@@ -1,0 +1,208 @@
+# CLAUDE.md — velve-auth
+
+Rules for every agent and every human working in this repository. They are not
+advice. A change that violates them does not get merged.
+
+The binding specification is `VELVE-AUTH-ARCHITEKTUR.md` in the repository root.
+It is written in German and it is the source of truth for the schema, the public
+interface, the security requirements `S-<class>-<n>`, the test cases
+`T-<class>-<n>`, the decided gaps `L-1` to `L-13` and the decision log `E-01` to
+`E-46`. Where this file and the architecture disagree, the architecture wins —
+and the disagreement is a bug in this file that must be fixed before continuing.
+
+---
+
+## 1. Language
+
+**Everything in this repository is written in English** — source code,
+identifiers, commit messages, pull requests, `README.md`, `DOCUMENTATION.md`,
+inline text and error codes.
+
+**One exception:** `CASE-STUDY.md` is German. It continues the decision log from
+architecture section 7 verbatim and in its original format, so it stays in the
+language that log is written in.
+
+This is decided once and does not get revisited. The package is a public MIT
+library on npm; its readers are not assumed to read German.
+
+## 2. Scope
+
+The library answers exactly one question: **who is signed in.**
+
+No roles. No permissions. No organisations. No teams. No profile data. A feature
+request that adds any of those is rejected, not deferred. Architecture section
+3.14 lists what is deliberately absent; that list is a promise, not a backlog.
+
+## 3. Code style
+
+The code must be readable without comments.
+
+- Every function is named so that its purpose follows from reading it. If a name
+  needs a comment to be understood, the name is wrong — rename it.
+- **A comment that explains _what_ the code does is a defect.** It is reported by
+  the reviewer and fixed by renaming or by splitting the function.
+- Comments are permitted only where the reason for the code cannot be expressed
+  in code: a specification clause being satisfied, a deliberate deviation from a
+  standard, a non-obvious ordering constraint. Then **one sentence**, no more.
+- A reference to the specification is a legitimate comment and is encouraged
+  where the code exists solely because of it: `S-OWNER-3`, `L-12`, `E-23`.
+- No `any` in the public surface. No `@ts-ignore`, no `@ts-expect-error` without
+  a failing-by-design test next to it. No `console.log`. No dead code, no unused
+  exports — `knip` enforces this.
+- The public interface must be usable without reading the documentation. If a
+  parameter needs prose to be understood, the parameter is shaped wrong.
+- No default export. Named exports only.
+- Errors carry a stable machine-readable code. What the outside learns is decided
+  in exactly one place, `src/core/http/error-map.ts`; no other module decides what
+  a caller is allowed to see.
+
+## 4. Branch discipline
+
+- **Never work on `main`.** No agent has write access to it. `main` changes only
+  through a pull request that the main gate has approved.
+- One feature, one branch, one worktree: branch `feature/<feature>`, worktree
+  `../velve-auth-wt-<feature>`.
+- **Push the branch immediately after creating it**, before the first content
+  change, so that progress is visible from the outside. Push again after every
+  completed building block — not only at the end.
+- Conventional Commits, English subject line, imperative mood:
+  `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`,
+  `perf:`, `security:`, `revert:`.
+- Commit every self-contained change separately. Do not batch unrelated work.
+- A commit message says **what changed and why**, and cites the specification
+  where the change follows from it.
+
+### No AI attribution
+
+Nothing in this repository refers to an AI model, an assistant, or a session.
+Not in commit messages, not in pull request titles or bodies, not in code
+comments, not in the documentation, not in file headers.
+
+Specifically forbidden: `Co-Authored-By` lines naming an assistant, "Generated
+with" footers, 🤖 or similar markers, session identifiers or session URLs, and
+the words Claude, Anthropic, ChatGPT, OpenAI, Copilot or "AI-generated" used to
+describe the authorship of anything here.
+
+The main gate verifies this with `git log --format=%B` over every commit on the
+branch and with a full-text search over the diff. A single hit blocks the merge.
+
+## 5. Working method
+
+### Writer and reviewer
+
+Every feature gets a writer and an independent reviewer. They run **one after
+the other** in the same worktree. The reviewer does not receive the writer's
+summary and does not work from the writer's assumptions — the reviewer's brief is
+the architecture and the assigned `S-…` requirements.
+
+**The reviewer writes the tests.** Not tests for the writer's code, but tests for
+the requirement against the result. When the reviewer finds a deviation, the
+failing test is written first, then the work goes back to the writer.
+
+A reviewer checks, in this order:
+
+1. Does the code satisfy each assigned `S-…` requirement? Each one individually,
+   with evidence.
+2. Is it understandable without comments? Every comment that describes _what_ the
+   code does is a finding.
+3. Is there dead code, an unused export, an `any`, a `@ts-ignore`, a
+   `console.log`?
+4. Do the error paths reveal nothing beyond what the specification allows?
+5. Is this feature's documentation written — not announced?
+
+### Parallelism and file ownership
+
+At most **four agents run at the same time**. This is a hard limit.
+
+Features in the same wave run in parallel; waves run one after another. **No two
+writers share a file.** The "touches" column of the wave tables in the build
+order is binding. A feature that needs a change outside its area stops and
+reports it instead of editing the file.
+
+### Definition of done
+
+A feature is finished when **all six** hold:
+
+1. The code is in the worktree, built, type-checked, linted.
+2. The reviewer's tests pass, and every assigned `S-…` requirement has at least
+   one test meeting the threshold fixed in architecture section 6.
+3. `DOCUMENTATION.md` covers every new function, parameter and configuration.
+4. `README.md` is updated if the outside picture changed.
+5. `CASE-STUDY.md` records the decisions actually taken while building.
+6. The main gate has approved.
+
+### The main gate
+
+Runs before every merge into `main` and blocks it on any finding. It does not
+repair anything itself.
+
+- `pnpm build` without errors **and without warnings**
+- `pnpm typecheck` under `strict`, no `any` in the public surface type
+- `pnpm lint` without findings, formatting applied
+- `pnpm knip` — no dead code, no unused export
+- `pnpm test` green, no skipped test without a reason stated in the code
+- `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
+- no AI attribution anywhere in the diff or the branch's commit history
+- the public surface has not changed unannounced (API snapshot comparison)
+
+## 6. Documentation duty
+
+Documentation is written **while** building, never afterwards. A feature whose
+documentation is "to be written" is not finished.
+
+- **`README.md`** — what it is, why it exists, how to install it, what it does,
+  and what it deliberately does not do.
+- **`DOCUMENTATION.md`** — every function, every parameter, every configuration
+  option, every schema table. The reference.
+- **`CASE-STUDY.md`** — grows with the build. Every design decision with its
+  reason, every rejected alternative, every problem and its solution, in the
+  format `Entscheidung · Kontext · Verworfen · Grund · Preis`.
+
+`CASE-STUDY.md` has one rule that matters more than the others: **no retroactive
+rationalisation.** If a decision was made for a bad reason and turned out right,
+the bad reason is what gets written down. The log is written during the build so
+that the reasons are the actual ones and not the reconstructed ones.
+
+Do not create any other markdown file. No summary files, no progress reports, no
+`NOTES.md`.
+
+## 7. Technical constraints
+
+These follow from architecture section 2 and are not open for local decision:
+
+- Pure TypeScript. **No WASM on the required path.** `hash-wasm` is an optional
+  peer dependency and an accelerator only.
+- ESM only. No CommonJS build. `dist/*.mjs` and `dist/*.d.mts`, nothing else.
+- No `postinstall`, no `node-gyp`, no native binding, no downloader.
+- Not used anywhere on the required path: `node:fs`, `node:wasi`,
+  `node:worker_threads`, `node:child_process`. The library assumes Web standards
+  — `globalThis.crypto` with `subtle` and `getRandomValues`, and `fetch`.
+- PostgreSQL 14 or newer. Hand-written SQL, no query builder, no ORM. The driver
+  is a parameter, never an import.
+- Keys come from a `KeyProvider`, never from `process.env` inside the core.
+- Core dependencies are exactly these six: `@noble/hashes`, `@noble/ciphers`,
+  `bcryptjs`, `otpauth`, `@simplewebauthn/server`, `jose`. Adding a seventh is a
+  decision for `CASE-STUDY.md`, not a routine change.
+
+## 8. Secrets
+
+- Never read, open, print or search `.env`, `.env.local`, `.env.production` or
+  any secrets file.
+- Never write a secret value into code, a test fixture, a commit or a log line.
+- A missing variable gets its **key** added to `.env.example` and is reported. Do
+  not invent a value.
+- Test keys are generated by the test setup, never committed.
+
+## 9. Commands
+
+```
+pnpm build       tsdown — ESM + .d.mts
+pnpm typecheck   tsc --noEmit, strict
+pnpm lint        biome check
+pnpm format      biome format --write
+pnpm test        vitest run
+pnpm knip        dead code and unused exports
+pnpm publint     package export correctness
+pnpm attw        type resolution across module modes
+pnpm gate        everything above, in the order the main gate runs it
+```
