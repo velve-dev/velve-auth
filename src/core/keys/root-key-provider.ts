@@ -6,6 +6,7 @@ import type { KeyProvider } from "./provider.js";
 import type { KeyPurpose } from "./purpose.js";
 
 const MINIMUM_ROOT_KEY_BYTES = 32;
+const DECIMAL_INTEGER = /^(0|[1-9][0-9]*)$/;
 
 const ENCRYPTION_PURPOSES = new Set<KeyPurpose>([
 	"totp-enc",
@@ -71,7 +72,8 @@ function decodeRootKeys(
 	const rootKeysByVersion = new Map<number, Uint8Array<ArrayBuffer>>();
 
 	for (const [version, encodedRootKey] of Object.entries(keysByVersion)) {
-		if (!isStorableKeyVersion(Number(version))) {
+		const keyVersion = parseKeyVersion(version);
+		if (keyVersion === null) {
 			throw new KeyError("key_version_out_of_range");
 		}
 
@@ -83,10 +85,20 @@ function decodeRootKeys(
 			throw new KeyError("root_key_too_short");
 		}
 
-		rootKeysByVersion.set(Number(version), rootKey);
+		rootKeysByVersion.set(keyVersion, rootKey);
 	}
 
 	return rootKeysByVersion;
+}
+
+// `Number` would also read "0x10" and "1e2", which no `integer` column can round-trip back.
+function parseKeyVersion(text: string): number | null {
+	if (!DECIMAL_INTEGER.test(text)) {
+		return null;
+	}
+
+	const version = Number(text);
+	return isStorableKeyVersion(version) ? version : null;
 }
 
 // S-KEY-2: signing purposes become HMAC keys and encryption purposes AES-GCM keys, so Web Crypto

@@ -62,6 +62,15 @@ describe("rootKeyProvider construction (S-KEY-6)", () => {
 		);
 	});
 
+	it("refuses a version spelled as anything but a decimal integer", () => {
+		for (const version of ["0x10", "1e2", " 1", "1.0", "+1", ""]) {
+			expectRejectedInput(
+				{ currentVersion: 1, keysByVersion: { [version]: generateRootKey() } },
+				"key_version_out_of_range",
+			);
+		}
+	});
+
 	it("accepts a root key longer than 32 bytes", () => {
 		expect(() =>
 			rootKeyProvider({
