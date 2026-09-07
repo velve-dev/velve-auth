@@ -253,6 +253,25 @@ describe("web handler", () => {
 		}
 	});
 
+	it("resolves a path written in another case or with an encoded character", async () => {
+		const { environment } = createHarness();
+		const handler = toWebHandler({ http: environment });
+
+		for (const path of ["/TEST/ECHO", "/Test/Echo", "/test/ech%6F"]) {
+			const response = await handler(requestTo(path, { body: { value: "x" } }));
+			expect([path, response.status]).toEqual([path, 200]);
+		}
+	});
+
+	it("answers a path with broken percent-encoding with 404 rather than the root route", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/%zz", { body: { value: "x" } }),
+		);
+
+		expect(response.status).toBe(404);
+	});
+
 	it("answers an unknown path with 404 and no body", async () => {
 		const { environment } = createHarness();
 		const response = await toWebHandler({ http: environment })(requestTo("/test/nothing-here"));

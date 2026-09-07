@@ -8,8 +8,11 @@ export interface RouteMatch {
 function toSegments(path: string): readonly string[] | null {
 	const segments: string[] = [];
 	for (const rawSegment of path.split("/")) {
-		if (rawSegment === "") {
+		if (rawSegment === "" || rawSegment === ".") {
 			continue;
+		}
+		if (rawSegment === "..") {
+			return null;
 		}
 		try {
 			segments.push(decodeURIComponent(rawSegment));
@@ -35,6 +38,7 @@ function withoutBase(
 	return segments.slice(baseSegments.length);
 }
 
+/** T-RATE-5 counts /TEST/ECHO and /test/echo on one bucket, so they must resolve to one route. */
 function capturePathParameters(
 	routeSegments: readonly string[],
 	requestSegments: readonly string[],
@@ -50,7 +54,7 @@ function capturePathParameters(
 		}
 		if (routeSegment.startsWith(":")) {
 			captured[routeSegment.slice(1)] = requestSegment;
-		} else if (routeSegment !== requestSegment) {
+		} else if (routeSegment.toLowerCase() !== requestSegment.toLowerCase()) {
 			return null;
 		}
 	}
@@ -74,10 +78,11 @@ export function matchRoute(
 	}
 
 	for (const route of routes) {
-		if (route.method !== method || route.caller === "server_only") {
+		const routeSegments = toSegments(route.path);
+		if (route.method !== method || route.caller === "server_only" || routeSegments === null) {
 			continue;
 		}
-		const pathParameters = capturePathParameters(toSegments(route.path) ?? [], routableSegments);
+		const pathParameters = capturePathParameters(routeSegments, routableSegments);
 		if (pathParameters !== null) {
 			return { route, pathParameters };
 		}
