@@ -28,3 +28,9 @@ export function jsonResponse(
 export function bodilessResponse(status: number, cookies: readonly CookieInstruction[]): Response {
 	return new Response(null, { status, headers: headersWith(cookies, null) });
 }
+
+export function redirectResponse(path: string, cookies: readonly CookieInstruction[]): Response {
+	const headers = headersWith(cookies, null);
+	headers.set("Location", path);
+	return new Response(null, { status: 302, headers });
+}

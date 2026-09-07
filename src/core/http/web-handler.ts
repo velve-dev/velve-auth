@@ -7,7 +7,8 @@ import {
 import { cookiePolicyOf, type HttpEnvironment, type WebHandlerTarget } from "./environment.js";
 import { toErrorBody, VelveError } from "./error-map.js";
 import { type RouteCall, type RouteOutcome, runRoute, toLoggedFailure } from "./pipeline.js";
-import { bodilessResponse, jsonResponse } from "./response.js";
+import { readRedirectPath } from "./redirect.js";
+import { bodilessResponse, jsonResponse, redirectResponse } from "./response.js";
 import { matchRoute, type RouteMatch } from "./router.js";
 import { isRecord } from "./validators.js";
 
@@ -94,7 +95,11 @@ function toResponse(outcome: RouteOutcome<unknown>, environment: HttpEnvironment
 	const parts = moveTokensIntoCookies(outcome.output, environment);
 	const cookies = lastInstructionPerCookie(parts.cookies, outcome.cookies);
 	assertCookieNamesAreEnumerated(cookies);
+	const redirectPath = readRedirectPath(parts.body);
 
+	if (redirectPath !== null) {
+		return redirectResponse(redirectPath, cookies);
+	}
 	return parts.body === undefined
 		? bodilessResponse(204, cookies)
 		: jsonResponse(200, parts.body, cookies);
