@@ -1,7 +1,7 @@
 import { VelveError } from "./error-map.js";
 import { isRecord } from "./validators.js";
 
-export interface Redirect {
+interface Redirect {
 	readonly redirectToPath: string;
 }
 

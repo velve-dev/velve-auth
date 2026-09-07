@@ -1,6 +1,6 @@
 import { VelveError } from "./error-map.js";
 
-export interface Validator<T> {
+interface Validator<T> {
 	parse(raw: unknown): T;
 }
 
