@@ -4,6 +4,10 @@ export interface Validator<T> {
 	parse(raw: unknown): T;
 }
 
+export interface ObjectValidator<T> extends Validator<T> {
+	readonly fields: readonly string[];
+}
+
 type Parsed<V> = V extends Validator<infer T> ? T : never;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -29,8 +33,9 @@ export function optional<T>(inner: Validator<T>): Validator<T | undefined> {
 
 export function object<Shape extends Record<string, Validator<unknown>>>(
 	shape: Shape,
-): Validator<{ [Key in keyof Shape]: Parsed<Shape[Key]> }> {
+): ObjectValidator<{ [Key in keyof Shape]: Parsed<Shape[Key]> }> {
 	return {
+		fields: Object.keys(shape),
 		parse: (raw) => {
 			if (!isRecord(raw)) {
 				throw new VelveError("invalid_input");

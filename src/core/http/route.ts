@@ -2,7 +2,7 @@ import type { PendingAuthentication, Session } from "./caller.js";
 import type { CookieWriter } from "./cookies.js";
 import type { VelveErrorCode } from "./error-map.js";
 import type { RateLimitRule } from "./rate-limit.js";
-import type { Validator } from "./validators.js";
+import { isRecord, type ObjectValidator } from "./validators.js";
 
 export type HttpMethod = "GET" | "POST";
 export type CallerRequirement = "anonymous" | "session" | "pending" | "server_only";
@@ -29,7 +29,7 @@ export interface RouteDeclaration<
 	readonly name: Name;
 	readonly method: HttpMethod;
 	readonly path: Path;
-	readonly input: Validator<Input>;
+	readonly input: ObjectValidator<Input>;
 	readonly errors: readonly Code[];
 	readonly caller: CallerRequirement;
 	readonly freshness: FreshnessRequirement;
@@ -75,6 +75,20 @@ function assertPathIsRoutable(path: string): void {
 	}
 }
 
+/** A GET route reads its input from the query string, where a provider appends parameters no declaration can enumerate. */
+function declaredFieldsOnly(rawInput: unknown, fields: readonly string[]): unknown {
+	if (!isRecord(rawInput)) {
+		return rawInput;
+	}
+	const declared: Record<string, unknown> = {};
+	for (const field of fields) {
+		if (Object.hasOwn(rawInput, field)) {
+			declared[field] = rawInput[field];
+		}
+	}
+	return declared;
+}
+
 function assertFreshnessHasASession(
 	name: string,
 	caller: CallerRequirement,
@@ -101,7 +115,11 @@ export function defineRoute<
 		...declaration,
 		// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
 		invoke: async (rawInput, resolveContext) => {
-			const input = declaration.input.parse(rawInput);
+			const input = declaration.input.parse(
+				declaration.method === "GET"
+					? declaredFieldsOnly(rawInput, declaration.input.fields)
+					: rawInput,
+			);
 			return declaration.handler(input, await resolveContext());
 		},
 	};

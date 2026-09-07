@@ -71,6 +71,28 @@ describe("web handler", () => {
 		expect(await response.json()).toEqual({ provider: "google", code: "abc" });
 	});
 
+	it("ignores query parameters the route does not declare", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/callback/google?code=abc&authuser=0&prompt=consent&hd=example.com", {
+				method: "GET",
+				origin: null,
+			}),
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ provider: "google", code: "abc" });
+	});
+
+	it("still rejects a POST body field the route does not declare", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/echo", { body: { value: "x", extra: "y" } }),
+		);
+
+		expect(response.status).toBe(400);
+	});
+
 	it("counts the request against the route name, not the written path", async () => {
 		const { environment, rateLimitRequests } = createHarness();
 		const handler = toWebHandler({ http: environment });
