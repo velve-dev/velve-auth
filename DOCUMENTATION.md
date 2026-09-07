@@ -40,69 +40,218 @@ import { VELVE_AUTH_VERSION } from "@velve/auth";
 ## Schema
 
 Everything lives in its own PostgreSQL schema, `velve` by default, so nothing
-collides with the application's own tables. Sixteen tables, documented as they
-are implemented.
+collides with the application's own tables. Sixteen tables.
 
-## The driver interface
+`user` is a reserved word in SQL, but `velve.user` is valid without quoting
+because PostgreSQL accepts any keyword after the dot. No statement in this
+library uses an unqualified name.
 
-Every statement the library runs goes through one small interface. The driver is
-a parameter of `createVelveAuth`, never an import of the core, so the core has no
-database dependency of its own.
+Storage rule: what the server only compares is hashed — session tokens, one-time
+tokens, challenges, recovery codes. What it needs in cleartext is encrypted —
+the TOTP secret, third-party OAuth tokens, the PKCE verifier, the PHC string.
+Passwords are derived with a KDF. Nothing confidential is in cleartext.
 
-```ts
-interface Driver {
-	query<T>(sql: string, params: unknown[]): Promise<T[]>;
-	transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T>;
-}
-```
+### `velve.user`
 
-| Member | Parameters | Returns |
+The identity. Deliberately minimal: no profile data.
+
+| Column | Type | Notes |
 |---|---|---|
-| `query` | `sql` — a single statement with `$1`-style placeholders; `params` — one value per placeholder | the result rows, in order |
-| `transaction` | `fn` — receives a driver bound to the transaction's connection | whatever `fn` returns |
+| `id` | `uuid` | primary key, `gen_random_uuid()` |
+| `email` | `text` | normalised, lowercase; unique where not null |
+| `email_verified_at` | `timestamptz` | null until the address is proven |
+| `username` | `text` | display form, as entered (NFKC) |
+| `username_key` | `text` | comparison form, NFKC + casefold; unique where not null |
+| `disabled_at` | `timestamptz` | set means the account is disabled |
+| `imported_from` | `text` | `supabase`, `clerk`, `auth0`, `firebase` or `nextauth` |
+| `imported_at` | `timestamptz` | when the import ran |
+| `created_at`, `updated_at` | `timestamptz` | |
 
-`transaction` commits when `fn` resolves and rolls back when it rejects. A driver
-handed to `fn` is bound to one connection: statements it runs are inside the
-transaction. Calling `transaction` on that bound driver joins the open
-transaction rather than starting a second one, so a helper that wants a
-transaction can be called from inside one.
+Constraints: `user_email_normalized` (the address equals its own lowercase),
+`user_username_normalized` (same for `username_key`), `user_username_pairing`
+(`username` and `username_key` are set together or not at all). Migration 2 adds
+`user_identity_mode`, the check that materialises the configured identity mode.
 
-There is no query builder and no ORM. All SQL is written by hand for PostgreSQL
-14 or newer.
+### `velve.password_credential`
 
-### `@velve/auth/pg`
+One row per user with a password.
 
-```ts
-import { Pool } from "pg";
-import { createNodePostgresDriver } from "@velve/auth/pg";
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | `uuid` | primary key, cascades from `velve.user` |
+| `phc` | `bytea` | AES-256-GCM over the canonical PHC string, purpose `password-enc` |
+| `key_version` | `integer` | the `password-enc` version `phc` was written under, default 1 |
+| `scheme` | `text` | cleartext, so the estate can be surveyed without a key |
+| `created_at`, `updated_at` | `timestamptz` | |
 
-const driver = createNodePostgresDriver(new Pool({ connectionString }));
-```
+### `velve.identity`
 
-`createNodePostgresDriver(pool)` returns a `Driver`. The pool is created, owned
-and closed by the application; the library never opens a connection and never
-reads a connection string.
+A linked provider identity. `(provider, subject)` is the only linking key; the
+email address is an attribute, never a key.
 
-`pg` is not a dependency of this package. The parameter is typed structurally, so
-a `Pool` from `node-postgres` satisfies it without the package being installed:
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `user_id` | `uuid` | cascades from `velve.user`, indexed |
+| `provider`, `subject` | `text` | unique together; `subject` is the provider's stable id, never an email |
+| `provider_email` | `text` | as reported by the provider |
+| `provider_email_verified` | `boolean` | per identity, default false |
+| `profile` | `jsonb` | raw claims; the application reads them, the library does not |
+| `access_token_enc`, `refresh_token_enc`, `id_token_enc` | `bytea` | AES-256-GCM, only when the application asks for token storage |
+| `token_key_version` | `integer` | the key version those three were written under |
+| `scopes` | `text[]` | |
+| `token_expires_at` | `timestamptz` | |
+| `created_at`, `updated_at` | `timestamptz` | |
 
-| Type | Shape |
-|---|---|
-| `NodePostgresQueryConfig` | `{ text: string; values: unknown[] }` |
-| `NodePostgresResult` | `{ rows: unknown[] }` |
-| `NodePostgresClient` | `query(config)`, `release()` |
-| `NodePostgresPool` | `query(config)`, `connect()` |
+### `velve.session`
 
-`query` outside a transaction runs on a pooled connection. `transaction` checks
-out one connection, runs `BEGIN`, calls the body, and runs `COMMIT`; if the body
-throws, it runs `ROLLBACK` and rethrows the body's error. The connection is
-released in both cases. A failing `ROLLBACK` does not replace the error that
-caused it.
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `user_id` | `uuid` | cascades from `velve.user`, indexed, **immutable** |
+| `token_sha256` | `bytea` | SHA-256 of the session token, unique |
+| `created_at`, `last_used_at` | `timestamptz` | |
+| `idle_expires_at`, `absolute_expires_at` | `timestamptz` | `absolute_expires_at` is indexed for the sweep |
+| `factors` | `text[]` | `password`, `totp`, `webauthn`, `recovery`, `oauth` |
+| `ip` | `inet` | truncated unless `sessionMetadata` says otherwise |
+| `user_agent` | `text` | truncated unless `sessionMetadata` says otherwise |
 
-### Identifiers
+The trigger `session_user_id_immutable` makes any `UPDATE` that names `user_id`
+fail with SQLSTATE 23514, whether or not the value would change. A session
+changes owner only by being replaced: insert the new row and delete the old one
+in one transaction (E-23).
 
-`schema` and table names reach SQL as identifiers, never as parameters, so they
-are checked before use. A name must match `^[a-z_][a-z0-9_$]*$` and stay within
-63 bytes; anything else raises `InvalidIdentifierError` with the code
-`invalid_identifier`. Mixed-case and quoted identifiers are rejected rather than
-quoted — there is no case in which the library needs one.
+### `velve.one_time_token`
+
+| Column | Type | Notes |
+|---|---|---|
+| `token_sha256` | `bytea` | primary key |
+| `purpose` | `text` | `email_verify`, `password_reset`, `email_change`, `magic_link` |
+| `user_id` | `uuid` | cascades from `velve.user`; indexed together with `purpose` |
+| `payload` | `jsonb` | |
+| `created_at` | `timestamptz` | |
+| `expires_at` | `timestamptz` | indexed for the sweep |
+
+### `velve.pending_authentication`
+
+The state between the first factor and the second.
+
+| Column | Type | Notes |
+|---|---|---|
+| `token_sha256` | `bytea` | primary key |
+| `user_id` | `uuid` | cascades from `velve.user` |
+| `factors_completed` | `text[]` | |
+| `attempts` | `integer` | default 0, counts against five |
+| `created_at` | `timestamptz` | |
+| `expires_at` | `timestamptz` | indexed for the sweep |
+
+### `velve.totp_credential`
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | `uuid` | primary key, cascades from `velve.user` |
+| `secret_enc` | `bytea` | AES-256-GCM, purpose `totp-enc` |
+| `key_version` | `integer` | the `totp-enc` version |
+| `confirmed_at` | `timestamptz` | null until the first correct code |
+| `created_at` | `timestamptz` | |
+
+### `velve.totp_used_step`
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id`, `time_step` | `uuid`, `bigint` | primary key together; the pair is what serialises concurrent submissions |
+| `expires_at` | `timestamptz` | indexed for the sweep |
+
+### `velve.recovery_code`
+
+One row per code, never a blob.
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id`, `code_hmac` | `uuid`, `bytea` | primary key together |
+| `key_version` | `integer` | the `token-pepper` version the HMAC was taken under, default 1 |
+| `created_at` | `timestamptz` | |
+
+### `velve.webauthn_credential`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | primary key |
+| `user_id` | `uuid` | cascades from `velve.user`, indexed |
+| `credential_id` | `bytea` | unique |
+| `public_key` | `bytea` | |
+| `sign_count` | `bigint` | default 0 |
+| `transports` | `text[]` | |
+| `aaguid` | `uuid` | |
+| `backup_eligible`, `backup_state` | `boolean` | eligible means a synchronised passkey |
+| `user_verified_at_registration` | `boolean` | |
+| `label` | `text` | |
+| `created_at`, `last_used_at` | `timestamptz` | |
+
+### `velve.webauthn_challenge`
+
+| Column | Type | Notes |
+|---|---|---|
+| `challenge_sha256` | `bytea` | primary key |
+| `purpose` | `text` | `register` or `authenticate` |
+| `user_id` | `uuid` | cascades from `velve.user`; null for a discoverable sign-in |
+| `created_at` | `timestamptz` | |
+| `expires_at` | `timestamptz` | indexed for the sweep |
+
+### `velve.oauth_flow`
+
+| Column | Type | Notes |
+|---|---|---|
+| `state_sha256` | `bytea` | primary key |
+| `provider` | `text` | |
+| `pkce_verifier_enc` | `bytea` | AES-256-GCM, purpose `pkce-enc` |
+| `key_version` | `integer` | the `pkce-enc` version |
+| `nonce` | `text` | for OIDC |
+| `redirect_path` | `text` | a path, never a full URL |
+| `link_to_user_id` | `uuid` | cascades from `velve.user`; set means the flow links rather than signs in |
+| `created_at` | `timestamptz` | |
+| `expires_at` | `timestamptz` | indexed for the sweep |
+
+### `velve.rate_bucket`
+
+| Column | Type | Notes |
+|---|---|---|
+| `bucket_key` | `text` | primary key |
+| `tokens` | `real` | negative means the request is rejected |
+| `updated_at` | `timestamptz` | |
+| `expires_at` | `timestamptz` | indexed for the sweep |
+
+### `velve.import_mapping`
+
+Makes an import repeatable: the same source row maps to the same account.
+
+| Column | Type | Notes |
+|---|---|---|
+| `source`, `source_id` | `text` | primary key together; `source_id` is the source primary key, unchanged |
+| `user_id` | `uuid` | cascades from `velve.user`, indexed |
+| `run_id` | `uuid` | which run created the row, indexed |
+| `imported_at` | `timestamptz` | |
+
+### `velve.password_reset_required`
+
+Legacy hashes that could not be carried over.
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | `uuid` | primary key, cascades from `velve.user` |
+| `reason` | `text` | `unsupported_scheme`, `hash_not_exported`, `missing_parameters`, `malformed`, `no_password_in_source` |
+| `source` | `text` | |
+| `detail` | `text` | for example `clerk:phpass` |
+| `created_at` | `timestamptz` | |
+
+### `velve.schema_migration`
+
+The migration ledger.
+
+| Column | Type | Notes |
+|---|---|---|
+| `version` | `integer` | primary key |
+| `name` | `text` | |
+| `applied_at` | `timestamptz` | |
+| `checksum` | `text` | SHA-256 of the migration's SQL, hex |
+
