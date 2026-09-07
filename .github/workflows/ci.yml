@@ -13,6 +13,11 @@ concurrency:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19", "26"]
+    name: gate (node ${{ matrix.node }})
     services:
       postgres:
         image: postgres:16-alpine
@@ -36,7 +41,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .node-version
+          node-version: ${{ matrix.node }}
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
