@@ -1,4 +1,3 @@
-import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import type { HttpEnvironment, LogLevel } from "../src/core/http/environment.js";
 import type { ConcealedError } from "../src/core/http/error-map.js";
 import type { RateLimitRequest } from "../src/core/http/rate-limit.js";
@@ -177,7 +176,6 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 	const environment: HttpEnvironment = {
 		routes: options.routes ?? TEST_ROUTES,
 		origins: options.origins ?? [ALLOWED_ORIGIN],
-		cookieNames: DEFAULT_COOKIE_NAMES,
 		cookieSameSite: "lax",
 		sessionCookieMaximumAgeInSeconds: 2_592_000,
 		freshnessWindowInSeconds: 900,

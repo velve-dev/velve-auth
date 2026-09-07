@@ -30,6 +30,7 @@ export interface CookieInstruction {
 }
 
 export interface CookiePolicy {
+	/** The names read from the request; the names written come from DEFAULT_COOKIE_NAMES (S-COOKIE-6). */
 	readonly names: CookieNames;
 	readonly sameSite: CookieSameSite;
 	readonly sessionMaximumAgeInSeconds: number;
@@ -47,6 +48,7 @@ export interface CookieCollector extends CookieWriter {
 }
 
 const COOKIE_VALUE_CHARACTERS = /^[A-Za-z0-9._~-]*$/;
+const COOKIE_NAME_CHARACTERS = /^__Host-[A-Za-z0-9_-]+$/;
 
 function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
 	return sameSite === "lax"
@@ -55,17 +57,17 @@ function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
 }
 
 export function serializeCookie(instruction: CookieInstruction): string {
-	if (!COOKIE_VALUE_CHARACTERS.test(instruction.value)) {
+	if (
+		!COOKIE_NAME_CHARACTERS.test(instruction.name) ||
+		!COOKIE_VALUE_CHARACTERS.test(instruction.value)
+	) {
 		throw new VelveError("internal_error");
 	}
 	return `${instruction.name}=${instruction.value}; Max-Age=${instruction.maximumAgeInSeconds}; ${instruction.attributes}`;
 }
 
-export function assertCookieNamesAreEnumerated(
-	instructions: readonly CookieInstruction[],
-	names: CookieNames,
-): void {
-	const enumerated = new Set<string>([names.session, names.pending]);
+export function assertCookieNamesAreEnumerated(instructions: readonly CookieInstruction[]): void {
+	const enumerated = new Set<string>([DEFAULT_COOKIE_NAMES.session, DEFAULT_COOKIE_NAMES.pending]);
 	for (const instruction of instructions) {
 		if (!enumerated.has(instruction.name)) {
 			throw new VelveError("internal_error");
@@ -76,6 +78,7 @@ export function assertCookieNamesAreEnumerated(
 export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 	const instructions = new Map<HostPrefixedCookieName, CookieInstruction>();
 	const attributes = cookieAttributesFor(policy.sameSite);
+	const written = DEFAULT_COOKIE_NAMES;
 
 	function write(name: HostPrefixedCookieName, value: string, maximumAgeInSeconds: number): void {
 		instructions.set(name, { name, value, maximumAgeInSeconds, attributes });
@@ -83,16 +86,16 @@ export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 
 	return {
 		setSession: (token) => {
-			write(policy.names.session, token, policy.sessionMaximumAgeInSeconds);
+			write(written.session, token, policy.sessionMaximumAgeInSeconds);
 		},
 		clearSession: () => {
-			write(policy.names.session, "", 0);
+			write(written.session, "", 0);
 		},
 		setPending: (token) => {
-			write(policy.names.pending, token, PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS);
+			write(written.pending, token, PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS);
 		},
 		clearPending: () => {
-			write(policy.names.pending, "", 0);
+			write(written.pending, "", 0);
 		},
 		collect: () => [...instructions.values()],
 	};

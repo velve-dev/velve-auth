@@ -48,7 +48,7 @@ function readRouteCall(
 		ipAddress: readClientAddress(request),
 		userAgent: request.headers.get("user-agent"),
 		readCallerTokens: () => {
-			const cookies = readCookies(request.headers.get("cookie"), environment.cookieNames);
+			const cookies = readCookies(request.headers.get("cookie"), cookiePolicyOf(environment).names);
 			return {
 				sessionToken: cookies.session,
 				// S-CACHE-4: only the four routes with caller "pending" ever see the pending cookie.
@@ -93,7 +93,7 @@ function lastInstructionPerCookie(
 function toResponse(outcome: RouteOutcome<unknown>, environment: HttpEnvironment): Response {
 	const parts = moveTokensIntoCookies(outcome.output, environment);
 	const cookies = lastInstructionPerCookie(parts.cookies, outcome.cookies);
-	assertCookieNamesAreEnumerated(cookies, environment.cookieNames);
+	assertCookieNamesAreEnumerated(cookies);
 
 	return parts.body === undefined
 		? bodilessResponse(204, cookies)

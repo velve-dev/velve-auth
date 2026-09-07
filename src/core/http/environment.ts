@@ -1,5 +1,5 @@
 import type { CallerResolver } from "./caller.js";
-import type { CookieNames, CookiePolicy, CookieSameSite } from "./cookies.js";
+import { type CookiePolicy, type CookieSameSite, DEFAULT_COOKIE_NAMES } from "./cookies.js";
 import type { RateLimiter } from "./rate-limit.js";
 import type { AnyRoute } from "./route.js";
 
@@ -12,7 +12,6 @@ export type LogLevel = "info" | "warn" | "error";
 export interface HttpEnvironment {
 	readonly routes: readonly AnyRoute[];
 	readonly origins: readonly string[];
-	readonly cookieNames: CookieNames;
 	readonly cookieSameSite: CookieSameSite;
 	readonly sessionCookieMaximumAgeInSeconds: number;
 	readonly freshnessWindowInSeconds: number;
@@ -32,7 +31,7 @@ export interface WebHandlerTarget {
 
 export function cookiePolicyOf(environment: HttpEnvironment): CookiePolicy {
 	return {
-		names: environment.cookieNames,
+		names: DEFAULT_COOKIE_NAMES,
 		sameSite: environment.cookieSameSite,
 		sessionMaximumAgeInSeconds: environment.sessionCookieMaximumAgeInSeconds,
 	};
