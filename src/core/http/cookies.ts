@@ -20,7 +20,7 @@ export const DEFAULT_COOKIE_NAMES: CookieNames = {
 	pending: "__Host-velve_pending",
 };
 
-export const PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS = 300;
+const PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS = 300;
 
 export interface CookieInstruction {
 	readonly name: HostPrefixedCookieName;
@@ -48,7 +48,7 @@ export interface CookieCollector extends CookieWriter {
 
 const COOKIE_VALUE_CHARACTERS = /^[A-Za-z0-9._~-]*$/;
 
-export function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
+function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
 	return sameSite === "lax"
 		? "HttpOnly; Secure; SameSite=Lax; Path=/"
 		: "HttpOnly; Secure; SameSite=Strict; Path=/";
@@ -98,7 +98,7 @@ export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 	};
 }
 
-export interface CookieValues {
+interface CookieValues {
 	readonly session: string | null;
 	readonly pending: string | null;
 }

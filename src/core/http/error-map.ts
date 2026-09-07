@@ -194,7 +194,7 @@ export class ConcealedError extends Error {
 	}
 }
 
-export interface VisibleFailure {
+interface VisibleFailure {
 	readonly error: VelveError;
 	readonly loggedReason: string;
 }
@@ -212,7 +212,7 @@ export function toVisibleFailure(cause: unknown): VisibleFailure {
 	return { error: new VelveError("internal_error"), loggedReason: "unhandled_exception" };
 }
 
-export interface ErrorBody {
+interface ErrorBody {
 	readonly error: {
 		readonly code: VelveErrorCode;
 		readonly message: string;

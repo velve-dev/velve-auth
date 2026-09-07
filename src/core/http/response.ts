@@ -1,0 +1,30 @@
+import { type CookieInstruction, serializeCookie } from "./cookies.js";
+
+function headersWith(cookies: readonly CookieInstruction[], contentType: string | null): Headers {
+	const headers = new Headers();
+	// L-6: an upstream cache the library knows nothing about is the normal case.
+	headers.set("Cache-Control", "no-store");
+	headers.set("Vary", "Cookie");
+	if (contentType !== null) {
+		headers.set("Content-Type", contentType);
+	}
+	for (const cookie of cookies) {
+		headers.append("Set-Cookie", serializeCookie(cookie));
+	}
+	return headers;
+}
+
+export function jsonResponse(
+	status: number,
+	body: unknown,
+	cookies: readonly CookieInstruction[],
+): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: headersWith(cookies, "application/json"),
+	});
+}
+
+export function bodilessResponse(status: number, cookies: readonly CookieInstruction[]): Response {
+	return new Response(null, { status, headers: headersWith(cookies, null) });
+}
