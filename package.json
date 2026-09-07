@@ -1,7 +1,7 @@
 {
 	"name": "@velve/auth",
 	"version": "0.0.0",
-	"description": "Authentication for TypeScript and PostgreSQL that answers exactly one question: who is signed in.",
+	"description": "The European authentication library for TypeScript and PostgreSQL. Answers exactly one question: who is signed in.",
 	"license": "MIT",
 	"type": "module",
 	"sideEffects": false,
