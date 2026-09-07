@@ -196,6 +196,28 @@ describe("web handler", () => {
 		expect(await withPendingCookie.text()).toBe(await withoutCookie.text());
 	});
 
+	it("gives a route declared server_only no HTTP route at all", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/maintenance/sweep"),
+		);
+
+		expect(response.status).toBe(404);
+	});
+
+	it("answers with JSON wherever there is a body", async () => {
+		const { environment } = createHarness();
+		const handler = toWebHandler({ http: environment });
+		const responses = [
+			await handler(requestTo("/test/echo", { body: { value: "hello" } })),
+			await handler(requestTo("/test/echo", { origin: "https://evil.com" })),
+		];
+
+		for (const response of responses) {
+			expect(response.headers.get("Content-Type")).toBe("application/json");
+		}
+	});
+
 	it("answers an unknown path with 404 and no body", async () => {
 		const { environment } = createHarness();
 		const response = await toWebHandler({ http: environment })(requestTo("/test/nothing-here"));

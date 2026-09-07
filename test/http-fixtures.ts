@@ -125,6 +125,19 @@ export const failingRoute = defineRoute({
 	},
 });
 
+const maintenanceRoute = defineRoute({
+	name: "test.maintenance.sweep",
+	method: "POST",
+	path: "/test/maintenance/sweep",
+	input: object({}),
+	errors: [] as const,
+	caller: "server_only",
+	freshness: "not_required",
+	originCheck: "checked",
+	rateLimit: { perIpAddress: "none", perAccount: "none" },
+	handler: async () => ({ removed: 0 }),
+});
+
 const TEST_ROUTES: readonly AnyRoute[] = [
 	echoRoute,
 	signInRoute,
@@ -133,6 +146,7 @@ const TEST_ROUTES: readonly AnyRoute[] = [
 	freshRoute,
 	pendingRoute,
 	callbackRoute,
+	maintenanceRoute,
 ];
 
 interface LogEntry {
