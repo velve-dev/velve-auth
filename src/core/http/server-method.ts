@@ -19,10 +19,12 @@ export function createServerMethod<
 			route,
 			{
 				origin,
-				sessionToken: sessionToken ?? null,
-				pendingToken: pendingToken ?? null,
 				ipAddress: ipAddress ?? null,
 				userAgent: userAgent ?? null,
+				readCallerTokens: () => ({
+					sessionToken: sessionToken ?? null,
+					pendingToken: pendingToken ?? null,
+				}),
 				readInput: async () => routeInput,
 			},
 			environment,

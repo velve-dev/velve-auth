@@ -6,12 +6,16 @@ import { assertOriginAllowed } from "./origin.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
 import type { RequestContext, RouteRuntime } from "./route.js";
 
-export interface RouteCall {
-	readonly origin: string | null;
+interface CallerTokens {
 	readonly sessionToken: string | null;
 	readonly pendingToken: string | null;
+}
+
+export interface RouteCall {
+	readonly origin: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
+	readonly readCallerTokens: () => CallerTokens;
 	readonly readInput: () => Promise<unknown>;
 }
 
@@ -68,18 +72,19 @@ async function createRequestContext(
 	environment: HttpEnvironment,
 	cookies: CookieCollector,
 ): Promise<RequestContext> {
+	const tokens = call.readCallerTokens();
 	const session =
-		route.caller === "session" ? await resolveSession(call.sessionToken, environment) : null;
+		route.caller === "session" ? await resolveSession(tokens.sessionToken, environment) : null;
 	if (session !== null && route.freshness === "required") {
 		assertSessionIsFresh(session, environment);
 	}
 	const pending =
-		route.caller === "pending" ? await resolvePending(call.pendingToken, environment) : null;
+		route.caller === "pending" ? await resolvePending(tokens.pendingToken, environment) : null;
 
 	return {
 		session,
 		pending,
-		sessionToken: call.sessionToken,
+		sessionToken: tokens.sessionToken,
 		ipAddress: call.ipAddress,
 		userAgent: call.userAgent,
 		cookies,

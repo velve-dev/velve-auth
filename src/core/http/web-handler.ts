@@ -43,14 +43,18 @@ function readRouteCall(
 	environment: HttpEnvironment,
 	readClientAddress: (request: Request) => string | null,
 ): RouteCall {
-	const cookies = readCookies(request.headers.get("cookie"), environment.cookieNames);
 	return {
 		origin: request.headers.get("origin"),
-		sessionToken: cookies.session,
-		// S-CACHE-4: only the four routes with caller "pending" ever see the pending cookie.
-		pendingToken: match.route.caller === "pending" ? cookies.pending : null,
 		ipAddress: readClientAddress(request),
 		userAgent: request.headers.get("user-agent"),
+		readCallerTokens: () => {
+			const cookies = readCookies(request.headers.get("cookie"), environment.cookieNames);
+			return {
+				sessionToken: cookies.session,
+				// S-CACHE-4: only the four routes with caller "pending" ever see the pending cookie.
+				pendingToken: match.route.caller === "pending" ? cookies.pending : null,
+			};
+		},
 		readInput: () => readInput(request, match),
 	};
 }

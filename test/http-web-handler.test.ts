@@ -172,6 +172,19 @@ describe("web handler", () => {
 		expect(response.status).toBe(400);
 	});
 
+	it("checks the origin before it reads the cookies", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/session", {
+				method: "GET",
+				origin: "https://evil.com",
+				cookie: "__Host-velve_session=A; __Host-velve_session=B",
+			}),
+		);
+
+		expect(response.status).toBe(403);
+	});
+
 	it("requires a fresh session where the declaration asks for one", async () => {
 		const stale = createHarness({ sessionAgeInSeconds: 901 });
 		const fresh = createHarness({ sessionAgeInSeconds: 899 });
