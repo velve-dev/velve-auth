@@ -120,7 +120,10 @@ of each version and caches them for the lifetime of the provider.
 Root keys are read in canonical base64url only. Padding is optional but must be
 one or two `=` at the end of a string whose length is a multiple of four, and
 trailing bits belonging to no byte must be zero — a key with a mistyped last
-character is rejected rather than decoded to the correct bytes. Each key of
+character is rejected rather than decoded to the correct bytes. **A leading or
+trailing space or newline is part of the string and makes it
+`root_key_malformed`**; the value is not trimmed, because trimming would bring
+back exactly the aliasing the canonical reading removes. Each key of
 `keysByVersion` must be the plain decimal spelling of its version; `0x10` and
 `1e2` are refused.
 
@@ -191,7 +194,8 @@ added to a deployment that already holds encrypted values.
 header, `envelope_algorithm_unsupported` for a label this version does not
 know, `ciphertext_malformed` below the length of a nonce and a tag, and
 `key_version_unknown` for a version that has left the ring. A wrong purpose, a
-wrong key or a tampered byte fails as an authentication error from the cipher.
+wrong key, a tampered byte or a rewritten header fails with
+`authentication_failed`.
 
 ### `randomBytes(length)`
 
@@ -211,8 +215,16 @@ Every failure of this module is a `KeyError` with a `code` from a fixed set:
 `root_key_missing`, `root_key_too_short`, `root_key_malformed`,
 `key_version_out_of_range`, `key_version_unknown`,
 `key_material_not_exportable`, `purpose_cannot_encrypt`,
-`ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`.
-The message is fixed per code, so no key material can reach an error string.
+`ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`,
+`authentication_failed`. The message is fixed per code, so no key material can
+reach an error string.
+
+That includes the failure a caller most has to handle: a ciphertext that does
+not authenticate arrives as `authentication_failed`, not as the exception type
+of whatever runtime the cipher ran on. `if (error instanceof KeyError)` covers
+the adversarial path as well as the configuration ones. The one thing it does
+not cover is a fault of the runtime underneath — a broken `crypto.subtle`
+during encryption surfaces as itself, deliberately.
 
 There is one error class and a code on it, rather than one class per failure.
 Callers switch on `error.code`; `instanceof KeyError` separates this module's
