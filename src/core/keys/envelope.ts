@@ -17,8 +17,7 @@ export interface PurposeCiphertext {
 	ciphertext: Uint8Array<ArrayBuffer>;
 }
 
-// S-KEY-3, column form: the caller stores `ciphertext` in a `bytea` column and `keyVersion` in the
-// neighbouring `key_version` column.
+// S-KEY-3, column form.
 export async function encryptWithPurposeKey(
 	keys: KeyProvider,
 	purpose: KeyPurpose,
@@ -56,8 +55,8 @@ export async function decryptWithPurposeKey(
 	return engine.decrypt(key, ciphertext.subarray(0, NONCE_BYTES), ciphertext.subarray(NONCE_BYTES));
 }
 
-// S-KEY-3, envelope form: algorithm label first so a later cipher change leaves stored data
-// readable (section 2.4), then the key version in the same range the columns use.
+// S-KEY-3, envelope form. The algorithm label comes first so that a later cipher change leaves
+// stored data readable (section 2.4).
 export async function sealEnvelope(
 	keys: KeyProvider,
 	purpose: KeyPurpose,

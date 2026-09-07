@@ -1,4 +1,4 @@
-// Section 2.7: `crypto.timingSafeEqual` is Node-specific, so the comparison is an XOR loop.
+// `crypto.timingSafeEqual` is Node-specific and must not be used (section 2.7).
 export function equalsInConstantTime(
 	left: Uint8Array<ArrayBuffer>,
 	right: Uint8Array<ArrayBuffer>,
