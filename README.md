@@ -1,10 +1,13 @@
+![Velve Auth](https://raw.githubusercontent.com/velve-dev/velve-auth/main/assets/banner.png)
+
 # @velve/auth
 
-Authentication for TypeScript and PostgreSQL that answers exactly one question:
-**who is signed in.**
+**The European authentication library for TypeScript and PostgreSQL.**
 
-It runs inside your application's process. Your users live in your database. No
-third-party service is involved at any point.
+It answers exactly one question — **who is signed in** — and it answers it
+completely. The library runs inside your application's process, your users live
+in your database, and no third-party service is involved at any point. Nothing
+leaves your infrastructure, because there is nowhere for it to go.
 
 > **Status: in development.** The public interface is specified and frozen; the
 > implementation is being built feature by feature. Nothing here is published to
