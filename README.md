@@ -64,7 +64,9 @@ This list is a promise, not a backlog. None of it is planned.
 
 - Roles, permissions, policies, access control of any kind
 - Organisations, teams, tenants, invitations, membership
-- Profile data beyond what identifies an account
+- Profile data on the user record. A linked OAuth identity caches the claims
+  the provider returned, because the application usually needs them; the user
+  record itself holds nothing beyond what identifies the account.
 - Acting as an identity provider — no OIDC provider, no SAML, no SCIM
 - Databases other than PostgreSQL; no MySQL, no SQLite, no ORM adapter
 - Billing, subscriptions, or anything that bills
