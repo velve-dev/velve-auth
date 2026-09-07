@@ -5,9 +5,12 @@
 **The European authentication library for TypeScript and PostgreSQL.**
 
 It answers exactly one question — **who is signed in** — and it answers it
-completely. The library runs inside your application's process, your users live
-in your database, and no third-party service is involved at any point. Nothing
-leaves your infrastructure, because there is nowhere for it to go.
+completely. The library runs inside your application's process and your users
+live in your database, so no third-party authentication service ever sits
+between you and them.
+
+The only traffic that leaves your infrastructure goes to the OAuth providers you
+choose to enable, and if you enable none, none does.
 
 > **Status: in development.** The public interface is specified and frozen; the
 > implementation is being built feature by feature. Nothing here is published to
