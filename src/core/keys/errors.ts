@@ -7,6 +7,7 @@ export type KeyErrorCode =
 	| "key_material_not_exportable"
 	| "purpose_cannot_encrypt"
 	| "ciphertext_malformed"
+	| "authentication_failed"
 	| "envelope_malformed"
 	| "envelope_algorithm_unsupported";
 
@@ -19,6 +20,7 @@ const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
 	key_material_not_exportable: "the key cannot be exported for the fallback cipher",
 	purpose_cannot_encrypt: "the key purpose signs, it does not encrypt",
 	ciphertext_malformed: "the ciphertext is shorter than a nonce and an authentication tag",
+	authentication_failed: "the value does not authenticate under this key",
 	envelope_malformed: "the envelope is too short to carry a header",
 	envelope_algorithm_unsupported: "the envelope names an unsupported algorithm",
 };

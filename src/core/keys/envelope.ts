@@ -56,12 +56,19 @@ export async function decryptWithPurposeKey(
 	}
 
 	const engine = await selectAesGcmEngine();
-	return engine.decrypt(
-		key,
-		ciphertext.subarray(0, NONCE_BYTES),
-		writeEnvelopeHeader(keyVersion),
-		ciphertext.subarray(NONCE_BYTES),
-	);
+
+	try {
+		return await engine.decrypt(
+			key,
+			ciphertext.subarray(0, NONCE_BYTES),
+			writeEnvelopeHeader(keyVersion),
+			ciphertext.subarray(NONCE_BYTES),
+		);
+	} catch (failure) {
+		// A tag mismatch is the failure a caller most has to handle, so it carries a code of its own
+		// instead of the runtime's exception type (E-71); an engine KeyError already has one.
+		throw failure instanceof KeyError ? failure : new KeyError("authentication_failed");
+	}
 }
 
 // S-KEY-3, envelope form. The algorithm label comes first so that a later cipher change leaves

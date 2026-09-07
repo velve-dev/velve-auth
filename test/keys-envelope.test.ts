@@ -104,7 +104,26 @@ describe("envelope encryption (S-KEY-3, E-44)", () => {
 	it("rejects a tampered ciphertext", async () => {
 		const envelope = await sealEnvelope(keys, "totp-enc", randomBytes(24));
 
-		await expect(openEnvelope(keys, "totp-enc", withLastBitFlipped(envelope))).rejects.toThrow();
+		expect(
+			await catchKeyErrorCode(openEnvelope(keys, "totp-enc", withLastBitFlipped(envelope))),
+		).toBe("authentication_failed");
+	});
+
+	it("names the tag failure rather than raising the runtime's own exception type", async () => {
+		const twoVersions = rootKeyProvider({
+			currentVersion: 2,
+			keysByVersion: { 1: generateRootKey(), 2: generateRootKey() },
+		});
+		const envelope = await sealEnvelope(twoVersions, "totp-enc", randomBytes(24));
+		const rewrittenVersion = Uint8Array.from(envelope);
+		new DataView(rewrittenVersion.buffer).setInt32(VERSION_OFFSET, 1);
+
+		expect(await catchKeyErrorCode(openEnvelope(twoVersions, "pkce-enc", envelope))).toBe(
+			"authentication_failed",
+		);
+		expect(await catchKeyErrorCode(openEnvelope(twoVersions, "totp-enc", rewrittenVersion))).toBe(
+			"authentication_failed",
+		);
 	});
 });
 
