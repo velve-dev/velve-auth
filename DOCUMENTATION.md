@@ -316,3 +316,77 @@ starting at once therefore serialise: the second finds the migration already
 applied and skips it. The lock is transaction-scoped, so it needs no session
 pinning from the driver and cannot be left behind by a crash.
 
+### What a plugin migration must do
+
+A plugin may add tables in the `velve` schema under its own prefix. Any column
+that references `velve.user(id)` must do so with `ON DELETE CASCADE`, and any
+column named `user_id` must carry such a foreign key. After each migration — core
+or plugin — the runner checks the catalogue inside the same transaction and
+rolls the migration back if either rule is broken, raising
+`MissingCascadeError` with the code `migration_missing_cascade` (S-TOKEN-6).
+Deleting a user has to empty every table that holds their rows, and a check that
+reads the catalogue cannot be forgotten the way a review can.
+
+## The driver interface
+
+Every statement the library runs goes through one small interface. The driver is
+a parameter of `createVelveAuth`, never an import of the core, so the core has no
+database dependency of its own.
+
+```ts
+interface Driver {
+	query<T>(sql: string, params: unknown[]): Promise<T[]>;
+	transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T>;
+}
+```
+
+| Member | Parameters | Returns |
+|---|---|---|
+| `query` | `sql` — a single statement with `$1`-style placeholders; `params` — one value per placeholder | the result rows, in order |
+| `transaction` | `fn` — receives a driver bound to the transaction's connection | whatever `fn` returns |
+
+`transaction` commits when `fn` resolves and rolls back when it rejects. A driver
+handed to `fn` is bound to one connection: statements it runs are inside the
+transaction. Calling `transaction` on that bound driver joins the open
+transaction rather than starting a second one, so a helper that wants a
+transaction can be called from inside one.
+
+There is no query builder and no ORM. All SQL is written by hand for PostgreSQL
+14 or newer.
+
+### `@velve/auth/pg`
+
+```ts
+import { Pool } from "pg";
+import { createNodePostgresDriver } from "@velve/auth/pg";
+
+const driver = createNodePostgresDriver(new Pool({ connectionString }));
+```
+
+`createNodePostgresDriver(pool)` returns a `Driver`. The pool is created, owned
+and closed by the application; the library never opens a connection and never
+reads a connection string.
+
+`pg` is not a dependency of this package. The parameter is typed structurally, so
+a `Pool` from `node-postgres` satisfies it without the package being installed:
+
+| Type | Shape |
+|---|---|
+| `NodePostgresQueryConfig` | `{ text: string; values: unknown[] }` |
+| `NodePostgresResult` | `{ rows: unknown[] }` |
+| `NodePostgresClient` | `query(config)`, `release()` |
+| `NodePostgresPool` | `query(config)`, `connect()` |
+
+`query` outside a transaction runs on a pooled connection. `transaction` checks
+out one connection, runs `BEGIN`, calls the body, and runs `COMMIT`; if the body
+throws, it runs `ROLLBACK` and rethrows the body's error. The connection is
+released in both cases. A failing `ROLLBACK` does not replace the error that
+caused it.
+
+### Identifiers
+
+`schema` and table names reach SQL as identifiers, never as parameters, so they
+are checked before use. A name must match `^[a-z_][a-z0-9_$]*$` and stay within
+63 bytes; anything else raises `InvalidIdentifierError` with the code
+`invalid_identifier`. Mixed-case and quoted identifiers are rejected rather than
+quoted — there is no case in which the library needs one.

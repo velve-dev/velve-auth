@@ -1,0 +1,97 @@
+import { randomBytes } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { MissingCascadeError } from "../src/core/db/cascade-guard.js";
+import type { Migration } from "../src/core/db/migration.js";
+import { runMigrations } from "../src/core/db/migration-runner.js";
+import { coreMigrations } from "../src/core/db/migrations/index.js";
+import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+
+const schema = `velve_plugin_${randomBytes(6).toString("hex")}`;
+let connection: TestConnection;
+
+const cascadingPluginTable: Migration = {
+	version: 100,
+	name: "audit_trail",
+	sql: `CREATE TABLE velve.audit_trail_entry (
+	id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE,
+	note text NOT NULL
+);`,
+};
+
+const restrictingPluginTable: Migration = {
+	version: 101,
+	name: "audit_trail_without_cascade",
+	sql: `CREATE TABLE velve.audit_trail_orphan (
+	id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	user_id uuid NOT NULL REFERENCES velve.user(id),
+	note text NOT NULL
+);`,
+};
+
+const unreferencedPluginTable: Migration = {
+	version: 102,
+	name: "audit_trail_without_foreign_key",
+	sql: `CREATE TABLE velve.audit_trail_loose (
+	id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	user_id uuid NOT NULL,
+	note text NOT NULL
+);`,
+};
+
+async function tableExists(table: string): Promise<boolean> {
+	const rows = await connection.query(
+		"SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2",
+		[schema, table],
+	);
+	return rows.length === 1;
+}
+
+function runWith(migration: Migration): Promise<unknown> {
+	return runMigrations({
+		driver: connection,
+		schema,
+		migrations: [...coreMigrations("email"), migration],
+	});
+}
+
+beforeAll(async () => {
+	connection = await openTestConnection();
+	await runMigrations({ driver: connection, schema, migrations: coreMigrations("email") });
+});
+
+afterAll(async () => {
+	await connection.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`, []);
+	await connection.close();
+});
+
+describe("plugin migrations (S-TOKEN-6)", () => {
+	it("accepts a plugin table whose foreign key cascades", async () => {
+		await runWith(cascadingPluginTable);
+
+		expect(await tableExists("audit_trail_entry")).toBe(true);
+	});
+
+	it("refuses a plugin table whose foreign key to the user does not cascade", async () => {
+		await expect(runWith(restrictingPluginTable)).rejects.toBeInstanceOf(MissingCascadeError);
+
+		expect(await tableExists("audit_trail_orphan")).toBe(false);
+	});
+
+	it("refuses a plugin table that carries user_id without a foreign key at all", async () => {
+		await expect(runWith(unreferencedPluginTable)).rejects.toMatchObject({
+			code: "migration_missing_cascade",
+		});
+
+		expect(await tableExists("audit_trail_loose")).toBe(false);
+	});
+
+	it("leaves the refused migrations out of the ledger", async () => {
+		const rows = await connection.query<{ version: number }>(
+			`SELECT version FROM ${schema}.schema_migration ORDER BY version`,
+			[],
+		);
+
+		expect(rows.map((row) => row.version)).toEqual([1, 2, 100]);
+	});
+});

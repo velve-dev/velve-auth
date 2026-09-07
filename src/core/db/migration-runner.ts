@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
+import { assertEveryUserReferenceCascades } from "./cascade-guard.js";
 import type { Driver } from "./driver.js";
 import { assertIdentifier, qualifiedTableName } from "./identifier.js";
 import {
@@ -115,6 +116,7 @@ async function applyMigration(
 		}
 
 		await tx.query(withSchemaName(migration.sql, schema), []);
+		await assertEveryUserReferenceCascades(tx, schema);
 		await tx.query(`INSERT INTO ${ledger} (version, name, checksum) VALUES ($1, $2, $3)`, [
 			migration.version,
 			migration.name,
