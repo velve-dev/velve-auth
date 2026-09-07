@@ -181,7 +181,7 @@ invalidate stored data (section 2.4). Both shapes agree on the version: the
 four bytes in the envelope hold exactly the integer the column would hold.
 
 **The first twelve bytes — the label and the version — are the additional data
-of every AES-256-GCM operation (E-63).** Rewriting either fails the
+of every AES-256-GCM operation (E-65).** Rewriting either fails the
 authentication tag. The column shape passes the same twelve bytes, so its
 `key_version` column is authenticated too even though it is stored apart from
 the ciphertext. This is a property of the format, not of the code: it cannot be

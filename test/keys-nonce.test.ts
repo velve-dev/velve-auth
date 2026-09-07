@@ -89,10 +89,10 @@ describe("the ciphertext discloses nothing about the plaintext (S-REST-4)", () =
 	});
 });
 
-// E-03 and E-58 promise a working `@noble/ciphers` fallback for runtimes whose `crypto.subtle`
+// E-03 and E-60 promise a working `@noble/ciphers` fallback for runtimes whose `crypto.subtle`
 // cannot do AES-GCM. The engine is chosen once per process, so the whole module graph is loaded
 // again with a `crypto.subtle` that fails the probe.
-describe("the envelope path over the noble fallback (E-03, E-58, E-59)", () => {
+describe("the envelope path over the noble fallback (E-03, E-60, E-61)", () => {
 	afterAll(() => {
 		vi.restoreAllMocks();
 	});

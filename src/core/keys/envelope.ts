@@ -67,7 +67,7 @@ export async function decryptWithPurposeKey(
 
 // S-KEY-3, envelope form. The algorithm label comes first so that a later cipher change leaves
 // stored data readable (section 2.4); the header is also the additional data of every AES-GCM
-// operation, so neither the label nor the version can be rewritten without failing the tag (E-63).
+// operation, so neither the label nor the version can be rewritten without failing the tag (E-65).
 export async function sealEnvelope(
 	keys: KeyProvider,
 	purpose: EncryptionKeyPurpose,
