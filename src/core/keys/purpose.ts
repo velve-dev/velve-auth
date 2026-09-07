@@ -8,3 +8,7 @@ export const KEY_PURPOSES = [
 ] as const;
 
 export type KeyPurpose = (typeof KEY_PURPOSES)[number];
+
+export type EncryptionKeyPurpose = Extract<KeyPurpose, `${string}-enc`>;
+
+export type SigningKeyPurpose = Exclude<KeyPurpose, EncryptionKeyPurpose>;

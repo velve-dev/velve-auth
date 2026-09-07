@@ -3,17 +3,17 @@ import {
 	decryptWithPurposeKey,
 	encryptWithPurposeKey,
 	KeyError,
-	type KeyPurpose,
 	openEnvelope,
 	randomBytes,
 	rootKeyProvider,
+	type SigningKeyPurpose,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
-import { generateRootKey } from "./keys-fixtures.js";
+import { asEncryptionPurpose, generateRootKey } from "./keys-fixtures.js";
 
 const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
-const SIGNING_PURPOSES: readonly KeyPurpose[] = ["cookie-sig", "token-pepper"];
+const SIGNING_PURPOSES: readonly SigningKeyPurpose[] = ["cookie-sig", "token-pepper"];
 
 async function thrownBy(work: Promise<unknown>): Promise<unknown> {
 	try {
@@ -25,18 +25,16 @@ async function thrownBy(work: Promise<unknown>): Promise<unknown> {
 	return expect.fail("the operation succeeded where it must fail");
 }
 
-// FAILING BY DESIGN — reported to the writer, not to be made green by weakening the assertion.
-//
-// `encryptWithPurposeKey`, `sealEnvelope`, `decryptWithPurposeKey` and `openEnvelope` take the
-// full `KeyPurpose` union, so `sealEnvelope(keys, "cookie-sig", …)` type-checks. Only four of the
-// six purposes can encrypt. At run time Web Crypto rejects the HMAC key with a bare
-// `DOMException: InvalidAccessError`, which carries no `code` — repository rules section 3 requires every
-// error to carry a stable machine-readable one, and section 3 of this repository puts the decision
-// about what a caller learns in one place. The fix is either an encryption-only purpose type, so
-// the misuse does not compile, or a `KeyError` with its own code.
+// `encryptWithPurposeKey`, `sealEnvelope`, `decryptWithPurposeKey` and `openEnvelope` take
+// `EncryptionKeyPurpose`, so `sealEnvelope(keys, "cookie-sig", …)` no longer compiles. These cases
+// reach the runtime backstop through `asEncryptionPurpose`, which is the only place in the suite
+// that defeats the type; they hold the untyped caller to the same contract, a `KeyError` with a
+// stable code rather than Web Crypto's uncoded `DOMException: InvalidAccessError`.
 describe("encrypting under a signing purpose (repository rules section 3)", () => {
 	it.each(SIGNING_PURPOSES)("fails with a KeyError when sealing under %s", async (purpose) => {
-		const thrown = await thrownBy(sealEnvelope(keys, purpose, randomBytes(32)));
+		const thrown = await thrownBy(
+			sealEnvelope(keys, asEncryptionPurpose(purpose), randomBytes(32)),
+		);
 
 		expect(thrown).toBeInstanceOf(KeyError);
 	});
@@ -44,7 +42,9 @@ describe("encrypting under a signing purpose (repository rules section 3)", () =
 	it.each(SIGNING_PURPOSES)(
 		"fails with a KeyError in the column shape under %s",
 		async (purpose) => {
-			const thrown = await thrownBy(encryptWithPurposeKey(keys, purpose, randomBytes(32)));
+			const thrown = await thrownBy(
+				encryptWithPurposeKey(keys, asEncryptionPurpose(purpose), randomBytes(32)),
+			);
 
 			expect(thrown).toBeInstanceOf(KeyError);
 		},
@@ -53,7 +53,12 @@ describe("encrypting under a signing purpose (repository rules section 3)", () =
 	it.each(SIGNING_PURPOSES)("fails with a KeyError when decrypting under %s", async (purpose) => {
 		const sealed = await encryptWithPurposeKey(keys, "totp-enc", randomBytes(32));
 		const thrown = await thrownBy(
-			decryptWithPurposeKey(keys, purpose, sealed.keyVersion, sealed.ciphertext),
+			decryptWithPurposeKey(
+				keys,
+				asEncryptionPurpose(purpose),
+				sealed.keyVersion,
+				sealed.ciphertext,
+			),
 		);
 
 		expect(thrown).toBeInstanceOf(KeyError);

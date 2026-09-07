@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES } from "../src/core/keys/aes-gcm.js";
 import {
 	decryptWithPurposeKey,
+	type EncryptionKeyPurpose,
 	encryptWithPurposeKey,
 	KeyError,
-	type KeyPurpose,
 	openEnvelope,
 	type PurposeCiphertext,
 	randomBytes,
 	rootKeyProvider,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
-import { generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
+import { asEncryptionPurpose, generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
 
 const utf8 = new TextEncoder();
-const ENCRYPTION_PURPOSES: KeyPurpose[] = [
+const ENCRYPTION_PURPOSES: EncryptionKeyPurpose[] = [
 	"totp-enc",
 	"oauth-token-enc",
 	"pkce-enc",
@@ -149,9 +149,12 @@ describe("purpose separation of protected values (S-KEY-2)", () => {
 		}
 	});
 
-	it("cannot encrypt under a signing purpose at all", async () => {
-		await expect(sealEnvelope(keys, "cookie-sig", randomBytes(32))).rejects.toThrow();
-		await expect(sealEnvelope(keys, "token-pepper", randomBytes(32))).rejects.toThrow();
+	it("names the refusal when a signing purpose reaches the encryption path untyped", async () => {
+		for (const purpose of ["cookie-sig", "token-pepper"] as const) {
+			expect(
+				await catchKeyErrorCode(sealEnvelope(keys, asEncryptionPurpose(purpose), randomBytes(32))),
+			).toBe("purpose_cannot_encrypt");
+		}
 	});
 });
 

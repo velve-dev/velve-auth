@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NONCE_BYTES } from "../src/core/keys/aes-gcm.js";
 import {
+	type EncryptionKeyPurpose,
 	KEY_PURPOSES,
 	type KeyPurpose,
 	openEnvelope,
@@ -82,7 +83,9 @@ describe("cross-purpose use of a purpose key (S-KEY-2)", () => {
 });
 
 describe("cross-purpose use through the envelope (S-KEY-2)", () => {
-	const ENCRYPTION_PURPOSES = KEY_PURPOSES.filter((purpose) => !isSigningPurpose(purpose));
+	const ENCRYPTION_PURPOSES = KEY_PURPOSES.filter(
+		(purpose): purpose is EncryptionKeyPurpose => !isSigningPurpose(purpose),
+	);
 
 	it.each(
 		ENCRYPTION_PURPOSES.flatMap((produced) =>

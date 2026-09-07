@@ -2,10 +2,11 @@ import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES, selectAesGcmEngine } from "./aes
 import { KeyError } from "./errors.js";
 import { isStorableKeyVersion } from "./key-version.js";
 import type { KeyProvider } from "./provider.js";
-import type { KeyPurpose } from "./purpose.js";
+import type { EncryptionKeyPurpose, KeyPurpose } from "./purpose.js";
 import { randomBytes } from "./random.js";
 
 const ENVELOPE_ALGORITHM = "A256GCM";
+const ENCRYPTION_PURPOSE_SUFFIX = "-enc";
 const KEY_VERSION_BYTES = 4;
 
 const utf8 = new TextEncoder();
@@ -20,9 +21,11 @@ export interface PurposeCiphertext {
 // S-KEY-3, column form.
 export async function encryptWithPurposeKey(
 	keys: KeyProvider,
-	purpose: KeyPurpose,
+	purpose: EncryptionKeyPurpose,
 	plaintext: Uint8Array<ArrayBuffer>,
 ): Promise<PurposeCiphertext> {
+	refuseSigningPurpose(purpose);
+
 	const { version, key } = await keys.current(purpose);
 	if (!isStorableKeyVersion(version)) {
 		throw new KeyError("key_version_out_of_range");
@@ -37,10 +40,12 @@ export async function encryptWithPurposeKey(
 
 export async function decryptWithPurposeKey(
 	keys: KeyProvider,
-	purpose: KeyPurpose,
+	purpose: EncryptionKeyPurpose,
 	keyVersion: number,
 	ciphertext: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer>> {
+	refuseSigningPurpose(purpose);
+
 	if (ciphertext.length < NONCE_BYTES + AUTHENTICATION_TAG_BYTES) {
 		throw new KeyError("ciphertext_malformed");
 	}
@@ -65,7 +70,7 @@ export async function decryptWithPurposeKey(
 // operation, so neither the label nor the version can be rewritten without failing the tag (E-63).
 export async function sealEnvelope(
 	keys: KeyProvider,
-	purpose: KeyPurpose,
+	purpose: EncryptionKeyPurpose,
 	plaintext: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer>> {
 	const { keyVersion, ciphertext } = await encryptWithPurposeKey(keys, purpose, plaintext);
@@ -74,11 +79,19 @@ export async function sealEnvelope(
 
 export async function openEnvelope(
 	keys: KeyProvider,
-	purpose: KeyPurpose,
+	purpose: EncryptionKeyPurpose,
 	envelope: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer>> {
 	const { keyVersion, ciphertext } = readEnvelopeHeader(envelope);
 	return decryptWithPurposeKey(keys, purpose, keyVersion, ciphertext);
+}
+
+// The parameter type already forbids it; this is the same refusal for a caller without types,
+// with a code of its own instead of Web Crypto's uncoded DOMException (repository rules section 3).
+function refuseSigningPurpose(purpose: KeyPurpose): void {
+	if (!purpose.endsWith(ENCRYPTION_PURPOSE_SUFFIX)) {
+		throw new KeyError("purpose_cannot_encrypt");
+	}
 }
 
 function writeEnvelopeHeader(keyVersion: number): Uint8Array<ArrayBuffer> {

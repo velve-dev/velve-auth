@@ -5,6 +5,7 @@ export type KeyErrorCode =
 	| "key_version_out_of_range"
 	| "key_version_unknown"
 	| "key_material_not_exportable"
+	| "purpose_cannot_encrypt"
 	| "ciphertext_malformed"
 	| "envelope_malformed"
 	| "envelope_algorithm_unsupported";
@@ -16,6 +17,7 @@ const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
 	key_version_out_of_range: "a key version is not a positive 32-bit integer",
 	key_version_unknown: "the key version is no longer part of the key ring",
 	key_material_not_exportable: "the key cannot be exported for the fallback cipher",
+	purpose_cannot_encrypt: "the key purpose signs, it does not encrypt",
 	ciphertext_malformed: "the ciphertext is shorter than a nonce and an authentication tag",
 	envelope_malformed: "the envelope is too short to carry a header",
 	envelope_algorithm_unsupported: "the envelope names an unsupported algorithm",

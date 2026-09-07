@@ -11,7 +11,12 @@ import {
 	sealEnvelope,
 } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
-import { encodeBase64Url, generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
+import {
+	asEncryptionPurpose,
+	encodeBase64Url,
+	generateRootKey,
+	withLastBitFlipped,
+} from "./keys-fixtures.js";
 
 const NO_HEADER = new Uint8Array(0);
 
@@ -88,7 +93,7 @@ describe("no key material reaches an error (S-KEY-6, section 2.7)", () => {
 			thrownBy(() => openEnvelope(keys, "totp-enc", withLastBitFlipped(envelope))),
 			thrownBy(() => openEnvelope(keys, "totp-enc", new Uint8Array(3))),
 			thrownBy(() => openEnvelope(keys, "totp-enc", envelope.subarray(0, 20))),
-			thrownBy(() => sealEnvelope(keys, "cookie-sig", randomBytes(16))),
+			thrownBy(() => sealEnvelope(keys, asEncryptionPurpose("cookie-sig"), randomBytes(16))),
 			thrownBy(() =>
 				decryptWithPurposeKey(keys, "totp-enc", MAXIMUM_KEY_VERSION, stored.ciphertext),
 			),
