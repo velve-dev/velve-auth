@@ -1,0 +1,13 @@
+{
+	"$schema": "https://unpkg.com/knip@5/schema.json",
+	"entry": ["test/**/*.test.ts"],
+	"project": ["src/**/*.ts", "test/**/*.ts"],
+	"ignoreDependencies": [
+		"@noble/ciphers",
+		"@noble/hashes",
+		"@simplewebauthn/server",
+		"bcryptjs",
+		"jose",
+		"otpauth"
+	]
+}

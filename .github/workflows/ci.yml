@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19", "26"]
+    name: gate (node ${{ matrix.node }})
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: velve
+          POSTGRES_USER: velve
+          POSTGRES_DB: velve_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      VELVE_TEST_DATABASE_URL: postgres://velve:velve@localhost:5432/velve_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Dead code
+        run: pnpm knip
+
+      - name: Test
+        run: pnpm test
+
+      - name: Package exports
+        run: pnpm publint
+
+      - name: Type resolution
+        run: pnpm attw
+
+  attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject AI attribution
+        env:
+          ASSISTANTS: 'Claude|Anthropic|ChatGPT|OpenAI|Copilot|Gemini|Codex'
+        run: |
+          set -uo pipefail
+
+          # Files that must name the forbidden terms: the specification, this
+          # detector, and the rule itself.
+          EXEMPT=(':!VELVE-AUTH-ARCHITEKTUR.md' ':!.github/workflows/ci.yml' ':!CLAUDE.md')
+
+          MARKERS="Co-authored-by:.*($ASSISTANTS)|noreply@(anthropic|openai)\\.com|Generated with|🤖|claude\\.ai/code|session_[0-9A-Za-z]{16}"
+          CLAIMS="(written|generated|authored|created|produced|refactored)[[:space:]]+(by|with|using)[[:space:]]+(an?[[:space:]]+)?(AI|LLM|$ASSISTANTS)|AI-(generated|authored|written)|@author[[:space:]]+.*($ASSISTANTS)"
+
+          fail=0
+
+          if [ -n "$(git rev-parse --verify -q origin/main || true)" ]; then
+            RANGE="origin/main..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          echo "Scanning commit messages in $RANGE"
+          if git log --format=%B "$RANGE" | grep -EIni "$MARKERS|$CLAIMS"; then
+            echo "::error::AI attribution found in commit messages"
+            fail=1
+          fi
+
+          echo "Scanning tree"
+          if git grep -EIni "$MARKERS" -- . "${EXEMPT[@]}"; then
+            echo "::error::AI attribution marker found in tree"
+            fail=1
+          fi
+          if git grep -EIni "$CLAIMS" -- . "${EXEMPT[@]}"; then
+            echo "::error::AI authorship claim found in tree"
+            fail=1
+          fi
+
+          # The tree scan cannot see text that a later commit removed; the diff
+          # scan cannot see text that predates the branch. Both are needed.
+          echo "Scanning diff in $RANGE"
+          if git log -p --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -EIni "$MARKERS|$CLAIMS"; then
+            echo "::error::AI attribution found in the branch diff"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "No AI attribution found"

@@ -1,0 +1,119 @@
+{
+	"name": "@velve/auth",
+	"version": "0.0.0",
+	"description": "Authentication for TypeScript and PostgreSQL that answers exactly one question: who is signed in.",
+	"license": "MIT",
+	"type": "module",
+	"sideEffects": false,
+	"packageManager": "pnpm@10.7.1",
+	"engines": {
+		"node": ">=20.19"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/velve-dev/velve-auth.git"
+	},
+	"homepage": "https://github.com/velve-dev/velve-auth#readme",
+	"bugs": "https://github.com/velve-dev/velve-auth/issues",
+	"keywords": [
+		"authentication",
+		"auth",
+		"session",
+		"postgres",
+		"postgresql",
+		"webauthn",
+		"passkey",
+		"totp",
+		"oauth",
+		"argon2",
+		"typescript"
+	],
+	"files": [
+		"dist",
+		"migrations",
+		"README.md",
+		"DOCUMENTATION.md",
+		"CASE-STUDY.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.mts",
+			"default": "./dist/index.mjs"
+		},
+		"./http": {
+			"types": "./dist/http.d.mts",
+			"default": "./dist/http.mjs"
+		},
+		"./client": {
+			"types": "./dist/client.d.mts",
+			"default": "./dist/client.mjs"
+		},
+		"./pg": {
+			"types": "./dist/pg.d.mts",
+			"default": "./dist/pg.mjs"
+		},
+		"./postgres-js": {
+			"types": "./dist/postgres-js.d.mts",
+			"default": "./dist/postgres-js.mjs"
+		},
+		"./neon": {
+			"types": "./dist/neon.d.mts",
+			"default": "./dist/neon.mjs"
+		},
+		"./import": {
+			"types": "./dist/import.d.mts",
+			"default": "./dist/import.mjs"
+		},
+		"./schema": {
+			"types": "./dist/schema.d.mts",
+			"default": "./dist/schema.mjs"
+		},
+		"./testing": {
+			"types": "./dist/testing.d.mts",
+			"default": "./dist/testing.mjs"
+		},
+		"./package.json": "./package.json"
+	},
+	"scripts": {
+		"api": "vitest run test/api-surface.test.ts",
+		"attw": "attw --pack . --profile esm-only",
+		"build": "tsdown",
+		"format": "biome format --write .",
+		"gate": "pnpm build && pnpm typecheck && pnpm lint && pnpm knip && pnpm test && pnpm publint && pnpm attw",
+		"knip": "knip",
+		"lint": "biome check --error-on-warnings .",
+		"pretest": "tsdown",
+		"publint": "publint --strict",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@noble/ciphers": "^2.1.0",
+		"@noble/hashes": "^2.1.0",
+		"@simplewebauthn/server": "^13.2.2",
+		"bcryptjs": "^3.0.2",
+		"jose": "^6.1.0",
+		"otpauth": "^9.4.1"
+	},
+	"peerDependencies": {
+		"hash-wasm": "^4.12.0"
+	},
+	"peerDependenciesMeta": {
+		"hash-wasm": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@arethetypeswrong/cli": "^0.18.2",
+		"@biomejs/biome": "^2.3.0",
+		"@types/node": "^26.0.0",
+		"@vitest/coverage-v8": "^3.2.4",
+		"knip": "^5.64.0",
+		"publint": "^0.3.14",
+		"tsdown": "^0.15.6",
+		"typescript": "^5.9.2",
+		"vitest": "^3.2.4"
+	}
+}
