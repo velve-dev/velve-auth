@@ -3,17 +3,10 @@ import { KeyError } from "./errors.js";
 import { derivePurposeKeyBytes } from "./hkdf.js";
 import { isStorableKeyVersion } from "./key-version.js";
 import type { KeyProvider } from "./provider.js";
-import type { KeyPurpose } from "./purpose.js";
+import { isEncryptionPurpose, type KeyPurpose } from "./purpose.js";
 
 const MINIMUM_ROOT_KEY_BYTES = 32;
 const DECIMAL_INTEGER = /^(0|[1-9][0-9]*)$/;
-
-const ENCRYPTION_PURPOSES = new Set<KeyPurpose>([
-	"totp-enc",
-	"oauth-token-enc",
-	"pkce-enc",
-	"password-enc",
-]);
 
 export interface RootKeyProviderInput {
 	currentVersion: number;
@@ -107,7 +100,7 @@ function importPurposeKey(
 	purpose: KeyPurpose,
 	keyBytes: Uint8Array<ArrayBuffer>,
 ): Promise<CryptoKey> {
-	if (ENCRYPTION_PURPOSES.has(purpose)) {
+	if (isEncryptionPurpose(purpose)) {
 		// Extractable because the `@noble/ciphers` fallback needs the raw bytes (E-03).
 		return crypto.subtle.importKey("raw", keyBytes, "AES-GCM", true, ["encrypt", "decrypt"]);
 	}

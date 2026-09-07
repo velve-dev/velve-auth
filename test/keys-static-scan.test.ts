@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { equalsInConstantTime } from "../src/core/keys/index.js";
+import { equalsInConstantTime, KEY_PURPOSES } from "../src/core/keys/index.js";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
 const keysDirectory = `${coreDirectory}/keys`;
@@ -109,18 +109,32 @@ describe("the purpose set is closed and split the way section 3.8 splits it", ()
 		expect(purposeSource).toMatch(/typeof KEY_PURPOSES\)\[number\]/);
 	});
 
-	it("names exactly the four encryption purposes as encrypting", () => {
-		const set = providerSource.slice(
-			providerSource.indexOf("ENCRYPTION_PURPOSES"),
-			providerSource.indexOf("]", providerSource.indexOf("ENCRYPTION_PURPOSES")),
-		);
-
-		expect([...set.matchAll(/"([a-z-]+)"/g)].map((match) => match[1])).toStrictEqual([
+	it("splits the six names the way the type splits them, by the -enc suffix", () => {
+		expect(KEY_PURPOSES.filter((purpose) => purpose.endsWith("-enc"))).toStrictEqual([
 			"totp-enc",
 			"oauth-token-enc",
 			"pkce-enc",
 			"password-enc",
 		]);
+		expect(KEY_PURPOSES.filter((purpose) => !purpose.endsWith("-enc"))).toStrictEqual([
+			"cookie-sig",
+			"token-pepper",
+		]);
+	});
+
+	it("answers whether a purpose encrypts in exactly one place", () => {
+		expect(filesMatching(/function isEncryptionPurpose/)).toStrictEqual([
+			`${keysDirectory}/purpose.ts`,
+		]);
+	});
+
+	it("has the key ring and the envelope ask that one place", () => {
+		expect(filesMatching(/isEncryptionPurpose\(/)).toStrictEqual([
+			`${keysDirectory}/envelope.ts`,
+			`${keysDirectory}/purpose.ts`,
+			`${keysDirectory}/root-key-provider.ts`,
+		]);
+		expect(providerSource).not.toMatch(/"(totp|oauth-token|pkce|password)-enc"/);
 	});
 });
 

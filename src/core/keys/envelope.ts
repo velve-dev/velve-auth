@@ -2,11 +2,10 @@ import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES, selectAesGcmEngine } from "./aes
 import { KeyError } from "./errors.js";
 import { isStorableKeyVersion } from "./key-version.js";
 import type { KeyProvider } from "./provider.js";
-import type { EncryptionKeyPurpose, KeyPurpose } from "./purpose.js";
+import { type EncryptionKeyPurpose, isEncryptionPurpose, type KeyPurpose } from "./purpose.js";
 import { randomBytes } from "./random.js";
 
 const ENVELOPE_ALGORITHM = "A256GCM";
-const ENCRYPTION_PURPOSE_SUFFIX = "-enc";
 const KEY_VERSION_BYTES = 4;
 
 const utf8 = new TextEncoder();
@@ -89,7 +88,7 @@ export async function openEnvelope(
 // The parameter type already forbids it; this is the same refusal for a caller without types,
 // with a code of its own instead of Web Crypto's uncoded DOMException (repository rules section 3).
 function refuseSigningPurpose(purpose: KeyPurpose): void {
-	if (!purpose.endsWith(ENCRYPTION_PURPOSE_SUFFIX)) {
+	if (!isEncryptionPurpose(purpose)) {
 		throw new KeyError("purpose_cannot_encrypt");
 	}
 }
