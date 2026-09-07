@@ -84,7 +84,13 @@ the words Claude, Anthropic, ChatGPT, OpenAI, Copilot or "AI-generated" used to
 describe the authorship of anything here.
 
 The main gate verifies this with `git log --format=%B` over every commit on the
-branch and with a full-text search over the diff. A single hit blocks the merge.
+branch, with a full-text search over the tree, and with one over the branch diff.
+The tree scan cannot see text a later commit removed; the diff scan cannot see
+text that predates the branch. Both run. A single hit blocks the merge.
+
+Three files are exempt because they must name the forbidden terms: the
+specification, this rule, and the check itself. Nothing else is exempt — text
+that would trip the check gets reworded rather than excused.
 
 ## 5. Working method
 

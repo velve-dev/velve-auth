@@ -84,8 +84,8 @@ jobs:
           # detector, and the rule itself.
           EXEMPT=(':!VELVE-AUTH-ARCHITEKTUR.md' ':!.github/workflows/ci.yml' ':!CLAUDE.md')
 
-          MARKERS="Co-[Aa]uthored-[Bb]y:.*($ASSISTANTS)|noreply@(anthropic|openai)\\.com|Generated with|🤖|claude\\.ai/code|session_[0-9A-Za-z]{16}"
-          CLAIMS="(written|generated|authored|created|produced|refactored)[[:space:]]+(by|with|using)[[:space:]]+(an?[[:space:]]+)?(AI|LLM|$ASSISTANTS)|AI-(generated|authored|written)"
+          MARKERS="Co-authored-by:.*($ASSISTANTS)|noreply@(anthropic|openai)\\.com|Generated with|🤖|claude\\.ai/code|session_[0-9A-Za-z]{16}"
+          CLAIMS="(written|generated|authored|created|produced|refactored)[[:space:]]+(by|with|using)[[:space:]]+(an?[[:space:]]+)?(AI|LLM|$ASSISTANTS)|AI-(generated|authored|written)|@author[[:space:]]+.*($ASSISTANTS)"
 
           fail=0
 
@@ -96,18 +96,26 @@ jobs:
           fi
 
           echo "Scanning commit messages in $RANGE"
-          if git log --format=%B "$RANGE" | grep -EIn "$MARKERS|$CLAIMS"; then
+          if git log --format=%B "$RANGE" | grep -EIni "$MARKERS|$CLAIMS"; then
             echo "::error::AI attribution found in commit messages"
             fail=1
           fi
 
           echo "Scanning tree"
-          if git grep -EIn "$MARKERS" -- . "${EXEMPT[@]}"; then
+          if git grep -EIni "$MARKERS" -- . "${EXEMPT[@]}"; then
             echo "::error::AI attribution marker found in tree"
             fail=1
           fi
-          if git grep -EIn "$CLAIMS" -- . "${EXEMPT[@]}"; then
+          if git grep -EIni "$CLAIMS" -- . "${EXEMPT[@]}"; then
             echo "::error::AI authorship claim found in tree"
+            fail=1
+          fi
+
+          # The tree scan cannot see text that a later commit removed; the diff
+          # scan cannot see text that predates the branch. Both are needed.
+          echo "Scanning diff in $RANGE"
+          if git log -p --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -EIni "$MARKERS|$CLAIMS"; then
+            echo "::error::AI attribution found in the branch diff"
             fail=1
           fi
 
