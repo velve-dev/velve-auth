@@ -74,8 +74,7 @@ CREATE TABLE velve.session (
 CREATE INDEX session_user_id_idx ON velve.session (user_id);
 CREATE INDEX session_sweep_idx   ON velve.session (absolute_expires_at);
 
--- E-23: a session changes owner only by being replaced, so the owner column
--- is immutable and any UPDATE naming it fails.
+-- E-23: a session changes owner only by being replaced, so the owner column is immutable.
 CREATE FUNCTION velve.reject_session_owner_update() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
