@@ -1,12 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Migration } from "../src/core/db/migration.js";
-import { runMigrations } from "../src/core/db/migration-runner.js";
-import { coreMigrations } from "../src/core/db/migrations/index.js";
 import {
 	assertSchemaUpToDate,
 	readSchemaStatus,
 	SchemaVersionMismatchError,
 } from "../src/core/db/schema-status.js";
+import { coreMigrations, runMigrations } from "../src/schema/index.js";
 import { dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 

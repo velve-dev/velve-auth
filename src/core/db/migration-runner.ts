@@ -27,7 +27,7 @@ export class MigrationRefusedError extends Error {
 	}
 }
 
-interface MigrationRunnerOptions {
+export interface MigrationRunnerOptions {
 	readonly driver: Driver;
 	readonly migrations: readonly Migration[];
 	readonly schema?: string;
