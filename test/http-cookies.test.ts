@@ -1,0 +1,100 @@
+import { describe, expect, it } from "vitest";
+import {
+	assertCookieNamesAreEnumerated,
+	type CookiePolicy,
+	createCookieCollector,
+	DEFAULT_COOKIE_NAMES,
+	readCookies,
+	serializeCookie,
+} from "../src/core/http/cookies.js";
+import { VelveError } from "../src/core/http/error-map.js";
+
+const POLICY: CookiePolicy = {
+	names: DEFAULT_COOKIE_NAMES,
+	sameSite: "lax",
+	sessionMaximumAgeInSeconds: 2_592_000,
+};
+
+describe("cookies", () => {
+	it("names the two cookies from the specification", () => {
+		expect(DEFAULT_COOKIE_NAMES).toEqual({
+			session: "__Host-velve_session",
+			pending: "__Host-velve_pending",
+		});
+	});
+
+	it("writes the session cookie with the fixed attribute set", () => {
+		const collector = createCookieCollector(POLICY);
+		collector.setSession("token-value");
+
+		expect(collector.collect().map(serializeCookie)).toEqual([
+			"__Host-velve_session=token-value; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax; Path=/",
+		]);
+	});
+
+	it("gives the pending cookie five minutes and the same attributes", () => {
+		const collector = createCookieCollector(POLICY);
+		collector.setPending("pending-value");
+
+		expect(collector.collect().map(serializeCookie)).toEqual([
+			"__Host-velve_pending=pending-value; Max-Age=300; HttpOnly; Secure; SameSite=Lax; Path=/",
+		]);
+	});
+
+	it("keeps HttpOnly and Secure when the application asks for strict same-site", () => {
+		const collector = createCookieCollector({ ...POLICY, sameSite: "strict" });
+		collector.setSession("token-value");
+
+		expect(collector.collect().map(serializeCookie)).toEqual([
+			"__Host-velve_session=token-value; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict; Path=/",
+		]);
+	});
+
+	it("writes at most one instruction per cookie", () => {
+		const collector = createCookieCollector(POLICY);
+		collector.setSession("first");
+		collector.clearSession();
+
+		expect(collector.collect()).toHaveLength(1);
+		expect(collector.collect()[0]?.maximumAgeInSeconds).toBe(0);
+	});
+
+	it("refuses a cookie value that could break out of the header", () => {
+		expect(() =>
+			serializeCookie({
+				name: "__Host-velve_session",
+				value: "a; Domain=evil.com",
+				maximumAgeInSeconds: 60,
+				attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+			}),
+		).toThrow(VelveError);
+	});
+
+	it("refuses to set a cookie that is not enumerated", () => {
+		expect(() =>
+			assertCookieNamesAreEnumerated(
+				[
+					{
+						name: "__Host-velve_extra",
+						value: "x",
+						maximumAgeInSeconds: 60,
+						attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+					},
+				],
+				DEFAULT_COOKIE_NAMES,
+			),
+		).toThrow(VelveError);
+	});
+
+	it("reads the enumerated cookies and ignores the rest", () => {
+		expect(
+			readCookies("theme=dark; __Host-velve_session=abc; theme=light", DEFAULT_COOKIE_NAMES),
+		).toEqual({ session: "abc", pending: null });
+	});
+
+	it("rejects a request that carries the same enumerated cookie twice", () => {
+		expect(() =>
+			readCookies("__Host-velve_session=A; __Host-velve_session=B", DEFAULT_COOKIE_NAMES),
+		).toThrow(new VelveError("invalid_input"));
+	});
+});

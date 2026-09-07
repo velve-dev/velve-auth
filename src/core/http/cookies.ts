@@ -1,0 +1,137 @@
+import { VelveError } from "./error-map.js";
+
+export type HostPrefixedCookieName = `__Host-${string}`;
+
+export type CookieSameSite = "lax" | "strict";
+
+/** S-COOKIE-2: the only two attribute sets the library can express — no Domain, no way to drop HttpOnly or Secure. */
+export type CookieAttributes =
+	| "HttpOnly; Secure; SameSite=Lax; Path=/"
+	| "HttpOnly; Secure; SameSite=Strict; Path=/";
+
+export interface CookieNames {
+	readonly session: HostPrefixedCookieName;
+	readonly pending: HostPrefixedCookieName;
+}
+
+/** S-COOKIE-6: the complete set of cookies the library ever sets. */
+export const DEFAULT_COOKIE_NAMES: CookieNames = {
+	session: "__Host-velve_session",
+	pending: "__Host-velve_pending",
+};
+
+export const PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS = 300;
+
+export interface CookieInstruction {
+	readonly name: HostPrefixedCookieName;
+	readonly value: string;
+	readonly maximumAgeInSeconds: number;
+	readonly attributes: CookieAttributes;
+}
+
+export interface CookiePolicy {
+	readonly names: CookieNames;
+	readonly sameSite: CookieSameSite;
+	readonly sessionMaximumAgeInSeconds: number;
+}
+
+export interface CookieWriter {
+	setSession(token: string): void;
+	clearSession(): void;
+	setPending(token: string): void;
+	clearPending(): void;
+}
+
+export interface CookieCollector extends CookieWriter {
+	collect(): readonly CookieInstruction[];
+}
+
+const COOKIE_VALUE_CHARACTERS = /^[A-Za-z0-9._~-]*$/;
+
+export function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
+	return sameSite === "lax"
+		? "HttpOnly; Secure; SameSite=Lax; Path=/"
+		: "HttpOnly; Secure; SameSite=Strict; Path=/";
+}
+
+export function serializeCookie(instruction: CookieInstruction): string {
+	if (!COOKIE_VALUE_CHARACTERS.test(instruction.value)) {
+		throw new VelveError("internal_error");
+	}
+	return `${instruction.name}=${instruction.value}; Max-Age=${instruction.maximumAgeInSeconds}; ${instruction.attributes}`;
+}
+
+export function assertCookieNamesAreEnumerated(
+	instructions: readonly CookieInstruction[],
+	names: CookieNames,
+): void {
+	const enumerated = new Set<string>([names.session, names.pending]);
+	for (const instruction of instructions) {
+		if (!enumerated.has(instruction.name)) {
+			throw new VelveError("internal_error");
+		}
+	}
+}
+
+export function createCookieCollector(policy: CookiePolicy): CookieCollector {
+	const instructions = new Map<HostPrefixedCookieName, CookieInstruction>();
+	const attributes = cookieAttributesFor(policy.sameSite);
+
+	function write(name: HostPrefixedCookieName, value: string, maximumAgeInSeconds: number): void {
+		instructions.set(name, { name, value, maximumAgeInSeconds, attributes });
+	}
+
+	return {
+		setSession: (token) => {
+			write(policy.names.session, token, policy.sessionMaximumAgeInSeconds);
+		},
+		clearSession: () => {
+			write(policy.names.session, "", 0);
+		},
+		setPending: (token) => {
+			write(policy.names.pending, token, PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS);
+		},
+		clearPending: () => {
+			write(policy.names.pending, "", 0);
+		},
+		collect: () => [...instructions.values()],
+	};
+}
+
+export interface CookieValues {
+	readonly session: string | null;
+	readonly pending: string | null;
+}
+
+function splitCookieHeader(header: string): readonly (readonly [string, string])[] {
+	const pairs: (readonly [string, string])[] = [];
+	for (const part of header.split(";")) {
+		const separator = part.indexOf("=");
+		if (separator > 0) {
+			pairs.push([part.slice(0, separator).trim(), part.slice(separator + 1).trim()]);
+		}
+	}
+	return pairs;
+}
+
+export function readCookies(header: string | null, names: CookieNames): CookieValues {
+	if (header === null) {
+		return { session: null, pending: null };
+	}
+	const enumerated = new Set<string>([names.session, names.pending]);
+	const values = new Map<string, string>();
+	for (const [name, value] of splitCookieHeader(header)) {
+		if (!enumerated.has(name)) {
+			continue;
+		}
+		// S-COOKIE-5: a second cookie of the same name is rejected, never disambiguated.
+		if (values.has(name)) {
+			throw new VelveError("invalid_input");
+		}
+		values.set(name, value);
+	}
+	return {
+		session: values.get(names.session) ?? null,
+		pending: values.get(names.pending) ?? null,
+	};
+}
