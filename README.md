@@ -52,6 +52,34 @@ binding, no install script, and no build step on your machine.
 pnpm add @velve/auth
 ```
 
+## Mounting it
+
+The HTTP layer is one function. It takes Web `Request` objects and returns Web
+`Response` objects, so it runs unchanged behind Node, Bun, Deno and any worker
+runtime.
+
+```ts
+import { toWebHandler } from "@velve/auth/http";
+
+const handler = toWebHandler(auth, { basePath: "/api/auth" });
+
+export const GET = handler;
+export const POST = handler;
+```
+
+Every route is declared once — path, method, input schema, output type, error
+codes — and the request handler, the directly callable server method and the
+typed client are derived from that one declaration. Origin checking and rate
+limiting run in front of every route on both call paths, the session and
+pending cookies carry the `__Host-` prefix and cannot be reconfigured, and every
+response carries `Cache-Control: no-store` and `Vary: Cookie` because a CDN in
+front is the normal case.
+
+`basePath` is where you mounted the handler, and the client address, if you want
+per-address rate limiting, comes from a function you pass in. Neither is read
+from a request header: a header the caller controls must never decide which
+bucket it is counted in.
+
 ## What it deliberately does not do
 
 This list is a promise, not a backlog. None of it is planned.
@@ -63,6 +91,8 @@ This list is a promise, not a backlog. None of it is planned.
 - Databases other than PostgreSQL; no MySQL, no SQLite, no ORM adapter
 - Billing, subscriptions, or anything that bills
 - A hosted service, a dashboard, or a control plane
+- CORS headers and preflight answers — that policy belongs in your reverse proxy
+  or your application, in front of the library
 
 If you need roles and organisations, you need a different library, and saying so
 plainly is more useful than a plugin that half-implements them.

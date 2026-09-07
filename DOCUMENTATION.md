@@ -72,6 +72,7 @@ handler and not by the application (L-6). A response with a body carries
 | Situation | Answer |
 |---|---|
 | Handler returned a value | `200` with that value as JSON |
+| Handler returned `redirectTo(path)` | `302` with `Location: <path>` and no body |
 | Handler returned nothing | `204` with no body |
 | Method and path match no route | `404` with no body — the 25 error codes have no code for "no such route" |
 | Anything threw | The status of the mapped error code, with the error envelope below |
@@ -102,6 +103,12 @@ for `HttpOnly`, `Secure`, `Domain`, `Path` or `SameSite=None`: the attribute set
 is a closed union of two string literals, so no other set can be written down
 (S-COOKIE-2). The `__Host-` prefix makes the browser enforce `Secure` and forbid
 `Domain`, which is what rules out cookie tossing from a subdomain.
+
+**The two names are not configurable.** They come from the enumeration in
+`src/core/http/cookies.ts`, which is also what a response is checked against
+before it is sent. Both the name and the value are checked against a token
+charset first, so no name and no value can end a `Set-Cookie` field early and
+append an attribute of its own.
 
 A request that carries one of these two cookies twice is rejected with
 `invalid_input` instead of one of the two values being picked (S-COOKIE-5).
@@ -140,7 +147,7 @@ that declaration; the client is derived from the same types.
 | `name` | `string` | Dotted path, e.g. `"signIn.password"`. It is the object path of the server method and the rate limit key — never the raw request path. |
 | `method` | `"GET" \| "POST"` | `GET` is for reading routes only. |
 | `path` | `string` | Absolute, no empty segments, no trailing slash. A `:name` segment captures a path parameter into the input. |
-| `input` | `Validator<Input>` | Built from `object()`, `string()` and `optional()`. Unknown keys are rejected. |
+| `input` | `ObjectValidator<Input>` | Built from `object()`, `string()` and `optional()`. A `POST` body with an undeclared key is rejected; on a `GET` route the undeclared query parameters are ignored, because providers append their own to the OAuth callback. |
 | `errors` | `readonly VelveErrorCode[]` | The codes this route may produce. A contract, not a comment. |
 | `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | `session` resolves the session cookie or fails with `session_required`; `pending` is the only requirement that reads `__Host-velve_pending`; `server_only` has no HTTP route and answers 404. |
 | `freshness` | `"not_required" \| "required"` | `required` needs `caller: "session"` and fails with `freshness_required` outside the freshness window. |
@@ -165,7 +172,7 @@ Declaring a route with an ambiguous path, or with `freshness: "required"` withou
 | `ipAddress` | `string \| null` | From `options.clientAddress`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
 | `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending` — a role, never a name, so no unenumerated cookie can be written. |
-| `enforceAccountRateLimit(identifier)` | `Promise<void>` | Consumes the per-account bucket once the route has normalised the identifier; a no-op where the declaration says `perAccount: "none"`. |
+| `enforceAccountRateLimit(normalisedIdentifier)` | `Promise<void>` | Consumes the per-account bucket. The identifier must already be normalised (L-5). A route that declares `perAccount` and completes without calling this writes a warning naming the route; where the declaration says `perAccount: "none"` the call does nothing. |
 
 ### `HttpEnvironment` — what the instance provides
 
@@ -175,7 +182,6 @@ Declaring a route with an ambiguous path, or with `freshness: "required"` withou
 |---|---|---|
 | `routes` | `readonly AnyRoute[]` | The route table, already filtered by identity mode and configuration. |
 | `origins` | `readonly string[]` | The allowed origins. An empty list rejects every checked route. |
-| `cookieNames` | `{ session, pending }` | Both `__Host-` prefixed; the type forbids any other prefix. |
 | `cookieSameSite` | `"lax" \| "strict"` | |
 | `sessionCookieMaximumAgeInSeconds` | `number` | |
 | `freshnessWindowInSeconds` | `number` | Measured against `session.createdAt`. |
@@ -183,6 +189,14 @@ Declaring a route with an ambiguous path, or with `freshness: "required"` withou
 | `rateLimiter` | `RateLimiter` | See below. |
 | `clock` | `Clock` | |
 | `log` | `(level, message, fields?) => void` | Where the true reason of every concealed failure is written. |
+
+### Failures on the direct server call
+
+The server method throws where the client returns a result (3.15 E), and it
+throws exactly what a request would have answered: a `VelveError` carrying one
+of the 25 codes, mapped and logged by the same code as the HTTP path. An
+application that catches it and forwards `error.code` into its own response
+publishes nothing the HTTP answer would not have published.
 
 ### The rate limiter seam
 
@@ -208,6 +222,48 @@ because the identifier does not exist before parsing. A decision with
 
 The seam is a named field, not a middleware chain: a plugin can neither replace
 the origin check nor run before it (3.11).
+
+### Redirects
+
+A handler that must send the caller somewhere returns `redirectTo(path)`, and
+the response becomes `302` with `Location: <path>` and no body. A value that is
+not a path without a scheme and without a host — `//evil.com`, `https://…`,
+`javascript:`, anything carrying a control character — fails with
+`internal_error` rather than reaching the header (S-REDIR-3). The full
+percent-decoding vector corpus of S-REDIR-2 belongs to the route that accepts a
+redirect target from a request, not to this layer, which never accepts one.
+
+`redirectTo(…)` combines with a session token in the same output; the token
+still goes into the cookie and never into the `Location` value (S-REDIR-4).
+
+### CORS
+
+**The library sends no CORS headers and answers no preflight**, and this is
+deliberate: cross-origin access control belongs in front of the library, in the
+reverse proxy or in the application, next to the rest of its HTTP policy. The
+same reasoning as architecture 3.14 — the library answers who is signed in, and
+nothing else.
+
+The consequence is concrete. If the browser origin and the API origin differ,
+every call is cross-origin, and without those headers the browser discards the
+answer. Terminate that in front of the process, for example in Traefik:
+
+```yaml
+http:
+  middlewares:
+    velve-auth-cors:
+      headers:
+        accessControlAllowOriginList: ["https://app.example.com"]
+        accessControlAllowCredentials: true
+        accessControlAllowMethods: ["GET", "POST", "OPTIONS"]
+        accessControlAllowHeaders: ["Content-Type"]
+        accessControlMaxAge: 600
+```
+
+The origin list there and `origins` in the configuration are separate lists on
+purpose: the CORS list decides which page may read an answer, the `origins` list
+decides which request is executed at all. Widening the first one never widens
+the second.
 
 ### Error codes
 
