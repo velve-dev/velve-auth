@@ -5,7 +5,7 @@ export function encodeBase64Url(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64url");
 }
 
-// Test keys are generated, never committed (CLAUDE.md section 8).
+// A test key is drawn per run so that no key material is ever committed.
 export function generateRootKey(): string {
 	return encodeBase64Url(randomBytes(32));
 }
