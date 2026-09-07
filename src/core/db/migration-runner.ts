@@ -2,7 +2,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { assertEveryUserReferenceCascades } from "./cascade-guard.js";
 import type { Driver } from "./driver.js";
-import { assertIdentifier, qualifiedTableName } from "./identifier.js";
+import { assertSchemaName, qualifiedTableName } from "./identifier.js";
 import {
 	type AppliedMigration,
 	type Migration,
@@ -124,7 +124,7 @@ async function applyMigration(
 }
 
 export async function runMigrations(options: MigrationRunnerOptions): Promise<MigrationReport> {
-	const schema = assertIdentifier(options.schema ?? DEFAULT_SCHEMA);
+	const schema = assertSchemaName(options.schema ?? DEFAULT_SCHEMA);
 	const plan = inVersionOrder(options.migrations);
 
 	await createLedger(options.driver, schema);
