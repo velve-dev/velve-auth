@@ -16,7 +16,7 @@ export interface RequestContext {
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly cookies: CookieWriter;
-	enforceAccountRateLimit(accountIdentifier: string): Promise<void>;
+	enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
 }
 
 export interface RouteDeclaration<

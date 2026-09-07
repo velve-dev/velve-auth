@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConcealedError } from "../src/core/http/error-map.js";
+import { defineRoute } from "../src/core/http/route.js";
+import { object } from "../src/core/http/validators.js";
 import { toWebHandler } from "../src/http/index.js";
 import { ALLOWED_ORIGIN, createHarness, failingRoute, requestTo } from "./http-fixtures.js";
 
@@ -130,6 +132,42 @@ describe("web handler", () => {
 			{ kind: "ip_address", ipAddress: null },
 			{ kind: "account", accountIdentifier: "someone@example.com" },
 		]);
+	});
+
+	it("says so when a route declares an account bucket it never consumes", async () => {
+		const uncounted = defineRoute({
+			name: "test.uncounted",
+			method: "POST",
+			path: "/test/uncounted",
+			input: object({}),
+			errors: [] as const,
+			caller: "anonymous",
+			freshness: "not_required",
+			originCheck: "checked",
+			rateLimit: { perIpAddress: "none", perAccount: { capacity: 5, refillPerSecond: 0.01 } },
+			handler: async () => ({ done: true }),
+		});
+		const { environment, logs, rateLimitRequests } = createHarness({ routes: [uncounted] });
+		const response = await toWebHandler({ http: environment })(requestTo("/test/uncounted"));
+
+		expect(response.status).toBe(200);
+		expect(rateLimitRequests).toEqual([]);
+		expect(logs).toEqual([
+			{
+				level: "warn",
+				message: "route declares an account rate limit it never consumed",
+				fields: { route: "test.uncounted" },
+			},
+		]);
+	});
+
+	it("stays quiet when the route consumes the account bucket it declares", async () => {
+		const { environment, logs } = createHarness();
+		await toWebHandler({ http: environment })(
+			requestTo("/test/sign-in", { body: { identifier: "someone@example.com" } }),
+		);
+
+		expect(logs).toEqual([]);
 	});
 
 	it("moves a session token into the cookie instead of the response body", async () => {

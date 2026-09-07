@@ -66,11 +66,50 @@ function assertSessionIsFresh(session: Session, environment: HttpEnvironment): v
 	}
 }
 
+interface AccountBucket {
+	consume(normalisedIdentifier: string): Promise<void>;
+	wasConsumed(): boolean;
+}
+
+/** L-5: the key is the normalised identifier, formed before the user is resolved. */
+function createAccountBucket(
+	route: RouteRuntime<unknown>,
+	environment: HttpEnvironment,
+): AccountBucket {
+	let consumed = false;
+	return {
+		consume: async (normalisedIdentifier) => {
+			consumed = true;
+			const rule = route.rateLimit.perAccount;
+			if (rule !== "none") {
+				await consumeBucket(environment, route.name, rule, {
+					kind: "account",
+					accountIdentifier: normalisedIdentifier,
+				});
+			}
+		},
+		wasConsumed: () => consumed,
+	};
+}
+
+function warnOnUnconsumedAccountBucket(
+	route: RouteRuntime<unknown>,
+	accountBucket: AccountBucket,
+	environment: HttpEnvironment,
+): void {
+	if (route.rateLimit.perAccount !== "none" && !accountBucket.wasConsumed()) {
+		environment.log("warn", "route declares an account rate limit it never consumed", {
+			route: route.name,
+		});
+	}
+}
+
 async function createRequestContext(
 	route: RouteRuntime<unknown>,
 	call: RouteCall,
 	environment: HttpEnvironment,
 	cookies: CookieCollector,
+	accountBucket: AccountBucket,
 ): Promise<RequestContext> {
 	const tokens = call.readCallerTokens();
 	const session =
@@ -88,15 +127,7 @@ async function createRequestContext(
 		ipAddress: call.ipAddress,
 		userAgent: call.userAgent,
 		cookies,
-		enforceAccountRateLimit: async (accountIdentifier) => {
-			const rule = route.rateLimit.perAccount;
-			if (rule !== "none") {
-				await consumeBucket(environment, route.name, rule, {
-					kind: "account",
-					accountIdentifier,
-				});
-			}
-		},
+		enforceAccountRateLimit: accountBucket.consume,
 	};
 }
 
@@ -138,9 +169,11 @@ export async function runRoute<Output>(
 	await enforceIpAddressRateLimit(route, call, environment);
 
 	const cookies = createCookieCollector(cookiePolicyOf(environment));
+	const accountBucket = createAccountBucket(route, environment);
 	const output = await route.invoke(await call.readInput(), () =>
-		createRequestContext(route, call, environment, cookies),
+		createRequestContext(route, call, environment, cookies, accountBucket),
 	);
+	warnOnUnconsumedAccountBucket(route, accountBucket, environment);
 
 	return { output, cookies: cookies.collect() };
 }
