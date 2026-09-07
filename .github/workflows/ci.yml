@@ -75,15 +75,43 @@ jobs:
           fetch-depth: 0
 
       - name: Reject AI attribution
+        env:
+          ASSISTANTS: 'Claude|Anthropic|ChatGPT|OpenAI|Copilot|Gemini|Codex'
         run: |
-          PATTERN='Co-Authored-By:.*(Claude|Anthropic|Copilot|ChatGPT|OpenAI)|Generated with|🤖|claude\.ai/code|AI-generated|Co-authored-by:.*noreply@anthropic'
-          if git log --format=%B origin/main..HEAD 2>/dev/null | grep -Eiq "$PATTERN"; then
-            echo "AI attribution found in commit messages"
-            git log --format=%B origin/main..HEAD | grep -Ein "$PATTERN"
-            exit 1
+          set -uo pipefail
+
+          # Files that must name the forbidden terms: the specification, this
+          # detector, and the rule itself.
+          EXEMPT=(':!VELVE-AUTH-ARCHITEKTUR.md' ':!.github/workflows/ci.yml' ':!CLAUDE.md')
+
+          MARKERS="Co-[Aa]uthored-[Bb]y:.*($ASSISTANTS)|noreply@(anthropic|openai)\\.com|Generated with|🤖|claude\\.ai/code|session_[0-9A-Za-z]{16}"
+          CLAIMS="(written|generated|authored|created|produced|refactored)[[:space:]]+(by|with|using)[[:space:]]+(an?[[:space:]]+)?(AI|LLM|$ASSISTANTS)|AI-(generated|authored|written)"
+
+          fail=0
+
+          if [ -n "$(git rev-parse --verify -q origin/main || true)" ]; then
+            RANGE="origin/main..HEAD"
+          else
+            RANGE="HEAD"
           fi
-          if git grep -EIn "$PATTERN" -- . ':!VELVE-AUTH-ARCHITEKTUR.md' ':!.github/workflows/ci.yml' 2>/dev/null; then
-            echo "AI attribution found in tree"
+
+          echo "Scanning commit messages in $RANGE"
+          if git log --format=%B "$RANGE" | grep -EIn "$MARKERS|$CLAIMS"; then
+            echo "::error::AI attribution found in commit messages"
+            fail=1
+          fi
+
+          echo "Scanning tree"
+          if git grep -EIn "$MARKERS" -- . "${EXEMPT[@]}"; then
+            echo "::error::AI attribution marker found in tree"
+            fail=1
+          fi
+          if git grep -EIn "$CLAIMS" -- . "${EXEMPT[@]}"; then
+            echo "::error::AI authorship claim found in tree"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
             exit 1
           fi
           echo "No AI attribution found"
