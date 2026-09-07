@@ -1,4 +1,11 @@
 export { equalsInConstantTime } from "./constant-time.js";
+export type { PurposeCiphertext } from "./envelope.js";
+export {
+	decryptWithPurposeKey,
+	encryptWithPurposeKey,
+	openEnvelope,
+	sealEnvelope,
+} from "./envelope.js";
 export type { KeyErrorCode } from "./errors.js";
 export { KeyError } from "./errors.js";
 export type { KeyProvider } from "./provider.js";
