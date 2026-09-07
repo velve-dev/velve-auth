@@ -10,11 +10,13 @@ export interface AesGcmEngine {
 	encrypt(
 		key: CryptoKey,
 		nonce: Uint8Array<ArrayBuffer>,
+		additionalData: Uint8Array<ArrayBuffer>,
 		plaintext: Uint8Array<ArrayBuffer>,
 	): Promise<Uint8Array<ArrayBuffer>>;
 	decrypt(
 		key: CryptoKey,
 		nonce: Uint8Array<ArrayBuffer>,
+		additionalData: Uint8Array<ArrayBuffer>,
 		ciphertext: Uint8Array<ArrayBuffer>,
 	): Promise<Uint8Array<ArrayBuffer>>;
 }
@@ -22,15 +24,15 @@ export interface AesGcmEngine {
 export const subtleAesGcm: AesGcmEngine = {
 	name: "subtle",
 
-	async encrypt(key, nonce, plaintext) {
+	async encrypt(key, nonce, additionalData, plaintext) {
 		return new Uint8Array(
-			await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, plaintext),
+			await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData }, key, plaintext),
 		);
 	},
 
-	async decrypt(key, nonce, ciphertext) {
+	async decrypt(key, nonce, additionalData, ciphertext) {
 		return new Uint8Array(
-			await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, key, ciphertext),
+			await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce, additionalData }, key, ciphertext),
 		);
 	},
 };
@@ -38,12 +40,12 @@ export const subtleAesGcm: AesGcmEngine = {
 export const nobleAesGcm: AesGcmEngine = {
 	name: "noble",
 
-	async encrypt(key, nonce, plaintext) {
-		return gcm(await exportRawKey(key), nonce).encrypt(plaintext);
+	async encrypt(key, nonce, additionalData, plaintext) {
+		return gcm(await exportRawKey(key), nonce, additionalData).encrypt(plaintext);
 	},
 
-	async decrypt(key, nonce, ciphertext) {
-		return gcm(await exportRawKey(key), nonce).decrypt(ciphertext);
+	async decrypt(key, nonce, additionalData, ciphertext) {
+		return gcm(await exportRawKey(key), nonce, additionalData).decrypt(ciphertext);
 	},
 };
 
@@ -63,7 +65,8 @@ async function subtleSupportsAesGcm(): Promise<boolean> {
 		const probeKey = await crypto.subtle.importKey("raw", randomBytes(32), "AES-GCM", false, [
 			"encrypt",
 		]);
-		await subtleAesGcm.encrypt(probeKey, randomBytes(NONCE_BYTES), new Uint8Array(0));
+		const nothing = new Uint8Array(0);
+		await subtleAesGcm.encrypt(probeKey, randomBytes(NONCE_BYTES), nothing, nothing);
 		return true;
 	} catch {
 		return false;

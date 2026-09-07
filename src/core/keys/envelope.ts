@@ -30,7 +30,7 @@ export async function encryptWithPurposeKey(
 
 	const engine = await selectAesGcmEngine();
 	const nonce = randomBytes(NONCE_BYTES);
-	const sealed = await engine.encrypt(key, nonce, plaintext);
+	const sealed = await engine.encrypt(key, nonce, writeEnvelopeHeader(version), plaintext);
 
 	return { keyVersion: version, ciphertext: concatBytes(nonce, sealed) };
 }
@@ -52,11 +52,17 @@ export async function decryptWithPurposeKey(
 	}
 
 	const engine = await selectAesGcmEngine();
-	return engine.decrypt(key, ciphertext.subarray(0, NONCE_BYTES), ciphertext.subarray(NONCE_BYTES));
+	return engine.decrypt(
+		key,
+		ciphertext.subarray(0, NONCE_BYTES),
+		writeEnvelopeHeader(keyVersion),
+		ciphertext.subarray(NONCE_BYTES),
+	);
 }
 
 // S-KEY-3, envelope form. The algorithm label comes first so that a later cipher change leaves
-// stored data readable (section 2.4).
+// stored data readable (section 2.4); the header is also the additional data of every AES-GCM
+// operation, so neither the label nor the version can be rewritten without failing the tag (E-63).
 export async function sealEnvelope(
 	keys: KeyProvider,
 	purpose: KeyPurpose,

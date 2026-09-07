@@ -13,6 +13,8 @@ import {
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
 import { encodeBase64Url, generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
 
+const NO_HEADER = new Uint8Array(0);
+
 function hex(bytes: Uint8Array): string {
 	return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -90,8 +92,8 @@ describe("no key material reaches an error (S-KEY-6, section 2.7)", () => {
 			thrownBy(() =>
 				decryptWithPurposeKey(keys, "totp-enc", MAXIMUM_KEY_VERSION, stored.ciphertext),
 			),
-			thrownBy(() => nobleAesGcm.encrypt(signingKey, randomBytes(12), randomBytes(16))),
-			thrownBy(() => nobleAesGcm.decrypt(signingKey, randomBytes(12), randomBytes(32))),
+			thrownBy(() => nobleAesGcm.encrypt(signingKey, randomBytes(12), NO_HEADER, randomBytes(16))),
+			thrownBy(() => nobleAesGcm.decrypt(signingKey, randomBytes(12), NO_HEADER, randomBytes(32))),
 		]);
 	}
 
