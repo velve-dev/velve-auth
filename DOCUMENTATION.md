@@ -74,6 +74,11 @@ derivation context per purpose (section 3.8).
 
 `KEY_PURPOSES` is the tuple of those six names; `KeyPurpose` is the union
 derived from it. The set is closed — a name outside it does not type-check.
+`EncryptionKeyPurpose` and `SigningKeyPurpose` are the two halves of that
+union, derived from the same tuple. The four encryption functions take
+`EncryptionKeyPurpose`, so passing `cookie-sig` or `token-pepper` to them does
+not compile; a caller without types gets a `KeyError` with the code
+`purpose_cannot_encrypt`.
 
 Signing purposes are imported as HMAC keys and encryption purposes as AES-GCM
 keys. A value produced under one purpose therefore cannot be read under
@@ -111,6 +116,13 @@ of each version and caches them for the lifetime of the provider.
 |---|---|---|
 | `currentVersion` | `number` | the version `current()` writes with; must be present in `keysByVersion` |
 | `keysByVersion` | `Readonly<Record<number, string>>` | the key ring: version to base64url root key, at least 32 bytes each |
+
+Root keys are read in canonical base64url only. Padding is optional but must be
+one or two `=` at the end of a string whose length is a multiple of four, and
+trailing bits belonging to no byte must be zero — a key with a mistyped last
+character is rejected rather than decoded to the correct bytes. Each key of
+`keysByVersion` must be the plain decimal spelling of its version; `0x10` and
+`1e2` are refused.
 
 A key version is a positive PostgreSQL `integer`, so between `1` and
 `2147483647`. That is the same range the `key_version` columns hold.
@@ -168,6 +180,13 @@ The algorithm label comes first so that changing the cipher later does not
 invalidate stored data (section 2.4). Both shapes agree on the version: the
 four bytes in the envelope hold exactly the integer the column would hold.
 
+**The first twelve bytes — the label and the version — are the additional data
+of every AES-256-GCM operation (E-63).** Rewriting either fails the
+authentication tag. The column shape passes the same twelve bytes, so its
+`key_version` column is authenticated too even though it is stored apart from
+the ciphertext. This is a property of the format, not of the code: it cannot be
+added to a deployment that already holds encrypted values.
+
 `openEnvelope` fails with `envelope_malformed` for a value too short to carry a
 header, `envelope_algorithm_unsupported` for a label this version does not
 know, `ciphertext_malformed` below the length of a nonce and a tag, and
@@ -191,6 +210,10 @@ because it exists only on Node (section 2.7).
 Every failure of this module is a `KeyError` with a `code` from a fixed set:
 `root_key_missing`, `root_key_too_short`, `root_key_malformed`,
 `key_version_out_of_range`, `key_version_unknown`,
-`key_material_not_exportable`, `ciphertext_malformed`, `envelope_malformed`,
-`envelope_algorithm_unsupported`. The message is fixed per code, so no key
-material can reach an error string.
+`key_material_not_exportable`, `purpose_cannot_encrypt`,
+`ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`.
+The message is fixed per code, so no key material can reach an error string.
+
+There is one error class and a code on it, rather than one class per failure.
+Callers switch on `error.code`; `instanceof KeyError` separates this module's
+refusals from a fault of the runtime underneath it.
