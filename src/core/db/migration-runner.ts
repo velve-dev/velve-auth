@@ -9,6 +9,7 @@ import {
 	type MigrationReport,
 	migrationChecksum,
 } from "./migration.js";
+import { applySchemaName } from "./schema-rewrite.js";
 
 const DEFAULT_SCHEMA = "velve";
 const LEDGER_TABLE = "schema_migration";
@@ -35,10 +36,6 @@ interface MigrationRunnerOptions {
 function schemaLockKey(schema: string): number {
 	const digest = sha256(utf8ToBytes(schema));
 	return new DataView(digest.buffer, digest.byteOffset, digest.byteLength).getInt32(0);
-}
-
-function withSchemaName(sql: string, schema: string): string {
-	return sql.replaceAll(/\bvelve\b/g, schema);
 }
 
 function inVersionOrder(migrations: readonly Migration[]): readonly Migration[] {
@@ -115,7 +112,7 @@ async function applyMigration(
 			return false;
 		}
 
-		await tx.query(withSchemaName(migration.sql, schema), []);
+		await tx.query(applySchemaName(migration.sql, schema), []);
 		await assertEveryUserReferenceCascades(tx, schema);
 		await tx.query(`INSERT INTO ${ledger} (version, name, checksum) VALUES ($1, $2, $3)`, [
 			migration.version,
