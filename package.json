@@ -1,0 +1,88 @@
+{
+  "name": "@velve/auth",
+  "version": "0.0.0",
+  "description": "Authentication for TypeScript and PostgreSQL that answers exactly one question: who is signed in.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "packageManager": "pnpm@10.7.1",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/velve-dev/velve-auth.git"
+  },
+  "homepage": "https://github.com/velve-dev/velve-auth#readme",
+  "bugs": "https://github.com/velve-dev/velve-auth/issues",
+  "keywords": [
+    "authentication",
+    "auth",
+    "session",
+    "postgres",
+    "postgresql",
+    "webauthn",
+    "passkey",
+    "totp",
+    "oauth",
+    "argon2",
+    "typescript"
+  ],
+  "files": [
+    "dist",
+    "migrations",
+    "README.md",
+    "DOCUMENTATION.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./http": "./dist/http.mjs",
+    "./client": "./dist/client.mjs",
+    "./pg": "./dist/pg.mjs",
+    "./postgres-js": "./dist/postgres-js.mjs",
+    "./neon": "./dist/neon.mjs",
+    "./import": "./dist/import.mjs",
+    "./schema": "./dist/schema.mjs",
+    "./testing": "./dist/testing.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "knip": "knip",
+    "publint": "publint --strict",
+    "attw": "attw --pack .",
+    "gate": "pnpm build && pnpm typecheck && pnpm lint && pnpm knip && pnpm test && pnpm publint && pnpm attw"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.1.0",
+    "@noble/hashes": "^2.1.0",
+    "@simplewebauthn/server": "^13.2.2",
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.1.0",
+    "otpauth": "^9.4.1"
+  },
+  "peerDependencies": {
+    "hash-wasm": "^4.12.0"
+  },
+  "peerDependenciesMeta": {
+    "hash-wasm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@biomejs/biome": "^2.3.0",
+    "@types/node": "^22.18.1",
+    "knip": "^5.64.0",
+    "publint": "^0.3.14",
+    "tsdown": "^0.15.6",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

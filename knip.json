@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/http/index.ts",
+    "src/client/index.ts",
+    "src/pg/index.ts",
+    "src/postgres-js/index.ts",
+    "src/neon/index.ts",
+    "src/import/index.ts",
+    "src/schema/index.ts",
+    "src/testing/index.ts",
+    "test/**/*.test.ts"
+  ],
+  "project": ["src/**/*.ts", "test/**/*.ts"],
+  "ignoreDependencies": ["hash-wasm"]
+}
