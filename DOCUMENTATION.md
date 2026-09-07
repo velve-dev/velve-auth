@@ -255,3 +255,64 @@ The migration ledger.
 | `applied_at` | `timestamptz` | |
 | `checksum` | `text` | SHA-256 of the migration's SQL, hex |
 
+## Migrations
+
+Migrations are versioned, forward-only and transactional. Each one runs in its
+own transaction and is recorded in `velve.schema_migration` with the SHA-256 of
+its SQL.
+
+The same SQL is shipped twice: as files under `migrations/` for an operator who
+wants to read or apply it with their own tooling, and embedded in the module the
+runner executes, because the library reads no files at runtime. A test compares
+the two byte for byte.
+
+| File | Version | Applies |
+|---|---|---|
+| `0001_initial_schema.sql` | 1 | all sixteen tables in their final form, plus the `velve.session` owner trigger |
+| `0002_identity_email.sql` | 2 | `CHECK (email IS NOT NULL)` |
+| `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
+| `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
+
+Exactly one of the three version-2 files is applied — the one matching the
+configured identity mode. Changing the mode of a database that has already
+migrated is a schema change of its own; the runner will report the recorded
+migration 2 as changed rather than silently swapping the constraint.
+
+### `coreMigrations(identityMode)`
+
+Returns the shipped plan for one identity mode: `"email"`, `"username"` or
+`"username_email"`.
+
+### `runMigrations(options)`
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | — | where the statements run |
+| `migrations` | `readonly Migration[]` | — | the plan; core migrations plus any a plugin contributes |
+| `schema` | `string` | `"velve"` | the PostgreSQL schema to migrate |
+
+A `Migration` is `{ version: number; name: string; sql: string }`. The shipped
+SQL names the schema `velve`; when `schema` is something else, the runner
+rewrites that identifier before executing. The checksum is taken over the SQL as
+shipped, so the same migration in two differently named schemas hashes the same.
+
+Returns `{ appliedVersions, currentVersion }` — the versions this call applied,
+and the highest version in the ledger afterwards.
+
+What the runner does, in order:
+
+1. Refuses a plan in which two migrations claim the same version
+   (`migration_duplicate_version`).
+2. Creates the schema and the ledger table if they are missing.
+3. Compares the checksum of every already-applied migration against the plan and
+   refuses the whole run if one has changed (`migration_checksum_changed`). A
+   migration that has been applied is history; editing it is a mistake, not an
+   update.
+4. Applies each pending migration in version order, each in its own transaction.
+
+Every one of those transactions first takes a PostgreSQL advisory lock derived
+from the schema name, then re-reads the ledger inside the lock. Two processes
+starting at once therefore serialise: the second finds the migration already
+applied and skips it. The lock is transaction-scoped, so it needs no session
+pinning from the driver and cannot be left behind by a crash.
+
