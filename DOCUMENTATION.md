@@ -390,3 +390,55 @@ are checked before use. A name must match `^[a-z_][a-z0-9_$]*$` and stay within
 63 bytes; anything else raises `InvalidIdentifierError` with the code
 `invalid_identifier`. Mixed-case and quoted identifiers are rejected rather than
 quoted — there is no case in which the library needs one.
+
+## Repositories
+
+Ten of the thirty-three advisories behind the security requirements had one
+shape: a missing `AND user_id = :actor`. The countermeasure is not review, it is
+a signature that cannot be satisfied without naming the acting user (E-43).
+
+### `Actor`
+
+```ts
+import { actorOfResolvedSession } from "@velve/auth";
+```
+
+`Actor` is a branded `string`. The only way to obtain one is
+`actorOfResolvedSession({ userId })`, which is called with the session the
+library itself resolved. No handler builds an actor from a request body, a query
+string or a header (S-OWNER-7); a plain `string` does not satisfy the type, so
+the mistake does not compile.
+
+### `createOwnedRowRepository(options)`
+
+Builds a repository over one table whose rows belong to a user.
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | — | where the statements run |
+| `schema` | `string` | — | the PostgreSQL schema |
+| `table` | `string` | — | the table, without the schema |
+| `idColumn` | `string` | `"id"` | the column that addresses a single row |
+| `ownerColumn` | `string` | `"user_id"` | the column that holds the owner; `velve.oauth_flow` uses `link_to_user_id` |
+| `updatableColumns` | `readonly string[]` | `[]` | the columns `updateOwnedRow` may write |
+
+Every method takes `actor` and there is no method without it. The owner
+condition is part of the statement, not a branch around it (S-OWNER-2), and it
+is written unconditionally by the builder, so no call site can leave it out.
+
+| Method | Statement | Result |
+|---|---|---|
+| `findOwnedRow({ id, actor })` | `SELECT … WHERE id = $1 AND user_id = $2` | the row, or `null` |
+| `listOwnedRows({ actor })` | `SELECT … WHERE user_id = $1` | the rows, ordered by the id column |
+| `updateOwnedRow({ id, actor, values })` | `UPDATE … WHERE id = $1 AND user_id = $2 RETURNING *` | the updated row, or `null` |
+| `deleteOwnedRow({ id, actor })` | `DELETE … WHERE id = $1 AND user_id = $2 RETURNING *` | the deleted row, or `null` |
+| `deleteAllOwnedRows({ actor })` | `DELETE … WHERE user_id = $1 RETURNING id` | how many rows were removed |
+
+An empty result is the refusal. A row that belongs to someone else and a row
+that never existed produce the same `null`, so nothing leaks the difference
+(S-OWNER-8).
+
+`values` may only name a column listed in `updatableColumns`; anything else
+raises `UnknownColumnError` with the code `unknown_column`. The owner column is
+never updatable through this repository — changing who owns a row is not an
+update.
