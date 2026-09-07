@@ -65,10 +65,11 @@ describe("encrypting under a signing purpose (repository rules section 3)", () =
 	});
 });
 
-// The header sits outside the AES-GCM authentication, so it can be rewritten by anyone who can
-// write the column. This records what happens today: the rewrite is caught, but by the tag on the
-// next step rather than by the envelope itself.
-describe("the envelope header is not bound to the ciphertext", () => {
+// The header is the additional data of every AES-GCM operation (E-65), so anyone who can write the
+// column can still rewrite the algorithm label or the key version, but the rewrite fails the
+// authentication tag of the value itself. These cases hold that: neither a rewritten version nor a
+// rewritten nonce opens.
+describe("the envelope header is bound to the ciphertext", () => {
 	const VERSION_OFFSET = 1 + "A256GCM".length;
 
 	it("does not silently open a value whose version bytes were rewritten", async () => {
