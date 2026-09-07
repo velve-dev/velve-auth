@@ -2,7 +2,7 @@ import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { assertIdentifier, qualifiedTableName } from "../identifier.js";
 
-export interface OwnedRowRepositoryOptions {
+interface OwnedRowRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
 	readonly table: string;
@@ -11,7 +11,7 @@ export interface OwnedRowRepositoryOptions {
 	readonly updatableColumns?: readonly string[];
 }
 
-export interface OwnedRowRepository<Row> {
+interface OwnedRowRepository<Row> {
 	findOwnedRow(input: { id: string; actor: Actor }): Promise<Row | null>;
 	listOwnedRows(input: { actor: Actor }): Promise<Row[]>;
 	updateOwnedRow(input: {
