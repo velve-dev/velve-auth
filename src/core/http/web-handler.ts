@@ -5,8 +5,8 @@ import {
 	readCookies,
 } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment, type WebHandlerTarget } from "./environment.js";
-import { toErrorBody, toVisibleFailure, VelveError } from "./error-map.js";
-import { type RouteCall, type RouteOutcome, runRoute } from "./pipeline.js";
+import { toErrorBody, VelveError } from "./error-map.js";
+import { type RouteCall, type RouteOutcome, runRoute, toLoggedFailure } from "./pipeline.js";
 import { bodilessResponse, jsonResponse } from "./response.js";
 import { matchRoute, type RouteMatch } from "./router.js";
 import { isRecord } from "./validators.js";
@@ -122,12 +122,8 @@ export function toWebHandler(
 			const call = readRouteCall(request, match, environment, readClientAddress);
 			return toResponse(await runRoute(match.route, call, environment), environment);
 		} catch (cause) {
-			const failure = toVisibleFailure(cause);
-			environment.log(failure.error.httpStatus >= 500 ? "error" : "warn", "request rejected", {
-				route: match.route.name,
-				reason: failure.loggedReason,
-			});
-			return jsonResponse(failure.error.httpStatus, toErrorBody(failure.error), []);
+			const error = toLoggedFailure(cause, match.route.name, environment);
+			return jsonResponse(error.httpStatus, toErrorBody(error), []);
 		}
 	};
 }

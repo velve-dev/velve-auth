@@ -1,7 +1,7 @@
 import type { PendingAuthentication, Session } from "./caller.js";
 import { type CookieCollector, type CookieInstruction, createCookieCollector } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment } from "./environment.js";
-import { ConcealedError, VelveError } from "./error-map.js";
+import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
 import { assertOriginAllowed } from "./origin.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
 import type { RequestContext, RouteRuntime } from "./route.js";
@@ -112,6 +112,19 @@ async function enforceIpAddressRateLimit(
 			ipAddress: call.ipAddress,
 		});
 	}
+}
+
+export function toLoggedFailure(
+	cause: unknown,
+	routeName: string,
+	environment: HttpEnvironment,
+): VelveError {
+	const failure = toVisibleFailure(cause);
+	environment.log(failure.error.httpStatus >= 500 ? "error" : "warn", "request rejected", {
+		route: routeName,
+		reason: failure.loggedReason,
+	});
+	return failure.error;
 }
 
 export async function runRoute<Output>(
