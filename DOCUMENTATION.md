@@ -278,6 +278,17 @@ configured identity mode. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
 
+Everything in this section is imported from `@velve/auth/schema`.
+
+```ts
+import {
+	assertSchemaUpToDate,
+	coreMigrations,
+	readSchemaStatus,
+	runMigrations,
+} from "@velve/auth/schema";
+```
+
 ### `coreMigrations(identityMode)`
 
 Returns the shipped plan for one identity mode: `"email"`, `"username"` or
@@ -291,10 +302,24 @@ Returns the shipped plan for one identity mode: `"email"`, `"username"` or
 | `migrations` | `readonly Migration[]` | — | the plan; core migrations plus any a plugin contributes |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema to migrate |
 
-A `Migration` is `{ version: number; name: string; sql: string }`. The shipped
-SQL names the schema `velve`; when `schema` is something else, the runner
-rewrites that identifier before executing. The checksum is taken over the SQL as
-shipped, so the same migration in two differently named schemas hashes the same.
+A `Migration` is `{ version: number; name: string; sql: string }`. The checksum
+is taken over the SQL as shipped, so the same migration in two differently named
+schemas hashes the same.
+
+`schema` must be a lowercase unquoted identifier of at most 63 bytes and may not
+be a PostgreSQL reserved key word; anything else raises `InvalidIdentifierError`
+before a statement is sent.
+
+**How the schema name reaches the SQL.** The shipped SQL says `velve`. When
+`schema` is something else, the runner walks the statement and replaces that
+name in exactly two positions: where it qualifies something (`velve.session`)
+and where a `CREATE`, `DROP` or `ALTER SCHEMA` names it. It is skipped inside
+string literals, quoted identifiers, dollar-quoted bodies and comments, so a
+plugin migration that inserts the string `'velve'` or declares a column named
+`velve` keeps both. A comment mentioning `velve.user` also keeps the original
+name; the rewrite changes what runs, not what is written about it. A qualifier
+naming any other schema is left alone — a migration that reaches into `public`
+still reaches into `public`.
 
 Returns `{ appliedVersions, currentVersion }` — the versions this call applied,
 and the highest version in the ledger afterwards.
@@ -326,6 +351,36 @@ rolls the migration back if either rule is broken, raising
 `MissingCascadeError` with the code `migration_missing_cascade` (S-TOKEN-6).
 Deleting a user has to empty every table that holds their rows, and a check that
 reads the catalogue cannot be forgotten the way a review can.
+
+Two limits are worth knowing. The check runs when a migration is applied, so a
+constraint dropped by hand afterwards is not noticed until the next migration
+runs — the guard is not a monitor. And it reads only the configured schema, so a
+table in another schema referencing `velve.user` is outside its view; the
+architecture puts everything of this library in one schema, and a foreign table
+that references `velve.user` is the application's own to get right.
+
+### `readSchemaStatus(options)` and `assertSchemaUpToDate(options)`
+
+The version contract between the package and the database (F35, F37). Both take
+the same options as `runMigrations` and neither writes anything — a database
+that has never been migrated stays untouched and reports version 0.
+
+`readSchemaStatus` returns:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `currentVersion` | `number` | the highest version in the ledger, 0 if there is none |
+| `expectedVersion` | `number` | the highest version in the plan this package carries |
+| `appliedVersions` | `readonly number[]` | every version in the ledger, ascending |
+| `pendingVersions` | `readonly number[]` | versions in the plan that the ledger does not have |
+| `changedVersions` | `readonly number[]` | versions applied under a checksum the plan no longer produces |
+| `upToDate` | `boolean` | true when both lists are empty |
+
+`assertSchemaUpToDate` returns the same status when `upToDate` is true and
+otherwise throws `SchemaVersionMismatchError`, code `schema_version_mismatch`,
+whose message names both versions and which carries the status as `.status`.
+Call it at startup: a schema behind the package is a startup error, not a
+warning.
 
 ## The driver interface
 
@@ -400,16 +455,26 @@ a signature that cannot be satisfied without naming the acting user (E-43).
 ### `Actor`
 
 ```ts
-import { actorOfResolvedSession } from "@velve/auth";
+import { actorOfResolvedSession, type ResolvedSession } from "@velve/auth";
 ```
 
-`Actor` is a branded `string`. The only way to obtain one is
-`actorOfResolvedSession({ userId })`, which is called with the session the
-library itself resolved. No handler builds an actor from a request body, a query
-string or a header (S-OWNER-7); a plain `string` does not satisfy the type, so
-the mistake does not compile.
+`Actor` is a branded `string`, so a bare string is not one and the mistake does
+not compile. It is obtained from `actorOfResolvedSession(session)`, which is
+called with the session the library itself resolved; no handler builds an actor
+from a request body, a query string or a header (S-OWNER-7).
+
+`ResolvedSession` is the nominal type session resolution has to return. Today
+`actorOfResolvedSession` accepts any `{ userId: string }`, which means a caller
+one line away can still mint an actor from an untrusted string. Closing that
+door is one change to this parameter, and it belongs with the feature that owns
+session resolution; `CASE-STUDY.md` E-70 records the exact change and the shape
+that must stop compiling.
 
 ### `createOwnedRowRepository(options)`
+
+```ts
+import { createOwnedRowRepository } from "@velve/auth";
+```
 
 Builds a repository over one table whose rows belong to a user.
 
