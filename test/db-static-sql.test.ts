@@ -59,8 +59,13 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 
 	/** A statement that genuinely has no actor to filter on says so in its own text,
 	 * citing the requirement that permits it. A marker travels with the statement, so
-	 * it survives an interpolated schema name — which the table name does not. */
-	const DECLARES_NO_ACTOR = /--\s*no owner predicate:\s*S-[A-Z]+-\d+/i;
+	 * it survives an interpolated schema name — which the table name does not.
+	 *
+	 * A block comment, because a line comment swallows everything to the next newline:
+	 * `DELETE FROM t -- marker\nWHERE id = $1` becomes `DELETE FROM t` the moment any
+	 * logger or proxy normalises the whitespace, and an unqualified DELETE is a worse
+	 * failure than the one the marker exists to explain. */
+	const DECLARES_NO_ACTOR = /\/\*\s*no owner predicate:\s*S-[A-Z]+-\d+[^*]*\*\//i;
 
 	/** `FOR UPDATE` locks rows; it changes none. */
 	const CHANGES_ROWS = /(?<!\bFOR\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;

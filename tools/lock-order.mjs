@@ -7,29 +7,31 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const ROW_LOCK = /\bfor\s+(?:no\s+key\s+)?update\b/gi;
 const SOURCE = /\.(m?[jt]sx?|c[jt]s|sql)$/;
 
-/** The schema is fixed at sixteen tables, so naming the fifteen that are not `user`
- * catches a wrong lock without a false alarm on an interpolated table name — which
- * a search for the word `user` cannot distinguish from a variable called `owners`.
- * The limit this accepts: a lock whose target is only an interpolation is allowed. */
-const NOT_THE_USER_TABLE =
-	/\b(password_credential|identity|session|one_time_token|pending_authentication|totp_credential|totp_used_step|recovery_code|webauthn_credential|webauthn_challenge|oauth_flow|rate_bucket|schema_migration|import_mapping|password_reset_required)\b/i;
+/** Every repository builds its table name from the configured schema, so a scan cannot
+ * read which table a lock takes. Naming tables was therefore passing for the absence of
+ * a name rather than the presence of `user`. A locking statement now declares its target
+ * instead, in a block comment that travels with it and cannot be collapsed away. */
+const DECLARES_ITS_TARGET = /\/\*\s*locks:\s*([a-z_.${}]+)\s*\*\//i;
+const THE_USER_TABLE = /(^|\.)user$/i;
 
-/** A locking statement names the table it locks between FROM and the lock clause. */
-function tableOfLockingStatement(sql, lockIndex) {
-	const before = sql.slice(0, lockIndex);
-	const from = /\bfrom\b([\s\S]*)$/i.exec(before);
-	return from?.[1] ?? "";
+function statementAround(sql, lockIndex) {
+	const start = sql.lastIndexOf(";", lockIndex) + 1;
+	const end = sql.indexOf(";", lockIndex);
+	return sql.slice(start, end === -1 ? sql.length : end);
 }
 
-export function locksSomethingBeforeUser(sql) {
-	const offending = [];
+export function lockOrderViolations(sql) {
+	const violations = [];
 	for (const match of sql.matchAll(ROW_LOCK)) {
-		const target = tableOfLockingStatement(sql, match.index ?? 0).slice(-200);
-		if (NOT_THE_USER_TABLE.test(target)) {
-			offending.push(target.trim().replace(/\s+/g, " ").slice(-80));
+		const statement = statementAround(sql, match.index ?? 0);
+		const declared = DECLARES_ITS_TARGET.exec(statement)?.[1];
+		if (declared === undefined) {
+			violations.push("a row lock that does not declare what it locks");
+		} else if (!THE_USER_TABLE.test(declared.replace(/\$\{[^}]*\}/g, "").replace(/\.$/, ""))) {
+			violations.push(`a row lock on ${declared}`);
 		}
 	}
-	return offending;
+	return violations;
 }
 
 function sourceFiles() {
@@ -50,12 +52,9 @@ export function scanLockOrder() {
 	let locksScanned = 0;
 	for (const path of sourceFiles()) {
 		const contents = readFileSync(`${repositoryRoot}/${path}`, "utf8");
-		for (const match of contents.matchAll(ROW_LOCK)) {
-			locksScanned += 1;
-			const target = tableOfLockingStatement(contents, match.index ?? 0);
-			if (NOT_THE_USER_TABLE.test(target.slice(-200))) {
-				offenders.push(`${path}: locks ${target.trim().replace(/\s+/g, " ").slice(-80) || "?"}`);
-			}
+		locksScanned += [...contents.matchAll(ROW_LOCK)].length;
+		for (const violation of lockOrderViolations(contents)) {
+			offenders.push(`${path}: ${violation}`);
 		}
 	}
 	return { offenders, locksScanned };

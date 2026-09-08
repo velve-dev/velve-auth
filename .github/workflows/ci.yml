@@ -55,8 +55,14 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Reviewable text
+        run: pnpm check:reviewable
+
       - name: Session owner reassignment
         run: pnpm check:session-owner
+
+      - name: Lock order
+        run: pnpm check:lock-order
 
       - name: Dead code
         run: pnpm knip
