@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
+import { registrationResponse } from "../src/core/factor/webauthn/payload.js";
 import { VelveError } from "../src/core/http/error-map.js";
 import {
 	createAccount,
@@ -218,5 +219,57 @@ describe("registering an authenticator", () => {
 
 		await expect(rejected).rejects.toThrow(VelveError);
 		await expect(rejected).rejects.toMatchObject({ code: "webauthn_credential_rejected" });
+	});
+});
+
+/**
+ * The one seam nothing else crosses: the fixtures hand the simulator's raw object to the service,
+ * and the routes that would parse first are undeclared (E-472). So this case parses the way the
+ * route will and then reads the column, because that is where the value ends up (E-481).
+ */
+describe("a polluted prototype on the way to the column", () => {
+	let fixture: WebAuthnFixture;
+
+	beforeAll(async () => {
+		fixture = await openWebAuthnFixture("webauthn_pollution");
+	});
+
+	afterAll(() => fixture.close());
+
+	it("stores no transport the browser did not send", async () => {
+		const account = await createAccount(fixture);
+		const device = await newAuthenticator();
+		const started = await fixture.service.register.start({ actor: account, userName: "someone" });
+		const attested = await device.attest({ challenge: started.challengeToken });
+		const withoutTransports = { ...attested, response: { ...attested.response } };
+		Reflect.deleteProperty(withoutTransports.response, "transports");
+
+		Object.defineProperty(Object.prototype, "transports", {
+			value: ["usb", "POLLUTED"],
+			configurable: true,
+			enumerable: false,
+			writable: true,
+		});
+		let stored: readonly string[];
+		try {
+			const parsed = registrationResponse().parse(JSON.parse(JSON.stringify(withoutTransports)));
+			const { credential } = await fixture.service.register.finish({
+				actor: account,
+				challengeToken: started.challengeToken,
+				response: parsed,
+				label: "clean",
+			});
+			stored = credential.transports;
+		} finally {
+			Reflect.deleteProperty(Object.prototype, "transports");
+		}
+
+		expect(stored).toEqual([]);
+		const [row] = await fixture.connection.query<{ transports: string | null }>(
+			`SELECT to_jsonb(coalesce(transports, '{}'))::text AS transports
+			 FROM ${fixture.schema}.webauthn_credential WHERE user_id = $1`,
+			[account],
+		);
+		expect(row?.transports).toBe("[]");
 	});
 });

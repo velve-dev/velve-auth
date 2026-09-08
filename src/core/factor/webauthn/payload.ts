@@ -43,12 +43,15 @@ function declaredFieldsOnly(raw: unknown, fields: readonly string[]): unknown {
  * caller, so a field it grows and nothing here reads is ignored rather than answered with
  * `invalid_input` (E-455). The route's own input stays strict.
  */
-/** `object()` builds its result on `{}`, so an optional field this module later destructures
- * resolves through `Object.prototype` when the browser did not send it. A value the browser
- * wrote inherits nothing (E-456). */
-function withoutInheritance<T extends object>(parsed: T): T {
-	Object.setPrototypeOf(parsed, null);
-	return parsed;
+/**
+ * A value the browser wrote inherits nothing (E-456). `object()` builds its result on `{}`, and
+ * so does object rest destructuring and every object literal — so this is applied to what leaves
+ * this module, not only to what enters it: a consumer reads a field through the chain, and the
+ * prototype of the value it holds is the only thing that decides the answer (E-481).
+ */
+function withoutInheritance<T extends object>(value: T): T {
+	Object.setPrototypeOf(value, null);
+	return value;
 }
 
 function openObject<Shape extends Record<string, Validator<unknown>>>(shape: Shape) {
@@ -123,13 +126,13 @@ export function registrationResponse(): Validator<RegistrationResponseJSON> {
 			const parsed = registrationValidator.parse(raw);
 			const { transports, ...rest } = parsed.response;
 			const known = transports?.filter(isKnownTransport);
-			return {
+			return withoutInheritance({
 				id: parsed.id,
 				rawId: parsed.rawId,
 				clientExtensionResults: parsed.clientExtensionResults,
 				type: parsed.type,
-				response: known === undefined ? rest : { ...rest, transports: known },
-			};
+				response: withoutInheritance(known === undefined ? rest : { ...rest, transports: known }),
+			});
 		},
 	};
 }
@@ -138,13 +141,13 @@ export function authenticationResponse(): Validator<AuthenticationResponseJSON> 
 	return {
 		parse: (raw) => {
 			const parsed = authenticationValidator.parse(raw);
-			return {
+			return withoutInheritance({
 				id: parsed.id,
 				rawId: parsed.rawId,
 				clientExtensionResults: parsed.clientExtensionResults,
 				type: parsed.type,
-				response: parsed.response,
-			};
+				response: withoutInheritance(parsed.response),
+			});
 		},
 	};
 }

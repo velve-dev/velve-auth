@@ -129,6 +129,7 @@ describe("reading only what the caller sent", () => {
 		Reflect.deleteProperty(Object.prototype, "origin");
 		Reflect.deleteProperty(Object.prototype, "transports");
 		Reflect.deleteProperty(Object.prototype, "signature");
+		Reflect.deleteProperty(Object.prototype, "userHandle");
 	});
 
 	it("does not accept a field that lives only on the prototype", () => {
@@ -148,6 +149,7 @@ describe("reading only what the caller sent", () => {
 			value: ["usb"],
 			configurable: true,
 			enumerable: false,
+			writable: true,
 		});
 		const withoutTransports: Record<string, unknown> = {
 			clientDataJSON: "e30",
@@ -159,10 +161,26 @@ describe("reading only what the caller sent", () => {
 			response: withoutTransports,
 		});
 
-		/* What the parser produced, not what the prototype would answer for it: the returned
-		   object is an ordinary literal, so reading the field would find the pollution however
-		   well the parser behaved. */
-		expect(Object.hasOwn(parsed.response, "transports")).toBe(false);
+		/* Read the way the service reads it, through the chain. Asking `Object.hasOwn` here was
+		   the correction that broke this probe: the parser's own-property set said "absent" while
+		   the consumer's read said `["usb"]`, and only one of those two is the value (E-481). */
+		expect(parsed.response.transports).toBeUndefined();
+		expect(Object.getPrototypeOf(parsed.response)).toBeNull();
+	});
+
+	it("hands the service a value whose prototype carries nothing, on both ceremonies", () => {
+		Object.defineProperty(Object.prototype, "userHandle", {
+			value: "aW1wb3N0b3I",
+			configurable: true,
+			enumerable: false,
+			writable: true,
+		});
+
+		const assertion = authenticationResponse().parse(structuredClone(AN_ASSERTION));
+
+		expect(assertion.response.userHandle).toBeUndefined();
+		expect(Object.getPrototypeOf(assertion.response)).toBeNull();
+		Reflect.deleteProperty(Object.prototype, "userHandle");
 	});
 
 	it("does not read a polluted prototype as the origin the authenticator signed", () => {
@@ -170,6 +188,7 @@ describe("reading only what the caller sent", () => {
 			value: "https://example.com",
 			configurable: true,
 			enumerable: false,
+			writable: true,
 		});
 
 		expect(clientDataOrigin(clientDataFor({ type: "webauthn.get" }))).toBeNull();
@@ -182,9 +201,10 @@ describe("reading only what the caller sent", () => {
 	});
 
 	it("does not answer for an inherited property name when asked about a transport", () => {
-		for (const inherited of ["toString", "constructor", "hasOwnProperty", "__proto__"]) {
-			expect(isKnownTransport(inherited)).toBe(false);
-		}
+		const inheritedNames = ["toString", "constructor", "hasOwnProperty", "__proto__"];
+
+		expect(inheritedNames).toHaveLength(4);
+		expect(inheritedNames.filter(isKnownTransport)).toEqual([]);
 		expect(isKnownTransport("usb")).toBe(true);
 	});
 });

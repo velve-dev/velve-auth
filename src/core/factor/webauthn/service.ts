@@ -119,6 +119,12 @@ interface CredentialDescriptor {
 	readonly transports?: AuthenticatorTransportFuture[];
 }
 
+/** Read as an own property, so a hint the browser did not send cannot arrive from a polluted
+ * prototype and be written to the row (E-481). */
+function transportsSentWith(response: RegistrationResponseJSON): readonly string[] {
+	return Object.hasOwn(response.response, "transports") ? (response.response.transports ?? []) : [];
+}
+
 function aaguidOf(reported: string): string | null {
 	return reported === "" || reported === UNNAMED_AAGUID ? null : reported;
 }
@@ -310,7 +316,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 						credentialId: credentialIdBytes(credential.id),
 						publicKey: credential.publicKey,
 						signCount: credential.counter,
-						transports: response.response.transports ?? [],
+						transports: transportsSentWith(response),
 						aaguid: aaguidOf(aaguid),
 						isBackupEligible: credentialDeviceType === "multiDevice",
 						isCurrentlyBackedUp: credentialBackedUp,
