@@ -35,6 +35,10 @@ function caseFolded(value: string): string {
 	return [...value].map((character) => character.toLowerCase()).join("");
 }
 
+function codePointCount(value: string): number {
+	return [...value].length;
+}
+
 function isStructurallyAnAddress(candidate: string): boolean {
 	const separator = candidate.indexOf("@");
 	return (
@@ -61,18 +65,22 @@ export function normaliseUsername(
 	rules: UsernameRules,
 ): Normalisation<NormalisedUsername, UsernameRejection> {
 	const username = candidate.trim().normalize("NFKC");
+	// The caller's own pattern runs on this input, so its length is settled before it does.
+	if (codePointCount(username) > rules.maximumLength) {
+		return reject("too_long");
+	}
 	const usernameKey = caseFolded(username);
 	// The allowlist is applied to the comparison form so that case alone never decides
 	// acceptance, and homoglyphs are refused before they can reach the unique index (E-17).
 	if (!rules.allowedCharacters.test(usernameKey)) {
 		return reject("invalid_characters");
 	}
-	const length = [...usernameKey].length;
-	if (length < rules.minimumLength) {
-		return reject("too_short");
-	}
+	const length = codePointCount(usernameKey);
 	if (length > rules.maximumLength) {
 		return reject("too_long");
+	}
+	if (length < rules.minimumLength) {
+		return reject("too_short");
 	}
 	if (rules.reservedNames.includes(usernameKey)) {
 		return reject("reserved");
