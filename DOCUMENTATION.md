@@ -1242,18 +1242,6 @@ The deadline is computed by the database from `now()`, so it is the database
 clock that decides both when a token expires and whether it has; and the string
 form is the one every driver agrees on.
 
-`consumeOneTimeToken` is the only way a one-time token is ever read. There is no
-method that finds one, counts them or looks one up: a read before the write is
-the gap two of the advisories behind this library walked through (S-RACE-2).
-
-Both methods demand the purpose beside the hash. A lookup without one does not
-compile, which is what S-TOKEN-1 asks for.
-
-`expiresAt` comes back as an ISO-8601 instant in UTC — a string, not a `Date`.
-The deadline is computed by the database from `now()`, so it is the database
-clock that decides both when a token expires and whether it has; and the string
-form is the one every driver agrees on.
-
 ### `createOneTimeTokens(repository)`
 
 The two operations a flow needs, over that repository.
