@@ -60,12 +60,19 @@ describe("what the package actually ships (6.19, before every release)", () => {
 		expect(missing).toStrictEqual([]);
 	});
 
-	it("packs the four documents and the migrations, and no source or test file", () => {
-		const documents = ["README.md", "DOCUMENTATION.md", "CASE-STUDY.md", "LICENSE"];
+	/**
+	 * The list is written out rather than read from `package.json`'s `files`, which would make the
+	 * case nearly tautological: it would confirm that npm packs what `files` says and would stop
+	 * catching the only way this regresses, which is a name being dropped from `files`. Its value
+	 * is that it is a second, independent statement of what has to ship (E-537).
+	 */
+	it("packs the five documents and the migrations, and no source or test file", () => {
+		const documents = ["README.md", "DOCUMENTATION.md", "CASE-STUDY.md", "LICENSE", "NOTICE"];
 		const leaked = packed.filter(
 			(path) => path.startsWith("src/") || path.startsWith("test/") || path.startsWith("tools/"),
 		);
 
+		expect(documents).toHaveLength(5);
 		expect(documents.filter((name) => !packed.includes(name))).toStrictEqual([]);
 		expect(packed.filter((path) => path.startsWith("migrations/")).length).toBeGreaterThanOrEqual(
 			1,
