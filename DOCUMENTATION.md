@@ -1136,3 +1136,52 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+## Sessions
+
+The library answers one question — who is signed in — and this module is the
+only place that answers it. Every answer costs one database query; there is no
+cookie cache, no process cache and no parameter that could introduce one
+(S-CACHE-1). The most severe published flaw in the comparison system's core
+sign-in path was exactly such a cache (CVSS 9.1: the session was cached before
+the second factor had been checked).
+
+The module is not on a package subpath yet. It is reached from the instance the
+assembling feature builds; the names below are the ones that instance is built
+from.
+
+### `createSessionToken()`
+
+```ts
+createSessionToken(): { token: SessionToken; tokenHash: Uint8Array }
+```
+
+Draws a new session token.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `token` | `SessionToken` | 32 bytes from `crypto.getRandomValues`, base64url, 43 characters |
+| `tokenHash` | `Uint8Array` | `sha256(token)` — 32 bytes, the only form that is stored |
+
+`SessionToken` is a branded `string`, so a value that did not come from here
+cannot be passed where a session token is expected without a cast.
+
+The plaintext token leaves the process only in the cookie. `velve.session`
+stores `token_sha256` and nothing else, so a database dump contains no usable
+session, and no lookup time depends on the plaintext (S-TIM-4).
+
+### `sessionTokenHash(token)`
+
+```ts
+sessionTokenHash(token: string): Uint8Array
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `token` | `string` | the token as it arrives in the cookie |
+
+Returns the 32 bytes stored in `velve.session.token_sha256`. The hash is taken
+over the UTF-8 bytes of the token **text**, not over the 32 random bytes it
+encodes, so the verifier is computable from the cookie value without decoding
+it. A token spelled differently — padded, or in standard base64 — hashes
+differently and is simply not found.
