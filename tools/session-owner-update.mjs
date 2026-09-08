@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
-const SESSION_TABLE = /\b(?:velve\s*\.\s*)?session\b/i;
-const SETS_OWNER = /\bset\b[\s\S]*\buser_id\b/i;
-const REASSIGNMENT = [
-	/\bupdate\b[\s\S]*?\bsession\b[\s\S]*?\bset\b[\s\S]*?\buser_id\b/i,
-	/\binsert\s+into\b[\s\S]*?\bsession\b[\s\S]*?\bon\s+conflict\b[\s\S]*?\bdo\s+update\b[\s\S]*?\buser_id\b/i,
-	/\bmerge\s+into\b[\s\S]*?\bsession\b[\s\S]*?\bupdate\s+set\b[\s\S]*?\buser_id\b/i,
-];
+/** The schema is configurable, so a repository writes `UPDATE ${table} SET …` and the
+ * word `session` never appears. Requiring the table name made this blind to the one
+ * module it exists to police, so it now reads the assignment list of any UPDATE.
+ * Reassigning an owner is wrong on every table, not only on this one. */
+const WRITES_ROWS = /\b(update|merge\s+into|on\s+conflict)\b/i;
+const ASSIGNMENT_LIST = /\bset\b([\s\S]*?)(?:\bwhere\b|\breturning\b|\bfrom\b|$)/i;
+const OWNER_COLUMN = /\buser_id\b/i;
 
 const QUOTES = new Set(["'", '"', "`"]);
 
@@ -82,8 +82,9 @@ export function statementsIn(source, lineCommentOpener = "//") {
 }
 
 export function reassignsSessionOwner(statement) {
-	if (!SESSION_TABLE.test(statement) || !SETS_OWNER.test(statement)) return false;
-	return REASSIGNMENT.some((pattern) => pattern.test(statement));
+	if (!WRITES_ROWS.test(statement)) return false;
+	const assignments = ASSIGNMENT_LIST.exec(statement)?.[1];
+	return assignments !== undefined && OWNER_COLUMN.test(assignments);
 }
 
 /** The requirement is that the library never reassigns a session owner, so the
