@@ -8,13 +8,18 @@ import {
 	type UsernameRules,
 } from "../src/core/identity/configuration.js";
 import { normaliseEmail, normaliseUsername } from "../src/core/identity/normalise.js";
-import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import {
+	openTestConnection,
+	PostgresServerError,
+	type TestConnection,
+} from "./db-postgres-connection.js";
 
 const schema = `velve_identity_folds_${randomBytes(4).toString("hex")}`;
 const LAST_CODE_POINT = 0x10ffff;
 const FIRST_SURROGATE = 0xd800;
 const LAST_SURROGATE = 0xdfff;
 const UNUSABLE_IN_A_LINE = /[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]/u;
+const CHECK_VIOLATION = "23514";
 
 let connection: TestConnection;
 
@@ -107,6 +112,96 @@ describe("the JavaScript fold and lower() in PostgreSQL", () => {
 			entered.normalize("NFKC").toLowerCase(),
 		);
 		expect(await formsPostgresWouldFoldFurther(contextual)).toEqual([]);
+	});
+});
+
+const EVERYTHING_ALLOWED = resolveIdentityConfiguration({
+	mode: "username",
+	username: { allowedCharacters: /^[\s\S]+$/u, minimumLength: 1, maximumLength: 64 },
+}).username;
+
+const BATCH = 20_000;
+
+async function foldedFurtherInBatches(forms: readonly string[]): Promise<string[]> {
+	const found: string[] = [];
+	for (let start = 0; start < forms.length; start += BATCH) {
+		found.push(...(await formsPostgresWouldFoldFurther(forms.slice(start, start + BATCH))));
+	}
+	return found;
+}
+
+function describeCodePoints(value: string): string {
+	return [...value]
+		.map((character) => `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase()}`)
+		.join(" ");
+}
+
+describe("the comparison form the shipped normalisers actually produce", () => {
+	it("does not lowercase the whole string, so Final_Sigma never reaches the key", () => {
+		const entered = "abcΟΔΟΣ";
+		const name = normaliseUsername(entered, EVERYTHING_ALLOWED);
+		expect(name.accepted).toBe(true);
+		const key = name.accepted ? name.value.usernameKey : "";
+		expect(describeCodePoints(key.slice(-1))).toBe("U+3C3");
+		expect(describeCodePoints(entered.toLowerCase().slice(-1))).toBe("U+3C2");
+	});
+
+	it("folds an address the same way, which is where the same defect sat", () => {
+		const address = normaliseEmail("abcΟΔΟΣ@example.test");
+		expect(address.accepted).toBe(true);
+		expect(address.accepted ? address.value : "").toBe("abcοδοσ@example.test");
+	});
+
+	it("disagrees with lower() on exactly one code point in the whole of Unicode", async () => {
+		const seen = new Set<string>();
+		const keys: string[] = [];
+		const origin = new Map<string, number>();
+		for (const point of everyCodePoint()) {
+			const name = normaliseUsername(String.fromCodePoint(point).repeat(3), EVERYTHING_ALLOWED);
+			if (!name.accepted) {
+				continue;
+			}
+			const key = name.value.usernameKey;
+			if (UNUSABLE_IN_A_LINE.test(key) || seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			origin.set(key, point);
+			keys.push(key);
+		}
+		expect(keys.length).toBeGreaterThan(1_000_000);
+		const disagreeing = await foldedFurtherInBatches(keys);
+		expect(
+			disagreeing.map((key) => `U+${(origin.get(key) ?? 0).toString(16).toUpperCase()}`),
+		).toEqual(["U+38D"]);
+	}, 120_000);
+
+	it("carries that one disagreement into addresses as well", async () => {
+		const addresses: string[] = [];
+		for (const point of everyCodePoint()) {
+			const address = normaliseEmail(`${String.fromCodePoint(point)}@example.test`);
+			if (address.accepted) {
+				addresses.push(address.value);
+			}
+		}
+		expect(await foldedFurtherInBatches(addresses)).toEqual(["΍@example.test"]);
+	}, 120_000);
+
+	/**
+	 * The reference says the schema CHECK "is not a safety net" and that "there is no input for
+	 * which it fires". It fires for exactly this one, which is also the one fold disagreement.
+	 */
+	it("hands the schema CHECK the one row it can refuse", async () => {
+		const refusal = await connection
+			.query(`INSERT INTO ${schema}.user (email, username, username_key) VALUES ($1, $2, $2)`, [
+				`${randomBytes(6).toString("hex")}@example.test`,
+				"΍΍΍",
+			])
+			.then(
+				() => "accepted",
+				(cause: unknown) => (cause instanceof PostgresServerError ? cause.sqlState : "unexpected"),
+			);
+		expect(refusal).toBe(CHECK_VIOLATION);
 	});
 });
 
