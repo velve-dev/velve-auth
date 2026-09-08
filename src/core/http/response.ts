@@ -1,4 +1,5 @@
 import { type CookieInstruction, serializeCookie } from "./cookies.js";
+import { toErrorBody, type VelveError } from "./error-map.js";
 
 function headersWith(cookies: readonly CookieInstruction[], contentType: string | null): Headers {
 	const headers = new Headers();
@@ -27,6 +28,15 @@ export function jsonResponse(
 
 export function bodilessResponse(status: number, cookies: readonly CookieInstruction[]): Response {
 	return new Response(null, { status, headers: headersWith(cookies, null) });
+}
+
+// H13: the wait is a header per RFC 9110 as well as a body field, so an intermediary can act on it.
+export function errorResponse(error: VelveError, cookies: readonly CookieInstruction[]): Response {
+	const response = jsonResponse(error.httpStatus, toErrorBody(error), cookies);
+	if (error.retryAfterSeconds !== undefined) {
+		response.headers.set("Retry-After", String(Math.ceil(error.retryAfterSeconds)));
+	}
+	return response;
 }
 
 export function redirectResponse(path: string, cookies: readonly CookieInstruction[]): Response {

@@ -5,10 +5,10 @@ import {
 	readCookies,
 } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment, type WebHandlerTarget } from "./environment.js";
-import { toErrorBody, VelveError } from "./error-map.js";
+import { VelveError } from "./error-map.js";
 import { type RouteCall, type RouteOutcome, runRoute, toLoggedFailure } from "./pipeline.js";
 import { readRedirectPath } from "./redirect.js";
-import { bodilessResponse, jsonResponse, redirectResponse } from "./response.js";
+import { bodilessResponse, errorResponse, jsonResponse, redirectResponse } from "./response.js";
 import { matchRoute, type RouteMatch } from "./router.js";
 import { isRecord } from "./validators.js";
 
@@ -127,8 +127,7 @@ export function toWebHandler(
 			const call = readRouteCall(request, match, environment, readClientAddress);
 			return toResponse(await runRoute(match.route, call, environment), environment);
 		} catch (cause) {
-			const error = toLoggedFailure(cause, match.route.name, environment);
-			return jsonResponse(error.httpStatus, toErrorBody(error), []);
+			return errorResponse(toLoggedFailure(cause, match.route.name, environment), []);
 		}
 	};
 }
