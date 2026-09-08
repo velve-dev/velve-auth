@@ -1251,13 +1251,14 @@ provider holds the lock for its whole timeout. Repository rules section 7 requir
 `velve.user` to be locked before any other table, and `pnpm check:lock-order`
 enforces it.
 
-Whether calling this inside `driver.transaction` still rolls the whole issue
-back is a property of the driver, not of the library: the `Driver` interface
-does not say that `transaction` on a bound driver joins the open one rather than
-opening a second. `createNodePostgresDriver` does join, so the rollback works
-for `@velve/auth/pg` — the only driver that currently ships; `@velve/auth/postgres-js`
-and `@velve/auth/neon` are empty. A driver written elsewhere has to join for the
-rollback of section 3.15 A.7 to hold.
+Calling this inside `driver.transaction` rolls the whole issue back only if the
+driver joins the open transaction rather than opening a second. That is required
+of every driver under [the driver interface](#the-driver-interface) above, but it
+is a requirement on the implementation and not something the types carry:
+`Driver` is two method signatures. `createNodePostgresDriver` satisfies it, so
+the rollback of section 3.15 A.7 holds for `@velve/auth/pg` — the only driver
+that currently ships, since `@velve/auth/postgres-js` and `@velve/auth/neon`
+export nothing. A driver written elsewhere has to satisfy it too.
 
 Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
 code on it rather than one class per failure.
