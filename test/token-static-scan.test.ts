@@ -59,9 +59,14 @@ function collapseWhitespace(sql: string): string {
 
 /** The statements carry the schema as an interpolation; section 3.7 spells out the default. */
 function asWritten(sql: string): string {
-	return collapseWhitespace(sql)
+	return collapseWhitespace(withoutSqlComments(sql))
 		.replace(/\$\{table\}/g, "velve.one_time_token")
 		.replace(/\$\{owners\}/g, "velve.user");
+}
+
+/** A marker declaring a missing owner predicate (E-142) is not part of the statement. */
+function withoutSqlComments(sql: string): string {
+	return sql.replace(/--[^\n]*/g, " ");
 }
 
 /** Everything a `WHERE` filters on, which ends where the statement stops filtering. */
@@ -122,11 +127,16 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 	});
 
 	// S-TOKEN-4: the row names the account, so a caller-supplied owner has nothing to add here.
-	// This is the one row-removing statement in the library without an owner predicate, and it is
-	// deliberate rather than forgotten.
-	it("filters on no owner, because the token is the authority", () => {
+	// This is the one row-removing statement in the library without an owner predicate, and E-142
+	// requires the statement itself to say so and to name the requirement that permits it.
+	it("filters on no owner, and declares that in its own text", () => {
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(predicatesIn(consume)[0]).not.toContain("user_id");
+		expect(consume).toContain("-- no owner predicate: S-TOKEN-4");
+	});
+
+	it("declares it on no other statement", () => {
+		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
 });
 

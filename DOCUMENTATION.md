@@ -1234,6 +1234,11 @@ the purpose, never a token.
 method that finds one, counts them or looks one up: a read before the write is
 the gap two of the advisories behind this library walked through (S-RACE-2).
 
+It is also the one row-removing statement in the library with no owner predicate,
+and it carries `-- no owner predicate: S-TOKEN-4` in its own SQL to say so. The
+token is the authority there; the row names the account and nothing a caller
+sends does (E-142).
+
 Both methods demand the purpose beside the hash. A lookup without one does not
 compile, which is what S-TOKEN-1 asks for.
 

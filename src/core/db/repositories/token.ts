@@ -76,6 +76,7 @@ RETURNING ${EXPIRY_AS_ISO_8601} AS expires_at`;
 
 	// Section 3.7, verbatim: the only way a one-time token is ever read.
 	const consumeStatement = `DELETE FROM ${table}
+-- no owner predicate: S-TOKEN-4
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
 RETURNING user_id, payload`;
 
