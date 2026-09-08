@@ -104,6 +104,25 @@ function declaredFieldsOnly(rawInput: unknown, fields: readonly string[]): unkno
 	return declared;
 }
 
+const SERVER_CALL_FIELDS = new Set<string>([
+	"origin",
+	"sessionToken",
+	"pendingToken",
+	"ipAddress",
+	"userAgent",
+]);
+
+/** The direct server call carries these five fields beside the input, so an input field of the same name would be stripped there and kept over HTTP. */
+function assertInputLeavesTheCallEnvelopeAlone(name: string, fields: readonly string[]): void {
+	for (const field of fields) {
+		if (SERVER_CALL_FIELDS.has(field)) {
+			throw new Error(
+				`Route ${name} declares an input field ${field}, which a server call reserves`,
+			);
+		}
+	}
+}
+
 function assertFreshnessHasASession(
 	name: string,
 	caller: CallerRequirement,
@@ -125,6 +144,7 @@ export function defineRoute<
 ): Route<Name, Path, Input, Output, Code> {
 	assertPathIsRoutable(declaration.path);
 	assertFreshnessHasASession(declaration.name, declaration.caller, declaration.freshness);
+	assertInputLeavesTheCallEnvelopeAlone(declaration.name, declaration.input.fields);
 
 	return {
 		name: declaration.name,

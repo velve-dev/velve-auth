@@ -89,6 +89,25 @@ describe("defineRoute", () => {
 		expect(() => defineRoute({ ...declaration, path: "test/declared" })).toThrow(/absolute/);
 	});
 
+	it("refuses an input field that the direct server call reserves", () => {
+		for (const field of ["origin", "sessionToken", "pendingToken", "ipAddress", "userAgent"]) {
+			expect(() =>
+				defineRoute({
+					name: "test.shadowing",
+					method: "POST",
+					path: "/test/shadowing",
+					input: object({ [field]: string() }),
+					errors: [] as const,
+					caller: "anonymous",
+					freshness: "not_required",
+					originCheck: "checked",
+					rateLimit: { perIpAddress: "none", perAccount: "none" },
+					handler: async () => ({ accepted: true }),
+				}),
+			).toThrow(/reserves/);
+		}
+	});
+
 	it("refuses to require freshness without requiring a session", () => {
 		expect(() => defineRoute({ ...declaration, freshness: "required" })).toThrow(
 			/does not require a session/,
