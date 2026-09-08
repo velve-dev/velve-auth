@@ -8,7 +8,6 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
-import { testClock } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const INVENTED = "00000000-0000-4000-8000-000000000000";
@@ -39,7 +38,6 @@ beforeAll(async () => {
 	service = createSessionService({
 		driver: migrated.connection,
 		schema: migrated.schema,
-		clock: testClock(),
 	});
 	ownerId = await createUser(migrated.connection, migrated.schema);
 	strangerId = await createUser(migrated.connection, migrated.schema);

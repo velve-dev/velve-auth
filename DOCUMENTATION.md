@@ -1343,14 +1343,15 @@ createSessionService(options: {
   schema?: string                                   // "velve"
   session?: Partial<SessionConfig>
   sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
-  clock?: Clock                                     // accepted, read nowhere
 }): SessionService
 ```
 
-Everything the library does with sessions. Every moment this module decides by
-— both deadlines, the idle write interval and the freshness window — comes from
-the database's clock, so `clock` is accepted only so that one instance can hand
-the same configuration to every module.
+Everything the library does with sessions. **There is no `clock` option, and
+passing one is a compile error.** Every moment this module decides by — both
+deadlines, the idle write interval and the freshness window — comes from the
+database's clock. An option that were accepted and ignored would read like a
+seam that is not there: a test that advanced it to age a session would observe
+nothing and pass for the wrong reason.
 
 `service.settings` exposes the deadlines the configuration was read into,
 including `cookieName` and `cookieMaximumAgeInSeconds` for the cookie writer.
@@ -1449,10 +1450,8 @@ one. A process clock running an hour behind would keep a fifty-minute-old
 session inside a fifteen-minute window, and that window is what guards the
 operations on credentials.
 
-For the same reason `clock` is accepted by `createSessionService` and read
-nowhere: the assembling instance hands every module the same clock, and this one
-takes its time from the database. Moving a test clock does **not** make a
-session stale; age the session where `created_at` lives.
+For the same reason `createSessionService` takes no clock at all. To age a
+session in a test, age it where `created_at` lives — in the database.
 
 Every session operation that reaches rows by owner takes its actor from
 `actorOfFreshSession`, which checks freshness before it hands the actor out: an

@@ -13,7 +13,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
-import { MINUTE, type TestClock, testClock } from "./session-fixtures.js";
+import { MINUTE } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const A_BROWSER = {
@@ -23,7 +23,6 @@ const A_BROWSER = {
 };
 
 let migrated: MigratedSchema;
-let clock: TestClock;
 let service: SessionService;
 let userId: string;
 let strangerId: string;
@@ -59,11 +58,9 @@ async function resolvedNow(token: string) {
 
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_lifecycle");
-	clock = testClock();
 	const options: SessionServiceOptions = {
 		driver: migrated.connection,
 		schema: migrated.schema,
-		clock,
 	};
 	service = createSessionService(options);
 	userId = await createUser(migrated.connection, migrated.schema);
@@ -101,7 +98,6 @@ describe("issuing a session", () => {
 			driver: migrated.connection,
 			schema: migrated.schema,
 			sessionMetadata: "full",
-			clock,
 		});
 
 		const issued = await full.issue({ userId, factors: ["password"], observed: A_BROWSER });
@@ -163,7 +159,6 @@ describe("a credential change (S-FIX-6)", () => {
 	it("takes every other session of the user with it", async () => {
 		const elsewhere = await signIn();
 		const here = await signIn();
-		clock.set(new Date());
 
 		const replacement = await service.reissueAfterCredentialChange({
 			resolved: await resolvedNow(here.token),
@@ -178,7 +173,6 @@ describe("a credential change (S-FIX-6)", () => {
 
 	it("offers no parameter that would keep the other sessions", async () => {
 		const here = await signIn();
-		clock.set(new Date());
 
 		await service.reissueAfterCredentialChange({
 			resolved: await resolvedNow(here.token),
@@ -197,7 +191,6 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 		await service.revokeEvery({ resolved: await resolvedNow((await signIn()).token) });
 		const other = await signIn();
 		const here = await signIn();
-		clock.set(new Date());
 
 		await service.revoke({
 			resolved: await resolvedNow(here.token),
@@ -215,7 +208,6 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 			observed: NOWHERE,
 		});
 		const here = await signIn();
-		clock.set(new Date());
 		const resolved = await resolvedNow(here.token);
 
 		expect(
@@ -235,7 +227,6 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 		const here = await signIn();
 		const first = await signIn();
 		const second = await signIn();
-		clock.set(new Date());
 
 		const revoked = await service.revokeEveryOther({ resolved: await resolvedNow(here.token) });
 
@@ -247,7 +238,6 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 
 	it("revokes every session including the calling one", async () => {
 		const here = await signIn();
-		clock.set(new Date());
 
 		const revoked = await service.revokeEvery({ resolved: await resolvedNow(here.token) });
 
@@ -270,7 +260,6 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 describe("freshness (architecture 3.5, 3.15 B.9)", () => {
 	it("lets the owner-scoped operations through inside the window", async () => {
 		const here = await signIn();
-		clock.set(new Date());
 
 		expect(await service.list({ resolved: await resolvedNow(here.token) })).not.toEqual([]);
 	});
@@ -295,7 +284,6 @@ describe("freshness (architecture 3.5, 3.15 B.9)", () => {
 
 	it("answers the question without throwing where a caller only wants to know", async () => {
 		const here = await signIn();
-		clock.set(new Date());
 		const resolved = await resolvedNow(here.token);
 		const window: FreshnessWindow = {
 			freshnessWindowMs: service.settings.freshnessWindowMs,
@@ -340,7 +328,6 @@ describe("signing out (3.15 B.1)", () => {
 
 	it("needs no freshness, because signing out is never the dangerous direction", async () => {
 		const here = await signIn();
-		clock.advanceBy(30 * MINUTE);
 
 		await expect(service.signOut({ token: here.token })).resolves.toBeUndefined();
 		expect(await service.resolve(here.token)).toBeNull();

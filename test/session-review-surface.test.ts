@@ -105,7 +105,6 @@ describe("S-FIX-6, S-DEFAULT-2: revoking the other sessions is not a switch", ()
 
 		const options: SessionServiceOptions = {
 			driver,
-			clock: { now: () => new Date() },
 			// @ts-expect-error S-FIX-6: there is no option that keeps the other sessions.
 			revokeOtherSessions: false,
 		};

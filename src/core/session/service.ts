@@ -6,7 +6,6 @@ import {
 	type SessionInsert,
 } from "../db/repositories/session.js";
 import type { AuthenticationFactor, Session } from "../http/caller.js";
-import type { Clock } from "../http/environment.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import { type SessionConfig, type SessionSettings, sessionSettingsOf } from "./config.js";
 import { assertSessionIsFresh } from "./freshness.js";
@@ -43,8 +42,6 @@ export interface SessionServiceOptions {
 	readonly schema?: string;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
-	/** Accepted so one instance can hand the same clock to every module; this one reads none of it (E-238). */
-	readonly clock?: Clock;
 }
 
 export interface SessionService {

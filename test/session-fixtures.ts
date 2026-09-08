@@ -62,22 +62,3 @@ function countedTransaction(inner: Driver, statements: string[]): Driver {
 export function statementsMatching(driver: CountedDriver, pattern: RegExp): readonly string[] {
 	return driver.statements.filter((sql) => pattern.test(sql));
 }
-
-export interface TestClock {
-	now(): Date;
-	set(moment: Date): void;
-	advanceBy(milliseconds: number): void;
-}
-
-export function testClock(start = new Date()): TestClock {
-	let current = start;
-	return {
-		now: () => current,
-		set: (moment) => {
-			current = moment;
-		},
-		advanceBy: (milliseconds) => {
-			current = new Date(current.getTime() + milliseconds);
-		},
-	};
-}

@@ -5,7 +5,6 @@ import { DEFAULT_SESSION_METADATA_MODE, sessionMetadataFor } from "../src/core/s
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { truncatedUserAgent } from "../src/core/session/user-agent.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { testClock } from "./session-fixtures.js";
 
 const CHROME_ON_MACOS =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.205 Safari/537.36";
@@ -68,7 +67,6 @@ beforeAll(async () => {
 	truncating = createSessionService({
 		driver: sent.driver,
 		schema: migrated.schema,
-		clock: testClock(),
 	});
 	userId = await createUser(migrated.connection, migrated.schema);
 });
@@ -174,13 +172,11 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "none",
-			clock: testClock(),
 		});
 		const everything = createSessionService({
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "full",
-			clock: testClock(),
 		});
 
 		const blank = await nothing.issue({
@@ -253,7 +249,6 @@ describe("what truncation refuses to pass through", () => {
 		const unconfigured = createSessionService({
 			driver: sent.driver,
 			schema: migrated.schema,
-			clock: testClock(),
 		});
 
 		const issued = await unconfigured.issue({

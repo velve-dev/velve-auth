@@ -5,7 +5,6 @@ import type { Driver } from "../src/core/db/driver.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { testClock } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const SESSION_DIRECTORY = fileURLToPath(new URL("../src/core/session/", import.meta.url));
@@ -62,7 +61,6 @@ beforeAll(async () => {
 	service = createSessionService({
 		driver: recorder.driver,
 		schema: migrated.schema,
-		clock: testClock(),
 	});
 	userId = await createUser(migrated.connection, migrated.schema);
 });

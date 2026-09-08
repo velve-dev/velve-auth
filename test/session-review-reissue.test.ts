@@ -17,7 +17,7 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { sessionInsertFor, testClock } from "./session-fixtures.js";
+import { sessionInsertFor } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -92,7 +92,6 @@ beforeAll(async () => {
 	service = createSessionService({
 		driver: traced.driver,
 		schema: migrated.schema,
-		clock: testClock(),
 	});
 	sessions = createSessionRepository({ driver: traced.driver, schema: migrated.schema });
 	userId = await createUser(migrated.connection, migrated.schema);

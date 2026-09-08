@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { HOUR, MINUTE, type TestClock, testClock } from "./session-fixtures.js";
+import { HOUR, MINUTE } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -26,7 +26,6 @@ function countingByVerb(inner: Driver): Counter {
 
 let migrated: MigratedSchema;
 let counter: Counter;
-let clock: TestClock;
 let service: SessionService;
 let userId: string;
 
@@ -58,8 +57,7 @@ async function deadlinesOf(sessionId: string) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_deadlines");
 	counter = countingByVerb(migrated.connection);
-	clock = testClock();
-	service = createSessionService({ driver: counter.driver, schema: migrated.schema, clock });
+	service = createSessionService({ driver: counter.driver, schema: migrated.schema });
 	userId = await createUser(migrated.connection, migrated.schema);
 });
 
@@ -114,7 +112,6 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 			driver: counter.driver,
 			schema: migrated.schema,
 			session: { idleWriteInterval: "1s" },
-			clock,
 		});
 		const issued = await eager.issue({ userId, factors: ["password"], observed: NOWHERE });
 		await shift(issued.session.id, ["last_used_at"], "10 seconds");
@@ -183,7 +180,6 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 				driver: counter.driver,
 				schema: migrated.schema,
 				session: { idleTimeout: "31d" },
-				clock,
 			}),
 		).toThrow(/absoluteTimeout/);
 	});
@@ -192,8 +188,6 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 describe("freshness is fifteen minutes from created_at and nothing else restores it", () => {
 	it("is gone after the window and is not brought back by resolve, refresh or an idle write", async () => {
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
-		clock.set(new Date());
-		clock.advanceBy(16 * MINUTE);
 		await shift(issued.session.id, ["created_at", "last_used_at"], "2 hours");
 
 		await service.resolve(issued.token);
@@ -213,8 +207,6 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 
 	it("comes back with a re-issue, because a re-issue is a new row with a new created_at", async () => {
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
-		clock.set(new Date());
-		clock.advanceBy(16 * MINUTE);
 
 		const next = await service.reissue({
 			previousToken: issued.token,
@@ -222,7 +214,6 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 			factors: ["password", "totp"],
 			observed: NOWHERE,
 		});
-		clock.set(next.session.createdAt);
 		const resolved = await service.resolve(next.token);
 		if (resolved === null) {
 			throw new Error("the re-issued session did not resolve");
@@ -238,7 +229,6 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 	it("is measured against created_at, so an old session is never fresh again", async () => {
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
 		await shift(issued.session.id, ["created_at"], "20 minutes");
-		clock.set(new Date());
 		const resolved = await service.resolve(issued.token);
 		if (resolved === null) {
 			throw new Error("the session under test did not resolve");
@@ -252,15 +242,14 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 
 /**
  * E-232 settled that a deadline may not be decided by comparing two clocks, and the resolving
- * query already returns the database's `now()`. Freshness is the one deadline still read from
- * the process clock, so a skew between the two moves the window.
+ * query already returns the database's `now()`. Freshness reads that column, and the service
+ * accepts no clock at all, so there is no second one a skew could open a gap against (E-247).
  */
 describe("freshness is decided by the clock created_at came from", () => {
-	it("keeps a session the database created a moment ago fresh when the process clock runs ahead", async () => {
+	it("keeps a session the database created a moment ago fresh, whatever the process makes of the time", async () => {
 		const ahead = createSessionService({
 			driver: counter.driver,
 			schema: migrated.schema,
-			clock: testClock(new Date(Date.now() + 16 * MINUTE)),
 		});
 		const issued = await ahead.issue({ userId, factors: ["password"], observed: NOWHERE });
 		const resolved = await ahead.resolve(issued.token);
@@ -271,11 +260,10 @@ describe("freshness is decided by the clock created_at came from", () => {
 		await expect(ahead.list({ resolved })).resolves.not.toEqual([]);
 	});
 
-	it("refuses a session the database created fifty minutes ago when the process clock runs behind", async () => {
+	it("refuses a session the database created fifty minutes ago, whatever the process makes of the time", async () => {
 		const behind = createSessionService({
 			driver: counter.driver,
 			schema: migrated.schema,
-			clock: testClock(new Date(Date.now() - HOUR)),
 		});
 		const issued = await behind.issue({ userId, factors: ["password"], observed: NOWHERE });
 		await shift(issued.session.id, ["created_at"], "50 minutes");

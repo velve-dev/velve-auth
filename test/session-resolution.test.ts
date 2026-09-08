@@ -12,7 +12,6 @@ import {
 	HOUR,
 	MINUTE,
 	statementsMatching,
-	testClock,
 } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
@@ -26,7 +25,6 @@ function serviceOver(driver: CountedDriver): SessionService {
 	return createSessionService({
 		driver: driver.driver,
 		schema: migrated.schema,
-		clock: testClock(),
 	});
 }
 
