@@ -3397,25 +3397,354 @@ mechanism it calls.
 
 ## WebAuthn
 
-Reserved for `factor-webauthn` (wave 3). Architecture 3.6: registration and
-authentication as `start`/`finish` pairs, the single-use challenge bound to its
-purpose, the `backup_eligible` and `backup_state` flags that tell a
-device-bound authenticator from a synchronised one, and `signCountRegressed`
-reported to the application as a field of the sign-in result rather than raised
-as an error (L-9).
+WebAuthn is two things here, not one. A **passkey sign-in** is a complete
+authentication path of its own: a discoverable credential, no password anywhere
+in it, and a session whose factors are `["webauthn"]`. A **second factor** after
+a correct password is the other, and it yields `["password", "webauthn"]`. Both
+are in the core, so there is no path that runs past a hook (architecture 3.6).
 
-It follows TOTP because architecture 3.6 introduces the two in that order, and
-because it is the wider of them: a passkey sign-in is a complete authentication
-path on its own, yielding a session with no password among its factors at all,
-so it is read after the case that is only a second factor.
+A hardware security key is the second-factor case. What tells it apart from a
+synchronised passkey is the pair of authenticator flags `BE` and `BS`, stored in
+their own columns and rewritten on every sign-in. The library stores them and
+enforces no policy; the application builds one.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `factor-webauthn`'s
-partition of this file: that feature appends here and nowhere else, and removing
-this paragraph is the first thing it does.
+### `createWebAuthnService(options)`
 
-### Nothing is documented here yet
+```ts
+createWebAuthnService(options: {
+  driver: Driver
+  schema?: string            // "velve"
+  webauthn: WebAuthnConfig
+}): WebAuthnService
+```
 
-`factor-webauthn` replaces this heading with its own sub-tree.
+Everything the library does with WebAuthn. **There is no `clock` option, and
+passing one is a compile error.** The only moments this module decides by are
+the challenge's five minutes and its expiry, and both are computed and compared
+by PostgreSQL in the same statement (E-469). An option that were accepted and
+ignored would read like a seam that is not there.
+
+`service.settings` exposes the configuration as it was read, after validation.
+
+### `WebAuthnConfig` — the configuration block
+
+```ts
+interface WebAuthnConfig {
+  relyingPartyId: string
+  relyingPartyName: string
+  origins: readonly string[]
+  userVerification?: "required" | "preferred"   // "required"
+}
+```
+
+| Option | Meaning |
+|---|---|
+| `relyingPartyId` | the eTLD+1 the credentials are scoped to, e.g. `example.com`. A bare hostname: no scheme, no port, no path. |
+| `relyingPartyName` | what the authenticator shows the user. Any non-empty string. |
+| `origins` | every origin a ceremony may come from. An array, because a relying party legitimately has a web origin and a native one. |
+| `userVerification` | what **registration** asks the authenticator for. It does not govern sign-in. |
+
+`"discouraged"` is deliberately absent from the type. A second factor without
+user verification is not one, and Better Auth's `requireUserVerification: false`
+at both of its verification points is why a passkey there bypasses enforced 2FA
+(architecture 1 D33). **Both sign-in paths request and enforce
+`userVerification: "required"` unconditionally**, whatever this option says
+(E-463). The option decides only what the credential was asked for when it was
+created, which is recorded as `wasUserVerifiedAtRegistration`.
+
+An `origins` entry that begins with `http://` or `https://` must equal its own
+origin — `https://example.com`, never `https://example.com/`, because a trailing
+slash never equals what a browser sends and would refuse every ceremony. Any
+other spelling is passed through untouched, so `android:apk-key-hash:…` works
+(E-452).
+
+`webAuthnSettingsOf(config)` performs that validation and is what the service
+calls. It throws `InvalidWebAuthnConfigError`, whose `code` is one of
+`relying_party_id_empty`, `relying_party_id_is_not_a_hostname`,
+`relying_party_name_empty`, `origins_empty`, `origin_empty` or
+`origin_carries_more_than_an_origin`.
+
+### Registering an authenticator
+
+```ts
+service.register.start(input: {
+  actor: Actor
+  userName: string
+  userDisplayName?: string
+}): Promise<WebAuthnRegistrationChallenge>
+
+service.register.finish(input: {
+  actor: Actor
+  challengeToken: string
+  response: RegistrationResponseJSON
+  label: string
+}): Promise<{ credential: WebAuthnCredential }>
+```
+
+`userName` and `userDisplayName` are what the authenticator shows in its own
+list of credentials. They are parameters rather than something read from the
+account, because this module does not read identity columns; the caller passes
+what the account is called.
+
+`start` returns `{ publicKeyOptions, challengeToken }`. `publicKeyOptions` goes
+to `navigator.credentials.create()` unchanged. It names every credential the
+account already has under `excludeCredentials`, so the same authenticator cannot
+be enrolled twice, and asks for **`residentKey: "required"`** — a fixed value,
+not an option (architecture 1 D37). This is the only ceremony that enrols a
+credential, so it is the passkey path's registration whatever else it also
+serves, and `"preferred"` means in practice "mostly not": a credential that is
+not discoverable never appears in passkey sign-in and nothing says so.
+
+The consequence is worth knowing before you deploy: a security key holds a small
+fixed number of discoverable credentials, and one that is full **refuses the
+ceremony** rather than making a non-discoverable credential. Such a key cannot
+be enrolled as a second factor either, because there is one registration route
+for both (E-483).
+
+`challengeToken` is opaque to the caller and comes back to `finish`. It is also
+the value inside `publicKeyOptions.challenge`: one 32-byte secret is both the
+value the authenticator signs and the pointer to its row, so the ceremony and
+the lookup cannot drift apart (E-450).
+
+**`label` is required.** A list of three entries called "Security key" is not a
+list anyone can remove from, and the AAGUID knows the model, not the device
+(architecture 3.15 B.6).
+
+`finish` fails with `webauthn_challenge_invalid` when the challenge is unknown,
+spent, expired or was created for the other ceremony, and with
+`webauthn_credential_rejected` when the attestation does not verify — including
+when the authenticator did not verify the user and the configuration required
+it, and when this authenticator is already registered to some account.
+
+### Signing in with a passkey
+
+```ts
+service.passkey.start(): Promise<WebAuthnAuthenticationChallenge>
+
+service.passkey.finish(input: {
+  challengeToken: string
+  response: AuthenticationResponseJSON
+}): Promise<VerifiedWebAuthnAssertion>
+```
+
+No account is named, in the request or in the options: `allowCredentials` is
+absent, so the authenticator offers whatever discoverable credential it holds
+for the relying party, and the account is learned from the credential the user
+chose. `userVerification` is `"required"`.
+
+### Completing a second factor
+
+```ts
+service.authenticate.start(input: {
+  pending: PendingResolution
+}): Promise<WebAuthnAuthenticationChallenge>
+
+service.authenticate.finish(input: {
+  pending: PendingResolution
+  challengeToken: string
+  response: AuthenticationResponseJSON
+}): Promise<VerifiedWebAuthnAssertion>
+```
+
+Both take the resolved intermediate state rather than a session, because between
+a correct password and a second factor there is no session (architecture 3.6,
+S-FIX-4). `start` names the account's own credentials in `allowCredentials` and
+fails with `factor_not_enrolled` when there are none.
+
+The challenge is bound to the account it was issued for. A challenge minted for
+a passkey sign-in carries no account and cannot be spent as a second factor; one
+minted for an account cannot be spent as a passkey sign-in, or by a different
+account. Both rejections are `webauthn_challenge_invalid`.
+
+### `VerifiedWebAuthnAssertion`
+
+```ts
+interface VerifiedWebAuthnAssertion {
+  userId: string
+  credential: WebAuthnCredential
+  signCountRegressed: boolean
+}
+```
+
+What both sign-in paths return. **It contains no session and issues none** — the
+assembly decides that, because a passkey sign-in begins anonymous and the
+intermediate state is not a session to be replaced (E-470).
+
+`signCountRegressed` is L-9: a sign counter that has fallen back is **reported,
+not rejected**, and that is a deliberate documented deviation from WebAuthn
+Level 3 §7.2. Synchronised passkeys do not keep the counter reliably, and
+refusing would lock legitimate users out. What is reported is a counter that was
+running and did not rise: equality counts, because a counter in use has to
+increase. An authenticator that keeps no counter reports zero every time and is
+never reported as regressed.
+
+The value stored afterwards is the one the authenticator reported, not the
+higher of the two. Keeping the maximum would report the fall on every subsequent
+sign-in until the authenticator caught up, and a field that is always set is a
+field nobody reads (E-462).
+
+### Listing, renaming and removing
+
+```ts
+service.list(input: { actor: Actor }): Promise<WebAuthnCredential[]>
+
+service.rename(input: {
+  actor: Actor
+  credentialId: string
+  label: string
+}): Promise<{ credential: WebAuthnCredential }>
+
+service.remove(input: { actor: Actor; credentialId: string }): Promise<void>
+```
+
+`credentialId` is the row's own `uuid`, which is what `WebAuthnCredential.id`
+carries. The WebAuthn credential ID itself never leaves the process: it is a
+value that recognises a user across relying parties (architecture 3.15 C.2).
+
+Both take the owner from the resolved session and put it in the SQL predicate,
+never in a branch (S-OWNER-2). A credential belonging to another account, one
+that never existed, and an identifier that is not a `uuid` at all are one answer
+in each direction: `rename` answers `invalid_input` to all three, `remove`
+answers 204 to all three and changes nothing (S-OWNER-3, S-OWNER-8).
+
+`remove` fails with `last_sign_in_method` when the credential is the account's
+last way in. Counted are a password credential, every WebAuthn credential and
+every linked identity; a confirmed email address does not count, and recovery
+codes do not count (L-13). It runs through the same `removeSignInMethod` that
+`identity.unlink` uses, so there is one deletion path and one lock order, not
+two (E-460).
+
+### `WebAuthnCredential`
+
+```ts
+interface WebAuthnCredential {
+  id: string
+  label: string
+  transports: readonly string[]
+  aaguid: string | null
+  isBackupEligible: boolean
+  isCurrentlyBackedUp: boolean
+  wasUserVerifiedAtRegistration: boolean
+  createdAt: Date
+  lastUsedAt: Date | null
+}
+```
+
+| Field | What it is |
+|---|---|
+| `id` | the row's `uuid`; what `rename` and `remove` take |
+| `label` | what the user called this device. Empty for a credential that arrived through the import module, which carries no label |
+| `transports` | how the browser said the authenticator can be reached — a hint, never a decision |
+| `aaguid` | the authenticator model, or `null` when it declined to name one |
+| `isBackupEligible` | the `BE` flag: `true` means a synchronised passkey, `false` means device-bound |
+| `isCurrentlyBackedUp` | the `BS` flag: whether it is currently synchronised |
+| `wasUserVerifiedAtRegistration` | whether the authenticator verified the user when the credential was created |
+| `lastUsedAt` | `null` until the credential has completed a sign-in |
+
+#### Building a policy on `BE` and `BS`
+
+These two are the **only** basis an application has for telling a device-bound
+authenticator from a synchronised one, and the library enforces nothing on them.
+What they mean:
+
+| `isBackupEligible` | `isCurrentlyBackedUp` | What it is |
+|---|---|---|
+| `false` | `false` | device-bound. A security key, or a platform authenticator that cannot sync. Losing the device loses the credential. |
+| `true` | `false` | a passkey that may be synchronised and is not yet — typically created before the user enabled a keychain |
+| `true` | `true` | a synchronised passkey. It exists wherever the user's keychain does, and its security is that account's security. |
+| `false` | `true` | does not occur; the verifier rejects it |
+
+**They are rewritten on every sign-in**, not only at registration, because the
+second value can change: a passkey created before the user turned on their
+keychain is `BE = true, BS = false` at registration and `BE = true, BS = true`
+afterwards. A policy that read the registration-time value would keep treating it
+as unsynchronised.
+
+An application that wants "a second factor must be device-bound" filters on
+`isBackupEligible === false`. One that wants "warn when a factor is now synced"
+watches `isCurrentlyBackedUp`. Neither is expressible in the configuration, on
+purpose: the library does not know what the application's risk model is.
+
+The import module writes both as `false` when a credential is imported from a
+system that does not export them (architecture 4.1 e), which marks a
+synchronised passkey as device-bound and would mislead exactly such a policy.
+That is why the import defaults to importing no passkeys at all.
+
+### The challenge
+
+Every ceremony is a row in `velve.webauthn_challenge`, valid for **five minutes**
+and no more, consumed by a single `DELETE … RETURNING` (S-REPLAY-5).
+
+| Column | Type | What it holds |
+|---|---|---|
+| `challenge_sha256` | `bytea` | `sha256` of the challenge token — exactly 32 bytes, the primary key (S-REST-2) |
+| `purpose` | `text` | `register` or `authenticate`; a challenge is accepted only in the ceremony it was created for |
+| `user_id` | `uuid` | the account, or `NULL` for a discoverable passkey sign-in |
+| `created_at`, `expires_at` | `timestamptz` | written and compared by PostgreSQL, never by a clock in this process |
+
+The token carries 256 bit from `crypto.getRandomValues`, drawn through the same
+module and encoded the same way as the session token (S-RAND-4). The challenge
+itself is never stored; only its hash is, so a stolen dump cannot be replayed.
+
+Purpose, account and deadline all stand in the `WHERE` of the consuming
+statement, so a challenge used twice, used after five minutes, used in the other
+ceremony or used by another account produces no row — and all four answer
+`webauthn_challenge_invalid` with the same status and the same body bytes.
+
+Expired rows are removed by `auth.maintenance.sweep()` (L-11); they are already
+unusable before that.
+
+### `velve.webauthn_credential`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `uuid` | the identifier the surface uses |
+| `user_id` | `uuid` | `ON DELETE CASCADE` |
+| `credential_id` | `bytea` | the WebAuthn credential ID, globally unique. Never leaves the process |
+| `public_key` | `bytea` | COSE. Never leaves the process |
+| `sign_count` | `bigint` | last reported counter. Never leaves the process; it appears only as `signCountRegressed` |
+| `transports` | `text[]` | stored and read as JSON rather than through a delimiter, because the values are the browser's words (E-473) |
+| `aaguid` | `uuid` | `NULL` when the authenticator reported all zeros |
+| `backup_eligible`, `backup_state` | `boolean` | `BE` and `BS`, rewritten on every sign-in |
+| `user_verified_at_registration` | `boolean` | |
+| `label` | `text` | `NULL` only for imported rows; the surface shows `""` |
+| `created_at`, `last_used_at` | `timestamptz` | |
+
+### The credential payload
+
+`registrationResponse()` and `authenticationResponse()` are the validators for
+the JSON `navigator.credentials.create()` and `.get()` produce. Two things about
+them are deliberate and visible to a caller.
+
+**An unknown field is ignored, not rejected.** The credential JSON is written by
+the browser against a living specification, so a field it grows and this library
+does not read is dropped rather than answered with `invalid_input`. The route's
+own input around it stays strict (E-455).
+
+**The parsed payload carries no prototype**, on the way out as well as on the
+way in. A consumer reads a field through the prototype chain, so the prototype
+of the value it is handed is the only thing that decides whether an optional
+field the browser did not send comes back as something else (E-481).
+
+**An unknown `transports` value is dropped, not rejected.** A transport is a
+hint that no part of the ceremony depends on, and a new one ships in a browser
+before it ships in `@simplewebauthn/server`. Rejecting would lock that
+authenticator out over an advisory field, so the parser accepts any string and
+keeps the ones the verifier can type — which is also what is stored (E-453).
+`type` gets no such leniency, because that field decides something.
+
+### What is not here
+
+- **No session.** Both sign-in paths return a verified assertion; the assembly
+  issues the session (E-470).
+- **No attempt counting.** L-8's five attempts are per intermediate state and
+  are counted by the flow that owns it, not per factor (E-471).
+- **No attestation.** `attestationType` is `"none"` and no attestation statement
+  is evaluated. Velve Auth does not decide which authenticator models an
+  application trusts.
+- **No conditional UI.** `autocomplete="webauthn"` is an attribute in the
+  application's markup; the library supplies the options, not the form
+  (architecture 1 D35).
 
 ## The instance
 

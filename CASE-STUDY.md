@@ -2475,3 +2475,282 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 **Rejected.** Treating the existing "spends the code that was used and leaves the other nine" as the third leg.
 **Reason.** That test counts rows, and a count is not a redemption: a set could hold nine rows none of which can be spent, and it would pass. The third leg is now its own case — accepted, `invalid_recovery_code`, accepted, with eight left. A planted fault that makes a partly-spent set unreadable turns it red at exactly that assertion.
 **Price.** The gap came from writing the tests around the storage rule rather than around the threshold's three words, and nothing but reading the threshold catches that.
+### The challenge is the token
+`E-450` · factor-webauthn · challenge, frozen
+
+**Context.** Architecture 3.15 C gives a ceremony two values: `publicKeyOptions.challenge`, which the authenticator signs, and `challengeToken`, which the client returns so the server can find the row. Nothing says whether they are two values or one.
+**Rejected.** Two independent values — 32 random bytes for the challenge, a separate secret token for the row pointer.
+**Reason.** Two values means two places to get the binding right, and the failure mode of getting it wrong is silent: a server that looks up row A and hands `expectedChallenge` from row B still verifies a signature, just not the one it issued. One 32-byte value from `core/token` is base64url-encoded once; that string is the WebAuthn challenge, the row pointer, and the `expectedChallenge` handed to the verifier. `sha256` of it is the primary key. The verifier compares the challenge inside the signed client data against the same string the row was found by, so the binding is not a rule anybody has to maintain — it is the same variable.
+**Price.** The challenge and the lookup key are now the same secret, so a log line that prints `challengeToken` for debugging prints the value an attacker needs. Nothing prints it, and 3.15 C.2 already forbids `challenge_sha256` leaving the process, but the value with the wider blast radius is the one in the response body rather than the one in the column.
+
+### Three rejections, one statement, one logged reason
+`E-451` · factor-webauthn · S-REPLAY-5
+
+**Context.** `error-map.ts` declares three concealed reasons for a challenge — `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` — and S-ENUM-6 wants the true reason logged. S-REPLAY-5 wants one visible answer for all three.
+**Rejected.** Deleting by primary key alone and inspecting the returned `purpose` and `expires_at` to log which of the three it was.
+**Reason.** The rejected form reads the row and then decides in TypeScript, which is the shape 5.10 names as the one that gets lost in a refactor; the accepted form puts purpose, subject and deadline in the `WHERE` of a single `DELETE … RETURNING`, so the requirement is in the statement and an empty result set is the whole answer. It also matches `one_time_token`'s consume statement word for word in structure, which is worth more than a finer log line.
+**Price.** Two of the three declared reasons are unreachable from this feature, and `challenge_not_found` is logged where the cause was an expiry or a wrong ceremony. That is a real loss for an operator reading logs, and it is reported rather than fixed here, because the fix is in a file this feature does not own.
+
+### A native application's origin is not a URL
+`E-452` · factor-webauthn · configuration
+
+**Context.** `webauthn.origins` is an array because a relying party legitimately has a web origin and a native one (3.15 A.8). The obvious validation is `new URL(origin)`.
+**Rejected.** (a) Requiring every entry to parse as a URL. (b) Validating nothing beyond non-emptiness.
+**Reason.** (a) rejects `android:apk-key-hash:…`, which is the reason the field is an array at all. (b) lets `https://example.com/` through, and a trailing slash never equals the origin a browser sends — every ceremony then fails, at the one moment nobody is reading the configuration. So only the `http`/`https` spellings are held to a shape, and they must equal their own origin.
+**Price.** A misspelled native origin is accepted and fails at the first ceremony. There is no list of legal schemes for a native origin to check against, and inventing one would be this library deciding what platforms exist.
+
+### `transports` is a hint, and a hint may not lock a device out
+`E-453` · factor-webauthn · E-503 answered
+
+**Context.** E-503 handed this feature the per-field call and named the hazard: `oneOf(...)` pins `transports` to the seven values `AuthenticatorTransportFuture` has today, and a new transport ships in a browser before it ships in `@simplewebauthn/server`. Registration would then fail for that authenticator over a field nothing in the ceremony depends on.
+**Rejected.** (a) `oneOf(...)` for `transports`, as for `type`. (b) Accepting any string and storing it verbatim, narrowing only where the verifier's type demands it.
+**Reason.** (a) is the lockout E-503 describes, and it is the wrong trade for a value that is a UI affordance. (b) was the first decision here and is written down because it was reversed: storing a transport the verifier cannot type means the column holds a value that can never be put back into `allowCredentials`, so the two representations diverge for a gain that is display fidelity alone. The parser therefore accepts any string, filters to what the verifier can type, and stores what it forwards. What matters — that no registration is refused over the field — holds in both, and one representation is cheaper than two.
+**Price.** A transport a browser ships before `@simplewebauthn/server` does is dropped and never recorded, so when the verifier catches up the credentials registered in between still do not have it. `type` keeps its `oneOf`, because that field decides something.
+
+### A field the specification adds fails the build, not the request
+`E-454` · factor-webauthn · payload
+
+**Context.** The payload validators are hand-written against `RegistrationResponseJSON` and `AuthenticationResponseJSON`. A field added to either by a future `@simplewebauthn/server` would simply not be declared, and the parser would drop it in silence.
+**Rejected.** Trusting the assignment of the parsed value to the library's type to catch it.
+**Reason.** It does not: an added *optional* field leaves the parsed value still assignable, so the type check stays green while the parser quietly stops carrying a field the verifier may have begun to read. Each shape is therefore declared `satisfies Record<keyof Shape, unknown>`, which fails to compile when a key is missing and when one is spare.
+**Price.** A dependency upgrade that adds a field breaks the build rather than the tests, which is a worse message to read and a better moment to read it.
+
+### The browser's payload is parsed openly, the caller's input strictly
+`E-455` · factor-webauthn · payload
+
+**Context.** `object()` rejects any undeclared key. That is right for the route's own input, which the caller writes. The credential JSON inside it is written by `navigator.credentials.create()` against a living specification.
+**Rejected.** Loosening `object()`, or declaring the credential JSON strictly and accepting that a browser adding an informational field breaks registration until the library ships a release.
+**Reason.** Loosening `object()` is a change to a file this feature does not own and weakens the contract every other route relies on. So the two shapes are parsed differently on purpose: a ten-line wrapper trims the raw value to the declared fields before handing it to `object()`, exactly as `route.ts` already does for a GET query string, and only the browser-authored shapes use it. The route's own input keeps every strictness `object()` has.
+**Price.** A second object validator exists in the repository, and if `http` ever grows an open variant this one should be deleted rather than kept as the local dialect. A typo in a nested field name is now ignored instead of reported, which for a payload no human types is the right way round and is still a loss.
+
+### A value the browser wrote inherits nothing
+`E-456` · factor-webauthn · security, found by a plant
+
+**Context.** A prototype-pollution probe was written because the brief said the class was live: `object()` and `arrayOf` had both been reading inherited properties as if sent, and this feature indexes caller-supplied data in three more places. The probe went red.
+**Rejected.** Reading each optional field through `Object.hasOwn` at the point it is destructured.
+**Reason.** The defect was real. `object()` builds its result on `{}`, so destructuring `transports` out of a parsed attestation resolved through `Object.prototype` when the browser had sent none — and the value that reached the stored column was the polluted one. Per-field `hasOwn` fixes the fields anyone thought of; setting the parsed object's prototype to null fixes the ones nobody has written yet, at the one boundary where browser-authored data enters.
+**Price.** Two things, and the second is the uncomfortable one. `Object.setPrototypeOf` deoptimises the object it touches; at two or three objects per ceremony that is not worth measuring, and it would be at request-body scale. And the probe that found this was itself wrong: it asserted on `parsed.response.transports`, read off the ordinary literal the parser returns, which answers from the polluted prototype however well the parser behaved. So it stayed red after the fix, and the fix was nearly applied twice before the test was read properly. It now asks `Object.hasOwn` of what the parser produced. A probe that cannot distinguish the fault it hunts from an artefact of how it looks is the same defect as a probe planted where the fault cannot live, seen from the other side.
+
+### The verifier's cause is prose, and prose is not a dependency
+`E-457` · factor-webauthn · error handling
+
+**Context.** `verifyAuthenticationResponse` throws for a wrong origin, a wrong relying party, a missing user-verification flag, a bad signature and several more — and reports which by the English text of the `Error`. `error-map.ts` declares a concealed reason for four of those.
+**Rejected.** (a) Matching on the message to log the precise reason. (b) Mapping everything the verifier throws to `signature_invalid`.
+**Reason.** (a) is a dependency on a string that moves without a major version. (b) logs `signature_invalid` for a misconfigured origin, which is the failure an operator is most likely to be staring at and least able to diagnose. So origin, relying-party hash and the user-verification flag are checked here, before the verifier, purely to decide the logged reason; the verifier still decides acceptance and re-checks all three. Everything else it throws is one reason.
+**Price.** Three checks now exist twice, and the copies can disagree. The dangerous direction is named: if the verifier ever *loosens* one of them, this feature keeps rejecting, because its check runs first and throws. That is the safe direction to be wrong in and it is still being wrong. A first attempt inspected the caught value with `instanceof ConcealedError` to let its own reasons through; `test/http-enumeration.test.ts` refused it, correctly — what the outside learns is decided in one file — and the fix was to wrap only the verifier's own call, so nothing of this feature's is ever in flight to be inspected.
+
+### The verifier is told there is no counter
+`E-458` · factor-webauthn · L-9
+
+**Context.** L-9 says a regressed `sign_count` is reported as `signCountRegressed`, not rejected. `verifyAuthenticationResponse` throws when the reported counter is not greater than the stored one.
+**Rejected.** Catching that particular throw and continuing.
+**Reason.** Catching it means recognising it, and recognising it means matching on the message (E-457). Passing `counter: 0` makes the verifier's rule vacuous, and the comparison is made here, where the outcome is a field. Nothing is lost: the verifier's counter check is exactly the comparison being moved.
+**Price.** The library now depends on `counter: 0` continuing to mean "do not check", which is a behaviour of the verifier and not a documented contract. If a future version treats a zero counter as an assertion that the counter is zero, this reads as a regression on every sign-in rather than none. There is no test that would notice, because the simulator and the verifier would agree.
+
+### Whom a credential belongs to, proved in one of two ways
+`E-459` · factor-webauthn · S-OWNER-1, correction
+
+**Context.** `list`, `rename`, `remove` and registration take an `Actor` — the brand only session resolution mints. The second factor reaches the same rows and has no session: its subject is the intermediate state.
+**Rejected.** (a) Taking `userId: string` for the second factor. (b) Demanding an `Actor` and handing `auth-core` the job of minting one from the pending row.
+**Reason.** (a) opens the door S-OWNER-7 exists to close — a bare string is what a request body carries. (b) was the decision this branch actually made and it was wrong, which is worth writing plainly: `auth-core` then published `PendingResolution` with a comment saying it mints no `Actor` **on purpose**, so that the intermediate state has no path into an owner-scoped repository method. The hand-off would have pushed a cast into a file this feature does not own, to defeat a rule that file states deliberately. The owner parameter is now a union of the two proofs this library recognises, discriminated by `typeof`, and a bare string satisfies neither.
+**Price.** `S-OWNER-1` says every method on a table with a `user_id` column takes an `actor`; two of these take an owner that is sometimes not one. The predicate is still in the SQL and the parameter still cannot be a string from a body, but the requirement's wording no longer matches the code, and that gap is named here rather than papered over. Had `auth-core` published a day later, the wrong version would have been merged and the cast would have been someone else's problem to explain.
+
+### There is one deletion path for a sign-in method, and this feature does not add a second
+`E-460` · factor-webauthn · S-OWNER-3, L-13
+
+**Context.** `removeSignInMethod` already existed in `src/core/identity/sign-in-methods.ts`, already counted what would be left, and already took the `velve.user` lock first.
+**Rejected.** A `deleteOwnedCredential` on this feature's own repository, with the last-way-in count called beside it.
+**Reason.** Two deletion paths means the count is a rule someone has to remember to call, and L-13's failure mode is a locked-out account. It also means two places taking the user row lock, which is how a lock-ordering cycle gets built by accident. The existing function is used unchanged.
+**Price.** This feature's repository has no delete method at all, which reads like an omission until you find the call. And `remove` therefore holds a row lock on `velve.user` for the duration of a count over three tables — wider than it looks, as §7 says.
+
+### Not a uuid, not yours, not there: one answer
+`E-461` · factor-webauthn · S-OWNER-8
+
+**Context.** `remove` takes a `credentialId` that goes into a `uuid` predicate. A malformed value makes PostgreSQL raise, which would surface as `internal_error` — a third answer beside the two S-OWNER-8 requires to be identical. The route table gives `/factor/webauthn/remove` the statuses 204, 401, 403 and 409, and no 400 at all.
+**Rejected.** Rejecting a malformed identifier with `invalid_input`.
+**Reason.** There is no 400 on that route to reject it with, and inventing one would be a fourth answer. A value that is not a uuid can name no row, which is the same fact as a row that is not the caller's, so it takes the same exit: nothing happens, 204. `rename` does declare a 400, and there both the malformed and the unknown identifier answer `invalid_input`, which is uniform for the same reason.
+**Price.** `remove` with a malformed identifier does not touch the database, so it answers faster than one that does. That is a timing channel between "malformed" and "well-formed but not yours", which is not the distinction S-OWNER-8 protects — it says nothing about whether a credential exists — but it is a difference an attacker can measure and this entry is where it is admitted rather than discovered.
+
+### The counter that is stored is the one that was reported
+`E-462` · factor-webauthn · L-9
+
+**Context.** After a regression, the stored `sign_count` can be the value the authenticator just reported or the higher value it had before.
+**Rejected.** Keeping the maximum, so the counter only ever ratchets upward.
+**Reason.** The ratchet reports a regression on every subsequent sign-in, because every later value stays below the high-water mark until the authenticator catches up. An application that gets `signCountRegressed: true` forever learns to ignore the field, and a field everyone ignores is worse than no field. Storing the reported value reports the fall once, at the moment it happened, which is the event L-9 asks to be told about.
+**Price.** A cloned authenticator that is used once and then never again produces exactly one report, and if the application does nothing with it the clone is invisible afterwards. That is the trade L-9 already made when it chose reporting over rejection; this makes it slightly cheaper for the attacker and much cheaper for the legitimate user whose authenticator was reset.
+
+### User verification is required at both verification points and is not an option
+`E-463` · factor-webauthn · 3.6, 3.15 A.8
+
+**Context.** `WebAuthnConfig.userVerification` is `"required" | "preferred"`. 3.15 A.8 says `"discouraged"` is absent because a second factor without user verification is not one, and that discoverable passkey sign-in is always `"required"`.
+**Rejected.** Letting the configured value govern the assertion as well as the registration.
+**Reason.** Better Auth sets `requireUserVerification: false` at both of its verification points, which is why a passkey there is not a second factor and bypasses enforced 2FA (1 D33, N3-32/33). The configured value therefore governs registration only — what the authenticator is asked for, and what `user_verified_at_registration` records — while both assertion paths request and enforce `"required"` unconditionally.
+**Price.** An application that sets `"preferred"` can register a credential that then cannot be used, because every sign-in demands verification the authenticator was not asked to be capable of. That is a configuration that produces a dead credential, and nothing warns about it at start-up.
+
+### The simulator encodes with Node's primitives, not with the library's
+`E-464` · factor-webauthn · test infrastructure
+
+**Context.** The simulator needs base64url and CBOR. Both exist in the tree — `src/core/keys/base64url.ts`, and `@levischuck/tiny-cbor` under `@simplewebauthn/server`.
+**Rejected.** Reusing the library's encoders.
+**Reason.** An instrument that shares an encoder with the thing it measures agrees with it about a shared mistake, and the agreement looks like a passing test. `Buffer.toString("base64url")` and a hand-written canonical CBOR encoder are independent of both.
+**Price.** Roughly sixty lines of CBOR that exist only in the test tree and have to be right. They are canonical by RFC 8949 §4.2.1 ordering because `tiny-cbor` re-encodes what it decodes and moves its pointer by the length, so a non-canonical map would be a parse failure rather than a wrong value — which is at least a loud way to be wrong.
+
+### A simulator that cannot sign wrongly tests the happy path
+`E-465` · factor-webauthn · test infrastructure
+
+**Context.** Architecture 6.19 requires the simulator to be able to sign incorrectly, "otherwise the rejection is never tested".
+**Rejected.** One way of signing wrongly.
+**Reason.** One way tests one code path in the verifier. There are four: a second key pair that was never registered, a signature with its last byte flipped, an empty signature, and a signature over the authenticator data without the client-data hash — which is the one that fails only if the message the authenticator signs is assembled correctly. Each is checked twice: against `@simplewebauthn/server` directly, with nothing of this library in between, and through the sign-in path.
+**Price.** The four faults are enumerated by hand, and the enumeration is a guess at what a broken authenticator does. Nothing here produces a malformed DER signature, a valid signature over a different challenge, or a signature made with the right key and the wrong algorithm.
+
+### Registration prefers a discoverable credential and does not demand one
+`E-466` · factor-webauthn · registration
+
+**Context.** Passkey sign-in needs a discoverable credential. `authenticatorSelection.residentKey` decides whether the authenticator is asked to make one.
+**Rejected.** `"required"`.
+**Reason.** A security key has a small fixed number of discoverable slots and refuses when they are full. `"required"` therefore turns a hardware key into an authenticator this library cannot register, and hardware keys are precisely the second-factor case 3.6 describes. `"preferred"` gets a discoverable credential wherever one is possible.
+**Price.** A user who registers on a full security key gets a credential that works as a second factor and never appears in passkey sign-in, with nothing in the surface saying which kind they got. `WebAuthnCredential` reports the backup flags, not discoverability.
+
+### An authenticator registered twice has no concealed reason
+`E-467` · factor-webauthn · reported
+
+**Context.** `webauthn_credential.credential_id` is globally unique. `excludeCredentials` normally stops a second registration in the browser; when it does not, the insert raises a unique violation.
+**Rejected.** Letting the driver's error escape as `internal_error`.
+**Reason.** The route declares `webauthn_credential_rejected`, and that is the honest answer: the credential was not accepted. The repository raises its own named error and the service maps it, in the same shape `OneTimeTokenError` uses.
+**Price.** The logged reason is the visible code rather than the cause, because `ConcealedReason` in `error-map.ts` has no entry meaning "this authenticator is already registered" and this feature does not own that file. Reported rather than added.
+
+### No barrel for this module
+`E-468` · factor-webauthn · knip
+
+**Context.** `core/token`, `core/keys` and `core/factor/pending` each have an `index.ts`. This feature wrote one and `knip` called the file unused, because nothing in `src/` imports this module yet.
+**Rejected.** Keeping the barrel and importing it from the tests to make it used.
+**Reason.** That satisfies the check without the barrel doing anything, and re-exported types then fail the unused-export rule one at a time. `core/session` and `core/password` have no barrel for the same reason and are the closer precedent: a barrel is written when something upward imports it, and upward is `auth-core`.
+**Price.** `auth-core` will import six paths instead of one, and whoever adds the barrel later has to decide again what belongs in it.
+
+### The settable clock is not used here, and that is not an oversight
+`E-469` · factor-webauthn · 6.19, reported
+
+**Context.** `auth-core` published `createTestClock` in `@velve/auth/testing`, and this feature was told its challenge-expiry test needs it.
+**Rejected.** Taking a `Clock` in `WebAuthnServiceOptions` and passing it to the challenge repository.
+**Reason.** Nothing in this feature reads a JavaScript clock. `expires_at` is computed as `now() + make_interval(…)` in PostgreSQL and compared against `now()` in the same statement, which is what E-238 already established for sessions and what 6.19 itself prescribes for the database side — expiry timestamps are written directly in the test rather than the server's time being moved. Accepting a clock and ignoring it is exactly the defect E-247 records, where three tests passed for the wrong reason.
+**Price.** The expired-challenge case of T-REPLAY-5 is set up by writing `expires_at` into the past, which is a test that knows the column name. If the lifetime ever moves into JavaScript, that test keeps passing and stops meaning anything.
+
+### Who issues the session after a WebAuthn sign-in
+`E-470` · factor-webauthn · S-FIX-1 hand-off
+
+**Context.** S-FIX-1 counts passkey sign-in and second-factor completion among the eight trust-level events, and E-243 fixes which method each caller must name. This feature's `passkey.finish` and `authenticate.finish` return a verified assertion and issue nothing.
+**Rejected.** Taking a `SessionService` and issuing the session here.
+**Reason.** No feature module in `src/` imports another feature's service; `password` does not, `session` does not, and the assembly is where they meet. More concretely, `reissue` demands a `previousToken` naming an existing session row, and neither of these paths has one — a passkey sign-in begins anonymous, and the intermediate state is not a session (S-FIX-4). So the call cannot be made correctly from here even if it were allowed.
+**Price.** S-FIX-1 is unfulfilled for both WebAuthn paths and nothing on this branch would notice. The rule this entry hands over: **passkey sign-in and second-factor completion both call `issue`, not `reissue`, unless the request carried a session token, and neither ever calls `reissueAfterCredentialChange`.** That contradicts the brief this feature was given, which said both call `reissue`; the contradiction is with `reissue`'s signature, not with E-243's intent, and it is written here so the assembly resolves it deliberately.
+
+### L-8's five attempts are counted by the flow, not by this factor
+`E-471` · factor-webauthn · L-8 hand-off
+
+**Context.** `/factor/webauthn/authenticate/finish` declares `too_many_factor_attempts`, and `MAXIMUM_PENDING_ATTEMPTS` with `registerFailedAttempt` live in `core/factor/pending`.
+**Rejected.** Calling `registerFailedAttempt` from this feature's `authenticate.finish`.
+**Reason.** The five attempts are per intermediate state, not per factor: a user may try TOTP twice and WebAuthn three times, and the count that matters is the sum. A factor that counts its own failures either double-counts or misses the ones its neighbour caused. The state belongs to whoever owns the state.
+**Price.** Until the flow calls it, a WebAuthn second factor can be attempted without limit inside a five-minute window, bounded only by the per-IP rate limit. That is the gap, and it is this entry rather than a test.
+
+### The routes cannot be declared here
+`E-472` · factor-webauthn · reported
+
+**Context.** The nine routes of 3.15 D.3 are this feature's, and `defineRoute` exists.
+**Rejected.** Declaring them anyway and reading the subject from somewhere else.
+**Reason.** `RequestContext.pending` is a `PendingAuthentication` — `factorsCompleted`, `availableFactors`, `attemptsRemaining`, `expiresAt` — and carries no user id. The two routes with `caller: "pending"` therefore cannot reach the account whose credentials they need, and the alternative is reading an identifier out of the request, which is the confused deputy S-OWNER-6 and S-OWNER-7 exist to forbid. Every wave-2 feature stopped at the service layer for the same shape of reason.
+**Price.** Reported to `auth-core`, whose `RequestContext` it is: a `caller: "pending"` route needs the resolution, not the presentation. Until then the nine routes exist as a service surface and a table nobody has typed.
+
+### Transports travel as JSON, not through a delimiter
+`E-473` · factor-webauthn · storage
+
+**Context.** `session.factors` is read back with `array_to_string(factors, ',')`, and the obvious thing was to copy it for `transports`.
+**Rejected.** Copying it.
+**Reason.** `factors` is a closed set of five words that contain no comma. `transports` is whatever the browser called it (E-453), so `["a,b"]` and `["a","b"]` would arrive back identical. `to_jsonb(...)::text` on the way out and `jsonb_array_elements_text` on the way in have no delimiter to collide with.
+**Price.** Two statements in this repository read a `text[]` column in two different ways, and the reason is a property of the data rather than of the type. Anyone copying either into a third place will copy whichever they saw first.
+
+### An imported credential has no label, and the surface promises a string
+`E-474` · factor-webauthn · storage
+
+**Context.** `webauthn.register.finish` demands a `label` (3.15 B.6), but `webauthn_credential.label` is nullable because the import module writes rows without one (4.1 e).
+**Rejected.** Making the column `NOT NULL`, or typing the surface `label: string | null`.
+**Reason.** The column is 3.2's and not this feature's to change. `WebAuthnCredential.label` is `string` in 3.15 C, and the empty string is what "the import knew no name" looks like to a caller that has to render something.
+**Price.** A caller cannot tell an imported credential from one somebody deliberately named `""`, and nothing stops the latter — `register.finish` requires the field, not that it be non-empty.
+
+### A planted fault that fails on the parameter count proves nothing
+`E-475` · factor-webauthn · method, correction
+
+**Context.** §5 says a check is trusted only after it has been proved to fail on a planted fault. The first two plants against the challenge predicate deleted `AND purpose = $2` and `AND user_id IS NOT DISTINCT FROM $3::uuid` from the SQL.
+**Rejected.** Reading the resulting red as confirmation.
+**Reason.** Both went red with `could not determine data type of parameter $2` and `bind message supplies 3 parameters, but prepared statement requires 2` — PostgreSQL refusing a malformed statement, in every test that touched it, including the ones that have nothing to do with purpose or subject. The behaviour under test was never reached. The plants were rewritten to keep the parameter bound and make the predicate vacuous — `(purpose = $2 OR true)` — and then exactly the intended cases went red and nothing else did.
+**Price.** This is the same mistake as the one recorded in E-504, seen from a different angle and made one week later by someone who had read that entry that morning. The lesson that transfers is not "check where the fault lives" but something narrower: **a plant that changes the shape of a statement is testing the parser, and a plant that changes its meaning is testing the check.** Nine plants were made on this branch; two of them had to be made twice.
+
+### A search for a value that could not fit
+`E-476` · factor-webauthn · method, correction
+
+**Context.** One case asserts that the challenge itself never appears in `webauthn_challenge`, by searching the row for the token.
+**Rejected.** Leaving it, since it was green.
+**Reason.** It was green for the wrong reason. The token is 43 characters and the column is 32 bytes, so the search could not match however the bytes had been written — the test passed for the impossibility of the search rather than the correctness of the hash. It was found by planting the storage of the token in place of its hash and watching this test stay green while four others went red. It now searches for a 16-character prefix, in three encodings, and goes red on that plant.
+**Price.** The class is wider than this instance and nothing systematic catches it: a search whose needle cannot fit its haystack looks exactly like a search that found nothing. Every other assertion of this shape in this feature's tests was re-read by hand, which is not a mechanism.
+
+### The instrument advanced the counter the case was about
+`E-477` · factor-webauthn · method, correction
+
+**Context.** One case asserts that an authenticator keeping no counter — reporting zero on every assertion — is not reported as regressed.
+**Rejected.** Adjusting the assertion when it failed.
+**Reason.** It failed because the shared `enrol` helper registers through the simulator's default path, which increments the counter, so the credential was stored with `sign_count = 1` and a subsequent zero was a genuine fall. The behaviour was right and the fixture was wrong: a counterless authenticator reports zero at registration too. The case now registers explicitly at zero. Adjusting the assertion would have written down that a counterless authenticator is reported as regressed, which is false and would have been believed.
+**Price.** The shared fixture is convenient exactly until a case is about the thing the fixture decides for you, and there is no signal that says which cases those are.
+
+### The only failing test on this branch belongs to another
+`E-478` · factor-webauthn · reported
+
+**Context.** This feature imports `PendingResolution` from `core/factor/pending`, which is on `origin/feature/auth-core` and not on `main`. That branch was merged in to compile against it.
+**Rejected.** (a) Not merging, and defining a local shape with the same fields. (b) Regenerating `test/__snapshots__/api-surface.md`, which the merge makes stale.
+**Reason.** (a) is two declarations of one type across two branches, which is the divergence the merge exists to prevent. (b) is a file this feature does not own, and `auth-core`'s own commit says in as many words that the snapshot is regenerated once, at the end, and is the only failing test on its branch. Regenerating it here would take that decision away from them and hide whatever else has moved.
+**Price.** `pnpm test` on this branch fails one case — `public API surface > matches the committed snapshot` — and it fails for a change this feature did not make. Every counted figure in this feature's report was taken after that merge and has to be taken again when `main` moves.
+
+### The snapshot cleared itself, and the report that named it was stale before it was read
+`E-479` · factor-webauthn · E-478 answered
+
+**Context.** E-478 recorded that the one failing case on this branch — `public API surface > matches the committed snapshot` — came from merging `auth-core` and belonged to `auth-core` to fix, and that this branch would not regenerate a file it does not own. `auth-core` regenerated it in `1f2c281`, two commits after the one this branch had merged.
+**Rejected.** Nothing. The decision E-478 took was to wait, and waiting was what closed it.
+**Reason.** Re-merging `auth-core` at its current head takes the regenerated snapshot with it and the case passes. The full suite is green: **1367 passed, 11 skipped, 0 failed**, twice in a row. Worth recording that the *waiting* was the right call for a reason E-478 did not give: the regenerated snapshot moved by `auth-core`'s exports and this feature adds none, so had this branch regenerated it first, the two branches would have produced two versions of one generated file and conflicted in it — and a conflict in a generated file is resolved by whoever is least equipped to read it.
+**Price.** Every counted figure in this feature's report was taken twice: once after the first merge and once after the second, and the second is the one that stands. The report that carried the first set was read by a reviewer after the snapshot had already been fixed, and it said the branch was red when it was not — a figure with a timestamp on it and no way for the reader to see the timestamp. The merge of `CASE-STUDY.md` conflicted, as §5 predicts for four writers appending at end of file; both ranges were kept whole, `auth-core`'s block before this one, and neither side's text was touched.
+
+### A list that can be emptied deletes cases instead of failing them
+`E-480` · factor-webauthn · method
+
+**Context.** A gate finding against a sibling branch: eight of eleven route-table assertions passed when the route list was replaced with `[]`, including the two carrying the actual security claims. The same shape was looked for here.
+**Rejected.** Treating it as somebody else's finding, on the grounds that this feature's assertions are mostly on values rather than on lists.
+**Reason.** One instance was found and it was the worst kind. `it.each(FAULTS)` drives the four ways the simulator signs wrongly, in two files. Emptied, `it.each` produces **no cases at all** — the run goes from 8 tests to 5 and from 22 to 19, all green, and the four assertions that prove a rejection is reachable simply stop existing. That is worse than a vacuous pass, because a vacuous pass at least leaves a name in the output to be counted. Both files now assert the length of the list before it is used, and the pin of this feature's two pending-taking operations now states its own count instead of comparing two derived lists that could both be empty.
+**Price.** Three literal counts — 4, 4 and 2 — now have to be changed by hand when the lists change, which is the cost every count-stating assertion has. The alternative found nothing for a week and would have kept finding nothing.
+
+### The null prototype was applied to what entered and discarded on what left
+`E-481` · factor-webauthn · E-456 corrected, security
+
+**Context.** E-456 nulled the prototype of what `object().parse` returns and called the class closed. It was not. `registrationResponse()` then does `const { transports, ...rest } = parsed.response` and returns `{ ...rest, transports: known }` — and **object rest destructuring and every object literal build on `Object.prototype`**. The null prototype existed for the length of one statement and was thrown away by the next. `service.ts` read `response.response.transports ?? []` straight back through the chain, and the polluted array reached the stored column: `Object.prototype.transports = ["usb","POLLUTED"]` came out of `credential.transports` as `["POLLUTED"]`, traced end to end against a real database.
+**Rejected.** (a) Fixing only the parser. (b) Fixing only the consumer.
+**Reason.** Either alone closes it today and neither says so at the seam. Both ends changed: `withoutInheritance` is now applied to what the module **returns**, not only to what it parses, and the service asks `Object.hasOwn` before reading the hint. Planted separately, each guard is green while the other stands — which is what defence in depth is, and it is stated that way rather than claimed as two independent pins. Planted together, both probes redden, including the end-to-end one, with exactly the value above.
+**Price.** The harder half is not the defect, it is the probe. E-456 already convicted its first version for measuring the pollution instead of the parser — and the correction, `Object.hasOwn(parsed.response, "transports")`, made it ask **the wrong object**: the parser's own-property set genuinely said "absent" while the consumer's read said `["usb"]`, and the probe reported the half that was right. A probe has to read the field **the way the consumer reads it**, and neither version of that probe did until now. It hid this long because the one seam it lives on is the one nothing crosses: the two validators are called only from tests, the routes are undeclared (E-472), and the fixtures hand the simulator's raw object to the service. There is now a case that parses the way the route will and then reads the column. And a third instance of E-475 was collected while fixing it — two plants silently failed to apply because `biome` had collapsed the lines they matched, and a plant that does not apply is indistinguishable from a plant that proved the code right. Every plant now asserts that it applied.
+
+### Two identical wrong answers satisfy an equality
+`E-482` · factor-webauthn · T-OWNER-3, correction
+
+**Context.** T-OWNER-3's case asserted that the two rejections answer alike, that A's count was 2 before and after, and that B's was 2. Every one of those is satisfied by a `remove` that does nothing at all. Planted twice — refusing unconditionally, and returning before reaching `removeSignInMethod` — the case stayed green both times while three neighbours reddened under the second.
+**Rejected.** Leaving it and relying on the neighbours, which do catch a no-op.
+**Reason.** The neighbours catch it by accident of arrangement, and the requirement is asserted here. Equality was never the whole claim: S-OWNER-3 says the two answers are identical **and** that they are the answer the route declares. So the case now anchors on the literal 204 rather than on `answers[0] === answers[1]`, and ends by removing a credential B does own — so a `remove` that never deletes fails inside the case that is about deleting. Both of the gate's plants now redden it. The behaviour was correct throughout; only the test could not show it.
+**Price.** The anchor is a literal that has to move if the route's status ever does, which is the cost of anchoring. The general shape has no mechanical detector: an assertion that two answers agree is exactly as green when both are wrong, and the only tell is that plants aimed at the subject do not redden it.
+
+### D37 is a fixed value and this is the passkey path's registration
+`E-483` · factor-webauthn · E-466 reversed, architecture
+
+**Context.** E-466 chose `residentKey: "preferred"`, reasoning that `"required"` makes a full security key unregistrable and that hardware keys are the second-factor case 3.6 describes. Architecture 1 D37 says the opposite in as many words: *"Feste Vorgaben statt Optionen: `residentKey: "required"` … für den Passkey-Weg"*, and *"`preferred` heißt in der Praxis „meistens nicht""*.
+**Rejected.** (a) Keeping `"preferred"` on E-466's reasoning. (b) Splitting registration into a passkey ceremony and a second-factor ceremony, so D37 governs only the first.
+**Reason.** (a) is a local decision on a line §7 says is not open to one, and E-466 argued the trade without citing the row that had already decided it — which is the failure mode of reasoning from first principles next to a specification. (b) is the reading that would save it, and it does not survive: the route table in 3.15 D.3 has exactly one registration route, so the credential the passkey path signs in with can only have been enrolled by this line. It **is** the passkey path's registration, whatever else it also serves, and adding a second registration route to a fixed table is not this feature's call either. D37's `userVerification` half is a different matter and is superseded: 3.15 A.8 declares that one as an option with two values, and both verification points enforce `"required"` regardless, which is what D37 was protecting.
+**Price.** Named plainly rather than argued away, because it is the thing E-466 got right: **a security key whose discoverable slots are full now refuses registration, and cannot be enrolled as a second factor either**, because there is one route for both. That is a consequence of D37 as written, not of this branch, and it is reported upward as an observation for the architecture's owner rather than decided here. The documentation says it in the place a reader meets it.
+
+### A fifth way of signing wrongly, and the first one that isolates only the binding
+`E-484` · factor-webauthn · test infrastructure
+
+**Context.** The simulator had four wrong-signing modes. The gate reproduced the whole check against `@simplewebauthn/server` alone, confirmed all four reject, and proposed a fifth: sign correctly, then transmit a `clientDataJSON` differing only in `crossOrigin`.
+**Rejected.** Nothing — the argument for it was better than the reason it was missing.
+**Reason.** The four existing modes each break something the verifier checks *before* it checks the signature, or break the signature so badly that several checks could account for the refusal. This one leaves challenge, origin, relying-party hash and the user-verification flag all correct, and `crossOrigin` is a field the verifier does not read — so the **only** thing that can refuse it is the signature's binding to the bytes actually transmitted. `signed-without-the-client-data` tests that property obliquely; this tests it alone, and a case pins the concealed reason to `signature_invalid` rather than merely to a rejection.
+**Price.** The simulator needed one parameter and no other change, which is the good news and also the uncomfortable part: the mode was buildable from the start and the enumeration of four was a guess that stopped where it stopped. E-465 already said so — *"the enumeration is a guess at what a broken authenticator does"* — and naming the limitation did not make anyone go back and close it.

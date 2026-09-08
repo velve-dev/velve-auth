@@ -41,6 +41,14 @@ wrong:
   wrapped in an envelope key, so a stolen database dump on its own is not enough.
 - **Enumeration resistance is the default**, not a configuration option, and it
   lives in one place rather than at each endpoint.
+- **A passkey is a sign-in, and it is also a real second factor.** Discoverable
+  sign-in gives a session with no password in it at all; the same credential
+  after a password gives one with both. User verification is required at both,
+  and there is no option that lowers it — which is the difference between a
+  second factor and a button. The two authenticator flags that tell a hardware
+  key from a synchronised passkey are stored in their own columns and rewritten
+  on every sign-in, so an application can build a policy on them. The library
+  builds none.
 
 ## Requirements
 
