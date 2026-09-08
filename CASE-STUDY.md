@@ -796,6 +796,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Grund:* 1 wäre die vorsichtige Wahl für den Speicher und die falsche für alles andere: Auf jeder Node-20-Installation liefe genau eine Kennwortprüfung gleichzeitig, vier gleichzeitige Anmeldungen ständen in einer Reihe von je 90 ms, und die Wartegrenze aus L-1 würde unter Last erreicht, wo gar keine Last ist. Die Obergrenze 4 ist zugleich die Zahl, die die Dokumentation als Speicherobergrenze nennt (4 × 19 MiB), also verspricht der Rückfall nichts, was nicht ohnehin zugesichert ist.
 *Preis:* Auf einer Zweikern-Maschine unter Node 20 laufen bis zu vier Argon2id-Aufrufe statt zwei. Das ist kein Speicherproblem, aber es bedeutet mehr Kontextwechsel als nötig; wer das nicht will, setzt `concurrentHashLimit` ausdrücklich.
 
+*Aufgehoben durch:* E-183.
 **E-163 — Der `validate`-Einhängepunkt bekommt die normalisierte Form und gibt seine Begründung nicht heraus.**
 *Kontext:* L-7 gibt genau einen Einhängepunkt für eine Kennwortrichtlinie der Anwendung. Zwei Dinge waren offen: welche Fassung des Kennworts er sieht, und was aus seiner Ausnahme wird.
 *Verworfen:* (a) Ihm die rohe Eingabe zu geben. (b) Seine Ausnahme durchzureichen, damit die Anwendung ihren eigenen Grund anzeigen kann.
@@ -808,6 +809,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Grund:* Der zweite Angriffsvektor aus 5.18 (a) ist genau die Eingabelänge, und er greift schon vor dem KDF. Gemessen wird deshalb zuerst die Zahl der UTF-16-Code-Einheiten gegen die Byte-Obergrenze: Eine UTF-8-Kodierung ist nie kürzer als diese Zahl, die Prüfung lehnt also nichts ab, was bestehen würde, und sie braucht keine einzige Zuweisung. Erst danach wird normalisiert, dann werden Zeichen gezählt, dann Bytes — die letzte Messung, weil NFKC ein Kompatibilitätszeichen verlängern kann.
 *Preis:* Drei Messungen statt zwei, und die erste ist eine Abschätzung, die man beim Lesen erklärt bekommen muss. Der Kommentar dazu ist eine der wenigen Stellen im Modul, an denen ein Satz Prosa nötig ist.
 
+*Aufgehoben durch:* E-181.
 **E-165 — Der Anmeldepfad nimmt die Längenpolitik, nicht die Konfiguration.**
 *Kontext:* L-7 verlangt, dass `validate` beim Setzen und Ändern läuft und niemals bei der Anmeldung. Das ließe sich als Regel formulieren und in einer Prüfung festhalten.
 *Verworfen:* Eine gemeinsame Funktion mit einem Schalter `runValidateHook: boolean`.
@@ -844,6 +846,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Grund:* (a) wäre die sauberere Lösung und ist die, die eigentlich gehört: `knip.json` gehört aber keinem Feature dieser Welle, und die Dateizuständigkeit aus Regeln §5 ist bindend — ein Baustein, der eine gemeinsame Konfigurationsdatei anfasst, während drei andere parallel laufen, erzeugt genau den Konflikt, den die Regel verhindert. Das ist der unmittelbare Grund, und er wird hier als solcher genannt und nicht nachträglich zu einem technischen umgedeutet. Der zweite, davon unabhängige Grund trägt für sich: Ein Bündler, der ein absichtlich fehlendes Paket auflösen will, bricht den Bau eines Aufrufers, der die Bibliothek ohne Beschleuniger benutzt. (b) widerspricht 2.7, wo die Abhängigkeit gefunden und nicht übergeben wird.
 *Preis:* Der Bezeichner ist zur Bauzeit nicht mehr sichtbar. Kein Werkzeug — weder der Bündler noch die Dead-Code-Prüfung noch eine Abhängigkeitsanalyse — sieht die Verbindung; wer `hash-wasm` aus `package.json` entfernt, bekommt keinen Hinweis, sondern eine langsamere Bibliothek. Das ist ein echter Verlust an Nachvollziehbarkeit, und die Empfehlung an das Haupttor lautet, `knip.json` um `hash-wasm` zu ergänzen und das Literal danach zurückzuholen.
 
+*Aufgehoben durch:* E-180.
 **E-171 — Der veröffentlichte Firebase-Testvektor steht im Repository, alles andere wird je Lauf gezogen.**
 *Kontext:* Kennwörter und abgeleitete Hashes gehören nicht in eine eingecheckte Vorrichtung; die Schlüsselvorrichtungen der Welle 1 ziehen ihr Material deshalb bei jedem Lauf neu. Für `$fbscrypt$` verlangt 4.4 d) aber ausdrücklich einen Testvektor, weil ein vertauschtes Paar `n`/`r` **keinen Fehler** erzeugt, sondern nur Hashes, die nie passen.
 *Verworfen:* Auch den fbscrypt-Fall vollständig selbst zu erzeugen.
@@ -874,6 +877,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Grund:* Der Fall tritt nur nach einem Betriebsfehler ein — jemand hat eine Schlüsselversion aus dem Ring entfernt, unter der noch Zeilen geschrieben sind. Verkleidet als „falsches Kennwort" wäre das eine stille Massenaussperrung: Alle betroffenen Nutzer bekämen dieselbe Antwort wie bei einem Tippfehler, das Protokoll nennte `password_mismatch`, und niemand käme auf den Schlüsselring. Als benannter Fehler ist es laut, sofort sichtbar und in einer Minute behoben, indem die Version zurück in den Ring kommt. Genau dafür gibt es S-KEY-4.
 *Preis:* Eine Abweichung von der Gleichförmigkeit, und sie wird benannt: Solange der Betriebsfehler besteht, unterscheidet sich die Antwort für ein Konto mit einer toten Schlüsselversion (500) von der für ein nicht existierendes Konto (401). Ein Angreifer könnte in diesem Fenster aufzählen — aber nur, nachdem der Betreiber die betroffenen Konten bereits ausgesperrt hat, und das Fenster ist genau so lang, wie der Betreiber braucht, um einen sehr lauten Fehler zu bemerken.
 
+*Aufgehoben durch:* E-179.
 **E-176 — Ein nicht mehr angenommenes Altverfahren wird trotzdem gerechnet.**
 *Kontext:* `acceptLegacy` erlaubt es, den Bestand einzuengen: Wer bcrypt streicht, will keine bcrypt-Anmeldung mehr. Die naheliegende Umsetzung prüft das Verfahren nach dem Lesen der Zeile und lehnt ab, bevor ein KDF läuft.
 *Verworfen:* Genau das — früh ablehnen, keinen KDF-Aufruf verschwenden.
