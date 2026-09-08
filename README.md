@@ -151,7 +151,8 @@ plainly is more useful than a plugin that half-implements them.
   parameter, configuration option and table.
 - [`CASE-STUDY.md`](./CASE-STUDY.md) — why it is built this way. Every design
   decision, every rejected alternative, written during the build rather than
-  after it. In German.
+  after it. English from `E-189` on; the entries written before that are German
+  and are being converted feature by feature.
 - [`VELVE-AUTH-ARCHITEKTUR.md`](./VELVE-AUTH-ARCHITEKTUR.md) — the binding
   specification the implementation is measured against. In German.
 

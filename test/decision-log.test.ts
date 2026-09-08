@@ -13,18 +13,37 @@ const BINARY_DIRECTORY = /^assets\//;
 /** Smart punctuation and pasted text produce dashes other than the ASCII hyphen. */
 const CITATION = /\bE[-‐-―−](\d+)\b/g;
 const RANGE_ROW = /^\| E-(\d+) … E-(\d+) \| (.+?) \|$/gm;
-const ENTRY_HEADING = /^\*\*E-(\d+) — (.+?)\*\*/gm;
-const REQUIRED_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
+/** Entries written before the log turned English keep the German form (E-189). */
+const HEADING_FORMS = [
+	{
+		heading: /^\*\*E-(\d+) — (.+?)\*\*/gm,
+		numberGroup: 1,
+		titleGroup: 2,
+		parts: ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"],
+	},
+	{
+		heading: /^### (.+)\n`E-(\d+)` · /gm,
+		numberGroup: 2,
+		titleGroup: 1,
+		parts: ["**Context.**", "**Rejected.**", "**Reason.**", "**Price.**"],
+	},
+] as const;
 
-function entries(): { number: number; title: string; body: string }[] {
-	const found = [...caseStudy.matchAll(ENTRY_HEADING)];
-	return found.map((match, index) => ({
-		number: Number(match[1]),
-		title: match[2] as string,
-		body: caseStudy.slice(
-			match.index,
-			index + 1 < found.length ? found[index + 1]?.index : caseStudy.length,
-		),
+function entries(): { number: number; title: string; body: string; parts: readonly string[] }[] {
+	const found = HEADING_FORMS.flatMap((form) =>
+		[...caseStudy.matchAll(form.heading)].map((match) => ({
+			at: match.index,
+			number: Number(match[form.numberGroup]),
+			title: String(match[form.titleGroup]),
+			parts: form.parts,
+		})),
+	).sort((one, other) => one.at - other.at);
+
+	return found.map((entry, index) => ({
+		number: entry.number,
+		title: entry.title,
+		parts: entry.parts,
+		body: caseStudy.slice(entry.at, found[index + 1]?.at ?? caseStudy.length),
 	}));
 }
 
@@ -65,7 +84,7 @@ describe("decision log", () => {
 
 	it("gives every decision all four parts", () => {
 		const incomplete = log.flatMap((entry) => {
-			const missing = REQUIRED_PARTS.filter((part) => !entry.body.includes(part));
+			const missing = entry.parts.filter((part) => !entry.body.includes(part));
 			return missing.length === 0
 				? []
 				: [
