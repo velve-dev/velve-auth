@@ -70,3 +70,19 @@ describe("renaming the schema in a shipped statement", () => {
 		expect(rewritten).toContain(`CREATE SCHEMA IF NOT EXISTS ${target};`);
 	});
 });
+
+describe("string literals the first scanner mis-read", () => {
+	it("leaves an E-string with a backslash-escaped quote alone", () => {
+		expect(rewrite("SELECT E'it\\'s velve', velve.x")).toBe(`SELECT E'it\\'s velve', ${target}.x`);
+	});
+
+	it("does not treat a backslash as an escape in an ordinary string", () => {
+		expect(rewrite("SELECT 'a\\', velve.x")).toBe(`SELECT 'a\\', ${target}.x`);
+	});
+
+	it("reads a dollar quote that follows a keyword without a space", () => {
+		expect(rewrite("CREATE FUNCTION velve.f() RETURNS void AS$$SELECT 'velve'$$;")).toBe(
+			`CREATE FUNCTION ${target}.f() RETURNS void AS$$SELECT 'velve'$$;`,
+		);
+	});
+});

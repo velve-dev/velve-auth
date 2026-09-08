@@ -2,12 +2,24 @@ const SHIPPED_SCHEMA_NAME = "velve";
 const SCHEMA_NAME_MODIFIERS = new Set(["if", "not", "exists", "authorization"]);
 const SCHEMA_STATEMENTS = new Set(["create", "drop", "alter"]);
 
+type RegionKind = "code" | "comment" | "string" | "quoted-identifier" | "dollar-quoted";
+
+interface Region {
+	readonly kind: RegionKind;
+	readonly text: string;
+}
+
 function isWordCharacter(character: string): boolean {
 	return /[A-Za-z0-9_$]/.test(character);
 }
 
 function isWordStart(character: string): boolean {
 	return /[A-Za-z_]/.test(character);
+}
+
+function dollarQuoteTag(sql: string, start: number): string | null {
+	const match = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(start));
+	return match === null ? null : match[0];
 }
 
 function endOfLineComment(sql: string, start: number): number {
@@ -37,9 +49,20 @@ function endOfBlockComment(sql: string, start: number): number {
 	return sql.length;
 }
 
+function backslashesEscape(sql: string, quote: number): boolean {
+	const marker = sql[quote - 1] ?? "";
+	const beforeMarker = sql[quote - 2] ?? "";
+	return /[Ee]/.test(marker) && !isWordCharacter(beforeMarker);
+}
+
 function endOfQuoted(sql: string, start: number, quote: string): number {
+	const escapes = quote === "'" && backslashesEscape(sql, start);
 	let index = start + 1;
 	while (index < sql.length) {
+		if (escapes && sql[index] === "\\") {
+			index += 2;
+			continue;
+		}
 		if (sql[index] === quote) {
 			if (sql[index + 1] === quote) {
 				index += 2;
@@ -52,45 +75,68 @@ function endOfQuoted(sql: string, start: number, quote: string): number {
 	return sql.length;
 }
 
-function dollarQuoteTag(sql: string, start: number): string | null {
-	const match = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(start));
-	return match === null ? null : match[0];
-}
-
 function endOfDollarQuoted(sql: string, start: number, tag: string): number {
 	const closing = sql.indexOf(tag, start + tag.length);
 	return closing === -1 ? sql.length : closing + tag.length;
 }
 
-function readWord(sql: string, start: number): string {
-	let end = start;
-	while (end < sql.length && isWordCharacter(sql[end] as string)) {
-		end += 1;
-	}
-	return sql.slice(start, end);
-}
-
-function nextSignificantCharacter(sql: string, start: number): string {
-	let index = start;
-	while (index < sql.length && /\s/.test(sql[index] as string)) {
-		index += 1;
-	}
-	return sql[index] ?? "";
-}
-
-function endOfSkippableRegion(sql: string, index: number): number {
+function boundaryAt(sql: string, index: number): { kind: RegionKind; end: number } | null {
 	if (sql.startsWith("--", index)) {
-		return endOfLineComment(sql, index);
+		return { kind: "comment", end: endOfLineComment(sql, index) };
 	}
 	if (sql.startsWith("/*", index)) {
-		return endOfBlockComment(sql, index);
+		return { kind: "comment", end: endOfBlockComment(sql, index) };
 	}
 	const character = sql[index] as string;
-	if (character === "'" || character === '"') {
-		return endOfQuoted(sql, index, character);
+	if (character === "'") {
+		return { kind: "string", end: endOfQuoted(sql, index, character) };
+	}
+	if (character === '"') {
+		return { kind: "quoted-identifier", end: endOfQuoted(sql, index, character) };
 	}
 	const tag = character === "$" ? dollarQuoteTag(sql, index) : null;
-	return tag === null ? -1 : endOfDollarQuoted(sql, index, tag);
+	return tag === null ? null : { kind: "dollar-quoted", end: endOfDollarQuoted(sql, index, tag) };
+}
+
+function splitIntoRegions(sql: string): Region[] {
+	const regions: Region[] = [];
+	let index = 0;
+	let codeStart = 0;
+
+	while (index < sql.length) {
+		const boundary = boundaryAt(sql, index);
+		if (boundary === null) {
+			index += 1;
+			continue;
+		}
+		if (index > codeStart) {
+			regions.push({ kind: "code", text: sql.slice(codeStart, index) });
+		}
+		regions.push({ kind: boundary.kind, text: sql.slice(index, boundary.end) });
+		index = boundary.end;
+		codeStart = index;
+	}
+
+	if (codeStart < sql.length) {
+		regions.push({ kind: "code", text: sql.slice(codeStart) });
+	}
+	return regions;
+}
+
+function readWord(code: string, start: number): string {
+	let end = start;
+	while (end < code.length && isWordCharacter(code[end] as string)) {
+		end += 1;
+	}
+	return code.slice(start, end);
+}
+
+function nextSignificantCharacter(code: string, start: number): string {
+	let index = start;
+	while (index < code.length && /\s/.test(code[index] as string)) {
+		index += 1;
+	}
+	return code[index] ?? "";
 }
 
 class SchemaDeclarationTracker {
@@ -110,38 +156,38 @@ class SchemaDeclarationTracker {
 	}
 }
 
-export function applySchemaName(sql: string, schema: string): string {
-	if (schema === SHIPPED_SCHEMA_NAME) {
-		return sql;
-	}
-
-	const tracker = new SchemaDeclarationTracker();
+function rewriteCode(code: string, schema: string, tracker: SchemaDeclarationTracker): string {
 	let rewritten = "";
 	let index = 0;
 
-	while (index < sql.length) {
-		const skipped = endOfSkippableRegion(sql, index);
-		if (skipped !== -1) {
-			rewritten += sql.slice(index, skipped);
-			index = skipped;
-			continue;
-		}
-
-		const character = sql[index] as string;
+	while (index < code.length) {
+		const character = code[index] as string;
 		if (!isWordStart(character)) {
 			rewritten += character;
 			index += 1;
 			continue;
 		}
 
-		const word = readWord(sql, index);
+		const word = readWord(code, index);
 		const isShippedName = word.toLowerCase() === SHIPPED_SCHEMA_NAME;
 		const declaresTheSchema = tracker.declaresTheSchema(word);
-		const qualifiesSomething = nextSignificantCharacter(sql, index + word.length) === ".";
+		const qualifiesSomething = nextSignificantCharacter(code, index + word.length) === ".";
 
 		rewritten += isShippedName && (qualifiesSomething || declaresTheSchema) ? schema : word;
 		index += word.length;
 	}
 
 	return rewritten;
+}
+
+export function applySchemaName(sql: string, schema: string): string {
+	if (schema === SHIPPED_SCHEMA_NAME) {
+		return sql;
+	}
+	const tracker = new SchemaDeclarationTracker();
+	return splitIntoRegions(sql)
+		.map((region) =>
+			region.kind === "code" ? rewriteCode(region.text, schema, tracker) : region.text,
+		)
+		.join("");
 }
