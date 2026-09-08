@@ -61,8 +61,10 @@ export const GET = handler;
 export const POST = handler;
 ```
 
-Both verbs must be wired: seven routes are `GET`, and a framework that only
-receives `POST` answers 404 to every one of them.
+Both verbs must be wired. The route table carries `GET` routes as well as `POST`
+ones — how many depends on the identity mode and the configuration, since the
+table is filtered by both (3.15 D.3) — and a framework that only receives `POST`
+answers 404 to every one of them.
 
 `(Request) => Promise<Response>` — Web standards only, no Node built-ins.
 
@@ -79,7 +81,7 @@ handler and not by the application (L-6). A response with a body carries
 | Situation | Answer |
 |---|---|
 | Handler returned a value | `200` with that value as JSON |
-| Handler returned `redirectTo(path)` | `302` with `Location: <path>` and no body |
+| Handler returned `redirectTo(…)` | `302` with `Location: <path>` and no body |
 | Handler returned nothing | `204` with no body |
 | Method and path match no route | `404` with no body — the 25 error codes have no code for "no such route" |
 | Anything threw | The status of the mapped error code, with the error envelope below |
@@ -148,8 +150,7 @@ way — a route counts against the buckets its `rateLimit` field names, and
 `"none"` means no bucket of that kind. What the handler guarantees is the order:
 where a check is declared, nothing else runs before it.
 
-The
-check parses both sides and compares `new URL(x).origin` for equality against the
+The check parses both sides and compares `new URL(x).origin` for equality against the
 configured `origins` (S-CSRF-2). There is no prefix, substring, wildcard or
 pattern comparison anywhere in the library — the two published advisories in this
 class were `startsWith` on a URL string. A missing `Origin` header, an opaque
@@ -299,8 +300,8 @@ five fields, and only these five:
 | `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`; there is no way to omit the field and skip the check. |
 | `sessionToken` | `string?` | What `__Host-velve_session` would have carried; used where the route declares `caller: "session"`. |
 | `pendingToken` | `string?` | What `__Host-velve_pending` would have carried; used where the route declares `caller: "pending"`. |
-| `ipAddress` | `string \| null?` | The address the rate limiter counts against. Absent means no address, which shares one bucket per route (S-RATE-4). |
-| `userAgent` | `string \| null?` | Stored as session metadata, truncated by default (L-10). |
+| `ipAddress` | `string \| null?` | Passed to the rate limiter as the scope of the address bucket, unchanged. Absent becomes `null`, and the seam is then obliged to count that request rather than skip it (S-RATE-4); normalising an address to its `/64` prefix is the limiter's work (S-RATE-1), not this layer's. |
+| `userAgent` | `string \| null?` | Put on `RequestContext` and nothing else. Whatever stores it is obliged to truncate it by default (L-10); this layer neither stores nor shortens it. |
 
 These five names are reserved: a route declaring an input field of the same name
 is a start error, because the envelope would swallow it here and the HTTP path
