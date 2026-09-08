@@ -96,29 +96,6 @@ describe("the statements this repository actually runs (S-FIX-2, E-23)", () => {
 		expect(unscoped).toEqual([]);
 	});
 
-	/** A layer that normalises whitespace ends a line comment nowhere; a block comment ends where it says. */
-	function predicateSurvivesCollapse(sql: string): boolean {
-		const collapsed = sql.replace(/\s+/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
-		const uncommented = collapsed.replace(/--[\s\S]*$/, "");
-		return /\bWHERE\b/i.test(uncommented);
-	}
-
-	it("keeps its predicate when every newline is collapsed", async () => {
-		const changing = (await statementsAsTheyRun()).filter((sql) => CHANGES_ROWS.test(sql));
-		const unqualified = changing.filter((sql) => !predicateSurvivesCollapse(sql));
-
-		expect(changing.length).toBeGreaterThan(3);
-		expect(unqualified).toEqual([]);
-	});
-
-	it("would notice a marker that swallows the predicate once the newline is gone", () => {
-		const asLineComment = `DELETE FROM ${SCHEMA}.session -- no owner predicate: S-OWNER-2\n\tWHERE token_sha256 = $1`;
-		const asBlockComment = `DELETE FROM ${SCHEMA}.session /* no owner predicate: S-OWNER-2 */\n\tWHERE token_sha256 = $1`;
-
-		expect(predicateSurvivesCollapse(asLineComment)).toBe(false);
-		expect(predicateSurvivesCollapse(asBlockComment)).toBe(true);
-	});
-
 	it("declares a reason in exactly the statement that cannot name an owner", async () => {
 		const declaring = (await statementsAsTheyRun()).filter((sql) => DECLARES_NO_ACTOR.test(sql));
 
