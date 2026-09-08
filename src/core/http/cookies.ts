@@ -49,17 +49,31 @@ export interface CookieCollector extends CookieWriter {
 
 const COOKIE_VALUE_CHARACTERS = /^[A-Za-z0-9._~-]*$/;
 const COOKIE_NAME_CHARACTERS = /^__Host-[A-Za-z0-9_-]+$/;
+const COOKIE_MAXIMUM_AGE_LIMIT_IN_SECONDS = 34_560_000;
+
+const LAX_ATTRIBUTES = "HttpOnly; Secure; SameSite=Lax; Path=/";
+const STRICT_ATTRIBUTES = "HttpOnly; Secure; SameSite=Strict; Path=/";
+const WRITABLE_ATTRIBUTES = new Set<string>([LAX_ATTRIBUTES, STRICT_ATTRIBUTES]);
 
 function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
-	return sameSite === "lax"
-		? "HttpOnly; Secure; SameSite=Lax; Path=/"
-		: "HttpOnly; Secure; SameSite=Strict; Path=/";
+	return sameSite === "lax" ? LAX_ATTRIBUTES : STRICT_ATTRIBUTES;
 }
 
+function isWritableAge(maximumAgeInSeconds: number): boolean {
+	return (
+		Number.isInteger(maximumAgeInSeconds) &&
+		maximumAgeInSeconds >= 0 &&
+		maximumAgeInSeconds <= COOKIE_MAXIMUM_AGE_LIMIT_IN_SECONDS
+	);
+}
+
+// S-COOKIE-2: every part interpolated into the header is checked, not only the parts an attack was expected from.
 export function serializeCookie(instruction: CookieInstruction): string {
 	if (
 		!COOKIE_NAME_CHARACTERS.test(instruction.name) ||
-		!COOKIE_VALUE_CHARACTERS.test(instruction.value)
+		!COOKIE_VALUE_CHARACTERS.test(instruction.value) ||
+		!isWritableAge(instruction.maximumAgeInSeconds) ||
+		!WRITABLE_ATTRIBUTES.has(instruction.attributes)
 	) {
 		throw new VelveError("internal_error");
 	}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	assertCookieNamesAreEnumerated,
+	type CookieInstruction,
 	type CookiePolicy,
 	createCookieCollector,
 	DEFAULT_COOKIE_NAMES,
@@ -104,6 +105,37 @@ describe("cookies", () => {
 		expect(collector.collect().map(serializeCookie)).toEqual([
 			"__Host-velve_session=token-value; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax; Path=/",
 		]);
+	});
+
+	it("refuses every part of the header that was not built from the enumeration", () => {
+		for (const maximumAgeInSeconds of [Number.NaN, -1, 1.5, 60.000001, 1e21]) {
+			expect(() =>
+				serializeCookie({
+					name: "__Host-velve_session",
+					value: "token",
+					maximumAgeInSeconds,
+					attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+				}),
+			).toThrow(VelveError);
+		}
+	});
+
+	it("refuses an attribute set a caller outside TypeScript could still hand over", () => {
+		for (const attributes of [
+			"HttpOnly; Secure; SameSite=Lax; Path=/; Domain=.evil.com",
+			"SameSite=None; Path=/",
+		]) {
+			const fromJavaScript: CookieInstruction = JSON.parse(
+				JSON.stringify({
+					name: "__Host-velve_session",
+					value: "token",
+					maximumAgeInSeconds: 60,
+					attributes,
+				}),
+			);
+
+			expect(() => serializeCookie(fromJavaScript)).toThrow(VelveError);
+		}
 	});
 
 	it("reads the enumerated cookies and ignores the rest", () => {
