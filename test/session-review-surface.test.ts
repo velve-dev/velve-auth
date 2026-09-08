@@ -173,12 +173,12 @@ describe("code style the rules make a finding", () => {
 			}
 		}
 
+		// E-245 pinned four and said the fifth would have to be argued for. This is the other
+		// direction: `createVelveAuth` now calls `createSessionService`, so the list is one shorter.
 		expect(unused.sort()).toEqual([
-			// The module's own factory; the feature that assembles the instance does not exist yet.
 			"session/config.ts: DEFAULT_SESSION_CONFIG",
 			"session/config.ts: InvalidSessionConfigError",
 			"session/freshness.ts: isSessionFresh",
-			"session/service.ts: createSessionService",
 		]);
 	});
 });
