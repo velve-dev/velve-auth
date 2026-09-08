@@ -1,4 +1,5 @@
 import type { UsernameRules } from "./configuration.js";
+import { caseFolded, codePointCount } from "./fold.js";
 
 export type Normalisation<Value, Rejection> =
 	| { readonly accepted: true; readonly value: Value }
@@ -24,19 +25,6 @@ function accept<Value>(value: Value): Normalisation<Value, never> {
 
 function reject<Rejection>(rejection: Rejection): Normalisation<never, Rejection> {
 	return { accepted: false, rejection };
-}
-
-/**
- * Lowercasing a whole string applies the Final_Sigma rule, so `ΟΔΟΣ` becomes `οδος` where
- * PostgreSQL's `lower()` gives `οδοσ` and two accounts then hold one name; per code point
- * there is no context for that rule to read.
- */
-function caseFolded(value: string): string {
-	return [...value].map((character) => character.toLowerCase()).join("");
-}
-
-function codePointCount(value: string): number {
-	return [...value].length;
 }
 
 function isStructurallyAnAddress(candidate: string): boolean {

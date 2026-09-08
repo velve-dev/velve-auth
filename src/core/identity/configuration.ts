@@ -1,4 +1,5 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
+import { comparisonFormOf } from "./fold.js";
 
 export interface UsernameRules {
 	readonly allowedCharacters: RegExp;
@@ -146,10 +147,6 @@ function assertLengthBounds(minimumLength: number, maximumLength: number): void 
 			`maximumLength must be a whole number of at least minimumLength, not ${maximumLength}`,
 		);
 	}
-}
-
-function comparisonFormOf(name: string): string {
-	return name.normalize("NFKC").toLowerCase();
 }
 
 function resolveUsernameRules(overrides: Partial<UsernameRules> | undefined): UsernameRules {
