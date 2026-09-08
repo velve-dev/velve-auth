@@ -91,7 +91,10 @@ describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 
 describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 	it("names the table in the schema that creates it and in the repository, nowhere else", () => {
+		// L-11 adds a third: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
+		// and naming them is what it does. It reads no token and writes none.
 		expect(pathsMatching(/one_time_token/)).toStrictEqual([
+			`${coreDirectory}/auth/maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
 			repositoryPath,
 		]);
