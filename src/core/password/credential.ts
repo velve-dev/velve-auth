@@ -91,11 +91,15 @@ export function createPasswordCredentialRepository(
 		async write({ userId, phc, scheme }) {
 			const sealed = await sealPhc(options.keys, phc);
 
+			// S-OWNER-2: the conflict target is the owner column, and the predicate says so in the
+			// statement rather than leaving it to be inferred from the primary key (E-185).
 			await options.driver.query(
-				`INSERT INTO ${table} (user_id, phc, key_version, scheme) VALUES ($1, $2, $3, $4)
+				`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme)
+				 VALUES ($1, $2, $3, $4)
 				 ON CONFLICT (user_id) DO UPDATE
 				 SET phc = EXCLUDED.phc, key_version = EXCLUDED.key_version,
-				     scheme = EXCLUDED.scheme, updated_at = now()`,
+				     scheme = EXCLUDED.scheme, updated_at = now()
+				 WHERE credential.user_id = $1`,
 				[userId, sealed.ciphertext, sealed.keyVersion, scheme],
 			);
 		},

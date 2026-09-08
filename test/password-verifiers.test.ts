@@ -11,7 +11,10 @@ import { decodeStandardBase64 } from "../src/core/password/base64.js";
 import { ARGON2ID_FLOOR, resolvePasswordConfig } from "../src/core/password/config.js";
 import {
 	argon2CostIsAcceptable,
+	MAXIMUM_STORED_ARGON2_ITERATIONS,
 	MAXIMUM_STORED_MEMORY_KIB,
+	MAXIMUM_STORED_PARALLELISM,
+	MAXIMUM_STORED_PBKDF2_ITERATIONS,
 	pbkdf2CostIsAcceptable,
 	scryptCostIsAcceptable,
 } from "../src/core/password/limits.js";
@@ -260,10 +263,23 @@ describe("Firebase scrypt", () => {
 describe("the ceiling on a stored cost parameter", () => {
 	it("names a ceiling no documented source reaches", () => {
 		expect(MAXIMUM_STORED_MEMORY_KIB).toBe(65536);
+		expect(MAXIMUM_STORED_ARGON2_ITERATIONS).toBe(64);
+		expect(MAXIMUM_STORED_PARALLELISM).toBe(64);
+		expect(MAXIMUM_STORED_PBKDF2_ITERATIONS).toBe(2_000_000);
+
+		// Better Auth's scrypt at 32 MiB, Firebase at 16 MiB, Django's PBKDF2 at 1.2 million.
 		expect(scryptCostIsAcceptable(14, 16, 1)).toBe(true);
 		expect(scryptCostIsAcceptable(14, 8, 1)).toBe(true);
 		expect(argon2CostIsAcceptable(19456, 2, 1)).toBe(true);
 		expect(pbkdf2CostIsAcceptable(1_200_000)).toBe(true);
+	});
+
+	it("refuses at the value one past each ceiling", () => {
+		expect(argon2CostIsAcceptable(MAXIMUM_STORED_MEMORY_KIB + 1, 2, 1)).toBe(false);
+		expect(argon2CostIsAcceptable(1024, MAXIMUM_STORED_ARGON2_ITERATIONS + 1, 1)).toBe(false);
+		expect(argon2CostIsAcceptable(1024, 2, MAXIMUM_STORED_PARALLELISM + 1)).toBe(false);
+		expect(scryptCostIsAcceptable(14, 8, MAXIMUM_STORED_PARALLELISM + 1)).toBe(false);
+		expect(pbkdf2CostIsAcceptable(MAXIMUM_STORED_PBKDF2_ITERATIONS + 1)).toBe(false);
 	});
 
 	it("refuses a credential whose parameters would claim more than the ceiling", async () => {

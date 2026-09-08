@@ -283,13 +283,13 @@ describe("S-DOS-3 — where the concurrency ceiling comes from", () => {
 		}
 	});
 
-	// S-DOS-3 sizes the semaphore at `min(4, cpus)`. A runtime that reports no core count gets the
-	// ceiling instead of the minimum, which is the deviation E-162 records: on a one-core Node 20
-	// container the bound is four derivations and about 76 MiB, not one and 19 MiB.
-	it("falls back to the ceiling, not to the core count, when the runtime reports none", () => {
+	// S-DOS-3 sizes the semaphore at `min(4, cpus)`, so a runtime that reports no core count may
+	// not be answered with the ceiling: on a one-core Node 20 container that is four derivations
+	// and about 76 MiB where the requirement allows one and 19 MiB (E-183, superseding E-162).
+	it("falls back to one, not to the ceiling, when the runtime reports none", () => {
 		Reflect.deleteProperty(globalThis, "navigator");
 
-		expect(resolvePasswordConfig().concurrentHashLimit).toBe(4);
+		expect(resolvePasswordConfig().concurrentHashLimit).toBe(1);
 	});
 
 	it("takes an explicit limit over both", () => {
