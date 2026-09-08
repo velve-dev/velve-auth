@@ -7,6 +7,7 @@
 		"@noble/hashes",
 		"@simplewebauthn/server",
 		"bcryptjs",
+		"hash-wasm",
 		"jose",
 		"otpauth"
 	]
