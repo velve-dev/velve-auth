@@ -24,8 +24,6 @@ import {
 const DEFAULTS = resolvePasswordConfig();
 const PASSWORD = drawTestPassword();
 const WRONG_PASSWORD = drawTestPassword();
-/** Assembled for the same reason the module assembles it (E-170). */
-const ACCELERATOR_SPECIFIER = ["hash", "wasm"].join("-");
 
 let stored: StoredHashes;
 
@@ -191,14 +189,14 @@ describe("the hash-wasm accelerator", () => {
 
 	it("falls back to the pure path when the dependency is not installed", async () => {
 		vi.resetModules();
-		vi.doMock(ACCELERATOR_SPECIFIER, () => {
+		vi.doMock("hash-wasm", () => {
 			throw new Error("the optional accelerator is not installed");
 		});
 
 		const isolated = await import("../src/core/password/argon2.js");
 		expect((await isolated.selectArgon2Engine(0x13)).name).toBe("noble");
 
-		vi.doUnmock(ACCELERATOR_SPECIFIER);
+		vi.doUnmock("hash-wasm");
 		vi.resetModules();
 	});
 });

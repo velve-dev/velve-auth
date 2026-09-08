@@ -152,14 +152,11 @@ export async function createArgon2idHash(
 	});
 }
 
-// The specifier is assembled rather than written, so that neither this repository's dead-code
-// check nor a consumer's bundler resolves an optional peer dependency that is allowed to be
-// absent; a build must not fail over a package the library works without (E-170).
-const ACCELERATOR_SPECIFIER = ["hash", "wasm"].join("-");
-
 async function loadAccelerator(): Promise<Argon2Engine | null> {
 	try {
-		const loaded: unknown = await import(ACCELERATOR_SPECIFIER);
+		// A literal, so a dependency audit can see that an advisory against this package reaches
+		// this line; the dead-code check exempts it by name instead (E-180).
+		const loaded: unknown = await import("hash-wasm");
 		return isAccelerator(loaded) ? acceleratedArgon2(loaded) : null;
 	} catch {
 		return null;

@@ -17,6 +17,7 @@ import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import {
 	assertStoredKeyVersionsAreKnown,
 	PasswordKeyRingError,
+	type StoredKeyVersionCheckOptions,
 } from "../src/core/password/startup.js";
 import {
 	ABSENT_USER_ID,
@@ -414,11 +415,12 @@ describe("the key ring is checked at startup, not per sign-in", () => {
 
 	it("passes on an empty table, and asks the database once", async () => {
 		recorder.calls.length = 0;
-
-		await assertStoredKeyVersionsAreKnown({
+		const options: StoredKeyVersionCheckOptions = {
 			driver: recorder.driver,
 			keys: environment.keys,
-		});
+		};
+
+		await assertStoredKeyVersionsAreKnown(options);
 
 		expect(recorder.calls).toHaveLength(1);
 		expect(recorder.calls[0]?.sql).toContain("SELECT DISTINCT key_version");
