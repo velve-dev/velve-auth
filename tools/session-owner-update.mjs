@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const SESSION_TABLE = /\b(?:velve\s*\.\s*)?session\b/i;
 const SETS_OWNER = /\bset\b[\s\S]*\buser_id\b/i;
@@ -84,30 +87,34 @@ export function reassignsSessionOwner(statement) {
 	return REASSIGNMENT.some((pattern) => pattern.test(statement));
 }
 
-/** The rule governs SQL that runs, so prose about it is out of scope — and the
- * detector's own tests must contain the statement in order to test for it. */
-const EXECUTABLE_SOURCE = /\.(ts|mts|mjs|sql)$/;
-const DESCRIBES_THE_RULE = "test/session-owner-update.test.ts";
+/** The rule governs SQL that runs, so prose about it — the specification, the
+ * decision log — is out of scope. No executable file is exempt: this detector's
+ * own cases live in a JSON fixture precisely so none has to be. */
+const EXECUTABLE_SOURCE = /\.(m?[jt]sx?|c[jt]s|sql|psql|ddl|sh)$/;
+const LINE_COMMENT_OPENER = { sql: "--", psql: "--", ddl: "--", sh: "#" };
 
 function executableSourceFiles() {
 	const listed = execFileSync(
 		"git",
 		["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-		{ encoding: "utf8" },
+		{ cwd: repositoryRoot, encoding: "utf8" },
 	);
 	return listed
 		.split("\0")
 		.filter(Boolean)
-		.filter((path) => EXECUTABLE_SOURCE.test(path))
-		.filter((path) => path !== DESCRIBES_THE_RULE);
+		.filter((path) => EXECUTABLE_SOURCE.test(path));
 }
 
 export function scanTree() {
 	const offenders = [];
 	let statementsScanned = 0;
 	for (const path of executableSourceFiles()) {
-		const opener = path.endsWith(".sql") ? "--" : "//";
-		for (const statement of statementsIn(readFileSync(path, "utf8"), opener)) {
+		const extension = path.split(".").pop() ?? "";
+		const opener = LINE_COMMENT_OPENER[extension] ?? "//";
+		for (const statement of statementsIn(
+			readFileSync(`${repositoryRoot}/${path}`, "utf8"),
+			opener,
+		)) {
 			if (!/\b(update|merge)\b/i.test(statement)) continue;
 			statementsScanned += 1;
 			if (reassignsSessionOwner(statement)) {
