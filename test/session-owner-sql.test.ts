@@ -97,13 +97,10 @@ describe("the statements this repository actually runs (S-FIX-2, E-23)", () => {
 		);
 	});
 
-	/** E-229, E-237: pinned so the imprecision is visible; when the gate learns the difference, this test says so. */
-	it("is reported by the gate's pattern all the same, which reads a predicate as an assignment", async () => {
+	/** E-141 sharpened the gate's pattern to read the assignment list; this holds it to that. */
+	it("is left alone by the gate's pattern too, now that it reads the assignment list", async () => {
 		const flagged = (await statementsAsTheyRun()).filter(reassignsSessionOwner);
 
-		expect(flagged.map((sql) => sql.trimStart().slice(0, 6))).toEqual(["UPDATE"]);
-		expect(flagged.map(assignedColumns).every((assigned) => !/\buser_id\b/.test(assigned))).toBe(
-			true,
-		);
+		expect(flagged).toEqual([]);
 	});
 });
