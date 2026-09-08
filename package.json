@@ -34,7 +34,8 @@
 		"README.md",
 		"DOCUMENTATION.md",
 		"CASE-STUDY.md",
-		"LICENSE"
+		"LICENSE",
+		"NOTICE"
 	],
 	"exports": {
 		".": {

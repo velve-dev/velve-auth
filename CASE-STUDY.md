@@ -330,8 +330,10 @@ by a new entry — the only edit to an existing entry this log permits, made on
 the repository owner's explicit instruction, because the sentence states a fact
 about the package and not a reason that was held at the time. Why Apache and
 not MIT: Apache 2.0 is exactly as permissive — not copyleft, usable in a closed
-product, nothing owed back beyond the notice — and adds the two things MIT is
-silent about. An express patent grant, so a contributor cannot later assert a
+product, changes kept to yourself — and adds the two things MIT is silent
+about. It is not obligation-free where MIT is: §4(b) and §4(d) ask a
+redistributor to mark modified files and carry a NOTICE forward. See `E-505`
+for the decision and its price. An express patent grant, so a contributor cannot later assert a
 patent over their own contribution against this project or against anyone
 depending on it, with the grant terminating for whoever sues. And a trademark
 reservation, section 6, so a fork is free to exist and not free to call itself
@@ -2782,7 +2784,8 @@ out of the grant, so a fork may continue to call itself Velve Auth.
 
 **Rejected.** (a) Staying on MIT, on the strength of it being the string every
 developer recognises and every competitor uses — Better Auth, Lucia and Auth.js
-are all MIT. (b) A copyleft or source-available licence. (c) Dual licensing.
+are MIT; Auth.js is ISC, which is MIT with two clauses removed and no more
+protective. (b) A copyleft or source-available licence. (c) Dual licensing.
 
 **Reason.** (b) fails on what this package is: a dependency that runs inside
 someone else's process. A licence that reaches the calling application makes
@@ -2790,18 +2793,26 @@ the library unusable in the procurement of the firms it is aimed at, and it
 contradicts the positioning — the argument of this project is that the security
 work can be read and checked, which requires that it can be read, forked and
 vendored. (c) has nothing to sell separately. (a) is the real alternative and
-it loses on exactly two clauses: Apache 2.0 is equally permissive, imposes
-nothing further on a user beyond the notice MIT already requires, and closes
-both gaps. Enterprise legal review frequently prefers it for the patent clause.
+it loses on exactly two clauses. Apache 2.0 is equally permissive and closes
+both gaps. It is not obligation-free where MIT is: §4(b) requires modified
+files to be marked as modified and §4(d) requires a NOTICE's attributions to
+be carried forward, neither of which MIT asks. Both attach on redistribution
+rather than on use, so they cost a consumer nothing and a redistributor two
+lines — but the first draft of this entry claimed Apache imposed nothing
+further at all, which was false and is corrected here rather than left. Enterprise legal review frequently prefers it for the patent clause.
 The timing decided it as much as the substance: relicensing requires every
 contributor's consent, and today the contributor set is one person. That is the
 cheapest this change will ever be.
 
-**Price.** The file is 11,358 bytes where MIT was eleven lines, and a developer
+**Price.** The file is 11,358 bytes where MIT's was 1,062, and a developer
 scanning a package page reads "Apache-2.0" a beat slower than "MIT". Two places
 outside the licence itself asserted MIT and had to move with it: `CLAUDE.md` §1
 and `README.md`. A third, E-47's *Kontext*, was corrected in place — the single
 edit to an existing entry this log has permitted, made on the owner's explicit
-instruction and recorded in that entry rather than hidden. Every such statement
-is a second place the licence is written down, and nothing checks that they
-agree with `package.json`.
+instruction and recorded in that entry rather than hidden. Every such statement is a
+second place the licence is written down, and nothing checks that they agree
+with `package.json`. This entry first counted three and missed the two the same
+commit created — `NOTICE`, which states the licence in prose rather than as an
+SPDX token and is therefore the form a future grep is least likely to catch,
+and this paragraph. Undercounting the hazard while warning about it is the
+hazard.
