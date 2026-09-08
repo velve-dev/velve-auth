@@ -17,10 +17,11 @@ const POLICY: CookiePolicy = {
 };
 
 describe("cookies", () => {
-	it("names the two cookies from the specification", () => {
+	it("names the three cookies from the specification", () => {
 		expect(DEFAULT_COOKIE_NAMES).toEqual({
 			session: "__Host-velve_session",
 			pending: "__Host-velve_pending",
+			oauthState: "__Host-velve_oauth_state",
 		});
 	});
 
@@ -98,7 +99,11 @@ describe("cookies", () => {
 	it("writes the enumerated name even when the policy carries another one", () => {
 		const collector = createCookieCollector({
 			...POLICY,
-			names: { session: "__Host-velve_session=decoy; Domain=.evil.com", pending: "__Host-x" },
+			names: {
+				session: "__Host-velve_session=decoy; Domain=.evil.com",
+				pending: "__Host-x",
+				oauthState: "__Host-y",
+			},
 		});
 		collector.setSession("token-value");
 
@@ -163,7 +168,7 @@ describe("cookies", () => {
 	it("reads the enumerated cookies and ignores the rest", () => {
 		expect(
 			readCookies("theme=dark; __Host-velve_session=abc; theme=light", DEFAULT_COOKIE_NAMES),
-		).toEqual({ session: "abc", pending: null });
+		).toEqual({ session: "abc", pending: null, oauthState: null });
 	});
 
 	it("rejects a request that carries the same enumerated cookie twice", () => {

@@ -89,6 +89,7 @@ describe("cookie policy — S-COOKIE-1 to S-COOKIE-6", () => {
 		const smuggled: CookieNames = {
 			session: "__Host-velve_session=decoy; Domain=.evil.com; leftover",
 			pending: PENDING_COOKIE,
+			oauthState: "__Host-velve_oauth_state=decoy; Domain=.evil.com",
 		};
 
 		expect(() =>
@@ -106,6 +107,7 @@ describe("cookie policy — S-COOKIE-1 to S-COOKIE-6", () => {
 			names: {
 				session: "__Host-velve_session=decoy; Domain=.evil.com; leftover",
 				pending: PENDING_COOKIE,
+				oauthState: "__Host-velve_oauth_state=decoy; Domain=.evil.com",
 			},
 			sameSite: "lax",
 			sessionMaximumAgeInSeconds: 60,
