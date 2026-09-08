@@ -1,9 +1,13 @@
 import { type Actor, actorOfResolvedSession, type ResolvedSession } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
-import { createSessionRepository, type SessionInsert } from "../db/repositories/session.js";
+import {
+	createSessionRepository,
+	PreviousSessionMissingError,
+	type SessionInsert,
+} from "../db/repositories/session.js";
 import type { AuthenticationFactor, Session } from "../http/caller.js";
 import type { Clock } from "../http/environment.js";
-import { VelveError } from "../http/error-map.js";
+import { ConcealedError, VelveError } from "../http/error-map.js";
 import { type SessionConfig, type SessionSettings, sessionSettingsOf } from "./config.js";
 import { assertSessionIsFresh } from "./freshness.js";
 import {
@@ -77,6 +81,14 @@ export interface SessionService {
 }
 
 const WRITE_NOW = 0;
+
+/** A session that vanished between its resolution and its replacement is a session the caller no longer has. */
+function replacedSessionFailure(cause: unknown): never {
+	if (cause instanceof PreviousSessionMissingError) {
+		throw new ConcealedError("session_not_found");
+	}
+	throw cause;
+}
 
 /** E-93, S-OWNER-7: the brand of a resolved session is asserted here and nowhere else. */
 function resolutionOf(userId: string, session: Session, observedAt: Date): SessionResolution {
@@ -162,10 +174,12 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		// S-FIX-1: every change of the trust level ends the previous session and begins a new one.
 		async reissue({ previousToken, userId, factors, observed }) {
 			const issued = createSessionToken();
-			const session = await sessions.replaceSession({
-				previousTokenHash: sessionTokenHash(previousToken),
-				insert: insertFor(userId, factors, observed, issued.tokenHash),
-			});
+			const session = await sessions
+				.replaceSession({
+					previousTokenHash: sessionTokenHash(previousToken),
+					insert: insertFor(userId, factors, observed, issued.tokenHash),
+				})
+				.catch(replacedSessionFailure);
 			return { token: issued.token, session };
 		},
 

@@ -1308,6 +1308,14 @@ with `SessionOwnerMismatchError` if the row it removed belonged to a different
 user than the row it is about to write — a re-issue cannot move a session
 between accounts even by mistake.
 
+`replaceSession` also refuses, with `PreviousSessionMissingError`, when the
+`DELETE` matched no row: a replacement that replaces nothing is an issue, and
+issuing is what `insertSession` is for. Two requests re-issuing the same session
+at the same moment therefore leave one live session rather than two — the loser's
+`DELETE` matches nothing once the winner has committed, and its transaction rolls
+back. `SessionService.reissue` turns that refusal into `session_required`,
+because a session that vanished mid-flight is a session the caller no longer has.
+
 `replaceEverySessionOfUser` is what a password change uses: it removes **every**
 session of the user and issues one new one, in one transaction. There is no
 parameter that keeps the others (S-FIX-6).

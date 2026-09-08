@@ -11,6 +11,15 @@ const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 	"oauth",
 ];
 
+export class PreviousSessionMissingError extends Error {
+	readonly code = "previous_session_missing";
+
+	constructor() {
+		super("the session this re-issue replaces was already gone");
+		this.name = "PreviousSessionMissingError";
+	}
+}
+
 export class SessionOwnerMismatchError extends Error {
 	readonly code = "session_owner_mismatch";
 
@@ -306,7 +315,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		replaceSession({ previousTokenHash, insert }) {
 			return options.driver.transaction(async (tx) => {
 				const removed = await deleteSessionByTokenHash(tx, previousTokenHash);
-				if (removed !== null && removed.userId !== insert.userId) {
+				// E-239: the removal is what makes this a replacement; without it the caller ends up with two live sessions.
+				if (removed === null) {
+					throw new PreviousSessionMissingError();
+				}
+				if (removed.userId !== insert.userId) {
 					throw new SessionOwnerMismatchError();
 				}
 				return insertSession(tx, insert);

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
 import {
 	createSessionRepository,
+	PreviousSessionMissingError,
 	SessionOwnerMismatchError,
 	type SessionRepository,
 } from "../src/core/db/repositories/session.js";
@@ -300,13 +301,16 @@ describe("replacing a session (S-FIX-1, E-23)", () => {
 		);
 	});
 
-	it("issues a session even when the previous token is already gone", async () => {
-		const replacement = await sessions.replaceSession({
-			previousTokenHash: createSessionToken().tokenHash,
-			insert: sessionInsertFor(ownerId),
-		});
+	it("issues nothing when the session it was to replace is already gone (E-239)", async () => {
+		const before = await countRows();
 
-		expect(replacement.userId).toBe(ownerId);
+		await expect(
+			sessions.replaceSession({
+				previousTokenHash: createSessionToken().tokenHash,
+				insert: sessionInsertFor(ownerId),
+			}),
+		).rejects.toBeInstanceOf(PreviousSessionMissingError);
+		expect(await countRows()).toBe(before);
 	});
 
 	it("refuses to hand a user's session to another user", async () => {
