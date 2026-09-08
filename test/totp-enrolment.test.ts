@@ -20,6 +20,7 @@ import {
 	pendingAuthenticationsOn,
 	secretBytesOfBase32,
 	testKeyProvider,
+	testKeyRing,
 } from "./totp-fixtures.js";
 
 const FIXED_INSTANT = new Date("2026-05-03T18:45:00.000Z");
@@ -167,22 +168,61 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 		expect(ciphertext.toString("base64")).not.toContain(secretBytes.toString("base64"));
 	});
 
-	it("refuses to decrypt a secret whose key version has left the ring (S-KEY-4)", async () => {
+	/* The first form of this test built its second provider with `testKeyProvider(2)`, which draws
+	   fresh root keys and leaves version 1 in the ring, so the failure it asserted was a tag
+	   mismatch — a different branch of `decryptWithPurposeKey` from the one S-KEY-4 names (E-427). */
+	it("raises the named error when the stored key version has left the ring (S-KEY-4)", async () => {
+		const ring = testKeyRing(2);
 		const userId = await createUser(connection, schema);
-		const actor = actorOfTestUser(userId);
-		await totp.enroll.start({ actor, accountName: "rotated@example.com" });
-
-		const withoutTheVersion = createTotpService({
+		const underVersionOne = createTotpService({
 			driver: connection,
 			schema,
-			keys: testKeyProvider(2),
+			keys: ring.providerAt(1, [1]),
 			pending: pendingAuthenticationsOn(connection, schema),
 			issuer: "Velve",
 			clock,
 		});
-		await expect(withoutTheVersion.enroll.finish({ actor, code: "000000" })).rejects.toMatchObject({
-			code: "authentication_failed",
+		await underVersionOne.enroll.start({
+			actor: actorOfTestUser(userId),
+			accountName: "rotated@example.com",
 		});
+
+		const stored = await readStoredCredential(userId);
+		if (stored === undefined) {
+			throw new Error("the enrolment wrote no row");
+		}
+		expect(stored.key_version).toBe(1);
+
+		await expect(
+			decryptWithPurposeKey(
+				ring.providerAt(2, [2]),
+				"totp-enc",
+				stored.key_version,
+				Uint8Array.from(stored.secret_enc),
+			),
+		).rejects.toMatchObject({ code: "key_version_unknown" });
+	});
+
+	it("raises the tag mismatch when the version is in the ring under other material", async () => {
+		const userId = await createUser(connection, schema);
+		await totp.enroll.start({
+			actor: actorOfTestUser(userId),
+			accountName: "othermaterial@example.com",
+		});
+
+		const stored = await readStoredCredential(userId);
+		if (stored === undefined) {
+			throw new Error("the enrolment wrote no row");
+		}
+
+		await expect(
+			decryptWithPurposeKey(
+				testKeyProvider(),
+				"totp-enc",
+				stored.key_version,
+				Uint8Array.from(stored.secret_enc),
+			),
+		).rejects.toMatchObject({ code: "authentication_failed" });
 	});
 });
 

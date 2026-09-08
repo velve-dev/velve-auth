@@ -16,6 +16,7 @@ import {
 	pendingAuthenticationsOn,
 	secretBytesOfBase32,
 	testKeyProvider,
+	testKeyRing,
 } from "./totp-fixtures.js";
 
 const FIXED_INSTANT = new Date("2026-08-19T05:05:00.000Z");
@@ -126,6 +127,105 @@ describe("the verify path tells nothing about whether the factor exists", () => 
 
 		expect(answer.code).not.toBe("factor_not_enrolled");
 		expect(answer.httpStatus).not.toBe(409);
+	});
+
+	/**
+	 * S-KEY-4's error is named at the throw site and was lost at the boundary: `KeyError` is neither
+	 * a `VelveError` nor a `ConcealedError`, so it reached the caller as 500 — a status the route
+	 * declaration does not carry (3.15 D.3) and one that only accounts whose secret predates a
+	 * rotation could produce (E-428).
+	 */
+	it("answers a secret it cannot read the way it answers a wrong code", async () => {
+		const ring = testKeyRing(2);
+		const underVersionOne = createTotpService({
+			driver: connection,
+			schema,
+			keys: ring.providerAt(1, [1]),
+			pending,
+			issuer: "Velve",
+			clock,
+		});
+		const afterTheVersionWasDropped = createTotpService({
+			driver: connection,
+			schema,
+			keys: ring.providerAt(2, [2]),
+			pending,
+			issuer: "Velve",
+			clock,
+		});
+
+		const userId = await createUser(connection, schema);
+		const actor = actorOfTestUser(userId);
+		const enrollment = await underVersionOne.enroll.start({
+			actor,
+			accountName: "rotated@example.com",
+		});
+		await underVersionOne.enroll.finish({
+			actor,
+			code: totpCodeForStep(secretBytesOfBase32(enrollment.secretBase32), timeStepAt(clock.now())),
+		});
+
+		const { token } = await beginPendingState(pending, userId);
+		const unreadable = await afterTheVersionWasDropped
+			.verify({ pendingToken: token, code: "000000" })
+			.then(() => null)
+			.catch((failure: unknown) => toVisibleFailure(failure));
+
+		expect(unreadable?.error.code).toBe("invalid_factor_code");
+		expect(unreadable?.error.httpStatus).toBe(401);
+		expect(unreadable?.error.message).toBe("The code is not valid.");
+		expect(unreadable?.loggedReason).not.toBe("unhandled_exception");
+	});
+
+	it("answers the same on the two paths a session reaches, so no route gains a 500", async () => {
+		const ring = testKeyRing(2);
+		const underVersionOne = createTotpService({
+			driver: connection,
+			schema,
+			keys: ring.providerAt(1, [1]),
+			pending,
+			issuer: "Velve",
+			clock,
+		});
+		const afterTheVersionWasDropped = createTotpService({
+			driver: connection,
+			schema,
+			keys: ring.providerAt(2, [2]),
+			pending,
+			issuer: "Velve",
+			clock,
+		});
+
+		const confirmed = actorOfTestUser(await createUser(connection, schema));
+		const started = await underVersionOne.enroll.start({
+			actor: confirmed,
+			accountName: "removing@example.com",
+		});
+		await underVersionOne.enroll.finish({
+			actor: confirmed,
+			code: totpCodeForStep(secretBytesOfBase32(started.secretBase32), timeStepAt(clock.now())),
+		});
+
+		const unconfirmed = actorOfTestUser(await createUser(connection, schema));
+		await underVersionOne.enroll.start({
+			actor: unconfirmed,
+			accountName: "confirming@example.com",
+		});
+
+		const onRemove = await afterTheVersionWasDropped
+			.remove({ actor: confirmed, code: "000000" })
+			.then(() => null)
+			.catch((failure: unknown) => toVisibleFailure(failure));
+		const onFinish = await afterTheVersionWasDropped.enroll
+			.finish({ actor: unconfirmed, code: "000000" })
+			.then(() => null)
+			.catch((failure: unknown) => toVisibleFailure(failure));
+
+		for (const answer of [onRemove, onFinish]) {
+			expect(answer?.error.code).toBe("invalid_factor_code");
+			expect(answer?.error.httpStatus).toBe(401);
+			expect(answer?.loggedReason).not.toBe("unhandled_exception");
+		}
 	});
 
 	it("still names factor_not_enrolled where a session proves the account (3.15 B.6)", async () => {

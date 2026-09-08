@@ -3,6 +3,7 @@ import type { Driver } from "../../db/driver.js";
 import type { Clock } from "../../http/environment.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { decryptWithPurposeKey, encryptWithPurposeKey } from "../../keys/envelope.js";
+import { KeyError } from "../../keys/errors.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import type { PendingAuthenticationService, PendingResolution } from "../pending/service.js";
 import type { PendingToken } from "../pending/token.js";
@@ -41,14 +42,24 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		schema: options.schema ?? "velve",
 	});
 
-	// S-REST-4 and S-KEY-3: the secret is the one value here the server needs back in the clear.
+	/**
+	 * S-REST-4 and S-KEY-3: the secret is the one value here the server needs back in the clear.
+	 * A `KeyError` is neither a `VelveError` nor a `ConcealedError`, so letting it out answers 500 on
+	 * three routes that declare no such status, and makes an account whose secret predates a rotation
+	 * distinguishable from every other one. A secret the server cannot read is a factor nobody can
+	 * hold, which is the class `totp_not_confirmed` already names (E-428).
+	 */
 	async function decryptSecret(credential: StoredTotpCredential): Promise<Uint8Array<ArrayBuffer>> {
-		return decryptWithPurposeKey(
-			options.keys,
-			"totp-enc",
-			credential.keyVersion,
-			credential.secretEnc,
-		);
+		try {
+			return await decryptWithPurposeKey(
+				options.keys,
+				"totp-enc",
+				credential.keyVersion,
+				credential.secretEnc,
+			);
+		} catch (failure) {
+			throw failure instanceof KeyError ? new ConcealedError("totp_not_confirmed") : failure;
+		}
 	}
 
 	/** A factor that is absent and one that is not held answer alike, because the route that verifies is reached with a pending state and not with a session. */

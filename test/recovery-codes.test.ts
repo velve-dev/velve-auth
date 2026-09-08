@@ -175,6 +175,30 @@ describe("consumption is a DELETE … RETURNING on one row (S-RACE-4, 3.6)", () 
 		expect(await recovery.remaining({ actor })).toEqual({ remainingCount: 9 });
 	});
 
+	/** T-REST-3's threshold is "3/3: success, refusal, success" — the third leg is a second, different code after the first is spent. */
+	it("succeeds, refuses the same code, and succeeds again with a different one", async () => {
+		const userId = await createUser(connection, schema);
+		const actor = actorOfTestUser(userId);
+		const { codes } = await recovery.generate({ actor });
+		const [first, second] = codes;
+
+		const outcomes: string[] = [];
+		for (const submitted of [first, first, second]) {
+			outcomes.push(
+				await recovery
+					.verify({
+						pendingToken: (await beginPendingState(pending, userId)).token,
+						code: submitted ?? "",
+					})
+					.then(() => "accepted")
+					.catch((cause: unknown) => toVisibleFailure(cause).error.code),
+			);
+		}
+
+		expect(outcomes).toEqual(["accepted", "invalid_recovery_code", "accepted"]);
+		expect(await recovery.remaining({ actor })).toEqual({ remainingCount: 8 });
+	});
+
 	it("refuses the same code a second time", async () => {
 		const userId = await createUser(connection, schema);
 		const actor = actorOfTestUser(userId);
