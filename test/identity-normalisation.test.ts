@@ -1,0 +1,130 @@
+import { describe, expect, it } from "vitest";
+import {
+	DEFAULT_USERNAME_RULES,
+	resolveIdentityConfiguration,
+} from "../src/core/identity/configuration.js";
+import {
+	type NormalisedUsername,
+	normaliseEmail,
+	normaliseUsername,
+} from "../src/core/identity/normalise.js";
+
+const rules = DEFAULT_USERNAME_RULES;
+const KELVIN_SIGN = "\u212A";
+
+function normalisedEmail(candidate: string): string | undefined {
+	const outcome = normaliseEmail(candidate);
+	return outcome.accepted ? outcome.value : undefined;
+}
+
+function emailRejection(candidate: string): string | undefined {
+	const outcome = normaliseEmail(candidate);
+	return outcome.accepted ? undefined : outcome.rejection;
+}
+
+function usernameKey(candidate: string): string | undefined {
+	const outcome = normaliseUsername(candidate, rules);
+	return outcome.accepted ? outcome.value.usernameKey : undefined;
+}
+
+function usernameRejection(candidate: string): string | undefined {
+	const outcome = normaliseUsername(candidate, rules);
+	return outcome.accepted ? undefined : outcome.rejection;
+}
+
+describe("email normalisation", () => {
+	it("trims, folds to NFKC and lowercases", () => {
+		expect(normalisedEmail("  Alice@Example.COM  ")).toBe("alice@example.com");
+		expect(normalisedEmail("ＡＬＩＣＥ＠a.test")).toBe("alice@a.test");
+	});
+
+	it("is idempotent", () => {
+		const once = normalisedEmail("Alice@Example.com");
+		expect(once).toBe("alice@example.com");
+		expect(normalisedEmail("alice@example.com")).toBe(once);
+	});
+
+	it("refuses everything that is not one address", () => {
+		expect(emailRejection("alice")).toBe("malformed");
+		expect(emailRejection("@example.com")).toBe("malformed");
+		expect(emailRejection("alice@")).toBe("malformed");
+		expect(emailRejection("alice@example.com@evil.test")).toBe("malformed");
+		expect(emailRejection("")).toBe("malformed");
+	});
+
+	it("refuses an address carrying an invisible or separating character", () => {
+		expect(emailRejection("ali​ce@example.com")).toBe("malformed");
+		expect(emailRejection("alice bob@example.com")).toBe("malformed");
+		expect(emailRejection("alice@exam ple.com")).toBe("malformed");
+		expect(emailRejection("alice\0@example.com")).toBe("malformed");
+	});
+
+	it("refuses an address longer than the RFC 5321 path", () => {
+		expect(emailRejection(`${"a".repeat(250)}@example.com`)).toBe("too_long");
+	});
+});
+
+describe("username normalisation", () => {
+	it("keeps the entered spelling and folds only the comparison form (E-17)", () => {
+		const expected: NormalisedUsername = { username: "AliceB", usernameKey: "aliceb" };
+		expect(normaliseUsername("AliceB", rules)).toEqual({ accepted: true, value: expected });
+	});
+
+	it("collapses compatibility spellings before comparing", () => {
+		expect(usernameKey("ＡＬＩＣＥ")).toBe("alice");
+		expect(usernameKey(`${KELVIN_SIGN}lice`)).toBe("klice");
+		expect(usernameKey("alice")).toBe("alice");
+	});
+
+	it("refuses every homoglyph the default allowlist does not spell", () => {
+		const confusables: Record<string, string> = {
+			"cyrillic a": "аlice",
+			"cyrillic e": "alicе",
+			"greek omicron": "οlive",
+			cherokee: "Ꭰlice",
+			"zero-width joiner": "ali‍ce",
+			"soft hyphen": "ali­ce",
+			"right-to-left override": "‮alice",
+			"combining acute": "alicé",
+			"dotted capital i": "İstanbul",
+			"capital sharp s": "straẞe",
+		};
+		for (const [name, candidate] of Object.entries(confusables)) {
+			expect([name, usernameRejection(candidate)]).toEqual([name, "invalid_characters"]);
+		}
+	});
+
+	it("reports invalid characters before length, so a wildcard is never merely too short", () => {
+		expect(usernameRejection("*")).toBe("invalid_characters");
+		expect(usernameRejection("ali%ce")).toBe("invalid_characters");
+	});
+
+	it("applies the configured bounds", () => {
+		expect(usernameRejection("ab")).toBe("too_short");
+		expect(usernameRejection("a".repeat(33))).toBe("too_long");
+		expect(usernameRejection("abc")).toBeUndefined();
+	});
+
+	it("refuses a reserved name whatever case it arrives in", () => {
+		const configuration = resolveIdentityConfiguration({
+			mode: "username",
+			username: { reservedNames: ["admin"] },
+		});
+		expect(normaliseUsername("ADMIN", configuration.username)).toEqual({
+			accepted: false,
+			rejection: "reserved",
+		});
+	});
+
+	it("accepts a widened allowlist and still refuses what stays outside it", () => {
+		const configuration = resolveIdentityConfiguration({
+			mode: "username",
+			username: { allowedCharacters: /^[a-zäöüß0-9_-]+$/ },
+		});
+		expect(normaliseUsername("Grüße", configuration.username)).toEqual({
+			accepted: true,
+			value: { username: "Grüße", usernameKey: "grüße" },
+		});
+		expect(normaliseUsername("Grüßе", configuration.username).accepted).toBe(false);
+	});
+});
