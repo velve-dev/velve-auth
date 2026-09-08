@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { VelveError } from "../src/core/http/error-map.js";
-import { readRedirectPath, redirectTo, toRedirectPath } from "../src/core/http/redirect.js";
+import {
+	type RedirectPath,
+	readRedirectPath,
+	redirectTo,
+	toRedirectPath,
+} from "../src/core/http/redirect.js";
 import { defineRoute } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import { toWebHandler } from "../src/http/index.js";
@@ -60,6 +65,12 @@ describe("redirects", () => {
 			expect(() => toRedirectPath(target)).toThrow(VelveError);
 			expect(() => readRedirectPath({ redirectToPath: target })).toThrow(VelveError);
 		}
+	});
+
+	it("carries the target as a minted path and never as a plain string", () => {
+		expectTypeOf(toRedirectPath("/app")).toEqualTypeOf<RedirectPath>();
+		expectTypeOf<Parameters<typeof redirectTo>[0]>().toEqualTypeOf<RedirectPath>();
+		expectTypeOf(redirectTo(toRedirectPath("/app")).redirectToPath).toEqualTypeOf<RedirectPath>();
 	});
 
 	it("reads no redirect out of an ordinary output", () => {
