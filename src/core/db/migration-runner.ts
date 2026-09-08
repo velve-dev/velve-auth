@@ -9,7 +9,11 @@ import {
 	type MigrationReport,
 	migrationChecksum,
 } from "./migration.js";
-import { applySchemaName, assertNoSchemaNameInsideDollarQuoting } from "./schema-rewrite.js";
+import {
+	applySchemaName,
+	assertNoSchemaNameInsideDollarQuoting,
+	splitStatements,
+} from "./schema-rewrite.js";
 
 const DEFAULT_SCHEMA = "velve";
 const LEDGER_TABLE = "schema_migration";
@@ -113,7 +117,9 @@ async function applyMigration(
 			return false;
 		}
 
-		await tx.query(applySchemaName(migration.sql, schema), []);
+		for (const statement of splitStatements(applySchemaName(migration.sql, schema))) {
+			await tx.query(statement, []);
+		}
 		await assertEveryUserReferenceCascades(tx, schema);
 		await tx.query(`INSERT INTO ${ledger} (version, name, checksum) VALUES ($1, $2, $3)`, [
 			migration.version,

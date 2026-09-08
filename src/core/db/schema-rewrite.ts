@@ -227,3 +227,28 @@ export function assertNoSchemaNameInsideDollarQuoting(sql: string, schema: strin
 		}
 	}
 }
+
+export function splitStatements(sql: string): string[] {
+	const statements: string[] = [];
+	let current = "";
+
+	for (const region of splitIntoRegions(sql)) {
+		if (region.kind !== "code") {
+			current += region.text;
+			continue;
+		}
+		let start = 0;
+		for (let index = 0; index < region.text.length; index += 1) {
+			if (region.text[index] !== ";") {
+				continue;
+			}
+			statements.push(current + region.text.slice(start, index));
+			current = "";
+			start = index + 1;
+		}
+		current += region.text.slice(start);
+	}
+	statements.push(current);
+
+	return statements.map((statement) => statement.trim()).filter((statement) => statement !== "");
+}

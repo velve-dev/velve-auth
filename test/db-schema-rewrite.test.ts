@@ -3,6 +3,7 @@ import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
 import {
 	applySchemaName,
 	assertNoSchemaNameInsideDollarQuoting,
+	splitStatements,
 	UnrewritableMigrationError,
 } from "../src/core/db/schema-rewrite.js";
 
@@ -115,5 +116,35 @@ describe("a dollar-quoted body naming the schema", () => {
 		expect(() =>
 			assertNoSchemaNameInsideDollarQuoting("SELECT $$ 'velve.user' $$", target),
 		).not.toThrow();
+	});
+});
+
+describe("splitting a migration into statements", () => {
+	it("cuts on a semicolon between statements", () => {
+		expect(splitStatements("CREATE TABLE a (); CREATE TABLE b ();")).toEqual([
+			"CREATE TABLE a ()",
+			"CREATE TABLE b ()",
+		]);
+	});
+
+	it("keeps a semicolon inside a string, a comment or a function body", () => {
+		expect(splitStatements("SELECT ';'; SELECT 2")).toEqual(["SELECT ';'", "SELECT 2"]);
+		expect(splitStatements("SELECT 1 -- ;\n; SELECT 2")).toEqual(["SELECT 1 -- ;", "SELECT 2"]);
+		expect(splitStatements("CREATE FUNCTION f() AS $$ BEGIN; END; $$; SELECT 2")).toEqual([
+			"CREATE FUNCTION f() AS $$ BEGIN; END; $$",
+			"SELECT 2",
+		]);
+	});
+
+	it("drops empty statements and trailing whitespace", () => {
+		expect(splitStatements(";;\n  \n;SELECT 1;\n")).toEqual(["SELECT 1"]);
+	});
+
+	it("cuts the shipped migration into statements the extended protocol can take", () => {
+		const statements = splitStatements(initialSchema.sql);
+
+		expect(statements.length).toBeGreaterThan(30);
+		expect(statements.every((statement) => !statement.endsWith(";"))).toBe(true);
+		expect(statements.filter((statement) => statement.includes("CREATE TABLE"))).toHaveLength(16);
 	});
 });
