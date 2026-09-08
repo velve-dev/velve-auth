@@ -46,10 +46,7 @@ function excludedIdentityId(removal: SignInMethodRemoval | undefined): string | 
 	return removal?.method === "linked_identity" ? removal.identityId : null;
 }
 
-/**
- * Counts what {password, WebAuthn credential, linked identity} the account still holds (L-13).
- * A confirmed address and recovery codes are deliberately absent: neither is a sign-in name.
- */
+/** A confirmed address and recovery codes are absent by decision: neither is a sign-in name (L-13). */
 export async function countSignInMethods(query: SignInMethodQuery): Promise<SignInMethodCount> {
 	const password = qualifiedTableName(query.schema, "password_credential");
 	const webauthn = qualifiedTableName(query.schema, "webauthn_credential");
@@ -80,15 +77,41 @@ export async function countSignInMethods(query: SignInMethodQuery): Promise<Sign
 	};
 }
 
-/**
- * Call this inside the transaction that performs the removal and before the DELETE. The row
- * lock serialises two concurrent removals that would each see the other's credential (L-13).
- */
-export async function assertSignInMethodRemains(check: SignInMethodRemovalCheck): Promise<void> {
+const REMOVAL_TABLE: Readonly<Record<SignInMethodRemoval["method"], string>> = {
+	password: "password_credential",
+	webauthn_credential: "webauthn_credential",
+	linked_identity: "identity",
+};
+
+function removalStatement(
+	schema: string,
+	removal: SignInMethodRemoval,
+): { readonly sql: string; readonly params: readonly unknown[] } {
+	const table = qualifiedTableName(schema, REMOVAL_TABLE[removal.method]);
+	switch (removal.method) {
+		case "password":
+			return { sql: `DELETE FROM ${table} WHERE user_id = $1`, params: [] };
+		case "webauthn_credential":
+			return {
+				sql: `DELETE FROM ${table} WHERE user_id = $1 AND id = $2`,
+				params: [removal.credentialId],
+			};
+		case "linked_identity":
+			return {
+				sql: `DELETE FROM ${table} WHERE user_id = $1 AND id = $2`,
+				params: [removal.identityId],
+			};
+	}
+}
+
+async function removeUnlessItIsTheLast(
+	transaction: Driver,
+	check: SignInMethodRemovalCheck,
+): Promise<boolean> {
 	const user = qualifiedTableName(check.schema, "user");
-	await check.transaction.query(`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE`, [check.actor]);
+	await transaction.query(`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE`, [check.actor]);
 	const remaining = await countSignInMethods({
-		driver: check.transaction,
+		driver: transaction,
 		schema: check.schema,
 		actor: check.actor,
 		excluding: check.removing,
@@ -96,4 +119,32 @@ export async function assertSignInMethodRemains(check: SignInMethodRemovalCheck)
 	if (totalSignInMethods(remaining) === 0) {
 		throw new VelveError("last_sign_in_method");
 	}
+	// A row lock assigns a transaction id, and outside a transaction block it is gone by the
+	// next statement — which is how this asks whether the lock it just took still holds.
+	const [held] = await transaction.query<{ readonly lock_outlives_its_statement: boolean }>(
+		`SELECT pg_current_xact_id_if_assigned() IS NOT NULL AS lock_outlives_its_statement`,
+		[],
+	);
+	if (held?.lock_outlives_its_statement !== true) {
+		return false;
+	}
+	const removal = removalStatement(check.schema, check.removing);
+	await transaction.query(removal.sql, [check.actor, ...removal.params]);
+	return true;
+}
+
+/**
+ * Removes the named sign-in method unless it is the last one, in which case nothing is removed
+ * and `last_sign_in_method` is thrown (L-13). The removal is part of the check because the two
+ * cannot be separated: between a caller's check and a caller's DELETE, another removal fits.
+ */
+export async function assertSignInMethodRemains(check: SignInMethodRemovalCheck): Promise<void> {
+	if (await removeUnlessItIsTheLast(check.transaction, check)) {
+		return;
+	}
+	await check.transaction.transaction(async (transaction) => {
+		if (!(await removeUnlessItIsTheLast(transaction, check))) {
+			throw new VelveError("internal_error");
+		}
+	});
 }

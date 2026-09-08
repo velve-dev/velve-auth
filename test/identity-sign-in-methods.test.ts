@@ -84,7 +84,7 @@ function countFor(userId: string, excluding?: SignInMethodRemoval): Promise<Sign
 	return countSignInMethods(query);
 }
 
-async function refusalFor(userId: string, removing: SignInMethodRemoval): Promise<string | null> {
+async function removalOf(userId: string, removing: SignInMethodRemoval): Promise<string | null> {
 	try {
 		await connection.transaction((transaction) => {
 			const check: SignInMethodRemovalCheck = {
@@ -139,13 +139,13 @@ describe("the last sign-in method (L-13)", () => {
 	it("refuses to remove the only password", async () => {
 		const userId = await createUser();
 		await givePassword(userId);
-		expect(await refusalFor(userId, { method: "password" })).toBe("last_sign_in_method");
+		expect(await removalOf(userId, { method: "password" })).toBe("last_sign_in_method");
 	});
 
 	it("refuses to remove the only credential", async () => {
 		const userId = await createUser();
 		const credentialId = await addWebauthnCredential(userId);
-		expect(await refusalFor(userId, { method: "webauthn_credential", credentialId })).toBe(
+		expect(await removalOf(userId, { method: "webauthn_credential", credentialId })).toBe(
 			"last_sign_in_method",
 		);
 	});
@@ -153,17 +153,29 @@ describe("the last sign-in method (L-13)", () => {
 	it("refuses to remove the only identity", async () => {
 		const userId = await createUser();
 		const identityId = await linkIdentity(userId);
-		expect(await refusalFor(userId, { method: "linked_identity", identityId })).toBe(
+		expect(await removalOf(userId, { method: "linked_identity", identityId })).toBe(
 			"last_sign_in_method",
 		);
 	});
 
-	it("allows the removal while any other way in remains", async () => {
+	it("removes the method while any other way in remains, and then refuses the last", async () => {
 		const userId = await createUser();
 		await givePassword(userId);
 		const identityId = await linkIdentity(userId);
-		expect(await refusalFor(userId, { method: "linked_identity", identityId })).toBeNull();
-		expect(await refusalFor(userId, { method: "password" })).toBeNull();
+		expect(await removalOf(userId, { method: "linked_identity", identityId })).toBeNull();
+		expect(await countFor(userId)).toEqual({
+			password: 1,
+			webauthnCredentials: 0,
+			linkedIdentities: 0,
+		});
+		expect(await removalOf(userId, { method: "password" })).toBe("last_sign_in_method");
+	});
+
+	it("leaves the row in place when it refuses", async () => {
+		const userId = await createUser();
+		await givePassword(userId);
+		expect(await removalOf(userId, { method: "password" })).toBe("last_sign_in_method");
+		expect(totalSignInMethods(await countFor(userId))).toBe(1);
 	});
 
 	it("does not let a confirmed address or a recovery code stand in for a way in", async () => {
@@ -176,7 +188,7 @@ describe("the last sign-in method (L-13)", () => {
 			[userId, randomBytes(32)],
 		);
 		await givePassword(userId);
-		expect(await refusalFor(userId, { method: "password" })).toBe("last_sign_in_method");
+		expect(await removalOf(userId, { method: "password" })).toBe("last_sign_in_method");
 	});
 
 	it("holds the account against a second removal until the first has committed", async () => {
