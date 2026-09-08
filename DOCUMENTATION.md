@@ -1136,3 +1136,68 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+---
+
+## Passwords
+
+The password module lives in `src/core/password`. It owns one canonical storage
+string per credential, the switch that decides which verifier reads it, the
+Argon2id creation path, the semaphore that bounds concurrent key derivation, and
+the envelope encryption of the stored string.
+
+### The PHC string
+
+A credential is stored as one string in the PHC family (architecture 3.3). No
+foreign raw format is ever stored: an import rewrites every source format into
+one of these strings before it is written.
+
+| Prefix | Scheme | Created | Verified |
+|---|---|---|---|
+| `$argon2id$` | Argon2id — the only scheme the library creates | yes | yes |
+| `$argon2i$`, `$argon2d$` | other Argon2 variants | no | yes |
+| `$2a$`, `$2b$`, `$2y$`, `$2x$` | bcrypt | no | yes |
+| `$scrypt$` | scrypt in PHC spelling | no | yes |
+| `$pbkdf2-sha256$`, `$pbkdf2-sha512$` | PBKDF2 | no | yes |
+| `$fbscrypt$` | Firebase scrypt, in the spelling GoTrue uses | no | yes |
+
+#### `parsePhc(text)`
+
+Reads a PHC string. Returns `null` for anything that is not one — a bcrypt hash
+included, since bcrypt is not a PHC string and is dispatched on its prefix
+without being parsed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `string` | the function identifier, `[a-z0-9-]{1,32}` |
+| `version` | `number \| undefined` | the standalone `v=` field, present on Argon2 |
+| `parameters` | `ReadonlyMap<string, string>` | the comma-separated list, in the order it appeared |
+| `salt` | `Uint8Array \| undefined` | decoded |
+| `hash` | `Uint8Array \| undefined` | decoded; absent when the string carries only a salt |
+
+The grammar is read left to right: identifier, then an optional `v=<decimal>`
+field, then an optional parameter list, then the salt and the hash. A field is
+read as a parameter list only when every pair is well formed **and** at least
+one value is non-empty, which is what separates a parameter from a salt that
+arrived with base64 padding (E-160). Base64 padding is accepted everywhere it
+occurs in an imported value and is never emitted.
+
+#### `formatPhc(value)`
+
+Writes the string back. Round-trips every canonical string byte for byte;
+padding an imported value carried in its salt or hash field is normalised away,
+because the canonical spelling has none.
+
+#### `integerParameter(value, name)` and `bytesParameter(value, name)`
+
+Read one parameter as a non-negative decimal of at most ten digits, or as
+base64-decoded bytes. Both return `null` when the parameter is absent or does
+not have that shape; neither substitutes a default. A verifier that cannot read
+its own parameters rejects the credential rather than deriving with a guess.
+
+#### `encodeStandardBase64(bytes)` and `decodeStandardBase64(text)`
+
+The PHC alphabet — standard base64, `+` and `/`, no padding on output. Decoding
+accepts a padded value and rejects the base64url alphabet, misplaced padding and
+non-canonical trailing bits. This is a second base64 implementation next to the
+key module's base64url; the reason is in E-161.
