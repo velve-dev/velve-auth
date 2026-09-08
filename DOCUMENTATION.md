@@ -1203,23 +1203,242 @@ is swallowed: a failing log sink must not cost the caller its answer.
 
 ## Rate limiting
 
-Reserved for `rate` (wave 3). Architecture 3.9: the token bucket in
-`velve.rate_bucket` as a single round trip, the three counters that run at once
-— address prefix, account, global per route — and the implementation that goes
-behind the `RateLimiter` seam the HTTP chapter declares above.
+The rate limiter lives in `src/core/limit`. It is the implementation behind the
+`RateLimiter` seam the HTTP chapter declares, and it adds nothing to that
+interface: the HTTP layer calls `consume` and reads `allowed`, and everything
+below is this module's business.
 
-It stands here because that seam stands above it. The interface, where it is
-consumed in the pipeline and what a refusal turns into are already documented as
-part of HTTP; this chapter is the counter that fills the seam, and it is read
-directly after the shape it has to fit.
+It is not reachable from a package entry point yet — the wiring belongs to
+whoever owns `src/index.ts` — so everything below describes the module as it is
+imported from `src/core/limit`, not as `@velve/auth` exports it today.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `rate`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does.
+It keeps three counters, and only two of them can refuse a request.
 
-### Nothing is documented here yet
+| Counter | Key | On overflow |
+|---|---|---|
+| Address | route name and the address prefix | `rate_limited` |
+| Account | route name and `HMAC(token-pepper, identifier)` | `rate_limited` |
+| Per route, per instance | route name, in memory | an alarm, and nothing else |
 
-`rate` replaces this heading with its own sub-tree.
+### `createRateLimiter(options)`
+
+```ts
+import { createRateLimiter } from "../limit/index.js";
+
+const rateLimiter = createRateLimiter({
+  driver,
+  keys,
+  schema: "velve",
+  clock: { now: () => new Date() },
+  config: {
+    routeFlood: {
+      rule: { capacity: 500, refillPerSecond: 5 },
+      onAlert: (alert) => metrics.increment("velve.route_flood", alert),
+    },
+  },
+});
+```
+
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | — | The database. Every check is one statement on it. |
+| `keys` | `KeyProvider` | — | Where the `token-pepper` key comes from. The account key is an HMAC under it, so no identifier is written down. |
+| `schema` | `string` | — | The schema holding `velve.rate_bucket`. Validated as an identifier before it reaches any statement. |
+| `clock` | `{ now(): Date }` | — | The instant a check is measured at. It is written into the row and it is what the next check measures elapsed time from. |
+| `config.routeFlood` | `{ rule, onAlert }` | absent | The per-route alarm below. Absent means no alarm and no in-memory state. |
+
+It returns a `RateLimiter`. Nothing else about it is public: there is no method
+to reset a bucket, none to read one, and none to exempt a caller.
+
+### The statement
+
+One `INSERT … ON CONFLICT … DO UPDATE … RETURNING tokens` per check, which is
+architecture 3.9 and is what makes `S-RATE-6` hold. There is no read followed by
+a write, and no row lock — `ON CONFLICT DO UPDATE` serialises the conflicting
+writers itself, so at *n* simultaneous requests against a capacity of *L*, at
+most *L* come back with a non-negative level.
+
+The refilled level is computed inside the statement:
+
+```
+level  = LEAST(capacity, GREATEST(0, stored + elapsed × refillPerSecond)) − 1
+```
+
+`RETURNING tokens` hands `level` back, and the request is allowed when it is not
+negative. Two floors deviate from the SQL printed in 3.9, and both exist for
+`S-RATE-7`:
+
+- **The level is floored at zero before the draw.** Without it a refused request
+  drives the stored level further negative every time, so a caller who sent a
+  million refused requests leaves a bucket that needs a million tokens' worth of
+  refilling. The account then stays shut for the rightful owner long after the
+  flood stopped, which is the lockout the requirement forbids. With the floor a
+  refused bucket rests at −1 and the next success needs two tokens' worth of
+  time, whatever happened before.
+- **Elapsed time is floored at zero.** The instant comes from `clock`, so two
+  instances with skewed clocks would otherwise let the one that is behind
+  subtract tokens rather than add them.
+
+`expires_at` is set on every write to the time the bucket needs to fill from
+empty — `capacity / refillPerSecond` — with a floor of 60 seconds and a ceiling
+of one day. A row swept earlier than that would hand the remaining tokens back
+early. The ceiling is not a rounding: a bucket that would take longer than a day
+to refill is a lockout with a rate limiter's name on it.
+
+The table itself is `velve.rate_bucket`, created by migration 1 and described in
+the schema chapter. This module adds no migration and no table.
+
+### The address counter
+
+The key is the route name and the address prefix: `/64` for IPv6 and the whole
+address for IPv4, through `ipAddressNetwork(text, { ipv4: 32, ipv6: 64 })`.
+
+```
+ip|signIn.password|2001:db8::/64
+ip|signIn.password|203.0.113.5/32
+ip|signIn.password|unresolved
+```
+
+A thousand addresses inside one `/64` are one bucket (`S-RATE-2`), and the
+compressed, expanded, upper-case and IPv4-mapped spellings of one address are
+one key (`S-RATE-1`). Surrounding whitespace is trimmed, so `" 203.0.113.5 "`
+and `"203.0.113.5"` count together.
+
+**`unresolved` is a real bucket, not a skipped check.** Where the address is
+`null`, or is text that is not one address — a zone identifier, `host:port`, a
+bracketed address, two addresses in one header value — the request counts on one
+shared bucket per route and the limit is enforced there (`S-RATE-4`). Nothing
+reaches the handler without being counted. The cost is that unrelated callers
+whose address could not be determined share a bucket; the alternative is a free
+lane that any caller can enter by sending a header the parser rejects.
+
+The route name in the key is the **resolved** name from the route declaration,
+never the request path, so `/sign-in/password`, `//sign-in/password`,
+`/sign-in/password/`, `/./sign-in/password`, `/sign-in//password`,
+`/sign-in/passw%6Frd` and `/SIGN-IN/PASSWORD` all count on one bucket
+(`S-RATE-5`, GHSA-x732-6j76-qmhm). The limiter never sees a path.
+
+### The account counter
+
+The key is the route name and `HMAC-SHA256(token-pepper, normalised identifier)`,
+base64url-encoded:
+
+```
+account|signIn.password|WwPZ0y5hVZ6t3q8k2m1n4p7r0s3u6w9x2z5A8C1E4G8
+```
+
+It is formed before the user is resolved, so an identifier that belongs to an
+account and one that belongs to nobody advance the same row and are refused
+after the same number of attempts. The identifier never reaches
+`velve.rate_bucket` in the clear (`S-RATE-7`, L-5), and the pepper is a key from
+the `KeyProvider` rather than a value in the process, so a database dump does
+not let the keys be recomputed.
+
+The route passes the identifier through `context.enforceAccountRateLimit` after
+it has parsed the input; normalising it is the route's job, not this module's.
+Two spellings that normalise to one identifier are one bucket only because the
+route normalised them first.
+
+An empty bucket is a refusal with `rate_limited`. It is never a delay and never
+a lock. `test/limit-option-shape.test.ts` holds an allowlist of every member
+name this module declares, each one read and found to be neither, and it fails
+the build on any name that is not on it — so a delay cannot be added without
+somebody putting its name on that list first. It is not a filter that recognises
+forbidden names, and it was one until it passed `minimumResponseTime` (E-394).
+The bucket refills at the configured rate, so an account stays reachable for its
+owner with the right credentials after any number of failed attempts by anyone
+else.
+
+A refusal is answered without running a key derivation, so it is measurably
+cheaper than a failed sign-in. That is the point of ordering the checks this way
+and not an accident of the implementation.
+
+### `retryAfterSeconds`
+
+A refusal carries the whole seconds until the bucket holds a token again,
+`ceil((1 − level) / refillPerSecond)`, and never less than 1. Where
+`refillPerSecond` is zero or not a finite number the field is **absent**: a wait
+that never ends is not a wait a caller can act on.
+
+A caller must not read the field's absence as anything more than absence. The
+KDF semaphore refuses with the same `rate_limited` code and has never carried a
+`Retry-After` (E-166), so two different refusals reach the outside under one
+code, and only one of them can say how long.
+
+### The per-route alarm
+
+`config.routeFlood` watches how much traffic one route is taking on this
+instance. It refuses nothing (`S-RATE-8`); when its allowance runs out it calls
+`onAlert` and the request continues to the ordinary counters.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `rule.capacity` | `number` | Address checks the route may take before the alarm sounds |
+| `rule.refillPerSecond` | `number` | How fast that allowance comes back |
+| `onAlert` | `(alert: RouteFloodAlert) => void` | Called on the transition into exhaustion, not on every request past it |
+
+```ts
+interface RouteFloodAlert {
+  routeName: string
+  addressChecksObserved: number   // on this instance, since it started
+  observedAt: Date
+}
+```
+
+Three things about it are worth knowing before it is configured.
+
+- **It counts address checks, not requests.** A route that declares
+  `perIpAddress: "none"` is invisible to the alarm, because the pipeline never
+  calls the limiter for it. Every route that can be flooded from outside
+  declares an address bucket, so in practice one check is one arriving request —
+  but the threshold is in checks, and that is what the field is named after.
+- **It is per instance and in memory.** Four processes behind one proxy hold
+  four independent counters; a threshold meant to describe the whole service has
+  to be divided by the number of instances. Nothing is written to the database
+  for it.
+- **It is refilled from the clock, never by a timer.** A process saturated by
+  the very flood the alarm exists to notice does not run its timers — 800
+  concurrent sign-ins once produced no timer callback at all in 14.7 seconds
+  (E-186) — so a counter whose window is reset on a timer is silent exactly when
+  it is needed.
+
+An `onAlert` that throws is swallowed, for the same reason a `log` that throws
+is: an alert sink that is down must not cost the caller its answer.
+
+### `resolveClientAddress(connectionAddress, forwardedFor, trustedProxies)`
+
+A pure function, exported so that whatever wires up `options.clientAddress` can
+use it. It reads no header itself and holds no state.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `connectionAddress` | `string \| null` | The transport peer, from the adapter |
+| `forwardedFor` | `string \| null` | The raw `X-Forwarded-For` value, or `null` |
+| `trustedProxies` | `readonly string[]` | Addresses and CIDR ranges whose `X-Forwarded-For` may be believed |
+
+```ts
+resolveClientAddress("203.0.113.1", "9.9.9.9", [])                       // "203.0.113.1"
+resolveClientAddress("10.0.0.5", "1.2.3.4, 10.0.0.9", ["10.0.0.0/8"])    // "1.2.3.4"
+resolveClientAddress("203.0.113.1", "9.9.9.9", ["10.0.0.0/8"])           // "203.0.113.1"
+```
+
+The header is read only where `trustedProxies` says who may write it
+(`S-RATE-3`). With an empty list, or a connection from an address the list does
+not cover, the answer is the connection address and no `X-Forwarded-*` header
+can move it. Where the connection is from a trusted proxy, the answer is the
+**rightmost** claimed address that is not itself a trusted proxy — the last hop
+no trusted party vouched for. Taking the leftmost instead would let any client
+prepend an address and choose its own bucket.
+
+An entry that does not parse — `10.0.0.0/`, `10.0.0.0/33`, `not-a-range` —
+matches nothing, so a mistyped list falls back to the connection address rather
+than trusting a header it cannot check. Nothing reports the typo; validating the
+list belongs to whatever accepts it as configuration.
+
+A chain of nothing but trusted proxies, and a `null` connection address, both
+answer with the connection address. In the second case that is `null`, which the
+address counter turns into the shared `unresolved` bucket rather than a skipped
+check.
 
 ## Passwords
 
@@ -2892,25 +3111,289 @@ on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
 
 ## TOTP and recovery codes
 
-Reserved for `factor-totp` (wave 3). Architecture 3.6: RFC 6238 verification
-with the encrypted secret and the `velve.totp_used_step` replay guard, the
-pending-authentication state and the five attempts it allows, and the recovery
-codes, which share all of that — the same state, the same `token-pepper` HMAC,
-the same `DELETE … RETURNING` consumption. One feature owns both; §6 of
-`CLAUDE.md` says why they are not split.
+Two second factors, one feature. They share the pending-authentication state,
+the `token-pepper` HMAC and the rule that a used artefact is removed by the
+statement that reads it, so architecture 3.6 introduces them together and this
+chapter documents them together.
 
-It stands here because everything it uses stands above it. The pending state is
-entered from a password check, its HMAC comes from Key management, its
-consumption is the one-time artefact pattern, and what it produces is a session
-— so it can only be read after all four chapters that define those.
+Everything here is a service. The routes of the table in architecture 3.15 D.3
+— `/factor/totp/enroll/start`, `/factor/totp/enroll/finish`,
+`/factor/totp/verify`, `/factor/totp/remove`, `/factor/recovery/generate`,
+`/factor/recovery/verify` and `/factor/recovery/remaining` — are assembled by
+the instance, not declared here.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `factor-totp`'s
-partition of this file: that feature appends here and nowhere else, and removing
-this paragraph is the first thing it does.
+### `createTotpService(options)`
 
-### Nothing is documented here yet
+Returns a `TotpService`. RFC 6238 with SHA-1, six digits, a thirty-second
+period and a tolerance of one step in each direction (architecture 3.6).
 
-`factor-totp` replaces this heading with its own sub-tree.
+| Option | Type | Required | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | yes | The PostgreSQL driver. Never imported; always passed. |
+| `keys` | `KeyProvider` | yes | Supplies the `totp-enc` key. The secret is encrypted under it and the version is stored beside the ciphertext. |
+| `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
+| `issuer` | `string` | yes | The issuer shown in the authenticator app and written into the key URI. |
+| `clock` | `Clock` | yes | The only time the module reads. There is no default: architecture 6.19 says the core reads the time through `clock` alone, and a default would be a second source. Tests pass `createTestClock()` from `@velve/auth/testing`. |
+| `schema` | `string` | no | Defaults to `velve`. |
+
+#### `totp.enroll.start({ actor, accountName })`
+
+Draws a fresh 160-bit secret, encrypts it under `totp-enc` and writes
+`velve.totp_credential` with `confirmed_at = NULL`. Returns
+`TotpEnrollment`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `secretBase32` | `string` | RFC 4648 base32, the form an authenticator app accepts when the URI cannot be scanned. |
+| `otpauthUri` | `string` | `otpauth://totp/<issuer>:<accountName>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30`. Every parameter is written out even where it equals the format's default, so an app that changed a default cannot silently disagree. |
+
+While `confirmed_at` is `NULL` the factor counts as absent: an abandoned
+attempt is data residue, not a locked-out user, and calling `start` again
+replaces it with a new secret. A **confirmed** credential makes `start` raise
+`factor_already_enrolled`.
+
+`accountName` is what the authenticator app shows beside the issuer. The
+library does not choose it; the caller passes the account's e-mail address or
+username.
+
+#### `totp.enroll.finish({ actor, code })`
+
+Verifies `code` against the unconfirmed secret, claims the time step it
+matched, and sets `confirmed_at`. Raises `factor_not_enrolled` when no
+enrolment was started, `factor_already_enrolled` when one is already
+confirmed, and `invalid_factor_code` when the code does not match.
+
+The confirming code is written into `velve.totp_used_step` like any accepted
+code. RFC 6238 §5.2 asks that an accepted code be refused for the rest of its
+step and does not ask why it was accepted; without the claim, the code typed to
+finish enrolment would still work as a second factor for up to sixty seconds.
+
+#### `totp.verify({ pendingToken, code })`
+
+The second-factor check. Resolves the pending state, verifies the code against
+the confirmed secret, claims the matched time step, and returns the
+`PendingResolution` — it does **not** consume the pending row. S-FIX-1 wants
+the row removed in the same transaction that inserts the session, and that
+transaction belongs to whoever issues the session.
+
+| Raised | When |
+|---|---|
+| `invalid_pending_authentication` | The token names no live pending state. |
+| `invalid_factor_code` | The code does not match, its step is already spent, the account has no confirmed credential, or the stored secret cannot be decrypted. |
+| `too_many_factor_attempts` | The failure that exhausted L-8's budget. The pending row is gone with it. |
+
+The causes behind `invalid_factor_code` differ only in the logged reason —
+`totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`. This route is
+reached with a pending state rather than a session, so answering "this account
+has no TOTP" there would say which accounts carry a second factor.
+
+#### `totp.remove({ actor, code })`
+
+Removes the credential and, in the same transaction, every row this account has
+in `velve.totp_used_step` — a re-enrolment must not inherit the previous
+secret's replay ledger. Demands a valid code: whoever can remove the factor
+without holding it has no factor. Raises `factor_not_enrolled` or
+`invalid_factor_code`.
+
+#### When the secret cannot be decrypted
+
+`decryptWithPurposeKey` raises `KeyError` when the stored `key_version` is no
+longer in the ring (`key_version_unknown`, S-KEY-4) or when the ciphertext does
+not authenticate under it (`authentication_failed`). `KeyError` is neither a
+`VelveError` nor a `ConcealedError`, so letting it out answers 500 — a status
+none of the three declaring routes carries, and one only an account whose secret
+predates a rotation can produce.
+
+Every path that decrypts therefore answers `invalid_factor_code` with the logged
+reason `totp_not_confirmed`: a secret the server cannot read is a credential
+nobody can hold.
+
+**This makes the failure uniform; it does not make it diagnosable.** Dropping a
+key version that TOTP secrets were written under turns second-factor sign-in
+into a refusal with no explanation for the operator. The check that belongs
+above this is an assembly-time one — hold every distinct
+`totp_credential.key_version` against the ring when the instance is built, and
+refuse to start on one that has left it — so the operator is told once, when
+they drop the version. That check is the instance's; this module only makes sure
+the request path says nothing an attacker can count on.
+
+#### `totp.isEnrolled({ userId })`
+
+True only for a **confirmed** credential. Takes a user id rather than an
+`Actor` because the pending-state path has no actor to offer.
+
+### The replay guard
+
+`S-REPLAY-4` in one statement:
+
+```sql
+INSERT INTO velve.totp_used_step (user_id, time_step, expires_at)
+VALUES ($1, $2, now() + make_interval(secs => $3::double precision))
+ON CONFLICT (user_id, time_step) DO NOTHING
+RETURNING time_step
+```
+
+No row back means the step was already spent. The conflict is swallowed rather
+than raised because `Driver` promises nothing about the shape of a driver's
+error, and a refusal that depends on reading SQLSTATE 23505 changes with the
+driver. The primary key is still the whole check, and it is what serialises
+fifty concurrent submissions of one code onto one winner (`S-RACE-3`).
+
+**The step written is the one that matched, not the one the clock is in.** With
+a tolerance of ±1 an accepted code can belong to the step before or after the
+current one; recording the current step would leave the matched one free for a
+second use.
+
+Rows are kept `TOTP_USED_STEP_RETENTION_SECONDS` — the full tolerance window
+plus two minutes — and are swept by `auth.maintenance.sweep()` (L-11).
+
+### TOTP constants
+
+| Name | Value | Why |
+|---|---|---|
+| `TOTP_ALGORITHM` | `"SHA1"` | Architecture 3.6. Every authenticator app implements it. |
+| `TOTP_DIGITS` | `6` | Architecture 3.6. The RFC's own vectors use eight; the library generates six. |
+| `TOTP_PERIOD_SECONDS` | `30` | Architecture 3.6. |
+| `TOTP_TOLERANCE_STEPS` | `1` | One step either side, so ninety seconds are accepted at any moment. |
+| `TOTP_SECRET_BYTES` | `20` | 160 bit. RFC 4226 §4 requires 128 and recommends 160. |
+| `TOTP_USED_STEP_RETENTION_SECONDS` | `210` | The widest accepted window (90 s) plus two minutes (L-11). |
+
+`timeStepAt(instant)` is the counter for an instant; `acceptedTimeSteps(instant)`
+is the three steps a submission at that instant may match;
+`totpCodeForStep(secretBytes, step)` is the code for one step; and
+`matchingTimeStep({ secretBytes, submittedCode, at })` answers with the matched
+step or `null`. It compares against every candidate without leaving early and
+in constant time, so the position of a match inside the window is not readable
+from the duration. `normaliseTotpCode` strips spaces and hyphens, because an
+authenticator app shows the code in two groups and a reader retypes the gap.
+
+### `createRecoveryCodeService(options)`
+
+| Option | Type | Required | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | yes | The PostgreSQL driver. |
+| `keys` | `KeyProvider` | yes | Supplies the `token-pepper` key the codes are HMAC'd under. |
+| `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
+| `schema` | `string` | no | Defaults to `velve`. |
+
+#### `recovery.generate({ actor })`
+
+Draws ten codes of 160 bit, deletes every code the account already has and
+writes the ten new ones — in one transaction, and after taking the row lock on
+`velve.user` that CLAUDE.md §7 requires of any transaction that takes one.
+Returns `{ codes }`.
+
+**This is the only moment the plaintext codes exist outside the caller's
+process.** What is stored is `HMAC-SHA256(token-pepper, canonical code)`, so
+there is no operation that shows a code again — a lost set is regenerated, not
+recovered.
+
+The set is always replaced whole. A partially renewed set is a set whose age
+nobody knows.
+
+#### `recovery.verify({ pendingToken, code })`
+
+Resolves the pending state, finds the row by HMAC and removes it with
+`DELETE … RETURNING`. Returns the `PendingResolution`; like TOTP it does not
+consume the pending row.
+
+| Raised | When |
+|---|---|
+| `invalid_pending_authentication` | The token names no live pending state. |
+| `invalid_recovery_code` | No such code for this account, or the account has no codes whose pepper version is still in the ring. |
+| `too_many_factor_attempts` | The failure that exhausted L-8's budget. |
+
+#### `recovery.remaining({ actor })`
+
+Returns `{ remainingCount }` and nothing else. The count is the only thing the
+stored form can answer.
+
+### The shape of a recovery code
+
+Ten codes, 160 bit each, pairwise distinct (`S-RAND-3`). Encoded in Crockford's
+base32 — the alphabet without `I`, `L`, `O` and `U` — as thirty-two characters
+shown in four groups of eight:
+
+```
+K3M7QR8V-2XN4TZ9B-5PWJ0HC6-Y1DFGS7A
+```
+
+The reader normalises before it hashes: upper-cases, drops anything that is not
+a digit or a letter, and maps `I` and `L` to `1` and `O` to `0`. A code retyped
+in lower case, without its groups, or with a `0` read as an `O` still finds its
+row.
+
+| Name | Value |
+|---|---|
+| `RECOVERY_CODE_COUNT` | `10` |
+| `RECOVERY_CODE_ENTROPY_BYTES` | `20` |
+| `RECOVERY_CODE_GROUP_LENGTH` | `8` |
+
+`createRecoveryCodeSet()` draws a set, `normaliseRecoveryCode(submitted)` is the
+canonical form, and `formatRecoveryCode(canonical)` puts the groups back.
+
+### How a recovery code is stored
+
+`velve.recovery_code` is one row per code:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `user_id` | `uuid` | The owner. Cascades on deletion of the account. |
+| `code_hmac` | `bytea` | `HMAC-SHA256(token-pepper, canonical code)`. Part of the primary key, so a lookup is an index hit and a redemption is one row. |
+| `key_version` | `integer` | The `token-pepper` version the HMAC was taken under (L-3). Without it a rotation would void every code, which in `identity: "username"` is the only way back into an account. |
+| `created_at` | `timestamptz` | When the set was written. |
+
+Because the version decides the HMAC, a redemption first reads which versions
+this account's codes span — `SELECT DISTINCT key_version … WHERE user_id = $1` —
+computes the HMAC under each version still in the ring, and then deletes. The
+read touches no value that decides validity; the whole validity predicate stays
+in the `WHERE` of the statement that removes the row (`S-RACE-2`). A code whose
+version has left the ring cannot be recomputed and answers exactly as a wrong
+code does.
+
+`generate` always writes the whole set under the current version, so in practice
+the ring read finds one version and the redemption is one statement.
+
+### `velve.totp_credential` and `velve.totp_used_step`
+
+| Column | Type | Meaning |
+|---|---|---|
+| `totp_credential.user_id` | `uuid` | Primary key. One TOTP factor per account. |
+| `totp_credential.secret_enc` | `bytea` | AES-256-GCM over the raw secret under the `totp-enc` purpose (`S-REST-4`). |
+| `totp_credential.key_version` | `integer` | The `totp-enc` version the ciphertext was written under (`S-KEY-3`). |
+| `totp_credential.confirmed_at` | `timestamptz` | `NULL` until a code has proved the app holds the secret. While it is `NULL` the factor does not exist. |
+| `totp_credential.created_at` | `timestamptz` | Set again when an unconfirmed enrolment is replaced. |
+| `totp_used_step.user_id` | `uuid` | With `time_step`, the primary key that is the replay check. |
+| `totp_used_step.time_step` | `bigint` | The step that was accepted. |
+| `totp_used_step.expires_at` | `timestamptz` | When `sweep()` may remove the row. |
+
+### The five attempts a pending state allows
+
+`verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for both
+factors. It resolves the state, runs the verification, and on failure calls
+`registerFailedAttempt`. The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the
+pending module and is not restated here.
+
+A correct code spends no attempt. Wrong codes one to four answer
+`invalid_factor_code`; the wrong code that exhausts the budget answers
+`too_many_factor_attempts` and takes the pending row with it, which is what
+makes the 429 in the route table reachable — a request made after the row is
+gone answers `invalid_pending_authentication` instead.
+
+### `identity: "username"` requires recovery codes
+
+`assertRecoveryCodesAreConfigured({ identityMode, recoveryCodes })` raises
+`RecoveryCodesRequiredError` — code `recovery_codes_required` — when
+`identityMode` is `"username"` and `recoveryCodes` is not on. This is
+`S-DEFAULT-4`. An account with no e-mail address has no address a reset can be
+sent to, so a configuration that offers neither recovery codes nor a mailbox
+ships a lockout.
+
+`recoveryCodesAreMandatoryFor(identityMode)` is the same decision as a
+predicate, for a caller that wants to ask rather than to catch.
+
+The check belongs at start-up and is called by the instance; this module is the
+mechanism it calls.
 
 ## WebAuthn
 
@@ -3307,6 +3790,16 @@ half is one line and carries a whole requirement: in the mode `"username"` there
 is no address to send a reset to, so `recoveryCodes` is **required**, and leaving
 it out is a compile error before it is a start error (S-DEFAULT-4).
 
+Both of those sentences depend on one detail that is easy to undo. `M` has
+exactly one inference site — `identity`, whose type is `IdentityConfigurationInput
+& { readonly mode: M }`, and the `{ mode: M }` half is what TypeScript infers
+from. Written as a single conditional type, which reads more naturally, the whole
+position becomes non-inferrable: `M` falls back to the union, the conditional
+distributes, and both promises above quietly stop holding while still compiling.
+It shipped that way once. If you change the shape of `identity`, check that
+`createVelveAuth` on a `"username"` mode without `recoveryCodes` still fails to
+compile (E-349).
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `database` | `Driver` | — | the driver from `@velve/auth/pg`, `/postgres-js` or `/neon`; the only way a connection enters |
@@ -3372,9 +3865,10 @@ At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
 can be counted. An option left at its default produces nothing.
 
-One line is written by every installation today: the rate counters are held in
-memory rather than in `velve.rate_bucket`. That is weaker than the design and it
-is reported rather than hidden.
+A default configuration writes no line at all. The counters live in
+`velve.rate_bucket`, through `createRateLimiter` from `core/limit`; the assembly
+translates `globalPerRoute.alertThresholdPerMinute` into the bucket rule that
+module takes, which is the same statement in its vocabulary (E-356).
 
 ### `TRUST_LEVEL_EVENTS`
 
@@ -3475,6 +3969,19 @@ createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationSe
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
 | `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
+
+```ts
+createSecondFactorCompletion({ driver, schema?, session?, sessionMetadata? })
+  .complete({ pendingToken, factor, observed }): Promise<IssuedSession>
+```
+
+The operation that finishes a second factor: it consumes the pending row and
+inserts the session **in one transaction**, so a failure between the two leaves
+neither effect. Without it the two halves live in different features — the
+pending row in this module, the session in `core/session` — and each can only
+reach one of them, which is how a spent intermediate state ends up with no
+session behind it. The resulting session carries the factors the pending row had
+completed plus the one just proved (S-FIX-1, S-RACE-5).
 
 Five attempts, then the row is deleted and the attempt starts again at the
 password (L-8). The count and the deletion are one transaction, so a fifth

@@ -14,13 +14,14 @@ import { ConcealedError, type VelveErrorCode } from "../http/error-map.js";
 import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
+import { createRateLimiter } from "../limit/index.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
-import { createInProcessRateLimiter, rateLimitConfigOf } from "./rate-limiting.js";
+import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
 import {
 	type ResolutionMemo,
 	type ResolvedSessionView,
@@ -141,30 +142,11 @@ function callerResolver(
 	};
 }
 
-/**
- * The counters of 3.9 belong in `velve.rate_bucket` and to the feature that owns `core/limit`.
- * Until that lands the assembly holds them in memory, which is weaker, so the operator is
- * told the same way they are told about any other weakening.
- */
-const RATE_BUCKETS_NOT_YET_SHARED: ChosenWeakening = {
-	option: "rateLimit",
-	chosen: "counters held in memory rather than in velve.rate_bucket",
-};
-
 function reportedWeakenings<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	chosenFreshnessWindowMs: number,
 ): readonly ChosenWeakening[] {
-	const chosen = weakeningsIn(
-		config,
-		sessionSettingsOf().freshnessWindowMs,
-		chosenFreshnessWindowMs,
-	);
-	// One line per option, never two, so the operator can count what this installation gave up.
-	return [
-		...chosen.filter((weakening) => weakening.option !== RATE_BUCKETS_NOT_YET_SHARED.option),
-		RATE_BUCKETS_NOT_YET_SHARED,
-	];
+	return weakeningsIn(config, sessionSettingsOf().freshnessWindowMs, chosenFreshnessWindowMs);
 }
 
 function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakening[]): void {
@@ -191,7 +173,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const schema = config.schema ?? DEFAULT_SCHEMA;
 	const clock = config.clock ?? defaultClock;
 	const log = config.log ?? NO_SINK;
-	const identity = resolveIdentityConfiguration(config.identity);
+	const identity = resolveIdentityConfiguration<M>(config.identity);
 	// S-DEFAULT-6: parameters below the floor are refused here, at the start, and not at the first hash.
 	const password = resolvePasswordConfig(config.password);
 	const sessionSettings = sessionSettingsOf(config.session);
@@ -241,7 +223,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			sessionSettings.freshnessWindowMs / MILLISECONDS_IN_A_SECOND,
 		),
 		callers: callerResolver(sessions, pending, resolutions),
-		rateLimiter: createInProcessRateLimiter({ clock, globalPerRoute: rateLimit.globalPerRoute }),
+		rateLimiter: createRateLimiter({
+			driver,
+			keys: config.keys,
+			schema,
+			clock,
+			config: { routeFlood: routeFloodWatchOf(rateLimit) },
+		}),
 		clock,
 		log,
 	};

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
 import { SECURITY_OPTIONS } from "../src/core/auth/security-options.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
@@ -15,7 +15,7 @@ import { KeyError, rootKeyProvider } from "../src/core/keys/index.js";
 import { sessionSettingsOf } from "../src/core/session/config.js";
 import { createVelveAuth } from "../src/index.js";
 import { createTestClock } from "../src/testing/index.js";
-import { configFor, createLogSink, testKeyProvider } from "./auth-fixtures.js";
+import { configFor, createLogSink, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
@@ -85,20 +85,51 @@ describe("what else refuses to start", () => {
 		expect(start({ email: undefined as never })).toThrow(VelveStartupError);
 	});
 
-	/** S-DEFAULT-4, E-207: the runtime half of `RecoveryCodesRequirement`, for callers from JavaScript. */
+	/**
+	 * S-DEFAULT-4, E-207. Both halves are asserted, and the compile-time one only because the cast
+	 * is gone: this read `createVelveAuth(withoutCodes as never)` for the failing case, and `as
+	 * never` is assignable to anything, so the assertion said the same thing whether the type
+	 * worked or not. §3 asks for `@ts-expect-error` beside a failing-by-design case; without it the
+	 * type half was unobserved for as long as it was broken (E-350).
+	 */
 	it("refuses the username mode without recovery codes and starts with them", () => {
-		const withoutCodes = {
-			database: connection,
+		const usernameMode = {
+			database: connection as Driver,
 			schema,
 			identity: { mode: "username" as const },
 			keys: testKeyProvider(),
-			origins: ["https://app.example.com"],
+			origins: [TEST_ORIGIN],
 		};
 
-		expect(() => createVelveAuth(withoutCodes as never)).toThrow(VelveStartupError);
 		expect(() =>
-			createVelveAuth({ ...withoutCodes, recoveryCodes: { count: 10, groupSize: 5 } } as never),
+			// @ts-expect-error RecoveryCodesRequirement makes the omission a compile error first.
+			createVelveAuth(usernameMode),
+		).toThrow(VelveStartupError);
+		expect(() =>
+			createVelveAuth({ ...usernameMode, recoveryCodes: { count: 10, groupSize: 5 } }),
 		).not.toThrow();
+	});
+
+	/**
+	 * 3.15 A.1 chose design B so that the error names the mode. It named the union instead, for the
+	 * same reason S-DEFAULT-4 did not bite: the mode was not inferrable, so every instance was
+	 * `VelveAuth<IdentityMode>` and the namespace was pruned in the one mode that has it.
+	 */
+	it("carries the username namespace where the mode has usernames, and not where it does not", () => {
+		const withUsernames = createVelveAuth({
+			database: connection as Driver,
+			schema,
+			identity: { mode: "username" as const },
+			keys: testKeyProvider(),
+			origins: [TEST_ORIGIN],
+			recoveryCodes: { count: 10, groupSize: 5 },
+		});
+		const addressesOnly = createVelveAuth(configFor({ database: connection as Driver, schema }));
+
+		expectTypeOf(withUsernames.username.isAvailable).toBeFunction();
+		expect(typeof withUsernames.username.isAvailable).toBe("function");
+		// @ts-expect-error the mode has no usernames, and the message says so rather than "never".
+		expect(addressesOnly.username).toBeUndefined();
 	});
 
 	// S-DEFAULT-6: the floor is a floor; the refusal is the password module's and is reached here.
@@ -113,7 +144,7 @@ describe("what else refuses to start", () => {
 });
 
 describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", () => {
-	it("says nothing about an option left at its default beyond the one the assembly itself weakens", () => {
+	it("says nothing at all about an option left at its default", () => {
 		const log = createLogSink();
 		start({ log: log.write })();
 
@@ -121,7 +152,7 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 			(line) => line.message === "a security option is weaker than its default",
 		);
 
-		expect(weakened.map((line) => line.fields.option)).toStrictEqual(["rateLimit"]);
+		expect(weakened.map((line) => line.fields.option)).toStrictEqual([]);
 	});
 
 	it("writes exactly one line per weakened option, naming the option", () => {
@@ -140,7 +171,6 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 
 		expect(weakened.map((line) => line.fields.option).sort()).toStrictEqual([
 			"clock",
-			"rateLimit",
 			"session",
 			"sessionMetadata",
 			"trustedProxies",

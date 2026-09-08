@@ -9,10 +9,16 @@ import { defineConfig } from "vitest/config";
 const CONCURRENCY_FILES = ["test/**/*-race.test.ts", "test/**/*-concurrency.test.ts"];
 const RUNS_ALONE_AFTERWARDS = { groupOrder: 1 };
 
+/** Vitest reads this only at the root; inside a project it is accepted and has no effect, so the
+ * one file per turn E-156 asks for never happened. It held while one file wanted fifty connections
+ * and broke the moment a second one did (E-411). */
+const ONE_FILE_AT_A_TIME = false;
+
 export default defineConfig({
 	test: {
 		environment: "node",
 		testTimeout: 30_000,
+		fileParallelism: ONE_FILE_AT_A_TIME,
 		coverage: { provider: "v8", include: ["src/**"] },
 		projects: [
 			{

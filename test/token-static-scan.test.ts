@@ -92,12 +92,40 @@ describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 	it("names the table in the schema that creates it and in the repository, nowhere else", () => {
 		// L-11 adds a third: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
-		// and naming them is what it does. It reads no token and writes none.
+		// and naming them is what it does. What it is allowed to do there is pinned below, because
+		// admitting a file to this list without that would move the sweep out of every scan in this
+		// file — each of the others reads the repository source alone (E-353).
 		expect(pathsMatching(/one_time_token/)).toStrictEqual([
 			`${coreDirectory}/auth/maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
 			repositoryPath,
 		]);
+	});
+
+	/**
+	 * The sweep reaches the table on a deadline, which is neither a purpose nor an owner, and that is
+	 * the whole of its licence. It names the table in a list of tables and builds its statement from
+	 * the configured schema, so the name and the SQL never meet in one literal — which is exactly why
+	 * admitting the file to the path list above proves nothing on its own, and why what it may do is
+	 * pinned here instead: one statement, a DELETE, a deadline predicate, no `purpose`, no `user_id`,
+	 * and its own marker naming the requirement that permits it (E-353).
+	 */
+	it("lets the sweep reach the table on a deadline and on nothing else", () => {
+		const sweep = readFileSync(`${coreDirectory}/auth/maintenance.ts`, "utf8");
+		const written = statementsIn(sweep);
+
+		expect(written).toHaveLength(1);
+		expect(written[0]).toMatch(/^\s*DELETE\b/i);
+		const predicates = predicatesIn(written[0] ?? "").map((predicate) => predicate.trim());
+		expect(predicates).toHaveLength(1);
+		// The column is interpolated, so what is pinned is the comparison, not the name.
+		expect(predicates[0]?.endsWith("<= now()")).toBe(true);
+		expect(written[0]).toContain("/* no owner predicate: S-OWNER-2");
+		expect(written[0]).not.toContain("purpose");
+		expect(written[0]).not.toContain("user_id");
+		// The table is named where the sweep lists what it sweeps, and in no statement.
+		expect(sweep.match(/one_time_token/g)).toHaveLength(1);
+		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
 	it("writes three statements, two of them against the table", () => {
@@ -128,15 +156,21 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 	});
 
 	// S-TOKEN-4: the row names the account, so a caller-supplied owner has nothing to add here.
-	// This is the one row-removing statement in the library without an owner predicate, and E-142
-	// requires the statement itself to say so and to name the requirement that permits it.
+	// E-142 requires the statement itself to say so and to name the requirement that permits it.
+	// It was the only such statement in the library when this was written; it is now one of eight
+	// across six files, and the count is asserted below rather than left in this sentence (E-353).
 	it("filters on no owner, and declares that in its own text", () => {
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(predicatesIn(consume)[0]).not.toContain("user_id");
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("declares it on no other statement", () => {
+	it("carries the marker on no other statement of this repository, and is one of eight overall", () => {
+		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
+		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
+
+		expect(markers).toHaveLength(8);
+		expect(carrying).toHaveLength(6);
 		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
 });

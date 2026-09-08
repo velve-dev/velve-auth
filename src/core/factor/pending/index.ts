@@ -1,4 +1,9 @@
 export {
+	createSecondFactorCompletion,
+	type SecondFactorCompletion,
+	type SecondFactorCompletionOptions,
+} from "./complete.js";
+export {
 	type CountedAttempt,
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationInsert,

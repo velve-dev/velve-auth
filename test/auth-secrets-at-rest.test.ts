@@ -9,7 +9,7 @@ import {
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
-import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
+import { createPasswordCredentialRepository, openPhc } from "../src/core/password/credential.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import { createDummyCredential, setPassword } from "../src/core/password/verify.js";
 import { createOneTimeTokens } from "../src/core/token/one-time-token.js";
@@ -46,8 +46,17 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 	);
 	plaintexts.push({ name: "password", value: TEST_PASSWORD });
 
+	/**
+	 * T-REST-1 names the password and its PHC string separately, and the separation is the point:
+	 * Argon2id keeps the plaintext out of a dump on its own, so searching for the plaintext says
+	 * nothing about whether `password-enc` encrypted anything. The PHC string is the only one of
+	 * the eight that fails if the envelope silently no-ops (E-351).
+	 */
 	const stored = await credentials.findByUserId(userId);
-	expect(stored).not.toBeNull();
+	if (stored === null) {
+		throw new Error("the password credential was not written, so there is nothing to search for");
+	}
+	plaintexts.push({ name: "password hash (PHC)", value: await openPhc(keys, stored) });
 
 	const pending = createPendingAuthenticationService({ driver: connection, schema });
 	const issued = await pending.begin({
@@ -141,9 +150,10 @@ function encodingsOf(value: string): readonly string[] {
 describe("what a dump of the schema holds (S-REST-1, T-REST-1)", () => {
 	/**
 	 * The requirement counts 24 values in three encodings. Eight of the twenty-four can be created
-	 * on this branch; the other sixteen belong to modules other wave-3 features build — the TOTP
-	 * secret, the ten recovery codes, the WebAuthn challenge, the OAuth `state`, the PKCE verifier
-	 * and the two foreign provider tokens. The count below is therefore stated, not implied.
+	 * on this branch — the password, its PHC string, four one-time tokens, the pending token and
+	 * the session token — and the other sixteen belong to modules other wave-3 features build: the
+	 * TOTP secret, the ten recovery codes, the WebAuthn challenge, the OAuth `state`, the PKCE
+	 * verifier and the two foreign provider tokens. The count below is stated, not implied.
 	 */
 	it("was read at all, and the search over it can find something", () => {
 		expect(dump.length).toBeGreaterThan(1000);
@@ -152,6 +162,7 @@ describe("what a dump of the schema holds (S-REST-1, T-REST-1)", () => {
 		expect(["pg_dump", "every column as text"]).toContain(howTheDumpWasTaken);
 	});
 
+	// Eight values across seven rows: the password and its PHC string are two secrets in one row.
 	it("holds every artefact this branch can create, so the search is not searching an empty schema", async () => {
 		const [rows] = await connection.query<{ present: number }>(
 			`SELECT (SELECT count(*) FROM ${schema}.session)
@@ -161,18 +172,18 @@ describe("what a dump of the schema holds (S-REST-1, T-REST-1)", () => {
 			[],
 		);
 
-		expect(plaintexts).toHaveLength(7);
+		expect(plaintexts).toHaveLength(8);
 		expect(Number(rows?.present ?? 0)).toBe(7);
 	});
 
-	it("contains none of them, in any of the three encodings: 21 searches, 0 hits", () => {
+	it("contains none of them, in any of the three encodings: 24 searches, 0 hits", () => {
 		const hits = plaintexts.flatMap((secret) =>
 			encodingsOf(secret.value)
 				.filter((encoded) => dump.includes(encoded))
 				.map((encoded) => `${secret.name} as ${encoded.slice(0, 12)}…`),
 		);
 
-		expect(plaintexts.length * 3).toBe(21);
+		expect(plaintexts.length * 3).toBe(24);
 		expect(hits).toStrictEqual([]);
 	});
 

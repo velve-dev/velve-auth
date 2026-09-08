@@ -1,12 +1,6 @@
-import type { Clock } from "../http/environment.js";
-import type {
-	BucketRule,
-	RateLimitDecision,
-	RateLimiter,
-	RateLimitRequest,
-	RateLimitScope,
-} from "../http/rate-limit.js";
-import type { RateAlert, RateLimitConfig } from "./config.js";
+import type { BucketRule } from "../http/rate-limit.js";
+import type { RouteFloodWatch } from "../limit/index.js";
+import type { RateLimitConfig } from "./config.js";
 
 const DEFAULT_RATE_LIMIT_CONFIG: RateLimitConfig = {
 	perIpAddress: { capacity: 10, refillPerSecond: 0.1 },
@@ -22,76 +16,27 @@ export function rateLimitConfigOf(config: Partial<RateLimitConfig> = {}): RateLi
 	};
 }
 
-function keyOf(routeName: string, scope: RateLimitScope): string {
-	return scope.kind === "ip_address"
-		? `${routeName}|address|${scope.ipAddress ?? "unknown"}`
-		: `${routeName}|account|${scope.accountIdentifier}`;
-}
-
-interface Bucket {
-	tokens: number;
-	updatedAtMs: number;
-}
-
-const MINUTE_IN_MILLISECONDS = 60_000;
+const SECONDS_IN_A_MINUTE = 60;
 
 /**
- * The counters 3.9 asks for live in `velve.rate_bucket` and are built by another feature, whose
- * files this one may not write. This is the bucket the assembly uses until that lands: the same
- * arithmetic, held in this process instead of in the database.
- *
- * It is weaker, and it says so — the assembly logs it as a weakening under S-DEFAULT-1, because a
- * counter per process is a counter an attacker divides by the number of processes. Replacing it is
- * one import.
+ * 3.15 A.6 states the global counter as a threshold per minute; `core/limit` takes a bucket rule
+ * (E-380). A threshold of N a minute is a bucket of N refilling at N/60 a second, which is the same
+ * statement in the other module's vocabulary.
  */
-export function createInProcessRateLimiter(input: {
-	readonly clock: Clock;
-	readonly globalPerRoute: RateLimitConfig["globalPerRoute"];
-}): RateLimiter {
-	const buckets = new Map<string, Bucket>();
-	const routeCounts = new Map<string, { count: number; windowStartedAtMs: number }>();
-
-	function refilled(bucket: Bucket, rule: BucketRule, nowMs: number): number {
-		const elapsedSeconds = (nowMs - bucket.updatedAtMs) / 1000;
-		return Math.min(rule.capacity, bucket.tokens + elapsedSeconds * rule.refillPerSecond);
-	}
-
-	function countTowardsTheAlert(routeName: string, nowMs: number): void {
-		const seen = routeCounts.get(routeName);
-		if (seen === undefined || nowMs - seen.windowStartedAtMs >= MINUTE_IN_MILLISECONDS) {
-			routeCounts.set(routeName, { count: 1, windowStartedAtMs: nowMs });
-			return;
-		}
-		seen.count += 1;
-		if (seen.count === input.globalPerRoute.alertThresholdPerMinute) {
-			const alert: RateAlert = {
-				routeName,
-				requestsInLastMinute: seen.count,
-				observedAt: input.clock.now(),
-			};
-			// L-5: the global counter never refuses, it reports.
-			input.globalPerRoute.onAlert(alert);
-		}
-	}
-
+export function routeFloodWatchOf(config: RateLimitConfig): RouteFloodWatch {
+	const rule: BucketRule = {
+		capacity: config.globalPerRoute.alertThresholdPerMinute,
+		refillPerSecond: config.globalPerRoute.alertThresholdPerMinute / SECONDS_IN_A_MINUTE,
+	};
 	return {
-		consume(request: RateLimitRequest): Promise<RateLimitDecision> {
-			const nowMs = input.clock.now().getTime();
-			countTowardsTheAlert(request.routeName, nowMs);
-
-			const key = keyOf(request.routeName, request.scope);
-			const bucket = buckets.get(key) ?? { tokens: request.rule.capacity, updatedAtMs: nowMs };
-			const available = refilled(bucket, request.rule, nowMs);
-			if (available < 1) {
-				buckets.set(key, { tokens: available, updatedAtMs: nowMs });
-				const secondsUntilOneToken = (1 - available) / request.rule.refillPerSecond;
-				return Promise.resolve({
-					allowed: false,
-					retryAfterSeconds: Math.ceil(secondsUntilOneToken),
-				});
-			}
-			buckets.set(key, { tokens: available - 1, updatedAtMs: nowMs });
-			return Promise.resolve({ allowed: true });
-		},
+		rule,
+		// `addressChecksObserved` counts the checks that drained a bucket which refills at exactly
+		// the declared threshold per minute, so it is that figure to within one refill (E-356).
+		onAlert: (alert) =>
+			config.globalPerRoute.onAlert({
+				routeName: alert.routeName,
+				requestsInLastMinute: alert.addressChecksObserved,
+				observedAt: alert.observedAt,
+			}),
 	};
 }
