@@ -136,3 +136,35 @@ $$;`,
 		expect(row?.answer).toBe(42);
 	});
 });
+
+describe("plugin migrations that partition", () => {
+	const partitionedWithoutCascade: Migration = {
+		version: 300,
+		name: "audit_trail_partitioned_loose",
+		sql: `CREATE TABLE velve.audit_trail_shard (
+	id uuid NOT NULL,
+	user_id uuid NOT NULL
+) PARTITION BY HASH (user_id);`,
+	};
+
+	const partitionedWithCascade: Migration = {
+		version: 301,
+		name: "audit_trail_partitioned",
+		sql: `CREATE TABLE velve.audit_trail_bucket (
+	id uuid NOT NULL,
+	user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE
+) PARTITION BY HASH (user_id);`,
+	};
+
+	it("refuses a partitioned parent whose user_id has no cascading foreign key", async () => {
+		await expect(runWith(partitionedWithoutCascade)).rejects.toBeInstanceOf(MissingCascadeError);
+
+		expect(await tableExists("audit_trail_shard")).toBe(false);
+	});
+
+	it("accepts a partitioned parent that cascades", async () => {
+		await runWith(partitionedWithCascade);
+
+		expect(await tableExists("audit_trail_bucket")).toBe(true);
+	});
+});

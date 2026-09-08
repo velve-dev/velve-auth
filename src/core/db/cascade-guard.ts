@@ -18,7 +18,7 @@ FROM pg_attribute column_
 JOIN pg_class child ON child.oid = column_.attrelid
 JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
 WHERE namespace_.nspname = $1
-  AND child.relkind = 'r'
+  AND child.relkind IN ('r', 'p')
   AND column_.attname = 'user_id'
   AND column_.attnum > 0
   AND NOT column_.attisdropped
