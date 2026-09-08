@@ -328,8 +328,8 @@ Entscheidungen, die beim Bauen fielen.
 Apache-2.0 now. The *Kontext* line above was edited in place to say so, which
 is the only edit to an existing entry this log has permitted, made on the
 repository owner's explicit instruction. `E-505` carries the decision, why
-Apache 2.0 rather than MIT, its price, and the gate's objection to this edit —
-the argument for it is recorded there rather than repeated here.
+Apache 2.0 rather than MIT, and its price; the argument is recorded there
+rather than repeated here.
 
 **E-48 — Node ab 20.19 ist Bauvoraussetzung, nicht nur Laufzeitvoraussetzung.**
 *Kontext:* Abschnitt 2.5 nennt Node 20.19 als Laufzeituntergrenze, abgeleitet aus `@noble/hashes` 2.x und den globalen Web-Crypto-Objekten. Beim Aufsetzen des Gerüsts stellte sich heraus, dass dieselbe Grenze schon für das Bauwerkzeug gilt: Die native Bindung von Rolldown, auf der `tsdown` aufsetzt, fordert `^20.19.0 || >=22.12.0`.
