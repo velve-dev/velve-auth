@@ -1293,11 +1293,14 @@ folding can lengthen a name.
 
 ### The exported names
 
-Every type a caller of this module imports. The option bags are plain objects;
+Every name a caller of this module imports. The option bags are plain objects;
 the result types are what the functions return.
 
 | Name | Kind | Used by |
 |---|---|---|
+| `caseFolded` | function | `comparisonFormOf`, both normalisers |
+| `codePointCount` | function | `normaliseUsername`, the length bounds |
+| `comparisonFormOf` | function | `reservedNames`, the username key column |
 | `IdentityConfiguration<Mode>` | result | everything in this section |
 | `IdentityConfigurationInput<Mode>` | option bag | `resolveIdentityConfiguration` |
 | `UsernameRules` | option bag | `normaliseUsername`, `usernameAvailability` |
@@ -1320,6 +1323,40 @@ the result types are what the functions return.
 
 `IdentityMode` is not one of them: it comes from the migration that materialises
 it, `src/core/db/migrations/identity-mode.ts` (E-190).
+
+### The comparison form
+
+Three exported functions build the form under which usernames and addresses are
+compared and stored. Both normalisers, the reserved-name list and the username
+key column all pass through them, so no two comparison forms in this module can
+disagree.
+
+#### `caseFolded(value)`
+
+Lowercases `value` one code point at a time and joins the result. Per code point
+there is no context for the Final_Sigma rule to apply, so `ΟΔΟΣ` folds to `οδοσ`
+— what PostgreSQL's `lower()` produces. Lowercasing the whole string at once
+would give `οδος` instead, a form `lower()` never produces, and under a widened
+allowlist the two spellings would become two accounts.
+
+#### `codePointCount(value)`
+
+The length of `value` in code points rather than UTF-16 code units.
+`minimumLength` and `maximumLength` are measured with it, so a character outside
+the basic plane counts once and not twice.
+
+#### `comparisonFormOf(name)`
+
+Trims, normalises to NFKC, then applies `caseFolded`. `resolveIdentityConfiguration`
+folds every `reservedNames` entry through it, which is why `"Admin"` and
+`"ＡＤＭＩＮ"` both reserve `admin`. `normaliseUsername` takes the same three steps
+in the same order to produce the username key it stores, so for any input the two
+agree — a reserved name is compared against a key built the same way.
+
+A caller that needs to know the form a name will be compared under — to
+pre-compute a `reservedNames` entry, or to query the key column directly — calls
+this rather than reimplementing the three steps, since reimplementing them is how
+the two forms come apart.
 
 ### Normalisation
 
