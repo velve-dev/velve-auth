@@ -73,6 +73,10 @@ async function createHarness(limit: number, waitLimitInMilliseconds: number): Pr
 	const gate = new Promise<void>((resolve) => {
 		release = resolve;
 	});
+	let announceHeldOpen = (): void => undefined;
+	const heldOpen = new Promise<void>((resolve) => {
+		announceHeldOpen = resolve;
+	});
 
 	// A derivation that is held open turns the semaphore into a queue without making the test wait
 	// on a real Argon2id call; the count is what S-DOS-4 is about, not the arithmetic.
@@ -80,6 +84,7 @@ async function createHarness(limit: number, waitLimitInMilliseconds: number): Pr
 		run(work) {
 			return inner.run(async () => {
 				derivations += 1;
+				announceHeldOpen();
 				await gate;
 				return work();
 			});
@@ -105,7 +110,7 @@ async function createHarness(limit: number, waitLimitInMilliseconds: number): Pr
 		},
 		semaphore,
 		derivations: () => derivations,
-		hold: () => Promise.resolve(),
+		hold: () => heldOpen,
 		release: () => {
 			release();
 		},
@@ -189,7 +194,13 @@ describe("S-DOS-3, S-DOS-4 — a flood is refused, not queued forever", () => {
 	it("refuses an existing and a missing identifier in exactly the same way", async () => {
 		const harness = await createHarness(1, 100);
 
+		// Each caller decrypts the stored credential before it reaches the semaphore, and those
+		// decryptions complete in threadpool order rather than call order, so which caller takes
+		// the single place is not decided by which was dispatched first (E-158).
 		const held = checkPassword({ userId: USER_ID, plaintext: PASSWORD }, harness.environment);
+		await harness.hold();
+		expect(harness.semaphore.inFlight).toBe(1);
+
 		const existing = checkPassword(
 			{ userId: USER_ID, plaintext: PASSWORD },
 			harness.environment,

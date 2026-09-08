@@ -27,9 +27,15 @@ const OPENS_A_BLOCK = /^(?:#{1,6}[ \t]|[ \t]*$)/;
 const CLAIM_LINE =
 	/^[ \t]*(?:[#>]+[ \t]*|[-*+][ \t]+|\*{1,2}|`)*E-\d+(?:`|\*{1,2})?[ \t]*(?:$|[—–\-:·])/;
 
+/** Entries written in the German format, from before CLAUDE.md §1 made the log English. They
+ * name no owner, so not one of them can be attributed; the count is here so that a new entry
+ * written without an owner fails instead of joining a set nothing looks at. It only comes down. */
+const ENTRIES_THAT_NAME_NO_OWNER = 167;
+
 type Heading = {
 	number: number;
 	title: string;
+	owner: string | null;
 	parts: string[];
 	start: number;
 	numberLineStart: number;
@@ -43,6 +49,7 @@ function headings(): Heading[] {
 	const german = [...caseStudy.matchAll(GERMAN_ENTRY)].map((match) => ({
 		number: Number(match[1]),
 		title: String(match[2]),
+		owner: null,
 		parts: GERMAN_PARTS,
 		start: Number(match.index),
 		numberLineStart: Number(match.index),
@@ -50,6 +57,7 @@ function headings(): Heading[] {
 	const english = [...caseStudy.matchAll(ENGLISH_ENTRY)].map((match) => ({
 		number: Number(match[2]),
 		title: String(match[1]),
+		owner: String(match[3]).trim(),
 		parts: ENGLISH_PARTS,
 		start: Number(match.index),
 		numberLineStart: Number(match.index) + String(match[1]).length + "### \n".length,
@@ -77,6 +85,20 @@ function reservedRanges(): { first: number; last: number; owner: string }[] {
  * purpose. Only whole rows, and only in the file that holds the table. */
 function withoutRangeTableRows(path: string, contents: string): string {
 	return path === "CLAUDE.md" ? contents.replace(RANGE_ROW, "") : contents;
+}
+
+/** A row names its owner as a backticked feature where it has one. Where it names none, the
+ * row's own name is what it opens with, up to the first comma — the clause after the comma is
+ * prose about the row, not a second owner — and an entry may cite that name in full or the
+ * words it starts with, which is how `gate` and `gate and infrastructure` are the same owner
+ * and `which belongs to no wave` is not one at all (E-159). */
+function ownersDeclaredBy(row: string): string[] {
+	const features = [...row.matchAll(/`([^`]+)`/g)].map((match) => String(match[1]));
+	if (features.length > 0) {
+		return features;
+	}
+	const words = (row.split(",")[0] ?? "").trim().split(/\s+/);
+	return words.map((_, index) => words.slice(0, index + 1).join(" "));
 }
 
 function everyTrackedFile(): string[] {
@@ -145,6 +167,33 @@ describe("decision log", () => {
 			.filter((entry) => !ranges.some((r) => entry.number >= r.first && entry.number <= r.last))
 			.map(label);
 		expect(outside).toEqual([]);
+	});
+
+	// CLAUDE.md §6 says the ranges exist so that a feature quietly taking a number it does not own
+	// fails on its own branch. Sitting inside some range is not owning it: E-300 sits in
+	// password's second range and, renumbered to 295, in session's, and a test that asks only
+	// whether a range contains the number passes both ways round (E-159).
+	it("keeps every decision inside a range reserved for the owner it names", () => {
+		const ranges = reservedRanges();
+		const misattributed = log
+			.filter((entry) => entry.owner !== null)
+			.filter((entry) => {
+				const range = ranges.find((r) => entry.number >= r.first && entry.number <= r.last);
+				return range === undefined || !ownersDeclaredBy(range.owner).includes(entry.owner ?? "");
+			})
+			.map((entry) => `${label(entry)} claims ${entry.owner}, which does not reserve it`);
+		expect(misattributed).toEqual([]);
+	});
+
+	// A check that steps over what it cannot read reports success for it. This one says how many
+	// entries it attributed and how many it could not, so neither number can drift unnoticed.
+	it("counts the entries it cannot attribute, so none of them is skipped in silence", () => {
+		const attributed = log.filter((entry) => entry.owner !== null);
+		const unattributable = log.filter((entry) => entry.owner === null).map(label);
+
+		expect(attributed.length).toBeGreaterThan(60);
+		expect(attributed.length + unattributable.length).toBe(log.length);
+		expect(unattributable).toHaveLength(ENTRIES_THAT_NAME_NO_OWNER);
 	});
 
 	it("reserves no number to two owners", () => {

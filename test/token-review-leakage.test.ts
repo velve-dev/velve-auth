@@ -57,6 +57,13 @@ function everythingOn(value: unknown): string {
 	return parts.join("\n");
 }
 
+/** A stack names the files it ran through, so this text carries the checkout's own location,
+ * and a directory is allowed to be 43 base64url characters wide. Where the repository happens
+ * to sit is not something a leak assertion can be about (E-157). */
+function withoutTheCheckoutPath(text: string): string {
+	return text.replaceAll(repositoryRoot, "");
+}
+
 describe("no plaintext token reaches a console", () => {
 	it("writes nothing at all while issuing and redeeming all four purposes", async () => {
 		const written: string[] = [];
@@ -152,9 +159,20 @@ describe("no plaintext token reaches a thrown value", () => {
 		expect(thrown).toBeInstanceOf(Error);
 		const text = everythingOn(thrown);
 		expect(text).toContain("password_reset");
-		expect(text).not.toMatch(/[A-Za-z0-9_-]{43}/);
+		expect(withoutTheCheckoutPath(text)).not.toMatch(/[A-Za-z0-9_-]{43}/);
 		expect(text).not.toContain("secretish");
 		expect(text).not.toContain(user);
+	});
+
+	// Removing the checkout path is a way to stop the assertion above reading the filesystem,
+	// not a way to stop it reading. A wider strip would silence the leak it exists to catch.
+	it("keeps a token-shaped word that stands next to a stack frame's path", () => {
+		const shaped = "x".repeat(43);
+
+		expect(withoutTheCheckoutPath(`at issue (${repositoryRoot}src/a.ts:1:1) ${shaped}`)).toContain(
+			shaped,
+		);
+		expect(withoutTheCheckoutPath(repositoryRoot)).not.toMatch(/[A-Za-z0-9_-]{43}/);
 	});
 });
 
