@@ -1153,11 +1153,23 @@ resolution produced.
 | Mode | Sign-in name | Unique on | Reset and confirmation over |
 |---|---|---|---|
 | `email` | the address | `email` | email |
-| `username` | the username | `username_key` | **not available** without recovery codes |
+| `username` | the username | `username_key` | recovery codes only |
 | `username_email` | username **or** address | both | email |
 
 The mode is chosen once, at initialisation. It decides which `CHECK` migration 2
 installs on `velve.user`, so changing it later is a migration and not a setting.
+
+**There is no reset by email in the `username` mode**, because there is no
+mailbox to send to. A user who forgets a password with no recovery codes has
+lost the account, so the specification makes `identity: { mode: "username" }`
+without `recoveryCodes` refuse to start, and a compile error before that, via a
+`RecoveryCodesRequirement<Mode>` on the instance options (architecture 3.4 and
+3.15 A.3, E-18). **Neither is built yet.** Both belong to the options type of
+`createVelveAuth`, which no feature has written; `core/identity` sees a mode, not
+the instance options, and cannot state a requirement about `recoveryCodes` from
+there. Until the feature that builds `createVelveAuth` carries it, choosing
+`username` without issuing recovery codes at registration is a mistake the
+library does not catch. This is a recorded hand-off, not an oversight (E-207).
 
 ```ts
 type IdentityConfiguration<Mode extends IdentityMode = IdentityMode>
@@ -1192,10 +1204,16 @@ Returns the configuration with every rule filled in and every reserved name
 already in its comparison form. Throws `IdentityConfigurationError` — a start
 error, not a request error — when a rule cannot work:
 
-- `allowedCharacters` does not begin with `^` and end with `$`. A pattern that
-  matches part of a name accepts the rest of it unexamined.
-- `allowedCharacters` carries the `g` or `y` flag. Both keep `lastIndex` between
-  calls, so the same name is accepted and refused in turn.
+- `allowedCharacters` can match less than a whole name. That is any of: no
+  leading `^` or no trailing `$`; a `^` or `$` anywhere else; or a top-level
+  alternation, because `/^[a-z]+|[0-9]+$/` anchors one branch and leaves the
+  other free to match anywhere. A pattern that matches part of a name accepts
+  the rest of it unexamined.
+- `allowedCharacters` carries the `g`, `y` or `m` flag. `g` and `y` keep
+  `lastIndex` between calls, so the same name is accepted and refused in turn.
+  `m` turns `^` and `$` into line anchors, so `/^[a-z0-9_-]+$/m` accepts
+  `alice\n***evil` — and a newline in the middle of a name is not something
+  `trim()` reaches.
 - `minimumLength` is not a whole number of at least 1.
 - `maximumLength` is not a whole number of at least `minimumLength`.
 
@@ -1231,21 +1249,65 @@ sign U+212A do not survive as separate names — they become `alice` and, for a
 name of that one character, `k`.
 
 **Widening it.** `allowedCharacters` is a configuration option, and widening it
-is a decision with two consequences a caller should make deliberately:
+is a decision with consequences a caller should take on deliberately.
 
-1. Every pair of characters the wider list admits that a reader cannot tell
-   apart is a name one user can wear in place of another.
-2. The comparison form is lowercased in JavaScript, and the database asserts
-   `username_key = lower(username_key)` in PostgreSQL. For characters outside
-   ASCII the two do not have to agree, and where they do not the insert fails
-   with a constraint violation rather than storing a wrong value. Test a widened
-   allowlist against the database you will run.
+*What the library does hold.* The comparison form is folded one code point at a
+time, which is what PostgreSQL's `lower()` does, so the two agree on every
+assigned code point below U+30000 and a name PostgreSQL considers one name
+cannot become two accounts. The one exception found is U+038D, an unassigned
+slot that the C library folds and JavaScript rightly leaves alone.
+
+*What it cannot hold.* Nothing here is a guarantee about a character that
+JavaScript and your PostgreSQL disagree on because they carry different Unicode
+versions. The schema's `username_key = lower(username_key)` is not a safety net
+for that: it asserts only that the stored form is already its own `lower()`,
+which both sides of a disagreement satisfy. There is no input for which it
+fires. Test a widened allowlist against the database you will actually run.
+
+*And the reason the default is what it is.* Every pair of characters a wider
+list admits that a reader cannot tell apart is a name one user can wear in place
+of another. The default admits 1294 code points and gives every one of them a
+plain ASCII display form; a wider list gives that up.
 
 `reservedNames` are compared against the comparison form and are stored in it, so
 `"Admin"` and `"ＡＤＭＩＮ"` both reserve `admin`. A reserved name that the
 allowlist cannot spell is unreachable rather than an error.
 
-`minimumLength` and `maximumLength` count code points of the comparison form.
+`minimumLength` and `maximumLength` count code points. The upper bound is
+checked against the NFKC form before `allowedCharacters` runs, because that
+pattern is the caller's and an unbounded input is work an unauthenticated
+request could ask for; it is checked again against the comparison form, because
+folding can lengthen a name.
+
+### The exported names
+
+Every type a caller of this module imports. The option bags are plain objects;
+the result types are what the functions return.
+
+| Name | Kind | Used by |
+|---|---|---|
+| `IdentityConfiguration<Mode>` | result | everything in this section |
+| `IdentityConfigurationInput<Mode>` | option bag | `resolveIdentityConfiguration` |
+| `UsernameRules` | option bag | `normaliseUsername`, `usernameAvailability` |
+| `IdentityConfigurationError` | error class | `resolveIdentityConfiguration` |
+| `Normalisation<Value, Rejection>` | result | both normalisers |
+| `EmailRejection`, `UsernameRejection` | result | both normalisers |
+| `NormalisedUsername` | result | `normaliseUsername` |
+| `IdentifierKind` | result | `REQUIRED_IDENTIFIERS`, `IdentifierRejection` |
+| `IdentityColumns` | result | `identityColumns` |
+| `ProvidedIdentifiers` | option bag | `identityColumns` |
+| `IdentifierRejection` | result | `identityColumns` |
+| `UserLookup` | option bag | `findUserByIdentifier` |
+| `ResolvedUserIdentity` | result | `findUserByIdentifier` |
+| `UsernameLookup` | option bag | `usernameAvailability` |
+| `UsernameAvailability` | result | `usernameAvailability` |
+| `SignInMethodQuery` | option bag | `countSignInMethods` |
+| `SignInMethodRemovalCheck` | option bag | `assertSignInMethodRemains` |
+| `SignInMethodCount` | result | `countSignInMethods`, `totalSignInMethods` |
+| `SignInMethodRemoval` | option bag | both of the above |
+
+`IdentityMode` is not one of them: it comes from the migration that materialises
+it, `src/core/db/migrations/identity-mode.ts` (E-190).
 
 ### Normalisation
 
@@ -1261,10 +1323,10 @@ code: the caller decides whether a rejection becomes `invalid_input`,
 
 #### `normaliseEmail(candidate)`
 
-Trims, folds to NFKC, lowercases, and then checks that the result is structurally
-one address: exactly one `@`, a non-empty part on each side, no control,
-formatting or separating character anywhere, and at most 254 bytes of UTF-8
-(RFC 5321). Returns `Normalisation<string, EmailRejection>`.
+Trims, folds to NFKC, folds case one code point at a time, and then checks that
+the result is structurally one address: exactly one `@`, a non-empty part on each
+side, no control, formatting or separating character anywhere, and at most 254
+bytes of UTF-8 (RFC 5321). Returns `Normalisation<string, EmailRejection>`.
 
 | `EmailRejection` | Meaning |
 |---|---|
@@ -1276,8 +1338,14 @@ library does not decide whether an address exists; a confirmation link does.
 
 #### `normaliseUsername(candidate, rules)`
 
-Trims, folds to NFKC — that is the display form — and lowercases it — that is the
-comparison form. Returns `Normalisation<NormalisedUsername, UsernameRejection>`.
+Trims and folds to NFKC — that is the display form — then folds case one code
+point at a time — that is the comparison form. Returns
+`Normalisation<NormalisedUsername, UsernameRejection>`.
+
+Case is folded per code point rather than over the whole string because
+lowercasing a whole string applies the Final_Sigma rule: `ΟΔΟΣ` would become
+`οδος` where PostgreSQL's `lower()` gives `οδοσ`, and under a widened allowlist
+the two spellings would become two accounts.
 
 ```ts
 interface NormalisedUsername {
@@ -1296,9 +1364,11 @@ carries one without the other.
 | `"too_long"` | more than `maximumLength` code points |
 | `"reserved"` | the comparison form is in `reservedNames` |
 
-The order is the order of that table: characters are judged before length, so a
+The order is: `too_long` first, against the NFKC form, so the caller's own
+pattern never runs on an unbounded input; then `invalid_characters`; then
+`too_short`; then `reserved`. Characters are judged before the lower bound, so a
 one-character wildcard is reported as `invalid_characters` and not as
-`too_short`, and no rejection ever reveals more than the input already did.
+`too_short`. No rejection reveals more than the input already did.
 
 ### The columns a configuration may write
 
@@ -1348,7 +1418,10 @@ so a call that gets both wrong reports the address.
 
 **No address is ever invented.** Where a provider reports none, `email` stays
 `null` in the `username` mode, and the call is rejected with `"required"` in the
-`email` and `username_email` modes. There is no fallback, no placeholder domain
+`email` and `username_email` modes. Real providers report a missing address as
+an empty string as often as they omit the field; `""` is `"malformed"`, which
+fails the whole call rather than the address alone, so a caller that means "no
+address was reported" should pass `null` and not the provider's `""`. There is no fallback, no placeholder domain
 and no address derived from an identifier — an invalid address in the table is
 worse than no address, because everything downstream takes it for a real one
 (E-16, S-LINK-5). A test scans the whole library for the three shapes such an
@@ -1397,6 +1470,12 @@ empty string and an address that names nobody all cost the same round trip as on
 that names an account, and no branch is taken before the answer is in. That is
 what keeps normalisation from becoming the enumeration oracle the rest of the
 library avoids (S-ENUM-1, E-46).
+
+The statement orders its results rather than leaving the choice to the planner.
+Under the default allowlist no identifier can match both columns, because `@` is
+not a username character; under an allowlist wide enough to admit it, one
+identifier can name one account by address and another by username. The address
+wins over the username, and the older row over the newer.
 
 #### `usernameAvailability(lookup)`
 
@@ -1469,40 +1548,46 @@ is what would be left after that removal.
 
 #### `assertSignInMethodRemains(check)`
 
+Removes the named sign-in method unless it is the last one. This is the whole
+operation, not a check to run before your own `DELETE`.
+
 | Parameter | Type | Meaning |
 |---|---|---|
-| `transaction` | `Driver` | **the transaction that performs the removal** |
+| `transaction` | `Driver` | a driver, or the transaction the caller already holds |
 | `schema` | `string` | the schema the tables live in |
 | `actor` | `Actor` | the account, from `actorOfResolvedSession` |
-| `removing` | `SignInMethodRemoval` | the row about to be deleted |
+| `removing` | `SignInMethodRemoval` | which sign-in method to remove |
 
-Returns nothing and throws `VelveError("last_sign_in_method")` — HTTP 409 — when
-the account would be left with no way in.
-
-**How to call it.** Inside the transaction that deletes the row, and before the
-`DELETE`:
+Returns nothing. Throws `VelveError("last_sign_in_method")` — HTTP 409 — when the
+account would be left with no way in, and then nothing is removed.
 
 ```ts
-await driver.transaction(async (transaction) => {
-  await assertSignInMethodRemains({
-    transaction,
-    schema,
-    actor,
-    removing: { method: "webauthn_credential", credentialId },
-  });
-  await transaction.query(
-    `DELETE FROM ${schema}.webauthn_credential WHERE id = $1 AND user_id = $2`,
-    [credentialId, actor],
-  );
+await assertSignInMethodRemains({
+  transaction: driver,
+  schema,
+  actor,
+  removing: { method: "webauthn_credential", credentialId },
 });
 ```
 
-The call takes `SELECT … FOR UPDATE` on the user row before it counts, which is
-why it needs the transaction and not merely a driver. Two removals running at
-once would otherwise each read before the other writes, each see the way in the
-other is deleting, and both succeed. Holding the row until commit turns that into
-one success and one `last_sign_in_method`.
+The row is deleted with `user_id = actor` in its `WHERE`, so a credential that
+belongs to somebody else is never removed and never counted.
 
-The check does not verify that the row belongs to the actor. That is the caller's
-`WHERE user_id = $2`, and it stays there so that ownership is enforced in the
-statement that acts, not in one that only reads.
+**Why the removal is inside the call.** The check and the removal cannot be
+separated. Between a caller's check and a caller's `DELETE` there is room for a
+second removal to check, see the way in that the first is about to delete, and
+delete its own — and the account ends with none, with no error raised anywhere.
+The call therefore takes `SELECT … FOR UPDATE` on the user row, counts what
+would remain, and deletes, in that order.
+
+**A caller who opened no transaction is safe too.** The lock is only worth
+anything for as long as a transaction holds it, and outside a transaction block
+it is gone with the statement that took it. The call notices — a row lock
+assigns a transaction id, and that id is gone by the next statement in
+autocommit — and redoes the whole sequence inside a transaction of its own.
+Nothing has been written at the point where it notices. A caller who already
+holds a transaction is unaffected: the first attempt completes, and the removal
+lands in that transaction and commits or rolls back with it.
+
+Either way, exactly one of two concurrent removals of the last two ways in
+succeeds and the other is refused with `last_sign_in_method`.
