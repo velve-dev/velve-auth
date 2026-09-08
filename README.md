@@ -192,4 +192,4 @@ plainly is more useful than a plugin that half-implements them.
 
 ## Licence
 
-MIT © Levo Studio
+MIT © Velve
