@@ -459,15 +459,21 @@ leaves behind, not headroom anyone can reach for.
 
 Wave 4 is cut against that.
 
-- **`oauth` gets fifty-five.** It owns fourteen requirements, `S-LINK-1` to
-  `S-LINK-7` among them, and two of its test cases are corpora rather than
-  cases: T-LINK-2's twelve-way state matrix and T-REDIR-2's corpus of at least a
-  hundred and twenty malicious redirect targets. On top of that, architecture
-  3.10 and 3.15 A.8 hand it seven options with no `S-` number behind them —
-  `trustedProviders`, `storeTokens`, the JWKS allowlist, `genericOAuth` — and an
-  option with no requirement number has to be argued in the log or it is argued
-  nowhere. It is the widest feature of the wave and the only one that could
-  plausibly fill its range.
+- **`oauth` gets fifty-five.** `S-LINK-1` to `S-LINK-7` are its, and that number
+  is checkable: 5.11 lists exactly seven. Requirements from four other classes
+  reach it too — `S-REDIR-6` for outbound endpoints, `S-KEY-7` for the JWKS
+  algorithm allowlist, `S-REST-4` and `S-REST-6` for `pkce_verifier_enc` and the
+  stored provider tokens — but the specification draws no feature-to-requirement
+  map, so any total across classes is a judgement and is not offered as a count.
+  Two of its test cases are corpora rather than cases: T-LINK-2's twelve-way
+  state matrix and T-REDIR-2's corpus of at least a hundred and twenty malicious
+  redirect targets. 3.10 names fourteen providers plus `genericOAuth`, and a
+  generic one is a set of endpoints and a subject claim rather than a credential
+  pair. It is the widest feature of the wave and the only one that could
+  plausibly fill its range. A requirement number does not remove the need for an
+  entry, either: the linking rule is where three of the advisories in 5.11 came
+  from, and `S-LINK-2`'s three conditions are exactly where a reasonable-looking
+  relaxation reintroduces one.
 - **`email-flows` gets forty.** It owns `S-LINK-4`, which is the rule the linking
   chapter has to cite rather than restate, and the whole `request…`/`redeem…`
   verb pair of 3.15's rule 2.
