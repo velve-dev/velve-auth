@@ -13,18 +13,48 @@ const BINARY_DIRECTORY = /^assets\//;
 /** Smart punctuation and pasted text produce dashes other than the ASCII hyphen. */
 const CITATION = /\bE[-‐-―−](\d+)\b/g;
 const RANGE_ROW = /^\| E-(\d+) … E-(\d+) \| (.+?) \|$/gm;
-const ENTRY_HEADING = /^\*\*E-(\d+) — (.+?)\*\*/gm;
-const REQUIRED_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
+interface EntryForm {
+	readonly heading: RegExp;
+	readonly read: (match: RegExpExecArray) => { number: number; title: string };
+	readonly requiredParts: readonly string[];
+}
 
-function entries(): { number: number; title: string; body: string }[] {
-	const found = [...caseStudy.matchAll(ENTRY_HEADING)];
-	return found.map((match, index) => ({
-		number: Number(match[1]),
-		title: match[2] as string,
-		body: caseStudy.slice(
-			match.index,
-			index + 1 < found.length ? found[index + 1]?.index : caseStudy.length,
-		),
+/** The log moved to English headings partway through the build; entries written before
+ * that were neither renumbered nor rewritten, so both forms have to be readable. */
+const ENTRY_FORMS: readonly EntryForm[] = [
+	{
+		heading: /^\*\*E-(\d+) — (.+?)\*\*/gm,
+		read: (match) => ({ number: Number(match[1]), title: String(match[2]) }),
+		requiredParts: ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"],
+	},
+	{
+		heading: /^### (.+)\n`E-(\d+)` · /gm,
+		read: (match) => ({ number: Number(match[2]), title: String(match[1]) }),
+		requiredParts: ["**Context.**", "**Rejected.**", "**Reason.**", "**Price.**"],
+	},
+];
+
+interface Entry {
+	readonly number: number;
+	readonly title: string;
+	readonly body: string;
+	readonly requiredParts: readonly string[];
+}
+
+function entries(): Entry[] {
+	const headings = ENTRY_FORMS.flatMap((form) =>
+		[...caseStudy.matchAll(form.heading)].map((match) => ({
+			at: match.index,
+			requiredParts: form.requiredParts,
+			...form.read(match),
+		})),
+	).sort((one, other) => one.at - other.at);
+
+	return headings.map((heading, position) => ({
+		number: heading.number,
+		title: heading.title,
+		requiredParts: heading.requiredParts,
+		body: caseStudy.slice(heading.at, headings[position + 1]?.at ?? caseStudy.length),
 	}));
 }
 
@@ -65,7 +95,7 @@ describe("decision log", () => {
 
 	it("gives every decision all four parts", () => {
 		const incomplete = log.flatMap((entry) => {
-			const missing = REQUIRED_PARTS.filter((part) => !entry.body.includes(part));
+			const missing = entry.requiredParts.filter((part) => !entry.body.includes(part));
 			return missing.length === 0
 				? []
 				: [
