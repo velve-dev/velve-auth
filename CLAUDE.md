@@ -14,16 +14,31 @@ and the disagreement is a bug in this file that must be fixed before continuing.
 
 ## 1. Language
 
-**Everything in this repository is written in English** — source code,
+**Everything in this repository is written in English.** Source code,
 identifiers, commit messages, pull requests, `README.md`, `DOCUMENTATION.md`,
-inline text and error codes.
+`CASE-STUDY.md`, inline text and error codes. There is no exception, and
+`CASE-STUDY.md` — which used to be one — is explicitly not one.
 
-**One exception:** `CASE-STUDY.md` is German. It continues the decision log from
-architecture section 7 verbatim and in its original format, so it stays in the
-language that log is written in.
+`CASE-STUDY.md` was German until this rule changed. It is being migrated to
+English in a single central pass, so that the migration does not collide with
+the feature branches appending to it. Until that pass has run the file holds
+both languages. A German entry still in it is outstanding work, not a permitted
+exception, and no entry written from now on may be German.
 
-This is decided once and does not get revisited. The package is a public MIT
-library on npm; its readers are not assumed to read German.
+That pass rewrites the file's own header too. The header states the language and
+the entry format of everything below it, and a translation that leaves it
+standing leaves the file describing itself wrongly — in German, and in the old
+`Kontext · Verworfen · Grund · Preis` shape §6 has replaced.
+
+The decision log continues architecture section 7, and section 7 is German. A
+continued entry is **translated, not quoted**: the case study no longer
+reproduces section 7's German verbatim. How a translation must read is fixed in
+§6, and it is the one place where the no-retroactive-rationalisation rule is
+easiest to break by accident.
+
+The rule that is decided once and does not get revisited is this one — English
+everywhere, `CASE-STUDY.md` included. The package is a public MIT library on
+npm; its readers are not assumed to read German.
 
 ## 2. Scope
 
@@ -173,7 +188,7 @@ documentation is "to be written" is not finished.
   option, every schema table. The reference.
 - **`CASE-STUDY.md`** — grows with the build. Every design decision with its
   reason, every rejected alternative, every problem and its solution, in the
-  format `Entscheidung · Kontext · Verworfen · Grund · Preis`.
+  entry format fixed below.
 
 `CASE-STUDY.md` has one rule that matters more than the others: **no retroactive
 rationalisation.** If a decision was made for a bad reason and turned out right,
@@ -182,6 +197,69 @@ that the reasons are the actual ones and not the reconstructed ones.
 
 Do not create any other markdown file. No summary files, no progress reports, no
 `NOTES.md`.
+
+### The entry format
+
+An entry looks exactly like this:
+
+```
+### Authenticate the envelope header
+`E-65` · keys · storage format, frozen
+
+**Context.** …
+**Rejected.** …
+**Reason.** …
+**Price.** …
+```
+
+- The **heading** carries the title, and nothing else. It is a sentence a reader
+  can scan, not a number.
+- The **subordinate line** carries three fields separated by ` · `: the ID in
+  backticks, the feature that owns the number, and a short tag saying what kind
+  of decision it is and whether it is still open — `storage format, frozen`,
+  `revisit after wave 3`.
+- All four parts are required, in that order, each opening its own paragraph:
+  `**Context.**`, `**Rejected.**`, `**Reason.**`, `**Price.**`. An entry with
+  nothing rejected still writes `**Rejected.**` and says so.
+
+Until the migration in §1 has run, the file also holds the old German form —
+`**E-nn — Entscheidung.**` followed by `*Kontext:*`, `*Verworfen:*`, `*Grund:*`,
+`*Preis:*`. `test/decision-log.test.ts` accepts both, and only both. A heading
+that is neither is a fault, not an entry, and the test says so rather than
+skipping it.
+
+**Heading position** is what the test means by it: a line that opens a markdown
+block — it is the first line of the file, or it follows a blank line or an ATX
+heading — and that begins, after any markdown decoration, with an `E-nnn` that
+is not followed by prose. `###`, `-`, `*`, `+`, `>` and backticks are decoration,
+so leaving the number in the `###` heading is caught, and so is a list item, an
+italic line or a blockquote carrying one. A wrapped prose line never opens a
+block, so a citation that happens to land at a line start is not a heading and
+is not reported.
+
+### Translating an entry
+
+Translation is the sharpest edge the no-retroactive-rationalisation rule has,
+because a translator reads a weak argument and improves it without noticing.
+
+A translation carries the original argument across unchanged. It may not:
+
+- strengthen a reason, add evidence the original did not have, or supply a
+  justification the writer did not give;
+- soften a price, round a measured number, or drop a consequence because it
+  reads badly;
+- tidy a false start, a wrong assumption or an admitted mistake out of a
+  context, or reorder the entry so the decision looks more inevitable than it
+  was.
+
+**A translated entry that reads better than the original is a defect.** If the
+German was confused, the English is confused in the same places. Where the
+original is genuinely unclear, the translation stays unclear and the entry is
+reported — it is not repaired in passing, because repairing it invents a reason
+nobody had.
+
+New information about an old decision belongs in a new entry that cites the old
+one, never in the old entry's text.
 
 ### Numbering the decision log
 
@@ -205,11 +283,24 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-190 … E-219 | wave 2 · `identity` |
 | E-220 … E-249 | wave 2 · `session` |
 | E-250 … E-279 | wave 2 · `token` |
+| E-280 … E-299 | wave 2 · `session`, second range |
+| E-300 … E-319 | wave 2 · `password`, second range |
+| E-320 … E-349 | wave 3 · `auth-core` |
+| E-350 … E-379 | wave 3 · `rate` |
+| E-380 … E-409 | wave 3 · `factor-totp` |
+| E-410 … E-439 | wave 3 · `factor-webauthn` |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
 changed afterwards. A feature that runs out asks for a second range rather than
 borrowing from a neighbour.
+
+A second range is a **new row**, added at the bottom like any other and marked
+`second range`. It never widens or replaces the feature's first row, and the two
+rows are not an overlap — they are two disjoint blocks owned by the same
+feature, which is exactly what the rule above prescribes. Numbering inside the
+second range continues from its own start; the gap left at the end of the first
+range stays a gap.
 
 `test/decision-log.test.ts` reads that table. Every entry in `CASE-STUDY.md` must
 fall inside a declared range, and two ranges may not overlap — so a feature
@@ -227,9 +318,13 @@ fine and expected. Contiguity is worth nothing here; a silent wrong citation
 costs a great deal.
 
 `test/decision-log.test.ts` is the backstop, not the mechanism. It catches a
-number used twice, an entry missing one of its four parts, and a citation
-anywhere in the repository that resolves to no entry at all. It cannot catch a
-citation that resolves to the wrong entry — only not renumbering can.
+number used twice, an entry missing one of its four parts, a citation anywhere
+in the repository that resolves to no entry at all, and a block that sits in
+heading position carrying an `E-nnn` but matches neither entry form. That last
+one exists because without it such a block is skipped in silence: it is not
+counted, not part-checked and not range-checked, and if its number belongs to a
+real entry elsewhere the duplicate check does not see it either. It cannot catch
+a citation that resolves to the wrong entry — only not renumbering can.
 
 ## 7. Technical constraints
 
