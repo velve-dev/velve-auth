@@ -81,6 +81,22 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 		expect(withoutOwner).toEqual([]);
 	});
 
+	/** E-249: an asterisk inside the reason is the one input on which the two forms this
+	 * rule was written in on two branches disagree. */
+	it("reads a marker whose reason contains an asterisk, and still rejects the faults", () => {
+		const withAnAsterisk =
+			"DELETE FROM t /* no owner predicate: S-TOKEN-4 (see the 5*3 rule) */\n\tWHERE token_sha256 = $1";
+		const asALineComment =
+			"DELETE FROM t -- no owner predicate: S-OWNER-2\n\tWHERE token_sha256 = $1";
+		const withoutARequirement = "DELETE FROM t /* no owner predicate */\n\tWHERE token_sha256 = $1";
+		const declaringNothing = "DELETE FROM t WHERE token_sha256 = $1";
+
+		expect(DECLARES_NO_ACTOR.test(withAnAsterisk)).toBe(true);
+		expect(DECLARES_NO_ACTOR.test(asALineComment)).toBe(false);
+		expect(DECLARES_NO_ACTOR.test(withoutARequirement)).toBe(false);
+		expect(DECLARES_NO_ACTOR.test(declaringNothing)).toBe(false);
+	});
+
 	it("never reads a row before changing it, because no method issues two statements", () => {
 		const repository = readFileSync(
 			fileURLToPath(new URL("core/db/repositories/owned-row-repository.ts", sourceRoot)),
