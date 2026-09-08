@@ -495,5 +495,10 @@ describe("web handler", () => {
 		expect(response.status).toBe(500);
 		expect(await response.text()).not.toContain("10.0.0.4");
 		expect(logs[0]?.level).toBe("error");
+		expect(logs[0]?.fields).toEqual({
+			route: "test.broken",
+			reason: "unhandled_exception",
+			cause: "the connection to 10.0.0.4 was refused",
+		});
 	});
 });

@@ -167,10 +167,16 @@ export function toLoggedFailure(
 	environment: HttpEnvironment,
 ): VelveError {
 	const failure = toVisibleFailure(cause);
-	write(environment, failure.error.httpStatus >= 500 ? "error" : "warn", "request rejected", {
-		route: routeName,
-		reason: failure.loggedReason,
-	});
+	const fields =
+		failure.diagnostic === undefined
+			? { route: routeName, reason: failure.loggedReason }
+			: { route: routeName, reason: failure.loggedReason, cause: failure.diagnostic };
+	write(
+		environment,
+		failure.error.httpStatus >= 500 ? "error" : "warn",
+		"request rejected",
+		fields,
+	);
 	return failure.error;
 }
 
