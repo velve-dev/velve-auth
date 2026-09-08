@@ -964,7 +964,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Context.** `src/core/keys/base64url.ts` has a decoder and deliberately no encoder, because wave 1 needed none. The session token needs one, and `btoa` is not among the runtime assumptions of 2.6.
 **Rejected.** Putting the encoder next to the decoder in `keys/base64url.ts`, where it belongs.
 **Reason.** The ownership rule in §5 of the repository rules is binding: a feature that needs a change outside its area stops and reports it instead of editing the foreign file. Two wave-2 features in `keys/` at the same time is precisely the collision the rule prevents. The encoder is therefore a private function in `session/token.ts` and not a second public interface.
-**Price.** The alphabet now sits in two places in the package. If `keys/` later gets an encoder, this one is redundant and has to be removed — until then it is a duplication nobody sees, because it is not exported.
+**Price.** The alphabet now sits in two places in the package. If `keys/` later gets an encoder, this one is redundant and has to be removed — until then it is a duplication nobody sees, because it is not exported. **Addendum:** `keys/` got one with E-257, and this copy is gone; `session/token.ts` imports `encodeBase64Url` from `keys/base64url.ts`. The two were checked against each other over thirteen thousand inputs before the swap, because two encoders that agree on every token anyone has drawn are still two encoders.
 
 ### Truncate in the process, not in the database
 `E-222` · session · metadata minimisation
