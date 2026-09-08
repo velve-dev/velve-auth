@@ -42,7 +42,8 @@ function tokensOf(value: unknown): number {
  * of them non-negative. The refilled level is floored at zero before the draw, which bounds a
  * refused bucket at −1 — without it a flood drives the level arbitrarily negative and locks the
  * rightful owner out for as long as it takes to climb back, which is the lockout S-RATE-7
- * forbids. Elapsed time is floored for the same reason, against a clock that moved backwards.
+ * forbids. Elapsed time is floored against a clock that moved backwards, which it can because the
+ * instant is the process's rather than the database's (E-380, E-381).
  */
 export function createTokenBucketStore(options: TokenBucketStoreOptions): TokenBucketStore {
 	const table = qualifiedTableName(options.schema, "rate_bucket");

@@ -26,7 +26,7 @@ export interface RateLimiterOptions {
 const SHORTEST_BUCKET_LIFETIME_IN_SECONDS = 60;
 
 /** A bucket that would take longer than this to refill is a lockout wearing a rate limit's
- * clothes, and S-RATE-7 rules one out. */
+ * clothes, and S-RATE-7 rules one out (E-385). */
 const LONGEST_BUCKET_LIFETIME_IN_SECONDS = 86_400;
 
 /** A row swept before its bucket has refilled hands the tokens back early, so a bucket outlives

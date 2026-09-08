@@ -6,8 +6,9 @@ import { type IpAddressPrefixLengths, ipAddressNetwork } from "../net/ip-address
  * prefix does not buy an attacker a second bucket (CVE-2026-45364). */
 const RATE_LIMIT_PREFIX_LENGTHS: IpAddressPrefixLengths = { ipv4: 32, ipv6: 64 };
 
-/** S-RATE-4: a request whose address cannot be resolved counts on one shared bucket per route
- * instead of escaping the count. */
+/** S-RATE-4: a request whose address cannot be resolved counts on one shared bucket per route,
+ * and so does every spelling the parser rejects, which would otherwise be a bucket per spelling
+ * (E-384). */
 const ADDRESS_UNRESOLVED = "unresolved";
 
 /** Neither an address network nor a base64url digest contains it, so the last field of a key is

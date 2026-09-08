@@ -1743,3 +1743,135 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Price.** A behaviour change to the function every route declaration will use, made by a branch that owns no route. It is cheap only because of when it lands: nothing in `src/` calls `object()` yet, wave 2 left no route behind, and wave 3 writes the first ones. A wave later it would have been a change to every handler's input type. It was found by a type error while writing a test, not by design — the four constructors were finished and believed complete before the assignment was attempted, and had the proof been "the validator accepts a valid payload" rather than "the parsed value is assignable to the type the verifier demands", the seam would have shipped broken and looked tested. One existing type assertion moved with it: `test/http-route.test.ts` pinned a server method's input as `{ provider: string; code: string | undefined }` and now reads `{ provider: string } & { code?: string }`. `toEqual` treats a missing key and an `undefined` one alike, so no runtime assertion in the repository noticed the change — the only thing that saw it was the type-level test, which is the argument for having one. **Correction after the main gate:** the contract this entry installs was defeated by the line that implements it. `parse` read `raw[key]`, which walks the prototype chain, so an object built with `Object.create` or a plain object arriving after something wrote to `Object.prototype` produced a **present** key holding a value the caller never sent — the exact inverse of what this entry promises, and reachable on the direct server-call path for the same reason `number()` guards `NaN`. The unknown-key guard could not catch it, because `Object.keys` lists own properties and therefore never sees an inherited one to reject; a JSON body is safe only because `JSON.parse` makes even `__proto__` an own key. Both `object()` and `arrayOf()` now read through `Object.hasOwn`. The instructive part is not the defect but the test that missed it: a prototype probe **was** written — `"toString"` against `oneOf` — and it passes, and it could never have failed, because `oneOf` compares against an array where inheritance has no reach. The right idea aimed at the one constructor that could not suffer from it, while the constructor that could went unprobed. Counting thirty-one malformed inputs said nothing about whether any of them was pointed at a place a fault could live.
 
 **Renumbered.** These five entries are numbered E-500 … E-504. They were written as E-149 … E-153, and those numbers now belong to `docs/wave-3-preparation` — so anything citing them for this branch's decisions resolves to the wrong entries, which is precisely the failure §6 names and the reason this is written down instead of renumbered silently. The gate-and-infrastructure block E-140 … E-159 was handed to three branches in the same hour, and this branch and `docs/wave-3-preparation` both drew from the same block upward for entirely different decisions. No writer took a number it did not own. The coordinator who made the allocation had been told by a gate two hours earlier, in as many words, to close the membership-versus-ownership gap before wave 3, precisely because four parallel writers would hit it; that was not done, and the same allocation then created the first instance of it. Each branch stayed green on its own because `test/decision-log.test.ts` asked whether a number falls inside *some* declared range and never whether it falls inside the range its branch was given — membership is not ownership, and the check tested only the first. §6 calls the reserved range the mechanism and the test the backstop; this is the case where the mechanism failed and the backstop could not see it. That gap is closed on `main` by E-159, which is why this entry can state the rule and point at the check that now enforces it. The reallocation itself moved twice: this branch was first given E-495 … E-499, and by the time it could be applied `docs/wave-3-preparation` had spent those five on its own corrections, so the numbers are E-500 … E-504 — which is the same allocation pressure that caused the collision, one round later and caught before it landed rather than after.
+
+### Two floors the specification's SQL does not have
+`E-380` · rate · deviation from 3.9, frozen
+
+**Context.** Architecture 3.9 prints the statement verbatim, and its update clause is `LEAST(capacity, tokens + elapsed × refill) − 1`. Written that way a refused request decrements the stored level like an accepted one, so a bucket that has taken a million refusals stands at −1,000,000 and needs a million tokens' worth of refilling before anyone gets in. At the account counter's `refillPerSecond: 0.01` that is three years.
+
+**Rejected.** (a) The statement exactly as printed. (b) A separate `CASE WHEN` that decrements only on success, which is the textbook token bucket.
+
+**Reason.** (a) contradicts the last sentence of S-RATE-7 in the same document: an account must stay reachable for its rightful owner "after arbitrarily many failed attempts by third parties". Unbounded negative drift is a lockout, and a lockout is what that requirement exists to forbid. The architecture disagrees with itself here and CLAUDE.md's tie-breaker does not help, because both sides are the architecture; the requirement is prose about intent and the SQL is a sketch of mechanism, so the requirement wins. (b) is the better-known shape and was rejected only because it changes the statement more than necessary: one `GREATEST(0, …)` around the refilled level keeps the unconditional `− 1` the specification wrote and bounds the stored level at −1, which is enough. A second `GREATEST(0, …)` around the elapsed term followed from E-381 and guards a clock that moved backwards. So the shipped statement is 3.9 plus two function calls.
+
+**Price.** A refused bucket rests at −1 rather than 0, so a caller who arrives after a flood waits for two tokens rather than one — one extra refill period, silently, and nothing in the interface says so. That was the accepted cost of not restructuring the statement, and it is a worse deal than it looked when it was taken: the `CASE WHEN` in (b) would have cost one line and removed the surprise. It is not changed now because the tests are written against the shipped shape and the difference is one refill period, but the next person to touch this statement should take (b). The honest order of events is also worth writing down: this was not found by reading S-RATE-7. It was found while working out what T-RATE-7's "advance the clock by the refill time" could possibly mean for a bucket at −1,000,000, and only then did reading the requirement confirm it.
+
+### The instant comes from the process, not from `now()`
+`E-381` · rate · time source, revisit if instances disagree
+
+**Context.** 3.9's SQL calls `now()` four times: the level is refilled from `now() − updated_at`, and `updated_at` and `expires_at` are written from it. The brief for this feature listed `clock` among the constructor's parameters.
+
+**Rejected.** Keeping `now()` and giving the limiter no clock at all.
+
+**Reason.** The deciding reason was that the parameter list handed me a `clock` and a limiter that never reads it would be an unused constructor field. That is the actual reason and it is a bad one. The two supporting arguments were found afterwards, and they do hold: T-RATE-7 is specified as an integration test with a *controlled clock*, and a bucket whose refill is measured by the database cannot be advanced by a test; and `HttpEnvironment` already carries a `Clock` that everything else in the request path reads, so a second, invisible time source in the one component that measures elapsed time is a thing nobody would guess at.
+
+**Price.** The database was the one clock every instance agreed on, and this gives that up. Two processes whose clocks differ by a minute now write `updated_at` values that differ by a minute, and the one that is behind would compute a negative elapsed time and *subtract* tokens — which is why E-380's second floor exists. With the floor, skew can only make a bucket refill faster or slower than intended, bounded by the skew; without it, skew could empty a bucket. Nothing detects the skew and nothing reports it. `now()` would have been the stronger choice for a deployment of several instances, and this branch traded that for a test it could write.
+
+### The alarm counts address checks, and a route that declares no address bucket is invisible to it
+`E-382` · rate · alarm scope, open
+
+**Context.** S-RATE-8 wants a counter "per route and per instance" that only raises an alarm. The `RateLimiter` seam has exactly one method, `consume`, and the pipeline calls it once for the address bucket and once more, from inside the handler, for the account bucket. A counter that observes every call therefore counts a sign-in twice and a route without an account bucket once, so a threshold in "requests" would mean two different things on two routes.
+
+**Rejected.** (a) Observing every `consume` and documenting that the unit is checks, not requests. (b) Adding a second method to the limiter for the observation, so the pipeline could call it once per request.
+
+**Reason.** (b) is out because the seam is fixed and E-115 put it there specifically so that the counter arriving in a later wave would not touch the HTTP files; adding a method is touching them. Between (a) and observing only the address-scope call, the address call is the one the pipeline makes for every arriving request before it parses anything, which is as close to "a request arrived" as this side of the seam can see. Every route that can be flooded from outside declares an address bucket, so in practice one observation is one request.
+
+**Price.** "In practice" is doing real work in that sentence. A route configured with `perIpAddress: "none"` and an account bucket is counted zero times and cannot raise the alarm however hard it is hit, and nothing warns that the alarm has a blind spot on that route — the pipeline already warns about an unconsumed account bucket, and there is no equivalent here. The field is named `addressChecksObserved` so that the number cannot be read as a request count, which is a name doing the job a check should do. This stays open: if wave 3's route table turns out to hold a route with an account bucket and no address bucket, this decision is wrong for that route and needs revisiting rather than renaming.
+
+### The alarm has no timer, and fires on the way in rather than every time past it
+`E-383` · rate · alarm mechanics, frozen
+
+**Context.** A per-route counter needs a window. The obvious shape is a counter reset by an interval timer.
+
+**Rejected.** (a) A window reset by `setInterval` or a trailing `setTimeout`. (b) Calling `onAlert` on every request once the allowance is spent.
+
+**Reason.** (a) is inert exactly when it is needed. E-186 measured 800 concurrent sign-ins producing no timer callback at all in 14.7 seconds with `hash-wasm` installed; a counter whose window only resets from a timer would, under that load, either never reset or reset in one late burst, and the alarm that exists to notice a flood would be the thing the flood switched off. The counter is a token bucket refilled from `clock.now()` on each observation instead, so it has no scheduling at all and its state advances only when something is happening. (b) turns one flood into one alert per request, which is a second flood pointed at the alert sink; the alarm fires on the transition from "had allowance" to "spent", and again only after the allowance has recovered.
+
+**Price.** A sustained flood produces one alert and then silence, so an operator watching alert *volume* sees nothing after the first, and a flood that stops and restarts within the recovery time produces no second alert. `addressChecksObserved` is in the payload so a receiver can tell a long flood from a short one, but it is a running total since the process started, not a rate — deriving a rate from two alerts is left to whatever receives them. An `onAlert` that throws is swallowed, on the same argument the pipeline uses for a `log` that throws, which means an alert sink that is down looks exactly like a service that is quiet.
+
+### An address the parser rejects is counted, on one bucket per route
+`E-384` · rate · S-RATE-4, frozen
+
+**Context.** S-RATE-4 is about a request with no determinable client address. `ipAddressNetwork` also returns `null` for text that is not one address — a zone identifier, `host:port`, a bracketed address, two addresses in one header value — and the requirement does not say what those are.
+
+**Rejected.** (a) Giving unparseable text its own bucket, keyed by the raw string. (b) Letting the check pass when the address cannot be parsed.
+
+**Reason.** (b) is the failure S-RATE-4 is written against and needs no argument. (a) is the interesting one and it is worse than it looks: the raw string comes from whatever the adapter passed in, which for a proxied deployment is a header value, so an attacker who can make the parser fail gets a fresh bucket per spelling — `not-an-ip-1`, `not-an-ip-2` — which is CVE-2026-45364 with extra steps and an unbounded key space in a table with a primary key on it. Everything the parser rejects lands in one bucket per route, named `unresolved`, together with a genuinely absent address.
+
+**Price.** Callers that have nothing to do with each other share a bucket, so one broken client behind a proxy that mangles the header can exhaust the shared allowance and refuse every other caller whose address also failed to parse. That is a denial of service against a set of callers, and it is the deliberate choice, because the alternative is a free lane any caller can enter on demand. It also means a deployment whose adapter is wired up wrongly — passing a header value straight through, say — shows up as everyone sharing one bucket rather than as an error, and nothing says so out loud.
+
+### The bucket lifetime is computed, not configured
+`E-385` · rate · configuration, frozen
+
+**Context.** `velve.rate_bucket` has `expires_at` and a sweep index on it. Something has to decide how long a row lives, and a row swept before its bucket has refilled hands the remaining deficit back to the caller for free.
+
+**Rejected.** (a) A `bucketLifetimeInSeconds` option. (b) One fixed lifetime for every bucket.
+
+**Reason.** The correct answer is derivable — a bucket has to outlive the time it takes to fill from empty, which is `capacity / refillPerSecond` — and an option whose only correct value is computable from two other options is an option that will be set wrong. (b) is wrong in both directions at once, because the rules in one route table differ by three orders of magnitude in refill rate. The computed value is floored at 60 seconds, so a fast bucket does not produce rows that expire almost immediately, and capped at one day.
+
+**Price.** The one-day cap is a policy decision hidden inside an arithmetic one. A rule whose full refill takes longer than a day gets a row that may be swept before it has refilled, which quietly returns tokens to a caller who should not have them. The defence is that such a rule is a lockout wearing a rate limiter's name and S-RATE-7 rules it out anyway — but nothing rejects the configuration, so a rule like that is accepted, silently behaves differently from what it says, and the only place this is written down is the documentation and this entry.
+
+### A guard that could not fail, found by a plant that proved nothing
+`E-386` · rate · check quality, correction
+
+**Context.** `resolveClientAddress` began with two guards: return the connection address when `trustedProxies` is empty, then return it again when the connection is not from a trusted proxy. The first was written to make S-RATE-3's "only when `trustedProxies` is configured" clause visible in the code. The first plant against the function removed exactly that guard, and every test still passed.
+
+**Rejected.** Treating the passing plant as evidence that the tests were weak, and writing more tests.
+
+**Reason.** The plant had not made the function wrong. With an empty list `trustedProxies.some(…)` is `false`, so the second guard already returns the connection address; the first guard was a redundant short circuit and removing it changed nothing an observer could see. The tests were not weak, the plant was aimed at a place the fault could not live — the exact failure CLAUDE.md §5 warns about, met on the first attempt. The guard came out and S-RATE-3 is now carried by the one condition that decides it, so a plant against that condition changes behaviour; re-planted, it failed five tests.
+
+**Price.** The requirement is now expressed by an absence — the header is not read because the trust check did not pass — rather than by a line that names it, which is harder to see when reading the function. A comment above it says so, which is the weakest of the available guarantees. And the general lesson is bought at the price of admitting the specific one: a redundant guard is not just dead weight, it is a place where a planted fault silently passes and buys false confidence in the tests that let it through.
+
+### The option-shape check missed a planted lockout, and its self-test proved the wrong thing
+`E-387` · rate · check quality, correction
+
+**Context.** T-RATE-7 requires a static check that no option type carries a key for a delay or a lock. The first form scanned every declared member of the module against `/\b(delay|lock|block|…)/i`, and it had a self-test asserting that the pattern reports `lockoutSeconds` and does not report `refillPerSecond`. Both passed. Planting `readonly accountLockoutSeconds?: number` on `RateLimiterConfig` did not fail it.
+
+**Rejected.** Dropping the `\b` anchor and matching the stem anywhere in the name.
+
+**Reason.** `\b` never falls inside `accountLockoutSeconds`, because `t` and `L` are both word characters. The self-test could not catch that, because the one name it tried has the stem at position 0, where the anchor does match — the probe was aimed at the single spelling the fault cannot take, and it passed for that reason and no other. Dropping the anchor was rejected because `clock` is a member of `RateLimiterOptions` and contains `lock`, so an unanchored scan reports this module's own constructor. The name is split on its case changes first and each word is tested against the stems, so `accountLockoutSeconds` becomes `account lockout seconds` and `clock` stays one word that starts with no stem.
+
+**Price.** A member named `lockoutseconds`, all lower case, is one word that starts with `lock` and is caught, but a name that hides a stem in the middle of a word with no case change would not be. The check is a vocabulary filter and can be walked around by anyone who wants to; it exists to catch the option somebody adds in good faith, not the one somebody hides. This is the second entry in a row about a check that looked green — both were found in the same afternoon, both by planting, and neither by reading the check.
+
+### Fifty connections for a two-hundred-way race
+`E-388` · rate · test cost, frozen
+
+**Context.** T-RATE-6 fixes 200 simultaneous requests, capacity 20, 50 repetitions, tolerance 0. E-262 records that a full test run already reaches 89 of the 100 local PostgreSQL connections.
+
+**Rejected.** (a) One connection per request, which is what "200 simultaneous" reads like. (b) One connection for all of them, which is what the test connection's own queue would make of a `Promise.all`.
+
+**Reason.** (a) asks for twice the server's whole grant. (b) is not a race at all: the test connection serialises its statements, so 200 promises on one socket run one after another and the test would pass against an implementation with no atomicity whatsoever. Fifty connections is the width `test/token-race.test.ts` already holds, the concurrency project runs one file at a time after every other file has finished (E-156), and 200 requests spread over 50 sockets still puts 50 statements in flight at once.
+
+**Price.** The measured concurrency is 50, not 200, and the threshold says 200. What the run actually demonstrates is that fifty writers conflicting on one row leave exactly twenty winners, fifty times over; that four of the two hundred queue behind each other is invisible to the result and would hide a fault that only appears above fifty-way conflict, if such a fault exists. The planted read-then-write failed all fifty runs at this width, which is the evidence that the width is enough to separate the two implementations — not evidence that it is enough to separate every pair.
+
+### The account bucket is per route
+`E-389` · rate · key shape, frozen
+
+**Context.** 3.9 describes the account counter as "one bucket with a slowly refilling rate". S-RATE-5 says the key contains the resolved route name. Read together it is not obvious whether one account has one bucket or one per route, and the seam decides nothing: `consume` receives a route name for both scopes.
+
+**Rejected.** One bucket per account across all routes, keyed by the digest alone.
+
+**Reason.** S-RATE-5 is written about "the rate key" without qualifying which counter, and the pipeline passes the route name for the account scope as well, which reads as the interface expecting it to be used. The per-route key is also the one that composes: two routes with different costs can carry different capacities, which a shared bucket makes meaningless.
+
+**Price.** An attacker who can reach several routes that all take the same identifier gets a full capacity on each, so the total number of attempts against one account is the sum over the routes rather than one budget. Whether that matters depends on a route table this branch cannot see — if wave 3 ships several routes that each accept a password attempt, this decision is the wrong one and the fix is a shared key, not a smaller capacity. Nothing here detects that; it needs someone reading the finished route table.
+
+### The identifier is normalised by the route, not by the limiter
+`E-390` · rate · boundary, frozen
+
+**Context.** S-RATE-7 keys the account counter on the "normalised identifier". Normalisation belongs to `identity`, which owns folding, case and the email rules, and this module owns no file there.
+
+**Rejected.** Lower-casing and trimming the identifier inside `accountBucketKey`, as a safety net.
+
+**Reason.** A second, simpler normaliser next to the real one is the way two normalisers drift apart: the moment `identity` folds something this one does not, two spellings of one identifier get two buckets and the counter is quietly halved. One normaliser, applied by the caller, is the only shape with no drift in it. `context.enforceAccountRateLimit` takes what the route hands it.
+
+**Price.** A route that forgets to normalise gets a working rate limiter that counts spellings instead of accounts, and nothing detects it — not this module, which cannot tell a normalised string from an unnormalised one, and not the seam, which has no opinion. The test in `limit-account.test.ts` that shows three spellings on one bucket is a test of the fixture route's normalisation as much as of anything here, and it would keep passing if this module started normalising too. The only real defence is that the routes are written once, in one place, by whoever owns them.
+
+### No migration, no table, no sweep
+`E-391` · rate · scope, frozen
+
+**Context.** `velve.rate_bucket` already exists in migration 1 with the columns 3.9 needs and a sweep index on `expires_at`. Expired rows have to be removed by something.
+
+**Rejected.** (a) A migration adding an index on `bucket_key`'s prefix, so the three counters could be swept separately. (b) A sweep inside this module, run from `consume`.
+
+**Reason.** (a) would edit a file this feature does not own and move migration 1's checksum, which the migration runner treats as a schema that has been tampered with — every existing database would refuse to start. Whatever it bought was not worth that, and it buys little: the primary key covers the only lookup made. (b) is `maintenance`'s job; a sweep triggered from the request path is a request that occasionally takes a full table scan, and the deletion of expired rows is not urgent enough to pay for that.
+
+**Price.** Until something sweeps, `velve.rate_bucket` grows by one row per active bucket and shrinks by none. Every row's `expires_at` is set correctly on every write, so the sweep will work when it exists; there is simply nothing running it in this branch, and a deployment that never sweeps accumulates one row per address prefix per route indefinitely. That is a real hand-off and not a rounding error: the address counter's key space is the internet.
