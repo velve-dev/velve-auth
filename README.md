@@ -1,10 +1,16 @@
+![Velve Auth](https://raw.githubusercontent.com/velve-dev/velve-auth/main/assets/banner.png)
+
 # @velve/auth
 
-Authentication for TypeScript and PostgreSQL that answers exactly one question:
-**who is signed in.**
+**The European authentication library for TypeScript and PostgreSQL.**
 
-It runs inside your application's process. Your users live in your database. No
-third-party service is involved at any point.
+It answers exactly one question — **who is signed in** — and it answers it
+completely. The library runs inside your application's process and your users
+live in your database, so no third-party authentication service ever sits
+between you and them.
+
+The only traffic that leaves your infrastructure goes to the OAuth providers you
+choose to enable, and if you enable none, none does.
 
 > **Status: in development.** The public interface is specified and frozen; the
 > implementation is being built feature by feature. Nothing here is published to
@@ -96,7 +102,9 @@ This list is a promise, not a backlog. None of it is planned.
 
 - Roles, permissions, policies, access control of any kind
 - Organisations, teams, tenants, invitations, membership
-- Profile data beyond what identifies an account
+- Profile data on the user record. A linked OAuth identity caches the claims
+  the provider returned, because the application usually needs them; the user
+  record itself holds nothing beyond what identifies the account.
 - Acting as an identity provider — no OIDC provider, no SAML, no SCIM
 - Databases other than PostgreSQL; no MySQL, no SQLite, no ORM adapter
 - Billing, subscriptions, or anything that bills
