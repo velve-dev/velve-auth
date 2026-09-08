@@ -1145,7 +1145,7 @@ account, and how many ways into an account are left.
 
 Nothing in this section reads or writes a session. `findUserByIdentifier` and
 `usernameAvailability` take a `Driver`; `countSignInMethods` and
-`assertSignInMethodRemains` additionally take the `Actor` that session
+`removeSignInMethod` additionally take the `Actor` that session
 resolution produced.
 
 ### The three configurations
@@ -1252,17 +1252,20 @@ name of that one character, `k`.
 is a decision with consequences a caller should take on deliberately.
 
 *What the library does hold.* The comparison form is folded one code point at a
-time, which is what PostgreSQL's `lower()` does, so the two agree on every
-assigned code point below U+30000 and a name PostgreSQL considers one name
-cannot become two accounts. The one exception found is U+038D, an unassigned
-slot that the C library folds and JavaScript rightly leaves alone.
+time, which is what PostgreSQL's `lower()` does, so the two agree across all of
+Unicode — 1 111 758 comparison forms — and a name PostgreSQL considers one name
+cannot become two accounts. The one exception is U+038D, an unassigned slot that
+the C library folds to `ύ` and JavaScript, correctly, leaves alone.
 
 *What it cannot hold.* Nothing here is a guarantee about a character that
 JavaScript and your PostgreSQL disagree on because they carry different Unicode
-versions. The schema's `username_key = lower(username_key)` is not a safety net
-for that: it asserts only that the stored form is already its own `lower()`,
-which both sides of a disagreement satisfy. There is no input for which it
-fires. Test a widened allowlist against the database you will actually run.
+versions. `username_key = lower(username_key)` is a thin net for that, not a
+safety net: it asserts only that the stored form is already its own `lower()`,
+and where two sides of a disagreement both satisfy that it says nothing. It does
+fire for U+038D — an insert of that comparison form is refused with SQLSTATE
+23514 — and U+038D is the only input in Unicode for which it fires today. A
+different Unicode version on either side moves that set without warning, so test
+a widened allowlist against the database you will actually run.
 
 *And the reason the default is what it is.* Every pair of characters a wider
 list admits that a reader cannot tell apart is a name one user can wear in place
@@ -1302,7 +1305,7 @@ the result types are what the functions return.
 | `UsernameLookup` | option bag | `usernameAvailability` |
 | `UsernameAvailability` | result | `usernameAvailability` |
 | `SignInMethodQuery` | option bag | `countSignInMethods` |
-| `SignInMethodRemovalCheck` | option bag | `assertSignInMethodRemains` |
+| `SignInMethodRemovalRequest` | option bag | `removeSignInMethod` |
 | `SignInMethodCount` | result | `countSignInMethods`, `totalSignInMethods` |
 | `SignInMethodRemoval` | option bag | both of the above |
 
@@ -1546,14 +1549,14 @@ not make the count too low.
 Adds the three numbers. `totalSignInMethods(await countSignInMethods({ ..., excluding }))`
 is what would be left after that removal.
 
-#### `assertSignInMethodRemains(check)`
+#### `removeSignInMethod(request)`
 
 Removes the named sign-in method unless it is the last one. This is the whole
 operation, not a check to run before your own `DELETE`.
 
 | Parameter | Type | Meaning |
 |---|---|---|
-| `transaction` | `Driver` | a driver, or the transaction the caller already holds |
+| `driver` | `Driver` | a driver, or the transaction the caller already holds |
 | `schema` | `string` | the schema the tables live in |
 | `actor` | `Actor` | the account, from `actorOfResolvedSession` |
 | `removing` | `SignInMethodRemoval` | which sign-in method to remove |
@@ -1561,9 +1564,15 @@ operation, not a check to run before your own `DELETE`.
 Returns nothing. Throws `VelveError("last_sign_in_method")` — HTTP 409 — when the
 account would be left with no way in, and then nothing is removed.
 
+It does not report whether a row was actually deleted. A `credentialId` that is
+already gone, or that belongs to another account, is excluded from the count by
+its identifier rather than by subtracting one, so it never makes the count too
+low; the delete then matches nothing and the call returns. A caller that needs
+to tell "removed" from "there was nothing to remove" reads the row first.
+
 ```ts
-await assertSignInMethodRemains({
-  transaction: driver,
+await removeSignInMethod({
+  driver,
   schema,
   actor,
   removing: { method: "webauthn_credential", credentialId },
