@@ -64,10 +64,7 @@ export function resolveClientAddress(
 	forwardedFor: string | null,
 	trustedProxies: readonly string[],
 ): string | null {
-	if (connectionAddress === null || trustedProxies.length === 0) {
-		return connectionAddress;
-	}
-	if (!isTrustedProxy(connectionAddress, trustedProxies)) {
+	if (connectionAddress === null || !isTrustedProxy(connectionAddress, trustedProxies)) {
 		return connectionAddress;
 	}
 
