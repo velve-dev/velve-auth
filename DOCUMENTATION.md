@@ -1340,10 +1340,14 @@ Two spellings that normalise to one identifier are one bucket only because the
 route normalised them first.
 
 An empty bucket is a refusal with `rate_limited`. It is never a delay and never
-a lock — no option here names either, and `test/limit-option-shape.test.ts`
-fails the build if one ever does. The bucket refills at the configured rate, so
-an account stays reachable for its owner with the right credentials after any
-number of failed attempts by anyone else.
+a lock. `test/limit-option-shape.test.ts` holds an allowlist of every member
+name this module declares, each one read and found to be neither, and it fails
+the build on any name that is not on it — so a delay cannot be added without
+somebody putting its name on that list first. It is not a filter that recognises
+forbidden names, and it was one until it passed `minimumResponseTime` (E-394).
+The bucket refills at the configured rate, so an account stays reachable for its
+owner with the right credentials after any number of failed attempts by anyone
+else.
 
 A refusal is answered without running a key derivation, so it is measurably
 cheaper than a failed sign-in. That is the point of ordering the checks this way
