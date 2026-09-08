@@ -914,17 +914,33 @@ percent-decoding each segment once:
 
 ### Input validators
 
-`object()`, `string()` and `optional()` live in `core/http` and appear only in
-route declarations.
+The validator constructors live in `core/http` and appear only in route
+declarations.
 
 | Constructor | Accepts | Rejects |
 |---|---|---|
 | `string()` | a string, including `""` | everything else, `null` included |
+| `number()` | a finite number | `NaN`, `Infinity`, a numeric string, everything else |
+| `oneOf(...values)` | one of the listed strings, narrowed to that literal | any other string, and every non-string |
+| `arrayOf(inner)` | an array whose every entry `inner` accepts | a non-array, and an array with one entry `inner` rejects |
+| `unknownRecord()` | any object, contents unread | an array, `null`, and every primitive |
 | `optional(inner)` | `undefined`, or whatever `inner` accepts | what `inner` rejects; an explicit `null` is **not** absent |
 | `object(shape)` | an object whose declared fields all parse | an array, `null`, a non-object, and — on a `POST` body — any key the shape does not declare |
 
 Every rejection is `invalid_input` with the same message; no validator says
 which field was wrong, and no input value is echoed back.
+
+`object(shape)` nests: a field's validator may itself be an `object()`, which is
+how the two WebAuthn ceremony payloads are declared. An absent optional field
+leaves **no key** on the parsed value, and its type is `field?: T` rather than
+`field: T | undefined`, so a parsed payload is assignable to a foreign type that
+declares the field optional. `number()` guards `NaN` and `Infinity` because a
+direct server call passes JavaScript values, where a request body could only
+carry what JSON can spell.
+
+`unknownRecord()` exists for `clientExtensionResults`: the WebAuthn extension
+outputs are open-ended and the library reads none of them (3.15 D36), so the
+shape is checked and the contents are not.
 
 ### `RequestContext`
 

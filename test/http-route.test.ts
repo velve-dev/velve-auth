@@ -175,7 +175,7 @@ describe("server method", () => {
 	it("takes the caller tokens as named input fields", () => {
 		expectTypeOf<ServerMethodOf<typeof callbackRoute>>().toEqualTypeOf<
 			(
-				input: { provider: string; code: string | undefined } & ServerCallFields,
+				input: { provider: string } & { code?: string } & ServerCallFields,
 			) => Promise<{ provider: string; code: string | null }>
 		>();
 	});
