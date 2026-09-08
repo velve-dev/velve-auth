@@ -304,6 +304,36 @@ nobody had.
 New information about an old decision belongs in a new entry that cites the old
 one, never in the old entry's text.
 
+### Correcting an entry before it merges
+
+**On your own branch, before merge, a measurement may be restated in place; a
+reason may not. An entry that existed at the merge base is never edited.**
+
+The rule above protects a reason from being rewritten *after it has been read*,
+and an entry on an unmerged branch has been read by nobody. Forbidding the
+in-branch correction produces the opposite of what that rule wants: a writer who
+may not change `ten of thirteen` to `eleven of fourteen` in their own unpublished
+entry has to publish a number they know is wrong and aim a second entry at it,
+and the wrong number becomes permanent.
+
+The sharp edge is the honest half. The same latitude covers rewriting a **reason**
+on an unmerged branch, which is retroactive rationalisation, and **no diff of any
+form separates the two cases** — an edit to an entry the branch itself introduced
+nets out to an addition against the merge base whichever way the edit went. This
+rule needs a human. E-536 found that boundary; E-538 records an instance where a
+wrong reason was corrected in place anyway, deliberately and disclosed in the
+entry, which is what disclosure is for and is not a precedent for doing it
+quietly.
+
+What a script can read is the second sentence, and `pnpm check:log-append` reads
+it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
+deletions. The **three-dot** form is the form. Two-dot is not a stricter version
+of the property but a wrong one — where the base has moved and has not been
+merged, it counts deletions `main`'s own commits made as though this branch had
+made them (E-538). The check is structurally blind to an edit of an entry the
+same branch introduced, because at the merge base that entry did not exist. That
+blindness is exactly right: it is the case this rule permits.
+
 ### Numbering the decision log
 
 `CASE-STUDY.md` is the one file every feature appends to. That is a deliberate
