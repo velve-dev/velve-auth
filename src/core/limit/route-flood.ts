@@ -11,7 +11,7 @@ export interface RouteFloodWatch {
 	readonly onAlert: (alert: RouteFloodAlert) => void;
 }
 
-export interface RouteFloodCounter {
+interface RouteFloodCounter {
 	observe(routeName: string, observedAt: Date): void;
 }
 

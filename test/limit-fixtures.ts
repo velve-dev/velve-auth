@@ -10,8 +10,8 @@ import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-export const ALLOWED_ORIGIN = "https://app.example.com";
-export const START_OF_TEST_TIME = new Date("2026-01-01T12:00:00.000Z");
+const ALLOWED_ORIGIN = "https://app.example.com";
+const START_OF_TEST_TIME = new Date("2026-01-01T12:00:00.000Z");
 
 export interface MovableClock {
 	now(): Date;
@@ -33,7 +33,7 @@ export interface CountedRateLimiter extends RateLimiter {
 }
 
 /** T-RATE-4 counts skipped checks, which only a limiter that sees every call can report. */
-export function countingRateLimiter(inner: RateLimiter): CountedRateLimiter {
+function countingRateLimiter(inner: RateLimiter): CountedRateLimiter {
 	const requests: RateLimitRequest[] = [];
 	return {
 		requests,
@@ -44,16 +44,11 @@ export function countingRateLimiter(inner: RateLimiter): CountedRateLimiter {
 	};
 }
 
-export interface LimitedRoutes {
-	readonly signIn: RateLimitRule;
-	readonly probe: RateLimitRule;
-}
-
 export const NO_LIMIT: RateLimitRule = { perIpAddress: "none", perAccount: "none" };
 
-export type FailedSignInWork = (identifier: string) => Promise<void>;
+type FailedSignInWork = (identifier: string) => Promise<void>;
 
-export interface RouteTableOptions {
+interface RouteTableOptions {
 	readonly signIn: RateLimitRule;
 	readonly probe: RateLimitRule;
 	readonly onCredentialCheck?: FailedSignInWork;
@@ -61,7 +56,7 @@ export interface RouteTableOptions {
 
 /** The two shapes the requirements need: a route with an account bucket behind an address
  * bucket, and one with an address bucket alone. */
-export function testRoutes(options: RouteTableOptions): readonly AnyRoute[] {
+function testRoutes(options: RouteTableOptions): readonly AnyRoute[] {
 	const signIn = defineRoute({
 		name: "signIn.password",
 		method: "POST",
@@ -95,7 +90,7 @@ export function testRoutes(options: RouteTableOptions): readonly AnyRoute[] {
 	return [signIn, probe];
 }
 
-export function testHttpEnvironment(
+function testHttpEnvironment(
 	routes: readonly AnyRoute[],
 	rateLimiter: RateLimiter,
 	clock: Clock,
@@ -129,7 +124,7 @@ export interface Harness {
 	readonly close: () => Promise<void>;
 }
 
-export interface HarnessOptions extends RouteTableOptions {
+interface HarnessOptions extends RouteTableOptions {
 	readonly config?: RateLimiterConfig;
 	readonly clientAddress?: (request: Request) => string | null;
 }
@@ -188,7 +183,7 @@ export function probeRequest(headers: Readonly<Record<string, string>> = {}): Re
 	});
 }
 
-export interface BucketRow {
+interface BucketRow {
 	readonly bucket_key: string;
 	readonly tokens: unknown;
 }

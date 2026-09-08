@@ -11,9 +11,10 @@ const REQUESTS = 200;
 const REPETITIONS = 50;
 
 /** One connection per request would ask for 200 of the hundred PostgreSQL grants, and a full
- * run already reaches 89 of them (E-262). Fifty is what a concurrency file has been shown to
- * hold, and it is the width the interleaving is measured at. */
-const CONNECTIONS = 50;
+ * run already reaches 89 of them (E-262). Fifty was measured against `test/token-race.test.ts`,
+ * which holds fifty of its own at the same time, and the two together exhausted the server
+ * (E-392). Twenty is what fits beside it, and it is the width the interleaving is measured at. */
+const CONNECTIONS = 20;
 
 /** Low enough that the whole run refills a thousandth of one token, so tolerance 0 is a
  * statement about the statement and not about how long the run took. */

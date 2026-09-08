@@ -1,12 +1,12 @@
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 
-export interface TokenBucketStoreOptions {
+interface TokenBucketStoreOptions {
 	readonly driver: Driver;
 	readonly schema: string;
 }
 
-export interface TokenBucketDraw {
+interface TokenBucketDraw {
 	readonly bucketKey: string;
 	readonly capacity: number;
 	readonly refillPerSecond: number;
@@ -14,7 +14,7 @@ export interface TokenBucketDraw {
 	readonly observedAt: Date;
 }
 
-export interface TokenBucketStore {
+interface TokenBucketStore {
 	draw(input: TokenBucketDraw): Promise<number>;
 }
 
