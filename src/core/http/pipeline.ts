@@ -1,4 +1,4 @@
-import type { PendingAuthentication, Session } from "./caller.js";
+import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import { type CookieCollector, type CookieInstruction, createCookieCollector } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment, type LogLevel } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
@@ -9,6 +9,7 @@ import {
 	type RequestContext,
 	type RouteMetadata,
 	type RunnableRoute,
+	readsPendingCookie,
 } from "./route.js";
 
 interface CallerTokens {
@@ -57,7 +58,7 @@ async function resolveSession(
 async function resolvePending(
 	pendingToken: string | null,
 	environment: HttpEnvironment,
-): Promise<PendingAuthentication> {
+): Promise<ResolvedPendingAuthentication> {
 	if (pendingToken === null) {
 		throw new ConcealedError("pending_cookie_absent");
 	}
@@ -114,18 +115,21 @@ async function createRequestContext(
 	accountBucket: AccountBucket,
 ): Promise<RequestContext> {
 	const tokens = call.readCallerTokens();
+	// S-CACHE-4: a route that does not declare the cookie readable is answered as if it were absent.
+	const pendingToken = readsPendingCookie(route) ? tokens.pendingToken : null;
 	const session =
 		route.caller === "session" ? await resolveSession(tokens.sessionToken, environment) : null;
 	if (session !== null && route.freshness === "required") {
 		assertSessionIsFresh(session, environment);
 	}
 	const pending =
-		route.caller === "pending" ? await resolvePending(tokens.pendingToken, environment) : null;
+		route.caller === "pending" ? await resolvePending(pendingToken, environment) : null;
 
 	return {
 		session,
 		pending,
 		sessionToken: tokens.sessionToken,
+		pendingToken,
 		ipAddress: call.ipAddress,
 		userAgent: call.userAgent,
 		cookies,

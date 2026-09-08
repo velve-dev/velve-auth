@@ -22,7 +22,18 @@ export interface PendingAuthentication {
 	readonly expiresAt: Date;
 }
 
+/**
+ * E-405 and E-472: a `caller: "pending"` route is authorised by the intermediate state and has to
+ * act on the account it belongs to, which the presentation above deliberately withholds.
+ */
+export interface ResolvedPendingAuthentication {
+	readonly userId: string;
+	readonly pending: PendingAuthentication;
+	/** The database's clock at the moment it answered. */
+	readonly observedAt: Date;
+}
+
 export interface CallerResolver {
 	resolveSession(sessionToken: string): Promise<Session>;
-	resolvePending(pendingToken: string): Promise<PendingAuthentication>;
+	resolvePending(pendingToken: string): Promise<ResolvedPendingAuthentication>;
 }

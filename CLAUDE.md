@@ -333,6 +333,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-405 … E-449 | wave 3 · `factor-totp`, which owns recovery codes as well as TOTP |
 | E-450 … E-494 | wave 3 · `factor-webauthn` |
 | E-495 … E-514 | gate and infrastructure, second range |
+| E-515 … E-539 | gate and infrastructure, third range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -484,6 +485,9 @@ pnpm test        vitest run — the blocking tier
 pnpm test:nightly
                  vitest run with VELVE_NIGHTLY=1 — adds the statistical and
                  high-repetition cases section 6 puts on a nightly schedule
+pnpm test:release
+                 vitest run over the release project — the cases section 6 puts
+                 before every release; a version tag runs it
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL

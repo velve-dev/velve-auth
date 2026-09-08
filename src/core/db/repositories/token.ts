@@ -4,7 +4,9 @@ import {
 	type OneTimeTokenPayload,
 	type OneTimeTokenPurpose,
 } from "../../token/purpose.js";
+import type { RedeemedOneTimeToken } from "../actor.js";
 import type { Driver } from "../driver.js";
+import { toEntityId } from "../entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../identifier.js";
 
 export interface OneTimeTokenRepositoryOptions {
@@ -24,13 +26,14 @@ export interface OneTimeTokenLookup {
 	readonly purpose: OneTimeTokenPurpose;
 }
 
-export interface StoredOneTimeToken {
-	readonly userId: string | null;
+/** E-234: the removal proved the owner, so what comes back is the second lawful provenance of an `Actor`. */
+export type StoredOneTimeToken = RedeemedOneTimeToken & {
 	readonly payload: OneTimeTokenPayload | null;
-}
+};
 
 export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: string }>;
+	/** S-TOKEN-4: a row that names no account is answered exactly as no row is. */
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
 }
 
@@ -62,6 +65,11 @@ export class OneTimeTokenError extends Error {
 }
 
 const EXPIRY_AS_ISO_8601 = `to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+// E-93: the one place in this repository where the redemption becomes evidence of an owner.
+function redeemedBy(userId: string, payload: OneTimeTokenPayload | null): StoredOneTimeToken {
+	return { userId: toEntityId<"user">(userId), payload } as StoredOneTimeToken;
+}
 
 /** A driver may hand back `jsonb` decoded or as the text PostgreSQL sent; both arrive here. */
 function readPayload(value: unknown): OneTimeTokenPayload | null {
@@ -134,7 +142,9 @@ RETURNING user_id, payload`;
 				consumeStatement,
 				[tokenSha256, purpose],
 			);
-			return row === undefined ? null : { userId: row.user_id, payload: readPayload(row.payload) };
+			return row === undefined || row.user_id === null
+				? null
+				: redeemedBy(row.user_id, readPayload(row.payload));
 		},
 	};
 }

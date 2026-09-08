@@ -96,7 +96,14 @@ describe("what the session cookie carries (S-COOKIE-4)", () => {
 			sessionMaximumAgeInSeconds: 60,
 		});
 
-		const methods = ["setSession", "clearSession", "setPending", "clearPending"] as const;
+		const methods = [
+			"setSession",
+			"clearSession",
+			"setPending",
+			"clearPending",
+			"setOAuthState",
+			"clearOAuthState",
+		] as const;
 
 		expect(Object.keys(collector).sort()).toStrictEqual([...methods, "collect"].sort());
 		// One parameter, and it is the token: there is no second one a caller could pass state in.

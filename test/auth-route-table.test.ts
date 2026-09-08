@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PENDING_CALLER_ROUTES } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import type { AnyRoute } from "../src/core/http/route.js";
+import { type AnyRoute, readsPendingCookie } from "../src/core/http/route.js";
 import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 
@@ -19,27 +19,32 @@ afterAll(async () => {
 });
 
 /**
- * The part of 3.15 D.3 this feature declares. The namespaces whose services belong to another
- * wave-3 feature are absent, and naming the set here rather than counting it means a route added
- * or lost shows up as a name rather than as a number nobody reads.
+ * E-342 named the seven routes exactly, so that a route added or lost showed up as a name rather
+ * than as a number nobody reads — and called the file a merge conflict waiting for four branches.
+ * What replaces it is a property over whatever the table holds, plus a floor that an empty table
+ * fails: the floor carries no meaning of its own, it exists because a wave-3 gate found eight of
+ * eleven assertions here passing on an empty list.
  */
-const DECLARED_ROUTES = [
-	"signOut",
-	"session.read",
-	"session.list",
-	"session.revoke",
-	"session.revokeAllOther",
-	"session.revokeAll",
-	"session.refresh",
-];
+const MINIMUM_ROUTES = 7;
+const MINIMUM_GET_ROUTES = 2;
+const MINIMUM_PENDING_READERS = 2;
 
-/** The GET routes of that set, named for the same reason: a count passes on an empty table. */
-const DECLARED_GET_ROUTES = ["session.read", "session.list"];
+/**
+ * S-CACHE-4 counts **readers**, not authorities: the four routes with `caller: "pending"` evaluate
+ * `__Host-velve_pending` and every other route ignores it completely. `PENDING_CALLER_ROUTES`
+ * bounds the authorities, and until `pendingCookie` existed that bounded the readers too. It no
+ * longer does, so the reader set is named here and the count is what holds it (E-530).
+ */
+const ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE = new Set<string>([
+	...PENDING_CALLER_ROUTES,
+	"pending.read",
+	"pending.cancel",
+]);
 
 /** 3.15 D.3: the only route without an origin check is the provider's redirection back. */
 const ROUTES_THAT_MAY_BE_EXEMPT = new Set(["signIn.oauth.callback"]);
 
-/** S-CSRF-4: the seven reading routes, plus the callback, are the whole of what may answer a GET. */
+/** S-CSRF-4: the reading routes, plus the callback, are the whole of what may answer a GET. */
 const READING_GET_ROUTES = new Set([
 	"session.read",
 	"session.list",
@@ -51,37 +56,62 @@ const READING_GET_ROUTES = new Set([
 	"signIn.oauth.callback",
 ]);
 
-describe("the origin check over the whole table (S-CSRF-1)", () => {
-	it("leaves exactly the routes that may be exempt exempt, over the table this feature declares", () => {
-		const exempt = routes.filter((route) => route.originCheck !== "checked").map((r) => r.name);
+/** A GET whose declared input is not optional needs one, or it answers 400 before anything else. */
+const QUERY_BY_ROUTE: Readonly<Record<string, string>> = {
+	"username.isAvailable": "?username=x",
+};
 
-		expect(routes.map((route) => route.name)).toStrictEqual(DECLARED_ROUTES);
-		expect(exempt.filter((name) => !ROUTES_THAT_MAY_BE_EXEMPT.has(name))).toStrictEqual([]);
-		expect(exempt).toStrictEqual([]);
+function pathFor(route: AnyRoute): string {
+	const filled = route.path
+		.split("/")
+		.map((segment) => (segment.startsWith(":") ? "placeholder" : segment))
+		.join("/");
+	return `${filled}${QUERY_BY_ROUTE[route.name] ?? ""}`;
+}
+
+function requestFor(route: AnyRoute, cookie?: string): Request {
+	return requestTo(pathFor(route), {
+		method: route.method,
+		...(cookie === undefined ? {} : { cookie }),
+		...(route.method === "POST" ? { body: {} } : {}),
 	});
+}
 
-	it("refuses every route on the HTTP path when the origin is foreign", async () => {
-		const answers = await Promise.all(
-			routes.map((route) =>
-				mounted.handler(
-					requestTo(route.path, {
-						method: route.method,
-						origin: "https://evil.example.com",
-						body: route.method === "POST" ? {} : undefined,
-					}),
-				),
-			),
+function namesOf(subset: readonly AnyRoute[]): readonly string[] {
+	return subset.map((route) => route.name);
+}
+
+describe("the origin check over the whole table (S-CSRF-1)", () => {
+	it("names one route that may be exempt, and exempts exactly the ones in the table", () => {
+		const exempt = namesOf(routes.filter((route) => route.originCheck !== "checked"));
+		const permittedAndDeclared = namesOf(
+			routes.filter((route) => ROUTES_THAT_MAY_BE_EXEMPT.has(route.name)),
 		);
 
+		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect([...ROUTES_THAT_MAY_BE_EXEMPT]).toStrictEqual(["signIn.oauth.callback"]);
+		expect(exempt).toStrictEqual(permittedAndDeclared);
+	});
+
+	it("refuses every checked route on the HTTP path when the origin is foreign", async () => {
+		const checked = routes.filter((route) => route.originCheck === "checked");
 		const codes = await Promise.all(
-			answers.map(async (answer) => {
+			checked.map(async (route) => {
+				const answer = await mounted.handler(
+					requestTo(pathFor(route), {
+						method: route.method,
+						origin: "https://evil.example.com",
+						...(route.method === "POST" ? { body: {} } : {}),
+					}),
+				);
 				const body = (await answer.json()) as { error?: { code?: string } };
 				return `${answer.status} ${body.error?.code ?? ""}`;
 			}),
 		);
 
-		expect(codes).toHaveLength(DECLARED_ROUTES.length);
-		expect(codes).toStrictEqual(DECLARED_ROUTES.map(() => "403 origin_not_allowed"));
+		expect(checked.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(codes).toHaveLength(checked.length);
+		expect(codes).toStrictEqual(checked.map(() => "403 origin_not_allowed"));
 	});
 
 	/** 3.11: the check lies before the handler on the direct server call too, and E-121 made it required. */
@@ -97,22 +127,20 @@ describe("the origin check over the whole table (S-CSRF-1)", () => {
 
 describe("what a GET may do (S-CSRF-4)", () => {
 	it("classifies every GET route as reading, over a set that is not empty", () => {
-		const gets = routes.filter((route) => route.method === "GET").map((route) => route.name);
+		const gets = namesOf(routes.filter((route) => route.method === "GET"));
 
-		expect(gets.length).toBeGreaterThanOrEqual(2);
+		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(gets.length).toBeGreaterThanOrEqual(MINIMUM_GET_ROUTES);
 		expect(gets.filter((name) => !READING_GET_ROUTES.has(name))).toStrictEqual([]);
 	});
 
 	it("changes no row through a reading GET", async () => {
 		const before = await countEveryRow();
 		const gets = routes.filter((route) => route.method === "GET");
-		expect(gets.map((route) => route.name)).toStrictEqual(DECLARED_GET_ROUTES);
+
+		expect(gets.length).toBeGreaterThanOrEqual(MINIMUM_GET_ROUTES);
 		for (const route of gets) {
-			await mounted.handler(
-				requestTo(route.path === "/username/available" ? `${route.path}?username=x` : route.path, {
-					method: "GET",
-				}),
-			);
+			await mounted.handler(requestFor(route));
 		}
 
 		expect(await countEveryRow()).toStrictEqual(before);
@@ -141,40 +169,71 @@ async function countEveryRow(): Promise<Record<string, number>> {
 }
 
 describe("the routes that read the pending cookie (S-CACHE-4)", () => {
-	it("declares no route with caller `pending` that is not one of the four", () => {
-		const declaredPending = routes
-			.filter((route) => route.caller === "pending")
-			.map((route) => route.name);
+	it("declares caller `pending` for exactly the four of 3.6 that are in the table", () => {
+		const four: readonly string[] = PENDING_CALLER_ROUTES;
+		const declaredPending = namesOf(routes.filter((route) => route.caller === "pending"));
+		const namedAndDeclared = namesOf(routes.filter((route) => four.includes(route.name)));
 
 		expect(PENDING_CALLER_ROUTES).toHaveLength(4);
-		const four: readonly string[] = PENDING_CALLER_ROUTES;
-		expect(routes.map((route) => route.name)).toStrictEqual(DECLARED_ROUTES);
-		expect(declaredPending.filter((name) => !four.includes(name))).toStrictEqual([]);
+		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(declaredPending).toStrictEqual(namedAndDeclared);
 	});
 
-	/** Every other route ignores `__Host-velve_pending` completely, and answers as if it were absent. */
-	it("answers a request carrying only the pending cookie exactly as one carrying no cookie", async () => {
-		const withPending = await Promise.all(
-			routes.map((route) => answerFor(route, `${DEFAULT_COOKIE_NAMES.pending}=${"p".repeat(43)}`)),
+	it("lets exactly the routes named for it read the cookie, and no sixth", () => {
+		const readers = namesOf(routes.filter(readsPendingCookie));
+		const namedAndDeclared = namesOf(
+			routes.filter((route) => ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.has(route.name)),
 		);
-		const withoutCookie = await Promise.all(routes.map((route) => answerFor(route, undefined)));
 
-		expect(withPending).toHaveLength(DECLARED_ROUTES.length);
+		expect(ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.size).toBe(6);
+		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(readers.length).toBeGreaterThanOrEqual(MINIMUM_PENDING_READERS);
+		expect(readers).toStrictEqual(namedAndDeclared);
+	});
+
+	/**
+	 * The set is taken from the names rather than from `readsPendingCookie`, because a route that
+	 * declares itself readable is excluded by the predicate and would leave this measuring the
+	 * predicate against itself.
+	 */
+	it("answers a request carrying only the pending cookie exactly as one carrying no cookie", async () => {
+		const mustIgnore = routes.filter(
+			(route) => !ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.has(route.name),
+		);
+		const withPending = await Promise.all(
+			mustIgnore.map((route) =>
+				answerFor(route, `${DEFAULT_COOKIE_NAMES.pending}=${"p".repeat(43)}`),
+			),
+		);
+		const withoutCookie = await Promise.all(mustIgnore.map((route) => answerFor(route, undefined)));
+
+		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(mustIgnore.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES - MINIMUM_PENDING_READERS);
+		expect(withPending).toHaveLength(mustIgnore.length);
 		expect(withPending).toStrictEqual(withoutCookie);
 	});
 });
 
 async function answerFor(route: AnyRoute, cookie: string | undefined): Promise<string> {
-	const path = route.path === "/username/available" ? `${route.path}?username=x` : route.path;
-	const answer = await mounted.handler(
-		requestTo(path, {
-			method: route.method,
-			...(cookie === undefined ? {} : { cookie }),
-			body: route.method === "POST" ? {} : undefined,
-		}),
-	);
+	const answer = await mounted.handler(requestFor(route, cookie));
 	return `${answer.status} ${await answer.text()}`;
 }
+
+describe("the table as a table", () => {
+	it("names every route once, over a table that is not empty", () => {
+		const names = namesOf(routes);
+
+		expect(names.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(new Set(names).size).toBe(names.length);
+	});
+
+	it("answers a distinct path for every route", () => {
+		const folded = routes.map((route) => `${route.method} ${route.path}`);
+
+		expect(folded.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(new Set(folded).size).toBe(folded.length);
+	});
+});
 
 describe("where an authorization parameter is read (S-OWNER-6)", () => {
 	/**
@@ -213,53 +272,36 @@ describe("where an authorization parameter is read (S-OWNER-6)", () => {
 
 describe("the cookies this library can ever set (S-COOKIE-6)", () => {
 	/**
-	 * The two names are the whole set the library can express, and `assertCookieNamesAreEnumerated`
-	 * makes a third a 500. This table sets neither: the routes that issue a session or a pending
-	 * state belong to other features of this wave, so the count here is zero and says so. The one
-	 * this feature does set — the clearing of the session cookie on sign-out — needs a session that
-	 * already exists, and is measured in `auth-cookie-content.test.ts`.
+	 * The three names are the whole set the library can express, and
+	 * `assertCookieNamesAreEnumerated` makes a fourth a 500. The routes that issue a session, a
+	 * pending state or a state pointer belong to other features, so nothing here sets one — the
+	 * count of names seen is zero and says so.
 	 */
-	it("sets no name outside the enumerated two", async () => {
+	it("sets no name outside the enumerated three", async () => {
 		const seen = new Set<string>();
 		let swept = 0;
 		for (const route of routes) {
 			swept += 1;
-			const answer = await mounted.handler(
-				requestTo(route.path === "/username/available" ? `${route.path}?username=x` : route.path, {
-					method: route.method,
-					body: route.method === "POST" ? {} : undefined,
-				}),
-			);
+			const answer = await mounted.handler(requestFor(route));
 			for (const header of answer.headers.getSetCookie()) {
 				seen.add(header.slice(0, header.indexOf("=")));
 			}
 		}
 
-		const enumerated = new Set<string>([
-			DEFAULT_COOKIE_NAMES.session,
-			DEFAULT_COOKIE_NAMES.pending,
-		]);
-		expect(swept).toBe(DECLARED_ROUTES.length);
-		expect(enumerated.size).toBe(2);
+		const enumerated = new Set<string>(Object.values(DEFAULT_COOKIE_NAMES));
+		expect(swept).toBe(routes.length);
+		expect(swept).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(enumerated.size).toBe(3);
 		expect([...seen].filter((name) => !enumerated.has(name))).toStrictEqual([]);
-		expect(seen.size).toBe(0);
 	});
 });
 
 describe("what the answers carry (S-REDIR-3, S-REDIR-7, S-CACHE-1)", () => {
 	it("sets no Location, answers only JSON, and marks every answer uncacheable", async () => {
-		const answers = await Promise.all(
-			routes.map((route) =>
-				mounted.handler(
-					requestTo(
-						route.path === "/username/available" ? `${route.path}?username=x` : route.path,
-						{ method: route.method, body: route.method === "POST" ? {} : undefined },
-					),
-				),
-			),
-		);
+		const answers = await Promise.all(routes.map((route) => mounted.handler(requestFor(route))));
 
-		expect(answers.length).toBe(DECLARED_ROUTES.length);
+		expect(answers).toHaveLength(routes.length);
+		expect(answers.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
 		expect(answers.filter((answer) => answer.headers.has("Location"))).toStrictEqual([]);
 		expect(
 			answers

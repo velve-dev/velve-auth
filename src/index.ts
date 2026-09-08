@@ -39,7 +39,24 @@ export {
 	type TrustLevelEvent,
 } from "./core/auth/trust-level.js";
 export type { ImportSource, User } from "./core/auth/user.js";
-export { type Actor, actorOfResolvedSession, type ResolvedSession } from "./core/db/actor.js";
+export {
+	type Actor,
+	actorOfConsumedOAuthFlow,
+	actorOfRedeemedOneTimeToken,
+	actorOfResolvedSession,
+	type ConsumedOAuthFlow,
+	type RedeemedOneTimeToken,
+	type ResolvedSession,
+} from "./core/db/actor.js";
+export {
+	type EntityId,
+	type IdentityId,
+	type ProviderId,
+	type SessionId,
+	toEntityId,
+	type UserId,
+	type WebAuthnCredentialId,
+} from "./core/db/entity-id.js";
 export type { IdentityMode } from "./core/db/migrations/identity-mode.js";
 export {
 	createOwnedRowRepository,

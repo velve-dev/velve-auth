@@ -8,6 +8,7 @@ import {
 	type PendingAuthenticationService,
 	type PendingToken,
 } from "../factor/pending/index.js";
+import { emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
 import { ConcealedError, type VelveErrorCode } from "../http/error-map.js";
@@ -15,14 +16,17 @@ import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
+import { oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
+import { pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
 import {
+	pendingRoutes,
 	type ResolutionMemo,
 	type ResolvedSessionView,
 	type RouteServices,
@@ -137,7 +141,7 @@ function callerResolver(
 			if (resolved === null) {
 				throw new ConcealedError("pending_not_found");
 			}
-			return resolved.pending;
+			return resolved;
 		},
 	};
 }
@@ -191,6 +195,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const services: RouteServices = {
 		sessions,
+		pending,
 		users,
 		resolutions,
 		identity,
@@ -201,6 +206,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	};
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);
+	const pendingTable = pendingRoutes(services);
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
@@ -214,8 +220,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			revokeAll,
 			refresh,
 			...(usernameTable ?? []),
+			...pendingTable,
+			...oauthRoutes(services),
+			...emailFlowRoutes(services),
+			...pluginRoutes(services),
 		],
 		origins: config.origins,
+		trustedProxies: config.trustedProxies ?? [],
 		cookieSameSite: sessionSettings.sameSite,
 		sessionCookieMaximumAgeInSeconds: sessionSettings.cookieMaximumAgeInSeconds,
 		// E-233: one window, read from the session settings, so the pipeline and the actor agree.

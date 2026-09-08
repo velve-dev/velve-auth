@@ -514,20 +514,56 @@ a signature that cannot be satisfied without naming the acting user (E-43).
 ### `Actor`
 
 ```ts
-import { actorOfResolvedSession, type ResolvedSession } from "@velve/auth";
+import {
+  actorOfResolvedSession,
+  actorOfRedeemedOneTimeToken,
+  actorOfConsumedOAuthFlow,
+  type ResolvedSession,
+  type RedeemedOneTimeToken,
+  type ConsumedOAuthFlow,
+} from "@velve/auth";
 ```
 
 `Actor` is a branded `string`, so a bare string is not one and the mistake does
-not compile. It is obtained from `actorOfResolvedSession(session)`, which is
-called with the session the library itself resolved; no handler builds an actor
-from a request body, a query string or a header (S-OWNER-7).
+not compile. There are exactly three producers, one per way of proving who owns
+a row, and each takes a nominal type that only one module may assert
+(S-OWNER-7, E-93):
 
-`ResolvedSession` is the nominal type session resolution returns, and
-`actorOfResolvedSession` takes nothing else. A hand-built `{ userId: "…" }` does
-not compile, so the only way to an actor is through a session the library
-resolved itself (E-93). The brand is asserted in session resolution and nowhere
-else; a path that proves ownership differently — a redeemed one-time token, say
-— brings its own actor and does not borrow this one.
+| Producer | Evidence | Asserted in |
+|---|---|---|
+| `actorOfResolvedSession` | `ResolvedSession` — a session the library resolved | `core/session/service.ts` |
+| `actorOfRedeemedOneTimeToken` | `RedeemedOneTimeToken` — a row a `DELETE … RETURNING` removed | `core/db/repositories/token.ts` |
+| `actorOfConsumedOAuthFlow` | `ConsumedOAuthFlow` — a row of `velve.oauth_flow` the callback consumed | nowhere yet; the feature that consumes a flow asserts it where it removes the row |
+
+A hand-built `{ userId: "…" }` satisfies none of the three, so no handler builds
+an actor from a request body, a query string or a header. The three provenances
+do not cross either: a consumed flow is not a redeemed token, and neither is a
+session.
+
+**What the brand does not do.** It makes minting *visible*, not impossible. A
+caller that can issue a session for an arbitrary account can resolve that
+session and mint an actor from it in two awaits, with no cast anywhere
+(E-341). What rules that out is that issuing a session already implies the
+authority the actor would carry — the brand is a review aid, and the entry that
+records the path says so rather than claiming more.
+
+### `EntityId`
+
+```ts
+import { toEntityId, type EntityId, type UserId } from "@velve/auth";
+```
+
+`EntityId<Entity>` is a branded `string` for a `uuid` primary key, with one
+alias per table the public surface names: `UserId`, `SessionId`, `IdentityId`,
+`WebAuthnCredentialId`, and `ProviderId` for the other half of the
+`(provider, subject)` linking key of 3.10. Two aliases are never assignable to
+each other, and neither is a `SecretToken`.
+
+That is the second half of S-RAND-6. `SecretToken` already stopped an account
+identifier from arriving where a token belongs; `EntityId` stops a token from
+arriving where a row identifier belongs. `toEntityId(value)` is the conversion,
+and it is deliberately unchecked for the reason `toSecretToken` is (E-260): a
+rejected shape would be a second answer beside "no row".
 
 ### `createOwnedRowRepository(options)`
 
@@ -777,7 +813,7 @@ answers 404 to every one of them.
 |---|---|---|---|
 | `auth` | `{ http: HttpEnvironment }` | — | The instance; the handler reads its routes and its security settings from `auth.http`. |
 | `options.basePath` | `string` | `""` | Where the handler is mounted. Compared segment by segment; a request outside it is a 404. Never derived from a header. |
-| `options.clientAddress` | `(request: Request) => string \| null` | `() => null` | The client address for the rate limiter. A `Request` carries no connection address, so the adapter supplies it. `X-Forwarded-For` is never read by the library. |
+| `options.connectionAddress` | `(request: Request) => string \| null` | `() => null` | The address the connection came from. A `Request` carries none, so the adapter supplies it. The handler passes it through `resolveClientAddress` together with `X-Forwarded-For` and the configured `trustedProxies`, so the header counts where — and only where — the configuration says it may (S-RATE-3). Without this option every request shares one bucket per route. |
 
 Every response carries `Cache-Control: no-store` and `Vary: Cookie`, set by the
 handler and not by the application (L-6). A response with a body carries
@@ -806,7 +842,7 @@ answers byte for byte the same, whatever produced it.
 
 ### Cookies
 
-The library sets exactly two cookies, and the set is enumerated in
+The library sets exactly three cookies, and the set is enumerated in
 `src/core/http/cookies.ts` (S-COOKIE-6). A response that would set anything else
 fails with `internal_error` rather than being sent.
 
@@ -814,14 +850,26 @@ fails with `internal_error` rather than being sent.
 |---|---|---|
 | `__Host-velve_session` | the configured session lifetime | `HttpOnly; Secure; SameSite=Lax; Path=/` |
 | `__Host-velve_pending` | 300 seconds | `HttpOnly; Secure; SameSite=Lax; Path=/` |
+| `__Host-velve_oauth_state` | 600 seconds | `HttpOnly; Secure; SameSite=Lax; Path=/` |
 
-`SameSite` becomes `Strict` if the configuration asks for it. There is no option
-for `HttpOnly`, `Secure`, `Domain`, `Path` or `SameSite=None`: the attribute set
-is a closed union of two string literals, so no other set can be written down
-(S-COOKIE-2). The `__Host-` prefix makes the browser enforce `Secure` and forbid
-`Domain`, which is what rules out cookie tossing from a subdomain.
+`SameSite` becomes `Strict` on the first two if the configuration asks for it.
+There is no option for `HttpOnly`, `Secure`, `Domain`, `Path` or
+`SameSite=None`: the attribute set is a closed union of two string literals, so
+no other set can be written down (S-COOKIE-2). The `__Host-` prefix makes the
+browser enforce `Secure` and forbid `Domain`, which is what rules out cookie
+tossing from a subdomain.
 
-**The two names are not configurable.** They come from the enumeration in
+**`sameSite: "strict"` is legal with OAuth configured, and the state pointer
+does not follow it.** The provider returns through a top-level cross-site `GET`,
+which a `Strict` cookie is not sent on, so a `Strict` pointer would be missing
+at the one request that reads it and every callback would answer
+`oauth_flow_invalid`. `__Host-velve_oauth_state` therefore keeps `SameSite=Lax`
+whatever the session cookie is set to. What secures the callback is the
+server-side `state` row in `velve.oauth_flow` and PKCE (3.10), not this
+attribute. Its 600 seconds are chosen so the pointer outlives the row it points
+at; a pointer that expires first turns a working callback into a refusal.
+
+**The three names are not configurable.** They come from the enumeration in
 `src/core/http/cookies.ts`, which is also what a response is checked against
 before it is sent. Both the name and the value are checked against a token
 charset first, so no name and no value can end a `Set-Cookie` field early and
@@ -833,10 +881,11 @@ cookie about to be written (`name`, `value`, `maximumAgeInSeconds`,
 `attributes`), and every one of those four parts is checked before it is
 interpolated into the header; `CookiePolicy` is what the writer is built from —
 the names a request is read with, the `sameSite` choice and the session cookie's
-`Max-Age`; and `CookieWriter` is what a handler sees on its context, four
-methods named after roles rather than names.
+`Max-Age`; and `CookieWriter` is what a handler sees on its context, six
+methods named after roles rather than names — `setSession`, `clearSession`,
+`setPending`, `clearPending`, `setOAuthState`, `clearOAuthState`.
 
-A request that carries one of these two cookies twice is rejected with
+A request that carries one of these three cookies twice is rejected with
 `invalid_input` instead of one of the two values being picked (S-COOKIE-5).
 Duplicates of other cookie names are ignored, because path-scoped application
 cookies legitimately arrive twice.
@@ -881,7 +930,8 @@ that declaration; the client is derived from the same types.
 | `path` | `string` | Absolute, no empty segments, no trailing slash. A `:name` segment captures a path parameter into the input. |
 | `input` | `ObjectValidator<Input>` | Built from `object()`, `string()` and `optional()`. A `POST` body with an undeclared key is rejected; on a `GET` route the undeclared query parameters are ignored, because providers append their own to the OAuth callback. |
 | `errors` | `readonly VelveErrorCode[]` | The codes this route may produce. A contract, not a comment. |
-| `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | `session` resolves the session cookie or fails with `session_required`; `pending` is the only requirement that reads `__Host-velve_pending`; `server_only` has no HTTP route and answers 404. |
+| `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | Who may call, not what may be read. `session` resolves the session cookie or fails with `session_required`; `pending` resolves `__Host-velve_pending` into the account it names, and only the four routes of 3.6 declare it (S-CACHE-4); `server_only` has no HTTP route and answers 404. |
+| `pendingCookie` | `"hidden" \| "readable"` (optional) | Whether the route sees the value of `__Host-velve_pending`, which is a different question from whether it is authorised by it. Absent means `hidden`. `caller: "pending"` implies `readable`, and a declaration that says `hidden` there is refused at definition. A `readable` route with another caller — `GET /pending`, `POST /pending/cancel` — receives `context.pendingToken` and no authority. |
 | `freshness` | `"not_required" \| "required"` | `required` needs `caller: "session"` and fails with `freshness_required` outside the freshness window. |
 | `originCheck` | `"checked" \| "exempt"` | `exempt` exists for the OAuth callback, which has no `Origin` header by protocol. |
 | `rateLimit` | `{ perIpAddress: BucketRule \| "none"; perAccount: BucketRule \| "none" }` | The buckets this route consumes. |
@@ -891,11 +941,25 @@ The order in front of the handler is fixed and cannot be reordered by a caller o
 a plugin: origin check, per-address rate limit, input parse, caller resolution,
 handler.
 
-Four declaration mistakes are start errors rather than request-time surprises: a
+Five declaration mistakes are start errors rather than request-time surprises: a
 path that is not absolute or carries an empty or trailing segment; `freshness:
-"required"` without `caller: "session"`; an input field named like one of the
-five `ServerCallFields`; and, when the handler is built, a route table with a
+"required"` without `caller: "session"`; `caller: "pending"` with
+`pendingCookie: "hidden"`; an input field named like one of the five
+`ServerCallFields`; and, when the handler is built, a route table with a
 duplicate name or with two routes answering the same folded path.
+
+`readsPendingCookie(route)` is the predicate behind that field —
+`(route: RouteMetadata) => boolean`, true where the declaration resolved to
+`pendingCookie: "readable"`, which after `defineRoute` has run includes every
+route with `caller: "pending"`. It is not exported from the package; it lives in
+`core/http/route.ts` and the pipeline is its only caller, so what a route may see
+is decided in one place.
+
+S-CACHE-4 counts **readers**, and `caller` alone no longer bounds them. What
+bounds them is a named set in `test/auth-route-table.test.ts`, measured through
+that predicate: the four routes of 3.6 that the intermediate state authorises,
+plus `pending.read` and `pending.cancel`, which read the cookie and are
+authorised by nothing. Six names, and a seventh reader fails that case.
 
 `defineRoute` returns the route the table holds. It carries the declaration's
 metadata and its `input`, but **not** its `handler`: the invocation is reachable
@@ -968,11 +1032,12 @@ shape is checked and the contents are not.
 | Field | Type | Meaning |
 |---|---|---|
 | `session` | `Session \| null` | Set for `caller: "session"`. |
-| `pending` | `PendingAuthentication \| null` | Set for `caller: "pending"`. |
+| `pending` | `ResolvedPendingAuthentication \| null` | Set for `caller: "pending"`. It carries `userId`, the `pending` record itself and the `observedAt` the database answered with — a route authorised by the intermediate state has to act on the account it belongs to, which the record alone does not name. |
 | `sessionToken` | `string \| null` | The raw cookie value, for routes that answer with `null` instead of failing when no session exists. |
-| `ipAddress` | `string \| null` | From `options.clientAddress`. |
+| `pendingToken` | `string \| null` | The raw pending cookie value, and only for a route that declares `pendingCookie: "readable"`. Every other route is answered as if the cookie were absent. |
+| `ipAddress` | `string \| null` | The address the rate limiter counts: `options.connectionAddress` resolved against `X-Forwarded-For` and `trustedProxies`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
-| `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending` — a role, never a name, so no unenumerated cookie can be written. |
+| `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending`, `setOAuthState`, `clearOAuthState` — a role, never a name, so no unenumerated cookie can be written. |
 | `enforceAccountRateLimit(normalisedIdentifier)` | `Promise<void>` | Consumes the per-account bucket. The identifier must already be normalised (L-5). A route that declares `perAccount` and reaches its handler without calling this writes a warning naming the route, whether the handler returned or threw; where the declaration says `perAccount: "none"` the call does nothing. |
 
 `Session` and `PendingAuthentication` are the records of architecture 3.15 C. A
@@ -998,10 +1063,11 @@ Freshness is measured against `createdAt`, never against `lastUsedAt` (3.5).
 |---|---|---|
 | `routes` | `readonly AnyRoute[]` | The route table, already filtered by identity mode and configuration. |
 | `origins` | `readonly string[]` | The allowed origins. An empty list rejects every checked route. |
+| `trustedProxies` | `readonly string[]` | The CIDR ranges whose `X-Forwarded-For` counts. Empty — the default — means the connection address counts and no header can move a bucket (S-RATE-3). |
 | `cookieSameSite` | `"lax" \| "strict"` | Which of the two writable attribute sets the cookies carry. There is no third value. |
 | `sessionCookieMaximumAgeInSeconds` | `number` | `Max-Age` of the session cookie: a whole number of seconds, at most 400 days. |
 | `freshnessWindowInSeconds` | `number` | Measured against `session.createdAt`. |
-| `callers` | `CallerResolver` | `resolveSession` and `resolvePending`; both throw, and the error map decides what the caller sees. |
+| `callers` | `CallerResolver` | `resolveSession` returns the `Session`, `resolvePending` the `ResolvedPendingAuthentication`; both throw, and the error map decides what the caller sees. |
 | `rateLimiter` | `RateLimiter` | See below. |
 | `clock` | `Clock` | |
 | `log` | `(level, message, fields?) => void` | Where the true reason of every concealed failure is written. |
@@ -1407,8 +1473,11 @@ is: an alert sink that is down must not cost the caller its answer.
 
 ### `resolveClientAddress(connectionAddress, forwardedFor, trustedProxies)`
 
-A pure function, exported so that whatever wires up `options.clientAddress` can
-use it. It reads no header itself and holds no state.
+A pure function. `toWebHandler` calls it on every request with the address
+`options.connectionAddress` returned, the request's `X-Forwarded-For` and the
+configured `trustedProxies`; it is exported as well, for an adapter that has to
+resolve the address before the handler sees the request. It reads no header
+itself and holds no state.
 
 | Parameter | Type | Meaning |
 |---|---|---|
@@ -2582,7 +2651,7 @@ library that do.
 | Method | Does |
 |---|---|
 | `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
-| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a row or `null` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a `StoredOneTimeToken` or `null` |
 
 `replaceOneTimeToken` runs in a transaction and takes `SELECT 1 FROM velve.user
 WHERE id = $1 FOR UPDATE` before it writes. The statement declares what it locks,
@@ -2679,6 +2748,12 @@ only account the redemption may act on. No session, cookie or input field takes
 part in that decision (S-TOKEN-4). A row that names no user is not redeemable and
 answers `null` like the rest.
 
+The row the repository removed is also the evidence an `Actor` is minted from.
+`consumeOneTimeToken` returns a `RedeemedOneTimeToken` — the branded shape
+`actorOfRedeemedOneTimeToken` takes — and that brand is asserted in this
+repository and nowhere else, so a redemption that no `DELETE … RETURNING`
+produced cannot become an actor (E-234, E-93).
+
 | Field | Type | Meaning |
 |---|---|---|
 | `purpose` | `OneTimeTokenPurpose` | the purpose the token was minted and redeemed under |
@@ -2699,7 +2774,7 @@ answers `null` like the rest.
 | `OneTimeTokenRepositoryOptions` | `{ driver: Driver; schema: string }` | the argument of `createOneTimeTokenRepository` |
 | `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the argument of `replaceOneTimeToken` |
 | `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
-| `StoredOneTimeToken` | `{ userId: string \| null; payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns |
+| `StoredOneTimeToken` | `RedeemedOneTimeToken & { payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns; a row that names no account answers `null`, exactly as no row does (S-TOKEN-4) |
 | `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
 | `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
 | `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
@@ -3809,7 +3884,7 @@ compile (E-349).
 | `password` | `PasswordConfig` | Passwords chapter | Argon2id parameters, legacy schemes, length bounds, `validate` |
 | `session` | `Partial<SessionConfig>` | Sessions chapter | deadlines, cookie name, `SameSite`, freshness window |
 | `sessionMetadata` | `"truncated" \| "full" \| "none"` | `"truncated"` | how much of the address and the user agent is stored (L-10) |
-| `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts |
+| `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts; it reaches the handler through `auth.http`, so `toWebHandler` needs no second copy |
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
@@ -4030,9 +4105,15 @@ other features and this one may not write their files:
   flows over it do not.
 - `factor.totp`, `factor.webauthn`, `factor.recovery` and `signIn.passkey`.
 - everything OAuth, and the plugin interface.
-- `GET /pending` and `POST /pending/cancel`. The HTTP layer decides which routes
-  may read `__Host-velve_pending` by their `caller` being `"pending"`, and these
-  two need to read the cookie without being among the four that accept it as
-  authorization. Resolving that needs a change in `core/http/web-handler.ts`.
-  The two methods exist on the surface and take the token directly.
+
+The seams these fill are in place. The assembly composes its table from four
+modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
+`core/plugin/routes.ts` — and the last three return nothing today, so a feature
+adds a row by editing its own file.
+
+`GET /pending` and `POST /pending/cancel` are no longer among the missing.
+`pendingCookie: "readable"` is what they needed and did not have; both are
+declared, both read `__Host-velve_pending` and neither is authorised by it. The
+two methods of `auth.pending` still exist beside them and take the token
+directly, for a caller that is not a browser.
 

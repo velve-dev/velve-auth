@@ -59,7 +59,7 @@ describe("T-RATE-4 — no client address is still a counted request (S-RATE-4)",
 		const open_ = await open({
 			signIn: NO_LIMIT,
 			probe: { perIpAddress: ADDRESS_ONLY, perAccount: "none" },
-			clientAddress: (request) => request.headers.get("x-test-address"),
+			connectionAddress: (request) => request.headers.get("x-test-address"),
 		});
 
 		const spellings = ["fe80::1%eth0", "203.0.113.5:8080", "not-an-ip", "", "[2001:db8::1]"];
@@ -90,7 +90,7 @@ describe("T-RATE-5 — seven spellings of one path share one bucket (S-RATE-5)",
 		const open_ = await open({
 			signIn: { perIpAddress: ADDRESS_ONLY, perAccount: "none" },
 			probe: NO_LIMIT,
-			clientAddress: () => "203.0.113.5",
+			connectionAddress: () => "203.0.113.5",
 		});
 
 		const responses: Response[] = [];
@@ -119,7 +119,7 @@ describe("T-RATE-8 — the per-route counter alerts and refuses nothing (S-RATE-
 					onAlert: (alert) => alerts.push(alert),
 				},
 			},
-			clientAddress: () => "203.0.113.5",
+			connectionAddress: () => "203.0.113.5",
 		});
 
 		const responses: Response[] = [];
@@ -145,7 +145,7 @@ describe("T-RATE-8 — the per-route counter alerts and refuses nothing (S-RATE-
 					},
 				},
 			},
-			clientAddress: () => "203.0.113.5",
+			connectionAddress: () => "203.0.113.5",
 		});
 
 		const responses = [await open_.handle(probeRequest()), await open_.handle(probeRequest())];
@@ -159,7 +159,7 @@ describe("T-RATE-3 — the resolved address is what the counter sees (S-RATE-3)"
 		const open_ = await open({
 			signIn: NO_LIMIT,
 			probe: { perIpAddress: ADDRESS_ONLY, perAccount: "none" },
-			clientAddress: (request) =>
+			connectionAddress: (request) =>
 				resolveClientAddress("203.0.113.1", request.headers.get("x-forwarded-for"), []),
 		});
 
@@ -182,7 +182,7 @@ describe("T-RATE-3 — the resolved address is what the counter sees (S-RATE-3)"
 		const open_ = await open({
 			signIn: NO_LIMIT,
 			probe: { perIpAddress: ADDRESS_ONLY, perAccount: "none" },
-			clientAddress: (request) =>
+			connectionAddress: (request) =>
 				resolveClientAddress("10.0.0.5", request.headers.get("x-forwarded-for"), ["10.0.0.0/8"]),
 		});
 

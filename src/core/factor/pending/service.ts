@@ -1,5 +1,9 @@
 import type { Driver } from "../../db/driver.js";
-import type { AuthenticationFactor, PendingAuthentication } from "../../http/caller.js";
+import type {
+	AuthenticationFactor,
+	PendingAuthentication,
+	ResolvedPendingAuthentication,
+} from "../../http/caller.js";
 import { ConcealedError } from "../../http/error-map.js";
 import {
 	createPendingAuthenticationRepository,
@@ -37,12 +41,7 @@ export interface IssuedPendingAuthentication {
  * S-FIX-4: what resolution yields is deliberately not a `ResolvedSession` and mints no `Actor`, so
  * the intermediate state has no path into a repository method that reaches rows through an owner.
  */
-export interface PendingResolution {
-	readonly userId: string;
-	readonly pending: PendingAuthentication;
-	/** The database's clock at the moment it answered. */
-	readonly observedAt: Date;
-}
+export type PendingResolution = ResolvedPendingAuthentication;
 
 export interface ConsumedPendingAuthentication {
 	readonly userId: string;

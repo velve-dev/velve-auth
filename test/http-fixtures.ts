@@ -92,7 +92,7 @@ const pendingRoute = defineRoute({
 	originCheck: "checked",
 	rateLimit: { perIpAddress: "none", perAccount: "none" },
 	handler: async (_input, context) => ({
-		attemptsRemaining: context.pending?.attemptsRemaining ?? null,
+		attemptsRemaining: context.pending?.pending.attemptsRemaining ?? null,
 	}),
 });
 
@@ -163,6 +163,7 @@ interface Harness {
 interface HarnessOptions {
 	readonly routes?: readonly AnyRoute[];
 	readonly origins?: readonly string[];
+	readonly trustedProxies?: readonly string[];
 	readonly sessionAgeInSeconds?: number;
 	readonly sessionFailure?: ConcealedError;
 	readonly rateLimitAllows?: boolean;
@@ -176,6 +177,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 	const environment: HttpEnvironment = {
 		routes: options.routes ?? TEST_ROUTES,
 		origins: options.origins ?? [ALLOWED_ORIGIN],
+		trustedProxies: options.trustedProxies ?? [],
 		cookieSameSite: "lax",
 		sessionCookieMaximumAgeInSeconds: 2_592_000,
 		freshnessWindowInSeconds: 900,
@@ -197,11 +199,15 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 					isCurrent: true,
 				};
 			},
-			resolvePending: async () => ({
-				factorsCompleted: ["password"],
-				availableFactors: ["totp"],
-				attemptsRemaining: 5,
-				expiresAt: new Date(NOW.getTime() + 300_000),
+			resolvePending: async (pendingToken) => ({
+				userId: `user-of-${pendingToken}`,
+				pending: {
+					factorsCompleted: ["password"],
+					availableFactors: ["totp"],
+					attemptsRemaining: 5,
+					expiresAt: new Date(NOW.getTime() + 300_000),
+				},
+				observedAt: NOW,
 			}),
 		},
 		rateLimiter: {

@@ -21,7 +21,7 @@ describe("T-DOS-5 — the limiter runs before the semaphore is asked for a place
 		harness = await openLimitHarness({
 			signIn: { perIpAddress: { capacity: LIMIT, refillPerSecond: 0.001 }, perAccount: "none" },
 			probe: NO_LIMIT,
-			clientAddress: () => "203.0.113.5",
+			connectionAddress: () => "203.0.113.5",
 			onCredentialCheck: async () => {
 				acquisitions += 1;
 				await semaphore.run(async () => {

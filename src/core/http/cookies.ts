@@ -12,15 +12,24 @@ export type CookieAttributes =
 export interface CookieNames {
 	readonly session: HostPrefixedCookieName;
 	readonly pending: HostPrefixedCookieName;
+	readonly oauthState: HostPrefixedCookieName;
 }
 
 /** S-COOKIE-6: the complete set of cookies the library ever sets. */
 export const DEFAULT_COOKIE_NAMES: CookieNames = {
 	session: "__Host-velve_session",
 	pending: "__Host-velve_pending",
+	oauthState: "__Host-velve_oauth_state",
 };
 
 const PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS = 300;
+
+/**
+ * 3.10: the row in `velve.oauth_flow` is the authority and this cookie only points at it, so the
+ * cookie must outlive the row rather than the other way round — a pointer that expires first turns
+ * a working callback into `oauth_flow_invalid`.
+ */
+const OAUTH_STATE_COOKIE_MAXIMUM_AGE_IN_SECONDS = 600;
 
 export interface CookieInstruction {
 	readonly name: HostPrefixedCookieName;
@@ -41,6 +50,8 @@ export interface CookieWriter {
 	clearSession(): void;
 	setPending(token: string): void;
 	clearPending(): void;
+	setOAuthState(pointer: string): void;
+	clearOAuthState(): void;
 }
 
 export interface CookieCollector extends CookieWriter {
@@ -54,6 +65,14 @@ const COOKIE_MAXIMUM_AGE_LIMIT_IN_SECONDS = 34_560_000;
 const LAX_ATTRIBUTES = "HttpOnly; Secure; SameSite=Lax; Path=/";
 const STRICT_ATTRIBUTES = "HttpOnly; Secure; SameSite=Strict; Path=/";
 const WRITABLE_ATTRIBUTES = new Set<string>([LAX_ATTRIBUTES, STRICT_ATTRIBUTES]);
+
+/**
+ * 5.9 (a): the provider returns through a top-level cross-site GET, and a `SameSite=Strict` cookie
+ * is not sent on one — the pointer would be missing exactly where the callback needs it. What
+ * secures the callback is the server-side `state` and PKCE (3.10), not this attribute, so the
+ * state cookie keeps `Lax` whatever the session cookie is configured to.
+ */
+const OAUTH_STATE_ATTRIBUTES: CookieAttributes = LAX_ATTRIBUTES;
 
 function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
 	return sameSite === "lax" ? LAX_ATTRIBUTES : STRICT_ATTRIBUTES;
@@ -82,7 +101,7 @@ export function serializeCookie(instruction: CookieInstruction): string {
 }
 
 export function assertCookieNamesAreEnumerated(instructions: readonly CookieInstruction[]): void {
-	const enumerated = new Set<string>([DEFAULT_COOKIE_NAMES.session, DEFAULT_COOKIE_NAMES.pending]);
+	const enumerated = new Set<string>(Object.values(DEFAULT_COOKIE_NAMES));
 	for (const instruction of instructions) {
 		if (!enumerated.has(instruction.name)) {
 			throw new VelveError("internal_error");
@@ -92,25 +111,41 @@ export function assertCookieNamesAreEnumerated(instructions: readonly CookieInst
 
 export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 	const instructions = new Map<HostPrefixedCookieName, CookieInstruction>();
-	const attributes = cookieAttributesFor(policy.sameSite);
+	const chosen = cookieAttributesFor(policy.sameSite);
 	const written = DEFAULT_COOKIE_NAMES;
 
-	function write(name: HostPrefixedCookieName, value: string, maximumAgeInSeconds: number): void {
+	function write(
+		name: HostPrefixedCookieName,
+		value: string,
+		maximumAgeInSeconds: number,
+		attributes: CookieAttributes,
+	): void {
 		instructions.set(name, { name, value, maximumAgeInSeconds, attributes });
 	}
 
 	return {
 		setSession: (token) => {
-			write(written.session, token, policy.sessionMaximumAgeInSeconds);
+			write(written.session, token, policy.sessionMaximumAgeInSeconds, chosen);
 		},
 		clearSession: () => {
-			write(written.session, "", 0);
+			write(written.session, "", 0, chosen);
 		},
 		setPending: (token) => {
-			write(written.pending, token, PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS);
+			write(written.pending, token, PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS, chosen);
 		},
 		clearPending: () => {
-			write(written.pending, "", 0);
+			write(written.pending, "", 0, chosen);
+		},
+		setOAuthState: (pointer) => {
+			write(
+				written.oauthState,
+				pointer,
+				OAUTH_STATE_COOKIE_MAXIMUM_AGE_IN_SECONDS,
+				OAUTH_STATE_ATTRIBUTES,
+			);
+		},
+		clearOAuthState: () => {
+			write(written.oauthState, "", 0, OAUTH_STATE_ATTRIBUTES);
 		},
 		collect: () => [...instructions.values()],
 	};
@@ -119,6 +154,7 @@ export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 interface CookieValues {
 	readonly session: string | null;
 	readonly pending: string | null;
+	readonly oauthState: string | null;
 }
 
 function splitCookieHeader(header: string): readonly (readonly [string, string])[] {
@@ -134,9 +170,9 @@ function splitCookieHeader(header: string): readonly (readonly [string, string])
 
 export function readCookies(header: string | null, names: CookieNames): CookieValues {
 	if (header === null) {
-		return { session: null, pending: null };
+		return { session: null, pending: null, oauthState: null };
 	}
-	const enumerated = new Set<string>([names.session, names.pending]);
+	const enumerated = new Set<string>(Object.values(names));
 	const values = new Map<string, string>();
 	for (const [name, value] of splitCookieHeader(header)) {
 		if (!enumerated.has(name)) {
@@ -151,5 +187,6 @@ export function readCookies(header: string | null, names: CookieNames): CookieVa
 	return {
 		session: values.get(names.session) ?? null,
 		pending: values.get(names.pending) ?? null,
+		oauthState: values.get(names.oauthState) ?? null,
 	};
 }
