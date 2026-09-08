@@ -245,9 +245,13 @@ These follow from architecture section 2 and are not open for local decision:
 - PostgreSQL 14 or newer. Hand-written SQL, no query builder, no ORM. The driver
   is a parameter, never an import.
 - Keys come from a `KeyProvider`, never from `process.env` inside the core.
-- **`velve.user` is locked first.** A transaction that takes a row lock — `SELECT …
-  FOR UPDATE` or `FOR NO KEY UPDATE` — takes it on `velve.user` before it locks a
-  row in any other table in the schema. Two features reached for a row lock
+- **`velve.user` is locked first, and a lock declares what it locks.** A transaction
+  that takes a row lock — `SELECT … FOR UPDATE` or `FOR NO KEY UPDATE` — takes it on
+  `velve.user` before it locks a row in any other table, and the statement says so in
+  a block comment: `/* locks: ${schema}.user */`. Every repository builds its table
+  name from the configured schema, so no scan can read the target out of the SQL; a
+  check that tried to would pass for the absence of a name rather than the presence
+  of the right one. Two features reached for a row lock
   independently and both happened to lock the user row first; the ordering is a
   rule so the next one does not have to guess. A cycle here surfaces as a
   deadlock in production under load, not in a test, because it needs two specific
