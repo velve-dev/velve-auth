@@ -327,10 +327,28 @@ substituting a word inside it is not something this scanner can do safely. So a
 migration whose `$$ … $$` body qualifies `velve` is rejected before the
 transaction opens, with `UnrewritableMigrationError`, code
 `migration_unrewritable_body` — rather than applied and left pointing at a schema
-that is not the configured one. A body that qualifies nothing is unaffected. A
-plugin that needs to reach the library's tables from inside a function body has
-two ways: build the name at run time (`format('%I.user', …)`), or set the
-function's `search_path` and leave the names unqualified.
+that is not the configured one. A body that qualifies nothing is unaffected.
+
+What the check does **not** see is a name inside a string inside the body, which
+is how dynamic SQL carries it:
+
+```sql
+EXECUTE 'SELECT count(*) FROM velve.user' INTO n;   -- applied, and broken at the first call
+```
+
+So for a body that builds SQL at run time the rule is mandatory rather than
+advisory: **build the qualified name from a schema value available at run time
+and quote it with `format('%I.user', …)`** — inside a trigger function that value
+is `TG_TABLE_SCHEMA`, otherwise it is an argument the caller passes. Setting the
+function's `search_path` in the migration does not help: `SET search_path = velve`
+stands neither before a dot nor after `CREATE SCHEMA`, so it is not rewritten
+either. A plugin that can do neither should ship its migration only for the
+default schema name.
+
+In the other direction the check errs toward refusing: an attribute access it
+cannot parse as one — a plpython body holding an object named `velve` — is
+rejected although it means no schema. That asymmetry is deliberate. A refusal is
+loud and has a documented way out; an accepted broken function is silent.
 
 **Statements run one at a time.** The runner cuts the migration on the
 semicolons that are not inside a string, a comment or a dollar-quoted body, and

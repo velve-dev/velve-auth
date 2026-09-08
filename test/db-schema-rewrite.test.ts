@@ -148,3 +148,27 @@ describe("splitting a migration into statements", () => {
 		expect(statements.filter((statement) => statement.includes("CREATE TABLE"))).toHaveLength(16);
 	});
 });
+
+describe("what the dollar-quoting check lets through and what it over-refuses", () => {
+	it("does not see a qualifier carried inside a string, which is how dynamic SQL carries it", () => {
+		const dynamic =
+			"CREATE FUNCTION velve.f() RETURNS void AS $$ EXECUTE 'SELECT 1 FROM velve.user' $$;";
+
+		expect(() => assertNoSchemaNameInsideDollarQuoting(dynamic, target)).not.toThrow();
+	});
+
+	it("refuses an attribute access it cannot tell from a qualifier", () => {
+		const plpython =
+			"CREATE FUNCTION velve.f() RETURNS void LANGUAGE plpython3u AS $$ velve.run() $$;";
+
+		expect(() => assertNoSchemaNameInsideDollarQuoting(plpython, target)).toThrow(
+			UnrewritableMigrationError,
+		);
+	});
+
+	it("does not rewrite the schema named in a search_path setting", () => {
+		expect(rewrite("ALTER FUNCTION velve.f() SET search_path TO velve, public;")).toBe(
+			`ALTER FUNCTION ${target}.f() SET search_path TO velve, public;`,
+		);
+	});
+});
