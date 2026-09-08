@@ -122,9 +122,9 @@ At most **four agents run at the same time**. This is a hard limit.
 
 Features in the same wave run in parallel; waves run one after another. **No two
 writers share a file.** The single exception is `CASE-STUDY.md`, which every
-feature appends to; §6 explains how that is made safe. The "touches" column of
-the wave tables in the build order is binding. A feature that needs a change outside its area stops and
-reports it instead of editing the file.
+feature appends to; §6 explains how that is made safe. The set of files a
+feature may touch is fixed before it starts and is binding. A feature that needs
+a change outside its area stops and reports it instead of editing the file.
 
 ### Definition of done
 
@@ -181,9 +181,21 @@ exception to the file-ownership rule in §5, and it works only because of how th
 numbers are handed out.
 
 **Each feature is given a reserved range of decision numbers when its wave
-starts, and it uses only that range.** The range is recorded next to the feature
-in the wave table. Two features never reach for the same number, so no branch
-ever has to renumber, and the merge order does not matter.
+starts, and it uses only that range.** Two features never reach for the same
+number, so no branch ever has to renumber, and the merge order does not matter.
+
+| Range | Belongs to |
+|---|---|
+| E-01 … E-46 | the architecture's own log, section 7 — never extended here |
+| E-47 … E-58 | wave 0: the scaffold, the banner and the positioning line |
+| E-59 … E-79 | wave 1 · `keys` |
+| E-80 … E-109 | wave 1 · `db` |
+| E-110 … E-139 | wave 1 · `http` |
+| E-140 … | unassigned; the next wave's ranges go here before its features start |
+
+A range is assigned before the feature's writer starts and is not changed
+afterwards. A feature that runs out asks for a second range rather than
+borrowing from a neighbour.
 
 The reason this matters more than it looks: decision IDs are cited from code,
 tests and documentation — `E-23` next to the line it explains. A renumber has to
