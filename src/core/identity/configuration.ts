@@ -42,12 +42,12 @@ interface IdentityInputByMode {
 export type IdentityConfigurationInput<Mode extends IdentityMode = IdentityMode> =
 	IdentityInputByMode[Mode];
 
-export const DEFAULT_USERNAME_RULES: UsernameRules = {
+export const DEFAULT_USERNAME_RULES: UsernameRules = Object.freeze({
 	allowedCharacters: /^[a-z0-9_-]+$/,
 	minimumLength: 3,
 	maximumLength: 32,
-	reservedNames: [],
-};
+	reservedNames: Object.freeze([]) as readonly string[],
+});
 
 export class IdentityConfigurationError extends Error {
 	readonly code = "invalid_identity_configuration";
