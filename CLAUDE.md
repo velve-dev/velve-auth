@@ -194,6 +194,8 @@ repair anything itself.
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm test` green, no skipped test without a reason stated in the code
+- `pnpm publint` — the package's exports resolve as published
+- `pnpm attw` — the types resolve under every module mode the package claims
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
 - the public surface has not changed unannounced (API snapshot comparison)
