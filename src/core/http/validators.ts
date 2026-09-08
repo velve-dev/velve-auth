@@ -25,6 +25,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** An inherited property and an array hole are both absent, and a direct server call can pass either. */
+function ownValue(source: object, key: string | number): unknown {
+	return Object.hasOwn(source, key) ? (source as Record<string | number, unknown>)[key] : undefined;
+}
+
 export function string(): Validator<string> {
 	return {
 		parse: (raw) => {
@@ -68,12 +73,14 @@ export function arrayOf<T>(inner: Validator<T>): Validator<T[]> {
 			if (!Array.isArray(raw)) {
 				throw new VelveError("invalid_input");
 			}
-			return raw.map((entry) => inner.parse(entry));
+			return Array.from({ length: raw.length }, (_unused, index) =>
+				inner.parse(ownValue(raw, index)),
+			);
 		},
 	};
 }
 
-/** The WebAuthn extension outputs are open-ended and the library reads none of them (3.15 D36), so the shape is checked and the contents are not. */
+/** The WebAuthn extension outputs are open-ended and the library reads none of them (1 D36), so the shape is checked and the contents are not. */
 export function unknownRecord(): Validator<Record<string, unknown>> {
 	return {
 		parse: (raw) => {
@@ -107,7 +114,7 @@ export function object<Shape extends Record<string, Validator<unknown>>>(
 			}
 			const parsed: Record<string, unknown> = {};
 			for (const [key, validator] of Object.entries(shape)) {
-				const value = validator.parse(raw[key]);
+				const value = validator.parse(ownValue(raw, key));
 				if (value !== undefined) {
 					parsed[key] = value;
 				}

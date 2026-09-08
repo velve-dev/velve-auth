@@ -922,13 +922,22 @@ declarations.
 | `string()` | a string, including `""` | everything else, `null` included |
 | `number()` | a finite number | `NaN`, `Infinity`, a numeric string, everything else |
 | `oneOf(...values)` | one of the listed strings, narrowed to that literal | any other string, and every non-string |
-| `arrayOf(inner)` | an array whose every entry `inner` accepts | a non-array, and an array with one entry `inner` rejects |
+| `arrayOf(inner)` | an array whose every **own** index `inner` accepts | a non-array, an array with one entry `inner` rejects, and a hole — which is read as `undefined` and offered to `inner` like any other value |
 | `unknownRecord()` | any object, contents unread | an array, `null`, and every primitive |
 | `optional(inner)` | `undefined`, or whatever `inner` accepts | what `inner` rejects; an explicit `null` is **not** absent |
-| `object(shape)` | an object whose declared fields all parse | an array, `null`, a non-object, and — on a `POST` body — any key the shape does not declare |
+| `object(shape)` | an object whose declared fields all parse as **own** properties | an array, `null`, a non-object, and — on a `POST` body — any key the shape does not declare |
 
 Every rejection is `invalid_input` with the same message; no validator says
 which field was wrong, and no input value is echoed back.
+
+`object()` and `arrayOf()` read own properties only. An inherited property and an
+array hole are both absent, and a direct server call can pass either: an object
+built with `Object.create`, a sparse array, or a plain object whose class of
+input arrives after something has written to `Object.prototype`. Reading through
+the chain would let a value the caller never sent arrive as a validated field —
+the unknown-key guard cannot stop it, because `Object.keys` lists own keys and so
+never sees an inherited one to reject. A JSON body cannot reach this: `JSON.parse`
+makes even `__proto__` an own key, which the unknown-key guard rejects.
 
 `object(shape)` nests: a field's validator may itself be an `object()`, which is
 how the two WebAuthn ceremony payloads are declared. An absent optional field
@@ -939,7 +948,7 @@ direct server call passes JavaScript values, where a request body could only
 carry what JSON can spell.
 
 `unknownRecord()` exists for `clientExtensionResults`: the WebAuthn extension
-outputs are open-ended and the library reads none of them (3.15 D36), so the
+outputs are open-ended and the library reads none of them (1 D36), so the
 shape is checked and the contents are not.
 
 ### `RequestContext`

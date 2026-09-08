@@ -97,6 +97,25 @@ describe("input validators", () => {
 		}
 	});
 
+	it("reads no field from the prototype chain", () => {
+		expect(() =>
+			credentials.parse(Object.create({ identifier: "inherited", redirectPath: "inherited" })),
+		).toThrow(new VelveError("invalid_input"));
+	});
+
+	it("does not let a polluted Object.prototype fill in an optional field the caller omitted", () => {
+		const polluted = Object.prototype as unknown as Record<string, unknown>;
+		polluted.redirectPath = "https://evil.example";
+		try {
+			const parsed = credentials.parse({ identifier: "someone" });
+
+			expect(Object.hasOwn(parsed, "redirectPath")).toBe(false);
+			expect(parsed).toEqual({ identifier: "someone" });
+		} finally {
+			delete polluted.redirectPath;
+		}
+	});
+
 	it("says nothing about which field was wrong", () => {
 		try {
 			credentials.parse({ identifier: 7 });
@@ -132,7 +151,7 @@ describe("oneOf", () => {
 		}
 	});
 
-	it("does not accept a property inherited from Object.prototype", () => {
+	it("does not accept the name of an Object.prototype method as a value", () => {
 		expect(() => attachment.parse("toString")).toThrow(new VelveError("invalid_input"));
 	});
 });
@@ -146,6 +165,26 @@ describe("arrayOf", () => {
 	it("rejects a non-array and an array with one bad entry", () => {
 		for (const raw of ["usb", { 0: "usb", length: 1 }, null, ["usb", "bluetooth"], ["usb", 7]]) {
 			expect(() => arrayOf(transport).parse(raw)).toThrow(new VelveError("invalid_input"));
+		}
+	});
+
+	it("rejects a hole, which Array.prototype.map would have skipped unvalidated", () => {
+		const sparse = ["usb"];
+		sparse.length = 3;
+
+		expect(() => arrayOf(transport).parse(sparse)).toThrow(new VelveError("invalid_input"));
+		expect(() => arrayOf(string()).parse(new Array(2))).toThrow(new VelveError("invalid_input"));
+	});
+
+	it("reads no entry from the prototype chain", () => {
+		const polluted = Object.prototype as unknown as Record<number, unknown>;
+		polluted[1] = "nfc";
+		try {
+			const sparse = ["usb"];
+			sparse.length = 2;
+			expect(() => arrayOf(transport).parse(sparse)).toThrow(new VelveError("invalid_input"));
+		} finally {
+			delete polluted[1];
 		}
 	});
 });
