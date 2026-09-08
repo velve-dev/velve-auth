@@ -58,6 +58,44 @@ binding, no install script, and no build step on your machine.
 pnpm add @velve/auth
 ```
 
+## What works today
+
+The schema and the database layer are built. The rest of the surface is being
+added feature by feature.
+
+**The schema.** Sixteen tables in their own PostgreSQL schema, `velve` by
+default. The SQL is shipped as files under `migrations/`, so it can be read,
+reviewed and applied with your own tooling; the library carries the same text
+and never reads a file at run time.
+
+**The migration runner**, from `@velve/auth/schema`. Versioned, forward-only,
+one transaction per migration, guarded by a PostgreSQL advisory lock so two
+processes starting at once cannot both migrate. It records each migration with
+the checksum of its SQL and refuses to run if an applied migration has since
+been edited. It also refuses any migration — a plugin's as much as its own —
+that adds a table referencing `velve.user` without `ON DELETE CASCADE`.
+
+```ts
+import { Pool } from "pg";
+import { createNodePostgresDriver } from "@velve/auth/pg";
+import { assertSchemaUpToDate, coreMigrations, runMigrations } from "@velve/auth/schema";
+
+const driver = createNodePostgresDriver(new Pool({ connectionString }));
+
+await runMigrations({ driver, migrations: coreMigrations("email") });
+await assertSchemaUpToDate({ driver, migrations: coreMigrations("email") });
+```
+
+**The driver**, from `@velve/auth/pg`. You create, own and close the pool; the
+library never opens a connection and never reads a connection string. `pg` is
+not a dependency of this package — the parameter is typed structurally.
+
+`assertSchemaUpToDate` is the version contract: a database behind the package is
+a startup error, not a warning.
+
+[`DOCUMENTATION.md`](./DOCUMENTATION.md) has the schema table by table and every
+option of both functions.
+
 ## Mounting it
 
 The HTTP layer is one function. It takes Web `Request` objects and returns Web
