@@ -13,13 +13,31 @@ export { };
 
 ## index.d.mts
 
+import { AuthenticationFactor, PendingAuthentication, Session } from "./core/http/caller.mjs";
+import { VelveError, VelveErrorCode } from "./core/http/error-map.mjs";
+import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
+import { Clock } from "./core/http/environment.mjs";
+import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
+import { UsernameRules } from "./core/identity/configuration.mjs";
+import { KeyProvider } from "./core/keys/provider.mjs";
+import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { Actor, ResolvedSession, actorOfResolvedSession } from "./core/db/actor.mjs";
+import { PendingToken } from "./core/factor/pending/token.mjs";
+import { SweepReport } from "./core/auth/maintenance.mjs";
+import { ImportSource, User } from "./core/auth/user.mjs";
+import { ResolvedSessionView } from "./core/auth/routes.mjs";
+import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
+import { SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
+import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
+import { VelveStartupError } from "./core/auth/startup.mjs";
+import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
 import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, createOwnedRowRepository } from "./core/db/repositories/owned-row-repository.mjs";
 
 //#region src/index.d.ts
+declare function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M>;
 declare const VELVE_AUTH_VERSION = "0.0.0";
 //#endregion
-export { type Actor, type OwnedRowRepository, type OwnedRowRepositoryOptions, type ResolvedSession, UnknownColumnError, VELVE_AUTH_VERSION, actorOfResolvedSession, createOwnedRowRepository };
+export { type Actor, type AnyRoute, type AuthInternals, type AuthenticationFactor, type BaseConfig, type CallerRequirement, type Clock, type EmailConfig, type EmailMessage, type IdentityConfig, type IdentityFields, type IdentityMode, type ImportSource, type KeyProvider, type ModeHasEmail, type ModeHasUsername, type OnlyWhen, type OriginRequirement, type OwnedRowRepository, type OwnedRowRepositoryOptions, type PendingAuthentication, type PendingNamespace, type PendingToken, type RateAlert, type RateLimitConfig, type RecoveryCodesConfig, type RecoveryCodesRequirement, type ResolvedSession, type ResolvedSessionView, SECURITY_OPTIONS, type SecurityOption, type Session, type SessionNamespace, type SignInLookup, type SweepReport, TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, type TotpConfig, type TrustLevelEvent, UnknownColumnError, type User, type UserNamespace, type UsernameNamespace, type UsernameRules, VELVE_AUTH_VERSION, type VelveAuth, type VelveAuthConfig, VelveError, type VelveErrorCode, VelveStartupError, type WebAuthnConfig, actorOfResolvedSession, createOwnedRowRepository, createVelveAuth, rootKeyProvider };
 
 ## neon.d.mts
 
@@ -56,11 +74,11 @@ export { };
 ## schema.d.mts
 
 import { Driver } from "./core/db/driver.mjs";
+import { AppliedMigration, Migration, MigrationReport } from "./core/db/migration.mjs";
+import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
 import { MissingCascadeError } from "./core/db/cascade-guard.mjs";
 import { InvalidIdentifierError } from "./core/db/identifier.mjs";
-import { AppliedMigration, Migration, MigrationReport } from "./core/db/migration.mjs";
 import { MigrationRefusedError, MigrationRunnerOptions, runMigrations } from "./core/db/migration-runner.mjs";
-import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
 import { coreMigrations } from "./core/db/migrations/index.mjs";
 import { UnrewritableMigrationError } from "./core/db/schema-rewrite.mjs";
 import { SchemaStatus, SchemaStatusOptions, SchemaVersionMismatchError, assertSchemaUpToDate, readSchemaStatus } from "./core/db/schema-status.mjs";
