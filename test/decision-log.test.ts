@@ -21,8 +21,11 @@ const ENGLISH_ENTRY = /^### (.+?)\n`E-(\d+)` · ([^·\n]+) · (.+?)$/gm;
 const GERMAN_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
 const ENGLISH_PARTS = ["**Context.**", "**Rejected.**", "**Reason.**", "**Price.**"];
 
-/** A line opening with an E-number claims to head an entry, whether or not it parses. */
-const NUMBER_CLAIM = /^[ \t]*(?:\*\*|`)?E-\d+\b/gm;
+/** A heading opens a markdown block, so it follows a blank line or an ATX heading; a
+ * wrapped prose line never does, which is what keeps a citation at a line start out. */
+const OPENS_A_BLOCK = /^(?:#{1,6}[ \t]|[ \t]*$)/;
+const CLAIM_LINE =
+	/^[ \t]*(?:[#>]+[ \t]*|[-*+][ \t]+|\*{1,2}|`)*E-\d+(?:`|\*{1,2})?[ \t]*(?:$|[—–\-:·])/;
 
 type Heading = {
 	number: number;
@@ -85,30 +88,37 @@ function everyTrackedFile(): string[] {
 		.filter((path) => !NOT_A_CITATION_SITE.has(path));
 }
 
-function sourceLineAt(offset: number): string {
-	const end = caseStudy.indexOf("\n", offset);
-	return caseStudy.slice(offset, end === -1 ? caseStudy.length : end).trim();
-}
-
-function lineNumberAt(offset: number): number {
-	let line = 1;
-	for (let index = 0; index < offset; index++) if (caseStudy[index] === "\n") line++;
-	return line;
+function claimedHeadings(): { offset: number; line: number; text: string }[] {
+	const lines = caseStudy.split("\n");
+	const claims: { offset: number; line: number; text: string }[] = [];
+	let offset = 0;
+	for (const [index, line] of lines.entries()) {
+		const previous = lines[index - 1];
+		const opensABlock = previous === undefined || OPENS_A_BLOCK.test(previous);
+		if (opensABlock && CLAIM_LINE.test(line)) {
+			claims.push({ offset, line: index + 1, text: line.trim() });
+		}
+		offset += line.length + 1;
+	}
+	return claims;
 }
 
 describe("decision log", () => {
 	const log = entries();
 
-	it("parses every line that claims a decision number", () => {
+	it("parses every heading that claims a decision number", () => {
 		const parsed = new Set(log.map((entry) => entry.numberLineStart));
-		const unparsed = [...caseStudy.matchAll(NUMBER_CLAIM)]
-			.map((match) => Number(match.index))
-			.filter((offset) => !parsed.has(offset))
-			.map(
-				(offset) => `CASE-STUDY.md:${lineNumberAt(offset)} heads no entry: ${sourceLineAt(offset)}`,
-			);
+		const unparsed = claimedHeadings()
+			.filter((claim) => !parsed.has(claim.offset))
+			.map((claim) => `CASE-STUDY.md:${claim.line} heads no entry: ${claim.text}`);
 		expect(unparsed).toEqual([]);
 		expect(log.length).toBeGreaterThan(0);
+	});
+
+	it("sees the heading of every entry it parses", () => {
+		const claimed = new Set(claimedHeadings().map((claim) => claim.offset));
+		const invisible = log.filter((entry) => !claimed.has(entry.numberLineStart)).map(label);
+		expect(invisible).toEqual([]);
 	});
 
 	it("numbers every decision exactly once", () => {
