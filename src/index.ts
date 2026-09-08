@@ -71,7 +71,16 @@ export type {
 	Session,
 } from "./core/http/caller.js";
 export type { Clock } from "./core/http/environment.js";
-export { VelveError, type VelveErrorCode } from "./core/http/error-map.js";
+export {
+	type AnyErrorCode,
+	forgetPluginErrorCodes,
+	type PluginErrorCode,
+	type PluginErrorDefinition,
+	registerPluginErrorCodes,
+	resolveErrorCode,
+	VelveError,
+	type VelveErrorCode,
+} from "./core/http/error-map.js";
 export type { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.js";
 export type { UsernameRules } from "./core/identity/configuration.js";
 export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";

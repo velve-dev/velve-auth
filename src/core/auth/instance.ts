@@ -3,6 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
+import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
 	type PendingAuthenticationService,
@@ -22,6 +23,7 @@ import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import { pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
+import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
@@ -193,6 +195,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
+	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
+
 	const services: RouteServices = {
 		sessions,
 		pending,
@@ -203,6 +207,12 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		password,
 		driver,
 		schema,
+		keys: config.keys,
+		clock,
+		oneTimeTokens,
+		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
+		...(config.email === undefined ? {} : { email: config.email }),
+		...(config.plugins === undefined ? {} : { plugins: config.plugins }),
 	};
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);

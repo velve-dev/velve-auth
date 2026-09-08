@@ -24,10 +24,33 @@ const IMPORT_SOURCES: readonly ImportSource[] = [
 	"nextauth",
 ];
 
+export interface NewUser {
+	readonly email: string | null;
+	readonly username: string | null;
+	/** The comparison form, normalised by `core/identity`; this repository does not derive it. */
+	readonly usernameKey: string | null;
+	readonly emailVerifiedAt: Date | null;
+}
+
+/**
+ * The three writing methods below are declared here rather than by the feature that first needs
+ * one, because `oauth` needs creation for S-LINK-2's new account and `email-flows` needs both
+ * address writes, and this is one interface and one returned literal (E-719).
+ */
 export interface UserRepository {
 	findUserById(userId: string): Promise<User | null>;
 	findUserByEmail(email: string): Promise<User | null>;
 	findUserByUsernameKey(usernameKey: string): Promise<User | null>;
+	createUser(input: NewUser): Promise<User>;
+	setEmailVerifiedAt(input: {
+		readonly userId: string;
+		readonly verifiedAt: Date | null;
+	}): Promise<void>;
+	updateEmail(input: {
+		readonly userId: string;
+		readonly email: string;
+		readonly emailVerifiedAt: Date | null;
+	}): Promise<void>;
 	setDisabledAt(input: { readonly userId: string; readonly disabled: boolean }): Promise<void>;
 	deleteUser(userId: string): Promise<void>;
 }
@@ -107,6 +130,38 @@ export function createUserRepository(options: {
 		findUserById: (userId) => findOne(byId, userId),
 		findUserByEmail: (email) => findOne(byEmail, email),
 		findUserByUsernameKey: (usernameKey) => findOne(byUsernameKey, usernameKey),
+
+		async createUser({ email, username, usernameKey, emailVerifiedAt }) {
+			const [row] = await options.driver.query<UserRowShape>(
+				`WITH inserted AS (
+					INSERT INTO ${users} (email, email_verified_at, username, username_key)
+					VALUES ($1, $2, $3, $4)
+					RETURNING id, created_at, updated_at, email, email_verified_at, username,
+						disabled_at, imported_from
+				)
+				SELECT i.*, false AS has_password FROM inserted i`,
+				[email, emailVerifiedAt, username, usernameKey],
+			);
+			if (row === undefined) {
+				throw new TypeError("the insert of a user returned no row");
+			}
+			return toUser(row);
+		},
+
+		async setEmailVerifiedAt({ userId, verifiedAt }) {
+			await options.driver.query(
+				`UPDATE ${users} SET email_verified_at = $2, updated_at = now() WHERE id = $1`,
+				[userId, verifiedAt],
+			);
+		},
+
+		async updateEmail({ userId, email, emailVerifiedAt }) {
+			await options.driver.query(
+				`UPDATE ${users} SET email = $2, email_verified_at = $3, updated_at = now()
+				WHERE id = $1`,
+				[userId, email, emailVerifiedAt],
+			);
+		},
 
 		/**
 		 * L-4: the sessions stay; each of them ends at its next resolution. There is no owner

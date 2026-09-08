@@ -35,9 +35,30 @@ export interface GenericProviderConfig extends ProviderCredentials {
 	readonly subjectClaim: string;
 }
 
+export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
+	"google",
+	"github",
+	"apple",
+	"microsoft",
+	"gitlab",
+	"discord",
+	"facebook",
+	"linkedin",
+	"twitch",
+	"spotify",
+	"slack",
+	"notion",
+	"zoom",
+	"dropbox",
+];
+
+/**
+ * The index signature admits what the named keys hold, so a known provider can be configured with
+ * credentials alone; which shape an id must carry is decided at start (E-718).
+ */
 export interface OAuthConfig {
 	readonly providers: Partial<Record<KnownProvider, ProviderCredentials>> & {
-		readonly [customId: string]: GenericProviderConfig;
+		readonly [customId: string]: ProviderCredentials | GenericProviderConfig;
 	};
 	/** The third of the three conditions S-LINK-2 puts on an automatic link. */
 	readonly trustedProviders: readonly string[];

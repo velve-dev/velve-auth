@@ -3970,6 +3970,8 @@ compile (E-349).
 | `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts; it reaches the handler through `auth.http`, so `toWebHandler` needs no second copy |
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
+| `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register; declared in `core/plugin/config.ts` and read by no route yet |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -4000,6 +4002,7 @@ because nothing else would tell you.
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
+| `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
 
 Two more refusals come from the modules and keep their own error types: a root
 key shorter than 32 bytes raises `KeyError` while `rootKeyProvider` is being

@@ -1,14 +1,19 @@
 import { type PendingAuthenticationService, toPendingToken } from "../factor/pending/index.js";
 import type { PendingAuthentication, Session } from "../http/caller.js";
+import type { Clock } from "../http/environment.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute } from "../http/route.js";
 import { object, string } from "../http/validators.js";
 import type { IdentityConfiguration, UsernameRules } from "../identity/configuration.js";
 import { usernameAvailability } from "../identity/resolution.js";
+import type { KeyProvider } from "../keys/index.js";
+import type { OAuthConfig } from "../oauth/config.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
+import type { VelvePlugin } from "../plugin/config.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
-import type { RateLimitConfig } from "./config.js";
+import type { OneTimeTokens } from "../token/one-time-token.js";
+import type { EmailConfig, RateLimitConfig } from "./config.js";
 import type { User, UserRepository } from "./user.js";
 
 export interface ResolvedSessionView {
@@ -24,6 +29,11 @@ export interface ResolvedSessionView {
  */
 export type ResolutionMemo = WeakMap<Session, SessionResolution>;
 
+/**
+ * The four seam modules take this and nothing else, so a field a wave-4 feature needs is a field
+ * three writers would otherwise add to this one interface. The five below are declared here for
+ * that reason and are read by no core route yet (E-719).
+ */
 export interface RouteServices {
 	readonly sessions: SessionService;
 	readonly pending: PendingAuthenticationService;
@@ -34,6 +44,14 @@ export interface RouteServices {
 	readonly password: ResolvedPasswordConfig;
 	readonly driver: import("../db/driver.js").Driver;
 	readonly schema: string;
+	readonly keys: KeyProvider;
+	readonly clock: Clock;
+	readonly oneTimeTokens: OneTimeTokens;
+	readonly oauth?: OAuthConfig;
+	readonly email?: EmailConfig;
+	readonly plugins?: readonly VelvePlugin[];
+	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
+	readonly fetch?: typeof globalThis.fetch;
 }
 
 function addressOnly(services: RouteServices): RateLimitRule {

@@ -81,16 +81,88 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	internal_error: "The request could not be completed.",
 };
 
+/** 3.11: a plugin contributes error codes, and each one begins with its own id. */
+export type PluginErrorCode = `${string}.${string}`;
+export type AnyErrorCode = VelveErrorCode | PluginErrorCode;
+
+export interface PluginErrorDefinition {
+	readonly httpStatus: number;
+	readonly message: string;
+}
+
+const PLUGIN_ERRORS = new Map<PluginErrorCode, PluginErrorDefinition>();
+const PLUGIN_ERROR_STATUS_FLOOR = 400;
+const PLUGIN_ERROR_STATUS_CEILING = 599;
+
+function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
+	return !(code in MESSAGE_BY_ERROR_CODE);
+}
+
+/**
+ * §3 keeps this file the only place that decides what a caller learns, which is why a plugin
+ * registers here rather than widening the core union: the union stays a closed literal and the
+ * resolver below answers for both kinds. The registry is process-wide, so a second instance
+ * registering the same code with a different answer is refused rather than silently winning
+ * (E-720).
+ */
+export function registerPluginErrorCodes(
+	definitions: Readonly<Record<PluginErrorCode, PluginErrorDefinition>>,
+): void {
+	for (const [code, definition] of Object.entries(definitions) as [
+		PluginErrorCode,
+		PluginErrorDefinition,
+	][]) {
+		if (!isPluginErrorCode(code)) {
+			throw new TypeError(`${code} is a core error code and cannot be redefined`);
+		}
+		if (
+			definition.httpStatus < PLUGIN_ERROR_STATUS_FLOOR ||
+			definition.httpStatus > PLUGIN_ERROR_STATUS_CEILING
+		) {
+			throw new TypeError(`${code} must answer with a 4xx or 5xx status`);
+		}
+		const registered = PLUGIN_ERRORS.get(code);
+		if (
+			registered !== undefined &&
+			(registered.httpStatus !== definition.httpStatus || registered.message !== definition.message)
+		) {
+			throw new TypeError(`${code} is already registered with a different answer`);
+		}
+		PLUGIN_ERRORS.set(code, definition);
+	}
+}
+
+export function forgetPluginErrorCodes(): void {
+	PLUGIN_ERRORS.clear();
+}
+
+const UNREGISTERED: PluginErrorDefinition = {
+	httpStatus: HTTP_STATUS_BY_ERROR_CODE.internal_error,
+	message: MESSAGE_BY_ERROR_CODE.internal_error,
+};
+
+/** The one resolver: a core code reads the two tables, a namespaced one reads the registry. */
+export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
+	if (!isPluginErrorCode(code)) {
+		return {
+			httpStatus: HTTP_STATUS_BY_ERROR_CODE[code],
+			message: MESSAGE_BY_ERROR_CODE[code],
+		};
+	}
+	return PLUGIN_ERRORS.get(code) ?? UNREGISTERED;
+}
+
 export class VelveError extends Error {
-	readonly code: VelveErrorCode;
+	readonly code: AnyErrorCode;
 	readonly httpStatus: number;
 	readonly retryAfterSeconds?: number;
 
-	constructor(code: VelveErrorCode, options?: { readonly retryAfterSeconds: number }) {
-		super(MESSAGE_BY_ERROR_CODE[code]);
+	constructor(code: AnyErrorCode, options?: { readonly retryAfterSeconds: number }) {
+		const resolved = resolveErrorCode(code);
+		super(resolved.message);
 		this.name = "VelveError";
 		this.code = code;
-		this.httpStatus = HTTP_STATUS_BY_ERROR_CODE[code];
+		this.httpStatus = resolved.httpStatus;
 		if (options !== undefined) {
 			this.retryAfterSeconds = options.retryAfterSeconds;
 		}
@@ -219,7 +291,7 @@ export function toVisibleFailure(cause: unknown): VisibleFailure {
 
 interface ErrorBody {
 	readonly error: {
-		readonly code: VelveErrorCode;
+		readonly code: AnyErrorCode;
 		readonly message: string;
 		readonly retryAfterSeconds?: number;
 	};
@@ -239,15 +311,10 @@ export function writableWaitInSeconds(retryAfterSeconds: number | undefined): nu
 }
 
 export function toErrorBody(error: VelveError): ErrorBody {
+	const { message } = resolveErrorCode(error.code);
 	const wait = writableWaitInSeconds(error.retryAfterSeconds);
 	if (wait === null) {
-		return { error: { code: error.code, message: MESSAGE_BY_ERROR_CODE[error.code] } };
+		return { error: { code: error.code, message } };
 	}
-	return {
-		error: {
-			code: error.code,
-			message: MESSAGE_BY_ERROR_CODE[error.code],
-			retryAfterSeconds: wait,
-		},
-	};
+	return { error: { code: error.code, message, retryAfterSeconds: wait } };
 }

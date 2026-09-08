@@ -104,13 +104,17 @@ export interface PluginMigration<Id extends string> {
 	readonly createsTables: readonly `${Id}_${string}`[];
 }
 
-/** 3.15 G writes the input and output as `any`; `AnyRoute` already sets `unknown` as the form. */
+/**
+ * 3.15 G writes the input and output as `any`; `AnyRoute` already sets `unknown` as the form. The
+ * error type admits the plugin's own namespaced codes beside the core ones, which `error-map.ts`
+ * resolves rather than the core union absorbing them (E-720).
+ */
 export type PluginRoute<Id extends string> = RouteDeclaration<
 	`${Id}.${string}`,
 	`/x/${Id}/${string}`,
 	unknown,
 	unknown,
-	VelveErrorCode
+	VelveErrorCode | `${Id}.${string}`
 >;
 
 /**

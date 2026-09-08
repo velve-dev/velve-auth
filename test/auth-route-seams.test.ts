@@ -82,8 +82,11 @@ describe("the assembly composes the route table from every feature module", () =
 	});
 });
 
-describe("the three modules are empty until their feature fills them", () => {
-	it("returns nothing from any of them today", async () => {
+describe("the three seam modules answer with a route list", () => {
+	// The emptiness of the three was asserted here until wave 4, which made this file a test the
+	// first of oauth, email-flows and plugin to merge would turn red for the other two (E-721).
+	// What is worth keeping is that each module answers with a list the assembly can compose.
+	it("returns an array from each of them", async () => {
 		const oauth = await vi.importActual<typeof import("../src/core/oauth/routes.js")>(
 			"../src/core/oauth/routes.js",
 		);
@@ -102,6 +105,8 @@ describe("the three modules are empty until their feature fills them", () => {
 		];
 
 		expect(contributed).toHaveLength(3);
-		expect(contributed.flat()).toStrictEqual([]);
+		for (const routes of contributed) {
+			expect(Array.isArray(routes)).toBe(true);
+		}
 	});
 });
