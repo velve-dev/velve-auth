@@ -134,7 +134,7 @@ export function encodeCbor(value: CborValue): Uint8Array {
 			const encoded = value.entries
 				.map(([key, item]) => [encodeCbor(key), encodeCbor(item)] as const)
 				.sort(([left], [right]) => compareCanonically(left, right));
-			return concat(cborHead(5, encoded.length), ...encoded.flatMap(([key, item]) => [key, item]));
+			return concat(cborHead(5, encoded.length), ...encoded.flat());
 		}
 	}
 }
@@ -330,6 +330,20 @@ export async function createVirtualAuthenticator(
 		return signCount;
 	}
 
+	async function signatureOver(
+		data: Uint8Array,
+		client: Uint8Array,
+		fault: SignatureFault | undefined,
+	): Promise<Uint8Array> {
+		if (fault === "empty-signature") {
+			return new Uint8Array(0);
+		}
+		const message =
+			fault === "signed-without-the-client-data" ? concat(data) : concat(data, sha256(client));
+		const key = fault === "another-key" ? strangerKeyPair.privateKey : keyPair.privateKey;
+		return faultedSignature(await signWith(key, message), fault);
+	}
+
 	return {
 		credentialId: base64url(credentialId),
 
@@ -399,16 +413,7 @@ export async function createVirtualAuthenticator(
 							crossOrigin: true,
 						})
 					: client;
-			const signedMessage =
-				input.signatureFault === "signed-without-the-client-data"
-					? concat(data)
-					: concat(data, sha256(client));
-			const key =
-				input.signatureFault === "another-key" ? strangerKeyPair.privateKey : keyPair.privateKey;
-			const signature =
-				input.signatureFault === "empty-signature"
-					? new Uint8Array(0)
-					: faultedSignature(await signWith(key, signedMessage), input.signatureFault);
+			const signature = await signatureOver(data, client, input.signatureFault);
 			return {
 				id: input.credentialId ?? base64url(credentialId),
 				rawId: input.credentialId ?? base64url(credentialId),
