@@ -389,3 +389,148 @@ describe("the count as a hand-off to a caller who has not read it", () => {
 		expect(failure).toBe("postgres 22P02");
 	});
 });
+
+function removalOn(driver: Driver, userId: string, removing: SignInMethodRemoval): Promise<string> {
+	return assertSignInMethodRemains({
+		transaction: driver,
+		schema,
+		actor: actorOfResolvedSession({ userId }),
+		removing,
+	}).then(
+		() => "removed",
+		(cause: unknown) => (cause instanceof VelveError ? cause.code : "unexpected"),
+	);
+}
+
+/** A driver whose `transaction` opens none, which is what an HTTP-only Postgres endpoint offers. */
+function withoutRealTransactions(driver: TestConnection): Driver {
+	const fake: Driver = {
+		query<T>(sql: string, params: unknown[]): Promise<T[]> {
+			return driver.query<T>(sql, params);
+		},
+		transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T> {
+			return fn(fake);
+		},
+	};
+	return fake;
+}
+
+describe("the removal called every way a caller can call it", () => {
+	it("commits the removal when the caller opened no transaction", async () => {
+		const userId = await createUser();
+		await givePassword(userId);
+		const identityId = await linkIdentity(userId);
+		expect(await removalOn(connection, userId, { method: "linked_identity", identityId })).toBe(
+			"removed",
+		);
+		expect(await remainingMethods(userId)).toBe(1);
+	});
+
+	it("rolls the removal back with a transaction the caller rolls back", async () => {
+		const driver = await openTestConnection();
+		try {
+			const userId = await createUser();
+			await givePassword(userId);
+			const identityId = await linkIdentity(userId);
+			await driver.query("BEGIN", []);
+			expect(await removalOn(driver, userId, { method: "linked_identity", identityId })).toBe(
+				"removed",
+			);
+			await driver.query("ROLLBACK", []);
+			expect(await remainingMethods(userId)).toBe(2);
+		} finally {
+			await driver.close();
+		}
+	});
+
+	/**
+	 * Excluding by identifier rather than subtracting one means a stale identifier does not make
+	 * the count too low and refuse a removal that was allowed (E-199). The caller cannot tell that
+	 * nothing was deleted, because the call returns nothing either way.
+	 */
+	it("neither refuses nor deletes for an identifier that is already gone", async () => {
+		const userId = await createUser();
+		await givePassword(userId);
+		const identityId = await linkIdentity(userId);
+		expect(await removalOn(connection, userId, { method: "linked_identity", identityId })).toBe(
+			"removed",
+		);
+		expect(await removalOn(connection, userId, { method: "linked_identity", identityId })).toBe(
+			"removed",
+		);
+		expect(await remainingMethods(userId)).toBe(1);
+		expect(await removalOn(connection, userId, { method: "password" })).toBe("last_sign_in_method");
+		expect(await remainingMethods(userId)).toBe(1);
+	});
+
+	it("never removes a row that belongs to another account", async () => {
+		const mine = await createUser();
+		await givePassword(mine);
+		await linkIdentity(mine);
+		const theirs = await createUser();
+		await givePassword(theirs);
+		const theirCredential = await addWebauthnCredential(theirs);
+		expect(
+			await removalOn(connection, mine, {
+				method: "webauthn_credential",
+				credentialId: theirCredential,
+			}),
+		).toBe("removed");
+		expect(await remainingMethods(theirs)).toBe(2);
+		expect(await remainingMethods(mine)).toBe(2);
+	});
+
+	it("refuses for an account that does not exist and removes nothing anywhere", async () => {
+		const bystander = await createUser();
+		await givePassword(bystander);
+		expect(await removalOn(connection, NO_SUCH_USER, { method: "password" })).toBe(
+			"last_sign_in_method",
+		);
+		expect(await remainingMethods(bystander)).toBe(1);
+	});
+
+	it("fails closed rather than unlocked when the driver cannot open a transaction", async () => {
+		const driver = await openTestConnection();
+		try {
+			const userId = await createUser();
+			await givePassword(userId);
+			const identityId = await linkIdentity(userId);
+			expect(
+				await removalOn(withoutRealTransactions(driver), userId, {
+					method: "linked_identity",
+					identityId,
+				}),
+			).toBe("internal_error");
+			expect(await remainingMethods(userId)).toBe(2);
+		} finally {
+			await driver.close();
+		}
+	});
+
+	it("lets exactly one through when one caller holds a transaction and the other does not", async () => {
+		const inside = await openTestConnection();
+		const outside = await openTestConnection();
+		try {
+			const userId = await createUser();
+			await givePassword(userId);
+			const identityId = await linkIdentity(userId);
+			const held = async (): Promise<string> => {
+				await inside.query("BEGIN", []);
+				const outcome = await removalOn(inside, userId, { method: "password" });
+				await inside.query(outcome === "removed" ? "COMMIT" : "ROLLBACK", []);
+				return outcome;
+			};
+			const outcomes = (
+				await Promise.all([
+					held(),
+					removalOn(outside, userId, { method: "linked_identity", identityId }),
+				])
+			).sort();
+			expect(outcomes).toEqual(["last_sign_in_method", "removed"].sort());
+			expect(await remainingMethods(userId)).toBe(1);
+		} finally {
+			await inside.close();
+			await outside.close();
+		}
+	});
+});
