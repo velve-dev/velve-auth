@@ -57,22 +57,19 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 		expect(offenders).toEqual([]);
 	});
 
-	/** A one-time artefact is redeemed by someone who is not signed in, so there is no
-	 * actor to filter on; the token hash is the whole authorisation (S-TOKEN-4). */
-	const REDEEMED_WITHOUT_AN_ACTOR = /DELETE\s+FROM[\s\S]*one_time_token/i;
+	/** A statement that genuinely has no actor to filter on says so in its own text,
+	 * citing the requirement that permits it. A marker travels with the statement, so
+	 * it survives an interpolated schema name — which the table name does not. */
+	const DECLARES_NO_ACTOR = /--\s*no owner predicate:\s*S-[A-Z]+-\d+/i;
 
-	/** A session token is the credential: holding it is the ownership proof, and a sign-out
-	 * that resolved the row first would be the pre-SELECT S-OWNER-2 forbids (3.15 B.1). */
-	const ADDRESSED_BY_ITS_OWN_TOKEN = /DELETE\s+FROM[\s\S]*WHERE\s+token_sha256\s*=/i;
+	/** `FOR UPDATE` locks rows; it changes none. */
+	const CHANGES_ROWS = /(?<!\bFOR\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
 
 	it("gives every row-changing statement an owner predicate", () => {
-		const changing = sqlLiterals().filter((literal) =>
-			// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
-			/\b(DELETE\s+FROM|UPDATE)\b/i.test(literal.sql),
-		);
+		// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
+		const changing = sqlLiterals().filter((literal) => CHANGES_ROWS.test(literal.sql));
 		const withoutOwner = changing
-			.filter((literal) => !REDEEMED_WITHOUT_AN_ACTOR.test(literal.sql))
-			.filter((literal) => !ADDRESSED_BY_ITS_OWN_TOKEN.test(literal.sql))
+			.filter((literal) => !DECLARES_NO_ACTOR.test(literal.sql))
 			.filter((literal) => {
 				// RETURNING user_id is a result column, not a predicate.
 				const predicate = literal.sql.split(/\bRETURNING\b/i)[0] ?? "";
