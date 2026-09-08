@@ -1034,6 +1034,38 @@ because the identifier does not exist before parsing. A decision with
 The seam is a named field, not a middleware chain: a plugin can neither replace
 the origin check nor run before it (3.11).
 
+### Address parsing — `core/net/ip-address.ts`
+
+Two callers need the same address parser with different prefix lengths, so the
+parser is a module of its own that belongs to neither. It imports nothing.
+
+| Name | Signature | What it is |
+|---|---|---|
+| `canonicalIpAddress` | `(text: string) => string \| null` | the address as `inet` will hold it — RFC 5952 for IPv6, unmapped for `::ffff:` — or `null` if the text is not an address |
+| `ipAddressNetwork` | `(text: string, prefixLengths: IpAddressPrefixLengths) => string \| null` | the address masked to its family's prefix and written with that prefix, or `null` if the text is not an address |
+| `IpAddressPrefixLengths` | `{ ipv4: number; ipv6: number }` | how many leading bits survive, per family |
+
+```ts
+ipAddressNetwork("2001:DB8::1", { ipv4: 32, ipv6: 64 })         // "2001:db8::/64"
+ipAddressNetwork("::ffff:203.0.113.5", { ipv4: 32, ipv6: 64 })  // "203.0.113.5/32"
+ipAddressNetwork("203.0.113.5", { ipv4: 24, ipv6: 64 })         // "203.0.113.0/24"
+```
+
+The parse comes before the mask, so the compressed, expanded, upper-case and
+IPv4-mapped spellings of one address produce one string. That folding is what
+`S-RATE-1` requires of the rate key and what `L-10` requires of the stored
+session metadata; only the prefix lengths differ. The rate key uses
+`{ ipv4: 32, ipv6: 64 }` — the `/64` prefix rather than the address, or an
+attacker rotates freely inside one prefix (CVE-2026-45364), and the **full**
+IPv4 address, because a `/24` there would put 254 unrelated hosts in one bucket.
+Session metadata uses `{ ipv4: 24, ipv6: 64 }` (L-10) and keeps that choice in
+`core/session/ip-address.ts`, which is the only place the `/24` is written down.
+
+Anything that is not exactly one address is `null`, and a header holding two —
+`"1.2.3.4, 5.6.7.8"` — is not one address. A zone identifier, a bracketed host,
+a leading zero in an octet and a trailing prefix are all rejected rather than
+guessed at.
+
 ### Redirects
 
 A handler that must send the caller somewhere returns
@@ -2779,8 +2811,8 @@ remaining exported names, each of which the prose above uses without naming.
 
 | Name | Signature | What it is |
 |---|---|---|
-| `canonicalIpAddress` | `(text: string) => string \| null` | the address as `inet` will hold it — RFC 5952 for IPv6, unmapped for `::ffff:`— or `null` if the text is not an address |
-| `truncatedIpAddress` | `(text: string) => string \| null` | the same, cut to the `/24` or `/64` network and written with its prefix |
+| `canonicalIpAddress` | `(text: string) => string \| null` | the address as `inet` will hold it — RFC 5952 for IPv6, unmapped for `::ffff:`— or `null` if the text is not an address; re-exported from `core/net/ip-address.ts` |
+| `truncatedIpAddress` | `(text: string) => string \| null` | the same, cut to the `/24` or `/64` network and written with its prefix; the two prefix lengths are this module's L-10 decision over `ipAddressNetwork` |
 | `truncatedUserAgent` | `(userAgent: string) => string \| null` | `"Chrome on macOS"`; `null` when neither a browser nor a system family is recognised |
 | `boundedUserAgent` | `(userAgent: string) => string \| null` | the header trimmed and cut to 512 characters, `null` when it is empty |
 | `durationInMilliseconds` | `(duration: string) => number \| null` | a `Duration` in milliseconds; `null` for anything the type admits but a deadline cannot use |
