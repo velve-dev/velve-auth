@@ -1269,3 +1269,52 @@ outlive the one deadline nothing extends.
 
 `freshnessWindow` is measured against `created_at`, not `last_used_at`:
 freshness is time since sign-in, and only a new sign-in restores it.
+
+### `createSessionRepository(options)`
+
+```ts
+createSessionRepository(options: { driver: Driver; schema: string }): SessionRepository
+```
+
+Every statement the library issues against `velve.session`. All SQL lives here;
+nothing above this module writes SQL, and no method takes a table or column name
+from a caller.
+
+| Method | Statement | Result |
+|---|---|---|
+| `insertSession(insert)` | `INSERT … RETURNING …` | the new `Session` |
+| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` | `{ session, userId, userDisabledAt }` or `null` |
+| `extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs })` | `UPDATE … WHERE id = $1 AND user_id = $2 AND last_used_at <= now() - $4` | the new idle deadline, or `null` if nothing was written |
+| `deleteSessionByTokenHash(hash)` | `DELETE … WHERE token_sha256 = $1 RETURNING id, user_id` | what was removed, or `null` |
+| `deleteSessionOwnedBy({ sessionId, actor })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
+| `deleteEverySessionOwnedBy({ actor })` | `DELETE … WHERE user_id = $1` | how many rows went |
+| `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | `DELETE … WHERE user_id = $1 AND id <> $2` | how many rows went |
+| `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
+| `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
+| `replaceEverySessionOfUser({ actor, insert })` | `DELETE` of every row of the user plus `INSERT`, one transaction | the new `Session` |
+
+`SessionInsert` carries `userId`, `tokenHash`, `factors`, `ipAddress`,
+`userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`. Both deadlines are
+computed by the database from `now()`, so a session's clock is the database's
+clock and not the application's.
+
+Every method that reaches rows by owner takes an `actor` and puts it in the
+`WHERE` clause (S-OWNER-1, S-OWNER-2). A row of another user and a row that
+never existed produce the same answer (S-OWNER-8).
+
+There is no method that updates `user_id`. `replaceSession` removes the previous
+row and inserts a new one in one transaction (S-FIX-1, E-23), and it refuses
+with `SessionOwnerMismatchError` if the row it removed belonged to a different
+user than the row it is about to write — a re-issue cannot move a session
+between accounts even by mistake.
+
+`replaceEverySessionOfUser` is what a password change uses: it removes **every**
+session of the user and issues one new one, in one transaction. There is no
+parameter that keeps the others (S-FIX-6).
+
+`listSessionsOwnedBy` lists only sessions that can still be used; an expired row
+is not shown to the user as if it were a device that is still signed in.
+
+The `Driver` must decode `timestamptz` into a `Date` — `node-postgres`,
+`postgres.js` and the neon driver all do. Decoding a PostgreSQL type is the
+driver's work; the repository reads values, it does not parse them.
