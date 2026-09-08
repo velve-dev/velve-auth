@@ -58,9 +58,11 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 	});
 
 	/** A statement that genuinely has no actor to filter on says so in its own text,
-	 * citing the requirement that permits it. A marker travels with the statement, so
-	 * it survives an interpolated schema name — which the table name does not. */
-	const DECLARES_NO_ACTOR = /--\s*no owner predicate:\s*S-[A-Z]+-\d+/i;
+	 * citing the requirement it deviates from. A marker travels with the statement, so it
+	 * survives an interpolated schema name — which the table name does not. The block form
+	 * is required: a line comment that loses its newline to any whitespace-normalising
+	 * layer swallows the predicate behind it and leaves an unqualified statement. */
+	const DECLARES_NO_ACTOR = /\/\*\s*no owner predicate:\s*S-[A-Z]+-\d+[\s\S]*?\*\//i;
 
 	/** `FOR UPDATE` locks rows; it changes none. */
 	const CHANGES_ROWS = /(?<!\bFOR\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;

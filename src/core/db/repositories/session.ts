@@ -202,7 +202,7 @@ function extendIdleDeadlineStatement(table: string): string {
 }
 
 function deleteByTokenHashStatement(table: string): string {
-	return `DELETE FROM ${table} -- no owner predicate: S-FIX-3, a session row is addressed by its token hash and holding it is the proof
+	return `DELETE FROM ${table} /* no owner predicate: S-OWNER-2, the predicate is the secret itself */
 	WHERE token_sha256 = $1 RETURNING id, user_id`;
 }
 

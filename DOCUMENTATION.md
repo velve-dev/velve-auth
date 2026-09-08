@@ -1325,6 +1325,13 @@ because a session that vanished mid-flight is a session the caller no longer has
 session of the user and issues one new one, in one transaction. There is no
 parameter that keeps the others (S-FIX-6).
 
+`deleteSessionByTokenHash` is the one statement here without an owner predicate,
+and it says so in its own text: `/* no owner predicate: S-OWNER-2, the predicate
+is the secret itself */`. Signing out has a token and nothing else, and the only
+form that would satisfy S-OWNER-2 literally — resolve the row, then delete it by
+owner — is the pre-`SELECT` the same requirement forbids. A marker is admissible
+on that ground alone: the predicate must itself be a secret.
+
 `listSessionsOwnedBy` lists only sessions that can still be used; an expired row
 is not shown to the user as if it were a device that is still signed in. It is
 also the only method that sets `Session.isCurrent`, which 3.15 C reserves for
