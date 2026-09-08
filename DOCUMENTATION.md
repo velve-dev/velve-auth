@@ -1140,7 +1140,8 @@ is swallowed: a failing log sink must not cost the caller its answer.
 ## Sessions
 
 The library answers one question — who is signed in — and this module is the
-only place that answers it. Every answer costs one database query; there is no
+only place that answers it. Every answer costs a database query — one, and a
+second only on the request that extends the idle deadline; there is no
 cookie cache, no process cache and no parameter that could introduce one
 (S-CACHE-1). The most severe published flaw in the comparison system's core
 sign-in path was exactly such a cache (CVSS 9.1: the session was cached before
@@ -1199,7 +1200,7 @@ default is `"truncated"` (L-10).
 | `mode` | `ip` | `user_agent` |
 |---|---|---|
 | `"truncated"` (default) | IPv4 to `/24`, IPv6 to `/64` | browser and system family |
-| `"full"` | the address as observed | the header, bounded to 512 characters |
+| `"full"` | the address, canonicalised | the header, bounded to 512 characters |
 | `"none"` | `null` | `null` |
 
 `observed` carries what the request layer saw: `{ ipAddress, userAgent }`, each
@@ -1210,8 +1211,14 @@ The `/64` for IPv6 is the prefix length the rate limiter uses as well, so an
 address never appears in two different truncations. `"203.0.113.0/24"` is
 stored with its prefix, so a reader can tell a truncated value from a full one.
 An address a proxy wrote as an IPv4-mapped IPv6 address (`::ffff:203.0.113.42`)
-is truncated as IPv4; treating it as IPv6 would put every IPv4 client into one
-`/64`.
+is read as IPv4 in every mode; treating it as IPv6 would put every IPv4 client
+into one `/64`.
+
+`"full"` does not store the header's text. The address is parsed and written
+back in the form `inet` holds — RFC 5952 for IPv6, and the unmapped IPv4 form
+for `::ffff:203.0.113.42`, which is stored as `203.0.113.42`. What `"full"`
+keeps is the whole address rather than a prefix, not the spelling it arrived
+in; a value that is not an address at all is stored as `null` in every mode.
 
 A value that is not an address becomes `null` rather than an error: metadata is
 not part of the answer to who is signed in, and a malformed `X-Forwarded-For`
@@ -1370,8 +1377,9 @@ including `cookieName` and `cookieMaximumAgeInSeconds` for the cookie writer.
 | `resolve(token)` | the resolution, or `null` for an unknown or expired token |
 | `refresh(token)` | the same, and it forces the idle write the interval would hold back |
 
-`resolve` is the library's only authorisation decision, and it costs exactly one
-query. It throws `account_disabled` when the account is disabled — the only
+`resolve` is the library's only authorisation decision, and it always asks the
+database: one query, plus the idle write on the at most one request per
+`idleWriteInterval` where that write is due. It throws `account_disabled` when the account is disabled — the only
 place in the library where that code is raised, because by then the caller has
 proved the account is theirs (L-4). An account disabled between two requests
 takes effect on the next one; there is no lifetime to wait out (S-CACHE-3).
@@ -1399,12 +1407,17 @@ decides after the fact is measured against it.
 `observed` is `{ ipAddress, userAgent }` as the request layer saw them; what is
 stored follows `sessionMetadata` (L-10).
 
-Every event that changes the trust level — sign-in, second factor completed,
-password changed, a new identity linked — calls `reissue`, so the token a caller
-held before the change is gone from the table and a request carrying it is
-answered exactly like a request without a cookie (S-FIX-1, S-FIX-3). A password
-change calls `reissueAfterCredentialChange`, which has no parameter that could
-keep the other sessions (S-FIX-6).
+Every event that changes the trust level ends the session that preceded it, and
+each event calls the method that matches what preceded it. A sign-in calls
+`issue`: there is no session yet, and the second factor is completed out of
+`velve.pending_authentication`, which is not one either. An event that follows an
+existing session — the second factor completed on top of one, a new identity
+linked — calls `reissue`. A password change calls
+`reissueAfterCredentialChange`, which has no parameter that could keep the other
+sessions (S-FIX-6), and a password reset has no surviving session at all and
+calls `revokeEverySessionOfUser`. In every case the token the caller held before
+the change is gone from the table, and a request carrying it is answered exactly
+like a request without a cookie (S-FIX-1, S-FIX-3).
 
 Re-issue is always an `INSERT` plus a `DELETE`; `UPDATE velve.session SET
 user_id` does not exist, and a re-issue whose new row would belong to a
@@ -1460,11 +1473,16 @@ operations on credentials.
 For the same reason `createSessionService` takes no clock at all. To age a
 session in a test, age it where `created_at` lives — in the database.
 
-Every session operation that reaches rows by owner takes its actor from
-`actorOfFreshSession`, which checks freshness before it hands the actor out: an
-operation of that group cannot be written without the check.
+`list`, `revoke`, `revokeEveryOther` and `revokeEvery` — the four B.9 puts the
+requirement on — take their actor from `actorOfFreshSession`, which checks
+freshness before it hands the actor out, so none of the four can be written
+without the check. Three other places obtain an actor without it, each for a
+stated reason: `resolve` itself, which needs one to write the idle deadline of
+the session it has just resolved; `revokeEverySessionOfUser`, which is handed an
+actor rather than minting one, because the password reset has no session to
+resolve; and `reissueAfterCredentialChange`, deliberately.
 
-`reissueAfterCredentialChange` is the exception, deliberately. B.9 puts the
+`reissueAfterCredentialChange` is that third case. B.9 puts the
 freshness requirement on `password.set` and `password.change`, which is *before*
 the password is hashed and written; a check inside the re-issue would run after
 it, and failing there would leave the new password in place, the other sessions
@@ -1487,3 +1505,33 @@ the value it was given.
 rather than parsing a duration again. The HTTP environment's
 `freshnessWindowInSeconds` and its session cookie lifetime have to be derived
 from the same result, or two windows would be in force at once.
+
+### The rest of the session module, by name
+
+`sessionMetadataFor`, `createSessionRepository` and `createSessionService` are
+the module's front doors, and everything above describes them. These are the
+remaining exported names, each of which the prose above uses without naming.
+
+| Name | Signature | What it is |
+|---|---|---|
+| `canonicalIpAddress` | `(text: string) => string \| null` | the address as `inet` will hold it — RFC 5952 for IPv6, unmapped for `::ffff:`— or `null` if the text is not an address |
+| `truncatedIpAddress` | `(text: string) => string \| null` | the same, cut to the `/24` or `/64` network and written with its prefix |
+| `truncatedUserAgent` | `(userAgent: string) => string \| null` | `"Chrome on macOS"`; `null` when neither a browser nor a system family is recognised |
+| `boundedUserAgent` | `(userAgent: string) => string \| null` | the header trimmed and cut to 512 characters, `null` when it is empty |
+| `durationInMilliseconds` | `(duration: string) => number \| null` | a `Duration` in milliseconds; `null` for anything the type admits but a deadline cannot use |
+| `DEFAULT_SESSION_METADATA_MODE` | `SessionMetadataMode` | `"truncated"` — the value `sessionMetadata` takes when the configuration says nothing (L-10) |
+| `DEFAULT_SESSION_CONFIG` | `SessionConfig` | the table of defaults above, as a value; `sessionSettingsOf` reads a partial configuration over it |
+
+The four address and user-agent functions are the whole of what `"truncated"`
+and `"full"` mean; `sessionMetadataFor` chooses between them and does nothing
+else.
+
+Types the interface carries: `SessionToken` and `IssuedSessionToken` (from
+`createSessionToken`), `SessionConfig`, `SessionSettings` and `Duration`
+(configuration), `SessionMetadata` and `SessionMetadataMode` (metadata),
+`FreshnessWindow` (`{ freshnessWindowMs, now }`), `SessionResolution`,
+`IssuedSession` (`{ token, session }`), `ObservedRequest`
+(`{ ipAddress, userAgent }`), `SessionServiceOptions` and `SessionService`, and
+on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
+`SessionRepository`. The errors are `InvalidSessionConfigError` (startup),
+`SessionOwnerMismatchError` and `PreviousSessionMissingError` (re-issue).
