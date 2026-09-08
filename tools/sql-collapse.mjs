@@ -183,29 +183,38 @@ function endOfSimpleString(source, start) {
 	return index + 1;
 }
 
+// PostgreSQL nests block comments and TypeScript does not, so the two languages get two
+// scanners. Sharing the depth-counting one sent this walker past the first closer and into
+// whatever followed, which is how a literal stops being read without anything reporting it.
+function endOfTypeScriptBlockComment(source, start) {
+	const close = source.indexOf("*/", start + 2);
+	return close === -1 ? source.length : close + 2;
+}
+
 /** A comment or a literal in the surrounding TypeScript; anything else is one character. */
 function tokenAt(source, index) {
 	if (source.startsWith("//", index)) {
 		const newline = source.indexOf("\n", index);
-		return { literal: false, end: newline === -1 ? source.length : newline + 1 };
+		return { kind: "line-comment", end: newline === -1 ? source.length : newline + 1 };
 	}
 	if (source.startsWith("/*", index)) {
-		return { literal: false, end: endOfBlockComment(source, index) };
+		return { kind: "block-comment", end: endOfTypeScriptBlockComment(source, index) };
 	}
 	const character = source[index];
 	if (character === "'" || character === '"') {
-		return { literal: true, end: endOfSimpleString(source, index) };
+		return { kind: "literal", end: endOfSimpleString(source, index) };
 	}
 	if (character === "`") {
-		return { literal: true, end: endOfTemplateLiteral(source, index) };
+		return { kind: "literal", end: endOfTemplateLiteral(source, index) };
 	}
 	return null;
 }
 
-/** Nested interpolation is why this walks the source instead of matching a pair of backticks:
- * a template inside `${…}` closes the outer pattern early and truncates what is examined. */
-export function literalsIn(source) {
+/** One walk, both outputs: what was read and what was skipped over to read it. A check that
+ * cannot say what it skipped cannot notice that it skipped too much. */
+function scanTypeScript(source) {
 	const literals = [];
+	const blockComments = [];
 	let index = 0;
 	while (index < source.length) {
 		const token = tokenAt(source, index);
@@ -213,12 +222,30 @@ export function literalsIn(source) {
 			index += 1;
 			continue;
 		}
-		if (token.literal) {
-			literals.push(source.slice(index + 1, token.end - 1));
-		}
+		if (token.kind === "literal") literals.push(source.slice(index + 1, token.end - 1));
+		if (token.kind === "block-comment") blockComments.push(source.slice(index, token.end));
 		index = token.end;
 	}
-	return literals;
+	return { literals, blockComments };
+}
+
+/** A TypeScript block comment ends at its first closing marker, so a scanned one never holds
+ * another inside it. One that does means the walker ran past the end, and everything it stepped
+ * over on the way went unread — the silent half of getting this wrong. */
+export function runsPastItsEnd(blockComment) {
+	return blockComment.slice(2, -2).includes("*/");
+}
+
+export function walkerFaults(source) {
+	return scanTypeScript(source)
+		.blockComments.filter(runsPastItsEnd)
+		.map((comment) => `ran past the end of ${JSON.stringify(comment.slice(0, 50))}`);
+}
+
+/** Nested interpolation is why this walks the source instead of matching a pair of backticks:
+ * a template inside `${…}` closes the outer pattern early and truncates what is examined. */
+export function literalsIn(source) {
+	return scanTypeScript(source).literals;
 }
 
 export function examinedStatementsIn(source) {
@@ -241,15 +268,18 @@ function sourceFiles() {
 export function scanSqlCollapse() {
 	const files = sourceFiles();
 	if (files === null) {
-		return { offenders: [], statementsScanned: 0, filesScanned: 0 };
+		return { offenders: [], blindSpots: [], statementsScanned: 0, filesScanned: 0 };
 	}
 
 	const offenders = [];
+	const blindSpots = [];
 	let statementsScanned = 0;
 	for (const path of files) {
-		for (const statement of examinedStatementsIn(
-			readFileSync(`${repositoryRoot}/${path}`, "utf8"),
-		)) {
+		const source = readFileSync(`${repositoryRoot}/${path}`, "utf8");
+		for (const fault of walkerFaults(source)) {
+			blindSpots.push(`${path}: ${fault}`);
+		}
+		for (const statement of examinedStatementsIn(source)) {
 			statementsScanned += 1;
 			if (!survivesCollapsing(statement)) {
 				const remains = onOneLine(withoutSqlComments(onOneLine(statement)));
@@ -260,5 +290,5 @@ export function scanSqlCollapse() {
 		}
 	}
 
-	return { offenders, statementsScanned, filesScanned: files.length };
+	return { offenders, blindSpots, statementsScanned, filesScanned: files.length };
 }

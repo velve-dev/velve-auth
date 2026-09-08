@@ -6,8 +6,10 @@ import {
 	examinedStatementsIn,
 	literalsIn,
 	onOneLine,
+	runsPastItsEnd,
 	statementsOf,
 	survivesCollapsing,
+	walkerFaults,
 	withoutSqlComments,
 } from "../tools/sql-collapse.mjs";
 import fixtures from "./fixtures/sql-collapse.json" with { type: "json" };
@@ -19,6 +21,20 @@ function sourceFiles(): string[] {
 		.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
 		.map((entry) => `${entry.parentPath}/${entry.name}`)
 		.sort();
+}
+
+const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+
+/** Everything the walker is ever pointed at, which is wider than what the check scans. */
+function walkedFiles(): string[] {
+	return ["src", "test", "tools"].flatMap((directory) =>
+		readdirSync(`${repositoryRoot}${directory}`, { recursive: true, withFileTypes: true })
+			.filter(
+				(entry) => entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".mjs")),
+			)
+			.map((entry) => `${entry.parentPath}/${entry.name}`)
+			.sort(),
+	);
 }
 
 const cases = (name: keyof typeof fixtures) =>
@@ -144,5 +160,50 @@ describe("the regions this reads are the regions the runner reads", () => {
 				JSON.stringify(splitStatements(literal).map((statement) => statement.trim())),
 		);
 		expect(disagreements).toStrictEqual([]);
+	});
+});
+
+// A check that cannot see itself go blind is not a check. The walker skips comments to find
+// literals, so an over-long skip reads nothing and reports a plausible count for source it
+// never opened. Both assertions below are about the scan itself, not about any statement.
+describe("the scan can tell that it read everything", () => {
+	// TypeScript block comments do not nest, so a scanned one never holds another inside it.
+	// This is the predicate the corpus assertion rests on; without it that assertion is empty.
+	it("knows a comment that ran past its own end from one that stopped", () => {
+		expect(runsPastItsEnd("/* documents the marker /* like this */")).toBe(false);
+		expect(runsPastItsEnd("/* documents the marker /* like this */ and then some */")).toBe(true);
+	});
+
+	it("skips no comment past its own end anywhere in the tree", () => {
+		const faults = walkedFiles().flatMap((path) =>
+			walkerFaults(readFileSync(path, "utf8")).map((fault) => `${path}: ${fault}`),
+		);
+		expect(faults).toStrictEqual([]);
+	});
+
+	// Counted a second way, sharing nothing with the walker but the meaning of `//`: a file whose
+	// backticks are not all inside line comments has a template literal in it, and a walker that
+	// found none skipped over one.
+	it("finds a literal in every file that has a backtick outside a line comment", () => {
+		const missed = walkedFiles().filter((path) => {
+			const source = readFileSync(path, "utf8");
+			return source.replace(/\/\/[^\n]*/g, "").includes("`") && literalsIn(source).length === 0;
+		});
+
+		expect(walkedFiles().length).toBeGreaterThan(50);
+		expect(missed).toStrictEqual([]);
+	});
+
+	it("reads the literal that follows a block comment holding a comment opener", () => {
+		const source = [
+			"/* documents the marker /* like this */",
+			"const q = `DELETE FROM t",
+			"-- swallows the predicate",
+			"WHERE id = $1`;",
+		].join("\n");
+
+		expect(literalsIn(source)).toHaveLength(1);
+		expect(examinedStatementsIn(source)).toHaveLength(1);
+		expect(survivesCollapsing(examinedStatementsIn(source)[0] ?? "")).toBe(false);
 	});
 });
