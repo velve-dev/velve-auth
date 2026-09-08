@@ -111,8 +111,7 @@ async function removeUnderALockThatHolds(
 	const user = qualifiedTableName(request.schema, "user");
 	// The user row is taken before any other table this call reads or writes (E-143).
 	await driver.query(
-		// biome-ignore lint/suspicious/noTemplateCurlyInString lint/style/useTemplate: check:lock-order reads the declaration as written, and escaping it inside a template would hide it.
-		`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE ` + "/* locks: ${schema}.user */",
+		`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE /* locks: ${request.schema}.user */`,
 		[request.actor],
 	);
 	const remaining = await countSignInMethods({
