@@ -5,12 +5,13 @@ import { describe, expect, it } from "vitest";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const caseStudy = readFileSync(`${repositoryRoot}/CASE-STUDY.md`, "utf8");
+const rules = readFileSync(`${repositoryRoot}/CLAUDE.md`, "utf8");
 
-const NOT_SEARCHABLE_TEXT = /\.(png|jpe?g|gif|ico|webp|woff2?|pdf|zip)$/;
-const SKIPPED_FILES = new Set(["VELVE-AUTH-ARCHITEKTUR.md", "pnpm-lock.yaml"]);
+/** The specification is the source E-01 to E-46 were taken from, not a citation site. */
+const NOT_A_CITATION_SITE = new Set(["VELVE-AUTH-ARCHITEKTUR.md"]);
+const BINARY_DIRECTORY = /^assets\//;
 const CITATION = /\bE-(\d+)\b/g;
-/** A reserved range names numbers that do not exist yet; that is its purpose. */
-const RESERVED_RANGE = /E-\d+ ?… ?(E-\d+)?/g;
+const RANGE_ROW = /^\| E-(\d+) … E-(\d+) \| (.+?) \|$/gm;
 const ENTRY_HEADING = /^\*\*E-(\d+) — (.+?)\*\*/gm;
 const REQUIRED_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
 
@@ -26,13 +27,27 @@ function entries(): { number: number; title: string; body: string }[] {
 	}));
 }
 
+function reservedRanges(): { first: number; last: number; owner: string }[] {
+	return [...rules.matchAll(RANGE_ROW)].map((row) => ({
+		first: Number(row[1]),
+		last: Number(row[2]),
+		owner: String(row[3]),
+	}));
+}
+
+/** A row of the reservation table names numbers that do not exist yet; that is its
+ * purpose. Only whole rows, and only in the file that holds the table. */
+function withoutRangeTableRows(path: string, contents: string): string {
+	return path === "CLAUDE.md" ? contents.replace(RANGE_ROW, "") : contents;
+}
+
 function everyTrackedFile(): string[] {
 	const listed = execFileSync("git", ["ls-files", "-z"], { cwd: repositoryRoot, encoding: "utf8" });
 	return listed
 		.split("\0")
 		.filter(Boolean)
-		.filter((path) => !NOT_SEARCHABLE_TEXT.test(path))
-		.filter((path) => !SKIPPED_FILES.has(path));
+		.filter((path) => !BINARY_DIRECTORY.test(path))
+		.filter((path) => !NOT_A_CITATION_SITE.has(path));
 }
 
 describe("decision log", () => {
@@ -59,11 +74,34 @@ describe("decision log", () => {
 		expect(incomplete).toEqual([]);
 	});
 
+	it("keeps every decision inside a range CLAUDE.md reserves for it", () => {
+		const ranges = reservedRanges();
+		expect(ranges.length).toBeGreaterThan(0);
+		const outside = log
+			.filter((entry) => !ranges.some((r) => entry.number >= r.first && entry.number <= r.last))
+			.map((entry) => `E-${String(entry.number).padStart(2, "0")} (${entry.title})`);
+		expect(outside).toEqual([]);
+	});
+
+	it("reserves no number to two owners", () => {
+		const ranges = reservedRanges();
+		const overlapping = ranges.flatMap((range, index) =>
+			ranges
+				.slice(index + 1)
+				.filter((other) => range.first <= other.last && other.first <= range.last)
+				.map((other) => `${range.owner} overlaps ${other.owner}`),
+		);
+		expect(overlapping).toEqual([]);
+	});
+
 	it("resolves every decision cited anywhere in the repository", () => {
 		const known = new Set(log.map((entry) => entry.number));
 		const dangling: string[] = [];
 		for (const path of everyTrackedFile()) {
-			const contents = readFileSync(`${repositoryRoot}${path}`, "utf8").replace(RESERVED_RANGE, "");
+			const contents = withoutRangeTableRows(
+				path,
+				readFileSync(`${repositoryRoot}${path}`, "utf8"),
+			);
 			for (const [citation, digits] of contents.matchAll(CITATION)) {
 				if (!known.has(Number(digits))) {
 					dangling.push(

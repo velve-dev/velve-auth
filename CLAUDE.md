@@ -191,11 +191,16 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-59 … E-79 | wave 1 · `keys` |
 | E-80 … E-109 | wave 1 · `db` |
 | E-110 … E-139 | wave 1 · `http` |
-| E-140 … | unassigned; the next wave's ranges go here before its features start |
 
-A range is assigned before the feature's writer starts and is not changed
-afterwards. A feature that runs out asks for a second range rather than
+The next wave's ranges are added to that table before its features start,
+continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
+changed afterwards. A feature that runs out asks for a second range rather than
 borrowing from a neighbour.
+
+`test/decision-log.test.ts` reads that table. Every entry in `CASE-STUDY.md` must
+fall inside a declared range, and two ranges may not overlap — so a feature
+quietly taking a number it does not own fails on its own branch rather than at
+the merge, and a bad assignment fails at wave start while it is still free.
 
 The reason this matters more than it looks: decision IDs are cited from code,
 tests and documentation — `E-23` next to the line it explains. A renumber has to
