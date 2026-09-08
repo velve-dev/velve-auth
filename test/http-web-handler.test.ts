@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConcealedError } from "../src/core/http/error-map.js";
 import { defineRoute, type RouteDeclaration } from "../src/core/http/route.js";
-import { object } from "../src/core/http/validators.js";
+import { object, string } from "../src/core/http/validators.js";
 import { toWebHandler } from "../src/http/index.js";
 import { ALLOWED_ORIGIN, createHarness, failingRoute, requestTo } from "./http-fixtures.js";
 
@@ -374,6 +374,22 @@ describe("web handler", () => {
 					name: "test.collision.upper",
 					path: "/test/COLLISION",
 				}),
+			],
+		});
+
+		expect(() => toWebHandler({ http: environment })).toThrow(/already answers/);
+	});
+
+	it("refuses to start when a literal path disappears behind a parameter path", () => {
+		const { environment } = createHarness({
+			routes: [
+				defineRoute({
+					...COLLIDING_DECLARATION,
+					name: "test.user.byId",
+					path: "/test/user/:id",
+					input: object({ id: string() }),
+				}),
+				defineRoute({ ...COLLIDING_DECLARATION, name: "test.user.me", path: "/test/user/me" }),
 			],
 		});
 

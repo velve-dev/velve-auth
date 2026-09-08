@@ -65,18 +65,22 @@ function capturePathParameters(
 	return captured;
 }
 
-function matchingPatternOf(route: AnyRoute): string {
-	const segments = toSegments(route.path) ?? [];
-	const pattern = segments
-		.map((segment) => (segment.startsWith(":") ? ":" : foldCase(segment)))
-		.join("/");
-	return `${route.method} /${pattern}`;
+function segmentsOverlap(first: readonly string[], second: readonly string[]): boolean {
+	if (first.length !== second.length) {
+		return false;
+	}
+	return first.every((segment, index) => {
+		const other = second[index] ?? "";
+		return (
+			segment.startsWith(":") || other.startsWith(":") || foldCase(segment) === foldCase(other)
+		);
+	});
 }
 
-/** 3.11: a conflict in the route table is a start error, and case folding makes two paths conflict that read as different. */
+/** 3.11: a conflict in the route table is a start error — two paths that fold together, and a literal path a parameter path would swallow. */
 export function assertRouteTableIsUnambiguous(routes: readonly AnyRoute[]): void {
 	const names = new Set<string>();
-	const patterns = new Set<string>();
+	const routable: { readonly route: AnyRoute; readonly segments: readonly string[] }[] = [];
 
 	for (const route of routes) {
 		if (names.has(route.name)) {
@@ -87,13 +91,18 @@ export function assertRouteTableIsUnambiguous(routes: readonly AnyRoute[]): void
 		if (route.caller === "server_only") {
 			continue;
 		}
-		const pattern = matchingPatternOf(route);
-		if (patterns.has(pattern)) {
-			throw new Error(
-				`Route ${route.name} answers ${pattern}, which another route already answers`,
-			);
+		const segments = toSegments(route.path);
+		if (segments === null) {
+			throw new Error(`Route ${route.name} declares a path that does not decode`);
 		}
-		patterns.add(pattern);
+		for (const earlier of routable) {
+			if (earlier.route.method === route.method && segmentsOverlap(earlier.segments, segments)) {
+				throw new Error(
+					`Route ${route.name} answers a path that route ${earlier.route.name} already answers`,
+				);
+			}
+		}
+		routable.push({ route, segments });
 	}
 }
 
