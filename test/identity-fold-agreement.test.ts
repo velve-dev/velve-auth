@@ -136,6 +136,54 @@ function describeCodePoints(value: string): string {
 		.join(" ");
 }
 
+async function refusalForUsernameKey(usernameKey: string): Promise<string> {
+	return await connection
+		.query(`INSERT INTO ${schema}.user (email, username, username_key) VALUES ($1, $2, $2)`, [
+			`${randomBytes(6).toString("hex")}@example.test`,
+			usernameKey,
+		])
+		.then(
+			() => "accepted",
+			(cause: unknown) => (cause instanceof PostgresServerError ? cause.sqlState : "unexpected"),
+		);
+}
+
+async function refusalForEmail(email: string): Promise<string> {
+	return await connection
+		.query(`INSERT INTO ${schema}.user (email, username, username_key) VALUES ($1, $2, $2)`, [
+			email,
+			randomBytes(8).toString("hex"),
+		])
+		.then(
+			() => "accepted",
+			(cause: unknown) => (cause instanceof PostgresServerError ? cause.sqlState : "unexpected"),
+		);
+}
+
+function everyUsernameKey(): { keys: string[]; origin: Map<string, number> } {
+	const seen = new Set<string>();
+	const keys: string[] = [];
+	const origin = new Map<string, number>();
+	for (const point of everyCodePoint()) {
+		const name = normaliseUsername(String.fromCodePoint(point).repeat(3), EVERYTHING_ALLOWED);
+		if (!name.accepted) {
+			continue;
+		}
+		const key = name.value.usernameKey;
+		if (UNUSABLE_IN_A_LINE.test(key) || seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		origin.set(key, point);
+		keys.push(key);
+	}
+	return { keys, origin };
+}
+
+function namePoints(keys: readonly string[], origin: Map<string, number>): string {
+	return keys.map((key) => `U+${(origin.get(key) ?? 0).toString(16).toUpperCase()}`).join(", ");
+}
+
 describe("the comparison form the shipped normalisers actually produce", () => {
 	it("does not lowercase the whole string, so Final_Sigma never reaches the key", () => {
 		const entered = "abcΟΔΟΣ";
@@ -152,31 +200,34 @@ describe("the comparison form the shipped normalisers actually produce", () => {
 		expect(address.accepted ? address.value : "").toBe("abcοδοσ@example.test");
 	});
 
-	it("disagrees with lower() on exactly one code point in the whole of Unicode", async () => {
-		const seen = new Set<string>();
-		const keys: string[] = [];
-		const origin = new Map<string, number>();
-		for (const point of everyCodePoint()) {
-			const name = normaliseUsername(String.fromCodePoint(point).repeat(3), EVERYTHING_ALLOWED);
-			if (!name.accepted) {
-				continue;
-			}
-			const key = name.value.usernameKey;
-			if (UNUSABLE_IN_A_LINE.test(key) || seen.has(key)) {
-				continue;
-			}
-			seen.add(key);
-			origin.set(key, point);
-			keys.push(key);
-		}
+	/**
+	 * The two engines carry different Unicode versions, so which code points they disagree on is a
+	 * property of the database under test and not of the library. What has to hold on every
+	 * supported version is that a disagreement cannot be stored (E-212).
+	 */
+	it("stores no username key this database folds further than the library does", async ({
+		annotate,
+	}) => {
+		const { keys, origin } = everyUsernameKey();
 		expect(keys.length).toBeGreaterThan(1_000_000);
 		const disagreeing = await foldedFurtherInBatches(keys);
-		expect(
-			disagreeing.map((key) => `U+${(origin.get(key) ?? 0).toString(16).toUpperCase()}`),
-		).toEqual(["U+38D"]);
+		await annotate(
+			disagreeing.length === 0
+				? `this database folds none of ${keys.length} comparison forms further`
+				: `this database folds ${disagreeing.length} of ${keys.length} further: ${namePoints(disagreeing, origin)}`,
+		);
+		const accepted: string[] = [];
+		for (const key of disagreeing) {
+			if ((await refusalForUsernameKey(key)) !== CHECK_VIOLATION) {
+				accepted.push(`U+${(origin.get(key) ?? 0).toString(16).toUpperCase()}`);
+			}
+		}
+		expect(accepted).toEqual([]);
 	}, 120_000);
 
-	it("carries that one disagreement into addresses as well", async () => {
+	it("stores no address this database folds further than the library does", async ({
+		annotate,
+	}) => {
 		const addresses: string[] = [];
 		for (const point of everyCodePoint()) {
 			const address = normaliseEmail(`${String.fromCodePoint(point)}@example.test`);
@@ -184,24 +235,32 @@ describe("the comparison form the shipped normalisers actually produce", () => {
 				addresses.push(address.value);
 			}
 		}
-		expect(await foldedFurtherInBatches(addresses)).toEqual(["΍@example.test"]);
+		const disagreeing = await foldedFurtherInBatches(addresses);
+		await annotate(
+			disagreeing.length === 0
+				? `this database folds none of ${addresses.length} addresses further`
+				: `this database folds ${disagreeing.length} of ${addresses.length} further: ${disagreeing.map((address) => describeCodePoints(address.split("@")[0] ?? "")).join(", ")}`,
+		);
+		const accepted: string[] = [];
+		for (const address of disagreeing) {
+			if ((await refusalForEmail(address)) !== CHECK_VIOLATION) {
+				accepted.push(describeCodePoints(address));
+			}
+		}
+		expect(accepted).toEqual([]);
 	}, 120_000);
 
 	/**
-	 * The reference says the schema CHECK "is not a safety net" and that "there is no input for
-	 * which it fires". It fires for exactly this one, which is also the one fold disagreement.
+	 * The sweep above asserts nothing on a database that agrees with the library everywhere, so
+	 * these two hold the CHECK to its job on any version: it refuses a key that is not its own
+	 * `lower()` and accepts one that is (E-212).
 	 */
-	it("hands the schema CHECK the one row it can refuse", async () => {
-		const refusal = await connection
-			.query(`INSERT INTO ${schema}.user (email, username, username_key) VALUES ($1, $2, $2)`, [
-				`${randomBytes(6).toString("hex")}@example.test`,
-				"΍΍΍",
-			])
-			.then(
-				() => "accepted",
-				(cause: unknown) => (cause instanceof PostgresServerError ? cause.sqlState : "unexpected"),
-			);
-		expect(refusal).toBe(CHECK_VIOLATION);
+	it("refuses a username key that is not already its own lower()", async () => {
+		expect(await refusalForUsernameKey("ABC")).toBe(CHECK_VIOLATION);
+	});
+
+	it("accepts a username key that is already its own lower()", async () => {
+		expect(await refusalForUsernameKey(randomBytes(8).toString("hex"))).toBe("accepted");
 	});
 });
 

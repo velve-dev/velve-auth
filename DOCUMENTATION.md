@@ -1251,12 +1251,22 @@ name of that one character, `k`.
 **Widening it.** `allowedCharacters` is a configuration option, and widening it
 is a decision with consequences a caller should take on deliberately.
 
-*What the library does hold.* The comparison form the library stores is its own
-`lower()` in PostgreSQL — a fixpoint — for every code point in Unicode except
-U+038D, an unassigned slot that the C library folds to `ύ` and JavaScript,
-correctly, leaves alone. Folding one code point at a time is what buys that:
-lowercasing a whole string applies Final_Sigma, and the `οδος` it produces is
-not a form `lower()` would ever produce.
+*What the library does hold.* The comparison form the library produces is its own
+fixpoint: folding it again changes nothing, so the key written and the key looked
+up are the same value on any database. Folding one code point at a time is what
+buys that: lowercasing a whole string applies Final_Sigma, and the `οδος` it
+produces is not a form `lower()` would ever produce.
+
+Whether that form is also its own `lower()` in PostgreSQL depends on the Unicode
+data the two engines carry, and they are versioned apart. Where they disagree the
+schema CHECK refuses the row, so a form the two read differently cannot be
+stored — that is the property `test/identity-fold-agreement.test.ts` asserts,
+against whatever database it is run on. The size of the disagreement is measured
+rather than promised: against PostgreSQL 18.3 a sweep of 1,106,398 comparison
+forms finds exactly one, U+038D, an unassigned slot that the C library folds to
+`ύ` and JavaScript, correctly, leaves alone; against the PostgreSQL 16 that CI
+runs, it finds none. Run the sweep against the database you will actually run to
+learn your own number (E-212).
 
 *What that is not.* It is not a claim that two names PostgreSQL considers equal
 become one account. `lower('İstanbul') = lower('istanbul')` is true in
@@ -1271,10 +1281,11 @@ JavaScript and your PostgreSQL disagree on because they carry different Unicode
 versions. `username_key = lower(username_key)` is a thin net for that, not a
 safety net: it asserts only that the stored form is already its own `lower()`,
 and where two sides of a disagreement both satisfy that it says nothing. It does
-fire for U+038D — an insert of that comparison form is refused with SQLSTATE
-23514 — and U+038D is the only input in Unicode for which it fires today. A
-different Unicode version on either side moves that set without warning, so test
-a widened allowlist against the database you will actually run.
+fire wherever the two engines disagree — an insert of such a comparison form is
+refused with SQLSTATE 23514 — but which inputs those are is a property of your
+database and not of this library. A different Unicode version on either side
+moves that set without warning, so test a widened allowlist against the database
+you will actually run.
 
 *And the reason the default is what it is.* Every pair of characters a wider
 list admits that a reader cannot tell apart is a name one user can wear in place
