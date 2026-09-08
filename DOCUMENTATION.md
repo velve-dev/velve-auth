@@ -6,6 +6,11 @@ the implementation; a feature is not finished until it is documented here.
 Concepts and rationale are not repeated here — they are in
 [`CASE-STUDY.md`](./CASE-STUDY.md). This file states what things do.
 
+Chapters run in dependency order: everything a chapter uses stands above it.
+Where two chapters use nothing of each other, the architecture's section order
+decides between them, and where that does not either, the wider of the two is
+read second.
+
 ## Contents
 
 - [Package entry points](#package-entry-points)
@@ -22,7 +27,11 @@ Concepts and rationale are not repeated here — they are in
 - [Sessions](#sessions)
 - [TOTP and recovery codes](#totp-and-recovery-codes)
 - [WebAuthn](#webauthn)
+- [Email flows](#email-flows)
+- [OAuth and identity linking](#oauth-and-identity-linking)
 - [The instance](#the-instance)
+- [Plugins](#plugins)
+- [The client](#the-client)
 
 ## Package entry points
 
@@ -3821,12 +3830,64 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
   application's markup; the library supplies the options, not the form
   (architecture 1 D35).
 
+## Email flows
+
+Reserved for `email-flows` (wave 4). Architecture 3.7 and 3.15 B.1, B.4 and
+B.5: the artefacts that arrive by mail and are redeemed — the confirmation
+link, the address change, the password reset and the magic link — each with the
+deadline 3.7 fixes for it, and `S-LINK-4`, the rule that a first confirmation
+deletes a password set in a different session and revokes every session that
+predates it (L-12).
+
+It stands here because everything it uses stands above it. Its artefacts are the
+one-time tokens of that chapter and its deadlines are read from there, the
+credential `S-LINK-4` deletes is the Passwords chapter's, the sessions it revokes
+are the Sessions chapter's, and whether removing that credential leaves an
+account with no way in is decided by a count that the Identity and WebAuthn
+chapters state between them. The reset family is not all mailed either:
+`password.redeemResetWithRecoveryCode` consumes a recovery code, and recovery
+codes are documented two chapters above.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `email-flows`'
+partition of this file: that feature appends here and nowhere else, and removing
+this paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`email-flows` replaces this heading with its own sub-tree.
+
+## OAuth and identity linking
+
+Reserved for `oauth` (wave 4). Architecture 3.10 and 3.15 B.1 and B.7: the
+authorisation-code flow with PKCE S256 mandatory, `state` held server-side in
+`velve.oauth_flow` with the cookie carrying only the pointer, `nonce` under
+OIDC, the `iss` check of RFC 9207, the ID-token signature against JWKS, and the
+linking rule — `(provider, subject)` is the only key and the address is never
+one (`S-LINK-1` … `S-LINK-7`).
+
+It follows Email flows because the linking rule cites it rather than restating
+it. `S-LINK-4` belongs to that chapter, and the three conditions `S-LINK-2` puts
+on an automatic link read `email_verified_at` on the local row — the state those
+flows produce. A reader who has not read them takes the second condition for a
+restatement of the first, which is the reading CVE-2026-53516 shipped.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `oauth`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`oauth` replaces this heading with its own sub-tree.
+
 ## The instance
 
 `createVelveAuth` is the assembly point. It reads the configuration, refuses to
-start on a configuration that cannot be made safe, builds the modules the
-chapters above describe, and returns one object carrying the route table, the
-server methods and the maintenance sweep.
+start on a configuration that cannot be made safe, builds the modules the other
+chapters describe, and returns one object carrying the route table, the server
+methods and the maintenance sweep. Two chapters stand below this one rather than
+above it, and both for the same reason: a plugin contributes to the route table
+and is refused at start, and the client is derived from the finished table, so
+each is read against what this chapter returns.
 
 ```ts
 import { createVelveAuth, rootKeyProvider } from "@velve/auth";
@@ -4117,3 +4178,51 @@ declared, both read `__Host-velve_pending` and neither is authorised by it. The
 two methods of `auth.pending` still exist beside them and take the token
 directly, for a caller that is not a browser.
 
+
+## Plugins
+
+Reserved for `plugin` (wave 4). Architecture 3.11 and 3.15 G: the registry, the
+topological sort over `dependsOn`, the frozen context, the seven enumerated hook
+points and the veto a hook holds, and the four things a plugin may contribute —
+routes under `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes and
+rate-limit rules. Also the six things it may not, which 3.11 states as
+prohibitions rather than as omissions.
+
+It stands after The instance because each of those four is contributed **to**
+something the assembly owns, and the refusal that guards them is a start error. A
+route name colliding with a core route is not a warning; the moment it is
+detected is the moment `createVelveAuth` runs. So a chapter listing what a plugin
+may add can only be read after the chapter that says what it is added to and what
+happens when the addition is refused. Its migrations are the same versioned
+runner, which stands further above still.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `plugin`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`plugin` replaces this heading with its own sub-tree.
+
+## The client
+
+Reserved for `client` (wave 4). Architecture 3.15 E: `createVelveClient`, the
+`ClientSurface` derived from the same route declaration the server surface is,
+the result object that makes `ok` checkable instead of throwable, `unwrap` for a
+caller who wants the server's symmetry back, and `VelveTransportError` for the
+two failures that can carry no code.
+
+It stands last because it is generated from the route table and adds nothing to
+it. The table is assembled by The instance and extended by a plugin; the client
+iterates it once at construction and builds an ordinary nested object out of the
+`name` fields, so every route this chapter describes is declared in a chapter
+above it. There is no `Proxy` and no path assembled from property names, which is
+why nothing here can exist that is not written down there.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `client`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`client` replaces this heading with its own sub-tree.
