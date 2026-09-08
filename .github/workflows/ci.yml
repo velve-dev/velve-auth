@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
     branches: [main]
 
@@ -99,9 +100,14 @@ jobs:
 
           # A single NUL byte makes git classify a source file as binary, which hides
           # it from `git grep -I` and renders its diff as "Bin" in review.
+          echo "Checking that no .gitattributes hides a file from review"
+          if git ls-files -- '*.gitattributes' | xargs -r grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)'; then
+            echo "::error::a .gitattributes marks a path binary or -diff, which hides it from review"
+            fail=1
+          fi
+
           echo "Checking that no text file contains a NUL byte"
-          BINARY=$(git ls-files -- . ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' \
-            ':!*.ico' ':!*.webp' ':!*.woff' ':!*.woff2' ':!*.pdf' ':!*.zip' | while read -r f; do
+          BINARY=$(git ls-files -- . ':!assets/**' | while read -r f; do
             [ -f "$f" ] || continue
             if ! tr -d '\000' < "$f" | cmp -s - "$f"; then echo "$f"; fi
           done)
