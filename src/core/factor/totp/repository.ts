@@ -62,7 +62,7 @@ export function createTotpRepository(options: TotpRepositoryOptions): TotpReposi
 VALUES ($1, $2, $3, NULL)
 ON CONFLICT (user_id) DO UPDATE
 SET secret_enc = EXCLUDED.secret_enc, key_version = EXCLUDED.key_version, created_at = now()
-WHERE ${credentials}.confirmed_at IS NULL
+WHERE ${credentials}.user_id = $1 AND ${credentials}.confirmed_at IS NULL
 RETURNING secret_enc, key_version, confirmed_at`;
 
 	const findStatement = `SELECT secret_enc, key_version, confirmed_at FROM ${credentials}

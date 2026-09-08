@@ -10,14 +10,12 @@ import { type PendingFactorAttempt, spendPendingAttemptOn } from "./pending-atte
 import { createTotpRepository, type StoredTotpCredential } from "./repository.js";
 import { createTotpSecret, type TotpEnrollment, totpEnrollment } from "./secret.js";
 
-const SYSTEM_CLOCK: Clock = { now: () => new Date() };
-
 export interface TotpServiceOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
 	readonly issuer: string;
+	readonly clock: Clock;
 	readonly schema?: string;
-	readonly clock?: Clock;
 }
 
 export interface TotpService {
@@ -35,7 +33,6 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		driver: options.driver,
 		schema: options.schema ?? "velve",
 	});
-	const clock = options.clock ?? SYSTEM_CLOCK;
 
 	// S-REST-4 and S-KEY-3: the secret is the one value here the server needs back in the clear.
 	async function decryptSecret(credential: StoredTotpCredential): Promise<Uint8Array<ArrayBuffer>> {
@@ -58,7 +55,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		const step = matchingTimeStep({
 			secretBytes: await decryptSecret(input.credential),
 			submittedCode: input.code,
-			at: clock.now(),
+			at: options.clock.now(),
 		});
 		if (step === null) {
 			throw new ConcealedError("totp_code_wrong");
@@ -110,7 +107,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				const step = matchingTimeStep({
 					secretBytes: await decryptSecret(credential),
 					submittedCode: code,
-					at: clock.now(),
+					at: options.clock.now(),
 				});
 				if (step === null) {
 					throw new ConcealedError("totp_code_wrong");

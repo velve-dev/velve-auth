@@ -1,12 +1,13 @@
 import { ConcealedError, VelveError } from "../../http/error-map.js";
 
 // L-8: a pending state allows five attempts; after that the row is deleted and the caller starts at the password.
-export const MAXIMUM_ATTEMPTS_PER_PENDING_AUTHENTICATION = 5;
+export const MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE = 5;
 
 /**
  * The pending state itself belongs to `auth-core`; a second factor only spends attempts from it.
- * An implementation increments `pending_authentication.attempts` with `UPDATE … RETURNING` rather
- * than a row lock, because `pnpm check:lock-order` accepts a row lock only on `velve.user`.
+ * An implementation raises pending_authentication.attempts with an updating statement that returns
+ * the new count, rather than a row lock, because pnpm check:lock-order accepts a row lock only on
+ * the user table.
  */
 export interface PendingFactorAttempt {
 	readonly userId: string;
@@ -31,7 +32,7 @@ export async function spendPendingAttemptOn<Result>(
 	try {
 		return await verify();
 	} catch (failure) {
-		if (spent < MAXIMUM_ATTEMPTS_PER_PENDING_AUTHENTICATION) {
+		if (spent < MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE) {
 			throw failure;
 		}
 		await attempt.discard();
