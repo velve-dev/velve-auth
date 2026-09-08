@@ -8,6 +8,7 @@ import {
 	type PendingAuthenticationService,
 	type PendingToken,
 } from "../factor/pending/index.js";
+import { emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
 import { ConcealedError, type VelveErrorCode } from "../http/error-map.js";
@@ -15,8 +16,10 @@ import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
+import { oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
+import { pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
@@ -214,6 +217,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			revokeAll,
 			refresh,
 			...(usernameTable ?? []),
+			...oauthRoutes(services),
+			...emailFlowRoutes(services),
+			...pluginRoutes(services),
 		],
 		origins: config.origins,
 		cookieSameSite: sessionSettings.sameSite,
