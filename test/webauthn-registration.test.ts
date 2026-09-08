@@ -35,6 +35,8 @@ describe("registering an authenticator", () => {
 		expect(started.publicKeyOptions.challenge).toBe(started.challengeToken);
 		expect(started.publicKeyOptions.timeout).toBe(5 * 60 * 1000);
 		expect(started.publicKeyOptions.authenticatorSelection?.userVerification).toBe("required");
+		// Architecture 1 D37: a fixed default, not an option, and not "preferred".
+		expect(started.publicKeyOptions.authenticatorSelection?.residentKey).toBe("required");
 	});
 
 	it("names the account's enrolled authenticators so the same one cannot be added twice", async () => {

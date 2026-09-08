@@ -283,7 +283,10 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					attestationType: "none",
 					excludeCredentials: enrolled.map(descriptorOf),
 					authenticatorSelection: {
-						residentKey: "preferred",
+						/* Architecture 1 D37, fixed and not an option: this is the only ceremony that
+						   enrols a credential, so it is the passkey path's registration whatever else
+						   it also serves, and "preferred" means in practice "mostly not" (E-483). */
+						residentKey: "required",
 						userVerification: settings.registrationUserVerification,
 					},
 					...(userDisplayName === undefined ? {} : { userDisplayName }),
