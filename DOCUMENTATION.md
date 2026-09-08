@@ -1283,7 +1283,7 @@ from a caller.
 | Method | Statement | Result |
 |---|---|---|
 | `insertSession(insert)` | `INSERT … RETURNING …` | the new `Session` |
-| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` | `{ session, userId, userDisabledAt }` or `null` |
+| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` | `{ session, userId, userDisabledAt, observedAt }` or `null` |
 | `extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs })` | `UPDATE … WHERE id = $1 AND user_id = $2 AND last_used_at <= now() - $4` | the new idle deadline, or `null` if nothing was written |
 | `deleteSessionByTokenHash(hash)` | `DELETE … WHERE token_sha256 = $1 RETURNING id, user_id` | what was removed, or `null` |
 | `deleteSessionOwnedBy({ sessionId, actor })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
@@ -1292,6 +1292,11 @@ from a caller.
 | `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
 | `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
 | `replaceEverySessionOfUser({ actor, insert })` | `DELETE` of every row of the user plus `INSERT`, one transaction | the new `Session` |
+
+`observedAt` is the database's `now()`, read in the same statement as the row.
+Everything decided after the fact — whether the idle write is due, whether the
+session is still fresh — is measured against it, so no decision compares two
+clocks (E-232, E-238).
 
 `SessionInsert` carries `userId`, `tokenHash`, `factors`, `ipAddress`,
 `userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`. Both deadlines are
@@ -1397,6 +1402,16 @@ Re-issue is always an `INSERT` plus a `DELETE`; `UPDATE velve.session SET
 user_id` does not exist, and a re-issue whose new row would belong to a
 different user than the row it removed is refused (E-23, S-FIX-2).
 
+#### Listing
+
+| Method | Freshness | Answer |
+|---|---|---|
+| `list({ resolved })` | required | the caller's live sessions, newest first |
+
+`list` is the only place `Session.isCurrent` is set, and it is set by comparing
+each row with the session that resolved (3.15 C). Expired rows are not listed:
+a session the caller could not use is not a device that is still signed in.
+
 #### Ending sessions
 
 | Method | Freshness | Effect |
@@ -1442,6 +1457,13 @@ session stale; age the session where `created_at` lives.
 Every session operation that reaches rows by owner takes its actor from
 `actorOfFreshSession`, which checks freshness before it hands the actor out: an
 operation of that group cannot be written without the check.
+
+`reissueAfterCredentialChange` is the exception, deliberately. B.9 puts the
+freshness requirement on `password.set` and `password.change`, which is *before*
+the password is hashed and written; a check inside the re-issue would run after
+it, and failing there would leave the new password in place, the other sessions
+alive and the caller without a session — the half state S-FIX-6 exists to
+prevent.
 
 ### `sessionSettingsOf(config)`
 
