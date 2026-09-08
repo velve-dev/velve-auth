@@ -312,10 +312,11 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-250 … E-279 | wave 2 · `token` |
 | E-280 … E-299 | wave 2 · `session`, second range |
 | E-300 … E-319 | wave 2 · `password`, second range |
-| E-320 … E-349 | wave 3 · `auth-core` |
-| E-350 … E-379 | wave 3 · `rate` |
-| E-380 … E-409 | wave 3 · `factor-totp` |
-| E-410 … E-439 | wave 3 · `factor-webauthn` |
+| E-320 … E-379 | wave 3 · `auth-core` |
+| E-380 … E-404 | wave 3 · `rate` |
+| E-405 … E-449 | wave 3 · `factor-totp`, which owns recovery codes as well as TOTP |
+| E-450 … E-494 | wave 3 · `factor-webauthn` |
+| E-495 … E-514 | gate and infrastructure, second range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -328,6 +329,62 @@ rows are not an overlap — they are two disjoint blocks owned by the same
 feature, which is exactly what the rule above prescribes. Numbering inside the
 second range continues from its own start; the gap left at the end of the first
 range stays a gap.
+
+### How wide a range has to be
+
+Thirty was a guess, and wave 2 measured it. `password` used all thirty of its
+range and needed a second one. `session` used all thirty and has a second one
+reserved. `identity` used twenty-three, `token` twenty. Three of the nine ranges
+in the table above end exactly on their last number, which is not a snug fit —
+it is what a range that ran out looks like from the outside.
+
+What exhausted them was not the feature. **The tail of every exhausted range
+went to corrections, not to decisions about the thing being built.** `session`
+spent its last three numbers correcting three of its own earlier entries after
+its gate had run. `token` needed five corrections of its own entries. `password`
+spent its last number on the log's format migration. The working ratio is
+roughly twenty decisions plus ten corrections per thirty — and the corrections
+arrive *after* the writer believes the feature is finished, which is the worst
+moment to have to stop and ask for numbers.
+
+Wave 3 is cut against that ratio instead of against a round thirty.
+
+- **`auth-core` gets sixty.** It is the assembly point: configuration, startup
+  errors, the flow layer, the route table, the package entry point and the API
+  snapshot. On top of its own decisions it inherits twelve explicit hand-offs
+  from waves 1 and 2 — entries that say in so many words that a requirement is
+  currently unfulfilled and invisible — and each of those is answered by a
+  decision here or is carried forward again in writing.
+- **`factor-webauthn` gets forty-five.** The authenticator simulator, the
+  backup-eligible and backup-state policy, `signCount` regression, and a
+  documented deviation from WebAuthn Level 3 §7.2 each generate decisions with
+  no requirement number to anchor them, which is exactly the kind that has to be
+  argued in the log rather than cited from the specification.
+- **`factor-totp` gets forty-five**, because it also owns recovery codes.
+- **`rate` gets twenty-five.** It is the narrowest feature of the wave: one
+  statement, three counters and the seam the HTTP layer already declares.
+- **Gate and infrastructure gets a second block of twenty.** Its first block has
+  eleven numbers left, and it is where every broken-check finding lands. There
+  are already thirty-eight of those in the log, running at roughly four per
+  feature, and wave 3 runs four features at once. Eleven does not cover that.
+
+Over-reserving costs a gap in the numbering, which §6 has already said is fine.
+Under-reserving costs a mid-branch request for numbers at the moment the writer
+is least able to absorb one.
+
+### `factor-totp` owns recovery codes
+
+Recovery codes were in no wave at all. They belong to `factor-totp` for wave 3,
+and that is a scope decision, not an implementation detail: they share the
+pending-authentication state with TOTP, they share the `token-pepper` HMAC, they
+share `DELETE … RETURNING` consumption, and they are one of exactly four routes
+that accept the `__Host-velve_pending` cookie (architecture 3.6). Splitting them
+across two features would put two writers in the same state machine.
+
+The reason they cannot slip another wave is architecture 5.17. `S-DEFAULT-4`
+makes `identity: "username"` **without** recovery codes a start error, and that
+requirement has no implementation and no test today. A wave that ships a second
+factor and leaves the only recovery path unbuilt ships a lockout.
 
 `test/decision-log.test.ts` reads that table. Every entry in `CASE-STUDY.md` must
 fall inside a declared range, and two ranges may not overlap — so a feature
