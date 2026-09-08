@@ -1223,3 +1223,49 @@ column, and not in a statement a database log might keep.
 
 A user agent that names neither a browser nor a system family becomes `null`;
 `"curl/8.7.1"` is stored as nothing rather than as a device fingerprint.
+
+### `session` — the configuration block
+
+```ts
+interface SessionConfig {
+  idleTimeout: Duration          // "7d"
+  absoluteTimeout: Duration      // "30d"
+  idleWriteInterval: Duration    // "1h"
+  freshnessWindow: Duration      // "15m"
+  cookieName: `__Host-${string}` // "__Host-velve_session"
+  cookie: { sameSite: "lax" | "strict" }
+}
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `idleTimeout` | `"7d"` | how long a session survives without being used; extended on use |
+| `absoluteTimeout` | `"30d"` | how long a session may live at all; **never** extended |
+| `idleWriteInterval` | `"1h"` | how often at most the idle deadline is written back |
+| `freshnessWindow` | `"15m"` | how long after sign-in an operation on credentials is allowed |
+| `cookieName` | `"__Host-velve_session"` | the session cookie's name |
+| `cookie.sameSite` | `"lax"` | the only cookie attribute that is a choice |
+
+`Duration` is a whole number followed by `s`, `m`, `h` or `d`. `"1.5h"`,
+`"-7d"`, `"1w"` and `"7"` are refused at startup even though the type admits
+some of them; write `"90m"` instead of `"1.5h"`.
+
+`httpOnly`, `secure`, `domain` and `path` are not options. The `__Host-` prefix
+forces `Secure` and `Path=/` and forbids `Domain`, which is what rules out
+cookie tossing from a subdomain; `sameSite: "none"` is absent for the same
+reason. A `cookieName` without the prefix is a type error and, if forced
+through, a startup error.
+
+Reading the block also refuses combinations that cannot hold, each with the
+name of the option it refused:
+
+- a deadline of zero or less,
+- `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
+- `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
+- `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh.
+
+The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
+outlive the one deadline nothing extends.
+
+`freshnessWindow` is measured against `created_at`, not `last_used_at`:
+freshness is time since sign-in, and only a new sign-in restores it.

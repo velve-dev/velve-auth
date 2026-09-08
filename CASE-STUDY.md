@@ -789,3 +789,15 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* (a) Den Fehler durchreichen. (b) Den Rohwert in eine `text`-Spalte legen, statt ihn zu prüfen.
 *Grund:* (a) machte eine erfundene `X-Forwarded-For`-Zeile zum Anmeldeverhinderer — eine Verweigerung des Dienstes über eine Kopfzeile, die die Bibliothek nur protokolliert. (b) hätte die Typprüfung der Spalte aufgegeben, die genau diese Eingabe abfängt. Metadaten sind nicht Teil der Antwort auf „wer ist angemeldet"; sie dürfen die Antwort nicht kosten. Dasselbe gilt für den User-Agent, dessen Länge der Client bestimmt und der deshalb bei 512 Zeichen abgeschnitten wird, bevor er in eine unbegrenzte `text`-Spalte geht.
 *Preis:* Ein `NULL` in `ip` sagt nicht, ob niemand eine Adresse gemeldet hat oder ob die gemeldete unlesbar war. Diese Unterscheidung wäre ein zweites Feld wert, wenn jemand sie braucht; heute braucht sie niemand, und die Sitzungsliste zeigt in beiden Fällen dasselbe.
+
+**E-225 — Die Konfiguration lehnt Kombinationen ab, die einzeln gültig sind.**
+*Kontext:* `idleTimeout: "31d"` bei `absoluteTimeout: "30d"` ist zweimal eine gültige Dauer und zusammen sinnlos: Die Leerlauffrist wird nie erreicht, weil die absolute vorher greift. Dasselbe gilt für ein `idleWriteInterval`, das länger ist als die Leerlauffrist — die Frist liefe ab, bevor sie je verlängert würde.
+*Verworfen:* Nur die einzelnen Werte prüfen und die Kombination der Anwendung überlassen.
+*Grund:* Beide Fehlkonfigurationen sind still. Die erste sieht wie eine Sitzung aus, die 31 Tage lebt, und ist eine, die 30 lebt; die zweite sieht wie eine Sitzung aus, die bei Nutzung bestehen bleibt, und meldet den Nutzer nach sieben Tagen ab, obwohl er täglich da war. Ein Startfehler, der die Option beim Namen nennt, kostet einmal eine Minute; die stille Variante kostet Supportanfragen, deren Ursache niemand findet.
+*Preis:* Vier Ordnungsregeln, die in der Dokumentation stehen müssen, und eine Konfiguration, die sich nicht mehr feldweise ändern lässt, ohne die Nachbarn zu betrachten — wer `absoluteTimeout` verkürzt, muss `idleTimeout` mitverkürzen.
+
+**E-226 — Die Lebensdauer des Cookies ist die absolute Frist.**
+*Kontext:* Das Sitzungscookie braucht ein `Max-Age`. Kandidaten waren die Leerlauffrist (dann müsste jede Anfrage das Cookie neu setzen) und die absolute Frist.
+*Verworfen:* Das Cookie bei jeder Anfrage mit der neuen Leerlauffrist erneuern.
+*Grund:* Ein `Set-Cookie` bei jeder Antwort ist ein zweiter Schreibpfad neben der Leerlaufverlängerung, und beide müssten einig bleiben. Sitzungen laufen ohnehin in der Datenbank ab, nicht im Browser: Das Cookie ist der Träger, nicht die Frist. Die absolute Frist ist die einzige, die nichts verlängert, also ist sie die einzige, die ein Cookie überleben kann, ohne zu lügen.
+*Preis:* Ein Browser trägt ein Cookie unter Umständen 30 Tage lang mit, dessen Sitzung nach sieben Tagen Leerlauf längst gelöscht ist. Die Antwort darauf ist dieselbe wie ohne Cookie — die Auflösung entscheidet, nicht der Ablauf im Browser.
