@@ -45,8 +45,8 @@ interface Accelerator {
 	argon2d: AcceleratorFunction;
 }
 
-// Yielding to the event loop every 10 ms is what keeps a 90 ms derivation from blocking every
-// other request on the same runtime (2.7).
+// 2.7 fixes the tick for the pure path; it is what returns control to the host every 10 ms during
+// a 90 ms derivation, so a timer that comes due meanwhile still fires.
 const ASYNC_TICK_IN_MILLISECONDS = 10;
 
 // A `Map` for the same reason the switch uses one: no lookup in this module reads a name off
@@ -76,11 +76,23 @@ export const nobleArgon2: Argon2Engine = {
 	},
 };
 
+/**
+ * The accelerator computes in one synchronous WebAssembly call and settles in a microtask, so a
+ * chain of derivations never reaches the timer phase and S-DOS-4's wait limit never fires — the
+ * flood is served in full and no timer in the process runs meanwhile. One `setTimeout` turn per
+ * derivation restores the property the pure path gets from `asyncTick`. `scheduler.yield` would
+ * not do: it returns to a continuation queue, and what has to run here is the timer phase (E-186).
+ */
+function yieldToTimerPhase(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function acceleratedArgon2(accelerator: Accelerator): Argon2Engine {
 	return {
 		name: "hash-wasm",
 
 		async derive(request) {
+			await yieldToTimerPhase();
 			const derive = accelerator[request.variant];
 
 			return asDerivedKey(

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
+import { deriveArgon2, selectArgon2Engine } from "../src/core/password/argon2.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
 import {
 	createPasswordCredentialRepository,
@@ -141,6 +142,45 @@ describe("S-DOS-3, S-DOS-4 — a flood is refused, not queued forever", () => {
 		expect(refused).toHaveLength(499);
 		for (const outcome of refused) {
 			expect(outcome.reason).toMatchObject({ code: "rate_limited", httpStatus: 429 });
+		}
+	}, 120_000);
+
+	// The case above substitutes a held-open promise for the derivation, so it proves the
+	// semaphore's bookkeeping and cannot fail on the requirement: a derivation that never returns
+	// to the timer phase serves the whole flood without the wait limit ever coming due. This one
+	// runs the real derivation on whichever engine the runtime selected, which is the accelerator
+	// wherever `hash-wasm` is installed (E-186, repository rules section 5).
+	it("fires the wait limit against the derivation the runtime actually uses", async () => {
+		const engine = await selectArgon2Engine(0x13);
+		const semaphore = createKdfSemaphore({ limit: 1, waitLimitInMilliseconds: 40 });
+		const request = {
+			variant: "argon2id",
+			password: new Uint8Array(16),
+			salt: new Uint8Array(16),
+			memoryKiB: 1024,
+			iterations: 2,
+			parallelism: 1,
+			version: 0x13,
+			hashBytes: 32,
+		} as const;
+
+		let dueDuringTheFlood = false;
+		const timer = setTimeout(() => {
+			dueDuringTheFlood = true;
+		}, 20);
+
+		const settled = await Promise.allSettled(
+			Array.from({ length: 60 }, () => semaphore.run(() => deriveArgon2(request))),
+		);
+		clearTimeout(timer);
+
+		const refused = settled.filter((outcome) => outcome.status === "rejected");
+
+		expect(settled).toHaveLength(60);
+		expect(dueDuringTheFlood, `${engine.name} starved the timer phase`).toBe(true);
+		expect(refused.length, `${engine.name} never reached the wait limit`).toBeGreaterThan(0);
+		for (const outcome of refused) {
+			expect(outcome.reason).toMatchObject({ code: "rate_limited" });
 		}
 	}, 120_000);
 
