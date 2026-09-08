@@ -75,13 +75,14 @@ async function issueSimultaneously(purpose: OneTimeTokenPurpose): Promise<Secret
 	return (await Promise.all(issued)).map((result) => result.token);
 }
 
-// FAILING BY DESIGN. Section 3.7, last sentence, and S-TOKEN-3: a newly requested token of
-// a purpose deletes the user's earlier ones of that purpose. The replacement is one
-// statement, so it is atomic — but at READ COMMITTED its DELETE works from the snapshot
-// taken when the statement began, and a row another request inserts after that snapshot is
-// not a row it can delete. Eight simultaneous requests already leave several live tokens
-// where the requirement allows one, and every one of them redeems. T-TOKEN-3 only exercises
-// the sequential case, so the gate stays green while the invariant does not hold.
+// Section 3.7, last sentence, and S-TOKEN-3: a newly requested token of a purpose deletes
+// the user's earlier ones of that purpose. The replacement is one statement and therefore
+// atomic, but at READ COMMITTED its DELETE works from the snapshot taken when the statement
+// began, and a row another request inserted after that snapshot is not a row it can delete.
+// This check failed when it was written — eight simultaneous requests left up to eight live
+// tokens, every one of them redeemable — and passes because the replacement now takes a lock
+// on the owner row first (E-259). Deleting that lock brings the eight back. T-TOKEN-3
+// exercises only the sequential case, which is why this file exists beside it.
 describe("a re-issue leaves one live token of that purpose (S-TOKEN-3)", () => {
 	it.each(ONE_TIME_TOKEN_PURPOSES)(
 		"%s keeps one live token through eight simultaneous requests",

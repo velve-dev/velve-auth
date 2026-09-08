@@ -74,7 +74,7 @@ INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
 VALUES ($3, $2, $1, $4, now() + make_interval(secs => $5::double precision))
 RETURNING ${EXPIRY_AS_ISO_8601} AS expires_at`;
 
-	// Section 3.7, verbatim: the only way a one-time token is ever read.
+	// Section 3.7 word for word apart from the marker E-142 requires: the only way a token is read.
 	const consumeStatement = `DELETE FROM ${table}
 -- no owner predicate: S-TOKEN-4
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
