@@ -95,6 +95,20 @@ describe("length policy", () => {
 		}
 	});
 
+	it("admits a decomposed password whose normal form fits the byte ceiling", () => {
+		const decomposed = "U\u0308\u0301".repeat(1400);
+
+		expect(decomposed.length).toBe(4200);
+		expect(acceptSubmittedPassword(decomposed, DEFAULTS)?.bytes).toHaveLength(2800);
+	});
+
+	it("still refuses an input too long to be worth normalising", () => {
+		const beyondTheBound = "a".repeat(4 * 4096 + 1);
+
+		expect(acceptSubmittedPassword(beyondTheBound, DEFAULTS)).toBeNull();
+		expect(acceptSubmittedPassword("a".repeat(4 * 4096), DEFAULTS)).toBeNull();
+	});
+
 	it("measures characters, not UTF-16 code units", () => {
 		expect(acceptSubmittedPassword("😀".repeat(7), DEFAULTS)).toBeNull();
 		expect(acceptSubmittedPassword("😀".repeat(8), DEFAULTS)).not.toBeNull();

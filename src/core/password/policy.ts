@@ -9,6 +9,8 @@ export interface AcceptedPassword {
 
 const utf8 = new TextEncoder();
 
+const NORMALISATION_SHRINK_BOUND = 4;
+
 /**
  * The sign-in path, and the only entry the hot path uses. It takes a `PasswordPolicy` rather than
  * the whole configuration, so `validate` is not reachable from here at all (L-7).
@@ -17,9 +19,10 @@ export function acceptSubmittedPassword(
 	plaintext: string,
 	policy: PasswordPolicy,
 ): AcceptedPassword | null {
-	// S-DOS-1: a UTF-8 encoding is never shorter than the UTF-16 code unit count, so an oversized
-	// input is refused before it is normalised or encoded.
-	if (plaintext.length > policy.maximumLengthInBytes) {
+	// S-DOS-1: the guard exists only to keep a megabyte-sized input out of `normalize`, so it is a
+	// bound and not a measurement — UAX #15 caps canonical composition at a threefold shrink in
+	// UTF-8, and a UTF-8 encoding is never shorter than the UTF-16 code unit count (E-181).
+	if (plaintext.length > policy.maximumLengthInBytes * NORMALISATION_SHRINK_BOUND) {
 		return null;
 	}
 
