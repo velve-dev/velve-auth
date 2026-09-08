@@ -28,7 +28,7 @@ const netSources = sourceFilesUnder(netDirectory).map((path) => ({
 	code: withoutComments(readFileSync(path, "utf8")),
 }));
 
-describe("core/net imports nothing (E-149)", () => {
+describe("core/net imports nothing (E-500)", () => {
 	it("has files to scan, so a silent zero cannot pass for a clean result", () => {
 		expect(netSources.length).toBeGreaterThan(0);
 	});
