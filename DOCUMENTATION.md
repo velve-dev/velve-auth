@@ -4240,7 +4240,8 @@ edited for it.
 
 ## The client
 
-Reserved for `client` (wave 4). Architecture 3.15 E: `createVelveClient`, the
+Reserved for `client` (wave 5, not wave 4 — the client is derived from a route
+table three wave-4 features are still adding rows to). Architecture 3.15 E: `createVelveClient`, the
 `ClientSurface` derived from the same route declaration the server surface is,
 the result object that makes `ok` checkable instead of throwable, `unwrap` for a
 caller who wants the server's symmetry back, and `VelveTransportError` for the

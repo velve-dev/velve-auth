@@ -383,7 +383,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-540 … E-594 | wave 4 · `oauth` |
 | E-595 … E-634 | wave 4 · `email-flows` |
 | E-635 … E-669 | wave 4 · `plugin` |
-| E-670 … E-699 | wave 4 · `client` |
+| E-670 … E-699 | wave 5 · `client` |
 | E-700 … E-734 | gate and infrastructure, fourth range |
 
 The next wave's ranges are added to that table before its features start,
@@ -457,7 +457,7 @@ wave-3 preparation and the relicensing, the seam cut ran beside it and had to
 take a disjoint range, and its nine unused numbers are the gap §6 says a range
 leaves behind, not headroom anyone can reach for.
 
-Wave 4 is cut against that.
+Wave 4 is cut against that. It runs three writers, not four — `client` is below the cap because of what it is, not to fill a quota.
 
 - **`oauth` gets fifty-five.** `S-LINK-1` to `S-LINK-7` are its, and that number
   is checkable: 5.11 lists exactly seven. Requirements from four other classes
@@ -481,9 +481,16 @@ Wave 4 is cut against that.
   context and the enumerated hook points are each a boundary that 3.11 states as
   a prohibition, and a prohibition is the kind of thing that generates a decision
   when it is enforced rather than when it is written.
-- **`client` gets thirty.** It is the narrowest feature of the wave for the same
-  reason `rate` was of wave 3: the route table already exists, and the client is
-  derived from it (3.15 E).
+- **`client` gets thirty and is not in wave 4.** It is narrow for the same reason
+  `rate` was of wave 3 — the route table already exists and the client is derived
+  from it (3.15 E) — and that derivation is what moves it. 3.15 E requires
+  `@velve/auth/client` to carry the table as a value with no server core behind
+  it, and under `unbundle: true` every import in a route module survives into
+  `dist/client.mjs`. A handler-free table therefore needs either a per-feature
+  metadata split, which touches every file the other three writers own, or a
+  second table that the first of them to merge makes stale. Neither is a
+  partition, so `client` is written after the route surface settles. Its range is
+  reserved and untouched; nothing is renumbered.
 - **Gate and infrastructure gets a fourth block of thirty-five, not
   twenty-five.** The measurement above is what argues it. The largest single gate
   cut so far took twenty-four numbers, and a twenty-five-wide block against a
