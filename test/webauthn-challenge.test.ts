@@ -9,6 +9,7 @@ import {
 import { toErrorBody, toVisibleFailure } from "../src/core/http/error-map.js";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
 import {
+	beginSecondFactor,
 	createAccount,
 	newAuthenticator,
 	openWebAuthnFixture,
@@ -154,6 +155,7 @@ describe("the webauthn challenge", () => {
 			});
 
 			const misdirectedAssertion = await device.assert({ challenge: misdirected.challengeToken });
+			const pendingForAccount = await beginSecondFactor(fixture, account);
 			const attempts = [
 				() =>
 					fixture.service.register.finish({
@@ -171,7 +173,7 @@ describe("the webauthn challenge", () => {
 					}),
 				() =>
 					fixture.service.authenticate.finish({
-						actor: account,
+						pending: pendingForAccount,
 						challengeToken: misdirected.challengeToken,
 						response: misdirectedAssertion,
 					}),

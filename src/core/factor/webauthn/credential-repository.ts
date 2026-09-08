@@ -1,6 +1,19 @@
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { qualifiedTableName } from "../../db/identifier.js";
+import type { PendingResolution } from "../pending/index.js";
+
+/**
+ * Who a credential belongs to, proved in one of the two ways this library recognises: a resolved
+ * session, or the intermediate state a correct password produced. A `PendingResolution` mints no
+ * `Actor` on purpose (3.15 B.7, S-FIX-4), and a second factor still has to reach the account's
+ * own rows — so the owner predicate takes either proof and never a bare string (E-459).
+ */
+export type CredentialOwner = Actor | PendingResolution;
+
+export function ownerIdOf(owner: CredentialOwner): string {
+	return typeof owner === "string" ? owner : owner.userId;
+}
 
 /** Architecture 3.15 C. `credential_id`, `public_key` and `sign_count` are absent by decision
  * (3.15 C.2); the identifier a caller names a credential by is the row's own uuid. */
@@ -49,7 +62,7 @@ export interface WebAuthnAssertionRecord {
 export interface WebAuthnCredentialRepository {
 	insertCredential(input: WebAuthnCredentialInsert): Promise<WebAuthnCredential>;
 	listCredentialsOwnedBy(input: { actor: Actor }): Promise<WebAuthnCredential[]>;
-	listDescriptorsOwnedBy(input: { actor: Actor }): Promise<StoredWebAuthnCredential[]>;
+	listDescriptorsOwnedBy(input: { owner: CredentialOwner }): Promise<StoredWebAuthnCredential[]>;
 	/** S-OWNER-1 exception, on E-242's rule: the caller reaches this row through a signature it
 	 * has not yet checked and has no actor to offer, because discoverable sign-in names no user. */
 	findCredentialByCredentialId(input: {
@@ -57,7 +70,7 @@ export interface WebAuthnCredentialRepository {
 	}): Promise<StoredWebAuthnCredential | null>;
 	findOwnedCredentialByCredentialId(input: {
 		credentialId: Uint8Array<ArrayBuffer>;
-		actor: Actor;
+		owner: CredentialOwner;
 	}): Promise<StoredWebAuthnCredential | null>;
 	renameCredential(input: {
 		id: string;
@@ -243,8 +256,8 @@ RETURNING ${SELECTED_COLUMNS}`;
 			return rows.map(presentedCredential);
 		},
 
-		async listDescriptorsOwnedBy({ actor }) {
-			const rows = await options.driver.query<CredentialRow>(listStatement, [actor]);
+		async listDescriptorsOwnedBy({ owner }) {
+			const rows = await options.driver.query<CredentialRow>(listStatement, [ownerIdOf(owner)]);
 			return rows.map(storedCredential);
 		},
 
@@ -253,8 +266,8 @@ RETURNING ${SELECTED_COLUMNS}`;
 			return row === null ? null : storedCredential(row);
 		},
 
-		async findOwnedCredentialByCredentialId({ credentialId, actor }) {
-			const row = await single(findOwnedByCredentialIdStatement, [credentialId, actor]);
+		async findOwnedCredentialByCredentialId({ credentialId, owner }) {
+			const row = await single(findOwnedByCredentialIdStatement, [credentialId, ownerIdOf(owner)]);
 			return row === null ? null : storedCredential(row);
 		},
 

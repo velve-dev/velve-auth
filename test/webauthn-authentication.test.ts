@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
+import { PENDING_CALLER_ROUTES } from "../src/core/factor/pending/index.js";
 import { toVisibleFailure } from "../src/core/http/error-map.js";
 import {
+	beginSecondFactor,
 	createAccount,
 	enrol,
 	newAuthenticator,
@@ -156,11 +158,31 @@ describe("completing a second factor with webauthn", () => {
 
 	afterAll(() => fixture.close());
 
+	/**
+	 * S-CACHE-4 and 3.6: exactly four routes read `__Host-velve_pending`, and two of them are
+	 * this feature's. The count is read from the list `pending` publishes rather than repeated
+	 * here, so a third webauthn operation taking the intermediate state fails on the branch that
+	 * adds it.
+	 */
+	it("takes the intermediate state in exactly the two operations the pending module names", () => {
+		const mine = PENDING_CALLER_ROUTES.filter((route) => route.startsWith("factor.webauthn."));
+
+		expect(mine).toEqual([
+			"factor.webauthn.authenticate.start",
+			"factor.webauthn.authenticate.finish",
+		]);
+		expect(Object.keys(fixture.service.authenticate).sort()).toEqual(
+			mine.map((route) => route.split(".").at(-1)).sort(),
+		);
+	});
+
 	it("names the account's credentials and demands user verification", async () => {
 		const account = await createAccount(fixture);
 		const { authenticator } = await enrol(fixture, account, "key");
 
-		const started = await fixture.service.authenticate.start({ actor: account });
+		const started = await fixture.service.authenticate.start({
+			pending: await beginSecondFactor(fixture, account),
+		});
 
 		expect(started.publicKeyOptions.allowCredentials).toEqual([
 			{ id: authenticator.credentialId, transports: ["internal"], type: "public-key" },
@@ -171,7 +193,9 @@ describe("completing a second factor with webauthn", () => {
 	it("says the factor is not enrolled when the account has no authenticator", async () => {
 		const account = await createAccount(fixture);
 
-		const refused = fixture.service.authenticate.start({ actor: account });
+		const refused = fixture.service.authenticate.start({
+			pending: await beginSecondFactor(fixture, account),
+		});
 
 		await expect(refused).rejects.toMatchObject({ code: "factor_not_enrolled" });
 	});
@@ -180,9 +204,10 @@ describe("completing a second factor with webauthn", () => {
 		const account = await createAccount(fixture);
 		const { authenticator } = await enrol(fixture, account, "key");
 
-		const started = await fixture.service.authenticate.start({ actor: account });
+		const pending = await beginSecondFactor(fixture, account);
+		const started = await fixture.service.authenticate.start({ pending });
 		const verified = await fixture.service.authenticate.finish({
-			actor: account,
+			pending,
 			challengeToken: started.challengeToken,
 			response: await authenticator.assert({ challenge: started.challengeToken }),
 		});
@@ -196,9 +221,10 @@ describe("completing a second factor with webauthn", () => {
 		const stolen = await enrol(fixture, a, "a-key");
 		await enrol(fixture, b, "b-key");
 
-		const started = await fixture.service.authenticate.start({ actor: b });
+		const pending = await beginSecondFactor(fixture, b);
+		const started = await fixture.service.authenticate.start({ pending });
 		const refused = fixture.service.authenticate.finish({
-			actor: b,
+			pending,
 			challengeToken: started.challengeToken,
 			response: await stolen.authenticator.assert({ challenge: started.challengeToken }),
 		});
@@ -212,9 +238,11 @@ describe("completing a second factor with webauthn", () => {
 		const own = await enrol(fixture, a, "a-key");
 		await enrol(fixture, b, "b-key");
 
-		const forB = await fixture.service.authenticate.start({ actor: b });
+		const forB = await fixture.service.authenticate.start({
+			pending: await beginSecondFactor(fixture, b),
+		});
 		const refused = fixture.service.authenticate.finish({
-			actor: a,
+			pending: await beginSecondFactor(fixture, a),
 			challengeToken: forB.challengeToken,
 			response: await own.authenticator.assert({ challenge: forB.challengeToken }),
 		});
@@ -237,9 +265,10 @@ describe("the sign counter and the backup flags", () => {
 		authenticator: VirtualAuthenticator,
 		overrides: { signCount?: number; backupState?: boolean; backupEligible?: boolean } = {},
 	) {
-		const started = await fixture.service.authenticate.start({ actor: account });
+		const pending = await beginSecondFactor(fixture, account);
+		const started = await fixture.service.authenticate.start({ pending });
 		return fixture.service.authenticate.finish({
-			actor: account,
+			pending,
 			challengeToken: started.challengeToken,
 			response: await authenticator.assert({
 				challenge: started.challengeToken,

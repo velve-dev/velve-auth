@@ -17,6 +17,7 @@ import type { Driver } from "../../db/driver.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { removeSignInMethod } from "../../identity/sign-in-methods.js";
 import { decodeBase64Url, encodeBase64Url } from "../../keys/base64url.js";
+import type { PendingResolution } from "../pending/index.js";
 import {
 	createWebAuthnChallenges,
 	WEBAUTHN_CHALLENGE_LIFETIME_SECONDS,
@@ -24,8 +25,10 @@ import {
 } from "./challenge.js";
 import { type WebAuthnConfig, type WebAuthnSettings, webAuthnSettingsOf } from "./config.js";
 import {
+	type CredentialOwner,
 	createWebAuthnCredentialRepository,
 	DuplicateWebAuthnCredentialError,
+	ownerIdOf,
 	type StoredWebAuthnCredential,
 	type WebAuthnCredential,
 	type WebAuthnCredentialRepository,
@@ -72,10 +75,12 @@ export interface WebAuthnService {
 			label: string;
 		}): Promise<{ credential: WebAuthnCredential }>;
 	};
+	/** Architecture 3.6: the second factor after a password. Its subject is the intermediate
+	 * state, which is not a session and mints no `Actor`. */
 	authenticate: {
-		start(input: { actor: Actor }): Promise<WebAuthnAuthenticationChallenge>;
+		start(input: { pending: PendingResolution }): Promise<WebAuthnAuthenticationChallenge>;
 		finish(input: {
-			actor: Actor;
+			pending: PendingResolution;
 			challengeToken: string;
 			response: AuthenticationResponseJSON;
 		}): Promise<VerifiedWebAuthnAssertion>;
@@ -168,15 +173,17 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		}
 	}
 
-	async function requestOptionsFor(actor: Actor | null): Promise<WebAuthnAuthenticationChallenge> {
+	async function requestOptionsFor(
+		owner: CredentialOwner | null,
+	): Promise<WebAuthnAuthenticationChallenge> {
 		const allowCredentials =
-			actor === null ? [] : (await credentials.listDescriptorsOwnedBy({ actor })).map(descriptorOf);
-		if (actor !== null && allowCredentials.length === 0) {
+			owner === null ? [] : (await credentials.listDescriptorsOwnedBy({ owner })).map(descriptorOf);
+		if (owner !== null && allowCredentials.length === 0) {
 			throw new VelveError("factor_not_enrolled");
 		}
 		const { challengeToken, challengeBytes } = await challenges.issue({
 			purpose: "authenticate",
-			userId: actor,
+			userId: owner === null ? null : ownerIdOf(owner),
 		});
 		const publicKeyOptions = await generateAuthenticationOptions({
 			rpID: settings.relyingPartyId,
@@ -185,7 +192,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			/* Architecture 3.6 and 3.15 A.8: fixed at both verification points, and there is no
 			   configuration that lowers it. A second factor without user verification is not one. */
 			userVerification: "required",
-			...(actor === null ? {} : { allowCredentials }),
+			...(owner === null ? {} : { allowCredentials }),
 		});
 		return { publicKeyOptions, challengeToken };
 	}
@@ -243,7 +250,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 		register: {
 			async start({ actor, userName, userDisplayName }) {
-				const enrolled = await credentials.listDescriptorsOwnedBy({ actor });
+				const enrolled = await credentials.listDescriptorsOwnedBy({ owner: actor });
 				const { challengeToken, challengeBytes } = await challenges.issue({
 					purpose: "register",
 					userId: actor,
@@ -307,13 +314,17 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		},
 
 		authenticate: {
-			start: ({ actor }) => requestOptionsFor(actor),
+			start: ({ pending }) => requestOptionsFor(pending),
 
-			async finish({ actor, challengeToken, response }) {
-				await consumeChallengeOrReject({ challengeToken, purpose: "authenticate", userId: actor });
+			async finish({ pending, challengeToken, response }) {
+				await consumeChallengeOrReject({
+					challengeToken,
+					purpose: "authenticate",
+					userId: pending.userId,
+				});
 				const stored = await credentials.findOwnedCredentialByCredentialId({
 					credentialId: credentialIdBytes(response.id),
-					actor,
+					owner: pending,
 				});
 				if (stored === null) {
 					throw new ConcealedError("credential_unknown");

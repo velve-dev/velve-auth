@@ -1,4 +1,8 @@
 import type { Actor } from "../src/core/db/actor.js";
+import {
+	createPendingAuthenticationService,
+	type PendingResolution,
+} from "../src/core/factor/pending/index.js";
 import type { WebAuthnConfig } from "../src/core/factor/webauthn/config.js";
 import {
 	createWebAuthnService,
@@ -90,4 +94,28 @@ export async function enrol(
 		label,
 	});
 	return { authenticator: device, credentialId: credential.id };
+}
+
+/**
+ * The second factor's subject is the intermediate state, not a session, so the cases build a real
+ * `velve.pending_authentication` row and resolve it exactly as the flow will.
+ */
+export async function beginSecondFactor(
+	fixture: WebAuthnFixture,
+	actor: Actor,
+): Promise<PendingResolution> {
+	const pendingAuthentications = createPendingAuthenticationService({
+		driver: fixture.connection,
+		schema: fixture.schema,
+	});
+	const { token } = await pendingAuthentications.begin({
+		userId: actor,
+		factorsCompleted: ["password"],
+		availableFactors: ["webauthn"],
+	});
+	const resolved = await pendingAuthentications.resolve(token);
+	if (resolved === null) {
+		throw new Error("the pending authentication did not resolve");
+	}
+	return resolved;
 }
