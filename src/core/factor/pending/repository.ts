@@ -184,7 +184,8 @@ function resolveStatement(
 }
 
 function countAttemptStatement(table: string): string {
-	return `UPDATE ${table} SET attempts = attempts + 1
+	return `UPDATE ${table} /* no owner predicate: S-OWNER-2, E-242, the predicate is the secret itself */
+	SET attempts = attempts + 1
 	WHERE token_sha256 = $1 AND expires_at > now()
 	RETURNING attempts`;
 }

@@ -194,7 +194,7 @@ describe("what resolution reports", () => {
 		expect(answers).toStrictEqual([null, null, null]);
 	});
 
-	// L-4 puts `account_disabled` on the resolution of an existing session; this is a sign-in in progress.
+	// L-4 reserves its code for the resolution of an existing session; this is a sign-in in progress.
 	it("refuses a disabled account without naming the account", async () => {
 		const token = await begin();
 		await connection.query(`UPDATE ${schema}.user SET disabled_at = now() WHERE id = $1`, [userId]);

@@ -103,8 +103,9 @@ export function createPendingAuthenticationService(
 		},
 
 		/**
-		 * A disabled account answers as an unknown state rather than as `account_disabled`: L-4 puts
-		 * that code on the resolution of an existing session, and this is a sign-in still in progress.
+		 * A disabled account answers as an unknown state, and the code L-4 reserves for a disabled
+		 * account is not raised here: L-4 puts it on the resolution of an existing session, and this
+		 * is a sign-in still in progress.
 		 */
 		async resolve(token) {
 			const found = await repository.findPendingAuthenticationByTokenHash(hashPendingToken(token));
