@@ -279,9 +279,9 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 	// crypt_blowfish. bcryptjs carries the byte through instead of truncating on it.
 	it("does not truncate at a NUL byte", async () => {
 		const { hash } = await import("bcryptjs");
-		const encoded = await hash("velve tail", 4);
+		const encoded = await hash("velve\u0000tail", 4);
 
-		expect(await verifyAgainstScheme("bcrypt", asPassword("velve tail"), encoded)).toBe(true);
+		expect(await verifyAgainstScheme("bcrypt", asPassword("velve\u0000tail"), encoded)).toBe(true);
 		expect(await verifyAgainstScheme("bcrypt", asPassword("velve"), encoded)).toBe(false);
 	}, 60_000);
 

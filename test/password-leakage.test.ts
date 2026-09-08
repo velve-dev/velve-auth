@@ -235,6 +235,26 @@ describe("repository rules section 3 — what the module may contain", () => {
 		expect(offenders).toEqual([]);
 	});
 
+	// A single NUL byte makes git classify a source file as binary, which hides it from `git grep`
+	// and renders its diff as "Bin" — `ci.yml` names this escape, and this module has already
+	// shipped one. The check covers the module's own tests, because that is where it happened.
+	it("contains no NUL byte, here or in the tests of this module", () => {
+		const scanned = [
+			...sources,
+			...readdirSync("test")
+				.filter((name) => name.startsWith("password-") && name.endsWith(".ts"))
+				.map((name) => ({
+					path: join("test", name),
+					text: readFileSync(join("test", name), "utf8"),
+				})),
+		];
+
+		expect(scanned.length).toBeGreaterThan(25);
+		expect(scanned.filter((source) => source.text.includes("\u0000")).map((s) => s.path)).toEqual(
+			[],
+		);
+	});
+
 	// Repository rules section 3: a comment is permitted only where the reason cannot be expressed
 	// in code, and a reference to the specification is the legitimate case. A comment block that
 	// cites no clause is a comment that describes what the code does.
