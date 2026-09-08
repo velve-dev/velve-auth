@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { reassignsSessionOwner, statementsIn } from "../tools/session-owner-update.mjs";
 
-const flags = (source: string) => statementsIn(source).some(reassignsSessionOwner);
+const flags = (source: string, opener = "//") =>
+	statementsIn(source, opener).some(reassignsSessionOwner);
 
 const REASSIGNMENTS = [
 	["a plain update", "UPDATE velve.session SET user_id = $1 WHERE id = $2"],
@@ -49,7 +50,6 @@ const EVASIONS = [
 const IGNORED_IN_CONTEXT = [
 	["prose in a line comment", "// never write UPDATE velve.session SET user_id"],
 	["prose in a block comment", "/* UPDATE velve.session SET user_id is forbidden */"],
-	["prose in a SQL comment", "-- UPDATE velve.session SET user_id is forbidden"],
 ] as const;
 
 describe("session owner reassignment detector", () => {
@@ -67,5 +67,15 @@ describe("session owner reassignment detector", () => {
 
 	it.each(IGNORED_IN_CONTEXT)("still ignores %s", (_name, source) => {
 		expect(flags(source)).toBe(false);
+	});
+
+	it("is not blinded by a decrement in TypeScript", () => {
+		expect(flags("let i = 0;\ni--;\nconst q = `UPDATE velve.session SET user_id = $1`;")).toBe(
+			true,
+		);
+	});
+
+	it("still treats -- as a comment in SQL", () => {
+		expect(flags("-- UPDATE velve.session SET user_id is forbidden", "--")).toBe(false);
 	});
 });

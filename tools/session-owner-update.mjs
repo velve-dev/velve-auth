@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const SESSION_TABLE = /\b(?:velve\s*\.\s*)?session\b/i;
 const SETS_OWNER = /\bset\b[\s\S]*\buser_id\b/i;
@@ -41,21 +42,23 @@ function endOfQuoted(source, index) {
 	return source.length;
 }
 
-function commentEndsAt(source, index) {
+/** `--` opens a comment in SQL but is a decrement in TypeScript, and `//` the
+ * reverse, so the file's language decides which one blinds the scanner. */
+function commentEndsAt(source, index, lineCommentOpener) {
 	const pair = source.slice(index, index + 2);
 	if (pair === "/*") return endOfBlockComment(source, index);
-	if (pair === "//" || pair === "--") return endOfLineComment(source, index);
+	if (pair === lineCommentOpener) return endOfLineComment(source, index);
 	return null;
 }
 
 /** Comments are dropped but string bodies are kept: dynamic SQL lives inside quotes,
  * so removing them would hide exactly what this looks for. */
-export function statementsIn(source) {
+export function statementsIn(source, lineCommentOpener = "//") {
 	const statements = [];
 	let current = "";
 	let index = 0;
 	while (index < source.length) {
-		const commentEnd = commentEndsAt(source, index);
+		const commentEnd = commentEndsAt(source, index, lineCommentOpener);
 		if (commentEnd !== null) {
 			current += " ";
 			index = commentEnd;
@@ -81,26 +84,34 @@ export function reassignsSessionOwner(statement) {
 	return REASSIGNMENT.some((pattern) => pattern.test(statement));
 }
 
-function sourceFiles(directory, found = []) {
-	for (const entry of readdirSync(directory)) {
-		const path = `${directory}/${entry}`;
-		if (statSync(path).isDirectory()) sourceFiles(path, found);
-		else if (/\.(ts|mts|mjs|sql)$/.test(entry)) found.push(path);
-	}
-	return found;
+/** The rule governs SQL that runs, so prose about it is out of scope — and the
+ * detector's own tests must contain the statement in order to test for it. */
+const EXECUTABLE_SOURCE = /\.(ts|mts|mjs|sql)$/;
+const DESCRIBES_THE_RULE = "test/session-owner-update.test.ts";
+
+function executableSourceFiles() {
+	const listed = execFileSync(
+		"git",
+		["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+		{ encoding: "utf8" },
+	);
+	return listed
+		.split("\0")
+		.filter(Boolean)
+		.filter((path) => EXECUTABLE_SOURCE.test(path))
+		.filter((path) => path !== DESCRIBES_THE_RULE);
 }
 
-export function scanTree(directories) {
+export function scanTree() {
 	const offenders = [];
 	let statementsScanned = 0;
-	for (const directory of directories) {
-		for (const path of sourceFiles(directory)) {
-			for (const statement of statementsIn(readFileSync(path, "utf8"))) {
-				if (!/\b(update|merge)\b/i.test(statement)) continue;
-				statementsScanned += 1;
-				if (reassignsSessionOwner(statement)) {
-					offenders.push(`${path}: ${statement.trim().replace(/\s+/g, " ").slice(0, 120)}`);
-				}
+	for (const path of executableSourceFiles()) {
+		const opener = path.endsWith(".sql") ? "--" : "//";
+		for (const statement of statementsIn(readFileSync(path, "utf8"), opener)) {
+			if (!/\b(update|merge)\b/i.test(statement)) continue;
+			statementsScanned += 1;
+			if (reassignsSessionOwner(statement)) {
+				offenders.push(`${path}: ${statement.trim().replace(/\s+/g, " ").slice(0, 120)}`);
 			}
 		}
 	}
