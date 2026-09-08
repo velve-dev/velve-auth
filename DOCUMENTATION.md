@@ -1201,3 +1201,68 @@ The PHC alphabet — standard base64, `+` and `/`, no padding on output. Decodin
 accepts a padded value and rejects the base64url alphabet, misplaced padding and
 non-canonical trailing bits. This is a second base64 implementation next to the
 key module's base64url; the reason is in E-161.
+
+### `PasswordConfig`
+
+Everything the module can be told. Every field is optional; the defaults are the
+ones architecture 3.3 fixes.
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `argon2id` | `{ memoryKiB, iterations, parallelism }` | `{ 19456, 2, 1 }` | the parameters every created hash carries. Raising them is allowed, lowering any one of them is a start error (S-DEFAULT-6) |
+| `acceptLegacy` | `readonly LegacyScheme[]` | all seven | which imported schemes are still verified. Naming fewer narrows the estate; naming an unknown scheme is a start error |
+| `minimumLength` | `number` | `8` | in characters, counted after NFKC. Below 8 is a start error |
+| `maximumLengthInBytes` | `number` | `4096` | in UTF-8 bytes. Above 4096 is a start error; lowering it is allowed |
+| `concurrentHashLimit` | `number` | `min(4, cpus)` | how many key derivations may run at once (S-DOS-3) |
+| `validate` | `(plaintext: string) => Promise<void>` | none | the one hook for an application password policy (L-7) |
+
+`LegacyScheme` is `"argon2i" | "argon2d" | "bcrypt" | "scrypt" |
+"pbkdf2-sha256" | "pbkdf2-sha512" | "fbscrypt"` — the seven schemes that are
+verified but never created. Argon2id is not among them: it is the created one.
+
+There is no option that weakens anything. Every bound is a floor or a ceiling in
+the safe direction, so `resolvePasswordConfig` has nothing to log at start-up
+(S-DEFAULT-1); a weakening attempt is refused instead of recorded.
+
+#### `resolvePasswordConfig(config?)`
+
+Turns the options into the resolved shape the rest of the module takes, or
+throws `PasswordConfigurationError` with one of these codes:
+`argon2id_memory_below_floor`, `argon2id_iterations_below_floor`,
+`argon2id_parallelism_below_floor`, `minimum_length_below_floor`,
+`maximum_length_above_ceiling`, `concurrent_hash_limit_out_of_range`,
+`legacy_scheme_unknown`. It is a start error, never a request error.
+
+`min(4, cpus)` reads `navigator.hardwareConcurrency`. A runtime that does not
+report one — Node 20 has no `navigator` — gets `4`, the ceiling (E-162).
+
+### The length policy
+
+Length is checked before any key derivation, in three steps that get more
+expensive as they go (S-DOS-1, E-164):
+
+1. the UTF-16 code unit count against `maximumLengthInBytes`. A UTF-8 encoding
+   is never shorter than that count, so a megabyte-sized input is refused here,
+   before it is normalised or copied;
+2. NFKC normalisation (NIST SP 800-63B-4 §3.1.1.2), then the character count
+   against `minimumLength`;
+3. the UTF-8 byte length of the normalised form against `maximumLengthInBytes`,
+   because a compatibility character can grow under NFKC.
+
+#### `acceptSubmittedPassword(plaintext, policy)`
+
+The sign-in entry. Returns `{ text, bytes }` — the normalised password and its
+UTF-8 encoding — or `null` when the length policy refuses. It takes a
+`PasswordPolicy`, which has only the two length fields, so `validate` is not
+reachable from the hot path at all (L-7, E-165).
+
+#### `acceptNewPassword(plaintext, config)`
+
+The setting and changing entry. Applies the same length policy, then awaits
+`validate`. Throws `VelveError("password_unacceptable")` when either refuses.
+
+`validate` receives the **normalised** password, which is what becomes the
+credential. If it throws, the caller learns `password_unacceptable` and nothing
+else — the hook's own message goes nowhere (E-163). Its shared message names
+only the length limits, which is imprecise for a hook rejection; that is the
+price recorded in E-163.

@@ -771,3 +771,27 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* Den vorhandenen Decoder um ein Alphabet- und ein Strenge-Argument zu erweitern und aus beiden Modulen zu benutzen.
 *Grund:* Zwei Gründe, ein formaler und ein inhaltlicher. Formal gehört die Datei dem in Welle 1 zusammengeführten Schlüsselmodul; eine Änderung daran liegt außerhalb der Dateizuständigkeit dieses Bausteins (Regeln §5). Inhaltlich sind die beiden Anforderungen gegenläufig: Ein importierter PHC-String darf beide Schreibweisen mitbringen, ein Wurzelschlüssel darf es nicht. Ein gemeinsamer Codec müsste die Strenge zu einem Parameter machen und damit genau die Stelle aufweichen, an der sie zählt — ein falsch gesetztes Argument wäre dort still.
 *Preis:* Zwei Base64-Implementierungen im Kern, rund sechzig Zeilen Doppelung. Wer an einer eine Ecke ausbessert, muss die andere ansehen.
+
+**E-162 — Eine unbekannte Kernzahl führt auf die Obergrenze, nicht auf eins.**
+*Kontext:* S-DOS-3 bemisst den Semaphor mit `min(4, cpus)`. Der Kern darf `node:os` nicht benutzen (Regeln §7), also bleibt `navigator.hardwareConcurrency` — das es unter Node 20.19, der unteren Baugrenze, noch nicht gibt.
+*Verworfen:* Bei unbekannter Kernzahl auf 1 zu fallen.
+*Grund:* 1 wäre die vorsichtige Wahl für den Speicher und die falsche für alles andere: Auf jeder Node-20-Installation liefe genau eine Kennwortprüfung gleichzeitig, vier gleichzeitige Anmeldungen ständen in einer Reihe von je 90 ms, und die Wartegrenze aus L-1 würde unter Last erreicht, wo gar keine Last ist. Die Obergrenze 4 ist zugleich die Zahl, die die Dokumentation als Speicherobergrenze nennt (4 × 19 MiB), also verspricht der Rückfall nichts, was nicht ohnehin zugesichert ist.
+*Preis:* Auf einer Zweikern-Maschine unter Node 20 laufen bis zu vier Argon2id-Aufrufe statt zwei. Das ist kein Speicherproblem, aber es bedeutet mehr Kontextwechsel als nötig; wer das nicht will, setzt `concurrentHashLimit` ausdrücklich.
+
+**E-163 — Der `validate`-Einhängepunkt bekommt die normalisierte Form und gibt seine Begründung nicht heraus.**
+*Kontext:* L-7 gibt genau einen Einhängepunkt für eine Kennwortrichtlinie der Anwendung. Zwei Dinge waren offen: welche Fassung des Kennworts er sieht, und was aus seiner Ausnahme wird.
+*Verworfen:* (a) Ihm die rohe Eingabe zu geben. (b) Seine Ausnahme durchzureichen, damit die Anwendung ihren eigenen Grund anzeigen kann.
+*Grund:* (a) hätte den Fall erzeugt, in dem der Abgleich gegen ein Leak-Korpus auf einer Zeichenfolge läuft, die so nie gespeichert wird — die Ableitung arbeitet nach 3.3 immer auf der NFKC-Form. Ein Treffer wäre dann von der Schreibweise abhängig, und genau das soll die Normalisierung beseitigen. (b) widerspricht §3 der Regeln: Was das Außen erfährt, entscheidet `error-map.ts` und sonst nichts. Eine durchgereichte Fremdausnahme wäre am Haupttor `internal_error` mit Status 500 geworden — für eine abgelehnte Kennwortrichtlinie die falsche Antwort.
+*Preis:* Der Aufrufer bekommt `password_unacceptable` mit dem Text „The password does not meet the length requirements.", auch wenn die Länge stimmte und der Einhängepunkt aus einem ganz anderen Grund abgelehnt hat. Der Text gehört `error-map.ts` und liegt außerhalb dieses Bausteins; die Ungenauigkeit steht in der Referenz und ist gemeldet.
+
+**E-164 — Die Längenprüfung misst dreimal, in aufsteigender Kostenordnung.**
+*Kontext:* L-7 nennt zwei Grenzen in zwei verschiedenen Einheiten — 8 Zeichen und 4096 Byte —, und 3.3 verlangt die NFKC-Normalisierung vor jedem KDF-Aufruf. Die Normalisierung liegt damit zwischen den beiden Messungen, und sie ist selbst nicht umsonst: Ein „Kennwort" von einem Megabyte zu normalisieren, kostet Speicher und Zeit, bevor irgendeine Grenze greift.
+*Verworfen:* Zuerst zu normalisieren und danach beide Grenzen zu prüfen.
+*Grund:* Der zweite Angriffsvektor aus 5.18 (a) ist genau die Eingabelänge, und er greift schon vor dem KDF. Gemessen wird deshalb zuerst die Zahl der UTF-16-Code-Einheiten gegen die Byte-Obergrenze: Eine UTF-8-Kodierung ist nie kürzer als diese Zahl, die Prüfung lehnt also nichts ab, was bestehen würde, und sie braucht keine einzige Zuweisung. Erst danach wird normalisiert, dann werden Zeichen gezählt, dann Bytes — die letzte Messung, weil NFKC ein Kompatibilitätszeichen verlängern kann.
+*Preis:* Drei Messungen statt zwei, und die erste ist eine Abschätzung, die man beim Lesen erklärt bekommen muss. Der Kommentar dazu ist eine der wenigen Stellen im Modul, an denen ein Satz Prosa nötig ist.
+
+**E-165 — Der Anmeldepfad nimmt die Längenpolitik, nicht die Konfiguration.**
+*Kontext:* L-7 verlangt, dass `validate` beim Setzen und Ändern läuft und niemals bei der Anmeldung. Das ließe sich als Regel formulieren und in einer Prüfung festhalten.
+*Verworfen:* Eine gemeinsame Funktion mit einem Schalter `runValidateHook: boolean`.
+*Grund:* Ein Schalter ist eine Regel, die jemand falsch setzen kann, und der Fehler wäre still: Der Einhängepunkt liefe auf dem heißen Pfad, das Klartextkennwort erreichte fremden Code bei jeder Anmeldung, und nichts an der Antwort würde sich ändern. Stattdessen nimmt der Anmeldeeintrag den Typ `PasswordPolicy` mit genau zwei Feldern. Es gibt dort kein `validate`, das aufgerufen werden könnte — die Zusicherung steht im Typ und nicht in einer Prüfung.
+*Preis:* Zwei Eintrittspunkte statt einem, und `acceptNewPassword` ruft `acceptSubmittedPassword` auf, was sich beim Lesen kurz falsch anhört. Der Name des inneren Aufrufs beschreibt die Herkunft der Eingabe, nicht die Operation.
