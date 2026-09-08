@@ -311,15 +311,32 @@ be a PostgreSQL reserved key word; anything else raises `InvalidIdentifierError`
 before a statement is sent.
 
 **How the schema name reaches the SQL.** The shipped SQL says `velve`. When
-`schema` is something else, the runner walks the statement and replaces that
-name in exactly two positions: where it qualifies something (`velve.session`)
-and where a `CREATE`, `DROP` or `ALTER SCHEMA` names it. It is skipped inside
-string literals, quoted identifiers, dollar-quoted bodies and comments, so a
-plugin migration that inserts the string `'velve'` or declares a column named
-`velve` keeps both. A comment mentioning `velve.user` also keeps the original
-name; the rewrite changes what runs, not what is written about it. A qualifier
-naming any other schema is left alone — a migration that reaches into `public`
-still reaches into `public`.
+`schema` is something else, the runner cuts each statement into regions —
+comment, string literal, quoted identifier, dollar-quoted body, code — and
+replaces the name only in code, and there only in two positions: where it
+qualifies something (`velve.session`) and where a `CREATE`, `DROP` or
+`ALTER SCHEMA` names it. So a migration that inserts the string `'velve'` or
+declares a column named `velve` keeps both, and a qualifier naming another
+schema is left alone — a migration that reaches into `public` still reaches into
+`public`. A comment mentioning `velve.user` also keeps the original name; the
+rewrite changes what runs, not what is written about it.
+
+**A dollar-quoted body is not rewritten, and a migration that needs it to be is
+refused.** A function body is arbitrary code in an arbitrary language, and
+substituting a word inside it is not something this scanner can do safely. So a
+migration whose `$$ … $$` body qualifies `velve` is rejected before the
+transaction opens, with `UnrewritableMigrationError`, code
+`migration_unrewritable_body` — rather than applied and left pointing at a schema
+that is not the configured one. A body that qualifies nothing is unaffected. A
+plugin that needs to reach the library's tables from inside a function body has
+two ways: build the name at run time (`format('%I.user', …)`), or set the
+function's `search_path` and leave the names unqualified.
+
+**Statements run one at a time.** The runner cuts the migration on the
+semicolons that are not inside a string, a comment or a dollar-quoted body, and
+sends each statement through `Driver.query` on its own, inside the one
+transaction. That keeps `query`'s contract — one statement per call — true for
+every driver, including one built on the extended protocol.
 
 Returns `{ appliedVersions, currentVersion }` — the versions this call applied,
 and the highest version in the ledger afterwards.
@@ -351,6 +368,8 @@ rolls the migration back if either rule is broken, raising
 `MissingCascadeError` with the code `migration_missing_cascade` (S-TOKEN-6).
 Deleting a user has to empty every table that holds their rows, and a check that
 reads the catalogue cannot be forgotten the way a review can.
+
+Ordinary and partitioned tables are both checked, the parent as well as the leaf.
 
 Two limits are worth knowing. The check runs when a migration is applied, so a
 constraint dropped by hand afterwards is not noticed until the next migration
@@ -397,7 +416,7 @@ interface Driver {
 
 | Member | Parameters | Returns |
 |---|---|---|
-| `query` | `sql` — a single statement with `$1`-style placeholders; `params` — one value per placeholder | the result rows, in order |
+| `query` | `sql` — a single statement with `$1`-style placeholders; `params` — one value per placeholder, empty when there are none | the result rows, in order |
 | `transaction` | `fn` — receives a driver bound to the transaction's connection | whatever `fn` returns |
 
 `transaction` commits when `fn` resolves and rolls back when it rejects. A driver
@@ -408,6 +427,15 @@ transaction can be called from inside one.
 
 There is no query builder and no ORM. All SQL is written by hand for PostgreSQL
 14 or newer.
+
+A driver never has to handle more than one statement per call: everything that
+ships more than one — the migrations — is cut into statements before it reaches
+`query`.
+
+`createNodePostgresDriver` is the reference implementation, and a driver for
+another client is about forty lines. `NodePostgresPool.query` is declared with
+method syntax on purpose: that is what makes `node-postgres`' overloaded `query`
+assignable to it without a cast.
 
 ### `@velve/auth/pg`
 
