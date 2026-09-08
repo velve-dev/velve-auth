@@ -2978,6 +2978,16 @@ half is one line and carries a whole requirement: in the mode `"username"` there
 is no address to send a reset to, so `recoveryCodes` is **required**, and leaving
 it out is a compile error before it is a start error (S-DEFAULT-4).
 
+Both of those sentences depend on one detail that is easy to undo. `M` has
+exactly one inference site — `identity`, whose type is `IdentityConfigurationInput
+& { readonly mode: M }`, and the `{ mode: M }` half is what TypeScript infers
+from. Written as a single conditional type, which reads more naturally, the whole
+position becomes non-inferrable: `M` falls back to the union, the conditional
+distributes, and both promises above quietly stop holding while still compiling.
+It shipped that way once. If you change the shape of `identity`, check that
+`createVelveAuth` on a `"username"` mode without `recoveryCodes` still fails to
+compile (E-349).
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `database` | `Driver` | — | the driver from `@velve/auth/pg`, `/postgres-js` or `/neon`; the only way a connection enters |
@@ -3146,6 +3156,19 @@ createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationSe
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
 | `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
+
+```ts
+createSecondFactorCompletion({ driver, schema?, session?, sessionMetadata? })
+  .complete({ pendingToken, factor, observed }): Promise<IssuedSession>
+```
+
+The operation that finishes a second factor: it consumes the pending row and
+inserts the session **in one transaction**, so a failure between the two leaves
+neither effect. Without it the two halves live in different features — the
+pending row in this module, the session in `core/session` — and each can only
+reach one of them, which is how a spent intermediate state ends up with no
+session behind it. The resulting session carries the factors the pending row had
+completed plus the one just proved (S-FIX-1, S-RACE-5).
 
 Five attempts, then the row is deleted and the attempt starts again at the
 password (L-8). The count and the deletion are one transaction, so a fifth

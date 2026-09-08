@@ -1918,7 +1918,15 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Context.** E-234 recorded that `revokeEverySessionOfUser` demands an `Actor`, that the only lawful producer is session resolution, and that the reset path — which has no session — needs a second producer with the provenance "redeemed one-time token", to be built by the feature that redeems them.
 **Rejected.** (a) A producer in `src/core/flows/` casting a redemption result to `Actor`. (b) Adding the producer to `src/core/db/actor.ts` beside its sibling.
 **Reason.** (b) is right and edits a file this feature does not own. (a) is possible — `Actor` is exported and a cast compiles — and is exactly the hole E-93 walls up: the brand exists so that minting an actor is visible in review, and a second cast in a second file makes it two places to look instead of one. The deciding argument is that no password-reset flow ships in this feature, so the producer would have had no caller, and an unused escape hatch is the worst kind.
-**Price.** E-234 stays open a wave longer, and the requirement it carries — S-FIX-6 for the reset path — remains half satisfiable. Whoever builds `password.redeemReset` will meet it, and the right move then is still the one E-234 named: put the producer in `actor.ts`, next to the one that already exists, and let the brand keep meaning what it means.
+**Price.** E-234 stays open a wave longer, and the requirement it carries — S-FIX-6 for the reset path — remains half satisfiable. Whoever builds `password.redeemReset` will meet it, and the right move then is still the one E-234 named: put the producer in `actor.ts`, next to the one that already exists, and let the brand keep meaning what it means. **Correction after the main gate:** the reason above is written as though no producer were *possible* from inside this feature, and that is false. This compiles today, in this feature's own area, with no cast and without tripping the scan that pins minting to `db/actor.ts`:
+
+```ts
+const issued = await sessions.issue({ userId, factors: ["password"], observed });
+const resolved = await sessions.resolve(issued.token);
+return resolved === null ? null : actorOfResolvedSession(resolved);
+```
+
+`issue` takes a bare `userId: string`, so an arbitrary string out of a request becomes a branded `Actor` in two awaits — the E-93 hole, reachable now, and reachable by anyone, not only by a feature that wanted an actor. It was not taken here, and the deciding argument was the second one this entry already gives: no reset flow ships in this feature, so the producer would have had no caller. That argument stands on its own. What does not stand is the claim that the brand made the alternative impossible; it made it *visible*, which is a weaker and more honest thing, and the laundering path belongs written down where the next reader looks for it.
 
 ### The route table is the set this feature declares, named rather than counted
 `E-342` · auth-core · S-CSRF-1
@@ -1975,3 +1983,60 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Rejected.** (a) Leaving the method off. (b) Requiring the driver to grow a `close`.
 **Reason.** (a) removes a published method. (b) changes an interface three driver adapters implement, in files this feature does not own, to add a capability the library never needs — it opened nothing. The method resolves and the reference says why in one sentence.
 **Price.** A method that looks like a resource release and is not, which is precisely the shape that gets called in a `finally` and trusted. An application that expects `close()` to end its pool will leak it and get no warning.
+
+
+### The mode was not inferrable, so the requirement it carries never bit
+`E-349` · auth-core · S-DEFAULT-4, correction
+
+**Context.** `RecoveryCodesRequirement<M>` was written, exported, documented and reported as closing E-207. The gate wrote four lines of ordinary configuration — `username` mode, no `recoveryCodes` — and they compiled clean.
+**Rejected.** Nothing. This is a defect, and it shipped.
+**Reason.** `M` had exactly one candidate inference site, `identity: IdentityConfig<M>`, and `IdentityConfig` was a conditional type. A conditional type is not an inference position, so `M` never got a candidate, fell back to its constraint `IdentityMode`, and `RecoveryCodesRequirement<IdentityMode>` distributed into a union whose optional branch accepts everything. The type was correct and could not fire. `IdentityConfig<M>` is now `IdentityConfigurationInput & { readonly mode: M }` — reusing the lookup table `core/identity` already keeps, with `M` in a plain property position, which is the shape `IdentityFieldsByMode` beside it had used all along.
+**Price.** Two collateral failures rode along, and both were reported as working. The `username` namespace was pruned in the one mode that has it, because `ModeHasUsername<IdentityMode>` is not `true` — so 3.15 A.1's design B, chosen precisely so the error names the mode, named the union instead. And the reference stated twice, in this feature's own chapter, that the mode is inferred and that the omission is a compile error. Both false as shipped, both now true, and the reference now says which detail they depend on, because the natural way to write that type is the way that breaks them.
+
+### A cast made the test say the same thing whether the type worked or not
+`E-350` · auth-core · S-DEFAULT-4, correction
+
+**Context.** The test for S-DEFAULT-4 wrote `createVelveAuth(withoutCodes as never)` for the failing case and the same cast for the passing one, and asserted on the runtime throw.
+**Rejected.** Keeping the cast and adding a separate type test beside it.
+**Reason.** `as never` is assignable to every parameter, so the call compiles whatever the parameter type says — the assertion could not observe the type half at all, and reported success for as long as the type was broken. §3 asks for `@ts-expect-error` next to a failing-by-design case, and the repository uses it thirteen times elsewhere; this was the one place that needed it and did not have it. The casts are gone and the directive is there, so `pnpm typecheck` fails with `Unused '@ts-expect-error' directive` the moment the type stops biting.
+**Price.** The lesson is not "use the directive"; it is that a test written *around* an inconvenience reports on something other than what it names. The cast went in to make the fixture type-check quickly, and from that moment the test measured the runtime check twice and the type check never — while its name promised both. The planted regression that proves it now fires produced exactly the error above, and produced nothing at all before.
+
+### The one value that proves the encryption ran was the one left out
+`E-351` · auth-core · S-REST-1, correction
+
+**Context.** E-337 recorded the S-REST-1 measurement as seven values in three encodings, twenty-one searches. T-REST-1 decomposes to twenty-four values; sixteen belong to modules other features build; twenty-four minus sixteen is eight.
+**Rejected.** Treating the difference as a rounding of an already-stated shortfall.
+**Reason.** The missing value is the PHC string, which T-REST-1 names separately from the password, and the separation is the whole point: Argon2id keeps the plaintext out of a dump whether or not `password-enc` encrypted anything, so searching for the plaintext proves nothing about the envelope. The PHC string is the only one of the eight that fails if the envelope silently no-ops. The test already held the key ring and had already fetched the credential row; adding the value was one `openPhc` call. The count is now eight values, twenty-four searches, and the tree agreed with itself in three places only after all three were corrected — the comment said eight while the assertion and the entry said seven.
+**Price.** The figure was reported to a coordinator and written into an entry before the decomposition it claimed to follow had been done arithmetic on. A stated count is only worth what its derivation is worth, and this one was derived from what the test happened to create rather than from the requirement. The planted fault that now proves it — the PHC written into a text column — reports `password hash (PHC) as $argon2id$v=…`, which is what a no-op envelope would have looked like.
+
+### Eight of eleven whole-table assertions passed on an empty table
+`E-352` · auth-core · S-CSRF-1, correction
+
+**Context.** E-342 rejected a threshold in favour of naming the seven routes, and said in as many words that a number "passes on an empty table for the wrong reason". The naming was applied to three assertions. The other eight iterated `routes` and asserted over the result.
+**Rejected.** A shared non-empty guard in `beforeAll`, which would have satisfied the letter.
+**Reason.** `expect(codes).toStrictEqual(routes.map(() => "403 origin_not_allowed"))` compares an empty list with an empty list, and reports that every route refuses a foreign origin having tested none. The same shape carried S-CACHE-4's pending-cookie sweep and S-CSRF-4's row-count sweep — the two assertions carrying the actual security claims of this feature. Each expectation now counts against `DECLARED_ROUTES` rather than against the list it just iterated, so the count and the thing counted have different sources. A guard in `beforeAll` would have been one assertion protecting eight; putting the count in each is what makes each one able to fail alone.
+**Price.** The entry that argued for naming over counting was written by the same author who then wrote eight assertions that counted, in the same file, in the same sitting. Knowing the failure shape is not the same as recognising it, and nothing in a green run distinguishes them — the empty-list plant does, and it is the only thing that did. Three failed before it; eight fail now, and the three that still pass are the three that never read the table.
+
+### Admitting a file to a scan's list is not the same as scanning it
+`E-353` · auth-core · S-TOKEN-1, correction
+
+**Context.** The L-11 sweep names `one_time_token`, so `test/token-static-scan.test.ts` went red on a list of the files allowed to name the table, and the list was widened to admit `auth/maintenance.ts`.
+**Rejected.** Leaving the widening as it stood.
+**Reason.** Every other assertion in that file reads the token repository's source alone. Widening the path list therefore moved the sweep into the file's scope and into none of its checks: S-TOKEN-1's requirement that every predicate against the table names `purpose` no longer saw the one statement that has none. The widening was not dishonest but it was empty, and an exemption that is granted without being bounded is the shape a scan dies of. What the sweep may do is now pinned — one statement, a DELETE, a deadline predicate, no `purpose`, no `user_id`, its own marker — and a planted `AND user_id IS NOT NULL` fails it.
+**Price.** Two things had to be looked at that the widening had passed over. The neighbouring comment still called that repository's DELETE "the one row-removing statement in the library without an owner predicate"; there are seven such markers across five files, and the sentence is now a counted assertion rather than prose, so the next one to be added has to move a number. And the sweep names the table in a list of tables while building its SQL from the configured schema, so the name and the statement never meet in one literal — the path scan matched a data structure, not a query, which is precisely why matching it proved nothing.
+
+### The pending row and the session it becomes are one transaction
+`E-354` · auth-core · S-FIX-1, S-RACE-5
+
+**Context.** Nothing in the repository consumed a pending row and inserted a session together. `factor-totp` and `factor-webauthn` each reached the gap from their own side; neither can close it, because the pending service is in one module and the session service in another and each feature owns one.
+**Rejected.** (a) Leaving it to whichever factor feature writes its verify route first. (b) Putting the operation in the assembly, where the composition belongs.
+**Reason.** (a) leaves two features to solve the same problem twice and to disagree; it is also the failure mode S-FIX-1 exists for — a spent intermediate state with no session behind it, which locks a user out of a sign-in they completed. (b) is where it belongs conceptually and is not where the callers are: both features import the pending barrel and neither imports the assembly, so a function there would have been a function they could not reach. It sits beside the pending module and binds both services to the same transaction.
+**Price.** `core/factor/pending` now imports `core/session`, which is a dependency the module did not have and does not need for anything else it does. The concurrency property it looks like it provides, it does not: fifty racers still yield exactly one session because `consume` is a single `DELETE … RETURNING`, and removing the transaction leaves that test green. What the transaction buys is the rollback, and only the rollback test sees it — which is why both are written and why the non-transactional plant fails exactly one of them.
+
+### What the eight trust-level events share is the new token, not a deleted row
+`E-355` · auth-core · S-FIX-1, correction
+
+**Context.** `TRUST_LEVEL_EVENTS` is documented as "the eight events after which the previous session row is gone and a new token has been issued".
+**Rejected.** Narrowing the list to the events that really do replace a session row.
+**Reason.** The first half of that sentence is false for three of the eight. A passkey sign-in and a password sign-in from no session replace nothing, because there is nothing; a second factor replaces a pending row, which is not a session. Narrowing the list would have been worse than the wrong sentence — the events are on it because each is a change of trust level that must hand back a new token, and that is the invariant T-FIX-1 reads them for. The comment now says which row goes in which case, and that the shared invariant is the token.
+**Price.** A comment that was three sentences and is now six, on a constant of eight strings. It earns them: the sentence it replaced was the kind that reads as a specification and is quoted as one, and the first reader to build the passkey path would have gone looking for a session row to delete.

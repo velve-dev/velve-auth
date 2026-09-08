@@ -2,7 +2,7 @@ import type { Driver } from "../db/driver.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import type { Clock } from "../http/environment.js";
 import type { BucketRule } from "../http/rate-limit.js";
-import type { UsernameRules } from "../identity/configuration.js";
+import type { IdentityConfigurationInput } from "../identity/configuration.js";
 import type { KeyProvider } from "../keys/provider.js";
 import type { PasswordConfig } from "../password/config.js";
 import type { SessionConfig } from "../session/config.js";
@@ -93,11 +93,16 @@ export interface RateLimitConfig {
 	};
 }
 
-export type IdentityConfig<M extends IdentityMode> = M extends "email"
-	? { mode: "email" }
-	: M extends "username"
-		? { mode: "username"; username?: Partial<UsernameRules> }
-		: { mode: "username_email"; username?: Partial<UsernameRules> };
+/**
+ * `mode` stands alone as `{ readonly mode: M }` because that is the only shape `M` can be inferred
+ * from. Written as one conditional type — which is what it was — the whole type is a non-inferrable
+ * position, `M` falls back to the union, `RecoveryCodesRequirement` distributes and its optional
+ * branch swallows every configuration. The rules are attached by intersection, so the constraint
+ * that only a username mode carries them survives without costing the inference (E-349).
+ */
+export type IdentityConfig<M extends IdentityMode> = IdentityConfigurationInput & {
+	readonly mode: M;
+};
 
 /**
  * S-DEFAULT-4 and E-207: 3.4 asks for a start error, and this makes it a compile error as well.

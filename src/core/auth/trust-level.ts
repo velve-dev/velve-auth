@@ -1,8 +1,11 @@
 /**
- * S-FIX-1 and T-FIX-1: the eight events after which the previous session row is gone and a new
- * token has been issued. The list is a constant rather than eight scattered call sites because
- * T-FIX-1 is table-driven from it — a ninth event added without a case here fails the count, and
- * a case removed fails it too.
+ * S-FIX-1 and T-FIX-1: the eight events after which a newly issued token is in the caller's hands
+ * and no row that carried the old trust level survives. Which row that is differs — a password
+ * change replaces a session, a second factor replaces a pending row, and a passkey sign-in and an
+ * anonymous password sign-in replace nothing, because there was nothing. The invariant the eight
+ * share is the new token, not a deleted session. The list is a constant rather than eight scattered
+ * call sites because T-FIX-1 is table-driven from it: a ninth event added without a case here fails
+ * the count, and a case removed fails it too.
  */
 export const TRUST_LEVEL_EVENTS = [
 	"sign_in_password",

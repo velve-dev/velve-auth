@@ -16,6 +16,8 @@ import type {
 	PendingToken,
 	RemovedPendingAuthentication,
 	SecondFactor,
+	SecondFactorCompletion,
+	SecondFactorCompletionOptions,
 	StoredPendingAuthentication,
 } from "../src/core/factor/pending/index.js";
 import type { SessionToken } from "../src/core/session/token.js";
@@ -63,6 +65,14 @@ describe("the surface the pending module publishes", () => {
 		expectTypeOf<keyof PendingAuthenticationRepositoryOptions>().toEqualTypeOf<
 			"driver" | "schema"
 		>();
+	});
+
+	/** S-FIX-1: the composition neither factor feature can write, because each owns one half. */
+	it("publishes the operation that turns a proved factor into a session", () => {
+		expectTypeOf<SecondFactorCompletion["complete"]>().toBeFunction();
+		expectTypeOf<SecondFactorCompletionOptions["driver"]>().not.toBeAny();
+		expectTypeOf<SecondFactorCompletionOptions>().toHaveProperty("schema");
+		expectTypeOf<SecondFactorCompletionOptions>().toHaveProperty("sessionMetadata");
 	});
 
 	it("publishes the repository and service contracts the factor features build against", () => {

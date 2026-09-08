@@ -33,6 +33,9 @@ const DECLARED_ROUTES = [
 	"session.refresh",
 ];
 
+/** The GET routes of that set, named for the same reason: a count passes on an empty table. */
+const DECLARED_GET_ROUTES = ["session.read", "session.list"];
+
 /** 3.15 D.3: the only route without an origin check is the provider's redirection back. */
 const ROUTES_THAT_MAY_BE_EXEMPT = new Set(["signIn.oauth.callback"]);
 
@@ -77,7 +80,8 @@ describe("the origin check over the whole table (S-CSRF-1)", () => {
 			}),
 		);
 
-		expect(codes).toStrictEqual(routes.map(() => "403 origin_not_allowed"));
+		expect(codes).toHaveLength(DECLARED_ROUTES.length);
+		expect(codes).toStrictEqual(DECLARED_ROUTES.map(() => "403 origin_not_allowed"));
 	});
 
 	/** 3.11: the check lies before the handler on the direct server call too, and E-121 made it required. */
@@ -101,7 +105,9 @@ describe("what a GET may do (S-CSRF-4)", () => {
 
 	it("changes no row through a reading GET", async () => {
 		const before = await countEveryRow();
-		for (const route of routes.filter((route) => route.method === "GET")) {
+		const gets = routes.filter((route) => route.method === "GET");
+		expect(gets.map((route) => route.name)).toStrictEqual(DECLARED_GET_ROUTES);
+		for (const route of gets) {
 			await mounted.handler(
 				requestTo(route.path === "/username/available" ? `${route.path}?username=x` : route.path, {
 					method: "GET",
@@ -142,6 +148,7 @@ describe("the routes that read the pending cookie (S-CACHE-4)", () => {
 
 		expect(PENDING_CALLER_ROUTES).toHaveLength(4);
 		const four: readonly string[] = PENDING_CALLER_ROUTES;
+		expect(routes.map((route) => route.name)).toStrictEqual(DECLARED_ROUTES);
 		expect(declaredPending.filter((name) => !four.includes(name))).toStrictEqual([]);
 	});
 
@@ -152,8 +159,8 @@ describe("the routes that read the pending cookie (S-CACHE-4)", () => {
 		);
 		const withoutCookie = await Promise.all(routes.map((route) => answerFor(route, undefined)));
 
+		expect(withPending).toHaveLength(DECLARED_ROUTES.length);
 		expect(withPending).toStrictEqual(withoutCookie);
-		expect(withPending.length).toBe(routes.length);
 	});
 });
 
@@ -208,11 +215,15 @@ describe("the cookies this library can ever set (S-COOKIE-6)", () => {
 	/**
 	 * The two names are the whole set the library can express, and `assertCookieNamesAreEnumerated`
 	 * makes a third a 500. This table sets neither: the routes that issue a session or a pending
-	 * state belong to other features of this wave, so the count here is zero and says so.
+	 * state belong to other features of this wave, so the count here is zero and says so. The one
+	 * this feature does set — the clearing of the session cookie on sign-out — needs a session that
+	 * already exists, and is measured in `auth-cookie-content.test.ts`.
 	 */
 	it("sets no name outside the enumerated two", async () => {
 		const seen = new Set<string>();
+		let swept = 0;
 		for (const route of routes) {
+			swept += 1;
 			const answer = await mounted.handler(
 				requestTo(route.path === "/username/available" ? `${route.path}?username=x` : route.path, {
 					method: route.method,
@@ -228,6 +239,7 @@ describe("the cookies this library can ever set (S-COOKIE-6)", () => {
 			DEFAULT_COOKIE_NAMES.session,
 			DEFAULT_COOKIE_NAMES.pending,
 		]);
+		expect(swept).toBe(DECLARED_ROUTES.length);
 		expect(enumerated.size).toBe(2);
 		expect([...seen].filter((name) => !enumerated.has(name))).toStrictEqual([]);
 		expect(seen.size).toBe(0);

@@ -191,7 +191,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const schema = config.schema ?? DEFAULT_SCHEMA;
 	const clock = config.clock ?? defaultClock;
 	const log = config.log ?? NO_SINK;
-	const identity = resolveIdentityConfiguration(config.identity);
+	const identity = resolveIdentityConfiguration<M>(config.identity);
 	// S-DEFAULT-6: parameters below the floor are refused here, at the start, and not at the first hash.
 	const password = resolvePasswordConfig(config.password);
 	const sessionSettings = sessionSettingsOf(config.session);
