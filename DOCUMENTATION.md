@@ -510,12 +510,12 @@ not compile. It is obtained from `actorOfResolvedSession(session)`, which is
 called with the session the library itself resolved; no handler builds an actor
 from a request body, a query string or a header (S-OWNER-7).
 
-`ResolvedSession` is the nominal type session resolution has to return. Today
-`actorOfResolvedSession` accepts any `{ userId: string }`, which means a caller
-one line away can still mint an actor from an untrusted string. Closing that
-door is one change to this parameter, and it belongs with the feature that owns
-session resolution; `CASE-STUDY.md` E-93 records the exact change and the shape
-that must stop compiling.
+`ResolvedSession` is the nominal type session resolution returns, and
+`actorOfResolvedSession` takes nothing else. A hand-built `{ userId: "…" }` does
+not compile, so the only way to an actor is through a session the library
+resolved itself (E-93). The brand is asserted in session resolution and nowhere
+else; a path that proves ownership differently — a redeemed one-time token, say
+— brings its own actor and does not borrow this one.
 
 ### `createOwnedRowRepository(options)`
 

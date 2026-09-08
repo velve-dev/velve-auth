@@ -6,9 +6,14 @@ import {
 	type SessionRepository,
 } from "../src/core/db/repositories/session.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import {
 	actorOfTestUser,
+	createUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
+import {
 	countingDriver,
 	DAY,
 	HOUR,

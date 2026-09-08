@@ -1,4 +1,3 @@
-import { type Actor, actorOfResolvedSession, type ResolvedSession } from "../src/core/db/actor.js";
 import type { Driver } from "../src/core/db/driver.js";
 import type { SessionInsert } from "../src/core/db/repositories/session.js";
 import { createSessionToken } from "../src/core/session/token.js";
@@ -7,14 +6,6 @@ const SECOND = 1_000;
 export const MINUTE = 60 * SECOND;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
-
-/**
- * In the library only session resolution produces a `ResolvedSession` (E-93). A test that needs an
- * actor for a user it created itself asserts that here, in one place, and says so.
- */
-export function actorOfTestUser(userId: string): Actor {
-	return actorOfResolvedSession({ userId } as ResolvedSession);
-}
 
 export function sessionInsertFor(
 	userId: string,
