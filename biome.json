@@ -48,6 +48,16 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["tools/check-*.mjs"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off"
+					}
+				}
+			}
 		}
 	]
 }

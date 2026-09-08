@@ -55,6 +55,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Session owner reassignment
+        run: pnpm check:session-owner
+
       - name: Dead code
         run: pnpm knip
 
