@@ -86,6 +86,18 @@ describe("web handler", () => {
 		expect(await response.json()).toEqual({ provider: "google", code: "abc" });
 	});
 
+	it("rejects a query parameter that appears twice instead of choosing a value", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/callback/google?code=first&code=second", {
+				method: "GET",
+				origin: null,
+			}),
+		);
+
+		expect(response.status).toBe(400);
+	});
+
 	it("still rejects a POST body field the route does not declare", async () => {
 		const { environment } = createHarness();
 		const response = await toWebHandler({ http: environment })(

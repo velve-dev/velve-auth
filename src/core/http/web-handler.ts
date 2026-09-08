@@ -17,10 +17,21 @@ export interface WebHandlerOptions {
 	readonly clientAddress?: (request: Request) => string | null;
 }
 
+/** The same rule as S-COOKIE-5: a repeated name is rejected rather than one of its values chosen. */
+function readQuery(url: URL): Record<string, string> {
+	const query: Record<string, string> = {};
+	for (const [name, value] of url.searchParams) {
+		if (Object.hasOwn(query, name)) {
+			throw new VelveError("invalid_input");
+		}
+		query[name] = value;
+	}
+	return query;
+}
+
 async function readInput(request: Request, match: RouteMatch): Promise<unknown> {
 	if (match.route.method === "GET") {
-		const query = Object.fromEntries(new URL(request.url).searchParams);
-		return { ...query, ...match.pathParameters };
+		return { ...readQuery(new URL(request.url)), ...match.pathParameters };
 	}
 	const text = await request.text();
 	if (text === "") {
