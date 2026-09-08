@@ -8,39 +8,77 @@ const REASSIGNMENT = [
 	/\bmerge\s+into\b[\s\S]*?\bsession\b[\s\S]*?\bupdate\s+set\b[\s\S]*?\buser_id\b/i,
 ];
 
-function withoutLiteralsAndComments(sql) {
-	let out = "";
-	let index = 0;
-	while (index < sql.length) {
-		const rest = sql.slice(index);
-		const quoted = /^'(?:[^']|'')*'/.exec(rest);
-		if (quoted) {
-			out += "''";
-			index += quoted[0].length;
+const QUOTES = new Set(["'", '"', "`"]);
+
+function endOfBlockComment(source, index) {
+	const close = source.indexOf("*/", index + 2);
+	return close === -1 ? source.length : close + 2;
+}
+
+function endOfLineComment(source, index) {
+	const newline = source.indexOf("\n", index);
+	return newline === -1 ? source.length : newline;
+}
+
+function endOfQuoted(source, index) {
+	const quote = source[index];
+	let cursor = index + 1;
+	while (cursor < source.length) {
+		if (source[cursor] === "\\") {
+			cursor += 2;
 			continue;
 		}
-		if (rest.startsWith("/*")) {
-			const end = sql.indexOf("*/", index + 2);
-			out += " ";
-			index = end === -1 ? sql.length : end + 2;
+		if (source[cursor] !== quote) {
+			cursor += 1;
 			continue;
 		}
-		if (rest.startsWith("--") || rest.startsWith("//")) {
-			const end = sql.indexOf("\n", index);
-			out += " ";
-			index = end === -1 ? sql.length : end;
+		if (quote === "'" && source[cursor + 1] === "'") {
+			cursor += 2;
 			continue;
 		}
-		out += sql[index];
-		index += 1;
+		return cursor + 1;
 	}
-	return out;
+	return source.length;
+}
+
+function commentEndsAt(source, index) {
+	const pair = source.slice(index, index + 2);
+	if (pair === "/*") return endOfBlockComment(source, index);
+	if (pair === "//" || pair === "--") return endOfLineComment(source, index);
+	return null;
+}
+
+/** Comments are dropped but string bodies are kept: dynamic SQL lives inside quotes,
+ * so removing them would hide exactly what this looks for. */
+export function statementsIn(source) {
+	const statements = [];
+	let current = "";
+	let index = 0;
+	while (index < source.length) {
+		const commentEnd = commentEndsAt(source, index);
+		if (commentEnd !== null) {
+			current += " ";
+			index = commentEnd;
+		} else if (QUOTES.has(source[index])) {
+			const quotedEnd = endOfQuoted(source, index);
+			current += source.slice(index, quotedEnd);
+			index = quotedEnd;
+		} else if (source[index] === ";") {
+			statements.push(current);
+			current = "";
+			index += 1;
+		} else {
+			current += source[index];
+			index += 1;
+		}
+	}
+	statements.push(current);
+	return statements;
 }
 
 export function reassignsSessionOwner(statement) {
-	const sql = withoutLiteralsAndComments(statement);
-	if (!SESSION_TABLE.test(sql) || !SETS_OWNER.test(sql)) return false;
-	return REASSIGNMENT.some((pattern) => pattern.test(sql));
+	if (!SESSION_TABLE.test(statement) || !SETS_OWNER.test(statement)) return false;
+	return REASSIGNMENT.some((pattern) => pattern.test(statement));
 }
 
 function sourceFiles(directory, found = []) {
@@ -57,8 +95,7 @@ export function scanTree(directories) {
 	let statementsScanned = 0;
 	for (const directory of directories) {
 		for (const path of sourceFiles(directory)) {
-			const contents = withoutLiteralsAndComments(readFileSync(path, "utf8"));
-			for (const statement of contents.split(";")) {
+			for (const statement of statementsIn(readFileSync(path, "utf8"))) {
 				if (!/\b(update|merge)\b/i.test(statement)) continue;
 				statementsScanned += 1;
 				if (reassignsSessionOwner(statement)) {
