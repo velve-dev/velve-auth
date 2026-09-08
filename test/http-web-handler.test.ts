@@ -143,6 +143,21 @@ describe("web handler", () => {
 
 		expect(response.status).toBe(429);
 		expect(response.headers.get("Retry-After")).toBe("30");
+	});
+
+	it("writes no Retry-After for a wait it cannot express", async () => {
+		const { environment } = createHarness({ rateLimitAllows: false });
+		const response = await toWebHandler({
+			http: {
+				...environment,
+				rateLimiter: {
+					consume: async () => ({ allowed: false, retryAfterSeconds: Number.POSITIVE_INFINITY }),
+				},
+			},
+		})(requestTo("/test/echo", { body: { value: "x" } }));
+
+		expect(response.status).toBe(429);
+		expect(response.headers.get("Retry-After")).toBeNull();
 		expect(await response.json()).toEqual({
 			error: { code: "rate_limited", message: "Too many requests.", retryAfterSeconds: 30 },
 		});

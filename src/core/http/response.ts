@@ -30,11 +30,24 @@ export function bodilessResponse(status: number, cookies: readonly CookieInstruc
 	return new Response(null, { status, headers: headersWith(cookies, null) });
 }
 
+const RETRY_AFTER_LIMIT_IN_SECONDS = 86_400;
+
+function writableWait(retryAfterSeconds: number | undefined): number | null {
+	if (retryAfterSeconds === undefined) {
+		return null;
+	}
+	const seconds = Math.ceil(retryAfterSeconds);
+	return Number.isInteger(seconds) && seconds >= 0 && seconds <= RETRY_AFTER_LIMIT_IN_SECONDS
+		? seconds
+		: null;
+}
+
 // H13: the wait is a header per RFC 9110 as well as a body field, so an intermediary can act on it.
 export function errorResponse(error: VelveError, cookies: readonly CookieInstruction[]): Response {
 	const response = jsonResponse(error.httpStatus, toErrorBody(error), cookies);
-	if (error.retryAfterSeconds !== undefined) {
-		response.headers.set("Retry-After", String(Math.ceil(error.retryAfterSeconds)));
+	const wait = writableWait(error.retryAfterSeconds);
+	if (wait !== null) {
+		response.headers.set("Retry-After", String(wait));
 	}
 	return response;
 }
