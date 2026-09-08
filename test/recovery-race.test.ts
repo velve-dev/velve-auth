@@ -102,13 +102,14 @@ describe("T-RACE-4: fifty redemptions of one recovery code leave one winner (S-R
 			rounds.push(await raceOneCode());
 		}
 
-		expect(rounds).toHaveLength(REPETITIONS);
-		expect(rounds.filter((round) => round.accepted === 1)).toHaveLength(REPETITIONS);
-		expect(rounds.filter((round) => round.remaining === CODES_PER_SET - 1)).toHaveLength(
-			REPETITIONS,
+		expect(rounds.map((round) => round.accepted)).toEqual(
+			Array.from({ length: REPETITIONS }, () => 1),
 		);
-		expect(rounds.reduce((total, round) => total + round.accepted + round.refused, 0)).toBe(
-			REPETITIONS * ATTEMPTS,
+		expect(rounds.map((round) => round.remaining)).toEqual(
+			Array.from({ length: REPETITIONS }, () => CODES_PER_SET - 1),
+		);
+		expect(rounds.map((round) => round.accepted + round.refused)).toEqual(
+			Array.from({ length: REPETITIONS }, () => ATTEMPTS),
 		);
 	}, 300_000);
 });

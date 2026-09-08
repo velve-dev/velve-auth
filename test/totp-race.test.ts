@@ -99,12 +99,11 @@ describe("T-RACE-3: fifty submissions of one code leave one winner (S-RACE-3)", 
 			rounds.push(await raceOneCode());
 		}
 
-		expect(rounds).toHaveLength(REPETITIONS);
-		expect(rounds.filter((round) => round.accepted === 1)).toHaveLength(REPETITIONS);
-		expect(rounds.filter((round) => round.usedSteps === 1)).toHaveLength(REPETITIONS);
-		expect(rounds.reduce((total, round) => total + round.accepted + round.refused, 0)).toBe(
-			REPETITIONS * ATTEMPTS,
+		const onePerRound = Array.from({ length: REPETITIONS }, () => 1);
+		expect(rounds.map((round) => round.accepted)).toEqual(onePerRound);
+		expect(rounds.map((round) => round.usedSteps)).toEqual(onePerRound);
+		expect(rounds.map((round) => round.accepted + round.refused)).toEqual(
+			Array.from({ length: REPETITIONS }, () => ATTEMPTS),
 		);
-		expect(rounds.reduce((total, round) => total + round.accepted, 0)).toBe(REPETITIONS);
 	}, 300_000);
 });
