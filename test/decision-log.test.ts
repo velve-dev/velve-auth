@@ -13,18 +13,52 @@ const BINARY_DIRECTORY = /^assets\//;
 /** Smart punctuation and pasted text produce dashes other than the ASCII hyphen. */
 const CITATION = /\bE[-‐-―−](\d+)\b/g;
 const RANGE_ROW = /^\| E-(\d+) … E-(\d+) \| (.+?) \|$/gm;
-const ENTRY_HEADING = /^\*\*E-(\d+) — (.+?)\*\*/gm;
-const REQUIRED_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
 
-function entries(): { number: number; title: string; body: string }[] {
-	const found = [...caseStudy.matchAll(ENTRY_HEADING)];
-	return found.map((match, index) => ({
+/** CLAUDE.md §1 made the log English; every entry is still German until the migration
+ * pass runs, so both forms are accepted until it has. */
+const GERMAN_ENTRY = /^\*\*E-(\d+) — (.+?)\*\*/gm;
+const ENGLISH_ENTRY = /^### (.+?)\n`E-(\d+)` · ([^·\n]+) · (.+?)$/gm;
+const GERMAN_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
+const ENGLISH_PARTS = ["**Context.**", "**Rejected.**", "**Reason.**", "**Price.**"];
+
+/** A line opening with an E-number claims to head an entry, whether or not it parses. */
+const NUMBER_CLAIM = /^[ \t]*(?:\*\*|`)?E-\d+\b/gm;
+
+type Heading = {
+	number: number;
+	title: string;
+	parts: string[];
+	start: number;
+	numberLineStart: number;
+};
+
+function label(entry: { number: number; title: string }): string {
+	return `E-${String(entry.number).padStart(2, "0")} (${entry.title})`;
+}
+
+function headings(): Heading[] {
+	const german = [...caseStudy.matchAll(GERMAN_ENTRY)].map((match) => ({
 		number: Number(match[1]),
-		title: match[2] as string,
-		body: caseStudy.slice(
-			match.index,
-			index + 1 < found.length ? found[index + 1]?.index : caseStudy.length,
-		),
+		title: String(match[2]),
+		parts: GERMAN_PARTS,
+		start: Number(match.index),
+		numberLineStart: Number(match.index),
+	}));
+	const english = [...caseStudy.matchAll(ENGLISH_ENTRY)].map((match) => ({
+		number: Number(match[2]),
+		title: String(match[1]),
+		parts: ENGLISH_PARTS,
+		start: Number(match.index),
+		numberLineStart: Number(match.index) + String(match[1]).length + "### \n".length,
+	}));
+	return [...german, ...english].sort((a, b) => a.start - b.start);
+}
+
+function entries(): (Heading & { body: string })[] {
+	const found = headings();
+	return found.map((heading, index) => ({
+		...heading,
+		body: caseStudy.slice(heading.start, found[index + 1]?.start ?? caseStudy.length),
 	}));
 }
 
@@ -51,8 +85,31 @@ function everyTrackedFile(): string[] {
 		.filter((path) => !NOT_A_CITATION_SITE.has(path));
 }
 
+function sourceLineAt(offset: number): string {
+	const end = caseStudy.indexOf("\n", offset);
+	return caseStudy.slice(offset, end === -1 ? caseStudy.length : end).trim();
+}
+
+function lineNumberAt(offset: number): number {
+	let line = 1;
+	for (let index = 0; index < offset; index++) if (caseStudy[index] === "\n") line++;
+	return line;
+}
+
 describe("decision log", () => {
 	const log = entries();
+
+	it("parses every line that claims a decision number", () => {
+		const parsed = new Set(log.map((entry) => entry.numberLineStart));
+		const unparsed = [...caseStudy.matchAll(NUMBER_CLAIM)]
+			.map((match) => Number(match.index))
+			.filter((offset) => !parsed.has(offset))
+			.map(
+				(offset) => `CASE-STUDY.md:${lineNumberAt(offset)} heads no entry: ${sourceLineAt(offset)}`,
+			);
+		expect(unparsed).toEqual([]);
+		expect(log.length).toBeGreaterThan(0);
+	});
 
 	it("numbers every decision exactly once", () => {
 		const counts = new Map<number, number>();
@@ -65,12 +122,8 @@ describe("decision log", () => {
 
 	it("gives every decision all four parts", () => {
 		const incomplete = log.flatMap((entry) => {
-			const missing = REQUIRED_PARTS.filter((part) => !entry.body.includes(part));
-			return missing.length === 0
-				? []
-				: [
-						`E-${String(entry.number).padStart(2, "0")} (${entry.title}) lacks ${missing.join(", ")}`,
-					];
+			const missing = entry.parts.filter((part) => !entry.body.includes(part));
+			return missing.length === 0 ? [] : [`${label(entry)} lacks ${missing.join(", ")}`];
 		});
 		expect(incomplete).toEqual([]);
 	});
@@ -80,7 +133,7 @@ describe("decision log", () => {
 		expect(ranges.length).toBeGreaterThan(0);
 		const outside = log
 			.filter((entry) => !ranges.some((r) => entry.number >= r.first && entry.number <= r.last))
-			.map((entry) => `E-${String(entry.number).padStart(2, "0")} (${entry.title})`);
+			.map(label);
 		expect(outside).toEqual([]);
 	});
 
