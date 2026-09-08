@@ -12,6 +12,8 @@ import {
 
 /** The route answers 204 with no body, so what a caller can tell apart is the status, the code
  * and the body — and for two rejections that must be one string. */
+const REMOVE_ANSWERED_204 = JSON.stringify({ status: 204, body: null });
+
 async function answerTo(attempt: Promise<unknown>): Promise<string> {
 	return attempt.then(
 		() => JSON.stringify({ status: 204, body: null }),
@@ -48,7 +50,7 @@ describe("owning a webauthn credential", () => {
 		const b = await createAccount(fixture);
 		const first = await enrol(fixture, a, "a-one");
 		await enrol(fixture, a, "a-two");
-		await enrol(fixture, b, "b-one");
+		const ownedByB = await enrol(fixture, b, "b-one");
 		await enrol(fixture, b, "b-two");
 
 		const before = await credentialCountOf(fixture, a);
@@ -58,10 +60,18 @@ describe("owning a webauthn credential", () => {
 		];
 		const after = await credentialCountOf(fixture, a);
 
-		expect(answers[0]).toBe(answers[1]);
+		/* Anchored, not merely equal: two identical wrong answers satisfy an equality as well as
+		   two identical right ones, and counting non-deletions cannot tell "correctly refused"
+		   from "never deletes anything" (E-482). */
+		expect(answers).toEqual([REMOVE_ANSWERED_204, REMOVE_ANSWERED_204]);
 		expect(before).toBe(2);
 		expect(after).toBe(before);
 		expect(await credentialCountOf(fixture, b)).toBe(2);
+
+		// The same call, in the same case, on a row that is the caller's: it deletes.
+		await fixture.service.remove({ actor: b, credentialId: ownedByB.credentialId });
+		expect(await credentialCountOf(fixture, b)).toBe(1);
+		expect(await credentialCountOf(fixture, a)).toBe(2);
 	});
 
 	it("removes the caller's own credential", async () => {
@@ -141,7 +151,7 @@ describe("owning a webauthn credential", () => {
 	 * same exit as a row that is not the caller's. */
 	it("answers a credential identifier that is not a uuid as it answers an unknown one", async () => {
 		const account = await createAccount(fixture);
-		await enrol(fixture, account, "one");
+		const keptOne = await enrol(fixture, account, "one");
 		await enrol(fixture, account, "two");
 
 		const answers = [
@@ -149,8 +159,10 @@ describe("owning a webauthn credential", () => {
 			await answerTo(fixture.service.remove({ actor: account, credentialId: randomUUID() })),
 		];
 
-		expect(answers[0]).toBe(answers[1]);
+		expect(answers).toEqual([REMOVE_ANSWERED_204, REMOVE_ANSWERED_204]);
 		expect(await credentialCountOf(fixture, account)).toBe(2);
+		await fixture.service.remove({ actor: account, credentialId: keptOne.credentialId });
+		expect(await credentialCountOf(fixture, account)).toBe(1);
 	});
 });
 
@@ -176,5 +188,77 @@ describe("who may name an owner", () => {
 				owner: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
 			}),
 		).not.toThrow();
+	});
+});
+
+/**
+ * Blocker on `recordAssertionStatement`: its `user_id = $2` is defence in depth — `verified.id`
+ * and `verified.userId` come from one already-verified row — and no case would have noticed it
+ * being lost. An S-OWNER-2 predicate nothing asserts is a predicate the next refactor removes.
+ */
+describe("recording an assertion", () => {
+	let fixture: WebAuthnFixture;
+
+	beforeAll(async () => {
+		fixture = await openWebAuthnFixture("webauthn_record_assertion");
+	});
+
+	afterAll(() => fixture.close());
+
+	it("writes nothing when the row and the owner it is presented with disagree", async () => {
+		const a = await createAccount(fixture);
+		const b = await createAccount(fixture);
+		await enrol(fixture, a, "a-key");
+		await enrol(fixture, b, "b-key");
+		const repository = createWebAuthnCredentialRepository({
+			driver: fixture.connection,
+			schema: fixture.schema,
+		});
+		const [belongingToA] = await repository.listDescriptorsOwnedBy({ owner: a });
+		if (belongingToA === undefined) {
+			throw new Error("the credential was not created");
+		}
+
+		const written = await repository.recordAssertion({
+			verified: { ...belongingToA, userId: b },
+			signCount: 4242,
+			isBackupEligible: true,
+			isCurrentlyBackedUp: true,
+		});
+
+		expect(written).toBeNull();
+		const [row] = await fixture.connection.query<{ sign_count: unknown; backup_state: boolean }>(
+			`SELECT sign_count, backup_state FROM ${fixture.schema}.webauthn_credential WHERE id = $1`,
+			[belongingToA.id],
+		);
+		expect(Number(row?.sign_count)).not.toBe(4242);
+		expect(row?.backup_state).toBe(false);
+	});
+
+	it("writes the row when the owner it is presented with is the row's own", async () => {
+		const account = await createAccount(fixture);
+		await enrol(fixture, account, "key");
+		const repository = createWebAuthnCredentialRepository({
+			driver: fixture.connection,
+			schema: fixture.schema,
+		});
+		const [own] = await repository.listDescriptorsOwnedBy({ owner: account });
+		if (own === undefined) {
+			throw new Error("the credential was not created");
+		}
+
+		const written = await repository.recordAssertion({
+			verified: own,
+			signCount: 4242,
+			isBackupEligible: true,
+			isCurrentlyBackedUp: true,
+		});
+
+		expect(written).not.toBeNull();
+		const [row] = await fixture.connection.query<{ sign_count: unknown }>(
+			`SELECT sign_count FROM ${fixture.schema}.webauthn_credential WHERE id = $1`,
+			[own.id],
+		);
+		expect(Number(row?.sign_count)).toBe(4242);
 	});
 });
