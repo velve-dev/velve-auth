@@ -50,7 +50,7 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 	 * T-REST-1 names the password and its PHC string separately, and the separation is the point:
 	 * Argon2id keeps the plaintext out of a dump on its own, so searching for the plaintext says
 	 * nothing about whether `password-enc` encrypted anything. The PHC string is the only one of
-	 * the eight that fails if the envelope silently no-ops (E-350).
+	 * the eight that fails if the envelope silently no-ops (E-351).
 	 */
 	const stored = await credentials.findByUserId(userId);
 	if (stored === null) {

@@ -90,7 +90,7 @@ describe("what else refuses to start", () => {
 	 * is gone: this read `createVelveAuth(withoutCodes as never)` for the failing case, and `as
 	 * never` is assignable to anything, so the assertion said the same thing whether the type
 	 * worked or not. §3 asks for `@ts-expect-error` beside a failing-by-design case; without it the
-	 * type half was unobserved for as long as it was broken (E-349).
+	 * type half was unobserved for as long as it was broken (E-350).
 	 */
 	it("refuses the username mode without recovery codes and starts with them", () => {
 		const usernameMode = {

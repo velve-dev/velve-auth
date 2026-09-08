@@ -97,8 +97,9 @@ export interface RateLimitConfig {
  * `mode` stands alone as `{ readonly mode: M }` because that is the only shape `M` can be inferred
  * from. Written as one conditional type — which is what it was — the whole type is a non-inferrable
  * position, `M` falls back to the union, `RecoveryCodesRequirement` distributes and its optional
- * branch swallows every configuration. The rules are attached by intersection, so the constraint
- * that only a username mode carries them survives without costing the inference (E-349).
+ * branch swallows every configuration. The username rules come from `IdentityConfigurationInput`,
+ * the lookup table `core/identity` already keeps, so the constraint that only a username mode
+ * carries them has one definition rather than a second one here (E-349).
  */
 export type IdentityConfig<M extends IdentityMode> = IdentityConfigurationInput & {
 	readonly mode: M;
