@@ -57,13 +57,24 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 		expect(offenders).toEqual([]);
 	});
 
+	/** A statement that genuinely has no actor to filter on says so in its own text,
+	 * citing the requirement that permits it. A marker travels with the statement, so
+	 * it survives an interpolated schema name — which the table name does not. */
+	const DECLARES_NO_ACTOR = /--\s*no owner predicate:\s*S-[A-Z]+-\d+/i;
+
+	/** `FOR UPDATE` locks rows; it changes none. */
+	const CHANGES_ROWS = /(?<!\bFOR\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
+
 	it("gives every row-changing statement an owner predicate", () => {
-		const changing = sqlLiterals().filter((literal) =>
-			/^\s*(DELETE\s+FROM|UPDATE)\b/i.test(literal.sql),
-		);
-		const withoutOwner = changing.filter(
-			(literal) => !/\bWHERE\b[\s\S]*(\$\{ownerColumn\}|\buser_id\b)/i.test(literal.sql),
-		);
+		// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
+		const changing = sqlLiterals().filter((literal) => CHANGES_ROWS.test(literal.sql));
+		const withoutOwner = changing
+			.filter((literal) => !DECLARES_NO_ACTOR.test(literal.sql))
+			.filter((literal) => {
+				// RETURNING user_id is a result column, not a predicate.
+				const predicate = literal.sql.split(/\bRETURNING\b/i)[0] ?? "";
+				return !/\bWHERE\b[\s\S]*(\$\{ownerColumn\}|\buser_id\b)/i.test(predicate);
+			});
 
 		expect(changing.length).toBeGreaterThan(0);
 		expect(withoutOwner).toEqual([]);
