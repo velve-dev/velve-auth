@@ -1185,3 +1185,41 @@ over the UTF-8 bytes of the token **text**, not over the 32 random bytes it
 encodes, so the verifier is computable from the cookie value without decoding
 it. A token spelled differently — padded, or in standard base64 — hashes
 differently and is simply not found.
+
+### `sessionMetadataFor(mode, observed)`
+
+```ts
+sessionMetadataFor(mode: SessionMetadataMode, observed: SessionMetadata): SessionMetadata
+```
+
+Decides what `velve.session.ip` and `velve.session.user_agent` are allowed to
+hold. `mode` is the top-level configuration option `sessionMetadata`; its
+default is `"truncated"` (L-10).
+
+| `mode` | `ip` | `user_agent` |
+|---|---|---|
+| `"truncated"` (default) | IPv4 to `/24`, IPv6 to `/64` | browser and system family |
+| `"full"` | the address as observed | the header, bounded to 512 characters |
+| `"none"` | `null` | `null` |
+
+`observed` carries what the request layer saw: `{ ipAddress, userAgent }`, each
+`string | null`. The result has the same shape and is what the session row is
+written with.
+
+The `/64` for IPv6 is the prefix length the rate limiter uses as well, so an
+address never appears in two different truncations. `"203.0.113.0/24"` is
+stored with its prefix, so a reader can tell a truncated value from a full one.
+An address a proxy wrote as an IPv4-mapped IPv6 address (`::ffff:203.0.113.42`)
+is truncated as IPv4; treating it as IPv6 would put every IPv4 client into one
+`/64`.
+
+A value that is not an address becomes `null` rather than an error: metadata is
+not part of the answer to who is signed in, and a malformed `X-Forwarded-For`
+must not cost a user their sign-in.
+
+Truncation happens in the process, before the value is used as a statement
+parameter. The full address therefore never reaches the database — not in a
+column, and not in a statement a database log might keep.
+
+A user agent that names neither a browser nor a system family becomes `null`;
+`"curl/8.7.1"` is stored as nothing rather than as a device fingerprint.

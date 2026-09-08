@@ -771,3 +771,21 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* Den Kodierer neben den Dekodierer in `keys/base64url.ts` legen, wo er hingehört.
 *Grund:* Die Eigentumsregel aus §5 der Repositoryregeln ist bindend: Ein Feature, das eine Änderung außerhalb seines Bereichs braucht, hält an und meldet sie, statt die fremde Datei zu ändern. Zwei Wellen-2-Features gleichzeitig in `keys/` wäre genau der Konflikt, den die Regel verhindert. Der Kodierer ist deshalb eine private Funktion in `session/token.ts` und keine zweite öffentliche Schnittstelle.
 *Preis:* Das Alphabet steht jetzt an zwei Stellen im Paket. Wenn `keys/` später einen Kodierer bekommt, ist der hier überflüssig und muss entfernt werden — bis dahin ist er eine Verdopplung, die niemand sieht, weil sie nicht exportiert wird.
+
+**E-222 — Gekürzt wird im Prozess, nicht in der Datenbank.**
+*Kontext:* PostgreSQL kann die Kürzung selbst: `set_masklen($1::inet, 24)` wäre eine Zeile SQL statt eines handgeschriebenen Adressparsers, und die Datenbank prüft die Adresse gleich mit.
+*Verworfen:* Die Kürzung in die `INSERT`-Anweisung zu legen.
+*Grund:* Dann wandert die vollständige Adresse als Parameter in die Anweisung, und was in einer Anweisung steht, steht bei eingeschaltetem `log_statement` oder `log_min_duration_statement` im Datenbankprotokoll — dauerhaft, außerhalb der Tabelle, und an einer Stelle, die keine Datenschutzfolgenabschätzung je betrachtet. L-10 begründet die Kürzung mit Art. 5 Abs. 1 lit. c DSGVO; Datenminimierung, die den vollen Wert vorher noch einmal durch ein Protokoll schickt, ist keine.
+*Preis:* Ein eigener Adressparser für IPv4 und IPv6 samt RFC-5952-Ausgabe, rund hundert Zeilen, die PostgreSQL geschenkt hätte. Er muss dieselbe Textform erzeugen, die `inet` zurückgibt, sonst unterscheidet sich der berechnete Wert vom gespeicherten.
+
+**E-223 — `::ffff:203.0.113.42` wird als IPv4 gekürzt.**
+*Kontext:* Ein vorgelagerter Proxy schreibt IPv4-Adressen häufig als IPv4-abgebildete IPv6-Adressen in `X-Forwarded-For`. Buchstabengetreu wäre das eine IPv6-Adresse und würde auf `/64` gekürzt.
+*Verworfen:* Die Familie so zu nehmen, wie die Adresse geschrieben ist.
+*Grund:* `::ffff:0:0/96` ist genau ein `/64`. Jeder IPv4-Client hinter einem solchen Proxy landete in derselben Präfixzeile — die Metadaten wären wertlos, und dieselbe Verwechslung in der Ratenbegrenzung wäre ein gemeinsamer Eimer für das halbe Internet. Die Abbildung ist eine Schreibweise, keine Familie.
+*Preis:* Die Kürzung hängt jetzt an einer Mustererkennung im Adressraum. Wer `::ffff:...` bewusst als IPv6-Adresse behandelt wissen will, bekommt das nicht — und `2002::/16` (6to4) ist derselbe Fall, wird aber nicht erkannt, weil er in der Praxis nicht mehr vorkommt.
+
+**E-224 — Eine unlesbare Adresse wird zu NULL, nicht zu einem Fehler.**
+*Kontext:* `ip` ist `inet`. Ein Wert, den PostgreSQL nicht als Adresse liest, lässt das `INSERT` scheitern — und das `INSERT` ist die Anmeldung. Die Kopfzeile, aus der der Wert stammt, wählt der Aufrufer.
+*Verworfen:* (a) Den Fehler durchreichen. (b) Den Rohwert in eine `text`-Spalte legen, statt ihn zu prüfen.
+*Grund:* (a) machte eine erfundene `X-Forwarded-For`-Zeile zum Anmeldeverhinderer — eine Verweigerung des Dienstes über eine Kopfzeile, die die Bibliothek nur protokolliert. (b) hätte die Typprüfung der Spalte aufgegeben, die genau diese Eingabe abfängt. Metadaten sind nicht Teil der Antwort auf „wer ist angemeldet"; sie dürfen die Antwort nicht kosten. Dasselbe gilt für den User-Agent, dessen Länge der Client bestimmt und der deshalb bei 512 Zeichen abgeschnitten wird, bevor er in eine unbegrenzte `text`-Spalte geht.
+*Preis:* Ein `NULL` in `ip` sagt nicht, ob niemand eine Adresse gemeldet hat oder ob die gemeldete unlesbar war. Diese Unterscheidung wäre ein zweites Feld wert, wenn jemand sie braucht; heute braucht sie niemand, und die Sitzungsliste zeigt in beiden Fällen dasselbe.
