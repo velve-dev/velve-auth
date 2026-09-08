@@ -16,6 +16,14 @@
 		[
 			"a double dash inside a string body, which opens no comment",
 			"SELECT 1 FROM ${table} WHERE purpose = '--' AND expires_at > now()"
+		],
+		[
+			"a quoted identifier holding a double dash",
+			"SELECT 1 FROM ${schema}.\"odd--name\" WHERE id = $1"
+		],
+		[
+			"a dollar-quoted body holding a double dash",
+			"CREATE FUNCTION f() AS $$ BEGIN -- inside the body\n RETURN 1; END $$"
 		]
 	],
 	"forbidden": [
@@ -30,6 +38,10 @@
 		[
 			"a line comment before the assignment list",
 			"UPDATE ${table}\n-- extends the idle deadline\nSET last_used_at = now() WHERE id = $1"
+		],
+		[
+			"a keyword-less fragment cut in half by a line comment",
+			"to_char(expires_at AT TIME ZONE 'UTC',\n-- the agreed shape\n'YYYY')"
 		]
 	]
 }
