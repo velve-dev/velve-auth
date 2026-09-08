@@ -26,6 +26,7 @@ import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
 import {
+	pendingRoutes,
 	type ResolutionMemo,
 	type ResolvedSessionView,
 	type RouteServices,
@@ -194,6 +195,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const services: RouteServices = {
 		sessions,
+		pending,
 		users,
 		resolutions,
 		identity,
@@ -204,6 +206,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	};
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);
+	const pendingTable = pendingRoutes(services);
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
@@ -217,6 +220,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			revokeAll,
 			refresh,
 			...(usernameTable ?? []),
+			...pendingTable,
 			...oauthRoutes(services),
 			...emailFlowRoutes(services),
 			...pluginRoutes(services),

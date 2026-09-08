@@ -27,6 +27,19 @@ afterAll(async () => {
  */
 const MINIMUM_ROUTES = 7;
 const MINIMUM_GET_ROUTES = 2;
+const MINIMUM_PENDING_READERS = 2;
+
+/**
+ * S-CACHE-4 counts **readers**, not authorities: the four routes with `caller: "pending"` evaluate
+ * `__Host-velve_pending` and every other route ignores it completely. `PENDING_CALLER_ROUTES`
+ * bounds the authorities, and until `pendingCookie` existed that bounded the readers too. It no
+ * longer does, so the reader set is named here and the count is what holds it (E-530).
+ */
+const ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE = new Set<string>([
+	...PENDING_CALLER_ROUTES,
+	"pending.read",
+	"pending.cancel",
+]);
 
 /** 3.15 D.3: the only route without an origin check is the provider's redirection back. */
 const ROUTES_THAT_MAY_BE_EXEMPT = new Set(["signIn.oauth.callback"]);
@@ -166,17 +179,37 @@ describe("the routes that read the pending cookie (S-CACHE-4)", () => {
 		expect(declaredPending).toStrictEqual(namedAndDeclared);
 	});
 
-	/** Every route that does not declare the cookie readable answers as if it were absent. */
-	it("answers a request carrying only the pending cookie exactly as one carrying no cookie", async () => {
-		const hidden = routes.filter((route) => !readsPendingCookie(route));
-		const withPending = await Promise.all(
-			hidden.map((route) => answerFor(route, `${DEFAULT_COOKIE_NAMES.pending}=${"p".repeat(43)}`)),
+	it("lets exactly the routes named for it read the cookie, and no sixth", () => {
+		const readers = namesOf(routes.filter(readsPendingCookie));
+		const namedAndDeclared = namesOf(
+			routes.filter((route) => ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.has(route.name)),
 		);
-		const withoutCookie = await Promise.all(hidden.map((route) => answerFor(route, undefined)));
+
+		expect(ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.size).toBe(6);
+		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(readers.length).toBeGreaterThanOrEqual(MINIMUM_PENDING_READERS);
+		expect(readers).toStrictEqual(namedAndDeclared);
+	});
+
+	/**
+	 * The set is taken from the names rather than from `readsPendingCookie`, because a route that
+	 * declares itself readable is excluded by the predicate and would leave this measuring the
+	 * predicate against itself.
+	 */
+	it("answers a request carrying only the pending cookie exactly as one carrying no cookie", async () => {
+		const mustIgnore = routes.filter(
+			(route) => !ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.has(route.name),
+		);
+		const withPending = await Promise.all(
+			mustIgnore.map((route) =>
+				answerFor(route, `${DEFAULT_COOKIE_NAMES.pending}=${"p".repeat(43)}`),
+			),
+		);
+		const withoutCookie = await Promise.all(mustIgnore.map((route) => answerFor(route, undefined)));
 
 		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
-		expect(hidden.length).toBe(routes.length - routes.filter(readsPendingCookie).length);
-		expect(withPending).toHaveLength(hidden.length);
+		expect(mustIgnore.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES - MINIMUM_PENDING_READERS);
+		expect(withPending).toHaveLength(mustIgnore.length);
 		expect(withPending).toStrictEqual(withoutCookie);
 	});
 });

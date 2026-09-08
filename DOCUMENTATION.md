@@ -948,6 +948,19 @@ path that is not absolute or carries an empty or trailing segment; `freshness:
 `ServerCallFields`; and, when the handler is built, a route table with a
 duplicate name or with two routes answering the same folded path.
 
+`readsPendingCookie(route)` is the predicate behind that field —
+`(route: RouteMetadata) => boolean`, true where the declaration resolved to
+`pendingCookie: "readable"`, which after `defineRoute` has run includes every
+route with `caller: "pending"`. It is not exported from the package; it lives in
+`core/http/route.ts` and the pipeline is its only caller, so what a route may see
+is decided in one place.
+
+S-CACHE-4 counts **readers**, and `caller` alone no longer bounds them. What
+bounds them is a named set in `test/auth-route-table.test.ts`, measured through
+that predicate: the four routes of 3.6 that the intermediate state authorises,
+plus `pending.read` and `pending.cancel`, which read the cookie and are
+authorised by nothing. Six names, and a seventh reader fails that case.
+
 `defineRoute` returns the route the table holds. It carries the declaration's
 metadata and its `input`, but **not** its `handler`: the invocation is reachable
 only through the pipeline, so a caller holding a route cannot run it past the
@@ -4092,13 +4105,15 @@ other features and this one may not write their files:
   flows over it do not.
 - `factor.totp`, `factor.webauthn`, `factor.recovery` and `signIn.passkey`.
 - everything OAuth, and the plugin interface.
-- `GET /pending` and `POST /pending/cancel`. The two methods exist on the
-  surface and take the token directly.
 
 The seams these fill are in place. The assembly composes its table from four
 modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
 `core/plugin/routes.ts` — and the last three return nothing today, so a feature
-adds a row by editing its own file. `pendingCookie: "readable"` is what the two
-`/pending` routes need and what they did not have; the cookie's visibility is no
-longer decided by the caller requirement.
+adds a row by editing its own file.
+
+`GET /pending` and `POST /pending/cancel` are no longer among the missing.
+`pendingCookie: "readable"` is what they needed and did not have; both are
+declared, both read `__Host-velve_pending` and neither is authorised by it. The
+two methods of `auth.pending` still exist beside them and take the token
+directly, for a caller that is not a browser.
 

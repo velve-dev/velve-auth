@@ -4,9 +4,14 @@ name: Release tier
 # commit: one restarts the process to rotate the key ring, one removes an optional dependency, and
 # one reads the packed artefact. None of them belongs in a blocking gate, and a tier without a
 # schedule is a script nobody runs — which is what E-344 recorded and this closes.
+# The tag trigger alone means the tier's first run is after the merge that could break it, so a
+# nightly schedule runs it before the tag rather than at it (E-535). It stays out of the blocking
+# gate for the reason E-526 gives.
 on:
   push:
     tags: ["v*"]
+  schedule:
+    - cron: "41 4 * * *"
   workflow_dispatch:
 
 jobs:

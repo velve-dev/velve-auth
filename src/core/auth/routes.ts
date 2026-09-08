@@ -1,4 +1,5 @@
-import type { Session } from "../http/caller.js";
+import { type PendingAuthenticationService, toPendingToken } from "../factor/pending/index.js";
+import type { PendingAuthentication, Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute } from "../http/route.js";
@@ -25,6 +26,7 @@ export type ResolutionMemo = WeakMap<Session, SessionResolution>;
 
 export interface RouteServices {
 	readonly sessions: SessionService;
+	readonly pending: PendingAuthenticationService;
 	readonly users: UserRepository;
 	readonly resolutions: ResolutionMemo;
 	readonly identity: IdentityConfiguration;
@@ -216,6 +218,56 @@ export function sessionRoutes(services: RouteServices) {
 	});
 
 	return [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] as const;
+}
+
+/**
+ * 3.15 D.3 rows `GET /pending` and `POST /pending/cancel`. Neither is authorised by the
+ * intermediate state — reading it and cancelling it are what a caller does when it has one —
+ * so both declare `pendingCookie: "readable"` rather than `caller: "pending"` (E-335, E-516).
+ */
+export function pendingRoutes(services: RouteServices) {
+	const read = defineRoute({
+		name: "pending.read",
+		method: "GET",
+		path: "/pending",
+		input: object({}),
+		errors: ["origin_not_allowed"] as const,
+		caller: "anonymous",
+		freshness: "not_required",
+		originCheck: "checked",
+		rateLimit: UNLIMITED,
+		pendingCookie: "readable",
+		/** B.7: the state names the factors still open and never any user data. */
+		handler: async (_input, context): Promise<PendingAuthentication | null> => {
+			if (context.pendingToken === null) {
+				return null;
+			}
+			const resolved = await services.pending.resolve(toPendingToken(context.pendingToken));
+			return resolved === null ? null : resolved.pending;
+		},
+	});
+
+	const cancel = defineRoute({
+		name: "pending.cancel",
+		method: "POST",
+		path: "/pending/cancel",
+		input: object({}),
+		errors: ["invalid_input", "rate_limited", "origin_not_allowed"] as const,
+		caller: "anonymous",
+		freshness: "not_required",
+		originCheck: "checked",
+		rateLimit: addressOnly(services),
+		pendingCookie: "readable",
+		// The cookie goes whether or not a row was there, so a cancelled attempt cannot be replayed.
+		handler: async (_input, context): Promise<void> => {
+			if (context.pendingToken !== null) {
+				await services.pending.cancel({ token: toPendingToken(context.pendingToken) });
+			}
+			context.cookies.clearPending();
+		},
+	});
+
+	return [read, cancel] as const;
 }
 
 export interface UsernameAvailabilityAnswer {
