@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main, "feature/**"]
   pull_request:
     branches: [main]
 
@@ -100,13 +99,14 @@ jobs:
 
           # A single NUL byte makes git classify a source file as binary, which hides
           # it from `git grep -I` and renders its diff as "Bin" in review.
-          echo "Checking that no source file contains a NUL byte"
-          BINARY=$(git ls-files -- src test tools migrations | while read -r f; do
+          echo "Checking that no text file contains a NUL byte"
+          BINARY=$(git ls-files -- . ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' \
+            ':!*.ico' ':!*.webp' ':!*.woff' ':!*.woff2' ':!*.pdf' ':!*.zip' | while read -r f; do
             [ -f "$f" ] || continue
             if ! tr -d '\000' < "$f" | cmp -s - "$f"; then echo "$f"; fi
           done)
           if [ -n "$BINARY" ]; then
-            echo "::error::source files contain a NUL byte and escape review and scanning"
+            echo "::error::text files contain a NUL byte and escape review and scanning"
             echo "$BINARY"
             fail=1
           fi
