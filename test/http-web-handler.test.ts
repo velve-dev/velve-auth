@@ -187,6 +187,26 @@ describe("web handler", () => {
 		]);
 	});
 
+	it("says so as well when the handler throws without consuming the bucket", async () => {
+		const rejecting = defineRoute({
+			...COLLIDING_DECLARATION,
+			name: "test.rejecting",
+			path: "/test/rejecting",
+			rateLimit: { perIpAddress: "none", perAccount: { capacity: 5, refillPerSecond: 0.01 } },
+			handler: async () => {
+				throw new ConcealedError("password_mismatch");
+			},
+		});
+		const { environment, logs } = createHarness({ routes: [rejecting] });
+		const response = await toWebHandler({ http: environment })(requestTo("/test/rejecting"));
+
+		expect(response.status).toBe(401);
+		expect(logs.map((entry) => entry.message)).toEqual([
+			"route declares an account rate limit it never consumed",
+			"request rejected",
+		]);
+	});
+
 	it("stays quiet when the route consumes the account bucket it declares", async () => {
 		const { environment, logs } = createHarness();
 		await toWebHandler({ http: environment })(

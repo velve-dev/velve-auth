@@ -186,10 +186,20 @@ export async function runRoute<Output>(
 
 	const cookies = createCookieCollector(cookiePolicyOf(environment));
 	const accountBucket = createAccountBucket(route, environment);
-	const output = await invocationOf(route)(await call.readInput(), () =>
-		createRequestContext(route, call, environment, cookies, accountBucket),
-	);
-	warnOnUnconsumedAccountBucket(route, accountBucket, environment);
+	let handlerReached = false;
+	const resolveContext = async (): Promise<RequestContext> => {
+		const context = await createRequestContext(route, call, environment, cookies, accountBucket);
+		handlerReached = true;
+		return context;
+	};
 
-	return { output, cookies: cookies.collect() };
+	try {
+		const output = await invocationOf(route)(await call.readInput(), resolveContext);
+		return { output, cookies: cookies.collect() };
+	} finally {
+		// The account bucket bounds failed attempts above all, so the check runs after a throw as well.
+		if (handlerReached) {
+			warnOnUnconsumedAccountBucket(route, accountBucket, environment);
+		}
+	}
 }
