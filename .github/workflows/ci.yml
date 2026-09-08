@@ -64,6 +64,9 @@ jobs:
       - name: Lock order
         run: pnpm check:lock-order
 
+      - name: SQL survives normalisation
+        run: pnpm check:sql-collapse
+
       - name: Dead code
         run: pnpm knip
 

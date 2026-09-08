@@ -1,7 +1,7 @@
 CREATE SCHEMA IF NOT EXISTS velve;
 
--- The runner creates this table before it can read its own ledger, so migration 1
--- must tolerate finding it already there.
+/* The runner creates this table before it can read its own ledger, so migration 1
+   must tolerate finding it already there. */
 CREATE TABLE IF NOT EXISTS velve.schema_migration (
   version     integer PRIMARY KEY,
   name        text NOT NULL,
@@ -27,8 +27,8 @@ CREATE TABLE velve.user (
 CREATE UNIQUE INDEX user_email_key        ON velve.user (email)        WHERE email IS NOT NULL;
 CREATE UNIQUE INDEX user_username_key_key ON velve.user (username_key) WHERE username_key IS NOT NULL;
 
--- phc holds AES-256-GCM ciphertext over the canonical PHC string, purpose
--- password-enc; scheme stays cleartext so the estate can be surveyed without a key (L-2).
+/* phc holds AES-256-GCM ciphertext over the canonical PHC string, purpose
+   password-enc; scheme stays cleartext so the estate can be surveyed without a key (L-2). */
 CREATE TABLE velve.password_credential (
   user_id     uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,
   phc         bytea NOT NULL,
@@ -74,7 +74,7 @@ CREATE TABLE velve.session (
 CREATE INDEX session_user_id_idx ON velve.session (user_id);
 CREATE INDEX session_sweep_idx   ON velve.session (absolute_expires_at);
 
--- E-23: a session changes owner only by being replaced, so the owner column is immutable.
+/* E-23: a session changes owner only by being replaced, so the owner column is immutable. */
 CREATE FUNCTION velve.reject_session_owner_update() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -124,8 +124,8 @@ CREATE TABLE velve.totp_used_step (
 );
 CREATE INDEX totp_used_step_sweep_idx ON velve.totp_used_step (expires_at);
 
--- key_version carries the token-pepper version the HMAC was taken under, so a
--- rotation does not invalidate every recovery code (L-3).
+/* key_version carries the token-pepper version the HMAC was taken under, so a
+   rotation does not invalidate every recovery code (L-3). */
 CREATE TABLE velve.recovery_code (
   user_id     uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE,
   code_hmac   bytea NOT NULL,

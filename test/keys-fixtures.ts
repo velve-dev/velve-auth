@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { EncryptionKeyPurpose, SigningKeyPurpose } from "../src/core/keys/purpose.js";
-import { randomBytes } from "../src/core/keys/random.js";
+import { randomBytes } from "../src/core/token/random.js";
 
 export function encodeBase64Url(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64url");

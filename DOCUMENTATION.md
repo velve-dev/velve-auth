@@ -709,11 +709,6 @@ know, `ciphertext_malformed` below the length of a nonce and a tag, and
 wrong key, a tampered byte or a rewritten header fails with
 `authentication_failed`.
 
-### `randomBytes(length)`
-
-`Uint8Array` of `length` bytes from `crypto.getRandomValues`. Every secret the
-library generates comes from here and from nowhere else (S-RAND-1, S-RAND-5).
-
 ### `equalsInConstantTime(left, right)`
 
 `boolean`. An XOR loop over two `Uint8Array`s that does not exit early on the
@@ -1666,3 +1661,231 @@ lands in that transaction and commits or rolls back with it.
 
 Either way, exactly one of two concurrent removals of the last two ways in
 succeeds and the other is refused with `last_sign_in_method`.
+
+## One-time artefacts
+
+Email verification, password reset, email change and magic link are the same
+object: a row in `velve.one_time_token` keyed by `sha256(token)`, carrying a
+purpose and an expiry. The plaintext token exists for exactly as long as it
+takes to hand it to the caller; nothing in the library stores it, logs it or
+puts it in an error message.
+
+### `randomBytes(length)`
+
+`Uint8Array` of `length` bytes from `crypto.getRandomValues`. Every secret the
+library generates comes from here and from nowhere else — this is the one module
+that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `length` | `number` | how many bytes to draw |
+
+### `encodeBase64Url(bytes)`
+
+`string`. Canonical base64url, no padding, written here rather than through
+`btoa` for the reason `decodeBase64Url` beside it does not use `atob`: section
+2.6 lists the runtime assumptions and neither is among them (E-62, E-257). It is
+the encoder for every secret the library hands out; the decoder beside it reads
+root keys.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `bytes` | `Uint8Array` | the bytes to encode |
+
+### `SecretToken`
+
+A `string` with a brand on it. A plain string — a user id, a session id, any
+other database key — is **not** assignable to `SecretToken`, so a key cannot
+arrive where a token is expected without `toSecretToken` being written at the
+call site. That is the half of S-RAND-6 this type provides.
+
+The other half does not hold yet: `SecretToken` is a subtype of `string`, so a
+token still flows into any parameter typed `string`, including `userId`. Closing
+that needs the `EntityId` type S-RAND-6 names, which does not exist in the core;
+T-RAND-6 asks for two negative cases that do not compile and one of them does.
+The brand is nominal in any case: it says where a value came from, not that the
+value is valid.
+
+### `createSecretToken()`
+
+The plaintext of a one-time artefact: 32 bytes from `randomBytes`, base64url
+encoded, 43 characters, 256 bit — the same width, the same source and the same
+encoding as a session token (S-RAND-4). It takes no parameters, because there is
+nothing about a secret for a caller to choose.
+
+### `toSecretToken(value)`
+
+Turns a string that arrived from outside into a `SecretToken`. It validates
+nothing, deliberately: a rejected shape would be a second answer beside "no
+row", and a malformed token would then be distinguishable from a well-formed one
+that was never issued (S-REPLAY-3). Its whole job is to make the step from
+untrusted string to lookup key a line someone wrote.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `value` | `string` | whatever arrived claiming to be a token |
+
+### `hashSecretToken(token)`
+
+The 32 bytes stored in `one_time_token.token_sha256`: SHA-256 over the token's
+UTF-8 bytes. Any string can be hashed, so a malformed token takes the same path
+as a well-formed one that was never issued.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `token` | `SecretToken` | the plaintext handed to the caller, or whatever arrived claiming to be one |
+
+### `ONE_TIME_TOKEN_PURPOSES` and `ONE_TIME_TOKEN_LIFETIME_SECONDS`
+
+The four purposes and the deadline each one carries (section 3.7).
+
+| Purpose | Deadline |
+|---|---|
+| `email_verify` | 24 hours |
+| `password_reset` | 1 hour |
+| `email_change` | 1 hour |
+| `magic_link` | 10 minutes |
+
+A deadline is not configurable and is not a parameter of any function here. The
+purpose decides it, so a caller cannot mint a reset token that outlives the hour.
+
+### `createOneTimeTokenRepository(options)`
+
+The two statements that touch `velve.one_time_token`, and the only ones in the
+library that do.
+
+| Option | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | the driver, or the one bound to an open transaction |
+| `schema` | `string` | the schema the table lives in |
+
+| Method | Does |
+|---|---|
+| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a row or `null` |
+
+`replaceOneTimeToken` runs in a transaction and takes `SELECT 1 FROM velve.user
+WHERE id = $1 FOR UPDATE` before it writes. The statement declares what it locks,
+`/* locks: <schema>.user */`, which is what `pnpm check:lock-order` reads: a
+repository builds its table name from the configured schema, so a scan cannot
+otherwise tell which table a lock takes (E-147). The replacement is one statement and
+therefore atomic, but at `READ COMMITTED` its `DELETE` works from the snapshot
+the statement began with and cannot remove a row a concurrent request inserted
+after it; without the lock, eight simultaneous requests leave up to eight live
+tokens where section 3.7 allows one.
+
+The lock is wider than the invariant it protects. While it is held, every write
+of a user-owned row for that account waits — a concurrent session insert for the
+same user blocks — and because the transaction carries the mail send, a hanging
+provider holds the lock for its whole timeout. Repository rules section 7 requires
+`velve.user` to be locked before any other table, and `pnpm check:lock-order`
+enforces it.
+
+Calling this inside `driver.transaction` rolls the whole issue back only if the
+driver joins the open transaction rather than opening a second. That is required
+of every driver under [the driver interface](#the-driver-interface) above, but it
+is a requirement on the implementation and not something the types carry:
+`Driver` is two method signatures. `createNodePostgresDriver` satisfies it, so
+the rollback of section 3.15 A.7 holds for `@velve/auth/pg` — the only driver
+that currently ships, since `@velve/auth/postgres-js` and `@velve/auth/neon`
+export nothing. A driver written elsewhere has to satisfy it too.
+
+Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
+code on it rather than one class per failure.
+
+| Code | Raised when |
+|---|---|
+| `one_time_token_owner_unknown` | the account the token would belong to does not exist — it was deleted between whatever resolved it and this call |
+| `one_time_token_purpose_unknown` | the purpose is not one of the four; only reachable from a caller that is not type-checked |
+| `one_time_token_not_written` | the insert reported no row, which is a broken invariant rather than a caller error |
+
+The first two are guards standing in front of the driver: without them the
+account case surfaces as a foreign-key violation and the purpose case as a
+not-null violation on `expires_at`, each carrying the table and the constraint
+name out of the library. The purpose guard runs before any statement, so an
+unknown purpose reaches no driver; the account guard runs on the lock, which has
+already read the row it needs. Messages are fixed per code, so nothing a caller
+passed can reach an error string. What the failure was about travels beside the
+code in `purpose`, which is one of the four or `null` for the one code that fires
+because the purpose was not one of them (E-129, E-265). All three become
+`internal_error` over HTTP.
+
+`consumeOneTimeToken` is the only way a one-time token is ever read. There is no
+method that finds one, counts them or looks one up: a read before the write is
+the gap two of the advisories behind this library walked through (S-RACE-2).
+
+It is also the one row-removing statement in the library with no owner predicate,
+and it carries `/* no owner predicate: S-TOKEN-4 */` in its own SQL to say so — a
+block comment, because a line comment swallows everything after it as soon as
+anything normalises the newlines away (E-266). The
+token is the authority there; the row names the account and nothing a caller
+sends does (E-142).
+
+Both methods demand the purpose beside the hash. A lookup without one does not
+compile, which is what S-TOKEN-1 asks for.
+
+`expiresAt` comes back as an ISO-8601 instant in UTC — a string, not a `Date`.
+The deadline is computed by the database from `now()`, so it is the database
+clock that decides both when a token expires and whether it has; and the string
+form is the one every driver agrees on.
+
+### `createOneTimeTokens(repository)`
+
+The two operations a flow needs, over that repository.
+
+| Method | Parameters | Returns |
+|---|---|---|
+| `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext `SecretToken` and its deadline |
+| `redeem` | `{ token: SecretToken, purpose }` | `{ purpose, userId, payload }`, or `null` |
+
+Requesting a token supersedes the user's earlier tokens of the same purpose, and
+holds under concurrent requests as well as sequential ones (S-TOKEN-3).
+
+`issue` returns the plaintext once. The library keeps no copy: the row holds
+the hash, and the token appears in no log line and in no error message. Issuing
+inside `driver.transaction` is what makes a rollback possible when the mail that
+carries the token cannot be sent (section 3.15 A.7) — subject to the driver
+joining the open transaction, as described under `replaceOneTimeToken` above.
+
+`redeem` answers `null` for a token that expired, for one already used, for one
+minted for a different purpose and for one that never existed. The four are the
+same answer on purpose (S-REPLAY-3): they are indistinguishable to the caller
+because they are indistinguishable to the statement, which learns only whether a
+row came back. Nothing downstream may reintroduce the difference; the visible
+code for all four is `invalid_token`, decided in `error-map.ts` and nowhere else.
+
+`userId` in the answer is the account the token was minted for, and it is the
+only account the redemption may act on. No session, cookie or input field takes
+part in that decision (S-TOKEN-4). A row that names no user is not redeemable and
+answers `null` like the rest.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `purpose` | `OneTimeTokenPurpose` | the purpose the token was minted and redeemed under |
+| `userId` | `string` | the account from `one_time_token.user_id` |
+| `payload` | `OneTimeTokenPayload` or `null` | whatever `issue` stored, for example the address an `email_change` moves to |
+
+### The types this module exports
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `SecretToken` | branded `string` | the plaintext of an artefact, above |
+| `OneTimeTokenPurpose` | `"email_verify" \| "password_reset" \| "email_change" \| "magic_link"` | every signature that touches the table |
+| `OneTimeTokenPayload` | `Readonly<Record<string, unknown>>` | what `issue` stores and `redeem` returns |
+| `OneTimeTokenRequest` | `{ purpose; userId: string; payload?: OneTimeTokenPayload }` | the argument of `issue` |
+| `IssuedOneTimeToken` | `{ token: SecretToken; expiresAt: string }` | the result of `issue` |
+| `OneTimeTokenRedemption` | `{ purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the result of `redeem` |
+| `OneTimeTokens` | `{ issue; redeem }` | the result of `createOneTimeTokens` |
+| `OneTimeTokenRepositoryOptions` | `{ driver: Driver; schema: string }` | the argument of `createOneTimeTokenRepository` |
+| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the argument of `replaceOneTimeToken` |
+| `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
+| `StoredOneTimeToken` | `{ userId: string \| null; payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns |
+| `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
+| `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
+| `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
+
+`payload` is `Readonly`: the object `redeem` hands back is the row's, not a copy
+to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in
+`StoredOneTimeToken`, because the column is nullable and a row that names no
+account is not redeemable — the service turns that row into `null` rather than
+handing a caller a target it does not have.
