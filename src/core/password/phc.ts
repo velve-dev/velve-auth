@@ -39,8 +39,11 @@ export function parsePhc(text: string): PhcString | null {
 		return null;
 	}
 
-	const salt = takeBytes(rest);
-	const hash = takeBytes(rest);
+	const saltField = rest.shift();
+	const hashField = rest.shift();
+	const salt = saltField === undefined ? undefined : decodeStandardBase64(saltField);
+	const hash = hashField === undefined ? undefined : decodeStandardBase64(hashField);
+
 	if (salt === null || hash === null || (salt === undefined && hash !== undefined)) {
 		return null;
 	}
@@ -116,12 +119,6 @@ function takeParameters(fields: string[]): ReadonlyMap<string, string> | null {
 	}
 
 	return parameters;
-}
-
-/** `undefined` when the field is absent, `null` when it is present but not base64. */
-function takeBytes(fields: string[]): Uint8Array<ArrayBuffer> | null | undefined {
-	const field = fields.shift();
-	return field === undefined ? undefined : decodeStandardBase64(field);
 }
 
 // A salt field may carry base64 padding, so `aac=` reads as well as a parameter with an empty

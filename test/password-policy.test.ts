@@ -33,9 +33,12 @@ describe("password configuration", () => {
 		expect(DEFAULTS.validate).toBeUndefined();
 	});
 
-	it("sizes the semaphore at min(4, cpus)", () => {
+	it("never sizes the semaphore above min(4, cpus)", () => {
+		const reported = globalThis.navigator?.hardwareConcurrency;
+		const cores = typeof reported === "number" && reported >= 1 ? Math.floor(reported) : 1;
+
 		expect(DEFAULTS.concurrentHashLimit).toBeGreaterThanOrEqual(1);
-		expect(DEFAULTS.concurrentHashLimit).toBeLessThanOrEqual(4);
+		expect(DEFAULTS.concurrentHashLimit).toBe(Math.min(4, cores));
 	});
 
 	it("accepts every parameter raised above the floor", () => {
@@ -62,6 +65,12 @@ describe("password configuration", () => {
 	it("refuses to start on a length ceiling above 4096 and on a nonsensical semaphore", () => {
 		expect(configurationErrorCode({ maximumLengthInBytes: 4097 })).toBe(
 			"maximum_length_above_ceiling",
+		);
+		expect(configurationErrorCode({ maximumLengthInBytes: 7 })).toBe(
+			"maximum_length_below_minimum_length",
+		);
+		expect(configurationErrorCode({ maximumLengthInBytes: 100.5 })).toBe(
+			"maximum_length_not_an_integer",
 		);
 		expect(configurationErrorCode({ concurrentHashLimit: 0 })).toBe(
 			"concurrent_hash_limit_out_of_range",

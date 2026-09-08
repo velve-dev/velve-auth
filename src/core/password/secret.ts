@@ -16,7 +16,7 @@ export function asDerivedKey(bytes: Uint8Array<ArrayBuffer>): DerivedKey {
 	return bytes as DerivedKey;
 }
 
-/** The only comparison the module makes on a derived key, and it is over equal-length buffers. */
+/** S-TIM-3: the only comparison the module makes on a derived key, over equal-length buffers. */
 export function derivedKeysAreEqual(left: DerivedKey, right: DerivedKey): boolean {
 	return equalsInConstantTime(left, right);
 }

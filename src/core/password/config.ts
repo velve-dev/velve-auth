@@ -61,12 +61,14 @@ export function resolvePasswordConfig(config: PasswordConfig = {}): ResolvedPass
 	);
 	assertAtLeast(minimumLength, MINIMUM_LENGTH_FLOOR, "minimum_length_below_floor");
 
-	if (
-		!Number.isInteger(maximumLengthInBytes) ||
-		maximumLengthInBytes > MAXIMUM_LENGTH_CEILING_IN_BYTES ||
-		maximumLengthInBytes < minimumLength
-	) {
+	if (!Number.isInteger(maximumLengthInBytes)) {
+		throw new PasswordConfigurationError("maximum_length_not_an_integer");
+	}
+	if (maximumLengthInBytes > MAXIMUM_LENGTH_CEILING_IN_BYTES) {
 		throw new PasswordConfigurationError("maximum_length_above_ceiling");
+	}
+	if (maximumLengthInBytes < minimumLength) {
+		throw new PasswordConfigurationError("maximum_length_below_minimum_length");
 	}
 
 	if (!Number.isInteger(concurrentHashLimit) || concurrentHashLimit < 1) {
@@ -89,15 +91,16 @@ export function resolvePasswordConfig(config: PasswordConfig = {}): ResolvedPass
 	};
 }
 
-// S-DOS-3 sizes the semaphore at `min(4, cpus)`. Node 20 has no `navigator`, so an unknown core
-// count falls back to the ceiling rather than to one, which would halve throughput on every
-// runtime that does not report (E-162).
+// S-DOS-3 sizes the semaphore at `min(4, cpus)`, so a runtime that reports no core count may not
+// be answered with the ceiling: on a one-core container that overshoots the requirement itself.
+// `navigator.hardwareConcurrency` is the only reading available to a Web-standards core, and one
+// is the answer when it is missing — Node 20 has to set `concurrentHashLimit` (E-183).
 function defaultConcurrentHashLimit(): number {
 	const reported = globalThis.navigator?.hardwareConcurrency;
 
 	return typeof reported === "number" && reported >= 1
 		? Math.min(CONCURRENT_HASH_LIMIT_CEILING, Math.floor(reported))
-		: CONCURRENT_HASH_LIMIT_CEILING;
+		: 1;
 }
 
 function assertAtLeast(
