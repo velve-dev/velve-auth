@@ -5,12 +5,12 @@ import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import { VelveError } from "../src/core/http/error-map.js";
 import {
-	assertSignInMethodRemains,
 	countSignInMethods,
+	removeSignInMethod,
 	type SignInMethodCount,
 	type SignInMethodQuery,
 	type SignInMethodRemoval,
-	type SignInMethodRemovalCheck,
+	type SignInMethodRemovalRequest,
 	totalSignInMethods,
 } from "../src/core/identity/sign-in-methods.js";
 import {
@@ -87,13 +87,13 @@ function countFor(userId: string, excluding?: SignInMethodRemoval): Promise<Sign
 async function removalOf(userId: string, removing: SignInMethodRemoval): Promise<string | null> {
 	try {
 		await connection.transaction((transaction) => {
-			const check: SignInMethodRemovalCheck = {
-				transaction,
+			const check: SignInMethodRemovalRequest = {
+				driver: transaction,
 				schema,
 				actor: actorOfResolvedSession({ userId }),
 				removing,
 			};
-			return assertSignInMethodRemains(check);
+			return removeSignInMethod(check);
 		});
 		return null;
 	} catch (cause) {
@@ -198,8 +198,8 @@ describe("the last sign-in method (L-13)", () => {
 		const other = await openTestConnection();
 		try {
 			await connection.query("BEGIN", []);
-			await assertSignInMethodRemains({
-				transaction: connection,
+			await removeSignInMethod({
+				driver: connection,
 				schema,
 				actor: actorOfResolvedSession({ userId }),
 				removing: { method: "password" },

@@ -6,8 +6,8 @@ import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import { VelveError } from "../src/core/http/error-map.js";
 import {
-	assertSignInMethodRemains,
 	countSignInMethods,
+	removeSignInMethod,
 	type SignInMethodRemoval,
 	totalSignInMethods,
 } from "../src/core/identity/sign-in-methods.js";
@@ -101,8 +101,8 @@ async function removeInTransaction(
 ): Promise<string> {
 	try {
 		await driver.query("BEGIN", []);
-		await assertSignInMethodRemains({
-			transaction: driver,
+		await removeSignInMethod({
+			driver,
 			schema,
 			actor: actorOfResolvedSession({ userId }),
 			removing: removal,
@@ -128,8 +128,8 @@ async function removeWithoutTransaction(
 	pause: () => Promise<void>,
 ): Promise<string> {
 	try {
-		await assertSignInMethodRemains({
-			transaction: driver,
+		await removeSignInMethod({
+			driver,
 			schema,
 			actor: actorOfResolvedSession({ userId }),
 			removing: removal,
@@ -272,7 +272,7 @@ describe("two removals of the last two ways in (L-13)", () => {
 	});
 
 	/**
-	 * `assertSignInMethodRemains` takes a `Driver` named `transaction`, and a caller who hands it
+	 * `removeSignInMethod` takes a `Driver`, and a caller who hands it
 	 * a plain driver gets no lock and no complaint. L-13 is then violated with no error anywhere.
 	 */
 	it("lets exactly one of them through even when the caller opened no transaction", async () => {
@@ -329,8 +329,8 @@ describe("the count as a hand-off to a caller who has not read it", () => {
 		});
 		const refusal = await connection
 			.transaction((transaction) =>
-				assertSignInMethodRemains({
-					transaction,
+				removeSignInMethod({
+					driver: transaction,
 					schema,
 					actor,
 					removing: { method: "password" },
@@ -391,8 +391,8 @@ describe("the count as a hand-off to a caller who has not read it", () => {
 });
 
 function removalOn(driver: Driver, userId: string, removing: SignInMethodRemoval): Promise<string> {
-	return assertSignInMethodRemains({
-		transaction: driver,
+	return removeSignInMethod({
+		driver,
 		schema,
 		actor: actorOfResolvedSession({ userId }),
 		removing,

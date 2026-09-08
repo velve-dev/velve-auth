@@ -21,8 +21,8 @@ export interface SignInMethodQuery {
 	readonly excluding?: SignInMethodRemoval;
 }
 
-export interface SignInMethodRemovalCheck {
-	readonly transaction: Driver;
+export interface SignInMethodRemovalRequest {
+	readonly driver: Driver;
 	readonly schema: string;
 	readonly actor: Actor;
 	readonly removing: SignInMethodRemoval;
@@ -104,46 +104,43 @@ function removalStatement(
 	}
 }
 
-async function removeUnlessItIsTheLast(
-	transaction: Driver,
-	check: SignInMethodRemovalCheck,
+async function removeUnderALockThatHolds(
+	driver: Driver,
+	request: SignInMethodRemovalRequest,
 ): Promise<boolean> {
-	const user = qualifiedTableName(check.schema, "user");
-	await transaction.query(`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE`, [check.actor]);
+	// velve.user is locked before any other table this call reads or writes.
+	const user = qualifiedTableName(request.schema, "user");
+	await driver.query(`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE`, [request.actor]);
 	const remaining = await countSignInMethods({
-		driver: transaction,
-		schema: check.schema,
-		actor: check.actor,
-		excluding: check.removing,
+		driver,
+		schema: request.schema,
+		actor: request.actor,
+		excluding: request.removing,
 	});
 	if (totalSignInMethods(remaining) === 0) {
 		throw new VelveError("last_sign_in_method");
 	}
 	// A row lock assigns a transaction id, and outside a transaction block it is gone by the
 	// next statement — which is how this asks whether the lock it just took still holds.
-	const [held] = await transaction.query<{ readonly lock_outlives_its_statement: boolean }>(
+	const [held] = await driver.query<{ readonly lock_outlives_its_statement: boolean }>(
 		`SELECT pg_current_xact_id_if_assigned() IS NOT NULL AS lock_outlives_its_statement`,
 		[],
 	);
 	if (held?.lock_outlives_its_statement !== true) {
 		return false;
 	}
-	const removal = removalStatement(check.schema, check.removing);
-	await transaction.query(removal.sql, [check.actor, ...removal.params]);
+	const removal = removalStatement(request.schema, request.removing);
+	await driver.query(removal.sql, [request.actor, ...removal.params]);
 	return true;
 }
 
-/**
- * Removes the named sign-in method unless it is the last one, in which case nothing is removed
- * and `last_sign_in_method` is thrown (L-13). The removal is part of the check because the two
- * cannot be separated: between a caller's check and a caller's DELETE, another removal fits.
- */
-export async function assertSignInMethodRemains(check: SignInMethodRemovalCheck): Promise<void> {
-	if (await removeUnlessItIsTheLast(check.transaction, check)) {
+/** Throws `last_sign_in_method` and removes nothing when this is the account's last way in (L-13). */
+export async function removeSignInMethod(request: SignInMethodRemovalRequest): Promise<void> {
+	if (await removeUnderALockThatHolds(request.driver, request)) {
 		return;
 	}
-	await check.transaction.transaction(async (transaction) => {
-		if (!(await removeUnlessItIsTheLast(transaction, check))) {
+	await request.driver.transaction(async (transaction) => {
+		if (!(await removeUnderALockThatHolds(transaction, request))) {
 			throw new VelveError("internal_error");
 		}
 	});
