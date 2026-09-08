@@ -11,6 +11,5 @@ export { KeyError } from "./errors.js";
 export type { KeyProvider } from "./provider.js";
 export type { EncryptionKeyPurpose, KeyPurpose, SigningKeyPurpose } from "./purpose.js";
 export { KEY_PURPOSES } from "./purpose.js";
-export { randomBytes } from "./random.js";
 export type { RootKeyProviderInput } from "./root-key-provider.js";
 export { rootKeyProvider } from "./root-key-provider.js";

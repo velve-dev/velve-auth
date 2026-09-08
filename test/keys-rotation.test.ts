@@ -5,11 +5,11 @@ import {
 	KeyError,
 	type KeyProvider,
 	openEnvelope,
-	randomBytes,
 	rootKeyProvider,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
 const VERSION_OFFSET = 1 + "A256GCM".length;

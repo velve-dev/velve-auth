@@ -4,11 +4,11 @@ import {
 	encryptWithPurposeKey,
 	KeyError,
 	openEnvelope,
-	randomBytes,
 	rootKeyProvider,
 	type SigningKeyPurpose,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { asEncryptionPurpose, generateRootKey } from "./keys-fixtures.js";
 
 const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });

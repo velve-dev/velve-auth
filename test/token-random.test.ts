@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { randomBytes } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 
 describe("randomBytes", () => {
 	it("returns the requested number of bytes", () => {

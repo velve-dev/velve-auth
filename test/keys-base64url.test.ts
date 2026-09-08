@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
-import { randomBytes } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { encodeBase64Url } from "./keys-fixtures.js";
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

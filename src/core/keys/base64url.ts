@@ -4,6 +4,28 @@ const BASE64URL_VALUE_OF = new Map<string, number>(
 	[...BASE64URL_ALPHABET].map((character, value) => [character, value]),
 );
 
+// Encoded here rather than through `btoa`, for the reason `atob` is not used below (E-62).
+export function encodeBase64Url(bytes: Uint8Array): string {
+	let text = "";
+	let bitBuffer = 0;
+	let bufferedBits = 0;
+
+	for (const byte of bytes) {
+		bitBuffer = (bitBuffer << 8) | byte;
+		bufferedBits += 8;
+		while (bufferedBits >= 6) {
+			bufferedBits -= 6;
+			text += BASE64URL_ALPHABET.charAt((bitBuffer >> bufferedBits) & 0b11_1111);
+		}
+	}
+
+	if (bufferedBits > 0) {
+		text += BASE64URL_ALPHABET.charAt((bitBuffer << (6 - bufferedBits)) & 0b11_1111);
+	}
+
+	return text;
+}
+
 // Decoded here rather than through `atob`, which section 2.6 does not list among the runtime
 // assumptions. Only the canonical spelling is accepted, so a mistyped root key is rejected instead
 // of silently decoding to the same bytes as the correct one.
