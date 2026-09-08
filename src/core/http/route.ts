@@ -130,6 +130,13 @@ function assertInputLeavesTheCallEnvelopeAlone(name: string, fields: readonly st
 	}
 }
 
+function pathParameterNames(path: string): readonly string[] {
+	return path
+		.split("/")
+		.filter((segment) => segment.startsWith(":"))
+		.map((segment) => segment.slice(1));
+}
+
 function assertFreshnessHasASession(
 	name: string,
 	caller: CallerRequirement,
@@ -151,7 +158,10 @@ export function defineRoute<
 ): Route<Name, Path, Input, Output, Code> {
 	assertPathIsRoutable(declaration.path);
 	assertFreshnessHasASession(declaration.name, declaration.caller, declaration.freshness);
-	assertInputLeavesTheCallEnvelopeAlone(declaration.name, declaration.input.fields);
+	assertInputLeavesTheCallEnvelopeAlone(declaration.name, [
+		...declaration.input.fields,
+		...pathParameterNames(declaration.path),
+	]);
 
 	const route: Route<Name, Path, Input, Output, Code> = {
 		name: declaration.name,

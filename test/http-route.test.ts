@@ -89,6 +89,16 @@ describe("defineRoute", () => {
 		expect(() => defineRoute({ ...declaration, path: "test/declared" })).toThrow(/absolute/);
 	});
 
+	it("refuses a path parameter that the direct server call reserves", () => {
+		expect(() =>
+			defineRoute({
+				...declaration,
+				name: "test.reserved.path",
+				path: "/test/reserved/:sessionToken",
+			}),
+		).toThrow(/reserves/);
+	});
+
 	it("refuses an input field that the direct server call reserves", () => {
 		for (const field of ["origin", "sessionToken", "pendingToken", "ipAddress", "userAgent"]) {
 			expect(() =>
