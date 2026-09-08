@@ -1,8 +1,10 @@
-import { scanTree } from "./session-owner-update.mjs";
+import { scanBuiltPackage, scanTree } from "./session-owner-update.mjs";
 
-const { offenders, statementsScanned } = scanTree();
+const source = scanTree();
+const built = scanBuiltPackage();
+const offenders = [...source.offenders, ...built.offenders];
 
-if (offenders.length > 0) {
+if (offenders.length > 0 || !built.built) {
 	console.error(
 		"S-FIX-2: a session owner is reassigned in SQL. Re-issue is INSERT plus DELETE (E-23).",
 	);
@@ -11,4 +13,6 @@ if (offenders.length > 0) {
 	process.exit(1);
 }
 
-console.log(`S-FIX-2: ${statementsScanned} statements scanned, no session owner reassignment`);
+console.log(
+	`S-FIX-2: ${source.statementsScanned} source and ${built.statementsScanned} built statements scanned, no session owner reassignment`,
+);

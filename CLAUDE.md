@@ -198,6 +198,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-59 … E-79 | wave 1 · `keys` |
 | E-80 … E-109 | wave 1 · `db` |
 | E-110 … E-139 | wave 1 · `http` |
+| E-140 … E-159 | gate and infrastructure, which belongs to no wave |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
