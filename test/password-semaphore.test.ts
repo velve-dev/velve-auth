@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	createKdfSemaphore,
 	DEFAULT_WAIT_LIMIT_IN_MILLISECONDS,
+	type KdfSemaphoreOptions,
 } from "../src/core/password/semaphore.js";
 
 function deferred(): { promise: Promise<void>; settle: () => void } {
@@ -18,7 +19,8 @@ afterEach(() => {
 
 describe("the KDF semaphore", () => {
 	it("runs no more than the configured number of derivations at once", async () => {
-		const semaphore = createKdfSemaphore({ limit: 4 });
+		const options: KdfSemaphoreOptions = { limit: 4 };
+		const semaphore = createKdfSemaphore(options);
 		const gate = deferred();
 		let observedPeak = 0;
 

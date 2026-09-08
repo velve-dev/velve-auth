@@ -6,13 +6,16 @@ import {
 	type PasswordConfig,
 	resolvePasswordConfig,
 } from "../src/core/password/config.js";
-import { PasswordConfigurationError } from "../src/core/password/errors.js";
+import {
+	PasswordConfigurationError,
+	type PasswordConfigurationErrorCode,
+} from "../src/core/password/errors.js";
 import { acceptNewPassword, acceptSubmittedPassword } from "../src/core/password/policy.js";
 import { LEGACY_SCHEMES, type LegacyScheme } from "../src/core/password/scheme.js";
 
 const DEFAULTS = resolvePasswordConfig();
 
-function configurationErrorCode(config: PasswordConfig): string {
+function configurationErrorCode(config: PasswordConfig): PasswordConfigurationErrorCode | string {
 	try {
 		resolvePasswordConfig(config);
 	} catch (failure) {

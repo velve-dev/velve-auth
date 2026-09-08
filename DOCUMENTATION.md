@@ -1372,3 +1372,95 @@ creates version 1.3, this affects imported hashes alone.
 
 The dependency is loaded through an assembled specifier so that a consumer's
 bundler does not try to resolve a package that is allowed to be absent (E-170).
+
+### The stored credential
+
+`velve.password_credential.phc` holds AES-256-GCM over the canonical PHC string
+under the purpose key `password-enc`, with the key version in its own column.
+`scheme` stays in the clear, so the estate can be surveyed — how many bcrypt
+rows are left, how the rehash is progressing — without a key (L-2, S-REST-5).
+
+The price is stated where it belongs, at the top of the operational
+documentation: **losing the key means losing every password.** That is the same
+risk class as a pepper.
+
+#### `sealPhc(keys, phc)` and `openPhc(keys, row)`
+
+The only two ways a PHC string crosses the column boundary. `sealPhc` returns
+`{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
+that puts a cleartext string into the column, and the import module uses these
+same two functions rather than a path of its own (architecture 4.0.3).
+
+`openPhc` throws `KeyError("key_version_unknown")` when the row names a key
+version that has left the ring, and `KeyError("authentication_failed")` when the
+ciphertext does not authenticate. Neither is concealed as a wrong password
+(E-175).
+
+#### `createPasswordCredentialRepository({ driver, keys, schema? })`
+
+| Method | Statement |
+|---|---|
+| `findByUserId(userId)` | `SELECT … WHERE user_id = $1` |
+| `write({ userId, phc, scheme })` | `INSERT … ON CONFLICT (user_id) DO UPDATE` |
+| `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
+
+`replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
+the stored **ciphertext**, not the PHC string, so a password the user changed
+while a rehash was running is never overwritten by it (L-2, E-11).
+
+### Checking a password
+
+#### `createDummyCredential(keys, config)`
+
+Built once at start-up: a real Argon2id hash of a random password, at the
+configured parameters, sealed like any other credential. It is what the switch
+reads when no user was resolved, so the absent-user path performs the same
+decryption and calls the same **verifier** — not the creation function
+(S-TIM-2). It is created outside the semaphore, because nothing is being served
+yet.
+
+#### `checkPassword({ userId, plaintext }, environment)`
+
+`environment` is `{ config, semaphore, keys, credentials, dummy }`.
+
+`userId` is what the caller's identity lookup produced, or `null` when it
+produced nothing. Passing `null` does not shorten the path: the credential query
+is still issued, for `ABSENT_USER_ID`, the nil UUID that no account can hold
+(E-174).
+
+| Outcome | Meaning |
+|---|---|
+| `{ outcome: "unacceptable" }` | the length policy refused. Depends on the input alone; no statement and no derivation ran (S-DOS-1, S-DOS-2) |
+| `{ outcome: "refused", reason }` | `user_not_found`, `no_password_credential`, `legacy_scheme_rejected` or `password_mismatch` — all four map to `invalid_credentials` for the caller and are told apart only in the log |
+| `{ outcome: "verified", userId, rehash? }` | the password matched |
+
+After the length check there is no early exit: one credential query, one
+decryption, one verifier call with identical parameters, and the failure
+accumulated in a local variable (S-TIM-1). A credential whose scheme is not in
+`acceptLegacy` is **still** verified — against the dummy — so that narrowing
+`acceptLegacy` does not turn into a timing oracle for which accounts were
+imported (E-176).
+
+`rehash` is present when the credential is behind the current policy or the
+current key version. It is a **task, not a running promise**: the caller invokes
+it after it has sent its answer, so the rehash never lengthens the measured
+sign-in (S-TIM-5). It takes a place in the same semaphore as the check, so a
+rehash wave after a parameter increase cannot displace live sign-ins (S-DOS-6).
+Losing the compare and swap is harmless — it returns `false` and the next
+sign-in tries again.
+
+#### `setPassword({ userId, plaintext }, environment)`
+
+Applies the length policy, runs `validate`, derives Argon2id under the
+semaphore, and writes the sealed string. Revoking the user's other sessions is
+not this module's business; that belongs to the session module and has no switch
+(S-DEFAULT-2).
+
+#### `needsRehash(phc, config)`
+
+True when the scheme is not `argon2id`, when the Argon2 version is not 1.3, when
+any of `m`, `t` or `p` is below the configured value, when the salt is shorter
+than 16 bytes or the hash shorter than 32, or when the string does not parse at
+all. An imported credential is therefore rehashed at the first successful
+sign-in and verified with its original scheme on every sign-in until then
+(S-REST-7).

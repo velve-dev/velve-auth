@@ -1,6 +1,8 @@
 import { hash as bcryptHash, truncates } from "bcryptjs";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
+	type Argon2Engine,
+	type Argon2Request,
 	createArgon2idHash,
 	nobleArgon2,
 	selectArgon2Engine,
@@ -142,8 +144,8 @@ describe("Argon2", () => {
 
 describe("the hash-wasm accelerator", () => {
 	it("produces the same bytes as the pure path, so its presence needs no migration", async () => {
-		const engine = await selectArgon2Engine(0x13);
-		const request = {
+		const engine: Argon2Engine = await selectArgon2Engine(0x13);
+		const request: Argon2Request = {
 			variant: "argon2id",
 			password: accepted(PASSWORD).bytes,
 			salt: new Uint8Array(16).fill(3),
@@ -152,7 +154,7 @@ describe("the hash-wasm accelerator", () => {
 			parallelism: 1,
 			version: 0x13,
 			hashBytes: 32,
-		} as const;
+		};
 
 		expect(await engine.derive(request)).toEqual(await nobleArgon2.derive(request));
 	});
