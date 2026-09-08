@@ -43,9 +43,20 @@ function declaredFieldsOnly(raw: unknown, fields: readonly string[]): unknown {
  * caller, so a field it grows and nothing here reads is ignored rather than answered with
  * `invalid_input` (E-455). The route's own input stays strict.
  */
+/** `object()` builds its result on `{}`, so an optional field this module later destructures
+ * resolves through `Object.prototype` when the browser did not send it. A value the browser
+ * wrote inherits nothing (E-456). */
+function withoutInheritance<T extends object>(parsed: T): T {
+	Object.setPrototypeOf(parsed, null);
+	return parsed;
+}
+
 function openObject<Shape extends Record<string, Validator<unknown>>>(shape: Shape) {
 	const strict = object(shape);
-	return { parse: (raw: unknown) => strict.parse(declaredFieldsOnly(raw, strict.fields)) };
+	return {
+		parse: (raw: unknown) =>
+			withoutInheritance(strict.parse(declaredFieldsOnly(raw, strict.fields))),
+	};
 }
 
 /** Both directions at once: a name the verifier does not know cannot be listed here, and a name
