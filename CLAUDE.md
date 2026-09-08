@@ -136,10 +136,37 @@ A reviewer checks, in this order:
 At most **four agents run at the same time**. This is a hard limit.
 
 Features in the same wave run in parallel; waves run one after another. **No two
-writers share a file.** The single exception is `CASE-STUDY.md`, which every
-feature appends to; §6 explains how that is made safe. The set of files a
-feature may touch is fixed before it starts and is binding. A feature that needs
-a change outside its area stops and reports it instead of editing the file.
+writers share a file.**
+
+There are exactly two sanctioned exceptions, and both are safe for the same
+reason: the file is **partitioned before the wave starts**, and a feature writes
+only inside the partition it was given. The exception is never "this file is
+shared" — it is "this file has disjoint parts, and one of them is yours".
+
+- **`CASE-STUDY.md`** — every feature appends entries to it. The partition is a
+  reserved range of decision numbers, handed out before the writer starts; §6
+  sets the ranges out and `test/decision-log.test.ts` enforces them.
+- **`DOCUMENTATION.md`** — every feature documents itself in it, because item 3
+  of the definition of done below requires it. The partition is the chapter:
+  **a feature owns the `##` chapter named for it — one, for every feature of
+  wave 3 — and appends nowhere else in the file.** The chapter, its position and
+  its `## Contents` line are created as empty stubs before the wave starts, so
+  no writer inserts a heading and no two writers ever touch the same region.
+
+A feature that needs a change in another feature's chapter, in `## Contents`, or
+in a chapter no feature owns, stops and reports it — exactly as it would for any
+other file it does not own.
+
+Both exceptions rest on the partition existing **beforehand**. Until wave 3 there
+was no chapter partition, and the contradiction between this rule and item 3 of
+the definition of done was resolved by editing `DOCUMENTATION.md` anyway; all
+four wave-2 features did. That merged cleanly by luck, not by construction —
+four writers appending at end of file land on the same line, and four writers
+appending into four disjoint stubs cannot.
+
+The set of files a feature may touch is fixed before it starts and is binding. A
+feature that needs a change outside its area stops and reports it instead of
+editing the file.
 
 ### Definition of done
 
