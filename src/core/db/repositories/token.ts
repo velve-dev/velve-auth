@@ -1,5 +1,6 @@
 import {
 	ONE_TIME_TOKEN_LIFETIME_SECONDS,
+	ONE_TIME_TOKEN_PURPOSES,
 	type OneTimeTokenPayload,
 	type OneTimeTokenPurpose,
 } from "../../token/purpose.js";
@@ -33,12 +34,25 @@ export interface OneTimeTokenRepository {
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
 }
 
-export class OneTimeTokenNotWrittenError extends Error {
-	readonly code = "one_time_token_not_written";
+export type OneTimeTokenErrorCode =
+	| "one_time_token_owner_unknown"
+	| "one_time_token_purpose_unknown"
+	| "one_time_token_not_written";
 
-	constructor(table: string, purpose: OneTimeTokenPurpose) {
-		super(`${table} accepted no row for purpose ${purpose}`);
-		this.name = "OneTimeTokenNotWrittenError";
+// Fixed per code, so nothing the caller passed can reach an error string.
+const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
+	one_time_token_owner_unknown: "The account the token would belong to does not exist.",
+	one_time_token_purpose_unknown: "The purpose is not one of the four one-time token purposes.",
+	one_time_token_not_written: "The insert reported no row.",
+};
+
+export class OneTimeTokenError extends Error {
+	readonly code: OneTimeTokenErrorCode;
+
+	constructor(code: OneTimeTokenErrorCode) {
+		super(MESSAGE_BY_ERROR_CODE[code]);
+		this.name = "OneTimeTokenError";
+		this.code = code;
 	}
 }
 
@@ -81,9 +95,17 @@ WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
 RETURNING user_id, payload`;
 
 	return {
-		replaceOneTimeToken({ tokenSha256, purpose, userId, payload }) {
+		async replaceOneTimeToken({ tokenSha256, purpose, userId, payload }) {
+			// Both guards answer inputs that reach here from outside TypeScript; without them the
+			// driver raises instead, and a driver's error names the table and the constraint.
+			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
+				throw new OneTimeTokenError("one_time_token_purpose_unknown");
+			}
 			return options.driver.transaction(async (tx) => {
-				await tx.query(lockOwnerStatement, [userId]);
+				const owner = await tx.query(lockOwnerStatement, [userId]);
+				if (owner.length === 0) {
+					throw new OneTimeTokenError("one_time_token_owner_unknown");
+				}
 				const [row] = await tx.query<{ expires_at: string }>(replaceStatement, [
 					userId,
 					purpose,
@@ -92,7 +114,7 @@ RETURNING user_id, payload`;
 					ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
 				]);
 				if (row === undefined) {
-					throw new OneTimeTokenNotWrittenError(table, purpose);
+					throw new OneTimeTokenError("one_time_token_not_written");
 				}
 				return { expiresAt: row.expires_at };
 			});

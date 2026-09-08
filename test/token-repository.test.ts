@@ -3,21 +3,29 @@ import type { Driver } from "../src/core/db/driver.js";
 import { InvalidIdentifierError } from "../src/core/db/identifier.js";
 import {
 	createOneTimeTokenRepository,
-	OneTimeTokenNotWrittenError,
+	OneTimeTokenError,
 } from "../src/core/db/repositories/token.js";
-import { ONE_TIME_TOKEN_LIFETIME_SECONDS } from "../src/core/token/index.js";
+import {
+	ONE_TIME_TOKEN_LIFETIME_SECONDS,
+	type OneTimeTokenPurpose,
+} from "../src/core/token/index.js";
 
 interface Call {
 	readonly sql: string;
 	readonly params: readonly unknown[];
 }
 
-function driverReturning(rows: readonly unknown[]): { driver: Driver; calls: Call[] } {
+const OWNER_FOUND = [{ locked: 1 }];
+
+function driverReturning(
+	rows: readonly unknown[],
+	ownerRows: readonly unknown[] = OWNER_FOUND,
+): { driver: Driver; calls: Call[] } {
 	const calls: Call[] = [];
 	const driver: Driver = {
 		query<T>(sql: string, params: unknown[]): Promise<T[]> {
 			calls.push({ sql, params });
-			return Promise.resolve(rows as T[]);
+			return Promise.resolve((/FOR UPDATE/.test(sql) ? ownerRows : rows) as T[]);
 		},
 		transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T> {
 			return fn(driver);
@@ -26,8 +34,8 @@ function driverReturning(rows: readonly unknown[]): { driver: Driver; calls: Cal
 	return { driver, calls };
 }
 
-function repositoryReturning(rows: readonly unknown[]) {
-	const { driver, calls } = driverReturning(rows);
+function repositoryReturning(rows: readonly unknown[], ownerRows?: readonly unknown[]) {
+	const { driver, calls } = driverReturning(rows, ownerRows);
 	return { repository: createOneTimeTokenRepository({ driver, schema: "velve" }), calls };
 }
 
@@ -150,23 +158,74 @@ describe("what the repository refuses", () => {
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
 				payload: null,
 			}),
-		).rejects.toThrow("velve.one_time_token accepted no row for purpose magic_link");
+		).rejects.toThrow(OneTimeTokenError);
 	});
 
-	it("gives that failure a stable code", async () => {
-		const { repository } = repositoryReturning([]);
+	it("codes the three refusals and lets none of them carry an input", async () => {
+		const raise = async (
+			rows: readonly unknown[],
+			ownerRows: readonly unknown[],
+			purpose: OneTimeTokenPurpose,
+		) => {
+			const { repository } = repositoryReturning(rows, ownerRows);
+			return (await repository
+				.replaceOneTimeToken({
+					tokenSha256: HASH,
+					purpose,
+					userId: "0d1b6c8e-0000-4000-8000-000000000001",
+					payload: { secret: "must-not-appear" },
+				})
+				.catch((error: unknown) => error)) as OneTimeTokenError;
+		};
 
-		const raised = await repository
+		const written = [{ expires_at: "2026-09-08T00:00:00.000Z" }];
+		const unknownPurpose = "totp_step" as unknown as OneTimeTokenPurpose;
+		const raised = [
+			await raise(written, [], "magic_link"),
+			await raise(written, OWNER_FOUND, unknownPurpose),
+			await raise([], OWNER_FOUND, "magic_link"),
+		];
+
+		expect(raised.map((error) => error.code)).toStrictEqual([
+			"one_time_token_owner_unknown",
+			"one_time_token_purpose_unknown",
+			"one_time_token_not_written",
+		]);
+		for (const error of raised) {
+			expect(error).toBeInstanceOf(OneTimeTokenError);
+			expect(`${error.message} ${error.stack ?? ""}`).not.toContain("must-not-appear");
+		}
+	});
+
+	it("writes nothing when the account is gone", async () => {
+		const { repository, calls } = repositoryReturning([], []);
+
+		await repository
 			.replaceOneTimeToken({
 				tokenSha256: HASH,
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
 				payload: null,
 			})
-			.catch((error: unknown) => error);
+			.catch(() => undefined);
 
-		expect(raised).toBeInstanceOf(OneTimeTokenNotWrittenError);
-		expect((raised as OneTimeTokenNotWrittenError).code).toBe("one_time_token_not_written");
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.sql).toContain("FOR UPDATE");
+	});
+
+	it("reaches no driver at all for a purpose it does not know", async () => {
+		const { repository, calls } = repositoryReturning([]);
+
+		await repository
+			.replaceOneTimeToken({
+				tokenSha256: HASH,
+				purpose: "totp_step" as unknown as OneTimeTokenPurpose,
+				userId: "0d1b6c8e-0000-4000-8000-000000000001",
+				payload: null,
+			})
+			.catch(() => undefined);
+
+		expect(calls).toStrictEqual([]);
 	});
 
 	it("refuses a schema name that is not an identifier", () => {

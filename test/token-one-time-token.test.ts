@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	createOneTimeTokenRepository,
+	OneTimeTokenError,
 	type OneTimeTokenRepository,
 } from "../src/core/db/repositories/token.js";
 import {
@@ -277,6 +278,37 @@ describe("the target account comes from the row alone (S-TOKEN-4)", () => {
 
 		expect(redeemed?.userId).toBe(otherUser);
 		expect(redeemed?.userId).not.toBe(user);
+	});
+});
+
+// Both of these reach the driver as a constraint violation if nothing stops them first, and a
+// driver's error names the table and the constraint.
+describe("what issuing refuses, and how it says so", () => {
+	it("refuses an account that no longer exists, with a code and no driver text", async () => {
+		await clear();
+		const doomed = await createUser(connection, schema);
+		await connection.query(`DELETE FROM ${schema}.user WHERE id = $1`, [doomed]);
+
+		const raised = (await tokens
+			.issue({ purpose: "password_reset", userId: doomed })
+			.catch((error: unknown) => error)) as OneTimeTokenError;
+
+		expect(raised).toBeInstanceOf(OneTimeTokenError);
+		expect(raised.code).toBe("one_time_token_owner_unknown");
+		expect(raised.message).not.toContain("one_time_token");
+		expect(raised.message).not.toContain(doomed);
+	});
+
+	it("refuses a purpose outside the four, with a code and no driver text", async () => {
+		await clear();
+
+		const raised = (await tokens
+			.issue({ purpose: "totp_step" as unknown as OneTimeTokenPurpose, userId: user })
+			.catch((error: unknown) => error)) as OneTimeTokenError;
+
+		expect(raised).toBeInstanceOf(OneTimeTokenError);
+		expect(raised.code).toBe("one_time_token_purpose_unknown");
+		expect(raised.message).not.toContain("expires_at");
 	});
 });
 

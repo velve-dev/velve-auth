@@ -1225,10 +1225,22 @@ transaction rather than opening a second, so calling this inside
 `driver.transaction` still rolls the whole issue back when the mail cannot be
 sent.
 
-It raises `OneTimeTokenNotWrittenError` — code `one_time_token_not_written` —
-if the insert reports no row. That is a broken invariant rather than a caller
-error; over HTTP it becomes `internal_error`. The message names the table and
-the purpose, never a token.
+Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
+code on it rather than one class per failure.
+
+| Code | Raised when |
+|---|---|
+| `one_time_token_owner_unknown` | the account the token would belong to does not exist — it was deleted between whatever resolved it and this call |
+| `one_time_token_purpose_unknown` | the purpose is not one of the four; only reachable from a caller that is not type-checked |
+| `one_time_token_not_written` | the insert reported no row, which is a broken invariant rather than a caller error |
+
+The first two are guards standing in front of the driver: without them the
+account case surfaces as a foreign-key violation and the purpose case as a
+not-null violation on `expires_at`, each carrying the table and the constraint
+name out of the library. The purpose guard runs before any statement, so an
+unknown purpose reaches no driver; the account guard runs on the lock, which has
+already read the row it needs. Messages are fixed per code, so nothing a caller
+passed can reach an error string. All three become `internal_error` over HTTP.
 
 `consumeOneTimeToken` is the only way a one-time token is ever read. There is no
 method that finds one, counts them or looks one up: a read before the write is
