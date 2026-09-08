@@ -28,7 +28,7 @@ async function openAccountHarness(): Promise<Harness> {
 		signIn: { perIpAddress: "none", perAccount: ACCOUNT },
 		probe: NO_LIMIT,
 		onCredentialCheck: afterCredentialCheckDelay,
-		clientAddress: () => "203.0.113.5",
+		connectionAddress: () => "203.0.113.5",
 	});
 	return harness;
 }

@@ -222,6 +222,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			...pluginRoutes(services),
 		],
 		origins: config.origins,
+		trustedProxies: config.trustedProxies ?? [],
 		cookieSameSite: sessionSettings.sameSite,
 		sessionCookieMaximumAgeInSeconds: sessionSettings.cookieMaximumAgeInSeconds,
 		// E-233: one window, read from the session settings, so the pipeline and the actor agree.

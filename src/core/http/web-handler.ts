@@ -1,3 +1,4 @@
+import { resolveClientAddress } from "../limit/client-address.js";
 import {
 	assertCookieNamesAreEnumerated,
 	type CookieInstruction,
@@ -14,7 +15,8 @@ import { isRecord } from "./validators.js";
 
 export interface WebHandlerOptions {
 	readonly basePath?: string;
-	readonly clientAddress?: (request: Request) => string | null;
+	/** The address the connection came from; a `Request` does not carry one, so the adapter says. */
+	readonly connectionAddress?: (request: Request) => string | null;
 }
 
 /** The same rule as S-COOKIE-5: a repeated name is rejected rather than one of its values chosen. A prototypeless object so that "__proto__" is an own property like any other name. */
@@ -129,7 +131,14 @@ export function toWebHandler(
 	const environment = auth.http;
 	assertRouteTableIsUnambiguous(environment.routes);
 	const basePath = options.basePath ?? "";
-	const readClientAddress = options.clientAddress ?? (() => null);
+	const readConnectionAddress = options.connectionAddress ?? (() => null);
+	// S-RATE-3: the header counts only where `trustedProxies` names who may write it.
+	const readClientAddress = (request: Request): string | null =>
+		resolveClientAddress(
+			readConnectionAddress(request),
+			request.headers.get("x-forwarded-for"),
+			environment.trustedProxies,
+		);
 
 	return async (request) => {
 		const url = requestUrl(request);

@@ -163,6 +163,7 @@ interface Harness {
 interface HarnessOptions {
 	readonly routes?: readonly AnyRoute[];
 	readonly origins?: readonly string[];
+	readonly trustedProxies?: readonly string[];
 	readonly sessionAgeInSeconds?: number;
 	readonly sessionFailure?: ConcealedError;
 	readonly rateLimitAllows?: boolean;
@@ -176,6 +177,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 	const environment: HttpEnvironment = {
 		routes: options.routes ?? TEST_ROUTES,
 		origins: options.origins ?? [ALLOWED_ORIGIN],
+		trustedProxies: options.trustedProxies ?? [],
 		cookieSameSite: "lax",
 		sessionCookieMaximumAgeInSeconds: 2_592_000,
 		freshnessWindowInSeconds: 900,

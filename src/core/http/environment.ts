@@ -12,6 +12,8 @@ export type LogLevel = "info" | "warn" | "error";
 export interface HttpEnvironment {
 	readonly routes: readonly AnyRoute[];
 	readonly origins: readonly string[];
+	/** A.2: the CIDR ranges whose `X-Forwarded-For` counts; empty means the connection address does. */
+	readonly trustedProxies: readonly string[];
 	readonly cookieSameSite: CookieSameSite;
 	readonly sessionCookieMaximumAgeInSeconds: number;
 	readonly freshnessWindowInSeconds: number;

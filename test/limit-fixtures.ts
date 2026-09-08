@@ -98,6 +98,7 @@ function testHttpEnvironment(
 	return {
 		routes,
 		origins: [ALLOWED_ORIGIN],
+		trustedProxies: [],
 		cookieSameSite: "lax",
 		sessionCookieMaximumAgeInSeconds: 2_592_000,
 		freshnessWindowInSeconds: 900,
@@ -126,7 +127,7 @@ export interface Harness {
 
 interface HarnessOptions extends RouteTableOptions {
 	readonly config?: RateLimiterConfig;
-	readonly clientAddress?: (request: Request) => string | null;
+	readonly connectionAddress?: (request: Request) => string | null;
 }
 
 export async function openLimitHarness(options: HarnessOptions): Promise<Harness> {
@@ -138,7 +139,7 @@ export async function openLimitHarness(options: HarnessOptions): Promise<Harness
 	const routes = testRoutes(options);
 	const environment = testHttpEnvironment(routes, limiter, clock);
 	const handlerOptions =
-		options.clientAddress === undefined ? {} : { clientAddress: options.clientAddress };
+		options.connectionAddress === undefined ? {} : { connectionAddress: options.connectionAddress };
 
 	return {
 		connection: migrated.connection,

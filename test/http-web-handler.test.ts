@@ -493,7 +493,7 @@ describe("web handler", () => {
 
 	it("takes the client address only from the adapter, never from a header", async () => {
 		const { environment, rateLimitRequests } = createHarness();
-		const handler = toWebHandler({ http: environment }, { clientAddress: () => "203.0.113.7" });
+		const handler = toWebHandler({ http: environment }, { connectionAddress: () => "203.0.113.7" });
 		const request = new Request("https://api.example.com/test/echo", {
 			method: "POST",
 			headers: {
