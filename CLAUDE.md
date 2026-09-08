@@ -206,6 +206,8 @@ repair anything itself.
 - `pnpm check:lock-order` — `velve.user` is locked before any other table
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
+- `pnpm check:log-append` — the decision log deletes no line it had at the merge
+  base, and the branch has added at least one (§6, E-538)
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
 - `pnpm attw` — the types resolve under every module mode the package claims
@@ -577,6 +579,11 @@ pnpm check:sql-collapse
                  every SQL statement still says what it said once its newlines
                  are normalised away — a marker is a block comment, never a line
                  comment
+pnpm check:log-append
+                 no line CASE-STUDY.md had at the merge base is deleted or
+                 rewritten, and the branch has added at least one. Refuses the
+                 run if the base cannot be resolved; VELVE_LOG_BASE names a base
+                 other than origin/main
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
