@@ -1554,7 +1554,21 @@ any of them is refused, which routes the user to the reset path (E-182).
 
 bcrypt has no memory parameter, so its cost — an exponent — is the only bound
 there is: `$2a$14$` is about a second of one semaphore place and `$2a$31$` is
-about thirty years. GoTrue, Auth0 and Clerk all write cost 10.
+about thirty years. GoTrue, Auth0 and Clerk all write cost 10, which says the
+ceiling is generous; it does not say what admitting 14 costs. That is an
+occupancy figure, and it was measured rather than estimated.
+
+A cost-14 verification takes about 780 ms on the machine this was written on —
+roughly 43× a default Argon2id verification with the accelerator present, and
+roughly 9× without it. Raising `concurrentHashLimit` to 4 does not divide that
+by four: `bcryptjs` is JavaScript on the same thread as the rest of the process,
+so four verifications in flight take four times the wall clock of one. An estate
+stored at bcrypt-14 therefore answers about 1.3 sign-ins per second in total,
+against roughly 55 for the Argon2id the library writes itself. Read against
+S-DOS-3 and S-DOS-4, that is the whole judgement: four places bound the memory,
+but at cost 14 they bound nothing about time, and the five-second wait limit —
+not the semaphore — is what keeps the process answering, by refusing everything
+past a queue of about six.
 
 They are not configurable. Raising a denial-of-service ceiling is a weakening,
 and every documented source sits far below them: Better Auth's scrypt at 32 MiB,
