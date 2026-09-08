@@ -319,17 +319,17 @@ Entscheidungen, die beim Bauen fielen.
 ## Entscheidungen aus dem Bau
 
 **E-47 — Englisch als Repository-Sprache, `CASE-STUDY.md` als einzige Ausnahme.**
-*Kontext:* Der Bauauftrag verlangt, sich einmal festzulegen und dabei zu bleiben. Die Zielarchitektur und der Auftrag sind auf Deutsch, das Paket ist ein öffentliches Apache-2.0-Paket auf npm.
+*Kontext:* Der Bauauftrag verlangt, sich einmal festzulegen und dabei zu bleiben. Die Zielarchitektur und der Auftrag sind auf Deutsch, das Paket ist ein öffentliches MIT-Paket auf npm.
 *Verworfen:* Durchgehend Deutsch, passend zur Vorlage.
 *Grund:* Die Leser des Pakets sind nicht die Leser des Entwurfs. Wer `@velve/auth` installiert, findet Bezeichner, Fehlercodes und `DOCUMENTATION.md` vor; deutschsprachige Bezeichner in einer öffentlichen Bibliothek schließen ohne Gegenwert aus. `CASE-STUDY.md` ist ausgenommen, weil der Auftrag die wörtliche Übernahme von E-01 bis E-46 vorschreibt — eine Übersetzung wäre eine Änderung, und die Fortschreibung muss im selben Format und derselben Sprache weiterlaufen wie der Bestand.
 *Preis:* Das Repository ist zweisprachig. Wer die Gründe sucht, liest Deutsch; wer die Bibliothek benutzt, liest Englisch.
 
-**Licence addendum.** The package was MIT when this entry was written and is
-Apache-2.0 now. The *Kontext* line above was edited in place to say so, which
-is the only edit to an existing entry this log has permitted, made on the
-repository owner's explicit instruction. `E-505` carries the decision, why
-Apache 2.0 rather than MIT, and its price; the argument is recorded there
-rather than repeated here.
+**Licence addendum.** The *Kontext* above says MIT because that is what the
+package was when this entry was written, and it stays that way. The package is
+Apache-2.0 now. `E-505` carries the decision, why Apache 2.0 rather than MIT,
+and its price. This paragraph exists because the alternative considered was to
+edit the *Kontext* line instead, and leaving the line alone tells a reader both
+what the entry said and what is true now, which the edit would not have.
 
 **E-48 — Node ab 20.19 ist Bauvoraussetzung, nicht nur Laufzeitvoraussetzung.**
 *Kontext:* Abschnitt 2.5 nennt Node 20.19 als Laufzeituntergrenze, abgeleitet aus `@noble/hashes` 2.x und den globalen Web-Crypto-Objekten. Beim Aufsetzen des Gerüsts stellte sich heraus, dass dieselbe Grenze schon für das Bauwerkzeug gilt: Die native Bindung von Rolldown, auf der `tsdown` aufsetzt, fordert `^20.19.0 || >=22.12.0`.
@@ -2798,10 +2798,12 @@ cheapest this change will ever be.
 **Price.** The file is 11,358 bytes where MIT's was 1,062, and a developer
 scanning a package page reads "Apache-2.0" a beat slower than "MIT". Two places
 outside the licence itself asserted MIT and had to move with it: `CLAUDE.md` §1
-and `README.md`. A third, E-47's *Kontext*, was edited in place — the single
-edit to an existing entry this log has permitted, made on the owner's explicit
-instruction and recorded in that entry rather than hidden. Every such
-statement is a
+and `README.md`. A third, E-47's *Kontext*, states MIT as the fact it was when
+that entry was written; it is left alone and carries an addendum instead. The
+in-place edit was authorised and then withdrawn once the argument for it — that
+the sentence states a fact rather than a reason — was shown to dissolve the
+rule rather than carve an exception in it, since a *Kontext* is by construction
+a statement of fact about the world at the time. Every such statement is a
 second place the licence is written down, and nothing checks that they agree
 with `package.json`. This entry first counted three and missed the two the same
 commit created — `NOTICE`, which states the licence in prose rather than as an
