@@ -495,7 +495,7 @@ from a request body, a query string or a header (S-OWNER-7).
 `actorOfResolvedSession` accepts any `{ userId: string }`, which means a caller
 one line away can still mint an actor from an untrusted string. Closing that
 door is one change to this parameter, and it belongs with the feature that owns
-session resolution; `CASE-STUDY.md` E-70 records the exact change and the shape
+session resolution; `CASE-STUDY.md` E-93 records the exact change and the shape
 that must stop compiling.
 
 ### `createOwnedRowRepository(options)`

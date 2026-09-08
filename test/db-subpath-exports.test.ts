@@ -47,7 +47,7 @@ describe("@velve/auth", () => {
 	});
 
 	it("names the shape session resolution must return", () => {
-		// @ts-expect-error E-70: a plain object is not what session resolution produces.
+		// @ts-expect-error E-93: a plain object is not what session resolution produces.
 		const forged: ResolvedSession = { userId: "00000000-0000-4000-8000-000000000000" };
 
 		expect(forged.userId).toBe("00000000-0000-4000-8000-000000000000");

@@ -3,7 +3,7 @@ declare const resolvedSessionBrand: unique symbol;
 
 export type Actor = string & { readonly [actorBrand]: "resolved session" };
 
-// The shape session resolution must return; E-70 records why the parameter below does not demand it yet.
+// The shape session resolution must return; E-93 records why the parameter below does not demand it yet.
 export type ResolvedSession = { readonly userId: string } & {
 	readonly [resolvedSessionBrand]: "produced by session resolution";
 };
