@@ -1,4 +1,4 @@
-import type { PendingAuthentication, Session } from "./caller.js";
+import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import type { CookieWriter } from "./cookies.js";
 import type { VelveErrorCode } from "./error-map.js";
 import type { RateLimitRule } from "./rate-limit.js";
@@ -11,7 +11,7 @@ export type OriginRequirement = "checked" | "exempt";
 
 export interface RequestContext {
 	readonly session: Session | null;
-	readonly pending: PendingAuthentication | null;
+	readonly pending: ResolvedPendingAuthentication | null;
 	readonly sessionToken: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;

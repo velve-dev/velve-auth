@@ -1,4 +1,4 @@
-import type { PendingAuthentication, Session } from "./caller.js";
+import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import { type CookieCollector, type CookieInstruction, createCookieCollector } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment, type LogLevel } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
@@ -57,7 +57,7 @@ async function resolveSession(
 async function resolvePending(
 	pendingToken: string | null,
 	environment: HttpEnvironment,
-): Promise<PendingAuthentication> {
+): Promise<ResolvedPendingAuthentication> {
 	if (pendingToken === null) {
 		throw new ConcealedError("pending_cookie_absent");
 	}

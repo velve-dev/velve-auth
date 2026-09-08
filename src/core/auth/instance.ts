@@ -137,7 +137,7 @@ function callerResolver(
 			if (resolved === null) {
 				throw new ConcealedError("pending_not_found");
 			}
-			return resolved.pending;
+			return resolved;
 		},
 	};
 }

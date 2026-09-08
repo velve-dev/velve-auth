@@ -92,7 +92,7 @@ const pendingRoute = defineRoute({
 	originCheck: "checked",
 	rateLimit: { perIpAddress: "none", perAccount: "none" },
 	handler: async (_input, context) => ({
-		attemptsRemaining: context.pending?.attemptsRemaining ?? null,
+		attemptsRemaining: context.pending?.pending.attemptsRemaining ?? null,
 	}),
 });
 
@@ -197,11 +197,15 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 					isCurrent: true,
 				};
 			},
-			resolvePending: async () => ({
-				factorsCompleted: ["password"],
-				availableFactors: ["totp"],
-				attemptsRemaining: 5,
-				expiresAt: new Date(NOW.getTime() + 300_000),
+			resolvePending: async (pendingToken) => ({
+				userId: `user-of-${pendingToken}`,
+				pending: {
+					factorsCompleted: ["password"],
+					availableFactors: ["totp"],
+					attemptsRemaining: 5,
+					expiresAt: new Date(NOW.getTime() + 300_000),
+				},
+				observedAt: NOW,
 			}),
 		},
 		rateLimiter: {
