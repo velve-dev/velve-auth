@@ -14,6 +14,14 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}/package.json`, "utf8
  * itself. Anything else appearing there without appearing in the script is drift. */
 const NOT_RUN_BY_THE_GATE = ["format", "gate", "test:nightly", "test:release"];
 
+/** The one pnpm invocation in the workflow that is not a gate step. */
+const CI_SETUP = ["install"];
+
+/** Anchored to the start of a YAML scalar, and reading the script name rather than searching
+ * for it: `workflow.includes("run: pnpm test")` is satisfied by a step commented out and by
+ * `run: pnpm test:release`, and both of those remove the step from CI while staying green. */
+const WORKFLOW_STEP = /^[ \t]*(?:- )?run: pnpm ([\w:-]+)/gm;
+
 function section(heading: string): string {
 	const start = rules.indexOf(heading);
 	expect(start, `CLAUDE.md has no ${heading}`).toBeGreaterThan(-1);
@@ -71,9 +79,9 @@ describe("the gate's command lists", () => {
 
 	// The gate list and CI are two statements of the same set, and CI is the one that blocks a
 	// merge. A step present in the script and absent from the workflow runs for nobody but the
-	// author.
-	it("runs every gate step in CI as well", () => {
-		const absent = sorted(gateSteps).filter((name) => !workflow.includes(`run: pnpm ${name}`));
-		expect(absent).toEqual([]);
+	// author, and a step in the workflow that the script does not run blocks nobody locally.
+	it("runs in CI exactly the commands the gate script runs", () => {
+		const inWorkflow = [...workflow.matchAll(WORKFLOW_STEP)].map((match) => String(match[1]));
+		expect(sorted(inWorkflow)).toEqual(sorted([...gateSteps, ...CI_SETUP]));
 	});
 });
