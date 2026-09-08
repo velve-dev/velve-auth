@@ -1203,23 +1203,242 @@ is swallowed: a failing log sink must not cost the caller its answer.
 
 ## Rate limiting
 
-Reserved for `rate` (wave 3). Architecture 3.9: the token bucket in
-`velve.rate_bucket` as a single round trip, the three counters that run at once
-— address prefix, account, global per route — and the implementation that goes
-behind the `RateLimiter` seam the HTTP chapter declares above.
+The rate limiter lives in `src/core/limit`. It is the implementation behind the
+`RateLimiter` seam the HTTP chapter declares, and it adds nothing to that
+interface: the HTTP layer calls `consume` and reads `allowed`, and everything
+below is this module's business.
 
-It stands here because that seam stands above it. The interface, where it is
-consumed in the pipeline and what a refusal turns into are already documented as
-part of HTTP; this chapter is the counter that fills the seam, and it is read
-directly after the shape it has to fit.
+It is not reachable from a package entry point yet — the wiring belongs to
+whoever owns `src/index.ts` — so everything below describes the module as it is
+imported from `src/core/limit`, not as `@velve/auth` exports it today.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `rate`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does.
+It keeps three counters, and only two of them can refuse a request.
 
-### Nothing is documented here yet
+| Counter | Key | On overflow |
+|---|---|---|
+| Address | route name and the address prefix | `rate_limited` |
+| Account | route name and `HMAC(token-pepper, identifier)` | `rate_limited` |
+| Per route, per instance | route name, in memory | an alarm, and nothing else |
 
-`rate` replaces this heading with its own sub-tree.
+### `createRateLimiter(options)`
+
+```ts
+import { createRateLimiter } from "../limit/index.js";
+
+const rateLimiter = createRateLimiter({
+  driver,
+  keys,
+  schema: "velve",
+  clock: { now: () => new Date() },
+  config: {
+    routeFlood: {
+      rule: { capacity: 500, refillPerSecond: 5 },
+      onAlert: (alert) => metrics.increment("velve.route_flood", alert),
+    },
+  },
+});
+```
+
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | — | The database. Every check is one statement on it. |
+| `keys` | `KeyProvider` | — | Where the `token-pepper` key comes from. The account key is an HMAC under it, so no identifier is written down. |
+| `schema` | `string` | — | The schema holding `velve.rate_bucket`. Validated as an identifier before it reaches any statement. |
+| `clock` | `{ now(): Date }` | — | The instant a check is measured at. It is written into the row and it is what the next check measures elapsed time from. |
+| `config.routeFlood` | `{ rule, onAlert }` | absent | The per-route alarm below. Absent means no alarm and no in-memory state. |
+
+It returns a `RateLimiter`. Nothing else about it is public: there is no method
+to reset a bucket, none to read one, and none to exempt a caller.
+
+### The statement
+
+One `INSERT … ON CONFLICT … DO UPDATE … RETURNING tokens` per check, which is
+architecture 3.9 and is what makes `S-RATE-6` hold. There is no read followed by
+a write, and no row lock — `ON CONFLICT DO UPDATE` serialises the conflicting
+writers itself, so at *n* simultaneous requests against a capacity of *L*, at
+most *L* come back with a non-negative level.
+
+The refilled level is computed inside the statement:
+
+```
+level  = LEAST(capacity, GREATEST(0, stored + elapsed × refillPerSecond)) − 1
+```
+
+`RETURNING tokens` hands `level` back, and the request is allowed when it is not
+negative. Two floors deviate from the SQL printed in 3.9, and both exist for
+`S-RATE-7`:
+
+- **The level is floored at zero before the draw.** Without it a refused request
+  drives the stored level further negative every time, so a caller who sent a
+  million refused requests leaves a bucket that needs a million tokens' worth of
+  refilling. The account then stays shut for the rightful owner long after the
+  flood stopped, which is the lockout the requirement forbids. With the floor a
+  refused bucket rests at −1 and the next success needs two tokens' worth of
+  time, whatever happened before.
+- **Elapsed time is floored at zero.** The instant comes from `clock`, so two
+  instances with skewed clocks would otherwise let the one that is behind
+  subtract tokens rather than add them.
+
+`expires_at` is set on every write to the time the bucket needs to fill from
+empty — `capacity / refillPerSecond` — with a floor of 60 seconds and a ceiling
+of one day. A row swept earlier than that would hand the remaining tokens back
+early. The ceiling is not a rounding: a bucket that would take longer than a day
+to refill is a lockout with a rate limiter's name on it.
+
+The table itself is `velve.rate_bucket`, created by migration 1 and described in
+the schema chapter. This module adds no migration and no table.
+
+### The address counter
+
+The key is the route name and the address prefix: `/64` for IPv6 and the whole
+address for IPv4, through `ipAddressNetwork(text, { ipv4: 32, ipv6: 64 })`.
+
+```
+ip|signIn.password|2001:db8::/64
+ip|signIn.password|203.0.113.5/32
+ip|signIn.password|unresolved
+```
+
+A thousand addresses inside one `/64` are one bucket (`S-RATE-2`), and the
+compressed, expanded, upper-case and IPv4-mapped spellings of one address are
+one key (`S-RATE-1`). Surrounding whitespace is trimmed, so `" 203.0.113.5 "`
+and `"203.0.113.5"` count together.
+
+**`unresolved` is a real bucket, not a skipped check.** Where the address is
+`null`, or is text that is not one address — a zone identifier, `host:port`, a
+bracketed address, two addresses in one header value — the request counts on one
+shared bucket per route and the limit is enforced there (`S-RATE-4`). Nothing
+reaches the handler without being counted. The cost is that unrelated callers
+whose address could not be determined share a bucket; the alternative is a free
+lane that any caller can enter by sending a header the parser rejects.
+
+The route name in the key is the **resolved** name from the route declaration,
+never the request path, so `/sign-in/password`, `//sign-in/password`,
+`/sign-in/password/`, `/./sign-in/password`, `/sign-in//password`,
+`/sign-in/passw%6Frd` and `/SIGN-IN/PASSWORD` all count on one bucket
+(`S-RATE-5`, GHSA-x732-6j76-qmhm). The limiter never sees a path.
+
+### The account counter
+
+The key is the route name and `HMAC-SHA256(token-pepper, normalised identifier)`,
+base64url-encoded:
+
+```
+account|signIn.password|WwPZ0y5hVZ6t3q8k2m1n4p7r0s3u6w9x2z5A8C1E4G8
+```
+
+It is formed before the user is resolved, so an identifier that belongs to an
+account and one that belongs to nobody advance the same row and are refused
+after the same number of attempts. The identifier never reaches
+`velve.rate_bucket` in the clear (`S-RATE-7`, L-5), and the pepper is a key from
+the `KeyProvider` rather than a value in the process, so a database dump does
+not let the keys be recomputed.
+
+The route passes the identifier through `context.enforceAccountRateLimit` after
+it has parsed the input; normalising it is the route's job, not this module's.
+Two spellings that normalise to one identifier are one bucket only because the
+route normalised them first.
+
+An empty bucket is a refusal with `rate_limited`. It is never a delay and never
+a lock. `test/limit-option-shape.test.ts` holds an allowlist of every member
+name this module declares, each one read and found to be neither, and it fails
+the build on any name that is not on it — so a delay cannot be added without
+somebody putting its name on that list first. It is not a filter that recognises
+forbidden names, and it was one until it passed `minimumResponseTime` (E-394).
+The bucket refills at the configured rate, so an account stays reachable for its
+owner with the right credentials after any number of failed attempts by anyone
+else.
+
+A refusal is answered without running a key derivation, so it is measurably
+cheaper than a failed sign-in. That is the point of ordering the checks this way
+and not an accident of the implementation.
+
+### `retryAfterSeconds`
+
+A refusal carries the whole seconds until the bucket holds a token again,
+`ceil((1 − level) / refillPerSecond)`, and never less than 1. Where
+`refillPerSecond` is zero or not a finite number the field is **absent**: a wait
+that never ends is not a wait a caller can act on.
+
+A caller must not read the field's absence as anything more than absence. The
+KDF semaphore refuses with the same `rate_limited` code and has never carried a
+`Retry-After` (E-166), so two different refusals reach the outside under one
+code, and only one of them can say how long.
+
+### The per-route alarm
+
+`config.routeFlood` watches how much traffic one route is taking on this
+instance. It refuses nothing (`S-RATE-8`); when its allowance runs out it calls
+`onAlert` and the request continues to the ordinary counters.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `rule.capacity` | `number` | Address checks the route may take before the alarm sounds |
+| `rule.refillPerSecond` | `number` | How fast that allowance comes back |
+| `onAlert` | `(alert: RouteFloodAlert) => void` | Called on the transition into exhaustion, not on every request past it |
+
+```ts
+interface RouteFloodAlert {
+  routeName: string
+  addressChecksObserved: number   // on this instance, since it started
+  observedAt: Date
+}
+```
+
+Three things about it are worth knowing before it is configured.
+
+- **It counts address checks, not requests.** A route that declares
+  `perIpAddress: "none"` is invisible to the alarm, because the pipeline never
+  calls the limiter for it. Every route that can be flooded from outside
+  declares an address bucket, so in practice one check is one arriving request —
+  but the threshold is in checks, and that is what the field is named after.
+- **It is per instance and in memory.** Four processes behind one proxy hold
+  four independent counters; a threshold meant to describe the whole service has
+  to be divided by the number of instances. Nothing is written to the database
+  for it.
+- **It is refilled from the clock, never by a timer.** A process saturated by
+  the very flood the alarm exists to notice does not run its timers — 800
+  concurrent sign-ins once produced no timer callback at all in 14.7 seconds
+  (E-186) — so a counter whose window is reset on a timer is silent exactly when
+  it is needed.
+
+An `onAlert` that throws is swallowed, for the same reason a `log` that throws
+is: an alert sink that is down must not cost the caller its answer.
+
+### `resolveClientAddress(connectionAddress, forwardedFor, trustedProxies)`
+
+A pure function, exported so that whatever wires up `options.clientAddress` can
+use it. It reads no header itself and holds no state.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `connectionAddress` | `string \| null` | The transport peer, from the adapter |
+| `forwardedFor` | `string \| null` | The raw `X-Forwarded-For` value, or `null` |
+| `trustedProxies` | `readonly string[]` | Addresses and CIDR ranges whose `X-Forwarded-For` may be believed |
+
+```ts
+resolveClientAddress("203.0.113.1", "9.9.9.9", [])                       // "203.0.113.1"
+resolveClientAddress("10.0.0.5", "1.2.3.4, 10.0.0.9", ["10.0.0.0/8"])    // "1.2.3.4"
+resolveClientAddress("203.0.113.1", "9.9.9.9", ["10.0.0.0/8"])           // "203.0.113.1"
+```
+
+The header is read only where `trustedProxies` says who may write it
+(`S-RATE-3`). With an empty list, or a connection from an address the list does
+not cover, the answer is the connection address and no `X-Forwarded-*` header
+can move it. Where the connection is from a trusted proxy, the answer is the
+**rightmost** claimed address that is not itself a trusted proxy — the last hop
+no trusted party vouched for. Taking the leftmost instead would let any client
+prepend an address and choose its own bucket.
+
+An entry that does not parse — `10.0.0.0/`, `10.0.0.0/33`, `not-a-range` —
+matches nothing, so a mistyped list falls back to the connection address rather
+than trusting a header it cannot check. Nothing reports the typo; validating the
+list belongs to whatever accepts it as configuration.
+
+A chain of nothing but trusted proxies, and a `null` connection address, both
+answer with the connection address. In the second case that is `null`, which the
+address counter turns into the shared `unresolved` bucket rather than a skipped
+check.
 
 ## Passwords
 
@@ -3053,9 +3272,10 @@ At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
 can be counted. An option left at its default produces nothing.
 
-One line is written by every installation today: the rate counters are held in
-memory rather than in `velve.rate_bucket`. That is weaker than the design and it
-is reported rather than hidden.
+A default configuration writes no line at all. The counters live in
+`velve.rate_bucket`, through `createRateLimiter` from `core/limit`; the assembly
+translates `globalPerRoute.alertThresholdPerMinute` into the bucket rule that
+module takes, which is the same statement in its vocabulary (E-356).
 
 ### `TRUST_LEVEL_EVENTS`
 

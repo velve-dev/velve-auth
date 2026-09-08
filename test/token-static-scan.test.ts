@@ -157,20 +157,20 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 
 	// S-TOKEN-4: the row names the account, so a caller-supplied owner has nothing to add here.
 	// E-142 requires the statement itself to say so and to name the requirement that permits it.
-	// It was the only such statement in the library when this was written; it is now one of seven
-	// across five files, and the count is asserted below rather than left in this sentence (E-353).
+	// It was the only such statement in the library when this was written; it is now one of eight
+	// across six files, and the count is asserted below rather than left in this sentence (E-353).
 	it("filters on no owner, and declares that in its own text", () => {
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(predicatesIn(consume)[0]).not.toContain("user_id");
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of seven overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of eight overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
-		expect(markers).toHaveLength(7);
-		expect(carrying).toHaveLength(5);
+		expect(markers).toHaveLength(8);
+		expect(carrying).toHaveLength(6);
 		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
 });

@@ -144,7 +144,7 @@ describe("what else refuses to start", () => {
 });
 
 describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", () => {
-	it("says nothing about an option left at its default beyond the one the assembly itself weakens", () => {
+	it("says nothing at all about an option left at its default", () => {
 		const log = createLogSink();
 		start({ log: log.write })();
 
@@ -152,7 +152,7 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 			(line) => line.message === "a security option is weaker than its default",
 		);
 
-		expect(weakened.map((line) => line.fields.option)).toStrictEqual(["rateLimit"]);
+		expect(weakened.map((line) => line.fields.option)).toStrictEqual([]);
 	});
 
 	it("writes exactly one line per weakened option, naming the option", () => {
@@ -171,7 +171,6 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 
 		expect(weakened.map((line) => line.fields.option).sort()).toStrictEqual([
 			"clock",
-			"rateLimit",
 			"session",
 			"sessionMetadata",
 			"trustedProxies",

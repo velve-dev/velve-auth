@@ -19,14 +19,17 @@ let userId: string;
 const OBSERVED = { ipAddress: null, userAgent: null };
 
 /**
- * Fewer than the fifty S-RACE-1 fixes for a one-time token, and deliberately: `token-race.test.ts`
- * legitimately holds fifty of the hundred connections this server allows, the concurrency project
- * runs these files one after another, and two files each holding fifty exhausted the budget and
- * failed both (E-156 predicted the shape). What this test needs is genuine simultaneity, which
- * twenty-four gives; the connections are opened inside the test and closed before it returns, so
- * the peak lasts one test rather than the whole file.
+ * Far fewer than the fifty S-RACE-1 fixes for a one-time token, and the number was measured rather
+ * than chosen. `token-race.test.ts` legitimately holds fifty of the hundred connections this server
+ * allows for the whole of its file; adding a seventh concurrency file at twenty-four turned the
+ * nightly run red in *that* file, while `main` without this one was green — the budget is shared
+ * and cumulative, and the file that pays is whichever runs last. Eight is what
+ * `token-review-reissue-concurrency` uses, it is genuine simultaneity across eight connections,
+ * and it proves the same statement: exactly one completion gets through. The connections are also
+ * opened inside the test and closed before it returns, so the peak lasts one test rather than the
+ * file (E-358).
  */
-const ATTEMPTS = 24;
+const ATTEMPTS = 8;
 
 beforeAll(async () => {
 	const migrated = await openMigratedSchema("pendingrace");
@@ -107,7 +110,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		expect(await pending.resolve(token)).not.toBeNull();
 	});
 
-	it("lets exactly one of twenty-four concurrent completions through", async () => {
+	it("lets exactly one of eight concurrent completions through", async () => {
 		const token = await beginPending();
 		// One connection per racer: a shared one serialises the statements and joins the transactions,
 		// so every racer would run inside the first one's and one failure would roll back them all.
