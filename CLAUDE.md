@@ -25,6 +25,11 @@ the feature branches appending to it. Until that pass has run the file holds
 both languages. A German entry still in it is outstanding work, not a permitted
 exception, and no entry written from now on may be German.
 
+That pass rewrites the file's own header too. The header states the language and
+the entry format of everything below it, and a translation that leaves it
+standing leaves the file describing itself wrongly — in German, and in the old
+`Kontext · Verworfen · Grund · Preis` shape §6 has replaced.
+
 The decision log continues architecture section 7, and section 7 is German. A
 continued entry is **translated, not quoted**: the case study no longer
 reproduces section 7's German verbatim. How a translation must read is fixed in
@@ -222,6 +227,15 @@ Until the migration in §1 has run, the file also holds the old German form —
 `*Preis:*`. `test/decision-log.test.ts` accepts both, and only both. A heading
 that is neither is a fault, not an entry, and the test says so rather than
 skipping it.
+
+**Heading position** is what the test means by it: a line that opens a markdown
+block — it is the first line of the file, or it follows a blank line or an ATX
+heading — and that begins, after any markdown decoration, with an `E-nnn` that
+is not followed by prose. `###`, `-`, `*`, `+`, `>` and backticks are decoration,
+so leaving the number in the `###` heading is caught, and so is a list item, an
+italic line or a blockquote carrying one. A wrapped prose line never opens a
+block, so a citation that happens to land at a line start is not a heading and
+is not reported.
 
 ### Translating an entry
 
