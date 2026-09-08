@@ -11,6 +11,12 @@ Where two chapters use nothing of each other, the architecture's section order
 decides between them, and where that does not either, the wider of the two is
 read second.
 
+A chapter reserved for a feature that has not been written yet says so at its
+head, and that chapter is the only region of this file that feature writes into
+— `CLAUDE.md` §5 makes the chapter the partition. The reminder is repeated in
+each stub and the stub is deleted by the writer who fills it, so it is stated
+here as well, where nothing removes it.
+
 ## Contents
 
 - [Package entry points](#package-entry-points)
@@ -4214,12 +4220,13 @@ directly, for a caller that is not a browser.
 
 Reserved for `plugin` (wave 4). Architecture 3.11 and 3.15 G: the registry, the
 topological sort over `dependsOn`, the frozen context, the seven enumerated hook
-points and the veto a hook holds, and the four things a plugin may contribute —
-routes under `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes and
-rate-limit rules. Also the six things it may not, which 3.11 states as
-prohibitions rather than as omissions.
+points and the veto a hook holds, and what a plugin may contribute — routes under
+`/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
+and its own dependency declaration, which is how 3.11's first list reads. Also
+the six things it may not, which that section states as prohibitions rather than
+as omissions.
 
-It stands after The instance because each of those four is contributed **to**
+It stands after The instance because every one of those is contributed **to**
 something the assembly owns, and the refusal that guards them is a start error. A
 route name colliding with a core route is not a warning; the moment it is
 detected is the moment `createVelveAuth` runs. So a chapter listing what a plugin

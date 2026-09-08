@@ -138,18 +138,18 @@ At most **four agents run at the same time**. This is a hard limit.
 Features in the same wave run in parallel; waves run one after another. **No two
 writers share a file.**
 
-There are exactly two sanctioned exceptions, and both are safe for the same
-reason: the file is **partitioned before the wave starts**, and a feature writes
-only inside the partition it was given. The exception is never "this file is
-shared" — it is "this file has disjoint parts, and one of them is yours".
+There are exactly three sanctioned exceptions, and all of them are safe for the
+same reason: the file is **partitioned before the wave starts**, and a feature
+writes only inside the partition it was given. The exception is never "this file
+is shared" — it is "this file has disjoint parts, and one of them is yours".
 
 - **`CASE-STUDY.md`** — every feature appends entries to it. The partition is a
   reserved range of decision numbers, handed out before the writer starts; §6
   sets the ranges out and `test/decision-log.test.ts` enforces them.
 - **`DOCUMENTATION.md`** — every feature documents itself in it, because item 3
   of the definition of done below requires it. The partition is the chapter:
-  **a feature owns the `##` chapter named for it — one, for every feature of
-  wave 3 — and appends nowhere else in the file.** The chapter, its position and
+  **a feature owns the `##` chapter named for it — one for every feature of the
+  wave — and appends nowhere else in the file.** The chapter, its position and
   its `## Contents` line are created as empty stubs before the wave starts, so
   no writer inserts a heading and no two writers ever touch the same region.
   **This one is enforced by the reviewer noticing, not by a check.** Nothing
@@ -158,6 +158,13 @@ shared" — it is "this file has disjoint parts, and one of them is yours".
   paragraph written into a neighbour's chapter fails nowhere. The two bullets
   look alike and are not equally enforced, and the second is worth exactly what
   the reviewer checking it is worth.
+- **`README.md`** — item 4 of the definition of done points every feature at it
+  whenever the outside picture changes, and wave 4 changes that picture three
+  times. The partition is the `###` region under **What works today** named for
+  what the feature builds, cut before the wave like a chapter. A feature rewrites
+  its own region and nothing else in the file; the sentence above the regions
+  that says what works end to end belongs to no feature, so a change to it is
+  reported rather than made.
 
 A feature that needs a change in another feature's chapter, or in a chapter no
 feature owns, stops and reports it — exactly as it would for any other file it
@@ -611,8 +618,9 @@ pnpm check:log-append
                  rewritten, and the branch has added at least one. Refuses the
                  run if the base cannot be resolved; VELVE_LOG_BASE names a base
                  other than origin/main. Alone among the gate's steps it reads
-                 committed history and not the working tree, so a deletion that
-                 is not yet committed is invisible to it and to nothing else
+                 committed history and not the working tree, so an uncommitted
+                 deletion is invisible to it — and to every other step as well,
+                 which is why §6 states it rather than a check catching it
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

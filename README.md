@@ -106,8 +106,9 @@ refuses to start on one that cannot be made safe — a root key shorter than 32
 bytes, an empty origin list, a username-only mode without recovery codes, Argon2
 parameters below the floor — and returns the route table, the server methods and
 the maintenance sweep. Sessions, sign-out and the state between password and
-second factor work end to end today; sign-up, sign-in, the password flows, the
-second factors and OAuth are being added by the features behind this one.
+second factor work end to end today. The TOTP, recovery-code and WebAuthn
+services are built and their routes are not assembled into the table yet; sign-up,
+sign-in and the password flows are not built.
 
 ```ts
 import { createVelveAuth, rootKeyProvider } from "@velve/auth";
@@ -130,6 +131,23 @@ check, and none that keeps other sessions alive across a password change.
 
 [`DOCUMENTATION.md`](./DOCUMENTATION.md) has the schema table by table and every
 option of both functions.
+
+### Third-party sign-in
+
+Not built yet. The configuration is declared — `oauth` takes the fourteen
+providers of architecture 3.10 plus `genericOAuth`, `trustedProviders` and
+`storeTokens` — and no route reads it.
+
+### Email flows
+
+Not built yet. The confirmation link, the address change, the password reset and
+the magic link are one-time artefacts over a store that exists; the flows over
+them do not.
+
+### Plugins
+
+Not built yet. `VelvePlugin` is declared and `error-map.ts` already resolves a
+plugin's own error codes; the registry that runs the hooks does not exist.
 
 ## Mounting it
 
