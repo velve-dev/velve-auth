@@ -45,8 +45,8 @@ export function createOneTimeTokens(repository: OneTimeTokenRepository): OneTime
 				tokenSha256: hashSecretToken(token),
 				purpose,
 			});
-			// S-TOKEN-4: the target account is the stored one or there is none, and no target is
-			// the same answer as no row.
+			// S-TOKEN-4: a row that names no account has no target, and that is the same answer as
+			// no row at all.
 			if (stored === null || stored.userId === null) {
 				return null;
 			}
