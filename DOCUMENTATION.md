@@ -3006,9 +3006,17 @@ what the account is called.
 `start` returns `{ publicKeyOptions, challengeToken }`. `publicKeyOptions` goes
 to `navigator.credentials.create()` unchanged. It names every credential the
 account already has under `excludeCredentials`, so the same authenticator cannot
-be enrolled twice, and asks for `residentKey: "preferred"` — not `"required"`,
-because a security key has a small fixed number of discoverable slots and would
-refuse (E-466).
+be enrolled twice, and asks for **`residentKey: "required"`** — a fixed value,
+not an option (architecture 1 D37). This is the only ceremony that enrols a
+credential, so it is the passkey path's registration whatever else it also
+serves, and `"preferred"` means in practice "mostly not": a credential that is
+not discoverable never appears in passkey sign-in and nothing says so.
+
+The consequence is worth knowing before you deploy: a security key holds a small
+fixed number of discoverable credentials, and one that is full **refuses the
+ceremony** rather than making a non-discoverable credential. Such a key cannot
+be enrolled as a second factor either, because there is one registration route
+for both (E-483).
 
 `challengeToken` is opaque to the caller and comes back to `finish`. It is also
 the value inside `publicKeyOptions.challenge`: one 32-byte secret is both the
@@ -3230,16 +3238,17 @@ the browser against a living specification, so a field it grows and this library
 does not read is dropped rather than answered with `invalid_input`. The route's
 own input around it stays strict (E-455).
 
+**The parsed payload carries no prototype**, on the way out as well as on the
+way in. A consumer reads a field through the prototype chain, so the prototype
+of the value it is handed is the only thing that decides whether an optional
+field the browser did not send comes back as something else (E-481).
+
 **An unknown `transports` value is dropped, not rejected.** A transport is a
 hint that no part of the ceremony depends on, and a new one ships in a browser
 before it ships in `@simplewebauthn/server`. Rejecting would lock that
 authenticator out over an advisory field, so the parser accepts any string and
 keeps the ones the verifier can type — which is also what is stored (E-453).
 `type` gets no such leniency, because that field decides something.
-
-The parsed payload carries no prototype: an optional field the browser did not
-send must not resolve through a polluted `Object.prototype` into the stored row
-(E-456).
 
 ### What is not here
 
