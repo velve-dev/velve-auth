@@ -1150,12 +1150,31 @@ that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
 |---|---|---|
 | `length` | `number` | how many bytes to draw |
 
+### `encodeBase64Url(bytes)`
+
+`string`. Canonical base64url, no padding, written here rather than through
+`btoa` for the reason `decodeBase64Url` beside it does not use `atob`: section
+2.6 lists the runtime assumptions and neither is among them (E-62, E-257). It is
+the encoder for every secret the library hands out; the decoder beside it reads
+root keys.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `bytes` | `Uint8Array` | the bytes to encode |
+
 ### `SecretToken`
 
-A `string` with a brand on it. A user id, a session id or any other database key
-is not assignable to it, so a token cannot be confused with a key by assignment
-(S-RAND-6). The brand is nominal only: it says where a value came from, it does
-not say the value is valid.
+A `string` with a brand on it. A plain string — a user id, a session id, any
+other database key — is **not** assignable to `SecretToken`, so a key cannot
+arrive where a token is expected without `toSecretToken` being written at the
+call site. That is the half of S-RAND-6 this type provides.
+
+The other half does not hold yet: `SecretToken` is a subtype of `string`, so a
+token still flows into any parameter typed `string`, including `userId`. Closing
+that needs the `EntityId` type S-RAND-6 names, which does not exist in the core;
+T-RAND-6 asks for two negative cases that do not compile and one of them does.
+The brand is nominal in any case: it says where a value came from, not that the
+value is valid.
 
 ### `createSecretToken()`
 
@@ -1220,10 +1239,15 @@ WHERE id = $1 FOR UPDATE` before it writes. The replacement is one statement and
 therefore atomic, but at `READ COMMITTED` its `DELETE` works from the snapshot
 the statement began with and cannot remove a row a concurrent request inserted
 after it; without the lock, eight simultaneous requests leave up to eight live
-tokens where section 3.7 allows one. Both shipped drivers join an open
-transaction rather than opening a second, so calling this inside
-`driver.transaction` still rolls the whole issue back when the mail cannot be
-sent.
+tokens where section 3.7 allows one.
+
+Whether calling this inside `driver.transaction` still rolls the whole issue
+back is a property of the driver, not of the library: the `Driver` interface
+does not say that `transaction` on a bound driver joins the open one rather than
+opening a second. `createNodePostgresDriver` does join, so the rollback works
+for `@velve/auth/pg` — the only driver that currently ships; `@velve/auth/postgres-js`
+and `@velve/auth/neon` are empty. A driver written elsewhere has to join for the
+rollback of section 3.15 A.7 to hold.
 
 Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
 code on it rather than one class per failure.
@@ -1292,4 +1316,28 @@ answers `null` like the rest.
 |---|---|---|
 | `purpose` | `OneTimeTokenPurpose` | the purpose the token was minted and redeemed under |
 | `userId` | `string` | the account from `one_time_token.user_id` |
-| `payload` | `Record<string, unknown>` or `null` | whatever `issue` stored, for example the address an `email_change` moves to |
+| `payload` | `OneTimeTokenPayload` or `null` | whatever `issue` stored, for example the address an `email_change` moves to |
+
+### The types this module exports
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `SecretToken` | branded `string` | the plaintext of an artefact, above |
+| `OneTimeTokenPurpose` | `"email_verify" \| "password_reset" \| "email_change" \| "magic_link"` | every signature that touches the table |
+| `OneTimeTokenPayload` | `Readonly<Record<string, unknown>>` | what `issue` stores and `redeem` returns |
+| `OneTimeTokenRequest` | `{ purpose; userId: string; payload?: OneTimeTokenPayload }` | the argument of `issue` |
+| `IssuedOneTimeToken` | `{ token: SecretToken; expiresAt: string }` | the result of `issue` |
+| `OneTimeTokenRedemption` | `{ purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the result of `redeem` |
+| `OneTimeTokens` | `{ issue; redeem }` | the result of `createOneTimeTokens` |
+| `OneTimeTokenRepositoryOptions` | `{ driver: Driver; schema: string }` | the argument of `createOneTimeTokenRepository` |
+| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the argument of `replaceOneTimeToken` |
+| `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
+| `StoredOneTimeToken` | `{ userId: string \| null; payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns |
+| `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
+| `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
+
+`payload` is `Readonly`: the object `redeem` hands back is the row's, not a copy
+to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in
+`StoredOneTimeToken`, because the column is nullable and a row that names no
+account is not redeemable — the service turns that row into `null` rather than
+handing a caller a target it does not have.

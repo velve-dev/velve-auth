@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type {
 	createOneTimeTokenRepository,
+	OneTimeTokenError,
+	OneTimeTokenErrorCode,
 	OneTimeTokenRepository,
 	OneTimeTokenRepositoryOptions,
 } from "../src/core/db/repositories/token.js";
@@ -249,5 +251,6 @@ describe("the exported types describe the functions they name", () => {
 			Awaited<ReturnType<OneTimeTokens["redeem"]>>
 		>().toEqualTypeOf<OneTimeTokenRedemption | null>();
 		expectTypeOf<OneTimeTokenRequest["payload"]>().toEqualTypeOf<OneTimeTokenPayload | undefined>();
+		expectTypeOf<OneTimeTokenError["code"]>().toEqualTypeOf<OneTimeTokenErrorCode>();
 	});
 });
