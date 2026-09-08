@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: ['**']
   pull_request:
     branches: [main]
 
@@ -55,6 +55,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Session owner reassignment
+        run: pnpm check:session-owner
+
       - name: Dead code
         run: pnpm knip
 
@@ -95,18 +98,51 @@ jobs:
             RANGE="HEAD"
           fi
 
+          # A single NUL byte makes git classify a source file as binary, which hides
+          # it from `git grep -I` and renders its diff as "Bin" in review.
+          # Capture the output rather than testing the pipeline: with no .gitattributes,
+          # xargs -r runs nothing and exits 0, which an `if` reads as a hit.
+          # A symlink makes the content at a path differ from what a reviewer reads there.
+          echo "Checking that no source path is a symlink"
+          LINKS=$(git ls-files -s | awk '$1 == "120000" { $1=""; $2=""; $3=""; print }' || true)
+          if [ -n "$LINKS" ]; then
+            echo "::error::a tracked path is a symlink, so its content is not what review shows"
+            echo "$LINKS"
+            fail=1
+          fi
+
+          echo "Checking that no .gitattributes hides a file from review"
+          HIDDEN=$(git ls-files --cached --others --exclude-standard -- '*.gitattributes' \
+            | xargs -r grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)' || true)
+          if [ -n "$HIDDEN" ]; then
+            echo "::error::a .gitattributes marks a path binary or -diff, which hides it from review"
+            echo "$HIDDEN"
+            fail=1
+          fi
+
+          echo "Checking that no text file contains a NUL byte"
+          BINARY=$(git ls-files -- . ':!assets/**' | while read -r f; do
+            [ -f "$f" ] || continue
+            if ! tr -d '\000' < "$f" | cmp -s - "$f"; then echo "$f"; fi
+          done)
+          if [ -n "$BINARY" ]; then
+            echo "::error::text files contain a NUL byte and escape review and scanning"
+            echo "$BINARY"
+            fail=1
+          fi
+
           echo "Scanning commit messages in $RANGE"
-          if git log --format=%B "$RANGE" | grep -EIni "$MARKERS|$CLAIMS"; then
+          if git log --format=%B "$RANGE" | grep -Eani "$MARKERS|$CLAIMS"; then
             echo "::error::AI attribution found in commit messages"
             fail=1
           fi
 
           echo "Scanning tree"
-          if git grep -EIni "$MARKERS" -- . "${EXEMPT[@]}"; then
+          if git grep -Eani "$MARKERS" -- . "${EXEMPT[@]}"; then
             echo "::error::AI attribution marker found in tree"
             fail=1
           fi
-          if git grep -EIni "$CLAIMS" -- . "${EXEMPT[@]}"; then
+          if git grep -Eani "$CLAIMS" -- . "${EXEMPT[@]}"; then
             echo "::error::AI authorship claim found in tree"
             fail=1
           fi
@@ -114,7 +150,7 @@ jobs:
           # The tree scan cannot see text that a later commit removed; the diff
           # scan cannot see text that predates the branch. Both are needed.
           echo "Scanning diff in $RANGE"
-          if git log -p --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -EIni "$MARKERS|$CLAIMS"; then
+          if git log -p --text --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -Eani "$MARKERS|$CLAIMS"; then
             echo "::error::AI attribution found in the branch diff"
             fail=1
           fi
