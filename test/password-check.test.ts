@@ -222,6 +222,22 @@ describe("one code path regardless of the outcome", () => {
 		expect(rejected).toEqual({ outcome: "refused", reason: "legacy_scheme_rejected" });
 	}, 30_000);
 
+	// The gate reads the cleartext `scheme` column, the verifier reads the identifier inside the
+	// credential. When the two disagree the credential must lose, or `acceptLegacy` is advisory.
+	it("refuses a credential whose identifier disagrees with the column it is filed under", async () => {
+		await seed(stored.byScheme.argon2i, "argon2id");
+		const narrowed = { ...environment, config: resolvePasswordConfig({ acceptLegacy: [] }) };
+
+		expect(await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, narrowed)).toEqual({
+			outcome: "refused",
+			reason: "password_mismatch",
+		});
+		expect(await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, environment)).toEqual({
+			outcome: "refused",
+			reason: "password_mismatch",
+		});
+	}, 30_000);
+
 	it("still runs a derivation for a scheme it refuses to accept", async () => {
 		await seed(stored.byScheme.bcrypt, "bcrypt");
 		const narrowed = { ...environment, config: resolvePasswordConfig({ acceptLegacy: [] }) };

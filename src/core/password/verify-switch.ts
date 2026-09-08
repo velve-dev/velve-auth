@@ -10,10 +10,15 @@ import { verifyScrypt } from "./verifiers/scrypt.js";
 type SchemeVerifier = (password: AcceptedPassword, stored: string) => Promise<boolean>;
 type PhcVerifier = (password: AcceptedPassword, stored: PhcString) => Promise<boolean>;
 
-function overPhc(verify: PhcVerifier): SchemeVerifier {
+/**
+ * `acceptLegacy` is applied to the cleartext `scheme` column, so the column has to name the same
+ * function the credential does. Without this, a row filed as `argon2id` that decrypts to an
+ * `$argon2i$` string is verified as Argon2i however the configuration is set (E-177).
+ */
+function overPhc(identifier: PasswordScheme, verify: PhcVerifier): SchemeVerifier {
 	return async (password, stored) => {
 		const parsed = parsePhc(stored);
-		return parsed === null ? false : verify(password, parsed);
+		return parsed === null || parsed.id !== identifier ? false : verify(password, parsed);
 	};
 }
 
@@ -21,14 +26,14 @@ function overPhc(verify: PhcVerifier): SchemeVerifier {
 // on a literal a name inherited from `Object.prototype` resolves to a function whose result the
 // caller reads as a match (E-178).
 const VERIFIER_BY_SCHEME = new Map<PasswordScheme, SchemeVerifier>([
-	["argon2id", overPhc(verifyArgon2)],
-	["argon2i", overPhc(verifyArgon2)],
-	["argon2d", overPhc(verifyArgon2)],
+	["argon2id", overPhc("argon2id", verifyArgon2)],
+	["argon2i", overPhc("argon2i", verifyArgon2)],
+	["argon2d", overPhc("argon2d", verifyArgon2)],
 	["bcrypt", verifyBcrypt],
-	["scrypt", overPhc(verifyScrypt)],
-	["pbkdf2-sha256", overPhc(verifyPbkdf2)],
-	["pbkdf2-sha512", overPhc(verifyPbkdf2)],
-	["fbscrypt", overPhc(verifyFirebaseScrypt)],
+	["scrypt", overPhc("scrypt", verifyScrypt)],
+	["pbkdf2-sha256", overPhc("pbkdf2-sha256", verifyPbkdf2)],
+	["pbkdf2-sha512", overPhc("pbkdf2-sha512", verifyPbkdf2)],
+	["fbscrypt", overPhc("fbscrypt", verifyFirebaseScrypt)],
 ]);
 
 /**
