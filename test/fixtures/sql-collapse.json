@@ -1,0 +1,35 @@
+{
+	"permitted": [
+		["no comment at all", "DELETE FROM ${table} WHERE token_sha256 = $1 RETURNING user_id"],
+		[
+			"a block comment between the table and the predicate",
+			"DELETE FROM ${table}\n/* no owner predicate: S-TOKEN-4 */\nWHERE token_sha256 = $1"
+		],
+		[
+			"a block comment spanning two lines",
+			"SELECT 1 FROM ${schema}.user\n/* locks:\n   ${schema}.user */\nWHERE id = $1 FOR UPDATE"
+		],
+		[
+			"a line comment with nothing after it to take",
+			"SELECT 1 FROM ${schema}.user WHERE id = $1 FOR UPDATE\n-- nothing follows"
+		],
+		[
+			"a double dash inside a string body, which opens no comment",
+			"SELECT 1 FROM ${table} WHERE purpose = '--' AND expires_at > now()"
+		]
+	],
+	"forbidden": [
+		[
+			"a line comment between the table and the predicate",
+			"DELETE FROM ${table}\n-- no owner predicate: S-TOKEN-4\nWHERE token_sha256 = $1"
+		],
+		[
+			"a line comment before the RETURNING clause",
+			"DELETE FROM ${table} WHERE token_sha256 = $1\n-- returns the row it removed\nRETURNING user_id"
+		],
+		[
+			"a line comment before the assignment list",
+			"UPDATE ${table}\n-- extends the idle deadline\nSET last_used_at = now() WHERE id = $1"
+		]
+	]
+}

@@ -16,6 +16,7 @@ import {
 	type OneTimeTokens,
 	toSecretToken,
 } from "../src/core/token/index.js";
+import { onOneLine, withoutSqlComments } from "../tools/sql-collapse.mjs";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
 const repositoryPath = `${coreDirectory}/db/repositories/token.ts`;
@@ -64,22 +65,6 @@ function asWritten(sql: string): string {
 	return collapseWhitespace(withoutSqlComments(sql))
 		.replace(/\$\{table\}/g, "velve.one_time_token")
 		.replace(/\$\{schema\}/g, "velve");
-}
-
-/** A marker declaring a missing owner predicate (E-142) is not part of the statement. */
-function withoutSqlComments(sql: string): string {
-	return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
-}
-
-/** What a logger, a formatter or a fronting proxy leaves of a statement. */
-function onOneLine(sql: string): string {
-	return sql.replace(/\s+/g, " ").trim();
-}
-
-/** E-266: a comment that runs to the end of its line eats everything after it the moment the
- * newlines are gone, so removing comments has to give the same statement either way round. */
-function survivesCollapsing(sql: string): boolean {
-	return onOneLine(withoutSqlComments(onOneLine(sql))) === onOneLine(withoutSqlComments(sql));
 }
 
 /** Everything a `WHERE` filters on, which ends where the statement stops filtering. */
@@ -153,31 +138,12 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 	});
 });
 
-// The marker in the redemption once ran to the end of its line. Collapse the newlines and the
-// statement was DELETE FROM velve.one_time_token, with the predicate inside the comment (E-266).
-describe("no statement changes meaning when its newlines are normalised away", () => {
-	it("keeps every statement whole on one line", () => {
-		expect(statements.filter((statement) => !survivesCollapsing(statement))).toStrictEqual([]);
-	});
-
-	it("still filters the redemption on hash, purpose and expiry on one line", () => {
+describe("the redemption still filters on everything once it is on one line (E-266)", () => {
+	it("keeps hash, purpose and expiry outside the marker", () => {
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(withoutSqlComments(onOneLine(consume))).toContain(
 			"WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()",
 		);
-	});
-
-	// The planted pair: the same marker in the two comment forms, so a passing scan above is
-	// evidence that the check tells them apart rather than that it accepts everything.
-	it("tells a line comment from a block comment", () => {
-		const statement = "DELETE FROM t\nMARKER\nWHERE token_sha256 = $1";
-		const asLineComment = statement.replace("MARKER", "-- no owner predicate: S-TOKEN-4");
-		const asBlockComment = statement.replace("MARKER", "/* no owner predicate: S-TOKEN-4 */");
-
-		expect(survivesCollapsing(asLineComment)).toBe(false);
-		expect(survivesCollapsing(asBlockComment)).toBe(true);
-		expect(withoutSqlComments(onOneLine(asLineComment))).not.toContain("token_sha256");
-		expect(withoutSqlComments(onOneLine(asBlockComment))).toContain("token_sha256");
 	});
 });
 
