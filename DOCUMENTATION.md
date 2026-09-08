@@ -1536,7 +1536,8 @@ whole of any rotation window (E-179, superseding E-175).
 The memory a verification claims is a parameter of the credential, and an
 import writes it. Without a ceiling, S-DOS-3's bound — semaphore size × the
 memory parameter — is really semaphore size × the largest value any import ever
-wrote. Four fixed ceilings apply to every stored credential; a credential above
+wrote. Five fixed ceilings apply, and every scheme the switch verifies is
+covered by at least one of them; a credential above
 any of them is refused, which routes the user to the reset path (E-182).
 
 | Constant | Value | Applies to |
