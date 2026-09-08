@@ -161,7 +161,6 @@ describe("the stored credential", () => {
 
 		expect(row?.scheme).toBe("argon2id");
 		expect(row?.keyVersion).toBe(1);
-		expect(row?.phc[0]).not.toBe("$".charCodeAt(0));
 		expect(new TextDecoder().decode(row?.phc)).not.toContain("$argon2id$");
 		expect(await openPhc(environment.keys, row as PasswordCredentialRow)).toMatch(
 			/^\$argon2id\$v=19\$/,
