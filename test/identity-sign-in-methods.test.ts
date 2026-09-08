@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actorOfResolvedSession } from "../src/core/db/actor.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import { VelveError } from "../src/core/http/error-map.js";
@@ -13,6 +12,7 @@ import {
 	type SignInMethodRemovalRequest,
 	totalSignInMethods,
 } from "../src/core/identity/sign-in-methods.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 import {
 	openTestConnection,
 	PostgresServerError,
@@ -79,8 +79,8 @@ async function linkIdentity(userId: string): Promise<string> {
 function countFor(userId: string, excluding?: SignInMethodRemoval): Promise<SignInMethodCount> {
 	const query: SignInMethodQuery =
 		excluding === undefined
-			? { driver: connection, schema, actor: actorOfResolvedSession({ userId }) }
-			: { driver: connection, schema, actor: actorOfResolvedSession({ userId }), excluding };
+			? { driver: connection, schema, actor: actorOfTestUser(userId) }
+			: { driver: connection, schema, actor: actorOfTestUser(userId), excluding };
 	return countSignInMethods(query);
 }
 
@@ -90,7 +90,7 @@ async function removalOf(userId: string, removing: SignInMethodRemoval): Promise
 			const check: SignInMethodRemovalRequest = {
 				driver: transaction,
 				schema,
-				actor: actorOfResolvedSession({ userId }),
+				actor: actorOfTestUser(userId),
 				removing,
 			};
 			return removeSignInMethod(check);
@@ -201,7 +201,7 @@ describe("the last sign-in method (L-13)", () => {
 			await removeSignInMethod({
 				driver: connection,
 				schema,
-				actor: actorOfResolvedSession({ userId }),
+				actor: actorOfTestUser(userId),
 				removing: { method: "password" },
 			});
 			const contended = await other

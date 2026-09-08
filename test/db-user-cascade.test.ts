@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Actor, actorOfResolvedSession } from "../src/core/db/actor.js";
+import type { Actor } from "../src/core/db/actor.js";
 import { createOwnedRowRepository } from "../src/core/db/repositories/owned-row-repository.js";
 import {
+	actorOfTestUser,
 	type ColumnFact,
 	countRowsOwnedBy,
 	createUser,
@@ -94,8 +95,8 @@ describe("the owner predicate on every user-owned table (S-OWNER-2)", () => {
 	it("keeps a stranger away from each of the thirteen tables", async () => {
 		const ownerId = await createUser(migrated.connection, migrated.schema);
 		const strangerId = await createUser(migrated.connection, migrated.schema);
-		const ownerActor: Actor = actorOfResolvedSession({ userId: ownerId });
-		const strangerActor: Actor = actorOfResolvedSession({ userId: strangerId });
+		const ownerActor: Actor = actorOfTestUser(ownerId);
+		const strangerActor: Actor = actorOfTestUser(strangerId);
 
 		for (const table of owned) {
 			await insertRowOwnedBy(migrated.connection, migrated.schema, table, ownerId, columns);

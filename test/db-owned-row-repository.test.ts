@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Actor, actorOfResolvedSession } from "../src/core/db/actor.js";
+import type { Actor } from "../src/core/db/actor.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import {
 	createOwnedRowRepository,
 	UnknownColumnError,
 } from "../src/core/db/repositories/owned-row-repository.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
 interface WebAuthnCredentialRow {
@@ -30,7 +31,7 @@ async function createUser(email: string): Promise<Actor> {
 	if (row === undefined) {
 		throw new Error("the user was not created");
 	}
-	return actorOfResolvedSession({ userId: row.id });
+	return actorOfTestUser(row.id);
 }
 
 async function createCredential(actor: Actor, label: string): Promise<string> {

@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actorOfResolvedSession } from "../src/core/db/actor.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
@@ -11,6 +10,7 @@ import {
 	type SignInMethodRemoval,
 	totalSignInMethods,
 } from "../src/core/identity/sign-in-methods.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 import {
 	openTestConnection,
 	PostgresServerError,
@@ -104,7 +104,7 @@ async function removeInTransaction(
 		await removeSignInMethod({
 			driver,
 			schema,
-			actor: actorOfResolvedSession({ userId }),
+			actor: actorOfTestUser(userId),
 			removing: removal,
 		});
 		await pause();
@@ -131,7 +131,7 @@ async function removeWithoutTransaction(
 		await removeSignInMethod({
 			driver,
 			schema,
-			actor: actorOfResolvedSession({ userId }),
+			actor: actorOfTestUser(userId),
 			removing: removal,
 		});
 		await pause();
@@ -147,7 +147,7 @@ function remainingMethods(userId: string): Promise<number> {
 	return countSignInMethods({
 		driver: connection,
 		schema,
-		actor: actorOfResolvedSession({ userId }),
+		actor: actorOfTestUser(userId),
 	}).then(totalSignInMethods);
 }
 
@@ -245,7 +245,7 @@ describe("two removals of the last two ways in (L-13)", () => {
 				const remaining = await countSignInMethods({
 					driver,
 					schema,
-					actor: actorOfResolvedSession({ userId }),
+					actor: actorOfTestUser(userId),
 					excluding: removal,
 				});
 				if (totalSignInMethods(remaining) === 0) {
@@ -315,13 +315,13 @@ describe("the count as a hand-off to a caller who has not read it", () => {
 			await countSignInMethods({
 				driver: connection,
 				schema,
-				actor: actorOfResolvedSession({ userId: mine }),
+				actor: actorOfTestUser(mine),
 			}),
 		).toEqual({ password: 1, webauthnCredentials: 0, linkedIdentities: 0 });
 	});
 
 	it("answers zero for an account that does not exist and refuses the removal", async () => {
-		const actor = actorOfResolvedSession({ userId: NO_SUCH_USER });
+		const actor = actorOfTestUser(NO_SUCH_USER);
 		expect(await countSignInMethods({ driver: connection, schema, actor })).toEqual({
 			password: 0,
 			webauthnCredentials: 0,
@@ -348,7 +348,7 @@ describe("the count as a hand-off to a caller who has not read it", () => {
 		await givePassword(mine);
 		const theirs = await createUser();
 		const theirCredential = await addWebauthnCredential(theirs);
-		const actor = actorOfResolvedSession({ userId: mine });
+		const actor = actorOfTestUser(mine);
 		expect(
 			await countSignInMethods({
 				driver: connection,
@@ -376,7 +376,7 @@ describe("the count as a hand-off to a caller who has not read it", () => {
 	});
 
 	it("lets the driver refuse an identifier that is not a uuid rather than counting nothing", async () => {
-		const actor = actorOfResolvedSession({ userId: "not-a-uuid" });
+		const actor = actorOfTestUser("not-a-uuid");
 		const failure = await countSignInMethods({ driver: connection, schema, actor }).then(
 			() => "counted",
 			(cause: unknown) => {
@@ -394,7 +394,7 @@ function removalOn(driver: Driver, userId: string, removing: SignInMethodRemoval
 	return removeSignInMethod({
 		driver,
 		schema,
-		actor: actorOfResolvedSession({ userId }),
+		actor: actorOfTestUser(userId),
 		removing,
 	}).then(
 		() => "removed",

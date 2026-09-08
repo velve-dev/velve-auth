@@ -36,7 +36,7 @@ const driver: Driver = {
 
 describe("@velve/auth", () => {
 	it("hands out the actor constructor and the owner-scoped repository", () => {
-		const actor: Actor = actorOfResolvedSession({ userId: "not-a-uuid" });
+		const actor: Actor = actorOfResolvedSession({ userId: "not-a-uuid" } as ResolvedSession);
 		const options: OwnedRowRepositoryOptions = { driver, schema: "velve", table: "session" };
 		const repository: OwnedRowRepository<{ id: string }> = createOwnedRowRepository(options);
 
