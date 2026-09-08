@@ -36,6 +36,14 @@ async function rowsWithTokenHash(token: string): Promise<number> {
 	return row?.total ?? -1;
 }
 
+async function ageBeyondFreshness(sessionId: string): Promise<void> {
+	await migrated.connection.query(
+		`UPDATE ${migrated.schema}.session SET created_at = created_at - interval '16 minutes'
+		 WHERE id = $1 AND user_id = $2`,
+		[sessionId, userId],
+	);
+}
+
 async function signIn(): Promise<{ token: string; sessionId: string }> {
 	const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
 	return { token: issued.token, sessionId: issued.session.id };
@@ -136,7 +144,7 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 
 	it("restores freshness, which nothing else does", async () => {
 		const first = await signIn();
-		clock.advanceBy(20 * MINUTE);
+		await ageBeyondFreshness(first.sessionId);
 		await expect(service.list({ resolved: await resolvedNow(first.token) })).rejects.toMatchObject({
 			code: "freshness_required",
 		});
@@ -147,8 +155,6 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 			factors: ["password", "webauthn"],
 			observed: NOWHERE,
 		});
-		clock.set(second.session.createdAt);
-
 		expect(await service.list({ resolved: await resolvedNow(second.token) })).not.toEqual([]);
 	});
 });
@@ -271,9 +277,8 @@ describe("freshness (architecture 3.5, 3.15 B.9)", () => {
 
 	it("refuses each of them once the window has passed", async () => {
 		const here = await signIn();
-		clock.set(new Date());
+		await ageBeyondFreshness(here.sessionId);
 		const resolved = await resolvedNow(here.token);
-		clock.advanceBy(16 * MINUTE);
 
 		for (const operation of [
 			() => service.list({ resolved }),
@@ -294,22 +299,21 @@ describe("freshness (architecture 3.5, 3.15 B.9)", () => {
 		const resolved = await resolvedNow(here.token);
 		const window: FreshnessWindow = {
 			freshnessWindowMs: service.settings.freshnessWindowMs,
-			now: clock.now(),
+			now: resolved.observedAt,
 		};
 
 		expect(isSessionFresh(resolved.session, window)).toBe(true);
 		expect(
 			isSessionFresh(resolved.session, {
 				...window,
-				now: new Date(clock.now().getTime() + 16 * MINUTE),
+				now: new Date(resolved.observedAt.getTime() + 16 * MINUTE),
 			}),
 		).toBe(false);
 	});
 
 	it("is not restored by using the session", async () => {
 		const here = await signIn();
-		clock.set(new Date());
-		clock.advanceBy(16 * MINUTE);
+		await ageBeyondFreshness(here.sessionId);
 
 		await service.refresh(here.token);
 

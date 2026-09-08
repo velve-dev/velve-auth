@@ -1327,13 +1327,14 @@ createSessionService(options: {
   schema?: string                                   // "velve"
   session?: Partial<SessionConfig>
   sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
-  clock: Clock                                      // { now(): Date }
+  clock?: Clock                                     // accepted, read nowhere
 }): SessionService
 ```
 
-Everything the library does with sessions. `clock` has no default: the core
-takes its time from the configuration, never from a hidden source, and the
-same clock decides freshness here and in the HTTP pipeline.
+Everything the library does with sessions. Every moment this module decides by
+— both deadlines, the idle write interval and the freshness window — comes from
+the database's clock, so `clock` is accepted only so that one instance can hand
+the same configuration to every module.
 
 `service.settings` exposes the deadlines the configuration was read into,
 including `cookieName` and `cookieMaximumAgeInSeconds` for the cookie writer.
@@ -1357,9 +1358,11 @@ clock, which the resolving query returns with the row, so no second query and no
 comparison between two clocks is needed. `refresh` forces exactly that write and
 nothing else: never the absolute deadline, never a new token.
 
-The result of `resolve` is a `SessionResolution`. It is the only value in the
-library from which an `Actor` can be obtained (S-OWNER-7), and it is produced
-here and nowhere else.
+The result of `resolve` is a `SessionResolution`: `{ userId, session,
+observedAt }`. It is the only value in the library from which an `Actor` can be
+obtained (S-OWNER-7), and it is produced here and nowhere else. `observedAt` is
+the database's clock at the moment it answered, and every deadline this module
+decides after the fact is measured against it.
 
 #### Issuing and re-issuing
 
@@ -1410,6 +1413,20 @@ The window is measured from `created_at`, so it is time since the sign-in.
 Nothing but a new session restores it — using the session does not, and neither
 does `refresh`. A re-authentication that did not re-issue would be a second
 notion of trust standing beside `factors`, and there is only one.
+
+`now` is the database's clock, not the application's: `resolve` returns the
+moment the database answered as `observedAt`, and that is what freshness is
+measured with. `created_at` and both deadlines are written by the database, so
+deciding freshness with a second clock would move the window by whatever skew
+lies between them — in the dangerous direction as readily as in the harmless
+one. A process clock running an hour behind would keep a fifty-minute-old
+session inside a fifteen-minute window, and that window is what guards the
+operations on credentials.
+
+For the same reason `clock` is accepted by `createSessionService` and read
+nowhere: the assembling instance hands every module the same clock, and this one
+takes its time from the database. Moving a test clock does **not** make a
+session stale; age the session where `created_at` lives.
 
 Every session operation that reaches rows by owner takes its actor from
 `actorOfFreshSession`, which checks freshness before it hands the actor out: an

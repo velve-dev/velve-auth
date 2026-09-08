@@ -194,7 +194,7 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
 		clock.set(new Date());
 		clock.advanceBy(16 * MINUTE);
-		await shift(issued.session.id, ["last_used_at"], "2 hours");
+		await shift(issued.session.id, ["created_at", "last_used_at"], "2 hours");
 
 		await service.resolve(issued.token);
 		await service.refresh(issued.token);

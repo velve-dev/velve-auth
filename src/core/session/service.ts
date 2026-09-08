@@ -18,7 +18,11 @@ import { createSessionToken, type SessionToken, sessionTokenHash } from "./token
  * The only value the library accepts as proof that a session was resolved (E-93, S-OWNER-7).
  * It is produced in `resolve` and nowhere else, so an actor cannot be built from a request.
  */
-export type SessionResolution = ResolvedSession & { readonly session: Session };
+export type SessionResolution = ResolvedSession & {
+	readonly session: Session;
+	/** The database's clock at the moment it answered, and therefore the only clock freshness is decided by (E-238). */
+	readonly observedAt: Date;
+};
 
 export interface IssuedSession {
 	readonly token: SessionToken;
@@ -35,7 +39,8 @@ export interface SessionServiceOptions {
 	readonly schema?: string;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
-	readonly clock: Clock;
+	/** Accepted so one instance can hand the same clock to every module; this one reads none of it (E-238). */
+	readonly clock?: Clock;
 }
 
 export interface SessionService {
@@ -74,14 +79,13 @@ export interface SessionService {
 const WRITE_NOW = 0;
 
 /** E-93, S-OWNER-7: the brand of a resolved session is asserted here and nowhere else. */
-function resolutionOf(userId: string, session: Session): SessionResolution {
-	return { userId, session } as SessionResolution;
+function resolutionOf(userId: string, session: Session, observedAt: Date): SessionResolution {
+	return { userId, session, observedAt } as SessionResolution;
 }
 
 export function createSessionService(options: SessionServiceOptions): SessionService {
 	const settings = sessionSettingsOf(options.session);
 	const metadataMode = options.sessionMetadata ?? DEFAULT_SESSION_METADATA_MODE;
-	const clock = options.clock;
 	const sessions = createSessionRepository({
 		driver: options.driver,
 		schema: options.schema ?? "velve",
@@ -107,10 +111,11 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		};
 	}
 
+	// E-233, E-238: the freshness check sits where the actor is minted, and it reads the clock created_at came from.
 	function actorOfFreshSession(resolved: SessionResolution): Actor {
 		assertSessionIsFresh(resolved.session, {
 			freshnessWindowMs: settings.freshnessWindowMs,
-			now: clock.now(),
+			now: resolved.observedAt,
 		});
 		return actorOfResolvedSession(resolved);
 	}
@@ -127,7 +132,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		if (found.userDisabledAt !== null) {
 			throw new VelveError("account_disabled");
 		}
-		const resolved = resolutionOf(found.userId, found.session);
+		const resolved = resolutionOf(found.userId, found.session, found.observedAt);
 		const sinceLastWrite = found.observedAt.getTime() - found.session.lastUsedAt.getTime();
 		if (sinceLastWrite < writtenNoSoonerThanMs) {
 			return resolved;
@@ -140,7 +145,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		});
 		return extended === null
 			? resolved
-			: resolutionOf(found.userId, { ...found.session, idleExpiresAt: extended });
+			: resolutionOf(found.userId, { ...found.session, idleExpiresAt: extended }, found.observedAt);
 	}
 
 	return {

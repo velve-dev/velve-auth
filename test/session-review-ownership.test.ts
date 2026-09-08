@@ -147,7 +147,7 @@ describe("S-OWNER-7: the actor comes from a resolution and from nothing else", (
 
 		const listed = await service.list({
 			// @ts-expect-error S-OWNER-7: a user id from a request is not a resolution.
-			resolved: { userId: strangerId, session: resolved.session },
+			resolved: { userId: strangerId, session: resolved.session, observedAt: resolved.observedAt },
 		});
 
 		expect(listed.every((session) => session.userId === strangerId)).toBe(true);
