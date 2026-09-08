@@ -108,9 +108,13 @@ async function removeUnderALockThatHolds(
 	driver: Driver,
 	request: SignInMethodRemovalRequest,
 ): Promise<boolean> {
-	// velve.user is locked before any other table this call reads or writes.
 	const user = qualifiedTableName(request.schema, "user");
-	await driver.query(`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE`, [request.actor]);
+	// The user row is taken before any other table this call reads or writes (E-143).
+	await driver.query(
+		// biome-ignore lint/suspicious/noTemplateCurlyInString lint/style/useTemplate: check:lock-order reads the declaration as written, and escaping it inside a template would hide it.
+		`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE ` + "/* locks: ${schema}.user */",
+		[request.actor],
+	);
 	const remaining = await countSignInMethods({
 		driver,
 		schema: request.schema,

@@ -1597,7 +1597,9 @@ separated. Between a caller's check and a caller's `DELETE` there is room for a
 second removal to check, see the way in that the first is about to delete, and
 delete its own — and the account ends with none, with no error raised anywhere.
 The call therefore takes `SELECT … FOR UPDATE` on the user row, counts what
-would remain, and deletes, in that order.
+would remain, and deletes, in that order. The locking statement carries
+`/* locks: ${schema}.user */` so that `pnpm check:lock-order` can see which
+table it takes without resolving the interpolation.
 
 **A caller who opened no transaction is safe too.** The lock is only worth
 anything for as long as a transaction holds it, and outside a transaction block
