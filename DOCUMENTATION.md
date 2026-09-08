@@ -1193,8 +1193,18 @@ library that do.
 
 | Method | Does |
 |---|---|
-| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | one statement: deletes the user's earlier tokens of that purpose and inserts the new row, returning `{ expiresAt }` |
+| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
 | `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a row or `null` |
+
+`replaceOneTimeToken` runs in a transaction and takes `SELECT 1 FROM velve.user
+WHERE id = $1 FOR UPDATE` before it writes. The replacement is one statement and
+therefore atomic, but at `READ COMMITTED` its `DELETE` works from the snapshot
+the statement began with and cannot remove a row a concurrent request inserted
+after it; without the lock, eight simultaneous requests leave up to eight live
+tokens where section 3.7 allows one. Both shipped drivers join an open
+transaction rather than opening a second, so calling this inside
+`driver.transaction` still rolls the whole issue back when the mail cannot be
+sent.
 
 `consumeOneTimeToken` is the only way a one-time token is ever read. There is no
 method that finds one, counts them or looks one up: a read before the write is
@@ -1216,6 +1226,9 @@ The two operations a flow needs, over that repository.
 |---|---|---|
 | `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext token and its deadline |
 | `redeem` | `{ token, purpose }` | `{ purpose, userId, payload }`, or `null` |
+
+Requesting a token supersedes the user's earlier tokens of the same purpose, and
+holds under concurrent requests as well as sequential ones (S-TOKEN-3).
 
 `issue` returns the plaintext once. The library keeps no copy: the row holds
 the hash, and the token appears in no log line and in no error message. Issuing

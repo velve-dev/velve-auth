@@ -58,7 +58,9 @@ function collapseWhitespace(sql: string): string {
 
 /** The statements carry the schema as an interpolation; section 3.7 spells out the default. */
 function asWritten(sql: string): string {
-	return collapseWhitespace(sql).replace(/\$\{table\}/g, "velve.one_time_token");
+	return collapseWhitespace(sql)
+		.replace(/\$\{table\}/g, "velve.one_time_token")
+		.replace(/\$\{owners\}/g, "velve.user");
 }
 
 /** Everything a `WHERE` filters on, which ends where the statement stops filtering. */
@@ -70,6 +72,8 @@ function predicatesIn(sql: string): readonly string[] {
 }
 
 const statements = statementsIn(repositorySource);
+const tokenStatements = statements.filter((statement) => /\$\{table\}/.test(statement));
+const ownerStatements = statements.filter((statement) => /\$\{owners\}/.test(statement));
 
 describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 	it("has more than nothing to scan", () => {
@@ -89,18 +93,20 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		]);
 	});
 
-	it("has two statements to inspect, so a passing scan means something", () => {
-		expect(statements).toHaveLength(2);
+	it("writes three statements, two of them against the table", () => {
+		expect(statements).toHaveLength(3);
+		expect(tokenStatements).toHaveLength(2);
+		expect(ownerStatements).toHaveLength(1);
 	});
 
-	it("filters on the purpose in every predicate it writes", () => {
-		const predicates = statements.flatMap(predicatesIn);
+	it("filters on the purpose in every predicate it writes against the table", () => {
+		const predicates = tokenStatements.flatMap(predicatesIn);
 		expect(predicates).toHaveLength(2);
 		expect(predicates.filter((predicate) => !predicate.includes("purpose = $2"))).toStrictEqual([]);
 	});
 
 	it("names the purpose in the row it inserts", () => {
-		const insert = statements.find((statement) => /\bINSERT\b/i.test(statement)) ?? "";
+		const insert = tokenStatements.find((statement) => /\bINSERT\b/i.test(statement)) ?? "";
 		expect(insert).toContain("purpose");
 	});
 });
@@ -124,13 +130,22 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 });
 
 describe("nothing reads the row before removing it (S-RACE-2)", () => {
-	it("issues one statement per repository method", () => {
-		expect(repositorySource.match(/options\.driver\.query</g)).toHaveLength(2);
-		expect(repositorySource.match(/^\t\tasync [a-zA-Z]+\(/gm)).toHaveLength(2);
+	it("reads nothing from the table, so no read can precede a write to it", () => {
+		expect(tokenStatements.filter((statement) => /\bSELECT\b/i.test(statement))).toStrictEqual([]);
 	});
 
-	it("never selects from the table at all", () => {
-		expect(statements.filter((statement) => /\bSELECT\b/i.test(statement))).toStrictEqual([]);
+	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259); it decides
+	// nothing about the row it precedes, which is what S-RACE-2 forbids.
+	it("reads only the owner row, and only to lock it", () => {
+		expect(ownerStatements.map(asWritten)).toStrictEqual([
+			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE",
+		]);
+	});
+
+	it("consumes in a single statement with no statement before it", () => {
+		const consumeBody =
+			repositorySource.slice(repositorySource.indexOf("async consumeOneTimeToken")) ?? "";
+		expect(consumeBody.match(/\.query</g)).toHaveLength(1);
 	});
 
 	it("puts the validity conditions in the statement that removes the row", () => {

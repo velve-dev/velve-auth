@@ -41,8 +41,10 @@ describe("the parameters the repository sends", () => {
 			payload: { newEmail: "next@example.com" },
 		});
 
-		expect(calls).toHaveLength(1);
-		expect(calls[0]?.params).toStrictEqual([
+		expect(calls).toHaveLength(2);
+		expect(calls[0]?.sql).toContain("FOR UPDATE");
+		expect(calls[0]?.params).toStrictEqual(["0d1b6c8e-0000-4000-8000-000000000001"]);
+		expect(calls[1]?.params).toStrictEqual([
 			"0d1b6c8e-0000-4000-8000-000000000001",
 			"password_reset",
 			HASH,
@@ -62,7 +64,23 @@ describe("the parameters the repository sends", () => {
 			payload: null,
 		});
 
-		expect(calls[0]?.params[3]).toBeNull();
+		expect(calls[1]?.params[3]).toBeNull();
+	});
+
+	it("locks the owner row before it replaces anything (S-TOKEN-3, E-259)", async () => {
+		const { repository, calls } = repositoryReturning([{ expires_at: "2026-09-08T00:00:00.000Z" }]);
+
+		await repository.replaceOneTimeToken({
+			tokenSha256: HASH,
+			purpose: "magic_link",
+			userId: "0d1b6c8e-0000-4000-8000-000000000001",
+			payload: null,
+		});
+
+		expect(calls.map((call) => call.sql.split("\n")[0])).toStrictEqual([
+			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE",
+			"WITH superseded AS (",
+		]);
 	});
 
 	it("sends the hash and the purpose together for a lookup", async () => {

@@ -50,8 +50,14 @@ export function createOneTimeTokenRepository(
 	options: OneTimeTokenRepositoryOptions,
 ): OneTimeTokenRepository {
 	const table = qualifiedTableName(options.schema, "one_time_token");
+	const owners = qualifiedTableName(options.schema, "user");
 
-	// S-TOKEN-3: one statement, so the earlier tokens of that purpose cannot survive the new one.
+	// S-TOKEN-3: the statement below is atomic, but at READ COMMITTED its DELETE works from the
+	// snapshot the statement began with and therefore cannot remove a row a concurrent request
+	// inserted after it. Serialising the requests of one user is what makes the replacement hold
+	// under concurrency; the lock is taken before the snapshot that matters.
+	const lockOwnerStatement = `SELECT 1 FROM ${owners} WHERE id = $1 FOR UPDATE`;
+
 	const replaceStatement = `WITH superseded AS (
 	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
 )
@@ -65,18 +71,21 @@ WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
 RETURNING user_id, payload`;
 
 	return {
-		async replaceOneTimeToken({ tokenSha256, purpose, userId, payload }) {
-			const [row] = await options.driver.query<{ expires_at: string }>(replaceStatement, [
-				userId,
-				purpose,
-				tokenSha256,
-				payload === null ? null : JSON.stringify(payload),
-				ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
-			]);
-			if (row === undefined) {
-				throw new Error(`${table} accepted no row for purpose ${purpose}`);
-			}
-			return { expiresAt: row.expires_at };
+		replaceOneTimeToken({ tokenSha256, purpose, userId, payload }) {
+			return options.driver.transaction(async (tx) => {
+				await tx.query(lockOwnerStatement, [userId]);
+				const [row] = await tx.query<{ expires_at: string }>(replaceStatement, [
+					userId,
+					purpose,
+					tokenSha256,
+					payload === null ? null : JSON.stringify(payload),
+					ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
+				]);
+				if (row === undefined) {
+					throw new Error(`${table} accepted no row for purpose ${purpose}`);
+				}
+				return { expiresAt: row.expires_at };
+			});
 		},
 
 		async consumeOneTimeToken({ tokenSha256, purpose }) {
