@@ -7,19 +7,19 @@ import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
 
 const ASYNC_TICK_IN_MILLISECONDS = 10;
 
-const DIGEST_BY_ID: Readonly<
-	Record<string, { readonly subtle: "SHA-256" | "SHA-512"; readonly noble: CHash }>
-> = {
-	"pbkdf2-sha256": { subtle: "SHA-256", noble: sha256 },
-	"pbkdf2-sha512": { subtle: "SHA-512", noble: sha512 },
-};
+// A `Map`, because the key is the identifier of the stored credential and an import decides what
+// that says; on an object literal `constructor` resolves to a function (E-178).
+const DIGEST_BY_ID = new Map<string, { subtle: "SHA-256" | "SHA-512"; noble: CHash }>([
+	["pbkdf2-sha256", { subtle: "SHA-256", noble: sha256 }],
+	["pbkdf2-sha512", { subtle: "SHA-512", noble: sha512 }],
+]);
 
 /** `$pbkdf2-sha256$i=<iterations>$<salt>$<hash>` — the form the Clerk and Auth0 imports write. */
 export async function verifyPbkdf2(
 	password: AcceptedPassword,
 	stored: PhcString,
 ): Promise<boolean> {
-	const digest = DIGEST_BY_ID[stored.id];
+	const digest = DIGEST_BY_ID.get(stored.id);
 	const iterations = integerParameter(stored, "i");
 
 	if (

@@ -49,17 +49,19 @@ interface Accelerator {
 // other request on the same runtime (2.7).
 const ASYNC_TICK_IN_MILLISECONDS = 10;
 
-const NOBLE_BY_VARIANT: Readonly<Record<Argon2Variant, typeof argon2idAsync>> = {
-	argon2id: argon2idAsync,
-	argon2i: argon2iAsync,
-	argon2d: argon2dAsync,
-};
+// A `Map` for the same reason the switch uses one: no lookup in this module reads a name off
+// `Object.prototype` (E-178).
+const NOBLE_BY_VARIANT = new Map<Argon2Variant, typeof argon2idAsync>([
+	["argon2id", argon2idAsync],
+	["argon2i", argon2iAsync],
+	["argon2d", argon2dAsync],
+]);
 
 export const nobleArgon2: Argon2Engine = {
 	name: "noble",
 
 	async derive(request) {
-		const derive = NOBLE_BY_VARIANT[request.variant];
+		const derive = NOBLE_BY_VARIANT.get(request.variant) ?? argon2idAsync;
 
 		return asDerivedKey(
 			await derive(request.password, request.salt, {
@@ -169,8 +171,10 @@ function isAccelerator(loaded: unknown): loaded is Accelerator {
 		return false;
 	}
 
+	// `Object.hasOwn` before reading, so a name answered by the prototype never passes for one the
+	// accelerator actually exports (E-178).
 	const candidate = loaded as Record<string, unknown>;
 	return (["argon2id", "argon2i", "argon2d"] as const).every(
-		(name) => typeof candidate[name] === "function",
+		(name) => Object.hasOwn(candidate, name) && typeof candidate[name] === "function",
 	);
 }
