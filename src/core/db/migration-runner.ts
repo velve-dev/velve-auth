@@ -9,7 +9,7 @@ import {
 	type MigrationReport,
 	migrationChecksum,
 } from "./migration.js";
-import { applySchemaName } from "./schema-rewrite.js";
+import { applySchemaName, assertNoSchemaNameInsideDollarQuoting } from "./schema-rewrite.js";
 
 const DEFAULT_SCHEMA = "velve";
 const LEDGER_TABLE = "schema_migration";
@@ -100,6 +100,7 @@ async function applyMigration(
 	migration: Migration,
 ): Promise<boolean> {
 	const ledger = qualifiedTableName(schema, LEDGER_TABLE);
+	assertNoSchemaNameInsideDollarQuoting(migration.sql, schema);
 	return driver.transaction(async (tx) => {
 		await lockSchema(tx, schema);
 

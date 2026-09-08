@@ -4,6 +4,7 @@ import { MissingCascadeError } from "../src/core/db/cascade-guard.js";
 import type { Migration } from "../src/core/db/migration.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
+import { UnrewritableMigrationError } from "../src/core/db/schema-rewrite.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
 const schema = `velve_plugin_${randomBytes(6).toString("hex")}`;
@@ -93,5 +94,45 @@ describe("plugin migrations (S-TOKEN-6)", () => {
 		);
 
 		expect(rows.map((row) => row.version)).toEqual([1, 2, 100]);
+	});
+});
+
+describe("plugin migrations with a function body", () => {
+	const bodyNamingTheSchema: Migration = {
+		version: 200,
+		name: "audit_trail_counter",
+		sql: `CREATE FUNCTION velve.audit_trail_count() RETURNS bigint LANGUAGE sql AS $$
+	SELECT count(*) FROM velve.audit_trail_entry
+$$;`,
+	};
+
+	const bodyNamingNothing: Migration = {
+		version: 201,
+		name: "audit_trail_answer",
+		sql: `CREATE FUNCTION velve.audit_trail_answer() RETURNS integer LANGUAGE sql AS $$
+	SELECT 42
+$$;`,
+	};
+
+	it("refuses a body that qualifies the schema, because it is not rewritten", async () => {
+		await expect(runWith(bodyNamingTheSchema)).rejects.toBeInstanceOf(UnrewritableMigrationError);
+
+		const [row] = await connection.query<{ present: number }>(
+			`SELECT count(*)::int AS present FROM pg_proc proc
+			 JOIN pg_namespace namespace_ ON namespace_.oid = proc.pronamespace
+			 WHERE namespace_.nspname = $1 AND proc.proname = 'audit_trail_count'`,
+			[schema],
+		);
+		expect(row?.present).toBe(0);
+	});
+
+	it("applies a body that names no schema, and the function runs", async () => {
+		await runWith(bodyNamingNothing);
+
+		const [row] = await connection.query<{ answer: number }>(
+			`SELECT ${schema}.audit_trail_answer() AS answer`,
+			[],
+		);
+		expect(row?.answer).toBe(42);
 	});
 });

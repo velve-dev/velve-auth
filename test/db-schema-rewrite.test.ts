@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
-import { applySchemaName } from "../src/core/db/schema-rewrite.js";
+import {
+	applySchemaName,
+	assertNoSchemaNameInsideDollarQuoting,
+	UnrewritableMigrationError,
+} from "../src/core/db/schema-rewrite.js";
 
 const target = "velve_other";
 
@@ -84,5 +88,32 @@ describe("string literals the first scanner mis-read", () => {
 		expect(rewrite("CREATE FUNCTION velve.f() RETURNS void AS$$SELECT 'velve'$$;")).toBe(
 			`CREATE FUNCTION ${target}.f() RETURNS void AS$$SELECT 'velve'$$;`,
 		);
+	});
+});
+
+describe("a dollar-quoted body naming the schema", () => {
+	const withQualifier =
+		"CREATE FUNCTION velve.f() RETURNS void LANGUAGE sql AS $$ SELECT 1 FROM velve.user $$;";
+	const withoutQualifier = "CREATE FUNCTION velve.f() RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;";
+
+	it("is refused rather than left pointing at the wrong schema", () => {
+		expect(() => assertNoSchemaNameInsideDollarQuoting(withQualifier, target)).toThrow(
+			UnrewritableMigrationError,
+		);
+	});
+
+	it("is accepted when the schema is the one the SQL was written for", () => {
+		expect(() => assertNoSchemaNameInsideDollarQuoting(withQualifier, "velve")).not.toThrow();
+	});
+
+	it("is accepted when the body names no schema", () => {
+		expect(() => assertNoSchemaNameInsideDollarQuoting(withoutQualifier, target)).not.toThrow();
+		expect(() => assertNoSchemaNameInsideDollarQuoting(initialSchema.sql, target)).not.toThrow();
+	});
+
+	it("looks past a string inside the body, which is not a qualifier", () => {
+		expect(() =>
+			assertNoSchemaNameInsideDollarQuoting("SELECT $$ 'velve.user' $$", target),
+		).not.toThrow();
 	});
 });

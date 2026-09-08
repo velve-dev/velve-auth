@@ -1,6 +1,16 @@
 const SHIPPED_SCHEMA_NAME = "velve";
 const SCHEMA_NAME_MODIFIERS = new Set(["if", "not", "exists", "authorization"]);
 const SCHEMA_STATEMENTS = new Set(["create", "drop", "alter"]);
+const REWRITE_PROBE = "velve_probe";
+
+export class UnrewritableMigrationError extends Error {
+	readonly code = "migration_unrewritable_body";
+
+	constructor(message: string) {
+		super(message);
+		this.name = "UnrewritableMigrationError";
+	}
+}
 
 type RegionKind = "code" | "comment" | "string" | "quoted-identifier" | "dollar-quoted";
 
@@ -190,4 +200,30 @@ export function applySchemaName(sql: string, schema: string): string {
 			region.kind === "code" ? rewriteCode(region.text, schema, tracker) : region.text,
 		)
 		.join("");
+}
+
+function namesTheShippedSchema(sql: string): boolean {
+	const tracker = new SchemaDeclarationTracker();
+	return splitIntoRegions(sql).some(
+		(region) =>
+			region.kind === "code" && rewriteCode(region.text, REWRITE_PROBE, tracker) !== region.text,
+	);
+}
+
+function dollarQuotedBody(region: Region): string {
+	const tag = dollarQuoteTag(region.text, 0) ?? "";
+	return region.text.slice(tag.length, region.text.length - tag.length);
+}
+
+export function assertNoSchemaNameInsideDollarQuoting(sql: string, schema: string): void {
+	if (schema === SHIPPED_SCHEMA_NAME) {
+		return;
+	}
+	for (const region of splitIntoRegions(sql)) {
+		if (region.kind === "dollar-quoted" && namesTheShippedSchema(dollarQuotedBody(region))) {
+			throw new UnrewritableMigrationError(
+				`the migration names the schema "${SHIPPED_SCHEMA_NAME}" inside a dollar-quoted body, which is not rewritten to "${schema}"; qualify it at run time or ship the migration only for the default schema name`,
+			);
+		}
+	}
 }
