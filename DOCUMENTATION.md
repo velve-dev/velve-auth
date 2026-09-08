@@ -1304,3 +1304,71 @@ limiters, which do know, set that field themselves.
 Verification and the background rehash take places from the **same** semaphore,
 which is what stops a rehash wave after a parameter increase from displacing
 live sign-ins (S-DOS-6).
+
+### The verification switch
+
+#### `schemeOfStoredHash(phc)`
+
+Reads the scheme off the prefix of a stored value, or `null` when no prefix
+matches. Eleven prefixes map onto eight schemes — bcrypt contributes four.
+`md5`, `sha1` and every other prefix return `null` and are never verified
+(E-39).
+
+#### `verifyAgainstScheme(scheme, password, stored)`
+
+Runs the verifier the scheme names and answers `true` or `false`. It answers
+`false` — it does not throw — for a malformed stored value, an unreadable
+parameter, or a derivation that refuses its own inputs, so that nothing between
+step 2 and step 4 of the sequence in 3.3 can leave the path early (S-TIM-1).
+
+| Scheme | Verified with |
+|---|---|
+| `argon2id`, `argon2i`, `argon2d` | `@noble/hashes/argon2`, or `hash-wasm` when installed |
+| `bcrypt` | `bcryptjs` |
+| `scrypt` | `@noble/hashes/scrypt` |
+| `pbkdf2-sha256`, `pbkdf2-sha512` | `crypto.subtle.deriveBits`, falling back to `@noble/hashes/pbkdf2` |
+| `fbscrypt` | `@noble/hashes/scrypt` and AES-256-CTR |
+
+Every comparison of a derived value runs over equal-length buffers in constant
+time. Derived key material carries the branded type `Secret<…>`, which is what
+makes "no `===`, `startsWith`, `includes` or `localeCompare` on a secret"
+statically checkable (S-TIM-3, E-172).
+
+Details that decide whether an imported estate transfers:
+
+- **A missing `v=` field means Argon2 version 1.0**, as the reference decoder
+  reads it — not 1.3 (E-173).
+- **`$2x$` is verified as `$2a$`.** `bcryptjs` refuses the revision outright;
+  the two differ only in how bytes with the high bit set were handled, so the
+  rewrite answers correctly for an ASCII password and cannot produce a false
+  accept for any other (E-169).
+- **bcrypt proves only the first 72 bytes.** A password longer than that is
+  truncated by the algorithm. After the rehash to Argon2id the full length
+  counts.
+- **`$fbscrypt$` reads `n` as the exponent of `N` and `r` as scrypt's block
+  size.** Swapping the two produces no error, only hashes that never match,
+  which is why the derivation is tested against the published Firebase
+  reference vector (4.4 d, E-171).
+
+### Argon2id creation
+
+#### `createArgon2idHash(passwordBytes, parameters)`
+
+Draws a 16-byte salt, derives 32 bytes and returns the canonical string
+`$argon2id$v=19$m=<memoryKiB>,t=<iterations>,p=<parallelism>$<salt>$<hash>`.
+The parameters in the string are exactly the configured ones (S-REST-7).
+
+#### `selectArgon2Engine(version)`
+
+`hash-wasm` is an optional peer dependency and an accelerator only. When it is
+installed it derives Argon2 about four times faster and its output is
+byte-identical, so installing or removing it needs no migration and changes no
+security behaviour (S-DEFAULT-7).
+
+One exception, found by measurement: `hash-wasm` accepts a `version` option and
+ignores it, computing version 1.3 whichever value it is given. Any version other
+than 1.3 therefore stays on `@noble/hashes` (E-168). Since the library only ever
+creates version 1.3, this affects imported hashes alone.
+
+The dependency is loaded through an assembled specifier so that a consumer's
+bundler does not try to resolve a package that is allowed to be absent (E-170).
