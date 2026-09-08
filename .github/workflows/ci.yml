@@ -100,9 +100,8 @@ jobs:
 
           # A single NUL byte makes git classify a source file as binary, which hides
           # it from `git grep -I` and renders its diff as "Bin" in review.
-          # Capture the output rather than testing the pipeline's status: with no
-          # .gitattributes, xargs -r runs nothing and exits 0, which an `if` reads
-          # as a hit. Every check here must tell "found nothing" from "found a fault".
+          # Capture the output rather than testing the pipeline: with no .gitattributes,
+          # xargs -r runs nothing and exits 0, which an `if` reads as a hit.
           echo "Checking that no .gitattributes hides a file from review"
           HIDDEN=$(git ls-files --cached --others --exclude-standard -- '*.gitattributes' \
             | xargs -r grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)' || true)

@@ -153,6 +153,13 @@ repair anything itself.
 - no AI attribution anywhere in the diff or the branch's commit history
 - the public surface has not changed unannounced (API snapshot comparison)
 
+A check must be able to tell **found nothing** from **found a fault**. Three of
+this repository's checks were written so it could not — a scan reporting success
+because it matched no files, a shell condition testing a pipeline that exits
+zero on empty input, an exclusion that deleted the text it was meant to examine.
+Each looked green. When you add a check, prove it fails on a planted fault
+before you trust it passing.
+
 ## 6. Documentation duty
 
 Documentation is written **while** building, never afterwards. A feature whose
