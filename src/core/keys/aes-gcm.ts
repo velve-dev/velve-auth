@@ -1,6 +1,6 @@
 import { gcm } from "@noble/ciphers/aes.js";
+import { randomBytes } from "../token/random.js";
 import { KeyError } from "./errors.js";
-import { randomBytes } from "./random.js";
 
 export const NONCE_BYTES = 12;
 export const AUTHENTICATION_TAG_BYTES = 16;

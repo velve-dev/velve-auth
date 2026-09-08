@@ -709,11 +709,6 @@ know, `ciphertext_malformed` below the length of a nonce and a tag, and
 wrong key, a tampered byte or a rewritten header fails with
 `authentication_failed`.
 
-### `randomBytes(length)`
-
-`Uint8Array` of `length` bytes from `crypto.getRandomValues`. Every secret the
-library generates comes from here and from nowhere else (S-RAND-1, S-RAND-5).
-
 ### `equalsInConstantTime(left, right)`
 
 `boolean`. An XOR loop over two `Uint8Array`s that does not exit early on the
@@ -1136,3 +1131,21 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+## One-time artefacts
+
+Email verification, password reset, email change and magic link are the same
+object: a row in `velve.one_time_token` keyed by `sha256(token)`, carrying a
+purpose and an expiry. The plaintext token exists for exactly as long as it
+takes to hand it to the caller; nothing in the library stores it, logs it or
+puts it in an error message.
+
+### `randomBytes(length)`
+
+`Uint8Array` of `length` bytes from `crypto.getRandomValues`. Every secret the
+library generates comes from here and from nowhere else — this is the one module
+that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `length` | `number` | how many bytes to draw |
