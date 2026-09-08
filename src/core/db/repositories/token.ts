@@ -95,7 +95,7 @@ RETURNING ${EXPIRY_AS_ISO_8601} AS expires_at`;
 
 	// Section 3.7 word for word apart from the marker E-142 requires: the only way a token is read.
 	const consumeStatement = `DELETE FROM ${table}
--- no owner predicate: S-TOKEN-4
+/* no owner predicate: S-TOKEN-4 */
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
 RETURNING user_id, payload`;
 
