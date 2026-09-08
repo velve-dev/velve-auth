@@ -10,6 +10,7 @@ Concepts and rationale are not repeated here — they are in
 
 - [Package entry points](#package-entry-points)
 - [Schema](#schema)
+- [HTTP](#http)
 
 ## Package entry points
 
@@ -54,8 +55,14 @@ run at all.
 ```ts
 import { toWebHandler } from "@velve/auth/http";
 
-export const POST = toWebHandler(auth, { basePath: "/api/auth" });
+const handler = toWebHandler(auth, { basePath: "/api/auth" });
+
+export const GET = handler;
+export const POST = handler;
 ```
+
+Both verbs must be wired: seven routes are `GET`, and a framework that only
+receives `POST` answers 404 to every one of them.
 
 `(Request) => Promise<Response>` — Web standards only, no Node built-ins.
 
@@ -83,9 +90,12 @@ The error envelope is the only body shape a failed request produces:
 { "error": { "code": "rate_limited", "message": "Too many requests.", "retryAfterSeconds": 30 } }
 ```
 
-`retryAfterSeconds` appears only where the failure carries one. The message
-follows from the code alone, so two requests that fail with the same code get
-byte-identical answers.
+The message follows from the code alone, so two failures with the same code
+produce the same body. `retryAfterSeconds` is the single exception: it appears
+only on `rate_limited`, and only when the limiter supplied a wait, which the
+same answer also carries as a `Retry-After` header per RFC 9110. Two
+`rate_limited` answers with different waits therefore differ; every other code
+answers byte for byte the same, whatever produced it.
 
 ### Cookies
 
@@ -110,6 +120,15 @@ before it is sent. Both the name and the value are checked against a token
 charset first, so no name and no value can end a `Set-Cookie` field early and
 append an attribute of its own.
 
+The types behind them, for anyone reading `core/http/cookies.ts`:
+`DEFAULT_COOKIE_NAMES` is the enumeration itself; `CookieInstruction` is one
+cookie about to be written (`name`, `value`, `maximumAgeInSeconds`,
+`attributes`), and every one of those four parts is checked before it is
+interpolated into the header; `CookiePolicy` is what the writer is built from —
+the names a request is read with, the `sameSite` choice and the session cookie's
+`Max-Age`; and `CookieWriter` is what a handler sees on its context, four
+methods named after roles rather than names.
+
 A request that carries one of these two cookies twice is rejected with
 `invalid_input` instead of one of the two values being picked (S-COOKIE-5).
 Duplicates of other cookie names are ignored, because path-scoped application
@@ -122,7 +141,14 @@ there is no cookie there.
 
 ### Origin checking
 
-Every route except the OAuth callback declares `originCheck: "checked"`. The
+Origin checking is a per-route declaration, not something the handler applies on
+its own: the check runs where `originCheck: "checked"` is declared, and every
+core route except the OAuth callback declares it. Rate limiting reads the same
+way — a route counts against the buckets its `rateLimit` field names, and
+`"none"` means no bucket of that kind. What the handler guarantees is the order:
+where a check is declared, nothing else runs before it.
+
+The
 check parses both sides and compares `new URL(x).origin` for equality against the
 configured `origins` (S-CSRF-2). There is no prefix, substring, wildcard or
 pattern comparison anywhere in the library — the two published advisories in this
@@ -159,8 +185,52 @@ The order in front of the handler is fixed and cannot be reordered by a caller o
 a plugin: origin check, per-address rate limit, input parse, caller resolution,
 handler.
 
-Declaring a route with an ambiguous path, or with `freshness: "required"` without
-`caller: "session"`, is a start error rather than a request-time surprise.
+Four declaration mistakes are start errors rather than request-time surprises: a
+path that is not absolute or carries an empty or trailing segment; `freshness:
+"required"` without `caller: "session"`; an input field named like one of the
+five `ServerCallFields`; and, when the handler is built, a route table with a
+duplicate name or with two routes answering the same folded path.
+
+`defineRoute` returns the route the table holds. It carries the declaration's
+metadata and its `input`, but **not** its `handler`: the invocation is reachable
+only through the pipeline, so a caller holding a route cannot run it past the
+origin check, the rate limit, the error map and the log (3.11).
+
+### Path matching
+
+The request path is compared to the declared path segment by segment, after
+percent-decoding each segment once:
+
+- Literal segments compare **case-insensitively over ASCII only**. `/TEST/ECHO`
+  and `/test/echo` are one route and one rate-limit bucket (T-RATE-5); `A`–`Z`
+  fold and nothing else does, so a Unicode look-alike such as U+212A does not
+  fold into `k`.
+- Empty segments and `.` segments are dropped, so `//sign-in/password/` is
+  `/sign-in/password`. A `..` segment is refused outright.
+- A segment whose percent-encoding is broken makes the request match nothing.
+- `basePath` is compared the same way, segment by segment and folded, so a
+  mounted handler behaves like the routes below it.
+- `:name` in a declared path captures that segment into the input under `name`,
+  with its case preserved.
+- A `GET` route takes its input from the query string plus the captured path
+  parameters. A query parameter that appears twice rejects the request with
+  `invalid_input` rather than one of its values being chosen — the same rule as
+  S-COOKIE-5 for cookies, and it matters on the OAuth callback, where `state`
+  and `code` decide the outcome.
+
+### Input validators
+
+`object()`, `string()` and `optional()` live in `core/http` and appear only in
+route declarations.
+
+| Constructor | Accepts | Rejects |
+|---|---|---|
+| `string()` | a string, including `""` | everything else, `null` included |
+| `optional(inner)` | `undefined`, or whatever `inner` accepts | what `inner` rejects; an explicit `null` is **not** absent |
+| `object(shape)` | an object whose declared fields all parse | an array, `null`, a non-object, and — on a `POST` body — any key the shape does not declare |
+
+Every rejection is `invalid_input` with the same message; no validator says
+which field was wrong, and no input value is echoed back.
 
 ### `RequestContext`
 
@@ -172,7 +242,22 @@ Declaring a route with an ambiguous path, or with `freshness: "required"` withou
 | `ipAddress` | `string \| null` | From `options.clientAddress`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
 | `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending` — a role, never a name, so no unenumerated cookie can be written. |
-| `enforceAccountRateLimit(normalisedIdentifier)` | `Promise<void>` | Consumes the per-account bucket. The identifier must already be normalised (L-5). A route that declares `perAccount` and completes without calling this writes a warning naming the route; where the declaration says `perAccount: "none"` the call does nothing. |
+| `enforceAccountRateLimit(normalisedIdentifier)` | `Promise<void>` | Consumes the per-account bucket. The identifier must already be normalised (L-5). A route that declares `perAccount` and reaches its handler without calling this writes a warning naming the route, whether the handler returned or threw; where the declaration says `perAccount: "none"` the call does nothing. |
+
+`Session` and `PendingAuthentication` are the records of architecture 3.15 C. A
+handler reads these fields off the context:
+
+| `Session` | Type | | `PendingAuthentication` | Type |
+|---|---|---|---|---|
+| `id`, `userId` | `string` | | `factorsCompleted` | `readonly AuthenticationFactor[]` |
+| `createdAt`, `lastUsedAt` | `Date` | | `availableFactors` | `readonly ("totp" \| "webauthn" \| "recovery")[]` |
+| `idleExpiresAt`, `absoluteExpiresAt` | `Date` | | `attemptsRemaining` | `number` |
+| `factors` | `readonly AuthenticationFactor[]` | | `expiresAt` | `Date` |
+| `ipAddress`, `userAgent` | `string \| null` | | | |
+| `isCurrent` | `boolean` | | | |
+
+`AuthenticationFactor` is `"password" \| "totp" \| "webauthn" \| "recovery" \| "oauth"`.
+Freshness is measured against `createdAt`, never against `lastUsedAt` (3.5).
 
 ### `HttpEnvironment` — what the instance provides
 
@@ -182,21 +267,50 @@ Declaring a route with an ambiguous path, or with `freshness: "required"` withou
 |---|---|---|
 | `routes` | `readonly AnyRoute[]` | The route table, already filtered by identity mode and configuration. |
 | `origins` | `readonly string[]` | The allowed origins. An empty list rejects every checked route. |
-| `cookieSameSite` | `"lax" \| "strict"` | |
-| `sessionCookieMaximumAgeInSeconds` | `number` | |
+| `cookieSameSite` | `"lax" \| "strict"` | Which of the two writable attribute sets the cookies carry. There is no third value. |
+| `sessionCookieMaximumAgeInSeconds` | `number` | `Max-Age` of the session cookie: a whole number of seconds, at most 400 days. |
 | `freshnessWindowInSeconds` | `number` | Measured against `session.createdAt`. |
 | `callers` | `CallerResolver` | `resolveSession` and `resolvePending`; both throw, and the error map decides what the caller sees. |
 | `rateLimiter` | `RateLimiter` | See below. |
 | `clock` | `Clock` | |
 | `log` | `(level, message, fields?) => void` | Where the true reason of every concealed failure is written. |
 
-### Failures on the direct server call
+### `createServerMethod(route, environment)` — the direct server call
 
-The server method throws where the client returns a result (3.15 E), and it
-throws exactly what a request would have answered: a `VelveError` carrying one
-of the 25 codes, mapped and logged by the same code as the HTTP path. An
-application that catches it and forwards `error.code` into its own response
-publishes nothing the HTTP answer would not have published.
+The same declaration also yields the method the application calls in process:
+
+```ts
+const signIn = createServerMethod(signInPasswordRoute, auth.http);
+
+const result = await signIn({
+  emailOrUsername: "someone@example.com",
+  password,
+  origin: "https://app.example.com",
+});
+```
+
+It runs the same pipeline in the same order as a request — origin check,
+address bucket, input parse, caller resolution, handler — because 3.11 puts both
+checks in front of the direct call too. Beside the route's own input it takes
+five fields, and only these five:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`; there is no way to omit the field and skip the check. |
+| `sessionToken` | `string?` | What `__Host-velve_session` would have carried; used where the route declares `caller: "session"`. |
+| `pendingToken` | `string?` | What `__Host-velve_pending` would have carried; used where the route declares `caller: "pending"`. |
+| `ipAddress` | `string \| null?` | The address the rate limiter counts against. Absent means no address, which shares one bucket per route (S-RATE-4). |
+| `userAgent` | `string \| null?` | Stored as session metadata, truncated by default (L-10). |
+
+These five names are reserved: a route declaring an input field of the same name
+is a start error, because the envelope would swallow it here and the HTTP path
+would keep it.
+
+The method throws where the client returns a result (3.15 E), and it throws
+exactly what a request would have answered: a `VelveError` carrying one of the
+25 codes, mapped and logged by the same code as the HTTP path. An application
+that catches it and forwards `error.code` into its own response publishes
+nothing the HTTP answer would not have published.
 
 ### The rate limiter seam
 
@@ -206,15 +320,18 @@ publishes nothing the HTTP answer would not have published.
 interface RateLimiter {
   consume(request: {
     routeName: string
-    rule: { capacity: number; refillPerSecond: number }
+    rule: { capacity: number; refillPerSecond: number }   // requests, requests per second
     scope: { kind: "ip_address"; ipAddress: string | null }
          | { kind: "account"; accountIdentifier: string }
   }): Promise<{ allowed: boolean; retryAfterSeconds?: number }>
 }
 ```
 
-An implementation is passed in through `auth.http.rateLimiter` and needs no
-change to the HTTP layer. The pipeline consumes the address bucket before the
+`capacity` is a number of requests — the burst a caller may spend at once — and
+`refillPerSecond` is how many requests per second flow back into the bucket, so
+`{ capacity: 5, refillPerSecond: 0.01 }` is five attempts and then one more
+every hundred seconds. An implementation is passed in through
+`auth.http.rateLimiter` and needs no change to the HTTP layer. The pipeline consumes the address bucket before the
 input is parsed and before the caller is resolved; the route consumes the account
 bucket through `context.enforceAccountRateLimit` once it has the identifier,
 because the identifier does not exist before parsing. A decision with
@@ -225,13 +342,19 @@ the origin check nor run before it (3.11).
 
 ### Redirects
 
-A handler that must send the caller somewhere returns `redirectTo(path)`, and
-the response becomes `302` with `Location: <path>` and no body. A value that is
-not a path without a scheme and without a host — `//evil.com`, `https://…`,
-`javascript:`, anything carrying a control character — fails with
-`internal_error` rather than reaching the header (S-REDIR-3). The full
-percent-decoding vector corpus of S-REDIR-2 belongs to the route that accepts a
-redirect target from a request, not to this layer, which never accepts one.
+A handler that must send the caller somewhere returns
+`redirectTo(toRedirectPath(path))`, and the response becomes `302` with
+`Location: <path>` and no body. `toRedirectPath` is the only way to obtain the
+`RedirectPath` that `redirectTo` and `Redirect.redirectToPath` are typed with,
+so a redirect target is never a plain string (T-REDIR-1).
+
+It accepts a path and nothing else: no scheme, no host, **no query and no
+fragment**, and no character outside the RFC 3986 path set. `//evil.com`,
+`https://…`, `javascript:…`, `/app?token=…` and a value carrying `\r\n` all fail
+with `internal_error` rather than reaching the header (S-REDIR-3, S-REDIR-4 —
+with no query there is nowhere for a token to ride). The full percent-decoding
+vector corpus of S-REDIR-2 belongs to the route that accepts a redirect target
+from a request, not to this layer, which never accepts one.
 
 `redirectTo(…)` combines with a session token in the same output; the token
 still goes into the cookie and never into the `Location` value (S-REDIR-4).
@@ -310,4 +433,7 @@ code itself.
 | `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion` |
 
 An exception that is neither a `VelveError` nor a `ConcealedError` becomes
-`internal_error` with no detail in the body; the exception itself is logged.
+`internal_error` with no detail in the body. The log line for it carries
+`reason: "unhandled_exception"` and the exception's own message in a separate
+`cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
+is swallowed: a failing log sink must not cost the caller its answer.
