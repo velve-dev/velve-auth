@@ -9,6 +9,7 @@ import {
 	runsPastItsEnd,
 	statementsOf,
 	survivesCollapsing,
+	templateLiteralsIn,
 	walkerFaults,
 	withoutSqlComments,
 } from "../tools/sql-collapse.mjs";
@@ -35,6 +36,12 @@ function walkedFiles(): string[] {
 			.map((entry) => `${entry.parentPath}/${entry.name}`)
 			.sort(),
 	);
+}
+
+/** The second counter, deliberately not the walker: one regular expression over the two comment
+ * forms, taking whichever opens first so a `//` inside a block comment does not end it early. */
+function withoutTypeScriptComments(source: string): string {
+	return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
 }
 
 const cases = (name: keyof typeof fixtures) =>
@@ -116,6 +123,25 @@ describe("what the scan reaches", () => {
 		expect(literals[0]).toContain("-- and this");
 	});
 
+	// A regular expression is delimited like nothing else here, and a lone quote inside one put
+	// every quote after it out of phase, so the literals behind it went unread (E-155).
+	it("reads the template literal that follows a regular expression carrying a lone quote", () => {
+		const source = [
+			"const quoted = /[\"']/g;",
+			"const q = `DELETE FROM t",
+			"-- swallows the predicate",
+			"WHERE id = $1`;",
+		].join("\n");
+
+		expect(templateLiteralsIn(source)).toHaveLength(1);
+		expect(examinedStatementsIn(source)).toHaveLength(1);
+		expect(survivesCollapsing(examinedStatementsIn(source)[0] ?? "")).toBe(false);
+	});
+
+	it("reads a division as a division rather than as a regular expression", () => {
+		expect(literalsIn('const ratio = total / "one".length / 2;')).toStrictEqual(["one"]);
+	});
+
 	it("reads nothing out of a comment in the surrounding TypeScript", () => {
 		expect(literalsIn('// const q = "SELECT 1";\nconst n = 1;')).toStrictEqual([]);
 		expect(literalsIn('/* const q = "SELECT 1"; */\nconst n = 1;')).toStrictEqual([]);
@@ -181,17 +207,30 @@ describe("the scan can tell that it read everything", () => {
 		expect(faults).toStrictEqual([]);
 	});
 
-	// Counted a second way, sharing nothing with the walker but the meaning of `//`: a file whose
-	// backticks are not all inside line comments has a template literal in it, and a walker that
-	// found none skipped over one.
-	it("finds a literal in every file that has a backtick outside a line comment", () => {
-		const missed = walkedFiles().filter((path) => {
-			const source = readFileSync(path, "utf8");
-			return source.replace(/\/\/[^\n]*/g, "").includes("`") && literalsIn(source).length === 0;
-		});
+	// Counted a second way, sharing nothing with the walker but the two comment forms: a backtick
+	// that no comment encloses opens a template literal, and a walker that reported none walked
+	// over one. E-155 corrected both halves of that sentence.
+	it("finds a template literal in every file that has a backtick outside a comment", () => {
+		const carriesABacktick = walkedFiles().filter((path) =>
+			withoutTypeScriptComments(readFileSync(path, "utf8")).includes("`"),
+		);
+		const missed = carriesABacktick.filter(
+			(path) => templateLiteralsIn(readFileSync(path, "utf8")).length === 0,
+		);
 
 		expect(walkedFiles().length).toBeGreaterThan(50);
+		expect(carriesABacktick.length).toBeGreaterThan(50);
 		expect(missed).toStrictEqual([]);
+	});
+
+	// The premise of the assertion above, planted: a file whose backticks are all inside a block
+	// comment holds no template literal, so asking it for one reports a fault where none is.
+	it("asks nothing of a file whose only backticks are inside a block comment", () => {
+		const source = "/* the marker is written `like this` */\nexport const limit = 1;\n";
+
+		expect(source).toContain("`");
+		expect(withoutTypeScriptComments(source)).not.toContain("`");
+		expect(literalsIn(source)).toStrictEqual([]);
 	});
 
 	it("reads the literal that follows a block comment holding a comment opener", () => {

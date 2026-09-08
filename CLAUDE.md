@@ -136,10 +136,50 @@ A reviewer checks, in this order:
 At most **four agents run at the same time**. This is a hard limit.
 
 Features in the same wave run in parallel; waves run one after another. **No two
-writers share a file.** The single exception is `CASE-STUDY.md`, which every
-feature appends to; §6 explains how that is made safe. The set of files a
-feature may touch is fixed before it starts and is binding. A feature that needs
-a change outside its area stops and reports it instead of editing the file.
+writers share a file.**
+
+There are exactly two sanctioned exceptions, and both are safe for the same
+reason: the file is **partitioned before the wave starts**, and a feature writes
+only inside the partition it was given. The exception is never "this file is
+shared" — it is "this file has disjoint parts, and one of them is yours".
+
+- **`CASE-STUDY.md`** — every feature appends entries to it. The partition is a
+  reserved range of decision numbers, handed out before the writer starts; §6
+  sets the ranges out and `test/decision-log.test.ts` enforces them.
+- **`DOCUMENTATION.md`** — every feature documents itself in it, because item 3
+  of the definition of done below requires it. The partition is the chapter:
+  **a feature owns the `##` chapter named for it — one, for every feature of
+  wave 3 — and appends nowhere else in the file.** The chapter, its position and
+  its `## Contents` line are created as empty stubs before the wave starts, so
+  no writer inserts a heading and no two writers ever touch the same region.
+  **This one is enforced by the reviewer noticing, not by a check.** Nothing
+  reads the structure of `DOCUMENTATION.md`: a number outside a reserved range
+  fails in `test/decision-log.test.ts` on the branch that took it, but a
+  paragraph written into a neighbour's chapter fails nowhere. The two bullets
+  look alike and are not equally enforced, and the second is worth exactly what
+  the reviewer checking it is worth.
+
+A feature that needs a change in another feature's chapter, or in a chapter no
+feature owns, stops and reports it — exactly as it would for any other file it
+does not own.
+
+**`## Contents` belongs to the stub cut, not to any feature.** A chapter and its
+index line are created together, before the wave, and that is the only moment
+either changes — so no feature ever needs a line in the index, and the index
+cannot fall behind the headings without the pre-wave pass having skipped one.
+It fell to three of eleven entries before this rule existed, because chapters
+were added by whoever wrote them and the index was owned by nobody.
+
+Both exceptions rest on the partition existing **beforehand**. Until wave 3 there
+was no chapter partition, and the contradiction between this rule and item 3 of
+the definition of done was resolved by editing `DOCUMENTATION.md` anyway; all
+four wave-2 features did. That merged cleanly by luck, not by construction —
+four writers appending at end of file land on the same line, and four writers
+appending into four disjoint stubs cannot.
+
+The set of files a feature may touch is fixed before it starts and is binding. A
+feature that needs a change outside its area stops and reports it instead of
+editing the file.
 
 ### Definition of done
 
@@ -165,7 +205,10 @@ repair anything itself.
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
 - `pnpm check:lock-order` — `velve.user` is locked before any other table
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
+- `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm test` green, no skipped test without a reason stated in the code
+- `pnpm publint` — the package's exports resolve as published
+- `pnpm attw` — the types resolve under every module mode the package claims
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
 - the public surface has not changed unannounced (API snapshot comparison)
@@ -285,10 +328,11 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-250 … E-279 | wave 2 · `token` |
 | E-280 … E-299 | wave 2 · `session`, second range |
 | E-300 … E-319 | wave 2 · `password`, second range |
-| E-320 … E-349 | wave 3 · `auth-core` |
-| E-350 … E-379 | wave 3 · `rate` |
-| E-380 … E-409 | wave 3 · `factor-totp` |
-| E-410 … E-439 | wave 3 · `factor-webauthn` |
+| E-320 … E-379 | wave 3 · `auth-core` |
+| E-380 … E-404 | wave 3 · `rate` |
+| E-405 … E-449 | wave 3 · `factor-totp`, which owns recovery codes as well as TOTP |
+| E-450 … E-494 | wave 3 · `factor-webauthn` |
+| E-495 … E-514 | gate and infrastructure, second range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -301,6 +345,68 @@ rows are not an overlap — they are two disjoint blocks owned by the same
 feature, which is exactly what the rule above prescribes. Numbering inside the
 second range continues from its own start; the gap left at the end of the first
 range stays a gap.
+
+### How wide a range has to be
+
+Thirty was a guess, and wave 2 measured it. `password` used all thirty of its
+range and needed a second one. `session` used all thirty and has a second one
+reserved. `identity` used twenty-three, `token` twenty.
+
+Five rows in the table above end exactly on their last number, which is not a
+snug fit — it is what a range that ran out looks like from the outside. Two of
+those five prove nothing: the architecture's own log and wave 0 were sized after
+their contents were known. The other three were handed out in advance and filled
+to the brim — `password`, `session`, and the gate block itself.
+
+What exhausted them was not the feature. **The tail of every exhausted range
+went to corrections, not to decisions about the thing being built.** `session`
+spent its last three numbers correcting three of its own earlier entries after
+its gate had run. `token` needed five corrections of its own entries. `password`
+spent its last number on the log's format migration. The working ratio is
+roughly twenty decisions plus ten corrections per thirty — and the corrections
+arrive *after* the writer believes the feature is finished, which is the worst
+moment to have to stop and ask for numbers.
+
+Wave 3 is cut against that ratio instead of against a round thirty.
+
+- **`auth-core` gets sixty.** It is the assembly point: configuration, startup
+  errors, the flow layer, the route table, the package entry point and the API
+  snapshot. On top of its own decisions it inherits twelve explicit hand-offs
+  from waves 1 and 2 — entries that say in so many words that a requirement is
+  currently unfulfilled and invisible — and each of those is answered by a
+  decision here or is carried forward again in writing.
+- **`factor-webauthn` gets forty-five.** The authenticator simulator, the
+  backup-eligible and backup-state policy, `signCount` regression, and a
+  documented deviation from WebAuthn Level 3 §7.2 each generate decisions with
+  no requirement number to anchor them, which is exactly the kind that has to be
+  argued in the log rather than cited from the specification.
+- **`factor-totp` gets forty-five**, because it also owns recovery codes.
+- **`rate` gets twenty-five.** It is the narrowest feature of the wave: one
+  statement, three counters and the seam the HTTP layer already declares.
+- **Gate and infrastructure gets a second block of twenty, and needs it now.**
+  Its first block is **full** — all twenty of E-140 … E-159 are used — so the
+  second block is not a precaution against wave 3's demand, it is the only
+  source of gate numbers that exists. That block is where every broken-check
+  finding lands; there are already thirty-eight of those in the log, running at
+  roughly four per feature, and wave 3 runs four features at once.
+
+Over-reserving costs a gap in the numbering, which §6 has already said is fine.
+Under-reserving costs a mid-branch request for numbers at the moment the writer
+is least able to absorb one.
+
+### `factor-totp` owns recovery codes
+
+Recovery codes were in no wave at all. They belong to `factor-totp` for wave 3,
+and that is a scope decision, not an implementation detail: they share the
+pending-authentication state with TOTP, they share the `token-pepper` HMAC, they
+share `DELETE … RETURNING` consumption, and they are one of exactly four routes
+that accept the `__Host-velve_pending` cookie (architecture 3.6). Splitting them
+across two features would put two writers in the same state machine.
+
+The reason they cannot slip another wave is architecture 5.17. `S-DEFAULT-4`
+makes `identity: "username"` **without** recovery codes a start error, and that
+requirement has no implementation and no test today. A wave that ships a second
+factor and leaves the only recovery path unbuilt ships a lockout.
 
 `test/decision-log.test.ts` reads that table. Every entry in `CASE-STUDY.md` must
 fall inside a declared range, and two ranges may not overlap — so a feature
@@ -385,6 +491,10 @@ pnpm check:lock-order
                  velve.user is locked before any other table
 pnpm check:reviewable
                  no NUL byte hides a file from review
+pnpm check:sql-collapse
+                 every SQL statement still says what it said once its newlines
+                 are normalised away — a marker is a block comment, never a line
+                 comment
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

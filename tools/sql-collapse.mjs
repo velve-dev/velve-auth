@@ -191,7 +191,56 @@ function endOfTypeScriptBlockComment(source, start) {
 	return close === -1 ? source.length : close + 2;
 }
 
-/** A comment or a literal in the surrounding TypeScript; anything else is one character. */
+const ENDS_A_VALUE = /[A-Za-z0-9_$)\]]/;
+const TRAILING_WORD = /[A-Za-z_$][A-Za-z0-9_$]*$/;
+const KEYWORDS_A_PATTERN_MAY_FOLLOW = new Set([
+	"case",
+	"delete",
+	"do",
+	"else",
+	"in",
+	"instanceof",
+	"new",
+	"of",
+	"return",
+	"typeof",
+	"void",
+	"yield",
+]);
+
+/** A slash divides only after a value, and anything else in front of it opens a pattern. */
+function opensRegularExpression(source, index) {
+	let back = index - 1;
+	while (back >= 0 && /\s/.test(source[back] ?? "")) back -= 1;
+	const previous = source[back];
+	if (previous === undefined || !ENDS_A_VALUE.test(previous)) return true;
+	const word = TRAILING_WORD.exec(source.slice(0, back + 1))?.[0];
+	return word !== undefined && KEYWORDS_A_PATTERN_MAY_FOLLOW.has(word);
+}
+
+/** A pattern holds no unescaped newline, so a slash that reaches one was a division after all
+ * and gets put back as a single character (E-155). */
+function endOfRegularExpression(source, start) {
+	let index = start + 1;
+	let insideCharacterClass = false;
+	while (index < source.length) {
+		const character = source[index];
+		if (character === "\\") {
+			index += 2;
+			continue;
+		}
+		if (character === "\n") return start + 1;
+		if (insideCharacterClass) insideCharacterClass = character !== "]";
+		else if (character === "[") insideCharacterClass = true;
+		else if (character === "/") return index + 1;
+		index += 1;
+	}
+	return start + 1;
+}
+
+/** A comment, a pattern or a literal in the surrounding TypeScript; anything else is one
+ * character. A pattern is read only to be stepped over: an unbalanced quote inside one puts
+ * every quote after it out of phase, and the literals behind it stop being read (E-155). */
 function tokenAt(source, index) {
 	if (source.startsWith("//", index)) {
 		const newline = source.indexOf("\n", index);
@@ -201,11 +250,14 @@ function tokenAt(source, index) {
 		return { kind: "block-comment", end: endOfTypeScriptBlockComment(source, index) };
 	}
 	const character = source[index];
+	if (character === "/" && opensRegularExpression(source, index)) {
+		return { kind: "regular-expression", end: endOfRegularExpression(source, index) };
+	}
 	if (character === "'" || character === '"') {
-		return { kind: "literal", end: endOfSimpleString(source, index) };
+		return { kind: "string", end: endOfSimpleString(source, index) };
 	}
 	if (character === "`") {
-		return { kind: "literal", end: endOfTemplateLiteral(source, index) };
+		return { kind: "template", end: endOfTemplateLiteral(source, index) };
 	}
 	return null;
 }
@@ -214,6 +266,7 @@ function tokenAt(source, index) {
  * cannot say what it skipped cannot notice that it skipped too much. */
 function scanTypeScript(source) {
 	const literals = [];
+	const templateLiterals = [];
 	const blockComments = [];
 	let index = 0;
 	while (index < source.length) {
@@ -222,11 +275,15 @@ function scanTypeScript(source) {
 			index += 1;
 			continue;
 		}
-		if (token.kind === "literal") literals.push(source.slice(index + 1, token.end - 1));
+		if (token.kind === "string" || token.kind === "template") {
+			const content = source.slice(index + 1, token.end - 1);
+			literals.push(content);
+			if (token.kind === "template") templateLiterals.push(content);
+		}
 		if (token.kind === "block-comment") blockComments.push(source.slice(index, token.end));
 		index = token.end;
 	}
-	return { literals, blockComments };
+	return { literals, templateLiterals, blockComments };
 }
 
 /** A TypeScript block comment ends at its first closing marker, so a scanned one never holds
@@ -246,6 +303,12 @@ export function walkerFaults(source) {
  * a template inside `${…}` closes the outer pattern early and truncates what is examined. */
 export function literalsIn(source) {
 	return scanTypeScript(source).literals;
+}
+
+/** Only a template literal accounts for a backtick, so only a template literal is evidence that
+ * the walk read the backticks it stepped over; an import specifier is evidence of nothing. */
+export function templateLiteralsIn(source) {
+	return scanTypeScript(source).templateLiterals;
 }
 
 export function examinedStatementsIn(source) {
