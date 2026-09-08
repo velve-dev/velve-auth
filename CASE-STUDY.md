@@ -319,10 +319,25 @@ Entscheidungen, die beim Bauen fielen.
 ## Entscheidungen aus dem Bau
 
 **E-47 — Englisch als Repository-Sprache, `CASE-STUDY.md` als einzige Ausnahme.**
-*Kontext:* Der Bauauftrag verlangt, sich einmal festzulegen und dabei zu bleiben. Die Zielarchitektur und der Auftrag sind auf Deutsch, das Paket ist ein öffentliches MIT-Paket auf npm.
+*Kontext:* Der Bauauftrag verlangt, sich einmal festzulegen und dabei zu bleiben. Die Zielarchitektur und der Auftrag sind auf Deutsch, das Paket ist ein öffentliches Apache-2.0-Paket auf npm.
 *Verworfen:* Durchgehend Deutsch, passend zur Vorlage.
 *Grund:* Die Leser des Pakets sind nicht die Leser des Entwurfs. Wer `@velve/auth` installiert, findet Bezeichner, Fehlercodes und `DOCUMENTATION.md` vor; deutschsprachige Bezeichner in einer öffentlichen Bibliothek schließen ohne Gegenwert aus. `CASE-STUDY.md` ist ausgenommen, weil der Auftrag die wörtliche Übernahme von E-01 bis E-46 vorschreibt — eine Übersetzung wäre eine Änderung, und die Fortschreibung muss im selben Format und derselben Sprache weiterlaufen wie der Bestand.
 *Preis:* Das Repository ist zweisprachig. Wer die Gründe sucht, liest Deutsch; wer die Bibliothek benutzt, liest Englisch.
+
+**Licence addendum.** The package was MIT when this entry was written and is
+Apache-2.0 now, and the *Kontext* line above was corrected in place rather than
+by a new entry — the only edit to an existing entry this log permits, made on
+the repository owner's explicit instruction, because the sentence states a fact
+about the package and not a reason that was held at the time. Why Apache and
+not MIT: Apache 2.0 is exactly as permissive — not copyleft, usable in a closed
+product, nothing owed back beyond the notice — and adds the two things MIT is
+silent about. An express patent grant, so a contributor cannot later assert a
+patent over their own contribution against this project or against anyone
+depending on it, with the grant terminating for whoever sues. And a trademark
+reservation, section 6, so a fork is free to exist and not free to call itself
+Velve Auth. The price is a longer file and a string developers recognise less
+instantly than MIT. It was taken now because relicensing needs every
+contributor's consent, and today that is one person.
 
 **E-48 — Node ab 20.19 ist Bauvoraussetzung, nicht nur Laufzeitvoraussetzung.**
 *Kontext:* Abschnitt 2.5 nennt Node 20.19 als Laufzeituntergrenze, abgeleitet aus `@noble/hashes` 2.x und den globalen Web-Crypto-Objekten. Beim Aufsetzen des Gerüsts stellte sich heraus, dass dieselbe Grenze schon für das Bauwerkzeug gilt: Die native Bindung von Rolldown, auf der `tsdown` aufsetzt, fordert `^20.19.0 || >=22.12.0`.
@@ -2754,3 +2769,39 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 **Rejected.** Nothing — the argument for it was better than the reason it was missing.
 **Reason.** The four existing modes each break something the verifier checks *before* it checks the signature, or break the signature so badly that several checks could account for the refusal. This one leaves challenge, origin, relying-party hash and the user-verification flag all correct, and `crossOrigin` is a field the verifier does not read — so the **only** thing that can refuse it is the signature's binding to the bytes actually transmitted. `signed-without-the-client-data` tests that property obliquely; this tests it alone, and a case pins the concealed reason to `signature_invalid` rather than merely to a rejection.
 **Price.** The simulator needed one parameter and no other change, which is the good news and also the uncomfortable part: the mode was buildable from the start and the enumeration of four was a guess that stopped where it stopped. E-465 already said so — *"the enumeration is a guess at what a broken authenticator does"* — and naming the limitation did not make anyone go back and close it.
+
+### The licence moves to Apache 2.0
+`E-505` · gate · licensing, frozen
+
+**Context.** The commission fixed MIT, and MIT shipped through wave 3. Two gaps
+in it are specific to a company publishing a security dependency rather than to
+an individual publishing a utility: MIT says nothing about patents, so a
+contributor may assert one later over their own contribution against the
+project and against everyone depending on it; and MIT does not keep the name
+out of the grant, so a fork may continue to call itself Velve Auth.
+
+**Rejected.** (a) Staying on MIT, on the strength of it being the string every
+developer recognises and every competitor uses — Better Auth, Lucia and Auth.js
+are all MIT. (b) A copyleft or source-available licence. (c) Dual licensing.
+
+**Reason.** (b) fails on what this package is: a dependency that runs inside
+someone else's process. A licence that reaches the calling application makes
+the library unusable in the procurement of the firms it is aimed at, and it
+contradicts the positioning — the argument of this project is that the security
+work can be read and checked, which requires that it can be read, forked and
+vendored. (c) has nothing to sell separately. (a) is the real alternative and
+it loses on exactly two clauses: Apache 2.0 is equally permissive, imposes
+nothing further on a user beyond the notice MIT already requires, and closes
+both gaps. Enterprise legal review frequently prefers it for the patent clause.
+The timing decided it as much as the substance: relicensing requires every
+contributor's consent, and today the contributor set is one person. That is the
+cheapest this change will ever be.
+
+**Price.** The file is 11,358 bytes where MIT was eleven lines, and a developer
+scanning a package page reads "Apache-2.0" a beat slower than "MIT". Two places
+outside the licence itself asserted MIT and had to move with it: `CLAUDE.md` §1
+and `README.md`. A third, E-47's *Kontext*, was corrected in place — the single
+edit to an existing entry this log has permitted, made on the owner's explicit
+instruction and recorded in that entry rather than hidden. Every such statement
+is a second place the licence is written down, and nothing checks that they
+agree with `package.json`.

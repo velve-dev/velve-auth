@@ -192,4 +192,30 @@ plainly is more useful than a plugin that half-implements them.
 
 ## Licence
 
-MIT © Velve
+Apache License 2.0 © Velve — see [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+
+**Why Apache 2.0 and not MIT.** Apache 2.0 is exactly as permissive as MIT: it
+is not copyleft, you may use this in a closed product, modify it, sell it, and
+you owe nothing back beyond keeping the notice. Nothing is withheld from you
+that MIT would have given.
+
+It adds two things MIT is silent about, and both protect the people who depend
+on this library rather than the people who wrote it.
+
+**An express patent grant.** MIT says nothing about patents. Under it, someone
+could contribute code and later assert a patent covering their own
+contribution — against this project and against everyone using it. Apache 2.0
+has every contributor grant a patent licence for what they contributed, and
+that licence terminates for anyone who brings a patent suit over it. For a
+library that sits on the authentication path of other people's products, that
+is not a theoretical comfort.
+
+**A trademark reservation.** MIT does not prevent a fork from continuing to
+call itself Velve Auth. Apache 2.0 section 6 keeps names and marks out of the
+grant, so a fork is free to exist and not free to impersonate.
+
+The cost is honest and small: the file is longer than MIT's eleven lines, and
+"MIT" is the string a developer recognises without reading. We took the trade
+because the two gaps are the two that matter to a company shipping a security
+dependency, and because relicensing is cheap now and effectively impossible
+once other people have contributed.
