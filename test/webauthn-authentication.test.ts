@@ -128,7 +128,31 @@ describe("signing in with a passkey", () => {
 		"corrupted-signature",
 		"empty-signature",
 		"signed-without-the-client-data",
+		"client-data-exchanged-after-signing",
 	];
+
+	it("names five ways of signing wrongly, so an empty list cannot silently drop the cases", () => {
+		expect(FAULTS).toHaveLength(5);
+	});
+
+	/** It isolates the binding of the signature to the transmitted bytes: challenge, origin,
+	 * relying party and the user-verification flag all still check out, so `signature_invalid` is
+	 * the only reason left that can refuse it (E-484). */
+	it("refuses an exchanged client data for the signature and nothing else", async () => {
+		const account = await createAccount(fixture);
+		const { authenticator } = await enrol(fixture, account, "phone");
+		const started = await fixture.service.passkey.start();
+
+		const refused = fixture.service.passkey.finish({
+			challengeToken: started.challengeToken,
+			response: await authenticator.assert({
+				challenge: started.challengeToken,
+				signatureFault: "client-data-exchanged-after-signing",
+			}),
+		});
+
+		await expect(refused).rejects.toMatchObject({ reason: "signature_invalid" });
+	});
 
 	it.each(FAULTS)("refuses an assertion signed wrongly: %s", async (signatureFault) => {
 		const account = await createAccount(fixture);
@@ -167,10 +191,12 @@ describe("completing a second factor with webauthn", () => {
 	it("takes the intermediate state in exactly the two operations the pending module names", () => {
 		const mine = PENDING_CALLER_ROUTES.filter((route) => route.startsWith("factor.webauthn."));
 
+		expect(mine).toHaveLength(2);
 		expect(mine).toEqual([
 			"factor.webauthn.authenticate.start",
 			"factor.webauthn.authenticate.finish",
 		]);
+		expect(PENDING_CALLER_ROUTES).toHaveLength(4);
 		expect(Object.keys(fixture.service.authenticate).sort()).toEqual(
 			mine.map((route) => route.split(".").at(-1)).sort(),
 		);

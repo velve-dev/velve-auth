@@ -34,7 +34,11 @@ export type SignatureFault =
 	| "another-key"
 	| "corrupted-signature"
 	| "empty-signature"
-	| "signed-without-the-client-data";
+	| "signed-without-the-client-data"
+	/** Sign correctly, then transmit different client data. Challenge, origin and relying party
+	 * all still check out, so nothing but the signature's binding to the transmitted bytes can
+	 * refuse it — which `signed-without-the-client-data` only tests obliquely (E-484). */
+	| "client-data-exchanged-after-signing";
 
 export interface CeremonyOverrides {
 	readonly flags?: AuthenticatorFlags;
@@ -231,13 +235,18 @@ function authenticatorData(input: {
 	);
 }
 
-function clientData(input: { type: string; challenge: string; origin: string }): Uint8Array {
+function clientData(input: {
+	type: string;
+	challenge: string;
+	origin: string;
+	crossOrigin?: boolean;
+}): Uint8Array {
 	return new TextEncoder().encode(
 		JSON.stringify({
 			type: input.type,
 			challenge: input.challenge,
 			origin: input.origin,
-			crossOrigin: false,
+			crossOrigin: input.crossOrigin ?? false,
 		}),
 	);
 }
@@ -381,6 +390,15 @@ export async function createVirtualAuthenticator(
 				challenge: input.challenge,
 				origin: input.origin ?? options.origin,
 			});
+			const transmittedClient =
+				input.signatureFault === "client-data-exchanged-after-signing"
+					? clientData({
+							type: input.clientDataType ?? "webauthn.get",
+							challenge: input.challenge,
+							origin: input.origin ?? options.origin,
+							crossOrigin: true,
+						})
+					: client;
 			const signedMessage =
 				input.signatureFault === "signed-without-the-client-data"
 					? concat(data)
@@ -397,7 +415,7 @@ export async function createVirtualAuthenticator(
 				type: "public-key",
 				clientExtensionResults: {},
 				response: {
-					clientDataJSON: base64url(client),
+					clientDataJSON: base64url(transmittedClient),
 					authenticatorData: base64url(data),
 					signature: base64url(signature),
 					...(input.userHandle === undefined ? {} : { userHandle: input.userHandle }),

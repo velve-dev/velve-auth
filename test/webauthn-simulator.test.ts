@@ -75,7 +75,13 @@ describe("the virtual authenticator", () => {
 		"corrupted-signature",
 		"empty-signature",
 		"signed-without-the-client-data",
+		"client-data-exchanged-after-signing",
 	];
+
+	it("can sign wrongly in five ways, and a shorter list would delete cases rather than fail them", () => {
+		expect(FAULTS).toHaveLength(5);
+		expect(new Set(FAULTS).size).toBe(5);
+	});
 
 	it.each(FAULTS)("signs wrongly on demand: %s", async (signatureFault) => {
 		const registrationChallenge = createSecretToken();
