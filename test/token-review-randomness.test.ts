@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { createSecretToken, randomBytes } from "../src/core/token/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -87,9 +87,17 @@ describe("the CSPRNG is reached in exactly one module (S-RAND-5)", () => {
 });
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-const SAMPLE = 20_000;
+// Section 6, T-RAND-Verteilung: N = 100 000 per artefact type.
+const SAMPLE = 100_000;
 const TOKEN_CHARACTERS = 43;
 const TOKEN_BYTES = 32;
+
+/** T-RAND-Verteilung is a nightly row in section 6, and its own numbers say why: forty-two
+ * independent chi-square tests at p = 0.001 reject about four runs in a hundred with a perfect
+ * generator, whatever N is. That belongs where a person reads the result, not in front of a
+ * merge. The per-commit obligation is T-RAND-4, which lives in test/token-secret-token.test.ts
+ * at its own threshold of 1000. Set VELVE_NIGHTLY=1 to run this. */
+const NIGHTLY = process.env.VELVE_NIGHTLY === "1";
 
 // A 32-byte value is 258 base64url bits, so the last character carries four bits of data
 // and two of padding: sixteen of the sixty-four characters can appear there and no others.
@@ -102,16 +110,34 @@ const CHI_SQUARE_15_AT_P_001 = 37.697;
 // Two-sided normal deviate for the same p.
 const NORMAL_AT_P_001 = 3.29;
 
-const sample = Array.from({ length: SAMPLE }, () => createSecretToken());
-const decoded = sample.map((token) => Buffer.from(token, "base64url"));
-
 function chiSquare(counts: readonly number[]): number {
 	const total = counts.reduce((sum, count) => sum + count, 0);
 	const expected = total / counts.length;
 	return counts.reduce((sum, count) => sum + (count - expected) ** 2 / expected, 0);
 }
 
-describe("the tokens the generator produces (S-RAND-4, T-RAND-Verteilung)", () => {
+describe("the width the generator is asked for (S-RAND-4)", () => {
+	it("draws the width it is asked for and nothing shorter", () => {
+		for (const length of [0, 1, 12, 16, 31, 32, 64, 255]) {
+			expect(randomBytes(length)).toHaveLength(length);
+		}
+		expect(
+			new Set(Array.from({ length: 1000 }, () => Buffer.from(randomBytes(32)).toString("hex")))
+				.size,
+		).toBe(1000);
+	});
+});
+
+describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)", () => {
+	// Drawn in beforeAll rather than at collection, so a skipped run draws nothing.
+	let sample: string[] = [];
+	let decoded: Buffer[] = [];
+
+	beforeAll(() => {
+		sample = Array.from({ length: SAMPLE }, () => createSecretToken());
+		decoded = sample.map((token) => Buffer.from(token, "base64url"));
+	});
+
 	it("is a large enough sample to say anything", () => {
 		expect(sample).toHaveLength(SAMPLE);
 	});
@@ -188,13 +214,30 @@ describe("the tokens the generator produces (S-RAND-4, T-RAND-Verteilung)", () =
 		expect(deviate).toBeLessThan(NORMAL_AT_P_001);
 	});
 
-	it("draws the width it is asked for and nothing shorter", () => {
-		for (const length of [0, 1, 12, 16, 31, 32, 64, 255]) {
-			expect(randomBytes(length)).toHaveLength(length);
+	// NIST SP 800-22, runs test: the number of alternations between adjacent bits. A generator
+	// with the right proportion of ones can still fail this by producing them in blocks.
+	it("passes the runs test over every bit drawn (p > 0.001)", () => {
+		const bits: number[] = [];
+		for (const bytes of decoded) {
+			for (const byte of bytes) {
+				for (let bit = 7; bit >= 0; bit -= 1) {
+					bits.push((byte >> bit) & 1);
+				}
+			}
 		}
-		expect(
-			new Set(Array.from({ length: 1000 }, () => Buffer.from(randomBytes(32)).toString("hex")))
-				.size,
-		).toBe(1000);
+
+		const total = bits.length;
+		const ones = bits.reduce((sum, bit) => sum + bit, 0);
+		const proportion = ones / total;
+		let runs = 1;
+		for (let index = 1; index < total; index += 1) {
+			if (bits[index] !== bits[index - 1]) {
+				runs += 1;
+			}
+		}
+
+		const expected = 2 * total * proportion * (1 - proportion);
+		const deviation = 2 * Math.sqrt(2 * total) * proportion * (1 - proportion);
+		expect(Math.abs(runs - expected) / deviation).toBeLessThan(NORMAL_AT_P_001);
 	});
 });
