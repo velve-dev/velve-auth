@@ -1132,6 +1132,518 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
 
+## Passwords
+
+The password module lives in `src/core/password`. It owns one canonical storage
+string per credential, the switch that decides which verifier reads it, the
+Argon2id creation path, the semaphore that bounds concurrent key derivation, and
+the envelope encryption of the stored string.
+
+It is not reachable from a package entry point yet — the wiring belongs to
+whoever owns `src/index.ts` — so everything below describes the module as it is
+imported from `src/core/password`, not as `@velve/auth` exports it today.
+
+### The PHC string
+
+A credential is stored as one string in the PHC family (architecture 3.3). No
+foreign raw format is ever stored: an import rewrites every source format into
+one of these strings before it is written.
+
+| Prefix | Scheme | Created | Verified |
+|---|---|---|---|
+| `$argon2id$` | Argon2id — the only scheme the library creates | yes | yes |
+| `$argon2i$`, `$argon2d$` | other Argon2 variants | no | yes |
+| `$2a$`, `$2b$`, `$2y$`, `$2x$` | bcrypt | no | yes |
+| `$scrypt$` | scrypt in PHC spelling | no | yes |
+| `$pbkdf2-sha256$`, `$pbkdf2-sha512$` | PBKDF2 | no | yes |
+| `$fbscrypt$` | Firebase scrypt, in the spelling GoTrue uses | no | yes |
+
+#### `parsePhc(text)`
+
+Reads a PHC string. Returns `null` for anything that is not one — a bcrypt hash
+included, since bcrypt is not a PHC string and is dispatched on its prefix
+without being parsed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `string` | the function identifier, `[a-z0-9-]{1,32}` |
+| `version` | `number \| undefined` | the standalone `v=` field, present on Argon2 |
+| `parameters` | `ReadonlyMap<string, string>` | the comma-separated list, in the order it appeared |
+| `salt` | `Uint8Array \| undefined` | decoded |
+| `hash` | `Uint8Array \| undefined` | decoded; absent when the string carries only a salt |
+
+The grammar is read left to right: identifier, then an optional `v=<decimal>`
+field, then an optional parameter list, then the salt and the hash. A field is
+read as a parameter list only when every pair is well formed **and** at least
+one value is non-empty, which is what separates a parameter from a salt that
+arrived with base64 padding (E-160). Base64 padding is accepted everywhere it
+occurs in an imported value and is never emitted.
+
+#### `formatPhc(value)`
+
+Writes the string back. Round-trips every canonical string byte for byte;
+padding an imported value carried in its salt or hash field is normalised away,
+because the canonical spelling has none.
+
+#### `integerParameter(value, name)` and `bytesParameter(value, name)`
+
+Read one parameter as a non-negative decimal of at most ten digits, or as
+base64-decoded bytes. Both return `null` when the parameter is absent or does
+not have that shape; neither substitutes a default. A verifier that cannot read
+its own parameters rejects the credential rather than deriving with a guess.
+
+#### `encodeStandardBase64(bytes)` and `decodeStandardBase64(text)`
+
+The PHC alphabet — standard base64, `+` and `/`, no padding on output. Decoding
+accepts a padded value and rejects the base64url alphabet, misplaced padding and
+non-canonical trailing bits. This is a second base64 implementation next to the
+key module's base64url; the reason is in E-161.
+
+### `PasswordConfig`
+
+Everything the module can be told. Every field is optional; the defaults are the
+ones architecture 3.3 fixes.
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `argon2id` | `{ memoryKiB, iterations, parallelism }` | `{ 19456, 2, 1 }` | the parameters every created hash carries. Raising them is allowed, lowering any one of them is a start error (S-DEFAULT-6) |
+| `acceptLegacy` | `readonly LegacyScheme[]` | all seven | which imported schemes are still verified. Naming fewer narrows the estate; naming an unknown scheme is a start error |
+| `minimumLength` | `number` | `8` | in characters, counted after NFKC. Below 8 is a start error |
+| `maximumLengthInBytes` | `number` | `4096` | in UTF-8 bytes. Above 4096 is a start error; lowering it is allowed |
+| `concurrentHashLimit` | `number` | `min(4, cpus)` | how many key derivations may run at once. `1` to `4`; above four is a start error, because S-DOS-3 names `min(4, cpus)` as the bound of the library and not as a starting point (E-188) |
+| `validate` | `(plaintext: string) => Promise<void>` | none | the one hook for an application password policy (L-7) |
+
+`LegacyScheme` is `"argon2i" | "argon2d" | "bcrypt" | "scrypt" |
+"pbkdf2-sha256" | "pbkdf2-sha512" | "fbscrypt"` — the seven schemes that are
+verified but never created. Argon2id is not among them: it is the created one.
+
+There is no option that weakens anything. Every bound is a floor or a ceiling in
+the safe direction, so `resolvePasswordConfig` has nothing to log at start-up
+(S-DEFAULT-1); a weakening attempt is refused instead of recorded.
+
+#### `resolvePasswordConfig(config?)`
+
+Turns the options into the resolved shape the rest of the module takes, or
+throws `PasswordConfigurationError` with one of these codes:
+`argon2id_memory_below_floor`, `argon2id_iterations_below_floor`,
+`argon2id_parallelism_below_floor`, `minimum_length_below_floor`,
+`maximum_length_above_ceiling`, `maximum_length_below_minimum_length`,
+`maximum_length_not_an_integer`, `concurrent_hash_limit_out_of_range`,
+`legacy_scheme_unknown` — the union `PasswordConfigurationErrorCode`. It is a
+start error, never a request error.
+
+`min(4, cpus)` reads `navigator.hardwareConcurrency`. A runtime that does not
+report one — Node 20.19 has no `navigator` — gets `1`, because four would
+overshoot `min(4, cpus)` on a one- or two-core container. **On Node 20, set
+`concurrentHashLimit` explicitly** or the library serialises every sign-in
+(E-183).
+
+### The length policy
+
+Length is checked before any key derivation, in three steps that get more
+expensive as they go (S-DOS-1, E-164):
+
+1. the UTF-16 code unit count against **four times** `maximumLengthInBytes`.
+   This is a bound, not a measurement: NFKC composition can shrink a string, so
+   the raw count is not comparable with the byte length of the normal form.
+   UAX #15 caps canonical composition at a threefold shrink in UTF-8, so nothing
+   that would pass is refused here, and a megabyte-sized input still never
+   reaches `normalize` (E-181);
+2. NFKC normalisation (NIST SP 800-63B-4 §3.1.1.2), then the character count
+   against `minimumLength`;
+3. the UTF-8 byte length of the normalised form against `maximumLengthInBytes`,
+   because a compatibility character can grow under NFKC.
+
+#### `acceptSubmittedPassword(plaintext, policy)`
+
+The sign-in entry. Returns `{ text, bytes }` — the normalised password and its
+UTF-8 encoding — or `null` when the length policy refuses. It takes a
+`PasswordPolicy`, which has only the two length fields, so `validate` is not
+reachable from the hot path at all (L-7, E-165).
+
+#### `acceptNewPassword(plaintext, config)`
+
+The setting and changing entry. Applies the same length policy, then awaits
+`validate`. Throws `VelveError("password_unacceptable")` when either refuses.
+
+`validate` receives the **normalised** password, which is what becomes the
+credential. If it throws, the caller learns `password_unacceptable` and nothing
+else — the hook's own message goes nowhere (E-163). Its shared message names
+only the length limits, which is imprecise for a hook rejection; that is the
+price recorded in E-163.
+
+### The KDF semaphore
+
+Argon2id at the default parameters holds 19 MiB for the length of one call, and
+an imported `$fbscrypt$` verification holds about 16 MiB. Without a bound, a
+sign-in flood multiplies that by the number of concurrent requests and the
+process dies of memory instead of refusing requests (architecture 5.18).
+
+#### `createKdfSemaphore({ limit, waitLimitInMilliseconds? })`
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `limit` | — | how many derivations may run at once. `resolvePasswordConfig` supplies `min(4, cpus)` |
+| `waitLimitInMilliseconds` | `5000` | how long a request may wait for a place before it is refused (L-1, E-13) |
+
+| Member | Meaning |
+|---|---|
+| `run(work)` | acquires a place, awaits `work()`, releases the place — also when `work` throws |
+| `inFlight` | how many derivations are running now |
+| `peakInFlight` | the highest value `inFlight` has reached |
+| `waiting` | how many requests are queued for a place |
+
+Places are handed out first come, first served. A request that has waited
+`waitLimitInMilliseconds` is refused with `VelveError("rate_limited")`, leaves
+the queue and never runs its work, so a refusal costs no derivation. It is not
+*quick*: it arrives after the full wait limit, five seconds by default, where a
+successful sign-in takes about twenty milliseconds. What it costs is nothing,
+and what it depends on is load.
+
+This is a resource limit, not a timing equalisation. Nothing about it varies
+with the account: a request for an identifier that resolved to an account and
+one for an identifier that resolved to nobody wait the same time and are refused
+the same way (L-1, S-DOS-4). The semaphore is entered after the credential query
+and the decryption, so it is not the thing that keeps those two uniform — that
+is `checkPassword`'s single code path. The rate limiter of architecture 3.9 is
+what runs before the user is resolved.
+
+The refusal carries no `retryAfterSeconds`: the semaphore knows only that the
+queue was full, not when it will empty (E-166). The per-IP and per-account rate
+limiters, which do know, set that field themselves.
+
+Verification and the background rehash take places from the **same** semaphore,
+which is what stops a rehash wave after a parameter increase from displacing
+live sign-ins (S-DOS-6).
+
+### The verification switch
+
+#### `schemeOfStoredHash(phc)`
+
+Reads the scheme off the prefix of a stored value, or `null` when no prefix
+matches. Eleven prefixes map onto eight schemes — bcrypt contributes four.
+`md5`, `sha1` and every other prefix return `null` and are never verified
+(E-39).
+
+#### `verifyAgainstScheme(scheme, password, stored)`
+
+Runs the verifier the scheme names and answers `true` or `false`. It answers
+`false` — it does not throw — for every one of these, so that nothing between
+step 2 and step 4 of the sequence in 3.3 can leave the path early (S-TIM-1):
+
+- a scheme the table does not name;
+- a stored value that is not a PHC string, or not one of the scheme it is filed
+  under;
+- **an identifier inside the credential that disagrees with the `scheme`
+  column** — `acceptLegacy` is applied to the column, which L-2 keeps readable
+  without a key, so the column and the credential have to name the same
+  function or the policy would gate on one while the verifier acted on the
+  other (E-177). An import that writes a mismatched column produces rows that
+  never verify; the two write paths refuse to create one (E-187);
+- a parameter that is missing, not a decimal, or above a cost ceiling;
+- a derivation that refuses its own inputs.
+
+| Scheme | Verified with |
+|---|---|
+| `argon2id`, `argon2i`, `argon2d` | `@noble/hashes/argon2`, or `hash-wasm` when installed |
+| `bcrypt` | `bcryptjs` |
+| `scrypt` | `@noble/hashes/scrypt` |
+| `pbkdf2-sha256`, `pbkdf2-sha512` | `crypto.subtle.deriveBits`, falling back to `@noble/hashes/pbkdf2` |
+| `fbscrypt` | `@noble/hashes/scrypt` and AES-256-CTR |
+
+Every comparison of a derived value runs over equal-length buffers in constant
+time. Derived key material carries the branded type `Secret<…>`, which is what
+makes "no `===`, `startsWith`, `includes` or `localeCompare` on a secret"
+statically checkable (S-TIM-3, E-172).
+
+Details that decide whether an imported estate transfers:
+
+- **A missing `v=` field means Argon2 version 1.0**, as the reference decoder
+  reads it — not 1.3 (E-173).
+- **`$2x$` is verified as `$2a$`.** `bcryptjs` refuses the revision outright;
+  the two differ only in how bytes with the high bit set were handled, so the
+  rewrite answers correctly for an ASCII password and cannot produce a false
+  accept for any other (E-169).
+- **bcrypt proves only the first 72 bytes.** A password longer than that is
+  truncated by the algorithm. After the rehash to Argon2id the full length
+  counts.
+- **`$fbscrypt$` reads `n` as the exponent of `N` and `r` as scrypt's block
+  size.** Swapping the two produces no error, only hashes that never match,
+  which is why the derivation is tested against the published Firebase
+  reference vector (4.4 d, E-171).
+
+### Argon2id creation
+
+#### `createArgon2idHash(passwordBytes, parameters)`
+
+Draws a 16-byte salt, derives 32 bytes and returns the canonical string
+`$argon2id$v=19$m=<memoryKiB>,t=<iterations>,p=<parallelism>$<salt>$<hash>`.
+The parameters in the string are exactly the configured ones (S-REST-7).
+
+#### `selectArgon2Engine(version)`
+
+`hash-wasm` is an optional peer dependency and an accelerator only. When it is
+installed it derives Argon2 about four times faster and its output is
+byte-identical, so installing or removing it needs no migration and changes no
+security behaviour (S-DEFAULT-7).
+
+One exception, found by measurement: `hash-wasm` accepts a `version` option and
+ignores it, computing version 1.3 whichever value it is given. Any version other
+than 1.3 therefore stays on `@noble/hashes` (E-168). Since the library only ever
+creates version 1.3, this affects imported hashes alone.
+
+The dependency is loaded through a literal `import("hash-wasm")`, so a
+dependency or advisory scanner can see that an advisory against the package
+reaches this line; `knip.json` exempts it by name instead (E-180, which reversed
+E-170).
+
+Because the accelerator computes in one synchronous WebAssembly call, each
+accelerated derivation yields a `setTimeout` turn before it starts. Without it a
+flood is served in one microtask drain, no timer in the process fires, and
+S-DOS-4's wait limit never comes due (E-186).
+
+### The stored credential
+
+`velve.password_credential.phc` holds AES-256-GCM over the canonical PHC string
+under the purpose key `password-enc`, with the key version in its own column.
+`scheme` stays in the clear, so the estate can be surveyed — how many bcrypt
+rows are left, how the rehash is progressing — without a key (L-2, S-REST-5).
+
+The price is stated where it belongs, at the top of the operational
+documentation: **losing the key means losing every password.** That is the same
+risk class as a pepper.
+
+#### `sealPhc(keys, phc)` and `openPhc(keys, row)`
+
+The only two ways a PHC string crosses the column boundary. `sealPhc` returns
+`{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
+that puts a cleartext string into the column, and the import module uses these
+same two functions rather than a path of its own (architecture 4.0.3).
+
+`openPhc` throws `KeyError("key_version_unknown")` when the row names a key
+version that has left the ring, and `KeyError("authentication_failed")` when the
+ciphertext does not authenticate. `checkPassword` does not let either reach the
+caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
+
+#### `createPasswordCredentialRepository({ driver, keys, schema? })`
+
+| Method | Statement |
+|---|---|
+| `findByUserId(userId)` | `SELECT … WHERE user_id = $1` |
+| `write({ userId, phc, scheme })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
+| `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
+
+`replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
+the stored **ciphertext**, not the PHC string, so a password the user changed
+while a rehash was running is never overwritten by it (L-2, E-11).
+
+Both paths refuse two things before they write. A `scheme` that disagrees with
+the identifier of the credential is `CredentialWriteError`
+`scheme_does_not_match_credential`: such a row could never verify (E-177,
+E-187). And a statement that changed no row is `credential_not_written` —
+a conflict predicate that is false does not raise, it silently changes nothing,
+and the caller must not be told a password was stored when it was not (E-185).
+
+### Checking a password
+
+#### `createDummyCredential(keys, config)`
+
+Built once at start-up: a real Argon2id hash of a random password, at the
+configured parameters, sealed like any other credential. It is what the switch
+reads when no user was resolved, so the absent-user path performs the same
+decryption and calls the same **verifier** — not the creation function
+(S-TIM-2). It is created outside the semaphore, because nothing is being served
+yet.
+
+#### `checkPassword({ userId, plaintext }, environment)`
+
+`environment` is `{ config, semaphore, keys, credentials, dummy }`.
+
+`userId` is what the caller's identity lookup produced, or `null` when it
+produced nothing. Passing `null` does not shorten the path: the credential query
+is still issued, for `ABSENT_USER_ID`, the nil UUID that no account can hold
+(E-174).
+
+| Outcome | Meaning |
+|---|---|
+| `{ outcome: "unacceptable" }` | the length policy refused. Depends on the input alone; no statement and no derivation ran (S-DOS-1, S-DOS-2) |
+| `{ outcome: "refused", reason }` | `user_not_found`, `no_password_credential`, `legacy_scheme_rejected` or `password_mismatch` — all four map to `invalid_credentials` for the caller and are told apart only in the log |
+| `{ outcome: "verified", userId, rehash? }` | the password matched |
+
+After the length check there is no early exit: one credential query, one
+decryption, one verifier call with identical parameters, and the failure
+accumulated in a local variable (S-TIM-1). A credential whose scheme is not in
+`acceptLegacy` is **still** verified — against the dummy — so that narrowing
+`acceptLegacy` does not turn into a timing oracle for which accounts were
+imported (E-176).
+
+`rehash` is present when the credential is behind the current policy or the
+current key version. It is a **task, not a running promise**: the caller invokes
+it after it has sent its answer, so the rehash never lengthens the measured
+sign-in (S-TIM-5). It takes a place in the same semaphore as the check, so a
+rehash wave after a parameter increase cannot displace live sign-ins (S-DOS-6).
+Losing the compare and swap is harmless — it returns `false` and the next
+sign-in tries again.
+
+#### `setPassword({ userId, plaintext }, environment)`
+
+Applies the length policy, runs `validate`, derives Argon2id under the
+semaphore, and writes the sealed string. Revoking the user's other sessions is
+not this module's business; that belongs to the session module and has no switch
+(S-DEFAULT-2).
+
+#### `needsRehash(phc, config)`
+
+True when the scheme is not `argon2id`, when the Argon2 version is not 1.3, when
+any of `m`, `t` or `p` is below the configured value, when the salt is shorter
+than 16 bytes or the hash shorter than 32, or when the string does not parse at
+all. An imported credential is therefore rehashed at the first successful
+sign-in and verified with its original scheme on every sign-in until then
+(S-REST-7).
+
+### What the uniformity rule does and does not cover
+
+The rule from L-1 is that every endpoint has exactly one code path that does the
+same work regardless of the outcome. For passwords that means one key derivation
+with identical parameters, including against the dummy when no user exists.
+There is no response deadline and no artificial delay; the proof is the
+statistical test in architecture 6.1, not a number in a configuration.
+
+Two limits are worth stating plainly rather than leaving to be discovered.
+
+**A mixed estate is distinguishable by cost, not by outcome.** An account whose
+credential is still an imported bcrypt hash is verified with bcrypt, which costs
+far less than the Argon2id the dummy path runs. An observer can therefore learn
+that *some* account exists and came from an import — not which password it has,
+and not anything about accounts already on Argon2id. This follows directly from
+3.3, which verifies each record with its own scheme, and it shrinks to nothing
+as the silent rehash works through the estate. Running Argon2id in addition for
+every legacy verification would remove the signal at the price of doubling the
+cost of exactly the accounts an import made numerous; that trade is not taken.
+
+**A destroyed key version is loud at startup, silent per request.**
+`assertStoredKeyVersionsAreKnown` is where an operator learns of it. On the
+sign-in path the row simply fails to verify like any other, because a `throw`
+there would break S-TIM-1 and would also partition accounts into those written
+before a rotation and those written after — an enumeration channel open for the
+whole of any rotation window (E-179, superseding E-175).
+
+### Cost ceilings on a stored credential
+
+The memory a verification claims is a parameter of the credential, and an
+import writes it. Without a ceiling, S-DOS-3's bound — semaphore size × the
+memory parameter — is really semaphore size × the largest value any import ever
+wrote. Five fixed ceilings apply, and every scheme the switch verifies is
+covered by at least one of them; a credential above
+any of them is refused, which routes the user to the reset path (E-182).
+
+| Constant | Value | Applies to |
+|---|---|---|
+| `MAXIMUM_STORED_MEMORY_KIB` | `65536` | Argon2 `m`, and `128 · 2^ln · r` for scrypt and Firebase scrypt |
+| `MAXIMUM_STORED_ARGON2_ITERATIONS` | `64` | Argon2 `t` |
+| `MAXIMUM_STORED_PARALLELISM` | `64` | Argon2 and scrypt `p` |
+| `MAXIMUM_STORED_PBKDF2_ITERATIONS` | `2_000_000` | PBKDF2 `i` |
+| `MAXIMUM_STORED_BCRYPT_COST` | `14` | the cost field of a bcrypt hash |
+
+bcrypt has no memory parameter, so its cost — an exponent — is the only bound
+there is: `$2a$14$` is about a second of one semaphore place and `$2a$31$` is
+about thirty years. GoTrue, Auth0 and Clerk all write cost 10, which says the
+ceiling is generous; it does not say what admitting 14 costs. That is an
+occupancy figure, and it was measured rather than estimated.
+
+A cost-14 verification takes about 780 ms on the machine this was written on —
+roughly 43× a default Argon2id verification with the accelerator present, and
+roughly 9× without it. Raising `concurrentHashLimit` to 4 does not divide that
+by four: `bcryptjs` is JavaScript on the same thread as the rest of the process,
+so four verifications in flight take four times the wall clock of one. An estate
+stored at bcrypt-14 therefore answers about 1.3 sign-ins per second in total,
+against roughly 55 for the Argon2id the library writes itself. Read against
+S-DOS-3 and S-DOS-4, that is the whole judgement: four places bound the memory,
+but at cost 14 they bound nothing about time, and the five-second wait limit —
+not the semaphore — is what keeps the process answering, by refusing everything
+past a queue of about six.
+
+They are not configurable. Raising a denial-of-service ceiling is a weakening,
+and every documented source sits far below them: Better Auth's scrypt at 32 MiB,
+Firebase at 16 MiB, Django's PBKDF2 at 1.2 million iterations.
+`argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable` and
+`bcryptCostIsAcceptable` are the four predicates that apply them.
+
+### Startup
+
+#### `assertStoredKeyVersionsAreKnown({ driver, keys, schema? })`
+
+Reads `SELECT DISTINCT key_version FROM velve.password_credential` and holds
+each value against the `password-enc` ring. Throws `PasswordKeyRingError` —
+`code: "stored_key_version_unknown"`, `missingVersions: readonly number[]` —
+naming every version the ring no longer holds.
+
+**Call this once at assembly, before the instance serves anything.** L-2 makes
+the key ring a precondition for every stored password, so a version that has
+left the ring locks out everyone whose row was written under it. This is the
+only place that says so: on the sign-in path such a row fails to verify like any
+other, because a throw there would break S-TIM-1 and would partition accounts
+by when they were written (E-179).
+
+The check is exported rather than wired in, because assembling the instance is
+not this module's business. Until a caller invokes it, the operator error is
+silent.
+
+### Every exported name
+
+`src/core/password` is not reachable from a package entry point yet; the wiring
+belongs to whoever owns `src/index.ts`. This is the full surface a caller sees
+once it is.
+
+| Name | Kind | File |
+|---|---|---|
+| `parsePhc`, `formatPhc`, `integerParameter`, `bytesParameter` | function | `phc.ts` |
+| `PhcString` | interface | `phc.ts` |
+| `encodeStandardBase64`, `decodeStandardBase64` | function | `base64.ts` |
+| `PasswordConfig`, `ResolvedPasswordConfig`, `PasswordPolicy`, `Argon2idParameters` | interface | `config.ts` |
+| `resolvePasswordConfig` | function | `config.ts` |
+| `ARGON2ID_FLOOR`, `ARGON2ID_SALT_BYTES`, `ARGON2ID_HASH_BYTES`, `ARGON2ID_VERSION`, `MINIMUM_LENGTH_FLOOR`, `MAXIMUM_LENGTH_CEILING_IN_BYTES`, `CONCURRENT_HASH_LIMIT_CEILING` | const | `config.ts` |
+| `PasswordConfigurationError`, `PasswordConfigurationErrorCode` | class, type | `errors.ts` |
+| `CredentialWriteError`, `CredentialWriteErrorCode` | class, type | `errors.ts` |
+| `PasswordScheme`, `LegacyScheme` | type | `scheme.ts` |
+| `LEGACY_SCHEMES`, `CREATED_SCHEME` | const | `scheme.ts` |
+| `schemeOfStoredHash`, `isLegacyScheme` | function | `scheme.ts` |
+| `AcceptedPassword` | interface | `policy.ts` |
+| `acceptSubmittedPassword`, `acceptNewPassword` | function | `policy.ts` |
+| `KdfSemaphore`, `KdfSemaphoreOptions` | interface | `semaphore.ts` |
+| `createKdfSemaphore`, `DEFAULT_WAIT_LIMIT_IN_MILLISECONDS` | function, const | `semaphore.ts` |
+| `Secret`, `DerivedKey` | type | `secret.ts` |
+| `asDerivedKey`, `derivedKeysAreEqual` | function | `secret.ts` |
+| `Argon2Variant` | type | `argon2.ts` |
+| `Argon2Request`, `Argon2Engine` | interface | `argon2.ts` |
+| `nobleArgon2` | const | `argon2.ts` |
+| `selectArgon2Engine`, `deriveArgon2`, `createArgon2idHash` | function | `argon2.ts` |
+| `verifyArgon2`, `verifyBcrypt`, `verifyScrypt`, `verifyPbkdf2`, `verifyFirebaseScrypt` | function | `verifiers/` |
+| `deriveScrypt` | function | `verifiers/scrypt.ts` |
+| `verifyAgainstScheme` | function | `verify-switch.ts` |
+| `MAXIMUM_STORED_MEMORY_KIB`, `MAXIMUM_STORED_ARGON2_ITERATIONS`, `MAXIMUM_STORED_PARALLELISM`, `MAXIMUM_STORED_PBKDF2_ITERATIONS`, `MAXIMUM_STORED_BCRYPT_COST` | const | `limits.ts` |
+| `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable`, `bcryptCostIsAcceptable` | function | `limits.ts` |
+| `PasswordCredentialRow`, `SealedPhc`, `PasswordCredentialRepository`, `PasswordCredentialRepositoryOptions` | interface | `credential.ts` |
+| `PASSWORD_ENC_PURPOSE`, `PASSWORD_CREDENTIAL_SCHEMA`, `PASSWORD_CREDENTIAL_TABLE` | const | `credential.ts` |
+| `sealPhc`, `openPhc`, `createPasswordCredentialRepository` | function | `credential.ts` |
+| `needsRehash`, `needsRewrite` | function | `rehash.ts` |
+| `DummyCredential`, `PasswordEnvironment` | interface | `verify.ts` |
+| `PasswordCheck` | type | `verify.ts` |
+| `ABSENT_USER_ID` | const | `verify.ts` |
+| `createDummyCredential`, `checkPassword`, `setPassword` | function | `verify.ts` |
+| `PasswordKeyRingError`, `StoredKeyVersionCheckOptions` | class, interface | `startup.ts` |
+| `assertStoredKeyVersionsAreKnown` | function | `startup.ts` |
+
+`needsRewrite(row, phc, currentKeyVersion, config)` is `needsRehash` plus the
+key version: it is what `checkPassword` calls, so key rotation travels the same
+compare-and-swap path as a parameter increase (L-2).
+
+`deriveArgon2` and `deriveScrypt` are the two derivations a verifier calls;
+`nobleArgon2` is the pure engine, named so that a test can compare the
+accelerator against it. `DerivedKey` is `Secret<"derived-key">`, the branded
+type that makes S-TIM-3 checkable; `asDerivedKey` mints one and
+`derivedKeysAreEqual` is the only thing that compares two.
+
 ## Identity
 
 Which sign-in names an instance has, how they are normalised, which columns of

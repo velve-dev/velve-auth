@@ -810,6 +810,248 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Grund:* (a) scheitert genau an diesem Beispiel. Ein Abgleich über gemeinsame Wörter hätte E-03 **bestätigt**, nicht verworfen: Dessen Preis enthält „Rückfall" und „`@noble/ciphers`" — dieselben Wörter wie der Kommentar. Der falsche Eintrag schneidet hier besser ab als der richtige, weil er die Wörter teilt und nur die Aussage nicht. Wer entscheiden will, ob ein Eintrag eine Zeile trägt, muss beide lesen. (b) unterschätzt, was eine Fundstelle leistet: Sie ist eine Abkürzung für den Leser, der wissen will, warum eine Zeile so aussieht. Wer dieser hier folgt, landet bei einer Leistungsentscheidung und schließt daraus, die Exportierbarkeit sei um der Geschwindigkeit willen gewählt — statt bei der Zusage, ohne die die Rückfallebene nicht existieren könnte. Er nimmt sie dann beim nächsten Umbau als verhandelbar an. Verwandt genug, um plausibel zu wirken, ist die schlechtere Lage und nicht die bessere; eine offensichtlich absurde Nummer wäre beim Lesen aufgefallen.
 *Preis:* Die Durchsicht ist der Mechanismus, und sie skaliert nicht — dreizehn Fundstellen in `keys`, siebenundvierzig im Repositorium, alle einzeln gelesen, und beim nächsten Mal wieder. Sie sagt außerdem nichts über die Module, die sie nicht gelesen hat. Und eine zweite Fundstelle blieb bewusst stehen: `src/core/keys/base64url.ts` zitiert auf dem Zweig `feature/token` E-62 für den Kodierer, obwohl E-62 den **Dekodierer** entschieden hat; der Kodierer wurde von einem Eintrag aus dem Bereich der Welle 2 dorthin gelegt, dessen Nummer auf `main` noch nicht existiert und hier deshalb nicht ausgeschrieben steht — sie zu zitieren hieße, eine Fundstelle ins Leere zeigen zu lassen. Auf `main` steht in der Datei noch gar keine Nummer. Die Datei zu ändern hieße, einem offenen Zweig einen Konflikt in eine Zeile zu legen, die er selbst gerade bearbeitet; die Fundstelle wird gemeldet und dort behoben, wo sie entsteht.
 
+### A parameter list needs at least one non-empty value
+`E-160` · password · phc parsing, frozen
+
+**Context.** The PHC grammar lets a parameter carry an empty value, and the salt field of an imported `$fbscrypt$` string carries Base64 padding. Together those make the field `aac=` ambiguous: readable as the parameter `aac` with no value, and as a padded salt. Guess wrong and salt and hash shift by one field; the verifier then fails with no error at all and reports "wrong password".
+**Rejected.** (a) Forbidding padding in the salt and hash fields, as the PHC specification itself does. (b) Counting the fields from the right.
+**Reason.** (a) would have broken the adoption of Supabase and Firebase estates: GoTrue stores `$fbscrypt$…$<salt_b64>$<hash_b64>` with padding, and section 4.4 requires exactly that string be taken over unchanged. (b) fails because the hash field is optional — counted from the right, a salt without a hash cannot be told from a hash without a salt. A field therefore counts as a parameter list only when at least one pair carries a non-empty value. None of the eight schemes in 3.3 uses an empty parameter value, and the padding consists of nothing but empty values.
+**Price.** A future scheme whose only parameter is deliberately empty would be read as a salt. That stands in the reference, and the switch is a closed enumeration — such a scheme could not arrive unnoticed.
+
+### The password module's Base64 codec is its own code beside the key module's
+`E-161` · password · encoding, duplication
+
+**Context.** `src/core/keys/base64url.ts` already holds a hand-written decoder. It uses the URL alphabet, while PHC wants the standard one with `+` and `/`, and it is deliberately strict: only the canonical spelling is accepted, so that a mistyped root key is noticed instead of quietly decoding to the same bytes.
+**Rejected.** Extending the existing decoder with an alphabet argument and a strictness argument, and using it from both modules.
+**Reason.** Two reasons, one formal and one substantive. Formally the file belongs to the key module merged in wave 1; changing it lies outside this building block's file ownership (rules §5). Substantively the two requirements pull against each other: an imported PHC string may bring either spelling, a root key may not. A shared codec would have to make strictness a parameter and so soften the exact place where it counts — a wrongly set argument would be silent there.
+**Price.** Two Base64 implementations in the core, some sixty duplicated lines. Whoever repairs a corner of one has to look at the other.
+
+### An unknown core count falls to the ceiling, not to one
+`E-162` · password · concurrency, superseded by E-183
+
+**Context.** S-DOS-3 sizes the semaphore at `min(4, cpus)`. The core may not use `node:os` (rules §7), which leaves `navigator.hardwareConcurrency` — absent under Node 20.19, the lower build boundary.
+**Rejected.** Falling back to 1 when the core count is unknown.
+**Reason.** 1 would be the careful choice for memory and the wrong one for everything else: on every Node 20 installation exactly one password verification would run at a time, four concurrent sign-ins would queue at 90 ms each, and L-1's wait limit would be reached under a load that is not load. The ceiling of 4 is also the number the documentation names as the memory bound (4 × 19 MiB), so the fallback promises nothing that is not already promised.
+**Price.** On a two-core machine under Node 20, up to four Argon2id calls run instead of two. That is not a memory problem, but it means more context switching than necessary; whoever objects sets `concurrentHashLimit` explicitly.
+
+### The `validate` hook receives the normalised form and does not get to explain itself
+`E-163` · password · policy hook, frozen
+
+**Context.** L-7 gives exactly one hook for an application's password policy. Two things were open: which form of the password it sees, and what becomes of its exception.
+**Rejected.** (a) Giving it the raw input. (b) Passing its exception through so the application can show its own reason.
+**Reason.** (a) would have created the case where a check against a leak corpus runs on a string that is never stored that way — the derivation always works on the NFKC form per 3.3. A hit would then depend on spelling, which is precisely what normalisation is there to remove. (b) contradicts rules §3: what the outside learns is decided by `error-map.ts` and by nothing else. A foreign exception passed through would become `internal_error` with status 500 at the main gate — the wrong answer for a rejected password policy.
+**Price.** The caller gets `password_unacceptable` with the text "The password does not meet the length requirements.", even when the length was fine and the hook refused for an entirely different reason. That text belongs to `error-map.ts` and lies outside this building block; the inaccuracy is in the reference and has been reported.
+
+### The length check measures three times, in ascending order of cost
+`E-164` · password · input limits, superseded by E-181
+
+**Context.** L-7 names two limits in two different units — 8 characters and 4096 bytes — and 3.3 requires NFKC normalisation before every KDF call. Normalisation therefore sits between the two measurements, and it is not free itself: normalising a one-megabyte "password" costs memory and time before any limit bites.
+**Rejected.** Normalising first and checking both limits afterwards.
+**Reason.** The second attack vector in 5.18 (a) is exactly input length, and it lands before the KDF. So the count of UTF-16 code units is measured first against the byte ceiling: a UTF-8 encoding is never shorter than that count, so the check rejects nothing that would have passed, and it needs no allocation at all. Only then is the value normalised, then characters counted, then bytes — that measurement last, because NFKC can lengthen a compatibility character.
+**Price.** Three measurements instead of two, and the first is an estimate that has to be explained to a reader. Its comment is one of the few places in the module where a sentence of prose is needed.
+
+### The sign-in path takes the length policy, not the configuration
+`E-165` · password · policy hook, frozen
+
+**Context.** L-7 requires that `validate` run when setting and changing a password and never at sign-in. That could be written as a rule and held by a check.
+**Rejected.** One shared function with a `runValidateHook: boolean` switch.
+**Reason.** A switch is a rule someone can set wrongly, and the fault would be silent: the hook would run on the hot path, the plaintext password would reach foreign code on every sign-in, and nothing about the answer would change. Instead the sign-in entry point takes the type `PasswordPolicy` with exactly two fields. There is no `validate` there to call — the guarantee is in the type and not in a check.
+**Price.** Two entry points instead of one, and `acceptNewPassword` calls `acceptSubmittedPassword`, which sounds briefly wrong on reading. The inner name describes where the input came from, not the operation.
+
+### The semaphore's refusal carries no retry hint
+`E-166` · password · errors, frozen
+
+**Context.** `rate_limited` is the same error code the rate limiter of 3.9 uses, and that one sets `retryAfterSeconds` and the `Retry-After` header per E-130. The semaphore can throw the same code for a different reason.
+**Rejected.** Passing the remaining wait limit as `retryAfterSeconds`, so that every `rate_limited` answer carries the same field.
+**Reason.** The semaphore knows only that the queue was full, not when it will empty — that depends on how much longer the running derivations take and how many requests stand ahead of this one. A number derived from the wait limit would be an invention, and a client that obeys it either waits too long or runs straight back into the same queue. A missing field says "unknown"; a guessed one says something false with the authority of a header.
+**Price.** Two refusals with the same code behave differently — one carries `Retry-After`, the other does not. A caller who treats the field as guaranteed has to treat it as optional; that is in the type and in the reference.
+
+### The wait limit runs on a timer, not on the configurable clock
+`E-167` · password · scheduling, frozen
+
+**Context.** Per 6.19 the core reads time only through the configuration option `clock`, so that expiry and window tests are deterministic. The semaphore's wait limit is not an expiry time though, but a duration that has to pass while the process works.
+**Rejected.** Checking the wait limit against `clock.now()`, in a loop or when a place falls free.
+**Reason.** A check when a place falls free does not bite: if no place falls free — exactly the case the limit catches — the check never runs. A loop would be a timer with extra steps. Section 6.19 exempts this case explicitly: "`vi.useFakeTimers` is needed only for the semaphore's wait limit (S-DOS-4), because it runs on a timer and not on `clock`."
+**Price.** A test of the wait limit has to drive the timers and cannot use the same configurable clock as the other time tests. Two time mechanisms in one test plan, and whoever needs both in one test drives both.
+
+### The accelerator is used only for Argon2 version 1.3
+`E-168` · password · accelerator, frozen
+
+**Context.** 2.7 promises that `hash-wasm` produces byte-identical output and that switching needs no migration; S-DEFAULT-7 makes that a requirement. A cross-check over both versions showed otherwise: `hash-wasm` accepts the `version` option and **ignores it**. For `version: 0x10` it returns the same result as for `0x13`, while `@noble/hashes` correctly returns two different values.
+**Rejected.** (a) Treating the divergence as immaterial, because the library itself only ever creates 0x13. (b) Not verifying version 1.0 at all any more.
+**Reason.** (a) is precisely the fault S-DEFAULT-7 exists to prevent: whether `hash-wasm` is installed would decide whether an imported Argon2 1.0 hash verifies — the same sign-in would pass on one server and fail on another. (b) would have locked out an estate that 3.3 requires be verifiable. The accelerator is therefore chosen only for 0x13; every other version runs the pure path. That is the only shape in which the presence or absence of the dependency changes nothing but runtime.
+**Price.** The choice of engine now depends on a field of the stored string, not only on the environment. A reader has to know why — the comment says so, and the cross-check stands beside it as a test.
+
+### `$2x$` is verified as `$2a$`
+`E-169` · password · legacy schemes, frozen
+
+**Context.** The switch in 3.3 carries four bcrypt prefixes. `bcryptjs` knows three of them and throws "Invalid salt revision" on `$2x$`. An imported `$2x$` hash would therefore be permanently unverifiable and every sign-in on it a silent failure.
+**Rejected.** (a) Letting `$2x$` fail and sending the user down the reset path. (b) Reimplementing the crypt_blowfish variant.
+**Reason.** `$2x$` and `$2a$` differ only in how crypt_blowfish handled bytes with the high bit set. For an ASCII password both derivations are identical; for any other they cannot agree by accident — the rewrite can turn a certain false rejection into a correct answer and can never produce a false acceptance. (a) would have discarded an estate that consists mostly of ASCII passwords. (b) would mean pulling a known faulty implementation into the core to serve an edge case; that is the wrong place for the effort.
+**Price.** A `$2x$` password with non-ASCII characters still fails and leads to the reset path. The library cannot say which of the two cases it is holding, and the answer is the same in both — which it has to be.
+
+### The optional dependency's specifier is assembled, not written
+`E-170` · password · accelerator, superseded by E-180
+
+**Context.** `hash-wasm` is an optional peer dependency. As a string literal in `import()` it produces two findings: the main gate's dead-code check reports "Referenced optional peerDependencies" and fails, and a caller's bundler tries to resolve at build time a package that is allowed to be absent.
+**Rejected.** (a) Listing `hash-wasm` under `ignoreDependencies` in `knip.json`. (b) Not looking for the accelerator at all, but taking it through the configuration.
+**Reason.** (a) is the cleaner solution and the one that actually belongs; but `knip.json` belongs to no feature of this wave, and the file ownership in rules §5 is binding — a building block that touches a shared configuration file while three others run in parallel creates exactly the conflict the rule prevents. That is the immediate reason and it is named as such rather than reinterpreted afterwards as a technical one. The second, independent reason carries on its own: a bundler that wants to resolve a deliberately absent package breaks the build of a caller who uses the library without the accelerator. (b) contradicts 2.7, where the dependency is found and not handed in.
+**Price.** The specifier is no longer visible at build time. No tool — not the bundler, not the dead-code check, not a dependency analysis — sees the edge; whoever removes `hash-wasm` from `package.json` gets no warning, just a slower library. That is a real loss of traceability, and the recommendation to the main gate is to add `hash-wasm` to `knip.json` and bring the literal back afterwards.
+
+### The published Firebase test vector lives in the repository; everything else is drawn per run
+`E-171` · password · test fixtures, frozen
+
+**Context.** Passwords and derived hashes do not belong in a checked-in fixture; the key fixtures of wave 1 therefore draw their material fresh on every run. For `$fbscrypt$` though, 4.4 d) explicitly requires a test vector, because swapping `n` and `r` produces **no error**, only hashes that never match.
+**Rejected.** Generating the fbscrypt case entirely by ourselves too.
+**Reason.** A self-generated vector proves only that the verifier agrees with its own derivation. That is exactly the fault pitfall 1 describes: derivation and check would both be swapped, the test green, and the first real Firebase estate would fail silently. The vector comes from the public reference implementation, belongs to an invented `user1` and is nobody's credential.
+**Price.** A string in the repository that is formally a password and a hash over it. It is marked as such and carries its source; whoever reads the rule literally sees an exception, and it stands here so that it is not missed on a review pass.
+
+### The brand type `Secret<…>` is created in the password module
+`E-172` · password · types, reported
+
+**Context.** S-TIM-3 forbids `===`, `startsWith`, `includes` and `localeCompare` on a value of type `Secret<…>`, and T-TIM-3 checks that statically. The specification defines the type nowhere, and no previous wave introduced it — so the check would have found nothing and been green, because there were no branded values.
+**Rejected.** Leaving the type where it belongs, in a shared module, and building it together with the module that needs it second.
+**Reason.** A static check that finds nothing because there is nothing to find is exactly the case rules §5 names as "green because it applied to no file". The type is therefore created where the first branded value is created: at the output of the KDF. A shared location would be a file outside this building block's ownership.
+**Price.** The type sits in the wrong module. As soon as the session or the factor module needs it, it has to move, and the move touches a file that then belongs to two building blocks. That is reported.
+
+### A missing `v=` field means Argon2 version 1.0
+`E-173` · password · phc parsing, frozen
+
+**Context.** The PHC string of an imported Argon2 hash need not carry the version field. What holds in its absence decides whether the hash verifies.
+**Rejected.** Reading a missing field as 1.3, because that is the only version the library creates itself.
+**Reason.** Argon2's reference decoder (`argon2_decode_string`) sets version 1.0 when `v=` is absent, and every tool that produced such strings produced them under that assumption. Assuming 1.3 would be convenient and would derive every one of those hashes wrongly — again with no error, again as "wrong password".
+**Price.** The library therefore verifies a version it never creates, and the accelerator cannot compute it (E-168). Together that means an estate without the version field runs slower than one with it. After the first sign-in it is lifted to Argon2id 1.3 anyway.
+
+### The path without a user still asks for a credential, and asks for the nil UUID
+`E-174` · password · timing, frozen
+
+**Context.** S-TIM-1 requires the same sequence of database and KDF calls for existing and non-existing identifiers, and T-TIM-1b checks four cases for byte-identical call sequences. Resolving the user belongs to another building block; this one is handed a user id or `null`.
+**Rejected.** Skipping the credential query on `null` and making only the KDF call against the dummy.
+**Reason.** The sequence would then be exactly one query shorter — measurable, and in a range (0.1–2 ms per 5.1 (a)) that becomes visible over the network with a few hundred samples. The dummy KDF call would have covered the larger difference and left the smaller one standing. The query therefore always runs, and when there is no user id it runs with the nil UUID: a syntactically valid `uuid` that `gen_random_uuid()` does not produce and that hits the same primary key index as any other.
+**Price.** One database query per sign-in attempt on a non-existent identifier that never returns a row. That is an index lookup with no hit, and it is exactly the lookup the real case makes too. Creating the row with the nil UUID would destroy the uniformity — it cannot be created, because `velve.user` has no such row and the foreign key forbids it.
+
+### An unreadable key version is not disguised as a wrong password
+`E-175` · password · key ring, superseded by E-179
+
+**Context.** Per L-2 the PHC string is stored encrypted. If the named key version is missing from the ring, the key module throws `key_version_unknown` (S-KEY-4). Per L-1 the verification path would properly have to fold that into the same uniform failure answer as any other failure.
+**Rejected.** Catching the exception and refusing the sign-in as `invalid_credentials`.
+**Reason.** The case arises only after an operator error — someone removed a key version from the ring under which rows are still written. Disguised as "wrong password" it would be a silent mass lockout: every affected user would get the same answer as for a typo, the log would say `password_mismatch`, and nobody would think of the key ring. As a named error it is loud, immediately visible and fixed in a minute by putting the version back. That is what S-KEY-4 is for.
+**Price.** A deviation from uniformity, and it is named: while the operator error stands, the answer for an account with a dead key version (500) differs from the answer for a non-existent account (401). An attacker could enumerate in that window — but only after the operator has already locked the affected accounts out, and the window is exactly as long as the operator needs to notice a very loud error.
+
+### A legacy scheme that is no longer accepted is computed anyway
+`E-176` · password · timing, frozen
+
+**Context.** `acceptLegacy` narrows the estate: whoever drops bcrypt wants no more bcrypt sign-ins. The obvious implementation checks the scheme after reading the row and refuses before any KDF runs.
+**Rejected.** Exactly that — refuse early, waste no KDF call.
+**Reason.** The early refusal would be a whole KDF call faster than any other answer and so an oracle with a 50 to 250 ms signal — not for whether an account exists, but for whether it came from the import. That is a list an attacker wants: accounts with an old hash are the ones with the old, often reused password. So this case runs over the dummy too, with the same parameters, through the same semaphore.
+**Price.** An operator who empties `acceptLegacy` pays the same memory and the same time for every sign-in on a retired credential as for a real one. That is the price of the retirement being invisible from outside, and the right way out of the state is the reset path anyway, not starving the verification path.
+
+### The column and the credential must name the same function
+`E-177` · password · scheme switch, frozen
+
+**Context.** `acceptLegacy` is evaluated on the cleartext column `scheme` — per L-2 the only field readable without a key, and the one that makes the estate surveyable. The Argon2 verifier, by contrast, took its variant from the identifier **inside** the decrypted credential. The reviewer played it out: a row with `scheme='argon2id'` whose content is `$argon2i$…` is answered `verified` under `acceptLegacy: []`. An operator who has turned off every legacy scheme still verifies Argon2i and Argon2d.
+**Rejected.** (a) Evaluating the policy on the decrypted identifier instead of on the column. (b) Correcting the column against the content on read.
+**Reason.** (a) would have given up the surveyability L-2 explicitly buys: whoever wants to know how many bcrypt rows are left could no longer run `SELECT scheme, count(*)` but would have to decrypt every row. (b) would have created a silent write on the verification path and covered the disagreement instead of answering it. Instead the match is now a precondition: the PHC identifier must repeat the column verbatim, or the switch answers `false`. The check sits in `overPhc` and so covers all seven PHC schemes at once, not just Argon2.
+**Price.** A row whose column does not match its content because of a faulty import is no longer verifiable — it would have worked before. That is intended and leads to the reset path: a credential the database claims something else about than it claims itself is not one to issue a session on.
+
+### No lookup in the module reads a name off `Object.prototype`
+`E-178` · password · lookup tables, frozen
+
+**Context.** The switch was an object literal indexed by the `scheme` column; the PBKDF2 digest table likewise, indexed by the identifier of the parsed credential. `constructor` resolves on both to a function, and `await Object(password, stored)` returns an object the caller reads as a hit. The second case is the reachable one: the identifier comes out of the stored string, `constructor` passes the identifier regex, and only a later fault on the derivation path turned it into `false`.
+**Rejected.** (a) Checking the return value for `=== true` at the end. (b) `Object.create(null)` as the tables' prototype.
+**Reason.** (a) would have caught the symptom value and left standing the call of an arbitrary inherited function with the password as its first argument. (b) would be correct, but the type would still say "object with arbitrary keys", while `Map` records in its signature which keys exist and returns `undefined` for every other. The same holds for the check that the accelerator has its three functions: it now asks `Object.hasOwn` before it reads.
+**Price.** Three lookup tables are longer to write than a literal, and `Map` allows no `as const` inference of the key type — it now stands twice, in the type argument and in the entries. The reviewer found the case, not the author; that stands here because it bears on how much the module's other lookups can be trusted.
+
+### A dead key version is reported at startup, not at sign-in
+`E-179` · password · key ring, supersedes E-175
+
+**Context.** E-175 deliberately passed the key module's exception upward, so that a removed key version would not vanish as "wrong password". The reviewer held two things against it. First, the `throw` violates S-TIM-1 literally: between step 2 and step 4 there is neither `return` nor `throw`, without qualification. Second — and E-175 does not name this — that very branch splits users into "written before the rotation" and "written after", and so is an enumeration channel throughout every rotation window, not only after an operator error.
+**Rejected.** (a) The `throw` stays (E-175). (b) The failure is disguised as `invalid_credentials` and nothing else.
+**Reason.** The choice between (a) and (b) was posed wrongly; both answers lie on the request path, and the report does not belong there. It is addressed to the operator, not to the user, and it is right once instead of on every sign-in. `assertStoredKeyVersionsAreKnown` reads the present `key_version` values from `password_credential` and holds them against the ring — one query, at assembly, loud, with the missing versions in the error. The sign-in path then swallows the failure silently and carries on verifying against the dummy string that is kept in the open, so with **one** decryption attempt and **one** verifier call like every other case.
+**Price.** The dummy additionally holds its PHC string in cleartext in memory. That is the hash of a randomly drawn value and nobody's password, but it is a second representation of the same value, and whoever reads the memory sees it. The second price: the startup check belongs to assembly, and assembly does not belong to this building block — it is exported and has to be called. Until that happens, the operator error is silent.
+
+### The accelerator's specifier is a literal again
+`E-180` · password · accelerator, supersedes E-170
+
+**Context.** E-170 assembled the specifier because `knip.json` belongs to no building block of this wave and the dead-code check reports a referenced optional peer dependency as a finding. That entry explicitly asked for the change to be undone; `main` now carries `hash-wasm` in `ignoreDependencies`.
+**Rejected.** Keeping the assembly, because it also stops a bundler resolving a deliberately absent package.
+**Reason.** The second reason in E-170 does not carry as far as it was written there, and the price was larger than named: not only the dead-code check fails to see the edge, but so does every dependency and security scanner. An advisory against `hash-wasm` would never have surfaced as "affects this line", and the reviewer could not instrument the accelerator under its real name without breaking the gate. A dynamic import is not a static one anyway; a bundler that cannot resolve it warns instead of failing.
+**Price.** The exemption now sits in a file no feature owns, and has to stay there. Whoever ever removes `hash-wasm` from `package.json` has to touch `knip.json` too, or the check reports an exemption for a package that does not exist.
+
+### The cheap pre-check is a bound, not a measurement
+`E-181` · password · input limits, supersedes E-164
+
+**Context.** E-164 justified the first of the three measurements with the claim that a UTF-8 encoding is never shorter than the count of UTF-16 code units. That is true — for the same string. But the check compares the code units of the **raw** input against the byte ceiling of the **normalised** form, and NFKC can compose: `U 0308 0301` is three code units and five bytes and becomes one code unit and two bytes. `"Ǘ"` in decomposed spelling, repeated 1400 times, is 4200 code units and normalises to 2800 bytes — the policy allows it, the pre-check refused it. Not a hole but a lockout, and precisely for the inputs normalisation exists to serve.
+**Rejected.** (a) Dropping the pre-check and always normalising first. (b) Measuring the raw UTF-8 length first and comparing that.
+**Reason.** (a) would have reopened the second attack vector of 5.18 (a): a one-megabyte "password" would be normalised before any limit bites. (b) has the same fault as before, only in the right unit — the raw byte length is not the normal form's either. There is no cheap exact measurement; there is only a bound. UAX #15 bounds the shrinkage from canonical composition in UTF-8 by a factor of three, and the pre-check computes with four. So it rejects nothing that would have passed, and it still keeps out everything large enough to do harm.
+**Price.** In the boundary case the library normalises up to 16 KiB instead of 4 KiB before it refuses. And the number four is a safety margin over a guarantee of the Unicode standard, not over anything this code recomputes — should Unicode change that guarantee, nobody here would notice.
+
+### A stored cost parameter has a ceiling, and it is not configurable
+`E-182` · password · cost ceilings, frozen
+
+**Context.** S-DOS-3 promises that occupied memory does not exceed semaphore size times memory parameter. But the memory parameter sits per record in the stored string, and whoever writes it is the import. `m`, `ln` and `i` were allowed up to ten digits and ran into the KDF unchecked; `needsRehash` compares only **downwards**. The real bound was therefore the largest value any import ever wrote.
+**Rejected.** (a) Deriving the ceiling from the configured Argon2id parameters. (b) Carrying it as another configuration option.
+**Reason.** (a) would have refused every imported hash stronger than the local policy — exactly the estates one least wants to force into a reset. (b) would be a switch whose only upward movement is a weakening; per S-DEFAULT-1 it would have to be set explicitly and logged at startup, and the case is too rare for that. The limits are fixed, with room above everything the five sources in section 4 actually deliver: 64 MiB of memory against 32 MiB for Better Auth's scrypt and 16 MiB for Firebase, two million PBKDF2 rounds against Django's 1.2 million.
+**Price.** An estate over the limit is unverifiable and leads to the reset path — with no configuration option, so no way out for the operator but a bug report. That is deliberate: a number that was only guessed and never measured belongs in a report with data beside it, not in an option.
+
+### Without a reported core count the answer is one
+`E-183` · password · concurrency, supersedes E-162
+
+**Context.** E-162 fell back to the ceiling of 4 when the core count is unknown, and named throughput as the reason. The reviewer held the requirement against it: S-DOS-3 says `min(4, cpus)`, and T-DOS-3 measures exactly that. On a one- or two-core container 4 is not the ceiling but a breach of it — the default misses the requirement it is about, and on the sort of machine where memory is tightest.
+**Rejected.** (a) Staying at 4 (E-162). (b) Using `node:os.availableParallelism()`, which Node 20.19 has. (c) Reading `process.availableParallelism` — which does not exist, the function sits on `node:os`.
+**Reason.** (a) misses the requirement. (b) would mean pulling a `node:` import into the core, which per section 2.6 assumes Web standards; it would have to be loaded dynamically, and `resolvePasswordConfig` answers synchronously. (c) was simply wrong and was caught while writing this up — recorded here because the first attempt at this correction failed on exactly that. What remains is `navigator.hardwareConcurrency`, and where that is absent, the careful number.
+**Price.** On Node 20.19 — the lower build boundary — exactly one password verification runs at a time without an explicit setting, and four concurrent sign-ins queue at 90 ms each. That is the throughput collapse E-162 wanted to avoid. It now stands in the reference with the instruction beside it: whoever runs on Node 20 sets `concurrentHashLimit`.
+
+### The input length ceiling has three faults, so three codes
+`E-184` · password · errors, frozen
+
+**Context.** `maximum_length_above_ceiling` was thrown for three different cases — above 4096, below `minimumLength`, and not an integer — and the message named only the first. Whoever triggered the second got a text that said nothing about their configuration.
+**Rejected.** Rewording the message so that it covers all three cases.
+**Reason.** An error code is a machine-readable statement (rules §3), and folding three causes under one code makes it worthless to the caller — it cannot decide which field to touch. A collective text would have had the same problem in prose.
+**Price.** Two more codes in an enumeration a caller has to handle exhaustively when upgrading.
+
+### The upsert states the owner condition instead of letting it follow from the primary key
+`E-185` · password · sql, frozen
+
+**Context.** After merging `main`, the static check for S-OWNER-2 reads every statement containing `UPDATE` anywhere — including as `ON CONFLICT … DO UPDATE` inside an `INSERT`, because a data-modifying CTE begins with `WITH` and the anchoring therefore had to go. Writing the credential had no `WHERE` clause: the conflict key `user_id` is at once the primary key and the owner column, so the binding was there, but only to someone who knows the schema.
+**Rejected.** (a) Asking the gate to accept `ON CONFLICT (user_id) DO UPDATE` as an owner binding. (b) Splitting the statement into an `UPDATE` preceded by an `INSERT … ON CONFLICT DO NOTHING`.
+**Reason.** (a) would have widened the check by a special case whose correctness depends on the conflict key always being the owner column — an assumption that can already be false for the next table. (b) would have made two statements out of one and opened a window between them. Instead the `DO UPDATE` now carries `WHERE credential.user_id = $1`. The condition is redundant to the conflict key and therefore free, and it turns a property of the schema into a statement of the statement. Verified against PostgreSQL 16, because `ON CONFLICT` addresses the target table through the alias and not through the qualified name.
+**Price.** A condition that can never be false stands in the statement and has to be recognised as redundant on reading. The comment says why it is there.
+**Addendum.** Two things were missing from this entry. First the third option, which the main gate found and which would have been preferable to this one: a marker in the statement per E-142, with which a statement justifies its missing owner condition itself. It was not chosen here because the condition is in fact expressible, and an expressed condition is worth more than a justified omission — but it was the obvious alternative and it was not in the entry. Second, and heavier: `ON CONFLICT … DO UPDATE … WHERE` **does not throw** when its condition is false, it silently changes nothing, and `write()` threw its result away. On the day this tautology stops being one — a `BEFORE INSERT` trigger rewriting `NEW.user_id`, a composite conflict key, or this pattern copied to another table — `setPassword` would have reported success and not stored the password. The statement now carries `RETURNING user_id`, and a row count other than one is an error; `replaceIfUnchanged` two functions deeper had this right from the start. Two of this building block's test fixtures answered the insert with an empty list — so they asserted exactly the failure case and got away with it; that too only the row count exposed.
+
+### Yield to the timer phase, not the microtask queue
+`E-186` · password · scheduling, frozen
+
+**Context.** The comment on the tick constant claimed that yielding every 10 ms keeps one derivation from blocking every other request. For the pure path that is true; for the default case with `hash-wasm` installed it is not. The accelerator computes in **one** synchronous WebAssembly call and settles its promise in a microtask — the chain of release the semaphore, admit the next waiter, derive again runs entirely inside the microtask drain and never reaches the timer phase. The gate measured it: 800 concurrent sign-ins against a wait limit of 5000 ms, **14,684 ms total, zero refusals**, and in that time **not one timer in the process fired** — no rate window, no HTTP timeout, no readiness probe. The same flood with `hash-wasm` mocked away: 1 verified, 19 `rate_limited`.
+**Rejected.** (a) Documenting that S-DOS-4 does not hold with `hash-wasm`. (b) Splitting the accelerator into blocks, as `asyncTick` does on the pure path. (c) Using `scheduler.yield()` where it exists.
+**Reason.** (a) would have given up a requirement in the default position — the dependency is optional, but it is installed the moment somebody lists it, and then the library behaves differently from what it promises. That is exactly what S-DEFAULT-7 forbids. (b) is not possible: the call is a single WASM function with no entry point in the middle. What works is yielding **between** derivations, and that suffices: the 20 ms block of a single call is shorter than the 10 ms × several rounds of the pure path, and the timers run in between. (c) fails on two counts that have nothing to do with which phase it reaches. In this runtime `globalThis.scheduler` does not exist at all; `scheduler.yield()` is reachable only from `node:timers/promises`, and section 2.6 has the core assume Web standards rather than Node builtins, so importing it is not open to this module. And `setTimeout` is the very primitive the wait limit itself uses — yield and deadline then sit in one queue and cannot outrun each other, which no other yield gives.
+**Price.** One timer round per derivation, so about one millisecond in twenty — roughly five per cent of what the accelerator buys. And the library now yields differently in two places depending on the engine; whoever changes one has to remember the other. The test plan records it: the case runs against the engine the runtime actually chooses, and fails if that engine starves the timer phase.
+**Addendum.** The reason first written down here for rejecting (c) was false, and it is left standing above the correction rather than quietly swapped: it said `scheduler.yield()` "returns to a continuation queue, and what has to run here is the timer phase". That is true of the browser Prioritized Task Scheduling API and false of Node, where the implementation is `setImmediate`-based and reaches the timer phase perfectly well. Measured on this repository's runtime — Node 26.8.1, 30 accelerated derivations against a 10 ms interval, three runs, identical every time: no yield → 0 timer firings, `setTimeout(…, 0)` → 29, `setImmediate` → 29, `scheduler.yield()` → 29, `queueMicrotask` → 0. The shipped decision is unchanged and the two reasons that do carry it are now in the entry. The lesson is the cheaper one: a rejection that names a mechanism is a claim about behaviour, and this one was never run.
+
+### The column is held against the credential at write time too
+`E-187` · password · scheme switch, frozen
+
+**Context.** E-177 made the match of the `scheme` column and the PHC identifier a precondition of verifying. On the write side it did not exist: the caller — the core on registration, the importer writing an estate — could store any combination. A row with a contradictory column is per E-177 permanently unverifiable, and the user learns that as "wrong password" without an error standing anywhere.
+**Rejected.** (a) Dropping the `scheme` parameter and deriving it in the repository from the string. (b) Leaving it at read time and warning the importer in the documentation.
+**Reason.** (a) would be the tightest form and would have made the contradiction impossible instead of merely forbidden; rejected because eight call sites in this building block's tests pass the column explicitly and passing it is exactly what the test wants to check — a derived value could no longer be wrong and so could no longer be checked. (b) shifts a fault the library finds in one row onto the operation of somebody else's estate. So the repository checks the match before it encrypts, and throws `scheme_does_not_match_credential`. That is also the first caller of `schemeOfStoredHash` in `src/` — the function carrying the switch from 3.3 had until then only tests.
+**Price.** The importer can no longer store a row "as it came" when source column and source string disagree; it has to decide, and the decision is its own. For the case where a source delivers both and both contradict, there is now no silent path — only an error at import or one record fewer.
+
+### `concurrentHashLimit` lowers the bound and never raises it
+`E-188` · password · configuration, frozen
+
+**Context.** The reference promised that every limit of this module points in the safe direction and that an attempt to weaken one is refused. For the semaphore that was untrue: `resolvePasswordConfig({ concurrentHashLimit: 100_000 })` was accepted and thereby asserted a memory bound of 1855 GiB — on exactly the S-DOS-3 argument the paragraph rests on. bcrypt came on top: the four cost limits of E-182 applied to "every stored credential", except bcrypt has no memory parameter and was not among them. An imported `$2a$31$` row occupies a semaphore place for hours.
+**Rejected.** (a) Weakening the promise in the reference instead of binding the code. (b) Deriving the ceiling for `concurrentHashLimit` from the reported core count, so that a 64-core machine gets more.
+**Reason.** (a) would have saved the statement and given up the requirement. S-DOS-3 names `min(4, cpus)` as **the** bound of the library, not as a starting value, and T-DOS-3 measures exactly that — an installation with a higher value does not meet the requirement, however large the machine. (b) would have moved the same problem into a formula. The option now lowers and never raises; whoever needs more concurrent derivations runs more processes. For bcrypt the cost number is the only available bolt, and 14 is four steps above what GoTrue, Auth0 and Clerk write.
+**Price.** Two values a configuration used to accept are now startup errors, and an estate with bcrypt cost above 14 is no longer verifiable and goes down the reset path. The second price is more honestly named: both gaps stood in the reference as a promise before they stood in the code — the documentation ran ahead of the code, and that is the order in which a promise becomes false.
+
+### The decision log turns English, and its backstop learns to read both forms
+`E-189` · password · decision log, frozen
+
+**Context.** The log was German by rule, because it continued the specification's own log verbatim. That rule was reversed centrally: entries are written in English from here on, in a headed form — `### title`, then `` `E-nn` `` with owner and tags, then `**Context.** / **Rejected.** / **Reason.** / **Price.**`. `test/decision-log.test.ts` recognises only `**E-nn — title**` with the four German labels. Converting this feature's twenty-nine entries under that test does not fail loudly; the converted entries simply stop being entries, and every `E-160` to `E-188` cited from code, tests and the reference then resolves to nothing.
+**Rejected.** (a) Converting every entry in the file, so that only one form has to be recognised. (b) Leaving this feature's entries German and converting nothing.
+**Reason.** (a) touches entries owned by four other features and by the waves before them, which rules §5 forbids and which would collide with every branch still open. (b) would leave the file in the form the rule no longer wants and push the work onto whoever merges next. So the backstop reads both forms and keeps every check it had — the two label sets are matched per entry, so an entry in the new form with a German label missing is still reported as incomplete rather than skipped. Verified the way rules §5 requires: with a planted duplicate number in the new form, with an entry missing `**Price.**`, and with a citation of a number no entry carries. Each failed; then they were removed.
+**Price.** Two forms in one file for as long as it takes the other features to convert, and a test that is longer than the thing it checks. The dangling-citation check remains the only guard against a renumber, and it still cannot see a citation that resolves to the *wrong* entry — that is what the reserved ranges are for, not this test.
+
 **E-190 — `IdentityMode` bleibt bei der Migration, das Identitätsmodul importiert ihn.**
 *Kontext:* `src/core/db/migrations/identity-mode.ts` definiert den Typ bereits, weil die Migration 2 anhand des Modus eines von drei CHECK-Constraints auswählt. Das Identitätsmodul braucht denselben Typ.
 *Verworfen:* Den Typ nach `core/identity/` verschieben und die Migration von dort importieren lassen.
@@ -1309,3 +1551,11 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* (a) Nur den Läufer reparieren und sich auf den benannten Testfall verlassen. (b) Die beiden Seiten des Korpusvergleichs durch zwei verschiedene Literal-Extraktoren schicken.
 *Grund:* (a) prüft genau den einen Quelltext, den jemand als Testfall aufgeschrieben hat, und die nächste Blindstelle sieht anders aus. (b) hätte einen zweiten Extraktor gebraucht, also einen zweiten Ort mit eigenen Fehlern, und der Vergleich hätte gemeldet, dass zwei Werkzeuge sich uneinig sind, ohne zu sagen, welches recht hat. Stattdessen prüft die Prüfung eine Eigenschaft ihres eigenen Durchlaufs: Ein TypeScript-Blockkommentar endet an seinem ersten Abschluss, also enthält ein korrekt erkannter niemals einen weiteren in sich. Tut er es doch, ist der Läufer über das Ende hinausgelaufen — und alles, worüber er dabei hinweggegangen ist, wurde ungelesen gezählt. Dazu kommt eine zweite Zählung, die mit dem Läufer nichts teilt als die Bedeutung von `//`: Eine Datei, deren Backticks nicht alle in Zeilenkommentaren stehen, enthält ein Template-Literal, und wer dort keines findet, hat eines übersprungen. Beide laufen über `src/`, `test/` und `tools/`. Die zwei Blockkommentar-Läufer bleiben getrennt, mit einem Satz an der Trennstelle, weil die nächste Leserin die Verdopplung sonst für ein Versehen hält und sie zusammenlegt.
 *Preis:* Die Selbstprüfung ist bei korrektem Läufer eine Tautologie — sie kann nur anschlagen, wenn der Läufer falsch ist, und sie schlägt auch dann erst an, wenn irgendwo im Baum eine Quelle steht, die den Fehler auslöst. Gemessen: Mit dem wieder eingebauten Fehler und ohne solche Quelle bleibt die Prüfung grün; mit dem Fehler und einem verschachtelten `/*` in einer echten Datei weist sie ab und nennt Datei und Kommentar. Das ist ehrlicher, als es klingt, aber es heißt auch: Diese Prüfung findet den Fehler nicht am Tag, an dem er eingebaut wird, sondern am Tag, an dem ihn jemand auslöst. Und der wahrscheinlichste Auslöser ist, wer dieses Werkzeug dokumentiert — in genau diesem Zweig ist ein `*/` in einem Blockkommentar schon einmal aus Versehen entstanden.
+
+### An exemption a merged decision depends on, removed by a sibling who was right to remove it
+`E-300` · password · tooling, frozen
+
+**Context.** E-180 brought the literal `import("hash-wasm")` back into the accelerator loader on the strength of one line in `knip.json`, and recorded that the exemption has to stay there because no feature owns that file. It did not stay. PR #15 removed it, together with the two `@noble` entries, and #15 was not wrong to: with this branch unmerged nothing in `src/` referenced `hash-wasm`, so knip reported the exemption as redundant and removing it was the correct response to what the tool said. Merging this branch reinstates the reference, and the gate fails with "Referenced optional peerDependencies". The coupling — one branch's code, another branch's configuration line — was visible to nothing until the two met.
+**Rejected.** (a) Assembling the specifier again, as E-170 did, so that the module needs no exemption at all. (b) Asking for the exemption to be restored centrally and waiting.
+**Reason.** (a) would undo E-180 for the second time and reintroduce the cost it named: no dependency scanner, no bundler and no advisory would see that a finding against `hash-wasm` reaches this line. That price was paid once knowingly and is not worth paying again to avoid one line of configuration. (b) is the same edit made by someone else a day later. The line is restored here, and `bcryptjs` moves the opposite way in the same file for the mirror-image reason: it was exempt while no source imported it, and `src/core/password/verifiers/bcrypt.ts` imports it directly now, so knip reported *that* exemption as the stale kind E-180 warns about. One file, two entries, opposite directions, each following what the tool can now see.
+**Price.** Two changes to a shared file in one commit, which reads as carelessness unless the commit message says which way each went and why — so it does. And the real cost is not the line, it is what the episode shows: E-180's price named the wrong trigger. It warned whoever removes `hash-wasm` from `package.json`, and the actual trigger was a sibling tidying an exemption that looked stale precisely because the branch needing it had not landed. A price paragraph that names a specific trigger invites the reader to watch that one; the failure came in through the door it did not name. The same shape applies to `src/core/password/limits.ts`, folded in here rather than given its own number: `test/sql-collapse.test.ts` asserts that a file whose backticks are not all inside line comments holds a template literal, which ignores block comments entirely. Thirteen files in the tree have backticks only in block comments and twelve satisfy the assertion by accident, through a string literal that is usually just an import specifier. `limits.ts` is the only file in the repository with no string literal of any kind, so it was the first to fail — the defect is in the check, the workaround is one reworded comment here, and the check is reported rather than edited because it is not this feature's file.
