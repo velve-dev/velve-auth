@@ -101,13 +101,16 @@ RETURNING user_id, payload`;
 
 	return {
 		async replaceOneTimeToken({ tokenSha256, purpose, userId, payload }) {
-			// Both guards answer inputs that reach here from outside TypeScript; without them the
-			// driver raises instead, and a driver's error names the table and the constraint.
+			// Without this guard the not-null constraint on expires_at raises instead, and a
+			// driver's error names the table and the constraint (E-263). The type rules the case
+			// out; a caller that is not type-checked does not.
 			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
 				throw new OneTimeTokenError("one_time_token_purpose_unknown", null);
 			}
 			return options.driver.transaction(async (tx) => {
 				const owner = await tx.query(lockOwnerStatement, [userId]);
+				// The account can be deleted between whatever resolved it and this call; the lock
+				// has already read the row, so the foreign key never has to report it (E-263).
 				if (owner.length === 0) {
 					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}

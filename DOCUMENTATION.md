@@ -1308,7 +1308,8 @@ holds under concurrent requests as well as sequential ones (S-TOKEN-3).
 `issue` returns the plaintext once. The library keeps no copy: the row holds
 the hash, and the token appears in no log line and in no error message. Issuing
 inside `driver.transaction` is what makes a rollback possible when the mail that
-carries the token cannot be sent (section 3.15 A.7).
+carries the token cannot be sent (section 3.15 A.7) — subject to the driver
+joining the open transaction, as described under `replaceOneTimeToken` above.
 
 `redeem` answers `null` for a token that expired, for one already used, for one
 minted for a different purpose and for one that never existed. The four are the
