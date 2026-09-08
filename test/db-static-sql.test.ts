@@ -57,13 +57,22 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 		expect(offenders).toEqual([]);
 	});
 
+	/** A one-time artefact is redeemed by someone who is not signed in, so there is no
+	 * actor to filter on; the token hash is the whole authorisation (S-TOKEN-4). */
+	const REDEEMED_WITHOUT_AN_ACTOR = /DELETE\s+FROM[\s\S]*one_time_token/i;
+
 	it("gives every row-changing statement an owner predicate", () => {
 		const changing = sqlLiterals().filter((literal) =>
-			/^\s*(DELETE\s+FROM|UPDATE)\b/i.test(literal.sql),
+			// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
+			/\b(DELETE\s+FROM|UPDATE)\b/i.test(literal.sql),
 		);
-		const withoutOwner = changing.filter(
-			(literal) => !/\bWHERE\b[\s\S]*(\$\{ownerColumn\}|\buser_id\b)/i.test(literal.sql),
-		);
+		const withoutOwner = changing
+			.filter((literal) => !REDEEMED_WITHOUT_AN_ACTOR.test(literal.sql))
+			.filter((literal) => {
+				// RETURNING user_id is a result column, not a predicate.
+				const predicate = literal.sql.split(/\bRETURNING\b/i)[0] ?? "";
+				return !/\bWHERE\b[\s\S]*(\$\{ownerColumn\}|\buser_id\b)/i.test(predicate);
+			});
 
 		expect(changing.length).toBeGreaterThan(0);
 		expect(withoutOwner).toEqual([]);
