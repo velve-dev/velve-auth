@@ -337,9 +337,13 @@ range stays a gap.
 
 Thirty was a guess, and wave 2 measured it. `password` used all thirty of its
 range and needed a second one. `session` used all thirty and has a second one
-reserved. `identity` used twenty-three, `token` twenty. Three of the nine ranges
-in the table above end exactly on their last number, which is not a snug fit —
-it is what a range that ran out looks like from the outside.
+reserved. `identity` used twenty-three, `token` twenty.
+
+Five rows in the table above end exactly on their last number, which is not a
+snug fit — it is what a range that ran out looks like from the outside. Two of
+those five prove nothing: the architecture's own log and wave 0 were sized after
+their contents were known. The other three were handed out in advance and filled
+to the brim — `password`, `session`, and the gate block itself.
 
 What exhausted them was not the feature. **The tail of every exhausted range
 went to corrections, not to decisions about the thing being built.** `session`
@@ -366,10 +370,12 @@ Wave 3 is cut against that ratio instead of against a round thirty.
 - **`factor-totp` gets forty-five**, because it also owns recovery codes.
 - **`rate` gets twenty-five.** It is the narrowest feature of the wave: one
   statement, three counters and the seam the HTTP layer already declares.
-- **Gate and infrastructure gets a second block of twenty.** Its first block has
-  eleven numbers left, and it is where every broken-check finding lands. There
-  are already thirty-eight of those in the log, running at roughly four per
-  feature, and wave 3 runs four features at once. Eleven does not cover that.
+- **Gate and infrastructure gets a second block of twenty, and needs it now.**
+  Its first block is **full** — all twenty of E-140 … E-159 are used — so the
+  second block is not a precaution against wave 3's demand, it is the only
+  source of gate numbers that exists. That block is where every broken-check
+  finding lands; there are already thirty-eight of those in the log, running at
+  roughly four per feature, and wave 3 runs four features at once.
 
 Over-reserving costs a gap in the numbering, which §6 has already said is fine.
 Under-reserving costs a mid-branch request for numbers at the moment the writer
