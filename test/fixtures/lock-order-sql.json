@@ -1,0 +1,27 @@
+{
+	"permitted": [
+		["the user row, qualified", "SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE"],
+		[
+			"the user row with the schema interpolated",
+			"SELECT 1 FROM ${schema}.user WHERE id = $1 FOR UPDATE"
+		],
+		[
+			"the user row through an interpolated name",
+			"SELECT id FROM ${owners} WHERE id = $1 FOR NO KEY UPDATE"
+		],
+		["no lock at all", "SELECT 1 FROM ${schema}.session WHERE token_sha256 = $1"],
+		["a locking select that changes no row", "SELECT 1 FROM ${owners} WHERE id = $1 FOR UPDATE"]
+	],
+	"forbidden": [
+		["a session row", "SELECT 1 FROM ${schema}.session WHERE id = $1 FOR UPDATE"],
+		[
+			"a credential row",
+			"SELECT 1 FROM ${schema}.password_credential WHERE user_id = $1 FOR UPDATE"
+		],
+		["an identity row", "SELECT 1 FROM velve.identity WHERE id = $1 FOR NO KEY UPDATE"],
+		[
+			"a one-time token row",
+			"SELECT 1 FROM ${schema}.one_time_token WHERE token_sha256 = $1 FOR UPDATE"
+		]
+	]
+}

@@ -148,6 +148,7 @@ repair anything itself.
 - `pnpm lint` without findings, formatting applied
 - `pnpm knip` — no dead code, no unused export
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
+- `pnpm check:lock-order` — `velve.user` is locked before any other table
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
@@ -243,6 +244,16 @@ These follow from architecture section 2 and are not open for local decision:
 - PostgreSQL 14 or newer. Hand-written SQL, no query builder, no ORM. The driver
   is a parameter, never an import.
 - Keys come from a `KeyProvider`, never from `process.env` inside the core.
+- **`velve.user` is locked first.** A transaction that takes a row lock — `SELECT …
+  FOR UPDATE` or `FOR NO KEY UPDATE` — takes it on `velve.user` before it locks a
+  row in any other table in the schema. Two features reached for a row lock
+  independently and both happened to lock the user row first; the ordering is a
+  rule so the next one does not have to guess. A cycle here surfaces as a
+  deadlock in production under load, not in a test, because it needs two specific
+  transactions interleaving on the same account. `pnpm check:lock-order` enforces
+  it. A row lock is also wider than it looks: while it is held, every write of a
+  user-owned row for that account waits, and if the transaction contains an
+  outbound call the wait is that call's timeout.
 - Core dependencies are exactly these six: `@noble/hashes`, `@noble/ciphers`,
   `bcryptjs`, `otpauth`, `@simplewebauthn/server`, `jose`. Adding a seventh is a
   decision for `CASE-STUDY.md`, not a routine change.
@@ -267,6 +278,8 @@ pnpm test        vitest run
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL
+pnpm check:lock-order
+                 velve.user is locked before any other table
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
