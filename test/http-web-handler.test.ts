@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { ConcealedError } from "../src/core/http/error-map.js";
-import { defineRoute } from "../src/core/http/route.js";
+import { defineRoute, type RouteDeclaration } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import { toWebHandler } from "../src/http/index.js";
 import { ALLOWED_ORIGIN, createHarness, failingRoute, requestTo } from "./http-fixtures.js";
+
+const COLLIDING_DECLARATION = {
+	name: "test.collision",
+	method: "POST",
+	path: "/test/collision",
+	input: object({}),
+	errors: [],
+	caller: "anonymous",
+	freshness: "not_required",
+	originCheck: "checked",
+	rateLimit: { perIpAddress: "none", perAccount: "none" },
+	handler: async () => ({ done: true }),
+} satisfies RouteDeclaration<string, string, Record<string, never>, { done: boolean }, never>;
 
 describe("web handler", () => {
 	it("answers a declared route from its declaration", async () => {
@@ -309,6 +322,51 @@ describe("web handler", () => {
 		const handler = toWebHandler({ http: environment });
 
 		for (const path of ["/TEST/ECHO", "/Test/Echo", "/test/ech%6F"]) {
+			const response = await handler(requestTo(path, { body: { value: "x" } }));
+			expect([path, response.status]).toEqual([path, 200]);
+		}
+	});
+
+	it("refuses to start when two routes answer the same folded path", () => {
+		const { environment } = createHarness({
+			routes: [
+				defineRoute({ ...COLLIDING_DECLARATION, name: "test.collision.lower" }),
+				defineRoute({
+					...COLLIDING_DECLARATION,
+					name: "test.collision.upper",
+					path: "/test/COLLISION",
+				}),
+			],
+		});
+
+		expect(() => toWebHandler({ http: environment })).toThrow(/already answers/);
+	});
+
+	it("refuses to start when two routes carry the same name", () => {
+		const { environment } = createHarness({
+			routes: [
+				defineRoute(COLLIDING_DECLARATION),
+				defineRoute({ ...COLLIDING_DECLARATION, path: "/test/elsewhere" }),
+			],
+		});
+
+		expect(() => toWebHandler({ http: environment })).toThrow(/declared more than once/);
+	});
+
+	it("folds only ASCII case, so a Unicode look-alike does not resolve", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/ech%E2%84%AA", { body: { value: "x" } }),
+		);
+
+		expect(response.status).toBe(404);
+	});
+
+	it("folds the base path the same way it folds a route path", async () => {
+		const { environment } = createHarness();
+		const handler = toWebHandler({ http: environment }, { basePath: "/api/auth" });
+
+		for (const path of ["/API/AUTH/test/echo", "/api/auth/TEST/ECHO"]) {
 			const response = await handler(requestTo(path, { body: { value: "x" } }));
 			expect([path, response.status]).toEqual([path, 200]);
 		}

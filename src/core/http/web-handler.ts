@@ -9,7 +9,7 @@ import { VelveError } from "./error-map.js";
 import { type RouteCall, type RouteOutcome, runRoute, toLoggedFailure } from "./pipeline.js";
 import { readRedirectPath } from "./redirect.js";
 import { bodilessResponse, errorResponse, jsonResponse, redirectResponse } from "./response.js";
-import { matchRoute, type RouteMatch } from "./router.js";
+import { assertRouteTableIsUnambiguous, matchRoute, type RouteMatch } from "./router.js";
 import { isRecord } from "./validators.js";
 
 export interface WebHandlerOptions {
@@ -121,6 +121,7 @@ export function toWebHandler(
 	options: WebHandlerOptions = {},
 ): (request: Request) => Promise<Response> {
 	const environment = auth.http;
+	assertRouteTableIsUnambiguous(environment.routes);
 	const basePath = options.basePath ?? "";
 	const readClientAddress = options.clientAddress ?? (() => null);
 
