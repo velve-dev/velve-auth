@@ -154,9 +154,21 @@ describe("PBKDF2 — RFC 6070 and its SHA-2 counterparts", () => {
 	// RFC 6070 defines only HMAC-SHA1, which the switch of 3.3 does not carry. The vectors run
 	// against the fallback implementation the SHA-2 verifiers use, so that a fault in the counter
 	// handling is caught where it lives.
+	// Five of the six; the sixth needs 16 777 216 iterations and runs nightly, per 6.22.
 	it.each([
 		["password", "salt", 1, 20, "0c60c80f961f0e71f3a9b524af6012062fe037a6"],
+		["password", "salt", 2, 20, "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957"],
 		["password", "salt", 4096, 20, "4b007901b765489abead49d926f721d065a429c1"],
+		[
+			"passwordPASSWORDpassword",
+			"saltSALTsaltSALTsaltSALTsaltSALTsalt",
+			4096,
+			25,
+			"3d2eec4fe41c849b80c8d83662c0e44a8b291a964cf2f07038",
+		],
+		// The fifth vector carries a NUL in both the password and the salt, written as an escape
+		// because a raw one would make git call this file binary and hide it from every scan.
+		["pass\u0000word", "sa\u0000lt", 4096, 16, "56fa6aa75548099dcc37d7f03425e0c3"],
 	])(
 		"reproduces the HMAC-SHA1 vector at c = %#",
 		async (password, salt, c, dkLen, expected) => {
@@ -169,6 +181,21 @@ describe("PBKDF2 — RFC 6070 and its SHA-2 counterparts", () => {
 			expect(hexOf(derived)).toBe(expected);
 		},
 		60_000,
+	);
+
+	// RFC 6070's sixth vector: 16 777 216 iterations, minutes of SHA-1, nightly per 6.22.
+	it.skipIf(process.env.VELVE_NIGHTLY !== "1")(
+		"reproduces the HMAC-SHA1 vector at 16 777 216 iterations",
+		async () => {
+			const { sha1 } = await import("@noble/hashes/legacy.js");
+			const derived = await pbkdf2Async(sha1, utf8.encode("password"), utf8.encode("salt"), {
+				c: 16_777_216,
+				dkLen: 20,
+			});
+
+			expect(hexOf(derived)).toBe("eefe3d61cd4da4e4e9945b3d6ba2158c2634e984");
+		},
+		1_800_000,
 	);
 
 	it.each([
@@ -227,7 +254,12 @@ describe("PBKDF2 — RFC 6070 and its SHA-2 counterparts", () => {
 	);
 });
 
+const PUNCTUATION = "~!@#$%^&*()      ~!@#$%^&*()PNBFRD";
+
 describe("bcrypt — the crypt_blowfish reference vectors", () => {
+	// 6.22 requires at least twenty. Four from Provos and Mazieres' own crypt_blowfish suite, then
+	// the twenty published with jBCrypt and reproduced by py-bcrypt, which sweep four cost values
+	// across an empty password, one byte, three, the lower-case alphabet and a punctuation string.
 	const vectors: ReadonlyArray<readonly [string, string]> = [
 		["U*U", "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW"],
 		["U*U*", "$2a$05$CCCCCCCCCCCCCCCCCCCCC.VGOzA784oUp/Z0DY336zx7pLYAy0lwK"],
@@ -236,6 +268,26 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 			"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789chars after 72 are ignored",
 			"$2a$05$abcdefghijklmnopqrstuu5s2v8.iXieOjg/.AySBTTZIIVFJeBui",
 		],
+		["", "$2a$06$DCq7YPn5Rq63x1Lad4cll.TV4S6ytwfsfvkgY8jIucDrjc8deX1s."],
+		["", "$2a$08$HqWuK6/Ng6sg9gQzbLrgb.Tl.ZHfXLhvt/SgVyWhQqgqcZ7ZuUtye"],
+		["", "$2a$10$k1wbIrmNyFAPwPVPSVa/zecw2BCEnBwVS2GbrmgzxFUOqW9dk4TCW"],
+		["", "$2a$12$k42ZFHFWqBp3vWli.nIn8uYyIkbvYRvodzbfbK18SSsY.CsIQPlxO"],
+		["a", "$2a$06$m0CrhHm10qJ3lXRY.5zDGO3rS2KdeeWLuGmsfGlMfOxih58VYVfxe"],
+		["a", "$2a$08$cfcvVd2aQ8CMvoMpP2EBfeodLEkkFJ9umNEfPD18.hUF62qqlC/V."],
+		["a", "$2a$10$k87L/MF28Q673VKh8/cPi.SUl7MU/rWuSiIDDFayrKk/1tBsSQu4u"],
+		["a", "$2a$12$8NJH3LsPrANStV6XtBakCez0cKHXVxmvxIlcz785vxAIZrihHZpeS"],
+		["abc", "$2a$06$If6bvum7DFjUnE9p2uDeDu0YHzrHM6tf.iqN8.yx.jNN1ILEf7h0i"],
+		["abc", "$2a$08$Ro0CUfOqk6cXEKf3dyaM7OhSCvnwM9s4wIX9JeLapehKK5YdLxKcm"],
+		["abc", "$2a$10$WvvTPHKwdBJ3uk0Z37EMR.hLA2W6N9AEBhEgrAOljy2Ae5MtaSIUi"],
+		["abc", "$2a$12$EXRkfkdmXn2gzds2SSitu.MW9.gAVqa9eLS1//RYtYCmB1eLHg.9q"],
+		["abcdefghijklmnopqrstuvwxyz", "$2a$06$.rCVZVOThsIa97pEDOxvGuRRgzG64bvtJ0938xuqzv18d3ZpQhstC"],
+		["abcdefghijklmnopqrstuvwxyz", "$2a$08$aTsUwsyowQuzRrDqFflhgekJ8d9/7Z3GV3UcgvzQW3J5zMyrTvlz."],
+		["abcdefghijklmnopqrstuvwxyz", "$2a$10$fVH8e28OQRj9tqiDXs1e1uxpsjN0c7II7YPKXua2NAKYvM6iQk7dq"],
+		["abcdefghijklmnopqrstuvwxyz", "$2a$12$D4G5f18o7aMMfwasBL7GpuQWuP3pkrZrOAnqP.bmezbMng.QwJ/pG"],
+		[PUNCTUATION, "$2a$06$fPIsBO8qRqkjj273rfaOI.HtSV9jLDpTbZn782DC6/t7qT67P6FfO"],
+		[PUNCTUATION, "$2a$08$Eq2r4G/76Wv39MzSX262huzPz612MZiYHVUJe/OcOql2jo4.9UxTW"],
+		[PUNCTUATION, "$2a$10$LgfYWkbzEvQ4JakH7rOvHe0y8pHKF9OaFgwUZ2q7W2FFZmZzJYlfS"],
+		[PUNCTUATION, "$2a$12$WApznUOJfkEGSmYRfnkrPOr466oFDCaj4b6HY3EXGvfxm43seyhgC"],
 	];
 
 	it.each(vectors)(
