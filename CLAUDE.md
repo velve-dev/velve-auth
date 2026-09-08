@@ -275,7 +275,10 @@ pnpm build       tsdown — ESM + .d.mts
 pnpm typecheck   tsc --noEmit, strict
 pnpm lint        biome check, warnings included
 pnpm format      biome check --write — applies everything lint verifies
-pnpm test        vitest run
+pnpm test        vitest run — the blocking tier
+pnpm test:nightly
+                 vitest run with VELVE_NIGHTLY=1 — adds the statistical and
+                 high-repetition cases section 6 puts on a nightly schedule
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL

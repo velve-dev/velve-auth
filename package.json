@@ -90,6 +90,7 @@
 		"pretest": "tsdown",
 		"publint": "publint --strict",
 		"test": "vitest run",
+		"test:nightly": "VELVE_NIGHTLY=1 vitest run",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit"
 	},
