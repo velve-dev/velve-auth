@@ -1146,6 +1146,10 @@ string per credential, the switch that decides which verifier reads it, the
 Argon2id creation path, the semaphore that bounds concurrent key derivation, and
 the envelope encryption of the stored string.
 
+It is not reachable from a package entry point yet — the wiring belongs to
+whoever owns `src/index.ts` — so everything below describes the module as it is
+imported from `src/core/password`, not as `@velve/auth` exports it today.
+
 ### The PHC string
 
 A credential is stored as one string in the PHC family (architecture 3.3). No
