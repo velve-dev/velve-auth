@@ -1251,11 +1251,20 @@ name of that one character, `k`.
 **Widening it.** `allowedCharacters` is a configuration option, and widening it
 is a decision with consequences a caller should take on deliberately.
 
-*What the library does hold.* The comparison form is folded one code point at a
-time, which is what PostgreSQL's `lower()` does, so the two agree across all of
-Unicode — 1 111 758 comparison forms — and a name PostgreSQL considers one name
-cannot become two accounts. The one exception is U+038D, an unassigned slot that
-the C library folds to `ύ` and JavaScript, correctly, leaves alone.
+*What the library does hold.* The comparison form the library stores is its own
+`lower()` in PostgreSQL — a fixpoint — for every code point in Unicode except
+U+038D, an unassigned slot that the C library folds to `ύ` and JavaScript,
+correctly, leaves alone. Folding one code point at a time is what buys that:
+lowercasing a whole string applies Final_Sigma, and the `οδος` it produces is
+not a form `lower()` would ever produce.
+
+*What that is not.* It is not a claim that two names PostgreSQL considers equal
+become one account. `lower('İstanbul') = lower('istanbul')` is true in
+PostgreSQL — its `lower()` drops the combining dot, the library's fold keeps it
+— and under an allowlist admitting `\p{M}` those are two keys and two accounts.
+The library's uniqueness is over the exact bytes of `username_key`, not over
+PostgreSQL's notion of equal names, and no allowlist wider than ASCII should be
+chosen without checking which pairs that leaves apart.
 
 *What it cannot hold.* Nothing here is a guarantee about a character that
 JavaScript and your PostgreSQL disagree on because they carry different Unicode
@@ -1516,7 +1525,8 @@ and a linked identity. Removing the last one is refused with
 magic link works with it, and recovery codes do not count: they are a second
 factor, not a sign-in name.
 
-This is the count `factor.webauthn.remove` and `identity.unlink` share.
+This is the count the WebAuthn credential removal and the identity unlinking
+will share; neither of those features is built yet.
 
 ```ts
 interface SignInMethodCount {
