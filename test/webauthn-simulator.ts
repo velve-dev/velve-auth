@@ -16,13 +16,13 @@ import type {
 const P256_COORDINATE_BYTES = 32;
 const AAGUID_BYTES = 16;
 
-export const USER_PRESENT = 0b0000_0001;
-export const USER_VERIFIED = 0b0000_0100;
-export const BACKUP_ELIGIBLE = 0b0000_1000;
-export const BACKUP_STATE = 0b0001_0000;
-export const ATTESTED_CREDENTIAL_DATA = 0b0100_0000;
+const USER_PRESENT = 0b0000_0001;
+const USER_VERIFIED = 0b0000_0100;
+const BACKUP_ELIGIBLE = 0b0000_1000;
+const BACKUP_STATE = 0b0001_0000;
+const ATTESTED_CREDENTIAL_DATA = 0b0100_0000;
 
-export interface AuthenticatorFlags {
+interface AuthenticatorFlags {
 	readonly userPresent?: boolean;
 	readonly userVerified?: boolean;
 	readonly backupEligible?: boolean;
@@ -50,7 +50,7 @@ export interface AssertionOverrides extends CeremonyOverrides {
 	readonly userHandle?: string;
 }
 
-export interface VirtualAuthenticatorOptions {
+interface VirtualAuthenticatorOptions {
 	readonly relyingPartyId: string;
 	readonly origin: string;
 	readonly aaguid?: Uint8Array;
@@ -105,7 +105,7 @@ function cborHead(majorType: number, value: number): Uint8Array {
 	);
 }
 
-export type CborValue =
+type CborValue =
 	| { readonly kind: "unsigned"; readonly value: number }
 	| { readonly kind: "negative"; readonly value: number }
 	| { readonly kind: "bytes"; readonly value: Uint8Array }

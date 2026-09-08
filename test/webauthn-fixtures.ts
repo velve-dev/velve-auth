@@ -7,6 +7,7 @@ import type { WebAuthnConfig } from "../src/core/factor/webauthn/config.js";
 import {
 	createWebAuthnService,
 	type WebAuthnService,
+	type WebAuthnServiceOptions,
 } from "../src/core/factor/webauthn/service.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -33,7 +34,8 @@ export async function openWebAuthnFixture(
 	config: WebAuthnConfig = TEST_WEBAUTHN_CONFIG,
 ): Promise<WebAuthnFixture> {
 	const { connection, schema } = await openMigratedSchema(prefix);
-	const service = createWebAuthnService({ driver: connection, schema, webauthn: config });
+	const options: WebAuthnServiceOptions = { driver: connection, schema, webauthn: config };
+	const service = createWebAuthnService(options);
 	return {
 		connection,
 		schema,

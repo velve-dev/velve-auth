@@ -144,11 +144,18 @@ function countHasRegressed(stored: number, reported: number): boolean {
 	return stored > 0 && reported <= stored;
 }
 
-function rejectedCredential(cause: unknown): never {
-	if (cause instanceof ConcealedError || cause instanceof VelveError) {
-		throw cause;
+/**
+ * Whatever the verifier throws, the outside learns one thing. The cause is never inspected: it
+ * reaches this library as English prose, and what a caller is allowed to see is decided in
+ * `error-map.ts` and nowhere else (E-457). Only the verifier's own call is wrapped, so the
+ * checks around it keep the reasons they name.
+ */
+async function verifiedOrRejected<T>(verify: () => Promise<T>): Promise<T> {
+	try {
+		return await verify();
+	} catch {
+		throw new ConcealedError("signature_invalid");
 	}
-	throw new ConcealedError("signature_invalid");
 }
 
 export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthnService {
@@ -209,20 +216,22 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		);
 		assertUserWasVerified(input.response.response.authenticatorData);
 
-		const verification = await verifyAuthenticationResponse({
-			response: input.response,
-			expectedChallenge: input.challengeToken,
-			expectedOrigin: [...settings.origins],
-			expectedRPID: settings.relyingPartyId,
-			requireUserVerification: true,
-			credential: {
-				id: encodeBase64Url(input.stored.credentialId),
-				publicKey: input.stored.publicKey,
-				/* L-9: the verifier raises on a counter that has fallen back, so it is told none
-				   and the comparison is made below, where a regression is a field (E-458). */
-				counter: 0,
-			},
-		}).catch(rejectedCredential);
+		const verification = await verifiedOrRejected(() =>
+			verifyAuthenticationResponse({
+				response: input.response,
+				expectedChallenge: input.challengeToken,
+				expectedOrigin: [...settings.origins],
+				expectedRPID: settings.relyingPartyId,
+				requireUserVerification: true,
+				credential: {
+					id: encodeBase64Url(input.stored.credentialId),
+					publicKey: input.stored.publicKey,
+					/* L-9: the verifier raises on a counter that has fallen back, so it is told none
+					   and the comparison is made below, where a regression is a field (E-458). */
+					counter: 0,
+				},
+			}),
+		);
 		if (!verification.verified) {
 			throw new ConcealedError("signature_invalid");
 		}
@@ -276,14 +285,16 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			async finish({ actor, challengeToken, response, label }) {
 				await consumeChallengeOrReject({ challengeToken, purpose: "register", userId: actor });
 				assertOriginIsExpected(response.response.clientDataJSON, settings.origins);
-				const verification = await verifyRegistrationResponse({
-					response,
-					expectedChallenge: challengeToken,
-					expectedOrigin: [...settings.origins],
-					expectedRPID: settings.relyingPartyId,
-					requireUserPresence: true,
-					requireUserVerification: settings.registrationUserVerification === "required",
-				}).catch(rejectedCredential);
+				const verification = await verifiedOrRejected(() =>
+					verifyRegistrationResponse({
+						response,
+						expectedChallenge: challengeToken,
+						expectedOrigin: [...settings.origins],
+						expectedRPID: settings.relyingPartyId,
+						requireUserPresence: true,
+						requireUserVerification: settings.registrationUserVerification === "required",
+					}),
+				);
 				if (!verification.verified) {
 					throw new ConcealedError("signature_invalid");
 				}

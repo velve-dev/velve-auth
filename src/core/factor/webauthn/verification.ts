@@ -34,7 +34,7 @@ export function clientDataOrigin(clientDataJSON: string): string | null {
 	return typeof origin === "string" ? origin : null;
 }
 
-export function relyingPartyIdHashOf(authenticatorData: string): Uint8Array<ArrayBuffer> | null {
+function relyingPartyIdHashOf(authenticatorData: string): Uint8Array<ArrayBuffer> | null {
 	const bytes = decodeBase64Url(authenticatorData);
 	if (bytes === null || bytes.length < SHORTEST_AUTHENTICATOR_DATA) {
 		return null;

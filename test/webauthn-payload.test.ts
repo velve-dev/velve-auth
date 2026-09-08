@@ -4,7 +4,7 @@ import {
 	isKnownTransport,
 	registrationResponse,
 } from "../src/core/factor/webauthn/payload.js";
-import { clientDataOrigin } from "../src/core/factor/webauthn/verification.js";
+import { clientDataOrigin, userWasVerified } from "../src/core/factor/webauthn/verification.js";
 import { VelveError } from "../src/core/http/error-map.js";
 
 const A_REGISTRATION = {
@@ -37,6 +37,27 @@ const AN_ASSERTION = {
 function clientDataFor(fields: Record<string, unknown>): string {
 	return Buffer.from(JSON.stringify(fields), "utf8").toString("base64url");
 }
+
+/** The flag byte is authenticator data's fifth: bit 0 user presence, bit 2 user verification,
+ * bit 3 backup eligibility, bit 4 backup state. */
+function authenticatorDataWithFlags(flags: number): string {
+	const data = new Uint8Array(37);
+	data[32] = flags;
+	return Buffer.from(data).toString("base64url");
+}
+
+describe("the user-verification flag", () => {
+	it("reads the bit the specification puts it in and no neighbour of it", () => {
+		expect(userWasVerified(authenticatorDataWithFlags(0b0000_0100))).toBe(true);
+		expect(userWasVerified(authenticatorDataWithFlags(0b0001_1111 & ~0b0000_0100))).toBe(false);
+		expect(userWasVerified(authenticatorDataWithFlags(0b0000_0001))).toBe(false);
+	});
+
+	it("answers no for authenticator data too short to hold a flag byte", () => {
+		expect(userWasVerified(Buffer.alloc(20).toString("base64url"))).toBe(false);
+		expect(userWasVerified("not base64url!!")).toBe(false);
+	});
+});
 
 describe("the credential payload", () => {
 	it("accepts what a browser sends for a registration", () => {
