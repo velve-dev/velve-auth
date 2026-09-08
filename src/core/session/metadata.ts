@@ -27,10 +27,7 @@ function truncatedMetadata(observed: SessionMetadata): SessionMetadata {
 	};
 }
 
-/**
- * What `velve.session.ip` and `velve.session.user_agent` are allowed to hold. The truncation runs
- * before the value leaves the process, so the full address is not in the statement either (L-10).
- */
+/** L-10: the truncation runs before the value leaves the process, so the full address is not in the statement either. */
 export function sessionMetadataFor(
 	mode: SessionMetadataMode,
 	observed: SessionMetadata,

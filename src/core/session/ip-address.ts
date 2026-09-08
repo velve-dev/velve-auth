@@ -135,7 +135,6 @@ function ipv6Text(bytes: readonly number[]): string {
 	return `${head.join(":")}::${tail.join(":")}`;
 }
 
-/** The address as `inet` will hold it, or null if it is not an address at all. */
 export function canonicalIpAddress(text: string): string | null {
 	const address = parseIpAddress(text);
 	if (address === null) {

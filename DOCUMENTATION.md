@@ -1414,3 +1414,20 @@ notion of trust standing beside `factors`, and there is only one.
 Every session operation that reaches rows by owner takes its actor from
 `actorOfFreshSession`, which checks freshness before it hands the actor out: an
 operation of that group cannot be written without the check.
+
+### `sessionSettingsOf(config)`
+
+```ts
+sessionSettingsOf(config?: Partial<SessionConfig>): SessionSettings
+```
+
+Reads the `session` block once, at startup, and produces the numbers everything
+else uses: `idleTimeoutMs`, `absoluteTimeoutMs`, `idleWriteIntervalMs`,
+`freshnessWindowMs`, `cookieName`, `cookieMaximumAgeInSeconds` and `sameSite`.
+An option it refuses raises `InvalidSessionConfigError`, naming the option and
+the value it was given.
+
+`createSessionService` calls it; anything that needs a deadline reads the result
+rather than parsing a duration again. The HTTP environment's
+`freshnessWindowInSeconds` and its session cookie lifetime have to be derived
+from the same result, or two windows would be in force at once.
