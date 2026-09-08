@@ -21,14 +21,13 @@ export type {
 	VelveAuthConfig,
 	WebAuthnConfig,
 } from "./core/auth/config.js";
-export {
-	type AuthInternals,
-	assembleVelveAuth,
-	type PendingNamespace,
-	type SessionNamespace,
-	type UserNamespace,
-	type UsernameNamespace,
-	type VelveAuth,
+export type {
+	AuthInternals,
+	PendingNamespace,
+	SessionNamespace,
+	UserNamespace,
+	UsernameNamespace,
+	VelveAuth,
 } from "./core/auth/instance.js";
 export type { SweepReport } from "./core/auth/maintenance.js";
 export type { ResolvedSessionView } from "./core/auth/routes.js";
