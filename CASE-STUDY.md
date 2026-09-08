@@ -325,21 +325,11 @@ Entscheidungen, die beim Bauen fielen.
 *Preis:* Das Repository ist zweisprachig. Wer die Gründe sucht, liest Deutsch; wer die Bibliothek benutzt, liest Englisch.
 
 **Licence addendum.** The package was MIT when this entry was written and is
-Apache-2.0 now, and the *Kontext* line above was corrected in place rather than
-by a new entry — the only edit to an existing entry this log permits, made on
-the repository owner's explicit instruction, because the sentence states a fact
-about the package and not a reason that was held at the time. Why Apache and
-not MIT: Apache 2.0 is exactly as permissive — not copyleft, usable in a closed
-product, changes kept to yourself — and adds the two things MIT is silent
-about. It is not obligation-free where MIT is: §4(b) and §4(d) ask a
-redistributor to mark modified files and carry a NOTICE forward. See `E-505`
-for the decision and its price. An express patent grant, so a contributor cannot later assert a
-patent over their own contribution against this project or against anyone
-depending on it, with the grant terminating for whoever sues. And a trademark
-reservation, section 6, so a fork is free to exist and not free to call itself
-Velve Auth. The price is a longer file and a string developers recognise less
-instantly than MIT. It was taken now because relicensing needs every
-contributor's consent, and today that is one person.
+Apache-2.0 now. The *Kontext* line above was edited in place to say so, which
+is the only edit to an existing entry this log has permitted, made on the
+repository owner's explicit instruction. `E-505` carries the decision, why
+Apache 2.0 rather than MIT, its price, and the gate's objection to this edit —
+the argument for it is recorded there rather than repeated here.
 
 **E-48 — Node ab 20.19 ist Bauvoraussetzung, nicht nur Laufzeitvoraussetzung.**
 *Kontext:* Abschnitt 2.5 nennt Node 20.19 als Laufzeituntergrenze, abgeleitet aus `@noble/hashes` 2.x und den globalen Web-Crypto-Objekten. Beim Aufsetzen des Gerüsts stellte sich heraus, dass dieselbe Grenze schon für das Bauwerkzeug gilt: Die native Bindung von Rolldown, auf der `tsdown` aufsetzt, fordert `^20.19.0 || >=22.12.0`.
@@ -2783,8 +2773,8 @@ project and against everyone depending on it; and MIT does not keep the name
 out of the grant, so a fork may continue to call itself Velve Auth.
 
 **Rejected.** (a) Staying on MIT, on the strength of it being the string every
-developer recognises and every competitor uses — Better Auth, Lucia and Auth.js
-are MIT; Auth.js is ISC, which is MIT with two clauses removed and no more
+developer recognises and every competitor uses — Better Auth and Lucia are MIT,
+and Auth.js is ISC, which is MIT with two clauses removed and no more
 protective. (b) A copyleft or source-available licence. (c) Dual licensing.
 
 **Reason.** (b) fails on what this package is: a dependency that runs inside
@@ -2799,7 +2789,8 @@ files to be marked as modified and §4(d) requires a NOTICE's attributions to
 be carried forward, neither of which MIT asks. Both attach on redistribution
 rather than on use, so they cost a consumer nothing and a redistributor two
 lines — but the first draft of this entry claimed Apache imposed nothing
-further at all, which was false and is corrected here rather than left. Enterprise legal review frequently prefers it for the patent clause.
+further at all, which was false and is corrected here rather than left.
+Enterprise legal review frequently prefers it for the patent clause.
 The timing decided it as much as the substance: relicensing requires every
 contributor's consent, and today the contributor set is one person. That is the
 cheapest this change will ever be.
@@ -2807,9 +2798,10 @@ cheapest this change will ever be.
 **Price.** The file is 11,358 bytes where MIT's was 1,062, and a developer
 scanning a package page reads "Apache-2.0" a beat slower than "MIT". Two places
 outside the licence itself asserted MIT and had to move with it: `CLAUDE.md` §1
-and `README.md`. A third, E-47's *Kontext*, was corrected in place — the single
+and `README.md`. A third, E-47's *Kontext*, was edited in place — the single
 edit to an existing entry this log has permitted, made on the owner's explicit
-instruction and recorded in that entry rather than hidden. Every such statement is a
+instruction and recorded in that entry rather than hidden. Every such
+statement is a
 second place the licence is written down, and nothing checks that they agree
 with `package.json`. This entry first counted three and missed the two the same
 commit created — `NOTICE`, which states the licence in prose rather than as an

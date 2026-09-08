@@ -192,7 +192,8 @@ plainly is more useful than a plugin that half-implements them.
 
 ## Licence
 
-Apache License 2.0 © Velve — see [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+Apache License 2.0 © Velve — see [`LICENSE`](./LICENSE) and
+[`NOTICE`](./NOTICE).
 
 **Why Apache 2.0 and not MIT.** Apache 2.0 is exactly as permissive as MIT: it
 is not copyleft, you may use this in a closed product, modify it, sell it, and
@@ -217,9 +218,9 @@ is not a theoretical comfort.
 
 **A trademark reservation.** MIT is silent on names, so a fork can argue the
 licence let it keep calling itself Velve Auth. Apache 2.0 section 6 keeps names
-and marks out of the grant explicitly. It does not prohibit anything — trademark
-law does that, under either licence — but it removes the argument that the
-licence conveyed the name.
+and marks out of the grant explicitly. It does not prohibit anything —
+trademark law does that, under either licence — but it removes the argument
+that the licence conveyed the name.
 
 The cost is honest and small: the file is 11,358 bytes where MIT's was 1,062,
 and "MIT" is the string a developer recognises without reading. We took the trade
