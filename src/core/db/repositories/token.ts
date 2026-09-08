@@ -49,7 +49,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
 export class OneTimeTokenError extends Error {
 	readonly code: OneTimeTokenErrorCode;
 
-	/** E-129: what the failure was about travels in its own field, never spliced into the
+	/** E-265: what the failure was about travels in its own field, never spliced into the
 	 * message. It is null for the one code that fires because the purpose is not a purpose. */
 	readonly purpose: OneTimeTokenPurpose | null;
 
