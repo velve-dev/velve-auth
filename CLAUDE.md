@@ -152,10 +152,23 @@ shared" — it is "this file has disjoint parts, and one of them is yours".
   wave 3 — and appends nowhere else in the file.** The chapter, its position and
   its `## Contents` line are created as empty stubs before the wave starts, so
   no writer inserts a heading and no two writers ever touch the same region.
+  **This one is enforced by the reviewer noticing, not by a check.** Nothing
+  reads the structure of `DOCUMENTATION.md`: a number outside a reserved range
+  fails in `test/decision-log.test.ts` on the branch that took it, but a
+  paragraph written into a neighbour's chapter fails nowhere. The two bullets
+  look alike and are not equally enforced, and the second is worth exactly what
+  the reviewer checking it is worth.
 
-A feature that needs a change in another feature's chapter, in `## Contents`, or
-in a chapter no feature owns, stops and reports it — exactly as it would for any
-other file it does not own.
+A feature that needs a change in another feature's chapter, or in a chapter no
+feature owns, stops and reports it — exactly as it would for any other file it
+does not own.
+
+**`## Contents` belongs to the stub cut, not to any feature.** A chapter and its
+index line are created together, before the wave, and that is the only moment
+either changes — so no feature ever needs a line in the index, and the index
+cannot fall behind the headings without the pre-wave pass having skipped one.
+It fell to three of eleven entries before this rule existed, because chapters
+were added by whoever wrote them and the index was owned by nobody.
 
 Both exceptions rest on the partition existing **beforehand**. Until wave 3 there
 was no chapter partition, and the contradiction between this rule and item 3 of
