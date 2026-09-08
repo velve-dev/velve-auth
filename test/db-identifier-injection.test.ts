@@ -1,10 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { actorOfResolvedSession } from "../src/core/db/actor.js";
 import { InvalidIdentifierError } from "../src/core/db/identifier.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import { createOwnedRowRepository } from "../src/core/db/repositories/owned-row-repository.js";
-import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import {
+	actorOfTestUser,
+	createUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
 
 // Identifiers cannot be bound as parameters, so every one of these reaches SQL by
 // interpolation and the only defence is the check in src/core/db/identifier.ts.
@@ -33,13 +38,11 @@ const HOSTILE_NAMES: readonly string[] = [
 ];
 
 let migrated: MigratedSchema;
-let actor: ReturnType<typeof actorOfResolvedSession>;
+let actor: ReturnType<typeof actorOfTestUser>;
 
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_injection");
-	actor = actorOfResolvedSession({
-		userId: await createUser(migrated.connection, migrated.schema),
-	});
+	actor = actorOfTestUser(await createUser(migrated.connection, migrated.schema));
 });
 
 afterAll(async () => {
@@ -133,7 +136,7 @@ describe("identifiers that reach SQL by interpolation", () => {
 
 		await expect(
 			repository.listOwnedRows({
-				actor: actorOfResolvedSession({ userId: "' OR true --" }),
+				actor: actorOfTestUser("' OR true --"),
 			}),
 		).rejects.toMatchObject({ sqlState: "22P02" });
 	});

@@ -10,6 +10,17 @@ const TYPE_BYTEA = 17;
 const TYPE_SMALLINT = 21;
 const TYPE_INTEGER = 23;
 const TYPE_OID = 26;
+const TYPE_TIMESTAMP = 1114;
+const TYPE_TIMESTAMPTZ = 1184;
+
+const POSTGRES_TIMESTAMP =
+	/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{2})(?::?(\d{2}))?$/;
+
+/** node-postgres, postgres.js and the neon driver all hand a timestamptz back as a Date; this one stands in for them. */
+function decodeTimestamp(text: string): Date {
+	const parts = POSTGRES_TIMESTAMP.exec(text);
+	return new Date(parts === null ? text : `${parts[1]}T${parts[2]}${parts[3]}:${parts[4] ?? "00"}`);
+}
 
 export class PostgresServerError extends Error {
 	readonly sqlState: string;
@@ -98,6 +109,9 @@ function decodeValue(raw: Buffer | null, typeOid: number): unknown {
 		case TYPE_INTEGER:
 		case TYPE_OID:
 			return Number(text);
+		case TYPE_TIMESTAMP:
+		case TYPE_TIMESTAMPTZ:
+			return decodeTimestamp(text);
 		default:
 			return text;
 	}

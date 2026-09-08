@@ -58,14 +58,10 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 	});
 
 	/** A statement that genuinely has no actor to filter on says so in its own text,
-	 * citing the requirement that permits it. A marker travels with the statement, so
-	 * it survives an interpolated schema name — which the table name does not.
-	 *
-	 * A block comment, because a line comment swallows everything to the next newline:
-	 * `DELETE FROM t -- marker\nWHERE id = $1` becomes `DELETE FROM t` the moment any
-	 * logger or proxy normalises the whitespace, and an unqualified DELETE is a worse
-	 * failure than the one the marker exists to explain. */
-	const DECLARES_NO_ACTOR = /\/\*\s*no owner predicate:\s*S-[A-Z]+-\d+[^*]*\*\//i;
+	 * citing the requirement it deviates from. The block form is required because a line
+	 * comment loses its newline to any whitespace-normalising layer, and the predicate behind
+	 * it is swallowed along with the newline, leaving an unqualified statement. */
+	const DECLARES_NO_ACTOR = /\/\*\s*no owner predicate:\s*S-[A-Z]+-\d+[\s\S]*?\*\//i;
 
 	/** `FOR UPDATE` locks rows; it changes none. */
 	const CHANGES_ROWS = /(?<!\bFOR\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
@@ -83,6 +79,22 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 
 		expect(changing.length).toBeGreaterThan(0);
 		expect(withoutOwner).toEqual([]);
+	});
+
+	/** E-249: an asterisk inside the reason is the one input on which the two forms this
+	 * rule was written in on two branches disagree. */
+	it("reads a marker whose reason contains an asterisk, and still rejects the faults", () => {
+		const withAnAsterisk =
+			"DELETE FROM t /* no owner predicate: S-TOKEN-4 (see the 5*3 rule) */\n\tWHERE token_sha256 = $1";
+		const asALineComment =
+			"DELETE FROM t -- no owner predicate: S-OWNER-2\n\tWHERE token_sha256 = $1";
+		const withoutARequirement = "DELETE FROM t /* no owner predicate */\n\tWHERE token_sha256 = $1";
+		const declaringNothing = "DELETE FROM t WHERE token_sha256 = $1";
+
+		expect(DECLARES_NO_ACTOR.test(withAnAsterisk)).toBe(true);
+		expect(DECLARES_NO_ACTOR.test(asALineComment)).toBe(false);
+		expect(DECLARES_NO_ACTOR.test(withoutARequirement)).toBe(false);
+		expect(DECLARES_NO_ACTOR.test(declaringNothing)).toBe(false);
 	});
 
 	it("never reads a row before changing it, because no method issues two statements", () => {

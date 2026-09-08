@@ -2,7 +2,13 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Actor, actorOfResolvedSession } from "../src/core/db/actor.js";
 import { createOwnedRowRepository } from "../src/core/db/repositories/owned-row-repository.js";
-import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import {
+	actorOfTestUser,
+	createUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
 
 let migrated: MigratedSchema;
 let owner: Actor;
@@ -24,12 +30,8 @@ async function createCredential(actor: Actor): Promise<string> {
 
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_actor");
-	owner = actorOfResolvedSession({
-		userId: await createUser(migrated.connection, migrated.schema),
-	});
-	stranger = actorOfResolvedSession({
-		userId: await createUser(migrated.connection, migrated.schema),
-	});
+	owner = actorOfTestUser(await createUser(migrated.connection, migrated.schema));
+	stranger = actorOfTestUser(await createUser(migrated.connection, migrated.schema));
 	credentials = createOwnedRowRepository<{ id: string; user_id: string }>({
 		driver: migrated.connection,
 		schema: migrated.schema,
@@ -96,10 +98,11 @@ describe("every owner-scoped method demands an actor (S-OWNER-1, E-43)", () => {
 	});
 });
 
-describe("where an actor may come from", () => {
-	it("mints one from any object carrying a userId, whatever produced that string", () => {
+describe("where an actor may come from (S-OWNER-7, E-93)", () => {
+	it("mints none from an object session resolution did not produce", () => {
 		const fromRequestBody = { userId: "00000000-0000-4000-8000-0000000000ff" };
 
+		// @ts-expect-error S-OWNER-7: a hand-built object is not a resolved session.
 		const minted: Actor = actorOfResolvedSession(fromRequestBody);
 
 		expect(minted).toBe(fromRequestBody.userId);

@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { type Actor, actorOfResolvedSession, type ResolvedSession } from "../src/core/db/actor.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
 import type { IdentityMode } from "../src/core/db/migrations/identity-mode.js";
@@ -172,4 +173,12 @@ export async function countRowsOwnedBy(
 		[userId],
 	);
 	return row?.remaining ?? -1;
+}
+
+/**
+ * In the library only session resolution produces a `ResolvedSession` (E-93, S-OWNER-7). A test that
+ * needs an actor for a user it created itself asserts that brand here, in one place, and says so.
+ */
+export function actorOfTestUser(userId: string): Actor {
+	return actorOfResolvedSession({ userId } as ResolvedSession);
 }

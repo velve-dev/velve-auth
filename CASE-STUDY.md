@@ -784,6 +784,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Grund:* Im blockierenden Rang schaden sie doppelt. Sie kosten bei jedem Commit Minuten, und sie schlagen falsch an: Zweiundvierzig unabhängige χ²-Prüfungen bei p = 0,001 verwerfen rund vier von hundert Läufen auch bei einem einwandfreien Generator. Ein Tor, das ohne Fehler rot wird, wird ignoriert, und dann ist es wertlos für den Fall, in dem es recht hat. Streichen wäre die andere Richtung desselben Fehlers.
 *Preis:* Ein Fehler, den nur der Nachtlauf findet, wird bis zum nächsten Morgen nicht bemerkt, und niemand steht davor, wenn er auftritt — der Auftrag muss also so geschrieben sein, dass sein Fehlschlag von selbst auffällt. Zusätzlich ist der Rang selbst prüfbedürftig: Auf `main` existierte zum Zeitpunkt dieser Änderung keine einzige nachtgesteuerte Prüfung, der Schalter war also von einem defekten nicht zu unterscheiden. Belegt wurde er mit einer eingesetzten Prüfung — 524 Tests ohne, 525 mit —, weil sonst genau die Verwechslung entstünde, vor der Abschnitt 5 der Regeln warnt.
 
+
 **E-145 — Die Markierung ist ein Blockkommentar, weil ein Zeilenkommentar den Rest der Anweisung verschluckt.**
 *Kontext:* E-142 führte `-- no owner predicate: S-…` als Markierung ein, mit der eine Anweisung ihren fehlenden Eigentümer-Filter selbst begründet. Der Tor-Agent des `session`-Features hat gezeigt, wohin das führt: `DELETE FROM ${table} -- no owner predicate: …\nWHERE token_sha256 = $1` wird, sobald irgendetwas den Zeilenumbruch normalisiert — ein Protokollierer, ein Formatierer, ein vorgelagerter Proxy —, zu `DELETE FROM velve.session`. Jede Sitzungszeile.
 *Verworfen:* (a) Die Markierung an das Ende der Anweisung zwingen, hinter `RETURNING`. (b) Es bei der Zeilenform belassen, weil kein ausgelieferter Treiber SQL umschreibt.
@@ -801,6 +802,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* (a) Die Interpolation auflösen und die Variable zurückverfolgen. (b) Die Liste der Nicht-Nutzer-Tabellen erweitern.
 *Grund:* Beide Varianten kämpfen gegen dieselbe Tatsache an: Der Tabellenname steht zur Prüfzeit schlicht nicht da. E-143 hatte das als hingenommene Grenze notiert — die Prüfung ließ eine Sperre durch, deren Ziel nur aus einer Variablen bestand — und dabei übersehen, dass das nicht der Randfall ist, sondern **der Normalfall**. Damit bestand die Prüfung für die *Abwesenheit* eines Namens statt für die Anwesenheit des richtigen. Wer nicht lesen kann, muss fragen: Die Anweisung erklärt jetzt selbst, was sie sperrt, in derselben Blockform wie die Eigentümer-Markierung aus E-145.
 *Preis:* Eine Sperre ohne Erklärung wird abgewiesen, auch die korrekte — das ist beabsichtigt, weil eine nicht erklärte Sperre genau die ist, über die niemand nachgedacht hat. Und die Erklärung ist eine Behauptung des Autors: Wer `/* locks: user */` über eine Sperre auf `session` schreibt, kommt durch. Die Prüfung erzwingt, dass jemand die Frage beantwortet, nicht dass die Antwort stimmt. Dasselbe gilt für die Markierung aus E-142, und beide Male ist der Wert derselbe: Die Behauptung steht im Code, wo sie beim Lesen auffällt, statt in niemandes Kopf.
+
 
 **E-148 — Eine Fundstelle, die auf den falschen Eintrag zeigt, wird von Hand gefunden, weil keine Prüfung sie finden kann.**
 *Kontext:* Abschnitt 6 der Regeln nennt die schlimmste Fehlerart des Protokolls beim Namen: eine Fundstelle, die nicht ins Leere zeigt, sondern **auf den falschen Eintrag**, und die `test/decision-log.test.ts` deshalb nicht sehen kann — der Test kennt nur Nummern, die es nirgends gibt. Eine Handdurchsicht der siebenundvierzig Fundstellen des Repositoriums hat den ersten belegten Fall gefunden. `src/core/keys/root-key-provider.ts:104` begründete die exportierbaren Verschlüsselungsschlüssel mit E-03. E-03 entscheidet, welche Primitive auf `crypto.subtle` laufen statt auf `@noble/*`; die Rückfallebene kommt dort nur im Preis vor. Die Entscheidung, die diese Zeile trägt, ist E-60, und deren Grund schreibt sie wörtlich aus: „`rootKeyProvider` importiert die vier Verschlüsselungszwecke als `extractable`. Die beiden Signierzwecke bleiben nicht exportierbar, weil sie den Rückfall nicht brauchen."
@@ -1189,6 +1191,246 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* (a) Den Fall bei abweichender Serverversion überspringen. (b) CI auf PostgreSQL 18 festlegen. (c) Die erwartete Menge je Serverversion verzweigen.
 *Grund:* (a) ist genau die Prüfung, die aufhört zu prüfen, die Abschnitt 5 benennt. (b) macht Rot durch Wegsehen grün und bricht die Zusage aus Abschnitt 7, PostgreSQL ab 14 zu tragen. (c) verschiebt dieselbe Behauptung nur in eine Tabelle, die bei der nächsten ICU-Aktualisierung wieder falsch ist. Die Anforderung lautet ohnehin nicht „diese beiden weichen bei U+038D ab", sondern: Wo sie abweichen, darf nichts davon gespeichert werden. Der Abgleich findet die Menge jetzt, statt sie zu behaupten, und prüft für jedes gefundene Element, dass die Einfügung mit `23514` abgewiesen wird. Damit eine übereinstimmende Datenbank nicht leer durchgewunken wird, hält ein versionsunabhängiges Paar den CHECK an seiner Aufgabe fest: `ABC` muss abgewiesen und ein bereits gefalteter Schlüssel angenommen werden.
 *Preis:* Der Abgleich nennt die gefundene Stelle nicht mehr in einer Zusicherung. U+038D steht jetzt in einer Annotation des Laufs und im Referenzhandbuch mit der Serverversion daneben, unter der es gemessen wurde; wer die Zahl für seine eigene Datenbank braucht, muss den Abgleich dort laufen lassen. Dazu kommt eine Lehre, die über diesen Test hinausgeht und teurer war als er: Grün auf einer Maschine ist kein Beleg. Beide Richtungen wurden deshalb belegt, statt sie zu begründen — mit entferntem CHECK fällt das versionsunabhängige Paar auf jeder Version, und die Übereinstimmungslage von PostgreSQL 16 wurde nachgestellt, indem die Abweichungsabfrage leer gemacht wurde: Die drei umgeschriebenen Fälle bleiben grün, und der Positivtest, der beweist, dass die Suche überhaupt etwas findet, fällt.
+
+### Hash the cookie text, not the 32 raw bytes
+`E-220` · session · token storage, frozen
+
+**Context.** 3.5 prescribes "only `sha256(token)` is stored". The token is 32 bytes of randomness, delivered as base64url. `sha256(token)` admits both readings: the hash over the raw bytes, or over the text that sits in the cookie.
+**Rejected.** Forming the hash over the decoded raw bytes.
+**Reason.** Resolution would then have to decode every incoming cookie value first, and a value that does not decode would be a second failure state alongside "not found". That is exactly how an oracle appears: whoever sends an invalid character gets a different answer than whoever sends a valid but unknown token. Hashed over the text there is only one state — the hash hits a row or it hits none. S-FIX-3 reckons with `sha256($alt)` over the token as it was sent anyway.
+**Price.** There is no canonicalisation. The same 32 bytes written differently — with padding, or in standard base64 — produce a different hash and therefore no session. That is correct, but it surprises anyone who re-encodes the token in transit.
+
+### The base64url encoder is born in `session/`, although the decoder lives in `keys/`
+`E-221` · session · file ownership
+
+**Context.** `src/core/keys/base64url.ts` has a decoder and deliberately no encoder, because wave 1 needed none. The session token needs one, and `btoa` is not among the runtime assumptions of 2.6.
+**Rejected.** Putting the encoder next to the decoder in `keys/base64url.ts`, where it belongs.
+**Reason.** The ownership rule in §5 of the repository rules is binding: a feature that needs a change outside its area stops and reports it instead of editing the foreign file. Two wave-2 features in `keys/` at the same time is precisely the collision the rule prevents. The encoder is therefore a private function in `session/token.ts` and not a second public interface.
+**Price.** The alphabet now sits in two places in the package. If `keys/` later gets an encoder, this one is redundant and has to be removed — until then it is a duplication nobody sees, because it is not exported. **Addendum:** `keys/` got one with E-257, and this copy is gone; `session/token.ts` imports `encodeBase64Url` from `keys/base64url.ts`. The two were checked against each other over thirteen thousand inputs before the swap, because two encoders that agree on every token anyone has drawn are still two encoders.
+
+### Truncate in the process, not in the database
+`E-222` · session · metadata minimisation
+
+**Context.** PostgreSQL can truncate on its own: `set_masklen($1::inet, 24)` would be one line of SQL instead of a hand-written address parser, and the database validates the address along the way.
+**Rejected.** Putting the truncation into the `INSERT` statement.
+**Reason.** The full address then travels into the statement as a parameter, and whatever is in a statement is in the database log once `log_statement` or `log_min_duration_statement` is on — permanently, outside the table, and in a place no data protection impact assessment ever looks at. L-10 grounds the truncation in Article 5(1)(c) GDPR; data minimisation that sends the full value through a log first is not minimisation.
+**Price.** A parser of our own for IPv4 and IPv6 including RFC 5952 output, roughly a hundred lines that PostgreSQL would have given away. It has to produce the same textual form `inet` returns, otherwise the computed value differs from the stored one.
+
+### `::ffff:203.0.113.42` is truncated as IPv4
+`E-223` · session · address family
+
+**Context.** An upstream proxy frequently writes IPv4 addresses into `X-Forwarded-For` as IPv4-mapped IPv6 addresses. Read literally that is an IPv6 address and would be truncated to `/64`.
+**Rejected.** Taking the family as the address is written.
+**Reason.** `::ffff:0:0/96` is exactly one `/64`. Every IPv4 client behind such a proxy would land in the same prefix row — the metadata would be worthless, and the same confusion in rate limiting would be a shared bucket for half the internet. The mapping is a notation, not a family.
+**Price.** The truncation now hangs on pattern recognition in the address space. Anyone who deliberately wants `::ffff:...` treated as an IPv6 address does not get that — and `2002::/16` (6to4) is the same case, but is not recognised, because it no longer occurs in practice.
+
+### An unreadable address becomes NULL, not an error
+`E-224` · session · metadata failure mode
+
+**Context.** `ip` is `inet`. A value PostgreSQL does not read as an address makes the `INSERT` fail — and the `INSERT` is the sign-in. The header the value comes from is chosen by the caller.
+**Rejected.** (a) Passing the error through. (b) Putting the raw value into a `text` column instead of validating it.
+**Reason.** (a) would turn a fabricated `X-Forwarded-For` line into a sign-in blocker — a denial of service through a header the library only records. (b) would have given up the column's type check, which catches exactly this input. Metadata is not part of the answer to "who is signed in"; it must not cost the answer. The same holds for the user agent, whose length the client determines and which is therefore cut at 512 characters before it goes into an unbounded `text` column.
+**Price.** A `NULL` in `ip` does not say whether nobody reported an address or whether the reported one was unreadable. That distinction would be worth a second field if somebody needed it; today nobody does, and the session list shows the same thing in both cases.
+
+### The configuration rejects combinations that are valid individually
+`E-225` · session · configuration validation
+
+**Context.** `idleTimeout: "31d"` with `absoluteTimeout: "30d"` is twice a valid duration and together meaningless: the idle deadline is never reached, because the absolute one bites first. The same holds for an `idleWriteInterval` longer than the idle deadline — the deadline would expire before it was ever extended.
+**Rejected.** Validating only the individual values and leaving the combination to the application.
+**Reason.** Both misconfigurations are silent. The first looks like a session that lives 31 days and is one that lives 30; the second looks like a session that survives use and signs the user out after seven days although they were there daily. A start-up error that names the option costs a minute once; the silent variant costs support requests whose cause nobody finds.
+**Price.** Four ordering rules that have to be in the documentation, and a configuration that can no longer be changed field by field without looking at the neighbours — whoever shortens `absoluteTimeout` has to shorten `idleTimeout` with it.
+
+### The cookie's lifetime is the absolute deadline
+`E-226` · session · cookie lifetime
+
+**Context.** The session cookie needs a `Max-Age`. The candidates were the idle deadline (which would mean re-setting the cookie on every request) and the absolute deadline.
+**Rejected.** Renewing the cookie on every request with the new idle deadline.
+**Reason.** A `Set-Cookie` on every response is a second write path alongside the idle extension, and both would have to stay in agreement. Sessions expire in the database anyway, not in the browser: the cookie is the carrier, not the deadline. The absolute deadline is the only one nothing extends, so it is the only one a cookie can outlive without lying.
+**Price.** A browser may carry a cookie around for 30 days whose session was deleted after seven days of idleness. The answer to that is the same as without a cookie — resolution decides, not the expiry in the browser.
+
+### The driver decodes timestamps; the repository only reads them
+`E-227` · session · driver contract
+
+**Context.** `velve.session` has four `timestamptz` columns, and `Session` demands `Date`. The obvious version was a `toDate()` in the repository accepting both a `Date` and the textual form PostgreSQL sends over the wire.
+**Rejected.** Parsing the textual form in the core.
+**Reason.** Two reasons. First, converting a PostgreSQL type into a JavaScript value is the driver's job — that is exactly why the driver is a parameter (2.6); `node-postgres`, `postgres.js` and the Neon driver all three deliver a `Date`. Second, `test/keys-static-scan.test.ts` forbids `new Date(` in `src/core` at all, so that no secret grows out of a clock. A parser in the core would have broken that check or needed an exemption from it — for a job that belongs one layer down.
+**Price.** The `Driver` contract now demands something it does not state: `query` has to return `timestamptz` as `Date`. It is in the documentation, not in the type. And the minimal test connection `test/db-postgres-connection.ts` — a foreign file — had to gain four lines, because it was the only one decoding nothing; without that change no session test could have run.
+
+### Re-issue checks who owned the row it removed
+`E-228` · session · S-FIX-2
+
+**Context.** `replaceSession` deletes the old row by its token hash and inserts the new one. Both in one transaction satisfies S-FIX-1. Who determines the user of the new row is not thereby settled.
+**Rejected.** Trusting the supplied `userId`, because it comes from the resolved session anyway.
+**Reason.** "Comes from anyway" is the phrasing that stood in front of the bug in ten of the thirty-three advisories. A `DELETE` of A's session plus an `INSERT` for B is an owner reassignment — the same effect as the `UPDATE` that trigger and gate check forbid, only spread across two statements both checks look past. The check costs nothing: the deleted row returns its `user_id` regardless.
+**Price.** `replaceSession` now has a failure case that only occurs on a programming error, and that error is not a `VelveError` — it has no code for the outside, because it has no business outside. Whoever sees it has a bug, not a rejected request.
+
+### The S-FIX-2 scanner does not see this repository's session table
+`E-229` · session · gate blind spot
+
+**Context.** `pnpm check:session-owner` looks for `update` … `session` … `set` … `user_id` in a statement. The schema name is configurable (option `schema`, default `velve`), so the statement reads `UPDATE ${table} SET …` — and `${table}` does not contain the word `session`. The scanner therefore does not find this repository, neither for good nor for ill.
+**Rejected.** (a) Writing the table name literally as `velve.session` so the scanner sees it. (b) Extending the scanner.
+**Reason.** (a) would give up the schema configurability that 3.15 A.2 explicitly provides, and it would also be wrong on the merits: the repository writes into the schema it was given. (b) would be right, but `tools/` does not belong to this feature — the ownership rule forbids the change, and the extension is not trivial, because the scanner would then have to follow the interpolation. On top of that the scanner cannot answer the question sharply anyway: its pattern hits `SET … WHERE user_id = $1` just as it hits `SET user_id = $1`, so it cannot tell a legitimate owner predicate from a reassignment. S-FIX-2 is carried here by the database trigger (E-23), by `test/db-static-sql.test.ts` and by the check from E-228.
+**Price.** A gate check that reports green for the one place in the package that really writes into `velve.session`, without having read it. That is exactly the kind of check §5 of the repository rules warns about — "found nothing" indistinguishable from "found a fault" — and it is recorded here so that extending the scanner to interpolated table names is not forgotten.
+
+### The session list shows only what still holds
+`E-230` · session · list semantics
+
+**Context.** `session.list` returns the user's sessions. Expired rows stay in the table until the next `sweep` (L-11).
+**Rejected.** Listing every row and letting the application filter.
+**Reason.** The list is the surface "here are your signed-in devices". An expired row in it reads like a device that is still signed in, and invites revoking a session that no longer exists. Whether a session holds is answered in exactly one place — the two deadlines — and the list asks it the same way resolution does.
+**Price.** The list depends on the moment, not only on the contents: the same row disappears without a `DELETE`. Whoever counts the table directly sees more rows than the list shows, and that has to be documented, otherwise it looks like a bug.
+
+### The clock is a required argument of the session service, not a default
+`E-231` · session · time source
+
+**Context.** 3.15 A.2 names `clock` with the system clock as the default. The obvious route would have been `options.clock ?? { now: () => new Date() }`.
+**Rejected.** A built-in system clock as a fallback value.
+**Reason.** Two reasons, and the first was a check that already stood: `test/keys-static-scan.test.ts` forbids `new Date(` in `src/core` at all, so that no secret grows out of a clock. The second is the better one: a default would have created a second time source that nobody configures and nobody sees. The freshness check in the HTTP path reads `environment.clock`; had the session service quietly used its own, there would be two — and a test that sets the one would not have moved the other. Whoever builds the core supplies the clock; the default comes into being one layer up, where `new Date()` is allowed.
+**Price.** One more required field in an internal factory. The caller assembling `createVelveAuth` has to insert the system clock explicitly — and if they forget, it is a type error and not a wrong time.
+
+### Resolution brings the database clock with it
+`E-232` · session · idle write
+
+**Context.** The idle deadline is written at most once per `idleWriteInterval`. The first version fired the `UPDATE` on every request and let the condition `last_used_at <= now() - interval` decide — two statements per request, even when there was nothing to write.
+**Rejected.** (a) Accepting two statements per request. (b) Checking the due date against the application process's clock.
+**Reason.** (a) doubles the load on the library's hottest path and misses the threshold from T-CACHE-1, which demands exactly *n* resolution queries for *n* requests. (b) would have compared two clocks: if the process clock runs behind the database, the write never counts as due, and a session used daily would expire after seven days. The resolution query therefore carries `now() AS observed_at` along — the same query, one column more — and both sides of the comparison come from the same clock. The condition additionally stays in the `UPDATE` statement, so that two concurrent requests do not both write.
+**Price.** The resolution query deviates by one column from the wording 3.5 prescribes. T-CACHE-2 compares this SQL byte for byte against a fixture; the deviation is therefore a deliberate decision made visible in the fixture — and that is exactly how the check is meant.
+
+### Freshness is enforced where the actor comes into being
+`E-233` · session · freshness
+
+**Context.** B.9 demands freshness for `session.list`, `revoke`, `revokeAllOther` and `revokeAll`. The HTTP layer already checks it for every route with `freshness: "required"`. For a direct server method call nobody checks it there.
+**Rejected.** Relying on the check in the pipeline and doing nothing in the core.
+**Reason.** The pipeline checks what the route declaration says; a method called tomorrow without a route has no declaration. The check therefore sits where it cannot be bypassed: `actorOfFreshSession` checks freshness and only then hands out the actor. Whoever writes one of these operations needs the actor — and gets it only together with the check. Forgetting is no longer an option, it is a compile error.
+**Price.** Freshness is checked twice on the HTTP path, once in the pipeline and once here. Both read the same clock, but the window stands in two places: `HttpEnvironment.freshnessWindowInSeconds` and `SessionSettings.freshnessWindowMs`. Whoever assembles the instance has to derive one from the other; if they do not, two windows apply. That belongs in the assembly function that does not exist yet, and is hereby recorded.
+
+### This feature mints no actor for the password reset
+`E-234` · session · actor provenance
+
+**Context.** S-FIX-6 demands that the password reset revokes every session. At reset time there is no session: the proof is a redeemed one-time token. Every repository method that reaches rows through their owner demands an `Actor`, though — including `deleteEverySessionOwnedBy`, which is needed here — and the only producer of an `Actor` is, per E-93, session resolution. (Correction: the original wording claimed that **every** method on `velve.session` demands an actor; that is not true, see E-242.)
+**Rejected.** (a) A second factory `actorOfUserId(userId)` in the session module. (b) A repository method without `actor` taking only a `userId`.
+**Reason.** (a) would be exactly the hole E-93 is meant to wall up — a string in, an actor out, and nothing in the signature says where the string came from. (b) would break S-OWNER-1, which permits no method without `actor` on a table with `user_id`. So `revokeEverySessionOfUser` demands an `Actor` and mints none: the feature that redeems one-time tokens brings it, and if it has no lawful way to do so, that becomes visible there instead of being hidden here.
+**Price.** The requirement is thereby only half satisfiable inside this feature. The reset path needs a second lawful actor producer — provenance "redeemed one-time token" instead of "resolved session" — and the wave that owns `one_time_token` has to build it. Until then the capability stands ready and nobody calls it.
+
+### Not even the log learns why a session does not hold
+`E-235` · session · S-ENUM-6
+
+**Context.** 3.15 F.1 lists four inner reasons under `session_required`: `cookie_absent`, `session_not_found`, `session_idle_expired`, `session_absolute_expired`. S-ENUM-6 demands that the true reason is logged server-side.
+**Rejected.** Querying first without the deadline filter and evaluating the deadlines in TypeScript, so the three reasons can be told apart.
+**Reason.** Then it would no longer be the query deciding whether a session holds, but a branch behind it — and S-CACHE-2 demands, in so many words, the one query with all four conditions. A query that returns expired rows is moreover a query whose result somebody can accidentally treat as a session; exactly that sort of almost-session was behind the worst bug in the comparison system. The distinction is a logging detail, the decision is a security property.
+**Price.** A hit that is not one is always `session_not_found` for the log. Whoever wants to know whether sessions die at the idle or at the absolute deadline cannot read it out of the logs and has to count the table before the sweep.
+
+### `actorOfResolvedSession` now takes only what resolution produces
+`E-236` · session · nominal typing
+
+**Context.** E-93 described the gap and handed the change to this wave verbatim: the parameter is pulled from the structural `{ userId: string }` to the nominal `ResolvedSession`, and the test that pinned the old shape is turned around.
+**Rejected.** (a) Putting the brand on resolution's full return value, i.e. `{ session, user }` from 3.15 B.2. (b) Deferring the change until the instance is assembled.
+**Reason.** (a) failed on a fact of this wave: the type `User` does not exist yet, it belongs to another feature, and a `User` invented here would be a second one at merge time. The brand therefore stays on `{ userId }`, and what resolution additionally supplies — the `Session` — hangs off it as an intersection (`SessionResolution`). (b) would have left the gap open while real callers appear for the first time; that is precisely what the price in E-93 warns about.
+**Price.** Six foreign test files had to come along. They all needed an actor for a user they had created themselves, and got it from an object literal until now. Instead of six scattered type assertions the claim now stands once in `test/db-fixtures.ts` as `actorOfTestUser` — visible, named, and with the note that inside the library only resolution may do this. The ownership rule has thereby been crossed in six places; that was the condition for carrying out E-93's instruction at all.
+
+### S-FIX-2 is checked here against the executed statements, not against the source
+`E-237` · session · executed SQL
+
+**Context.** E-229 recorded that the gate check does not see this repository, because the table name is interpolated. A note alone leaves the gap open.
+**Rejected.** Leaving it at the note and trusting the trigger and `test/db-static-sql.test.ts`.
+**Reason.** Both check something else. The trigger checks at runtime and only what is actually executed; the source check inspects strings with `${table}` in them. What was missing was the statement as it goes to the database. The repository yields it: a driver that only records, every method called once, and the ten resulting statements are available with the schema substituted in. What is checked against them is the property that matters — which columns a statement **assigns**, not which it filters on.
+**Price.** Doing so brought out that the gate's pattern reports the legitimate extension of the idle deadline as a reassignment: `UPDATE … SET last_used_at = … WHERE id = $1 AND user_id = $2` matches `update` … `session` … `set` … `user_id` although `user_id` stands only in the condition. If the scanner saw this file, the gate would stay red — and the file is not wrong, the pattern is too coarse. The finding stands as its own test case in the feature so that it is visible and does not pass as coincidence; the pattern belongs to `tools/`, and that does not belong to this feature. Whoever sharpens it separates the assignment list between `SET` and `WHERE` from the rest, the way this test does.
+
+### Freshness is decided by the clock `created_at` comes from
+`E-238` · session · time source
+
+**Context.** The review measured what E-231 had left open: `created_at` and both deadlines are written by the database, but freshness compared the process clock against `created_at`. If the process clock runs 16 minutes fast, a session the database has just created is rejected; if it runs an hour slow, a 50-minute-old session passes the window. The second direction opens the gate that protects the operations on credentials.
+**Rejected.** (a) Keeping the process clock and documenting the skew as an operational problem. (b) Checking both clocks and letting the stricter one win.
+**Reason.** (a) moves a security property into the operations manual; NTP failure and virtualised clocks are the normal case, not the exception. (b) would have kept two time sources and merely deferred the question "which one holds". E-232 had already decided the same question for the idle write and delivered the answer with it: the resolution query brings `now()` along as `observedAt`. Exactly that column lay ready at the place where freshness is decided, and was not read. Now `SessionResolution` carries it, and `assertSessionIsFresh` receives it as `now`.
+**Price.** The option `clock` is thereby unused in the session module. It stays in the options — the instance hands the same clock to every module — but here it is a setting without effect, and that is a trap: whoever sets the clock in a test no longer ages a session. That now stands in bold in the documentation, and three of our own tests had to be reworked because they had run into exactly this trap — they now age the session where `created_at` stands. A foreign test case of the review's was extended by one column for the same reason; its claim is unchanged. **Addendum:** this paragraph describes a state that no longer exists. The option was removed entirely with **E-247**, because a setting without effect remains exactly the trap accepted as a price here; whoever reads this entry alone reads it wrongly.
+
+### A re-issue that replaces nothing fails
+`E-239` · session · S-FIX-1
+
+**Context.** `replaceSession` deleted the old row and created the new one even when the `DELETE` hit no row. The review ran two re-issues of the same session concurrently: both succeeded, and where there had been one session there were two. The loser deletes nothing, because the winner has already committed, and inserts anyway.
+**Rejected.** (a) Leaving it, because both rows belong to the same user. (b) A separate method for the case "without predecessor".
+**Reason.** (a) misreads what a re-issue is about: it is the cut at which the old trust level ends. Two living sessions after a factor change means one of them was never drawn into the re-issue — exactly the session multiplication S-FIX-1 rules out. (b) was unnecessary: for the case without a predecessor the method already exists, it is called `insertSession`, and the service calls it `issue`. Whoever passes a `previousTokenHash` thereby claims there is a predecessor; if that is not so, the claim is false and the operation has failed.
+**Price.** A race now ends for one of the two with an error instead of a session. The service translates it to `session_required` — the session the caller invoked no longer exists, and the right answer is to sign in again. One of our own tests that pinned the old leniency ("issues a session even when the previous token is already gone") stood right next to it and is turned around; it was the place where the gap would have been visible.
+
+### `isCurrent` is false outside `session.list`, not true
+`E-240` · session · list semantics
+
+**Context.** 3.15 C lists `isCurrent: boolean` with the addition "set only in `session.list`". The repository set it to `true` everywhere the returned session actually was the calling one — on insert and on resolve.
+**Rejected.** Leaving it `true`, because at those two places it is in fact correct.
+**Reason.** It is correct, and it is wrong anyway. The field answers the question "is this the session I am asking from" **within a list**; outside a list there are no alternatives to compare against. A `true` that is always `true` looks like information and is none — and the first application that reads it outside the list and concludes something from it concludes from a constant. `false` is the value the specification demands, and it is also the less dangerous one, because it invites nothing.
+**Price.** The session `resolve` returns says of itself that it is not the current one. That reads wrongly the first time, and it is therefore in the reference. Whoever really wants to compare has resolution's session ID in hand anyway.
+
+### Sign-out names no owner, because the token is one
+`E-241` · session · S-OWNER-2
+
+**Context.** Since E-141 `test/db-static-sql.test.ts` looks for the owner predicate only **before** the `RETURNING`. That brought out what had previously slipped through by accident: `DELETE FROM ${table} WHERE token_sha256 = $1 RETURNING id, user_id` satisfied the rule only because `user_id` stood behind `RETURNING`. The check was right and the hit deserved.
+**Rejected.** (a) Adding `AND user_id = $2`. (b) Resolving before deleting and then deleting with an actor.
+**Reason.** (a) is not possible: `signOut` receives a token and nothing else; who the user is stands only in the row that is to be deleted. (b) would be exactly the preceding `SELECT` that S-OWNER-2 forbids, and it would turn one statement into two with a window in between. The point is a different one: a session token **is** the proof. Whoever presents it has the session; an additional `user_id` predicate would check nothing the hash has not already checked. What originally continued here was: "This is the same justification the redemption of a one-time token already carries as a named exception, and it now stands beside it as a second named exception — with its reason, not as a hole in the pattern." That sentence was wrong, and how wrong stands in the *Price*.
+**Price.** **Correction after E-142:** the exception was first entered as a second named regular expression in `test/db-static-sql.test.ts`, and this entry described that as a gain. It was neither. The expression `/DELETE\s+FROM[\s\S]*WHERE\s+token_sha256\s*=/i` ran over **every** SQL literal in `src/`, not over session SQL, and would have permitted the omission to any module on any table as soon as a `token_sha256` predicate appeared anywhere in the statement — behind `RETURNING` included, because it was not anchored. The comment described a narrow single case, the pattern granted a class exception; exactly the sort of check §5 of the repository rules warns about. `main` has since replaced the mechanism: the statement carries the marker `-- no owner predicate: S-FIX-3` in its own text, it survives the interpolation of the schema, and it forces the author to name the requirement instead of having it granted by a list somewhere else. The price is now one line in the statement — and that the justification stands where it is read.
+
+### Four repository methods do without an actor, and that is not negligence
+`E-242` · session · S-OWNER-1
+
+**Context.** The review found a false claim in the *Context* of E-234: it says that every method on `velve.session` demands an `Actor`. Four do not — `insertSession`, `findSessionByTokenHash`, `deleteSessionByTokenHash` and `replaceSession`. The sentence was written in good faith and is wrong anyway; it is corrected above, and the reason stands here.
+**Rejected.** (a) Attaching an `actor` to the four methods so that the claim becomes true. (b) Leaving the false claim and not mentioning the exceptions.
+**Reason.** (a) would be a parameter none of these methods could use. `insertSession` creates a user's first row — there is no actor that could precede it, because the actor only arises out of a session. The other three are addressed by `token_sha256`, and the hash is a stronger predicate than the owner: whoever presents the token has the session; an additional `user_id = $2` would check nothing the hash has not already checked, and `signOut` could not even supply it (E-241). The rule that actually holds is narrower and sharper than the false one: **every method that reaches rows through their owner demands an actor; whoever reaches them through a secret has already proven it.** (b) would have left a checking rule standing on an untruth.
+**Price.** The rule now has two forms, and only the longer one is true. Whoever wants to check it mechanically — T-OWNER-1 wants that — has to be able to tell "reachable through the owner" from "addressed through a secret", and that stands in no type. Until then it is carried by a named reason per exception, here and in `test/db-static-sql.test.ts`.
+
+### Whether a password change takes the other sessions with it hangs on the name of the method called
+`E-243` · session · S-FIX-6 hand-off
+
+**Context.** `reissue` and `reissueAfterCredentialChange` have the same shape and differ in effect: one replaces a session, the other all of them. A password change that accidentally calls `reissue` satisfies S-FIX-1 and loses S-FIX-6 — silently, and nobody here can notice it.
+**Rejected.** (a) Merging the two methods into one with a flag. (b) Forbidding `reissue` when the user has further sessions.
+**Reason.** (a) is exactly the flag S-FIX-6 rules out ("This is not a flag."), and rule 1 of the interface forbids the boolean parameter anyway. (b) would be wrong: completing the second factor is a re-issue **without** revoking the other sessions and the most frequent caller of `reissue`. The caller that has to get it right is the password feature, and the call stands there. This hand-off is therefore named the way E-233 and E-234 are named: **`password.change` and `password.set` call `reissueAfterCredentialChange`, `password.redeemReset` calls `revokeEverySessionOfUser`, and no password path calls `reissue`.**
+**Price.** A requirement that depends on a choice of name at a foreign call site. It becomes checkable only once the call site exists — then as a test of the password feature: change the password, create a second session beforehand, count afterwards. Until then this is the only place stating what has to stand there.
+
+### A weakened default is reported by the instance, not by the session service
+`E-244` · session · S-DEFAULT-1 hand-off
+
+**Context.** S-DEFAULT-1 demands that a setting weakening a default is logged at start-up. `sessionMetadata: "full"` is such a setting: it lifts the data minimisation from L-10. It is logged nowhere.
+**Rejected.** Giving the session service a log sink.
+**Reason.** There would then be two — `HttpEnvironment.log` already exists and is the instance's sink. Two sinks means two formats, two configurations and two places an operator has to search. Start-up belongs to the assembly function anyway: it reads the configuration, it knows the defaults, and it has the sink. The session service supplies it the basis by not hiding the chosen mode.
+**Price.** Until that assembly function exists, S-DEFAULT-1 is unfulfilled for `sessionMetadata`, and nobody sees it. That is the third hand-off of this kind after E-233 and E-243; all three end in the same place, namely where `createVelveAuth` will come into being.
+
+### Four exports without callers stay, and the test plan records which
+`E-245` · session · knip
+
+**Context.** `knip` treats every test file as an entry point, so an export only a test calls counts as used. `DEFAULT_SESSION_CONFIG`, `InvalidSessionConfigError`, `isSessionFresh` and `createSessionService` have no caller in `src/` outside their own file.
+**Rejected.** Removing them one by one, or not exporting them until a caller exists.
+**Reason.** All four are the module's interface upwards, and upwards there is nothing yet: `createVelveAuth` is the assembly function that will call them. Hiding them now would mean digging them out again at assembly — movement without insight. `isSessionFresh` is additionally the definition `assertSessionIsFresh` sits on; the predicate form without an exception is what a surface needs that wants to show "this session is fresh" instead of asking and catching.
+**Price.** Four exports the gate does not recognise as dead, because tests keep them alive. The review pinned the list as a test case so that it stays a decision and does not become a catch-all: whoever adds a fifth has to change the list and say why while doing it.
+
+### The re-issue after a credential change does not check freshness itself
+`E-246` · session · freshness
+
+**Context.** `list`, `revoke`, `revokeEveryOther` and `revokeEvery` fetch their actor through `actorOfFreshSession` and thereby check freshness (E-233). `reissueAfterCredentialChange` is the only method with resolution that does not.
+**Rejected.** Building the check in there as well, for uniformity's sake.
+**Reason.** B.9 places the demand on `password.set` and `password.change`, that is on the route, **before** work is done. The re-issue is the consequence of that work and runs afterwards — after an Argon2id run costing tenths of a second. A freshness check at this place could therefore fail **after** the password has already been changed: the new password holds, the other sessions live on, and the caller has no new session — exactly the half state S-FIX-6 rules out. A check that fails late enough to do damage is worse than no check.
+**Price.** The rule "freshness is checked where the actor comes into being" has an exception, and it stands only here. Whoever calls `reissueAfterCredentialChange` from a path B.9 does not oblige to freshness anyway bypasses the check — and that is one more reason for the call list from E-243 to stay complete.
+
+### The session service takes no clock at all any more
+`E-247` · session · time source
+
+**Context.** E-238 put freshness on the database clock and thereby removed the last use of the option `clock` in this module. That entry kept it anyway, so that an instance can hand every module the same clock, and described the price as a documentation task.
+**Rejected.** Leaving the option as accepted-and-ignored, with a bold paragraph in the reference.
+**Reason.** A parameter that exists, that type-checks and that is thrown away is an offer that lies. Whoever passes a test clock gets a service reading `now()` from the database; a test that advances that clock to age a session observes nothing and turns **green for the wrong reason**. That is not a supposition: three of our own tests had run into exactly this trap before E-238 made it visible, and a paragraph in the reference would not have saved them from it — a compile error on `clock:` would have. The caller's convenience does not demand that this module accept a parameter it discards; the assembly function hands each module what it reads.
+**Price.** The absence is now itself the invariant and has to be documented as such, otherwise the next reader looks for the option. Two of the review's test cases that fed in a skewed process clock can no longer do so — they claim instead what now holds structurally, and their names say it. Gone with it is the possibility of simulating a clock skew at all; were there ever a moment the database does not supply, the clock would come back as a required field and this decision with it.
+
+### The marker names the requirement deviated from, and the condition under which that is permissible
+`E-248` · session · S-OWNER-2
+
+**Context.** The marker on the sign-out `DELETE` first cited S-FIX-3, because a session row is addressed there by `token_sha256` alone. The gate agent took two things apart in that. First, S-FIX-3 governs the eight events that change the trust level — signing out is not one of them; whoever follows the citation number lands at a clause that does not speak of signing out. Second, as a line comment behind `DELETE FROM ${table}` the marker opened a trap: if the newline falls away — logging, forwarding, normalisation — the comment swallows the `WHERE`, and what remains is `DELETE FROM velve.session`. Every row.
+**Rejected.** (a) Staying with S-FIX-3, because the reading of the hash as an address comes from there. (b) Putting the marker at the end behind `RETURNING`, where it can swallow nothing.
+**Reason.** (a) confuses reason and deviation. What is deviated from is **S-OWNER-2** — the owner condition belongs in the predicate — and the justification is that the only version literally satisfying S-OWNER-2 would be a preceding `SELECT`, which the same requirement forbids elsewhere. The conflict **is** the justification; S-FIX-3 only supplies the reading that the hash is the address. What is cited is therefore the deviation, not the reading. (b) would be safe at this one place and not again elsewhere. A block comment ends where it ends, no matter how the whitespace is normalised — the property one wants then no longer hangs on position.
+**Price.** The permissibility condition left over from the rejected two-exceptions limit stands only in prose: **a marker is permissible when the predicate is itself a secret** — the token hash here, the one-time token there. It cannot be checked mechanically; what the check sees is only that a requirement was named. Whoever places a third marker has to make that case, and whoever reads it has to demand it.
+
+### Two branches wrote the same rule into the same gate file, and only a planted input told them apart
+`E-249` · session · gate-tool ownership
+
+**Context.** `test/db-static-sql.test.ts` holds the rule that a statement without an owner predicate has to declare itself. Both this branch and `main` rewrote that rule from a line comment to a block comment — independently, within the same wave, in the same file the working method says no two writers may share. Both arrived at the identical design and differed only in how the marker's body is matched: `main` wrote `[^*]*`, this branch wrote `[\s\S]*?`. On every statement in the repository the two agree, so the merge conflict looked like a formatting difference and nothing else.
+**Rejected.** (a) Taking `main`'s form because `main` is the base and the base wins by default. (b) Keeping both expressions and accepting a marker either one accepts.
+**Reason.** (a) is merge order deciding a rule, which is not a review; the reason it was rejected is that the difference had not been read yet, not that `main`'s form was known to be worse. Reading it settled it: `[^*]*` cannot cross an asterisk, so a marker whose reason contains one — `/* no owner predicate: S-TOKEN-4 (see the 5*3 rule) */` — is not recognised as a marker at all, and the statement is then reported as having no declaration whatsoever. That is the failure mode §5 of the repository rules names: the check can no longer tell "no marker" from "a marker it cannot parse", and the author is sent to fix something that is not wrong. (b) is worse than either single form, because a union of two patterns is a rule nobody can state in one sentence.
+**Price.** The kept form is not the better one everywhere, and calling it a gain was wrong. `[\s\S]*?` stops at the first `*/` in the statement, so a marker that was opened and never closed is read as a complete declaration the moment any later comment supplies a closing marker — `/* no owner predicate: S-OWNER-2` followed further down by `/* anything */` counts as declared. PostgreSQL reads that same text as one comment running to the end, so the predicate the statement was exempted for is the predicate that got commented out. `main`'s `[^*]*` refused it, because it refuses every asterisk. Neither this check nor `check:sql-collapse` notices the result: the collapse check strips an unterminated comment the same way whichever order it works in, so the statement passes it too. The trade is therefore one blind spot for another, and the one taken on is the more dangerous of the two — it grants an exemption where the other only withheld one. It is left standing rather than patched a third time, because a third form of this expression needs its own argument and its own owner, and this branch has no claim to the file. The difference that decided the choice cannot be observed anywhere in the current tree — no marker in this repository contains an asterisk — so the resolution rests on a planted input and on nothing else, and it is only worth what that input is worth. The planted case is therefore now a test case in the same file, next to the two faults it must keep rejecting. The collision itself is not repaired by any of this: the file is still shared, nothing stopped either writer from opening it, and the next pair will meet in it the same way. Counting this branch alone, four crossings happened, not one — `test/decision-log.test.ts` for the English format, and `test/identity-sign-in-methods.test.ts`, `test/identity-last-method-race.test.ts` and their thirteen call sites once the narrowed `actorOfResolvedSession` met identity at the merge. All were reported rather than quietly taken; that is the whole of the safeguard, and it is a habit, not a mechanism. **Addendum:** one of the four was undone rather than kept. `test/decision-log.test.ts` is `main`'s again, taken whole when the central language pass landed; the version written here is gone, and nothing of it was merged back in.
 
 **E-250 — Der Zufall zieht nach `core/token/` um, und `core/keys/` reicht ihn nicht weiter.**
 *Kontext:* E-63 hat das Zufallsmodul bewusst als Schuld in `core/keys/` liegen lassen, weil `core/token/` damals einem anderen Autor gehörte. Jetzt gehört es diesem hier, und S-RAND-5 sowie 3.1 nennen `core/token/random.ts` als den Ort. Die Datei ist umgezogen, `core/keys/aes-gcm.ts` und `core/keys/envelope.ts` holen die Nonce jetzt aus `../token/random.js`.

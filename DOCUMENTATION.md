@@ -510,12 +510,12 @@ not compile. It is obtained from `actorOfResolvedSession(session)`, which is
 called with the session the library itself resolved; no handler builds an actor
 from a request body, a query string or a header (S-OWNER-7).
 
-`ResolvedSession` is the nominal type session resolution has to return. Today
-`actorOfResolvedSession` accepts any `{ userId: string }`, which means a caller
-one line away can still mint an actor from an untrusted string. Closing that
-door is one change to this parameter, and it belongs with the feature that owns
-session resolution; `CASE-STUDY.md` E-93 records the exact change and the shape
-that must stop compiling.
+`ResolvedSession` is the nominal type session resolution returns, and
+`actorOfResolvedSession` takes nothing else. A hand-built `{ userId: "…" }` does
+not compile, so the only way to an actor is through a session the library
+resolved itself (E-93). The brand is asserted in session resolution and nowhere
+else; a path that proves ownership differently — a redeemed one-time token, say
+— brings its own actor and does not borrow this one.
 
 ### `createOwnedRowRepository(options)`
 
@@ -2401,3 +2401,402 @@ to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in
 `StoredOneTimeToken`, because the column is nullable and a row that names no
 account is not redeemable — the service turns that row into `null` rather than
 handing a caller a target it does not have.
+
+## Sessions
+
+The library answers one question — who is signed in — and this module is the
+only place that answers it. Every answer costs a database query — one, and a
+second only on the request that extends the idle deadline; there is no
+cookie cache, no process cache and no parameter that could introduce one
+(S-CACHE-1). The most severe published flaw in the comparison system's core
+sign-in path was exactly such a cache (CVSS 9.1: the session was cached before
+the second factor had been checked).
+
+The module is not on a package subpath yet. It is reached from the instance the
+assembling feature builds; the names below are the ones that instance is built
+from.
+
+### `createSessionToken()`
+
+```ts
+createSessionToken(): { token: SessionToken; tokenHash: Uint8Array }
+```
+
+Draws a new session token.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `token` | `SessionToken` | 32 bytes from `crypto.getRandomValues`, base64url, 43 characters |
+| `tokenHash` | `Uint8Array` | `sha256(token)` — 32 bytes, the only form that is stored |
+
+`SessionToken` is a branded `string`, so a value that did not come from here
+cannot be passed where a session token is expected without a cast.
+
+The plaintext token leaves the process only in the cookie. `velve.session`
+stores `token_sha256` and nothing else, so a database dump contains no usable
+session, and no lookup time depends on the plaintext (S-TIM-4).
+
+### `sessionTokenHash(token)`
+
+```ts
+sessionTokenHash(token: string): Uint8Array
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `token` | `string` | the token as it arrives in the cookie |
+
+Returns the 32 bytes stored in `velve.session.token_sha256`. The hash is taken
+over the UTF-8 bytes of the token **text**, not over the 32 random bytes it
+encodes, so the verifier is computable from the cookie value without decoding
+it. A token spelled differently — padded, or in standard base64 — hashes
+differently and is simply not found.
+
+### `sessionMetadataFor(mode, observed)`
+
+```ts
+sessionMetadataFor(mode: SessionMetadataMode, observed: SessionMetadata): SessionMetadata
+```
+
+Decides what `velve.session.ip` and `velve.session.user_agent` are allowed to
+hold. `mode` is the top-level configuration option `sessionMetadata`; its
+default is `"truncated"` (L-10).
+
+| `mode` | `ip` | `user_agent` |
+|---|---|---|
+| `"truncated"` (default) | IPv4 to `/24`, IPv6 to `/64` | browser and system family |
+| `"full"` | the address, canonicalised | the header, bounded to 512 characters |
+| `"none"` | `null` | `null` |
+
+`observed` carries what the request layer saw: `{ ipAddress, userAgent }`, each
+`string | null`. The result has the same shape and is what the session row is
+written with.
+
+The `/64` for IPv6 is the prefix length the rate limiter uses as well, so an
+address never appears in two different truncations. `"203.0.113.0/24"` is
+stored with its prefix, so a reader can tell a truncated value from a full one.
+An address a proxy wrote as an IPv4-mapped IPv6 address (`::ffff:203.0.113.42`)
+is read as IPv4 in every mode; treating it as IPv6 would put every IPv4 client
+into one `/64`.
+
+`"full"` does not store the header's text. The address is parsed and written
+back in the form `inet` holds — RFC 5952 for IPv6, and the unmapped IPv4 form
+for `::ffff:203.0.113.42`, which is stored as `203.0.113.42`. What `"full"`
+keeps is the whole address rather than a prefix, not the spelling it arrived
+in; a value that is not an address at all is stored as `null` in every mode.
+
+A value that is not an address becomes `null` rather than an error: metadata is
+not part of the answer to who is signed in, and a malformed `X-Forwarded-For`
+must not cost a user their sign-in.
+
+Truncation happens in the process, before the value is used as a statement
+parameter. The full address therefore never reaches the database — not in a
+column, and not in a statement a database log might keep.
+
+A user agent that names neither a browser nor a system family becomes `null`;
+`"curl/8.7.1"` is stored as nothing rather than as a device fingerprint.
+
+### `session` — the configuration block
+
+```ts
+interface SessionConfig {
+  idleTimeout: Duration          // "7d"
+  absoluteTimeout: Duration      // "30d"
+  idleWriteInterval: Duration    // "1h"
+  freshnessWindow: Duration      // "15m"
+  cookieName: `__Host-${string}` // "__Host-velve_session"
+  cookie: { sameSite: "lax" | "strict" }
+}
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `idleTimeout` | `"7d"` | how long a session survives without being used; extended on use |
+| `absoluteTimeout` | `"30d"` | how long a session may live at all; **never** extended |
+| `idleWriteInterval` | `"1h"` | how often at most the idle deadline is written back |
+| `freshnessWindow` | `"15m"` | how long after sign-in an operation on credentials is allowed |
+| `cookieName` | `"__Host-velve_session"` | the session cookie's name |
+| `cookie.sameSite` | `"lax"` | the only cookie attribute that is a choice |
+
+`Duration` is a whole number followed by `s`, `m`, `h` or `d`. `"1.5h"`,
+`"-7d"`, `"1w"` and `"7"` are refused at startup even though the type admits
+some of them; write `"90m"` instead of `"1.5h"`.
+
+`httpOnly`, `secure`, `domain` and `path` are not options. The `__Host-` prefix
+forces `Secure` and `Path=/` and forbids `Domain`, which is what rules out
+cookie tossing from a subdomain; `sameSite: "none"` is absent for the same
+reason. A `cookieName` without the prefix is a type error and, if forced
+through, a startup error.
+
+Reading the block also refuses combinations that cannot hold, each with the
+name of the option it refused:
+
+- a deadline of zero or less,
+- `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
+- `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
+- `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh.
+
+The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
+outlive the one deadline nothing extends.
+
+`freshnessWindow` is measured against `created_at`, not `last_used_at`:
+freshness is time since sign-in, and only a new sign-in restores it.
+
+### `createSessionRepository(options)`
+
+```ts
+createSessionRepository(options: { driver: Driver; schema: string }): SessionRepository
+```
+
+Every statement the library issues against `velve.session`. All SQL lives here;
+nothing above this module writes SQL, and no method takes a table or column name
+from a caller.
+
+| Method | Statement | Result |
+|---|---|---|
+| `insertSession(insert)` | `INSERT … RETURNING …` | the new `Session` |
+| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` | `{ session, userId, userDisabledAt, observedAt }` or `null` |
+| `extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs })` | `UPDATE … WHERE id = $1 AND user_id = $2 AND last_used_at <= now() - $4` | the new idle deadline, or `null` if nothing was written |
+| `deleteSessionByTokenHash(hash)` | `DELETE … WHERE token_sha256 = $1 RETURNING id, user_id` | what was removed, or `null` |
+| `deleteSessionOwnedBy({ sessionId, actor })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
+| `deleteEverySessionOwnedBy({ actor })` | `DELETE … WHERE user_id = $1` | how many rows went |
+| `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | `DELETE … WHERE user_id = $1 AND id <> $2` | how many rows went |
+| `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
+| `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
+| `replaceEverySessionOfUser({ actor, insert })` | `DELETE` of every row of the user plus `INSERT`, one transaction | the new `Session` |
+
+`observedAt` is the database's `now()`, read in the same statement as the row.
+Everything decided after the fact — whether the idle write is due, whether the
+session is still fresh — is measured against it, so no decision compares two
+clocks (E-232, E-238).
+
+`SessionInsert` carries `userId`, `tokenHash`, `factors`, `ipAddress`,
+`userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`. Both deadlines are
+computed by the database from `now()`, so a session's clock is the database's
+clock and not the application's.
+
+Every method that reaches rows by owner takes an `actor` and puts it in the
+`WHERE` clause (S-OWNER-1, S-OWNER-2). A row of another user and a row that
+never existed produce the same answer (S-OWNER-8).
+
+There is no method that updates `user_id`. `replaceSession` removes the previous
+row and inserts a new one in one transaction (S-FIX-1, E-23), and it refuses
+with `SessionOwnerMismatchError` if the row it removed belonged to a different
+user than the row it is about to write — a re-issue cannot move a session
+between accounts even by mistake.
+
+`replaceSession` also refuses, with `PreviousSessionMissingError`, when the
+`DELETE` matched no row: a replacement that replaces nothing is an issue, and
+issuing is what `insertSession` is for. Two requests re-issuing the same session
+at the same moment therefore leave one live session rather than two — the loser's
+`DELETE` matches nothing once the winner has committed, and its transaction rolls
+back. `SessionService.reissue` turns that refusal into `session_required`,
+because a session that vanished mid-flight is a session the caller no longer has.
+
+`replaceEverySessionOfUser` is what a password change uses: it removes **every**
+session of the user and issues one new one, in one transaction. There is no
+parameter that keeps the others (S-FIX-6).
+
+`deleteSessionByTokenHash` is the one statement here without an owner predicate,
+and it says so in its own text: `/* no owner predicate: S-OWNER-2, the predicate
+is the secret itself */`. Signing out has a token and nothing else, and the only
+form that would satisfy S-OWNER-2 literally — resolve the row, then delete it by
+owner — is the pre-`SELECT` the same requirement forbids. A marker is admissible
+on that ground alone: the predicate must itself be a secret.
+
+`listSessionsOwnedBy` lists only sessions that can still be used; an expired row
+is not shown to the user as if it were a device that is still signed in. It is
+also the only method that sets `Session.isCurrent`, which 3.15 C reserves for
+`session.list`; every other method leaves it `false`, including on the session
+`resolve` just answered with.
+
+The `Driver` must decode `timestamptz` into a `Date` — `node-postgres`,
+`postgres.js` and the neon driver all do. Decoding a PostgreSQL type is the
+driver's work; the repository reads values, it does not parse them.
+
+### `createSessionService(options)`
+
+```ts
+createSessionService(options: {
+  driver: Driver
+  schema?: string                                   // "velve"
+  session?: Partial<SessionConfig>
+  sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
+}): SessionService
+```
+
+Everything the library does with sessions. **There is no `clock` option, and
+passing one is a compile error.** Every moment this module decides by — both
+deadlines, the idle write interval and the freshness window — comes from the
+database's clock. An option that were accepted and ignored would read like a
+seam that is not there: a test that advanced it to age a session would observe
+nothing and pass for the wrong reason.
+
+`service.settings` exposes the deadlines the configuration was read into,
+including `cookieName` and `cookieMaximumAgeInSeconds` for the cookie writer.
+
+#### Answering who is signed in
+
+| Method | Answer |
+|---|---|
+| `resolve(token)` | the resolution, or `null` for an unknown or expired token |
+| `refresh(token)` | the same, and it forces the idle write the interval would hold back |
+
+`resolve` is the library's only authorisation decision, and it always asks the
+database: one query, plus the idle write on the at most one request per
+`idleWriteInterval` where that write is due. It throws `account_disabled` when the account is disabled — the only
+place in the library where that code is raised, because by then the caller has
+proved the account is theirs (L-4). An account disabled between two requests
+takes effect on the next one; there is no lifetime to wait out (S-CACHE-3).
+
+As a side effect `resolve` extends the idle deadline, at most once per
+`idleWriteInterval`. Whether the write is due is decided from the database's own
+clock, which the resolving query returns with the row, so no second query and no
+comparison between two clocks is needed. `refresh` forces exactly that write and
+nothing else: never the absolute deadline, never a new token.
+
+The result of `resolve` is a `SessionResolution`: `{ userId, session,
+observedAt }`. It is the only value in the library from which an `Actor` can be
+obtained (S-OWNER-7), and it is produced here and nowhere else. `observedAt` is
+the database's clock at the moment it answered, and every deadline this module
+decides after the fact is measured against it.
+
+#### Issuing and re-issuing
+
+| Method | What it does |
+|---|---|
+| `issue({ userId, factors, observed })` | a new session — this is a sign-in |
+| `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
+| `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+
+`observed` is `{ ipAddress, userAgent }` as the request layer saw them; what is
+stored follows `sessionMetadata` (L-10).
+
+Every event that changes the trust level ends the session that preceded it, and
+each event calls the method that matches what preceded it. A sign-in calls
+`issue`: there is no session yet, and the second factor is completed out of
+`velve.pending_authentication`, which is not one either. An event that follows an
+existing session — the second factor completed on top of one, a new identity
+linked — calls `reissue`. A password change calls
+`reissueAfterCredentialChange`, which has no parameter that could keep the other
+sessions (S-FIX-6), and a password reset has no surviving session at all and
+calls `revokeEverySessionOfUser`. In every case the token the caller held before
+the change is gone from the table, and a request carrying it is answered exactly
+like a request without a cookie (S-FIX-1, S-FIX-3).
+
+Re-issue is always an `INSERT` plus a `DELETE`; `UPDATE velve.session SET
+user_id` does not exist, and a re-issue whose new row would belong to a
+different user than the row it removed is refused (E-23, S-FIX-2).
+
+#### Listing
+
+| Method | Freshness | Answer |
+|---|---|---|
+| `list({ resolved })` | required | the caller's live sessions, newest first |
+
+`list` is the only place `Session.isCurrent` is set, and it is set by comparing
+each row with the session that resolved (3.15 C). Expired rows are not listed:
+a session the caller could not use is not a device that is still signed in.
+
+#### Ending sessions
+
+| Method | Freshness | Effect |
+|---|---|---|
+| `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
+| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way |
+| `revokeEveryOther({ resolved })` | required | removes all but the calling session |
+| `revokeEvery({ resolved })` | required | removes all, including the calling one |
+| `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
+
+`revoke` answers a session of another user and a session that never existed
+identically, and changes nothing in both cases (S-OWNER-4, S-OWNER-8).
+
+`revokeEverySessionOfUser` is what the password **reset** path uses: there is no
+surviving session to resolve, so the caller brings the `Actor` its redeemed
+one-time token produced. The session module mints no actor for it.
+
+#### Freshness
+
+`isSessionFresh(session, { freshnessWindowMs, now })` answers whether a session
+is inside its freshness window; `assertSessionIsFresh` raises
+`freshness_required` when it is not.
+
+The window is measured from `created_at`, so it is time since the sign-in.
+Nothing but a new session restores it — using the session does not, and neither
+does `refresh`. A re-authentication that did not re-issue would be a second
+notion of trust standing beside `factors`, and there is only one.
+
+`now` is the database's clock, not the application's: `resolve` returns the
+moment the database answered as `observedAt`, and that is what freshness is
+measured with. `created_at` and both deadlines are written by the database, so
+deciding freshness with a second clock would move the window by whatever skew
+lies between them — in the dangerous direction as readily as in the harmless
+one. A process clock running an hour behind would keep a fifty-minute-old
+session inside a fifteen-minute window, and that window is what guards the
+operations on credentials.
+
+For the same reason `createSessionService` takes no clock at all. To age a
+session in a test, age it where `created_at` lives — in the database.
+
+`list`, `revoke`, `revokeEveryOther` and `revokeEvery` — the four B.9 puts the
+requirement on — take their actor from `actorOfFreshSession`, which checks
+freshness before it hands the actor out, so none of the four can be written
+without the check. Three other places obtain an actor without it, each for a
+stated reason: `resolve` itself, which needs one to write the idle deadline of
+the session it has just resolved; `revokeEverySessionOfUser`, which is handed an
+actor rather than minting one, because the password reset has no session to
+resolve; and `reissueAfterCredentialChange`, deliberately.
+
+`reissueAfterCredentialChange` is that third case. B.9 puts the
+freshness requirement on `password.set` and `password.change`, which is *before*
+the password is hashed and written; a check inside the re-issue would run after
+it, and failing there would leave the new password in place, the other sessions
+alive and the caller without a session — the half state S-FIX-6 exists to
+prevent.
+
+### `sessionSettingsOf(config)`
+
+```ts
+sessionSettingsOf(config?: Partial<SessionConfig>): SessionSettings
+```
+
+Reads the `session` block once, at startup, and produces the numbers everything
+else uses: `idleTimeoutMs`, `absoluteTimeoutMs`, `idleWriteIntervalMs`,
+`freshnessWindowMs`, `cookieName`, `cookieMaximumAgeInSeconds` and `sameSite`.
+An option it refuses raises `InvalidSessionConfigError`, naming the option and
+the value it was given.
+
+`createSessionService` calls it; anything that needs a deadline reads the result
+rather than parsing a duration again. The HTTP environment's
+`freshnessWindowInSeconds` and its session cookie lifetime have to be derived
+from the same result, or two windows would be in force at once.
+
+### The rest of the session module, by name
+
+`sessionMetadataFor`, `createSessionRepository` and `createSessionService` are
+the module's front doors, and everything above describes them. These are the
+remaining exported names, each of which the prose above uses without naming.
+
+| Name | Signature | What it is |
+|---|---|---|
+| `canonicalIpAddress` | `(text: string) => string \| null` | the address as `inet` will hold it — RFC 5952 for IPv6, unmapped for `::ffff:`— or `null` if the text is not an address |
+| `truncatedIpAddress` | `(text: string) => string \| null` | the same, cut to the `/24` or `/64` network and written with its prefix |
+| `truncatedUserAgent` | `(userAgent: string) => string \| null` | `"Chrome on macOS"`; `null` when neither a browser nor a system family is recognised |
+| `boundedUserAgent` | `(userAgent: string) => string \| null` | the header trimmed and cut to 512 characters, `null` when it is empty |
+| `durationInMilliseconds` | `(duration: string) => number \| null` | a `Duration` in milliseconds; `null` for anything the type admits but a deadline cannot use |
+| `DEFAULT_SESSION_METADATA_MODE` | `SessionMetadataMode` | `"truncated"` — the value `sessionMetadata` takes when the configuration says nothing (L-10) |
+| `DEFAULT_SESSION_CONFIG` | `SessionConfig` | the table of defaults above, as a value; `sessionSettingsOf` reads a partial configuration over it |
+
+The four address and user-agent functions are the whole of what `"truncated"`
+and `"full"` mean; `sessionMetadataFor` chooses between them and does nothing
+else.
+
+Types the interface carries: `SessionToken` and `IssuedSessionToken` (from
+`createSessionToken`), `SessionConfig`, `SessionSettings` and `Duration`
+(configuration), `SessionMetadata` and `SessionMetadataMode` (metadata),
+`FreshnessWindow` (`{ freshnessWindowMs, now }`), `SessionResolution`,
+`IssuedSession` (`{ token, session }`), `ObservedRequest`
+(`{ ipAddress, userAgent }`), `SessionServiceOptions` and `SessionService`, and
+on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
+`SessionRepository`. The errors are `InvalidSessionConfigError` (startup),
+`SessionOwnerMismatchError` and `PreviousSessionMissingError` (re-issue).
