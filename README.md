@@ -69,11 +69,13 @@ export const POST = handler;
 
 Every route is declared once — path, method, input schema, output type, error
 codes — and the request handler, the directly callable server method and the
-typed client are derived from that one declaration. Origin checking and rate
-limiting run in front of every route on both call paths, the session and
-pending cookies carry the `__Host-` prefix and cannot be reconfigured, and every
-response carries `Cache-Control: no-store` and `Vary: Cookie` because a CDN in
-front is the normal case.
+typed client are derived from that one declaration. Each route declares which
+checks stand in front of it, and every core route except the OAuth callback,
+which by protocol has no `Origin` header, declares the origin check. Where a
+check is declared it runs first, on both call paths, and no plugin can get in
+front of it. The session and pending cookies carry the `__Host-` prefix and
+cannot be reconfigured, and every response carries `Cache-Control: no-store` and
+`Vary: Cookie` because a CDN in front is the normal case.
 
 `basePath` is where you mounted the handler, and the client address, if you want
 per-address rate limiting, comes from a function you pass in. Neither is read
