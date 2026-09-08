@@ -10,7 +10,8 @@ const rules = readFileSync(`${repositoryRoot}/CLAUDE.md`, "utf8");
 /** The specification is the source E-01 to E-46 were taken from, not a citation site. */
 const NOT_A_CITATION_SITE = new Set(["VELVE-AUTH-ARCHITEKTUR.md"]);
 const BINARY_DIRECTORY = /^assets\//;
-const CITATION = /\bE-(\d+)\b/g;
+/** Smart punctuation and pasted text produce dashes other than the ASCII hyphen. */
+const CITATION = /\bE[-‐-―−](\d+)\b/g;
 const RANGE_ROW = /^\| E-(\d+) … E-(\d+) \| (.+?) \|$/gm;
 const ENTRY_HEADING = /^\*\*E-(\d+) — (.+?)\*\*/gm;
 const REQUIRED_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
