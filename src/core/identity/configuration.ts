@@ -58,19 +58,62 @@ export class IdentityConfigurationError extends Error {
 	}
 }
 
-const STATEFUL_REGEXP_FLAGS = ["g", "y"];
+const REFUSED_FLAGS: Readonly<Record<string, string>> = {
+	g: "lastIndex survives between calls, so the same name is accepted and refused in turn",
+	y: "lastIndex survives between calls, so the same name is accepted and refused in turn",
+	m: "^ and $ then match at a line break, so a name accepts anything after its first line",
+};
+
+function refusedFlagIn(flags: string): string | undefined {
+	return Object.keys(REFUSED_FLAGS).find((flag) => flags.includes(flag));
+}
+
+/** Reports why the pattern can match less than a whole name, or nothing if it cannot (E-193). */
+function partialMatchIn(source: string): string | undefined {
+	let groupDepth = 0;
+	let insideCharacterClass = false;
+	let anchoredAtStart = false;
+	let anchoredAtEnd = false;
+	for (let index = 0; index < source.length; index += 1) {
+		const character = source[index];
+		if (character === "\\") {
+			index += 1;
+		} else if (insideCharacterClass) {
+			insideCharacterClass = character !== "]";
+		} else if (character === "[") {
+			insideCharacterClass = true;
+		} else if (character === "(") {
+			groupDepth += 1;
+		} else if (character === ")") {
+			groupDepth -= 1;
+		} else if (character === "|" && groupDepth === 0) {
+			return "each branch of a top-level alternation would need its own anchors";
+		} else if (character === "^") {
+			if (index !== 0) {
+				return "a ^ anywhere but at the start anchors only part of the name";
+			}
+			anchoredAtStart = true;
+		} else if (character === "$") {
+			if (index !== source.length - 1) {
+				return "a $ anywhere but at the end anchors only part of the name";
+			}
+			anchoredAtEnd = true;
+		}
+	}
+	return anchoredAtStart && anchoredAtEnd ? undefined : "it needs a leading ^ and a trailing $";
+}
 
 function assertWholeStringPattern(pattern: RegExp): RegExp {
-	if (!pattern.source.startsWith("^") || !pattern.source.endsWith("$")) {
+	const partial = partialMatchIn(pattern.source);
+	if (partial !== undefined) {
 		throw new IdentityConfigurationError(
-			`allowedCharacters must match the whole name, so ${pattern} needs a leading ^ and a trailing $`,
+			`allowedCharacters must match the whole name, and in ${pattern} ${partial}`,
 		);
 	}
-	const stateful = STATEFUL_REGEXP_FLAGS.filter((flag) => pattern.flags.includes(flag));
-	// lastIndex survives between calls, so a global pattern accepts and rejects the same name in turn.
-	if (stateful.length > 0) {
+	const flag = refusedFlagIn(pattern.flags);
+	if (flag !== undefined) {
 		throw new IdentityConfigurationError(
-			`allowedCharacters carries the flag ${stateful.join(" and ")}, which makes matching stateful`,
+			`allowedCharacters carries the flag ${flag}: ${REFUSED_FLAGS[flag]}`,
 		);
 	}
 	return pattern;
