@@ -67,17 +67,18 @@ function isWritableAge(maximumAgeInSeconds: number): boolean {
 	);
 }
 
-// S-COOKIE-2: every part interpolated into the header is checked, not only the parts an attack was expected from.
+// S-COOKIE-2: every part is read once and then checked, so a property that answers differently on the second read cannot pass.
 export function serializeCookie(instruction: CookieInstruction): string {
+	const { name, value, maximumAgeInSeconds, attributes } = instruction;
 	if (
-		!COOKIE_NAME_CHARACTERS.test(instruction.name) ||
-		!COOKIE_VALUE_CHARACTERS.test(instruction.value) ||
-		!isWritableAge(instruction.maximumAgeInSeconds) ||
-		!WRITABLE_ATTRIBUTES.has(instruction.attributes)
+		!COOKIE_NAME_CHARACTERS.test(name) ||
+		!COOKIE_VALUE_CHARACTERS.test(value) ||
+		!isWritableAge(maximumAgeInSeconds) ||
+		!WRITABLE_ATTRIBUTES.has(attributes)
 	) {
 		throw new VelveError("internal_error");
 	}
-	return `${instruction.name}=${instruction.value}; Max-Age=${instruction.maximumAgeInSeconds}; ${instruction.attributes}`;
+	return `${name}=${value}; Max-Age=${maximumAgeInSeconds}; ${attributes}`;
 }
 
 export function assertCookieNamesAreEnumerated(instructions: readonly CookieInstruction[]): void {

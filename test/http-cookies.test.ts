@@ -138,6 +138,28 @@ describe("cookies", () => {
 		}
 	});
 
+	it("cannot be talked past by a property that changes between reads", () => {
+		let reads = 0;
+		const shifting: CookieInstruction = JSON.parse(
+			JSON.stringify({
+				name: "__Host-velve_session",
+				value: "token",
+				maximumAgeInSeconds: 60,
+				attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+			}),
+		);
+		Object.defineProperty(shifting, "attributes", {
+			get: () => {
+				reads += 1;
+				return reads === 1
+					? "HttpOnly; Secure; SameSite=Lax; Path=/"
+					: "HttpOnly; Secure; SameSite=Lax; Path=/; Domain=.evil.com";
+			},
+		});
+
+		expect(serializeCookie(shifting)).not.toContain("Domain");
+	});
+
 	it("reads the enumerated cookies and ignores the rest", () => {
 		expect(
 			readCookies("theme=dark; __Host-velve_session=abc; theme=light", DEFAULT_COOKIE_NAMES),
