@@ -1,13 +1,16 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const caseStudy = readFileSync(`${repositoryRoot}/CASE-STUDY.md`, "utf8");
 
-const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", ".git", "coverage"]);
-const SKIPPED_FILES = new Set(["VELVE-AUTH-ARCHITEKTUR.md"]);
+const NOT_SEARCHABLE_TEXT = /\.(png|jpe?g|gif|ico|webp|woff2?|pdf|zip)$/;
+const SKIPPED_FILES = new Set(["VELVE-AUTH-ARCHITEKTUR.md", "pnpm-lock.yaml"]);
 const CITATION = /\bE-(\d+)\b/g;
+/** A reserved range names numbers that do not exist yet; that is its purpose. */
+const RESERVED_RANGE = /E-\d+ ?… ?(E-\d+)?/g;
 const ENTRY_HEADING = /^\*\*E-(\d+) — (.+?)\*\*/gm;
 const REQUIRED_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
 
@@ -24,17 +27,12 @@ function entries(): { number: number; title: string; body: string }[] {
 }
 
 function everyTrackedFile(): string[] {
-	const found: string[] = [];
-	const walk = (directory: string) => {
-		for (const entry of readdirSync(directory)) {
-			if (SKIPPED_DIRECTORIES.has(entry) || SKIPPED_FILES.has(entry)) continue;
-			const path = `${directory}/${entry}`;
-			if (statSync(path).isDirectory()) walk(path);
-			else if (/\.(ts|mts|mjs|sql|md|json|yml)$/.test(entry)) found.push(path);
-		}
-	};
-	walk(repositoryRoot.replace(/\/$/, ""));
-	return found;
+	const listed = execFileSync("git", ["ls-files", "-z"], { cwd: repositoryRoot, encoding: "utf8" });
+	return listed
+		.split("\0")
+		.filter(Boolean)
+		.filter((path) => !NOT_SEARCHABLE_TEXT.test(path))
+		.filter((path) => !SKIPPED_FILES.has(path));
 }
 
 describe("decision log", () => {
@@ -65,7 +63,8 @@ describe("decision log", () => {
 		const known = new Set(log.map((entry) => entry.number));
 		const dangling: string[] = [];
 		for (const path of everyTrackedFile()) {
-			for (const [citation, digits] of readFileSync(path, "utf8").matchAll(CITATION)) {
+			const contents = readFileSync(`${repositoryRoot}${path}`, "utf8").replace(RESERVED_RANGE, "");
+			for (const [citation, digits] of contents.matchAll(CITATION)) {
 				if (!known.has(Number(digits))) {
 					dangling.push(
 						`${path.replace(repositoryRoot, "")} cites ${citation}, which does not exist`,
