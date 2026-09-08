@@ -1149,3 +1149,93 @@ that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
 | Parameter | Type | Meaning |
 |---|---|---|
 | `length` | `number` | how many bytes to draw |
+
+### `createSecretToken()`
+
+The plaintext of a one-time artefact: 32 bytes from `randomBytes`, base64url
+encoded, 43 characters, 256 bit — the same width, the same source and the same
+encoding as a session token (S-RAND-4). It takes no parameters, because there is
+nothing about a secret for a caller to choose.
+
+### `hashSecretToken(token)`
+
+The 32 bytes stored in `one_time_token.token_sha256`: SHA-256 over the token's
+UTF-8 bytes. Any string can be hashed, so a malformed token takes the same path
+as a well-formed one that was never issued.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `token` | `string` | the plaintext handed to the caller, or whatever arrived claiming to be one |
+
+### `ONE_TIME_TOKEN_PURPOSES` and `ONE_TIME_TOKEN_LIFETIME_SECONDS`
+
+The four purposes and the deadline each one carries (section 3.7).
+
+| Purpose | Deadline |
+|---|---|
+| `email_verify` | 24 hours |
+| `password_reset` | 1 hour |
+| `email_change` | 1 hour |
+| `magic_link` | 10 minutes |
+
+A deadline is not configurable and is not a parameter of any function here. The
+purpose decides it, so a caller cannot mint a reset token that outlives the hour.
+
+### `createOneTimeTokenRepository(options)`
+
+The two statements that touch `velve.one_time_token`, and the only ones in the
+library that do.
+
+| Option | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | the driver, or the one bound to an open transaction |
+| `schema` | `string` | the schema the table lives in |
+
+| Method | Does |
+|---|---|
+| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | one statement: deletes the user's earlier tokens of that purpose and inserts the new row, returning `{ expiresAt }` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a row or `null` |
+
+`consumeOneTimeToken` is the only way a one-time token is ever read. There is no
+method that finds one, counts them or looks one up: a read before the write is
+the gap two of the advisories behind this library walked through (S-RACE-2).
+
+Both methods demand the purpose beside the hash. A lookup without one does not
+compile, which is what S-TOKEN-1 asks for.
+
+`expiresAt` comes back as an ISO-8601 instant in UTC — a string, not a `Date`.
+The deadline is computed by the database from `now()`, so it is the database
+clock that decides both when a token expires and whether it has; and the string
+form is the one every driver agrees on.
+
+### `createOneTimeTokens(repository)`
+
+The two operations a flow needs, over that repository.
+
+| Method | Parameters | Returns |
+|---|---|---|
+| `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext token and its deadline |
+| `redeem` | `{ token, purpose }` | `{ purpose, userId, payload }`, or `null` |
+
+`issue` returns the plaintext once. The library keeps no copy: the row holds
+the hash, and the token appears in no log line and in no error message. Issuing
+inside `driver.transaction` is what makes a rollback possible when the mail that
+carries the token cannot be sent (section 3.15 A.7).
+
+`redeem` answers `null` for a token that expired, for one already used, for one
+minted for a different purpose and for one that never existed. The four are the
+same answer on purpose (S-REPLAY-3): they are indistinguishable to the caller
+because they are indistinguishable to the statement, which learns only whether a
+row came back. Nothing downstream may reintroduce the difference; the visible
+code for all four is `invalid_token`, decided in `error-map.ts` and nowhere else.
+
+`userId` in the answer is the account the token was minted for, and it is the
+only account the redemption may act on. No session, cookie or input field takes
+part in that decision (S-TOKEN-4). A row that names no user is not redeemable and
+answers `null` like the rest.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `purpose` | `OneTimeTokenPurpose` | the purpose the token was minted and redeemed under |
+| `userId` | `string` | the account from `one_time_token.user_id` |
+| `payload` | `Record<string, unknown>` or `null` | whatever `issue` stored, for example the address an `email_change` moves to |
