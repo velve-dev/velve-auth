@@ -1,0 +1,90 @@
+import {
+	ONE_TIME_TOKEN_LIFETIME_SECONDS,
+	type OneTimeTokenPayload,
+	type OneTimeTokenPurpose,
+} from "../../token/purpose.js";
+import type { Driver } from "../driver.js";
+import { qualifiedTableName } from "../identifier.js";
+
+export interface OneTimeTokenRepositoryOptions {
+	readonly driver: Driver;
+	readonly schema: string;
+}
+
+export interface OneTimeTokenReplacement {
+	readonly tokenSha256: Uint8Array;
+	readonly purpose: OneTimeTokenPurpose;
+	readonly userId: string;
+	readonly payload: OneTimeTokenPayload | null;
+}
+
+export interface OneTimeTokenLookup {
+	readonly tokenSha256: Uint8Array;
+	readonly purpose: OneTimeTokenPurpose;
+}
+
+export interface StoredOneTimeToken {
+	readonly userId: string | null;
+	readonly payload: OneTimeTokenPayload | null;
+}
+
+export interface OneTimeTokenRepository {
+	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: string }>;
+	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
+}
+
+const EXPIRY_AS_ISO_8601 = `to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+/** A driver may hand back `jsonb` decoded or as the text PostgreSQL sent; both arrive here. */
+function readPayload(value: unknown): OneTimeTokenPayload | null {
+	if (value === null || value === undefined) {
+		return null;
+	}
+	if (typeof value === "string") {
+		return JSON.parse(value) as OneTimeTokenPayload;
+	}
+	return value as OneTimeTokenPayload;
+}
+
+export function createOneTimeTokenRepository(
+	options: OneTimeTokenRepositoryOptions,
+): OneTimeTokenRepository {
+	const table = qualifiedTableName(options.schema, "one_time_token");
+
+	// S-TOKEN-3: one statement, so the earlier tokens of that purpose cannot survive the new one.
+	const replaceStatement = `WITH superseded AS (
+	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
+)
+INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
+VALUES ($3, $2, $1, $4, now() + make_interval(secs => $5::double precision))
+RETURNING ${EXPIRY_AS_ISO_8601} AS expires_at`;
+
+	// Section 3.7, verbatim: the only way a one-time token is ever read.
+	const consumeStatement = `DELETE FROM ${table}
+WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
+RETURNING user_id, payload`;
+
+	return {
+		async replaceOneTimeToken({ tokenSha256, purpose, userId, payload }) {
+			const [row] = await options.driver.query<{ expires_at: string }>(replaceStatement, [
+				userId,
+				purpose,
+				tokenSha256,
+				payload === null ? null : JSON.stringify(payload),
+				ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
+			]);
+			if (row === undefined) {
+				throw new Error(`${table} accepted no row for purpose ${purpose}`);
+			}
+			return { expiresAt: row.expires_at };
+		},
+
+		async consumeOneTimeToken({ tokenSha256, purpose }) {
+			const [row] = await options.driver.query<{ user_id: string | null; payload: unknown }>(
+				consumeStatement,
+				[tokenSha256, purpose],
+			);
+			return row === undefined ? null : { userId: row.user_id, payload: readPayload(row.payload) };
+		},
+	};
+}
