@@ -14,6 +14,8 @@ export interface NodePostgresClient {
 	release(): void;
 }
 
+// A real `Pool` satisfies this because method syntax compares bivariantly; written as a
+// property with an arrow type, node-postgres' overloaded `query` would no longer be assignable.
 export interface NodePostgresPool {
 	query(config: NodePostgresQueryConfig): Promise<NodePostgresResult>;
 	connect(): Promise<NodePostgresClient>;

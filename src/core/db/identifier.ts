@@ -1,8 +1,7 @@
 const UNQUOTED_IDENTIFIER = /^[a-z_][a-z0-9_$]*$/;
 const MAXIMUM_IDENTIFIER_BYTES = 63;
 
-// PostgreSQL appendix C, the reserved and function-or-type-name-reserved key words.
-// A name from this list is only legal after a dot, so it can never be a schema name.
+// PostgreSQL appendix C: these are only legal after a dot, so none can be a schema name.
 const RESERVED_KEY_WORDS = new Set([
 	"all",
 	"analyse",
