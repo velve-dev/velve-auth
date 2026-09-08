@@ -15,10 +15,14 @@ Concepts and rationale are not repeated here — they are in
 - [Repositories](#repositories)
 - [Key management](#key-management)
 - [HTTP](#http)
+- [Rate limiting](#rate-limiting)
 - [Passwords](#passwords)
 - [Identity](#identity)
 - [One-time artefacts](#one-time-artefacts)
 - [Sessions](#sessions)
+- [TOTP and recovery codes](#totp-and-recovery-codes)
+- [WebAuthn](#webauthn)
+- [The instance](#the-instance)
 
 ## Package entry points
 
@@ -1139,6 +1143,26 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+## Rate limiting
+
+Reserved for `rate` (wave 3). Architecture 3.9: the token bucket in
+`velve.rate_bucket` as a single round trip, the three counters that run at once
+— address prefix, account, global per route — and the implementation that goes
+behind the `RateLimiter` seam the HTTP chapter declares above.
+
+It stands here because that seam stands above it. The interface, where it is
+consumed in the pipeline and what a refusal turns into are already documented as
+part of HTTP; this chapter is the counter that fills the seam, and it is read
+directly after the shape it has to fit.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `rate`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`rate` replaces this heading with its own sub-tree.
 
 ## Passwords
 
@@ -2808,3 +2832,70 @@ Types the interface carries: `SessionToken` and `IssuedSessionToken` (from
 on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
 `SessionRepository`. The errors are `InvalidSessionConfigError` (startup),
 `SessionOwnerMismatchError` and `PreviousSessionMissingError` (re-issue).
+
+## TOTP and recovery codes
+
+Reserved for `factor-totp` (wave 3). Architecture 3.6: RFC 6238 verification
+with the encrypted secret and the `velve.totp_used_step` replay guard, the
+pending-authentication state and the five attempts it allows, and the recovery
+codes, which share all of that — the same state, the same `token-pepper` HMAC,
+the same `DELETE … RETURNING` consumption. One feature owns both; §6 of
+`CLAUDE.md` says why they are not split.
+
+It stands here because everything it uses stands above it. The pending state is
+entered from a password check, its HMAC comes from Key management, its
+consumption is the one-time artefact pattern, and what it produces is a session
+— so it can only be read after all four chapters that define those.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `factor-totp`'s
+partition of this file: that feature appends here and nowhere else, and removing
+this paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`factor-totp` replaces this heading with its own sub-tree.
+
+## WebAuthn
+
+Reserved for `factor-webauthn` (wave 3). Architecture 3.6: registration and
+authentication as `start`/`finish` pairs, the single-use challenge bound to its
+purpose, the `backup_eligible` and `backup_state` flags that tell a
+device-bound authenticator from a synchronised one, and `signCountRegressed`
+reported to the application as a field of the sign-in result rather than raised
+as an error (L-9).
+
+It follows TOTP because architecture 3.6 introduces the two in that order, and
+because it is the wider of them: a passkey sign-in is a complete authentication
+path on its own, yielding a session with no password among its factors at all,
+so it is read after the case that is only a second factor.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `factor-webauthn`'s
+partition of this file: that feature appends here and nowhere else, and removing
+this paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`factor-webauthn` replaces this heading with its own sub-tree.
+
+## The instance
+
+Reserved for `auth-core` (wave 3). Architecture 3.12 and 3.15: `createVelveAuth`
+and the configuration it takes, the errors a bad configuration raises at start,
+the namespaces of the surface it returns, the route table every module's routes
+are assembled into, the package entry points those become, and the API snapshot
+the main gate compares a branch against.
+
+It stands last because it is the assembly point. Every chapter above describes a
+module as it is imported from `src/core/…`; this one describes what wires them
+together and what `@velve/auth` finally exports. It is the "whoever owns
+`src/index.ts`" the Passwords chapter defers to and the "instance the assembling
+feature builds" the Sessions chapter names, and it cannot be written before the
+things it assembles are.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `auth-core`'s
+partition of this file: that feature appends here and nowhere else, and removing
+this paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`auth-core` replaces this heading with its own sub-tree.
