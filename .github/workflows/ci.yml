@@ -98,18 +98,31 @@ jobs:
             RANGE="HEAD"
           fi
 
+          # A single NUL byte makes git classify a source file as binary, which hides
+          # it from `git grep -I` and renders its diff as "Bin" in review.
+          echo "Checking that no source file contains a NUL byte"
+          BINARY=$(git ls-files -- src test tools migrations | while read -r f; do
+            [ -f "$f" ] || continue
+            if ! tr -d '\000' < "$f" | cmp -s - "$f"; then echo "$f"; fi
+          done)
+          if [ -n "$BINARY" ]; then
+            echo "::error::source files contain a NUL byte and escape review and scanning"
+            echo "$BINARY"
+            fail=1
+          fi
+
           echo "Scanning commit messages in $RANGE"
-          if git log --format=%B "$RANGE" | grep -EIni "$MARKERS|$CLAIMS"; then
+          if git log --format=%B "$RANGE" | grep -Eani "$MARKERS|$CLAIMS"; then
             echo "::error::AI attribution found in commit messages"
             fail=1
           fi
 
           echo "Scanning tree"
-          if git grep -EIni "$MARKERS" -- . "${EXEMPT[@]}"; then
+          if git grep -Eani "$MARKERS" -- . "${EXEMPT[@]}"; then
             echo "::error::AI attribution marker found in tree"
             fail=1
           fi
-          if git grep -EIni "$CLAIMS" -- . "${EXEMPT[@]}"; then
+          if git grep -Eani "$CLAIMS" -- . "${EXEMPT[@]}"; then
             echo "::error::AI authorship claim found in tree"
             fail=1
           fi
@@ -117,7 +130,7 @@ jobs:
           # The tree scan cannot see text that a later commit removed; the diff
           # scan cannot see text that predates the branch. Both are needed.
           echo "Scanning diff in $RANGE"
-          if git log -p --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -EIni "$MARKERS|$CLAIMS"; then
+          if git log -p --text --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -Eani "$MARKERS|$CLAIMS"; then
             echo "::error::AI attribution found in the branch diff"
             fail=1
           fi
