@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -86,17 +86,13 @@ export function reassignsSessionOwner(statement) {
 	return REASSIGNMENT.some((pattern) => pattern.test(statement));
 }
 
-/** Naming every extension that might execute is an unbounded list; naming the
- * files that only describe the rule is a short one. No executable file is exempt:
- * this detector's own cases live in a JSON fixture precisely so none has to be. */
-const DESCRIBES_THE_RULE = new Set([
-	"VELVE-AUTH-ARCHITEKTUR.md",
-	"CASE-STUDY.md",
-	"CLAUDE.md",
-	"DOCUMENTATION.md",
-	"README.md",
-	"test/fixtures/session-owner-sql.json",
-]);
+/** The requirement is that the library never reassigns a session owner, so the
+ * scan covers what ships and what runs against a database. Tests are excluded on
+ * purpose: proving the trigger refuses the statement means writing the statement,
+ * and a scan that forbade that would forbid testing the rule. Prose about the
+ * rule is excluded for the same reason. */
+const PROVES_OR_DESCRIBES_THE_RULE =
+	/^(test\/|VELVE-AUTH-ARCHITEKTUR\.md$|CASE-STUDY\.md$|CLAUDE\.md$|DOCUMENTATION\.md$|README\.md$)/;
 const NOT_TEXT = /^assets\//;
 const HASH_COMMENT = /\.(sh|bash|zsh|ksh|ya?ml|py|rb|toml)$/;
 const DOUBLE_DASH_COMMENT = /\.(sql|psql|pgsql|ddl)$/;
@@ -117,7 +113,43 @@ function executableSourceFiles() {
 		.split("\0")
 		.filter(Boolean)
 		.filter((path) => !NOT_TEXT.test(path))
-		.filter((path) => !DESCRIBES_THE_RULE.has(path));
+		.filter((path) => !PROVES_OR_DESCRIBES_THE_RULE.test(path))
+		.filter((path) => lstatSync(`${repositoryRoot}/${path}`, { throwIfNoEntry: false })?.isFile());
+}
+
+/** Source layout cannot prove what ships: a file under test/ re-exported from src/
+ * reaches dist/ like any other. S-FIX-2 is a claim about the library, so the built
+ * artefact is what settles it. */
+function builtFiles(directory) {
+	const found = [];
+	for (const entry of readdirSync(directory, { withFileTypes: true })) {
+		const path = `${directory}/${entry.name}`;
+		if (entry.isDirectory()) found.push(...builtFiles(path));
+		else if (/\.(mjs|d\.mts)$/.test(entry.name)) found.push(path);
+	}
+	return found;
+}
+
+export function scanBuiltPackage() {
+	const distribution = `${repositoryRoot}/dist`;
+	const files = existsSync(distribution) ? builtFiles(distribution) : [];
+	// Declarations alone are what an interrupted build leaves behind, not a build.
+	const built = files.some((path) => path.endsWith(".mjs"));
+	if (!built) return { offenders: [], statementsScanned: 0, built: false };
+	const offenders = [];
+	let statementsScanned = 0;
+	for (const path of files) {
+		for (const statement of statementsIn(readFileSync(path, "utf8"))) {
+			if (!/\b(update|merge)\b/i.test(statement)) continue;
+			statementsScanned += 1;
+			if (reassignsSessionOwner(statement)) {
+				offenders.push(
+					`${path.replace(`${repositoryRoot}/`, "")}: ${statement.trim().replace(/\s+/g, " ").slice(0, 120)}`,
+				);
+			}
+		}
+	}
+	return { offenders, statementsScanned, built };
 }
 
 export function scanTree() {
