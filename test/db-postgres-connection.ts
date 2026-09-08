@@ -486,7 +486,7 @@ function readErrorFields(body: Buffer): Map<string, string> {
 	const fields = new Map<string, string>();
 	while (!reader.exhausted) {
 		const key = reader.bytes(1).toString("latin1");
-		if (key === " ") {
+		if (key.charCodeAt(0) === 0) {
 			break;
 		}
 		fields.set(key, reader.cstring());
