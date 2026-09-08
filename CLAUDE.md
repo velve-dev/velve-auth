@@ -318,6 +318,12 @@ may not change `ten of thirteen` to `eleven of fourteen` in their own unpublishe
 entry has to publish a number they know is wrong and aim a second entry at it,
 and the wrong number becomes permanent.
 
+**A measurement is a number or a count the entry states about the work** — `ten
+of thirteen cases`, `six plants`, `40 of 60`. Everything else in an entry is a
+reason, including a statement about what the specification says, which is
+checkable but is not a measurement. The distinction is the whole load-bearing
+part of this rule and it has already needed adjudicating once, in E-538.
+
 The sharp edge is the honest half. The same latitude covers rewriting a **reason**
 on an unmerged branch, which is retroactive rationalisation, and **no diff of any
 form separates the two cases** — an edit to an entry the branch itself introduced
@@ -335,6 +341,14 @@ merged, it counts deletions `main`'s own commits made as though this branch had
 made them (E-538). The check is structurally blind to an edit of an entry the
 same branch introduced, because at the merge base that entry did not exist. That
 blindness is exactly right: it is the case this rule permits.
+
+**The loss the step actually prevents is a merge conflict resolved badly.** Four
+features append to `CASE-STUDY.md` in every wave, so a branch that merges `main`
+gets a conflict in it, and resolving that conflict by keeping one's own side
+drops a sibling's entries silently — the branch is green, the entries are gone,
+and the sibling has already merged. That is a routine mistake with no other
+detector. The in-branch edit E-538 records is the narrower case and the one the
+step cannot see.
 
 ### Numbering the decision log
 
@@ -583,7 +597,9 @@ pnpm check:log-append
                  no line CASE-STUDY.md had at the merge base is deleted or
                  rewritten, and the branch has added at least one. Refuses the
                  run if the base cannot be resolved; VELVE_LOG_BASE names a base
-                 other than origin/main
+                 other than origin/main. Alone among the gate's steps it reads
+                 committed history and not the working tree, so a deletion that
+                 is not yet committed is invisible to it and to nothing else
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

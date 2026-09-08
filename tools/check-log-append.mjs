@@ -94,4 +94,4 @@ if (commits > 0 && additions === 0) {
 }
 
 const against = `${BASE} (merge base ${mergeBase.slice(0, 7)}, ${commits} commit${commits === 1 ? "" : "s"} ahead)`;
-console.log(`log: ${LOG} +${additions} -0 against ${against}`);
+console.log(`log: ${LOG} +${additions} -0 committed against ${against}`);
