@@ -3841,12 +3841,31 @@ predates it (L-12).
 
 It stands here because everything it uses stands above it. Its artefacts are the
 one-time tokens of that chapter and its deadlines are read from there, the
-credential `S-LINK-4` deletes is the Passwords chapter's, the sessions it revokes
-are the Sessions chapter's, and whether removing that credential leaves an
-account with no way in is decided by a count that the Identity and WebAuthn
-chapters state between them. The reset family is not all mailed either:
-`password.redeemResetWithRecoveryCode` consumes a recovery code, and recovery
-codes are documented two chapters above.
+credential `S-LINK-4` deletes is the Passwords chapter's, and the sessions it
+revokes are the Sessions chapter's. What holds it below the two factor chapters
+is the result type: `signIn.magicLink.redeem` returns a `SignInResult`, whose
+`second_factor_required` branch carries `availableFactors` over `"totp"`,
+`"webauthn"` and `"recovery"` (3.15 C.1), so a magic link can end in the pending
+state offering a factor those chapters define rather than in a session. The reset
+family is not all mailed either — `password.redeemResetWithRecoveryCode` consumes
+a recovery code, which is documented two chapters above.
+
+`S-LINK-4`'s deletion is **unconditional**, and the last-way-in count of L-13 is
+not a guard on it. That count refuses exactly two operations, `webauthn.remove`
+and `identity.unlink`, and a confirmed address is excluded from it although a
+magic link works with one (3.15 B.7). L-12's attack is a pre-account whose only
+credential is the attacker's password, so a flow that declined to delete it for
+leaving no way in would fail closed on precisely the account the rule exists for.
+
+`T-LINK-4` pins that as a number rather than leaving it to reading: on the
+attacker path it requires `password_credential` at **0 rows**, every session
+created before the confirmation revoked, and the original password refused with
+`invalid_credentials` — and it runs on every commit. An implementation that adds
+the last-way-in check leaves 1 row and turns the case red. The counter-case in
+the same row is the one to keep beside it: the same registration with the
+confirmation redeemed **in the same session** keeps `password_credential` at 1
+row and leaves the session valid. What separates the two is the provenance of the
+password, not a count of credentials.
 
 Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `email-flows`'
 partition of this file: that feature appends here and nowhere else, and removing
@@ -4177,7 +4196,6 @@ adds a row by editing its own file.
 declared, both read `__Host-velve_pending` and neither is authorised by it. The
 two methods of `auth.pending` still exist beside them and take the token
 directly, for a caller that is not a browser.
-
 
 ## Plugins
 
