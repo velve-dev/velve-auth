@@ -1,4 +1,5 @@
 import { scryptAsync } from "@noble/hashes/scrypt.js";
+import { scryptCostIsAcceptable } from "../limits.js";
 import { integerParameter, type PhcString } from "../phc.js";
 import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
@@ -36,7 +37,8 @@ export async function verifyScrypt(
 		blockSize === null ||
 		parallelism === null ||
 		stored.salt === undefined ||
-		stored.hash === undefined
+		stored.hash === undefined ||
+		!scryptCostIsAcceptable(costExponent, blockSize, parallelism)
 	) {
 		return false;
 	}

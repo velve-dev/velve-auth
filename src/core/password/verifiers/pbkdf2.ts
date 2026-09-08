@@ -1,6 +1,7 @@
 import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import type { CHash } from "@noble/hashes/utils.js";
+import { pbkdf2CostIsAcceptable } from "../limits.js";
 import { integerParameter, type PhcString } from "../phc.js";
 import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
@@ -25,7 +26,7 @@ export async function verifyPbkdf2(
 	if (
 		digest === undefined ||
 		iterations === null ||
-		iterations < 1 ||
+		!pbkdf2CostIsAcceptable(iterations) ||
 		stored.salt === undefined ||
 		stored.hash === undefined
 	) {

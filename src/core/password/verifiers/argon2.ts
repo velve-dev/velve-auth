@@ -1,4 +1,5 @@
 import { type Argon2Variant, deriveArgon2 } from "../argon2.js";
+import { argon2CostIsAcceptable } from "../limits.js";
 import { integerParameter, type PhcString } from "../phc.js";
 import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
@@ -23,7 +24,8 @@ export async function verifyArgon2(
 		iterations === null ||
 		parallelism === null ||
 		stored.salt === undefined ||
-		stored.hash === undefined
+		stored.hash === undefined ||
+		!argon2CostIsAcceptable(memoryKiB, iterations, parallelism)
 	) {
 		return false;
 	}

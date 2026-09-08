@@ -9,6 +9,12 @@ import {
 } from "../src/core/password/argon2.js";
 import { decodeStandardBase64 } from "../src/core/password/base64.js";
 import { ARGON2ID_FLOOR, resolvePasswordConfig } from "../src/core/password/config.js";
+import {
+	argon2CostIsAcceptable,
+	MAXIMUM_STORED_MEMORY_KIB,
+	pbkdf2CostIsAcceptable,
+	scryptCostIsAcceptable,
+} from "../src/core/password/limits.js";
 import { integerParameter, parsePhc } from "../src/core/password/phc.js";
 import { type AcceptedPassword, acceptSubmittedPassword } from "../src/core/password/policy.js";
 import { type PasswordScheme, schemeOfStoredHash } from "../src/core/password/scheme.js";
@@ -248,5 +254,40 @@ describe("Firebase scrypt", () => {
 		const swapped = stored.byScheme.fbscrypt.replace("n=8,r=8", "n=9,r=7");
 
 		expect(await verify("fbscrypt", PASSWORD, swapped)).toBe(false);
+	});
+});
+
+describe("the ceiling on a stored cost parameter", () => {
+	it("names a ceiling no documented source reaches", () => {
+		expect(MAXIMUM_STORED_MEMORY_KIB).toBe(65536);
+		expect(scryptCostIsAcceptable(14, 16, 1)).toBe(true);
+		expect(scryptCostIsAcceptable(14, 8, 1)).toBe(true);
+		expect(argon2CostIsAcceptable(19456, 2, 1)).toBe(true);
+		expect(pbkdf2CostIsAcceptable(1_200_000)).toBe(true);
+	});
+
+	it("refuses a credential whose parameters would claim more than the ceiling", async () => {
+		const beyond = [
+			["argon2id", "$argon2id$v=19$m=65537,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$c29tZWhhc2g"],
+			["argon2id", "$argon2id$v=19$m=1024,t=65,p=1$c29tZXNhbHRzb21lc2FsdA$c29tZWhhc2g"],
+			["argon2id", "$argon2id$v=19$m=1024,t=2,p=65$c29tZXNhbHRzb21lc2FsdA$c29tZWhhc2g"],
+			["scrypt", "$scrypt$ln=20,r=8,p=1$c29tZXNhbHQ$c29tZWhhc2g"],
+			["scrypt", "$scrypt$ln=9999999999,r=8,p=1$c29tZXNhbHQ$c29tZWhhc2g"],
+			["pbkdf2-sha256", "$pbkdf2-sha256$i=2000001$c29tZXNhbHQ$c29tZWhhc2g"],
+			["fbscrypt", "$fbscrypt$v=1,n=20,r=8,p=1,ss=Bw==,sk=c2lnbmVy$c2FsdA$aGFzaA"],
+		] as const;
+
+		for (const [scheme, hash] of beyond) {
+			expect(await verify(scheme, PASSWORD, hash), hash).toBe(false);
+		}
+	});
+
+	it("refuses without spending the derivation the parameters asked for", async () => {
+		const started = Date.now();
+
+		expect(await verify("scrypt", PASSWORD, "$scrypt$ln=30,r=64,p=1$c29tZXNhbHQ$c29tZWhhc2g")).toBe(
+			false,
+		);
+		expect(Date.now() - started).toBeLessThan(1000);
 	});
 });
