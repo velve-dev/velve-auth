@@ -33,3 +33,27 @@ export class PasswordConfigurationError extends Error {
 		this.code = code;
 	}
 }
+
+export type CredentialWriteErrorCode =
+	| "scheme_does_not_match_credential"
+	| "credential_not_written";
+
+const CREDENTIAL_WRITE_MESSAGES: Record<CredentialWriteErrorCode, string> = {
+	scheme_does_not_match_credential:
+		"the scheme column and the identifier of the credential name different functions",
+	credential_not_written: "the credential write changed no row",
+};
+
+// E-177 holds the column and the credential to the same function at verification time; this is the
+// same agreement as a precondition for writing, so a row that could never verify is never stored.
+// `credential_not_written` is the other half: `ON CONFLICT … DO UPDATE … WHERE` does not raise
+// when its predicate is false, it silently updates nothing (E-187).
+export class CredentialWriteError extends Error {
+	readonly code: CredentialWriteErrorCode;
+
+	constructor(code: CredentialWriteErrorCode) {
+		super(CREDENTIAL_WRITE_MESSAGES[code]);
+		this.name = "CredentialWriteError";
+		this.code = code;
+	}
+}

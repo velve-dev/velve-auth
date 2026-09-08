@@ -10,6 +10,7 @@ import {
 	type SealedPhc,
 	sealPhc,
 } from "../src/core/password/credential.js";
+import type { CredentialWriteErrorCode } from "../src/core/password/errors.js";
 import { parsePhc } from "../src/core/password/phc.js";
 import { needsRehash } from "../src/core/password/rehash.js";
 import type { PasswordScheme } from "../src/core/password/scheme.js";
@@ -35,6 +36,7 @@ const PASSWORD = drawTestPassword();
 const WRONG_PASSWORD = drawTestPassword();
 
 const CHEAP_ARGON2ID = { memoryKiB: 19456, iterations: 2, parallelism: 1 } as const;
+const NOT_WRITTEN: CredentialWriteErrorCode = "credential_not_written";
 
 interface Call {
 	readonly sql: string;
@@ -82,7 +84,9 @@ function recordingDriver(): Recorder {
 					keyVersion: params[2] as number,
 					scheme: params[3] as PasswordScheme,
 				});
-				return [];
+				// The upsert returns the row it wrote; answering nothing is what a false
+				// `DO UPDATE … WHERE` looks like, and the repository refuses that (E-185).
+				return [{ user_id: params[0] }] as T[];
 			}
 
 			const existing = rows.get(String(params[0]));
@@ -166,6 +170,45 @@ describe("the stored credential", () => {
 			/^\$argon2id\$v=19\$/,
 		);
 	}, 30_000);
+
+	// `ON CONFLICT … DO UPDATE … WHERE` does not raise when its predicate is false; it updates
+	// nothing. Without the row count the caller is told the password was stored when it was not.
+	it("refuses to report success when the upsert changed no row", async () => {
+		const silent: Driver = {
+			query: async (sql, params) =>
+				sql.includes("INSERT") ? [] : recorder.driver.query(sql, params),
+			transaction: recorder.driver.transaction,
+		};
+		const deaf: PasswordEnvironment = {
+			...environment,
+			credentials: createPasswordCredentialRepository({ driver: silent, keys: environment.keys }),
+		};
+
+		await expect(setPassword({ userId: USER_ID, plaintext: PASSWORD }, deaf)).rejects.toMatchObject(
+			{ code: NOT_WRITTEN },
+		);
+		expect(recorder.rows.get(USER_ID)).toBeUndefined();
+	}, 30_000);
+
+	// The column and the credential have to name the same function to verify (E-177); a write that
+	// would store a row nobody could ever verify is refused instead of stored.
+	it("refuses a scheme column that disagrees with the credential it is written with", async () => {
+		await expect(
+			environment.credentials.write({
+				userId: USER_ID,
+				phc: stored.byScheme.argon2i,
+				scheme: "argon2id",
+			}),
+		).rejects.toMatchObject({ code: "scheme_does_not_match_credential" });
+
+		await expect(
+			environment.credentials.write({
+				userId: USER_ID,
+				phc: "not a stored hash at all",
+				scheme: "argon2id",
+			}),
+		).rejects.toMatchObject({ code: "scheme_does_not_match_credential" });
+	});
 
 	it("cannot be read with the key of another purpose", async () => {
 		await setPassword({ userId: USER_ID, plaintext: PASSWORD }, environment);

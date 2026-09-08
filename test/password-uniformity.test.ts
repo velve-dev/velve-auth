@@ -136,7 +136,9 @@ async function createProbe(): Promise<Probe> {
 							},
 						] as T[]);
 			}
-			return [];
+			// The upsert returns the row it wrote; a repository that is told nothing was written
+			// refuses, because that is what a false `DO UPDATE … WHERE` looks like (E-185).
+			return (sql.includes("INSERT") ? [{ user_id: parameters[0] }] : []) as T[];
 		},
 		transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T> {
 			return fn(driver);

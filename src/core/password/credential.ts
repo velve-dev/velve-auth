@@ -6,7 +6,8 @@ import {
 	encryptWithPurposeKey,
 	type KeyProvider,
 } from "../keys/index.js";
-import type { PasswordScheme } from "./scheme.js";
+import { CredentialWriteError } from "./errors.js";
+import { type PasswordScheme, schemeOfStoredHash } from "./scheme.js";
 
 export const PASSWORD_ENC_PURPOSE: EncryptionKeyPurpose = "password-enc";
 export const PASSWORD_CREDENTIAL_SCHEMA = "velve";
@@ -63,6 +64,12 @@ export interface PasswordCredentialRepositoryOptions {
 	readonly schema?: string;
 }
 
+function assertSchemeMatchesCredential(phc: string, scheme: PasswordScheme): void {
+	if (schemeOfStoredHash(phc) !== scheme) {
+		throw new CredentialWriteError("scheme_does_not_match_credential");
+	}
+}
+
 export function createPasswordCredentialRepository(
 	options: PasswordCredentialRepositoryOptions,
 ): PasswordCredentialRepository {
@@ -89,24 +96,33 @@ export function createPasswordCredentialRepository(
 		},
 
 		async write({ userId, phc, scheme }) {
+			assertSchemeMatchesCredential(phc, scheme);
 			const sealed = await sealPhc(options.keys, phc);
 
 			// S-OWNER-2: the conflict target is the owner column, and the predicate says so in the
 			// statement rather than leaving it to be inferred from the primary key (E-185).
-			await options.driver.query(
+			const written = await options.driver.query(
 				`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme)
 				 VALUES ($1, $2, $3, $4)
 				 ON CONFLICT (user_id) DO UPDATE
 				 SET phc = EXCLUDED.phc, key_version = EXCLUDED.key_version,
 				     scheme = EXCLUDED.scheme, updated_at = now()
-				 WHERE credential.user_id = $1`,
+				 WHERE credential.user_id = $1
+				 RETURNING user_id`,
 				[userId, sealed.ciphertext, sealed.keyVersion, scheme],
 			);
+
+			// A false `DO UPDATE … WHERE` does not raise, it updates nothing; without this the
+			// caller is told the password was stored when it was not (E-185).
+			if (written.length !== 1) {
+				throw new CredentialWriteError("credential_not_written");
+			}
 		},
 
 		// 3.3 step 6: compare and swap on the stored ciphertext, so a password the user changed
 		// while the rehash was running is never overwritten by it (E-11).
 		async replaceIfUnchanged({ userId, previous, phc, scheme }) {
+			assertSchemeMatchesCredential(phc, scheme);
 			const sealed = await sealPhc(options.keys, phc);
 
 			const changed = await options.driver.query(
