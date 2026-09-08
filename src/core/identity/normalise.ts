@@ -26,6 +26,15 @@ function reject<Rejection>(rejection: Rejection): Normalisation<never, Rejection
 	return { accepted: false, rejection };
 }
 
+/**
+ * Lowercasing a whole string applies the Final_Sigma rule, so `ΟΔΟΣ` becomes `οδος` where
+ * PostgreSQL's `lower()` gives `οδοσ` and two accounts then hold one name; per code point
+ * there is no context for that rule to read.
+ */
+function caseFolded(value: string): string {
+	return [...value].map((character) => character.toLowerCase()).join("");
+}
+
 function isStructurallyAnAddress(candidate: string): boolean {
 	const separator = candidate.indexOf("@");
 	return (
@@ -37,7 +46,7 @@ function isStructurallyAnAddress(candidate: string): boolean {
 }
 
 export function normaliseEmail(candidate: string): Normalisation<string, EmailRejection> {
-	const normalised = candidate.trim().normalize("NFKC").toLowerCase();
+	const normalised = caseFolded(candidate.trim().normalize("NFKC"));
 	if (!isStructurallyAnAddress(normalised)) {
 		return reject("malformed");
 	}
@@ -52,7 +61,7 @@ export function normaliseUsername(
 	rules: UsernameRules,
 ): Normalisation<NormalisedUsername, UsernameRejection> {
 	const username = candidate.trim().normalize("NFKC");
-	const usernameKey = username.toLowerCase();
+	const usernameKey = caseFolded(username);
 	// The allowlist is applied to the comparison form so that case alone never decides
 	// acceptance, and homoglyphs are refused before they can reach the unique index (E-17).
 	if (!rules.allowedCharacters.test(usernameKey)) {

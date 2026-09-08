@@ -229,20 +229,21 @@ describe("two accounts cannot share one comparison form", () => {
 	});
 
 	/**
-	 * DOCUMENTATION.md promises that where the JavaScript fold and `lower()` disagree "the insert
-	 * fails with a constraint violation rather than storing a wrong value". Greek final sigma is
-	 * such a disagreement, and the insert succeeds.
+	 * Written against a comparison form built by lowercasing the whole string, where Greek final
+	 * sigma made `ΟΔΟΣ` fold to something `lower()` disagrees with, so one name became two
+	 * accounts. The premise is now that the two folds agree and the unique index catches it.
 	 */
-	it("refuses the insert wherever JavaScript and PostgreSQL fold a name differently", async () => {
+	it("stores the fold PostgreSQL itself would produce, so one name stays one account", async () => {
 		const suffix = randomBytes(4).toString("hex");
-		const entered = `ΟΔΟΣ${suffix}`;
+		const entered = `${suffix}ΟΔΟΣ`;
 		const [folds] = await connection.query<{
 			readonly by_postgres: string;
 		}>(`SELECT lower($1::text) AS by_postgres`, [entered]);
 		const byJavaScript = normaliseUsername(entered, WIDENED_RULES);
 		expect(byJavaScript.accepted).toBe(true);
 		const jsKey = byJavaScript.accepted ? byJavaScript.value.usernameKey : "";
-		expect(folds?.by_postgres).not.toBe(jsKey);
+		expect(entered.normalize("NFKC").toLowerCase()).not.toBe(jsKey);
+		expect(folds?.by_postgres).toBe(jsKey);
 
 		expect(await insertName(entered, folds?.by_postgres ?? "")).toBeNull();
 		expect(await insertName(entered, jsKey)).toBe(UNIQUE_VIOLATION);
