@@ -1230,20 +1230,28 @@ Turns the options into the resolved shape the rest of the module takes, or
 throws `PasswordConfigurationError` with one of these codes:
 `argon2id_memory_below_floor`, `argon2id_iterations_below_floor`,
 `argon2id_parallelism_below_floor`, `minimum_length_below_floor`,
-`maximum_length_above_ceiling`, `concurrent_hash_limit_out_of_range`,
-`legacy_scheme_unknown`. It is a start error, never a request error.
+`maximum_length_above_ceiling`, `maximum_length_below_minimum_length`,
+`maximum_length_not_an_integer`, `concurrent_hash_limit_out_of_range`,
+`legacy_scheme_unknown` — the union `PasswordConfigurationErrorCode`. It is a
+start error, never a request error.
 
 `min(4, cpus)` reads `navigator.hardwareConcurrency`. A runtime that does not
-report one — Node 20 has no `navigator` — gets `4`, the ceiling (E-162).
+report one — Node 20.19 has no `navigator` — gets `1`, because four would
+overshoot `min(4, cpus)` on a one- or two-core container. **On Node 20, set
+`concurrentHashLimit` explicitly** or the library serialises every sign-in
+(E-183).
 
 ### The length policy
 
 Length is checked before any key derivation, in three steps that get more
 expensive as they go (S-DOS-1, E-164):
 
-1. the UTF-16 code unit count against `maximumLengthInBytes`. A UTF-8 encoding
-   is never shorter than that count, so a megabyte-sized input is refused here,
-   before it is normalised or copied;
+1. the UTF-16 code unit count against **four times** `maximumLengthInBytes`.
+   This is a bound, not a measurement: NFKC composition can shrink a string, so
+   the raw count is not comparable with the byte length of the normal form.
+   UAX #15 caps canonical composition at a threefold shrink in UTF-8, so nothing
+   that would pass is refused here, and a megabyte-sized input still never
+   reaches `normalize` (E-181);
 2. NFKC normalisation (NIST SP 800-63B-4 §3.1.1.2), then the character count
    against `minimumLength`;
 3. the UTF-8 byte length of the normalised form against `maximumLengthInBytes`,
@@ -1393,8 +1401,8 @@ same two functions rather than a path of its own (architecture 4.0.3).
 
 `openPhc` throws `KeyError("key_version_unknown")` when the row names a key
 version that has left the ring, and `KeyError("authentication_failed")` when the
-ciphertext does not authenticate. Neither is concealed as a wrong password
-(E-175).
+ciphertext does not authenticate. `checkPassword` does not let either reach the
+caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
 #### `createPasswordCredentialRepository({ driver, keys, schema? })`
 
@@ -1485,9 +1493,104 @@ as the silent rehash works through the estate. Running Argon2id in addition for
 every legacy verification would remove the signal at the price of doubling the
 cost of exactly the accounts an import made numerous; that trade is not taken.
 
-**A destroyed key version is loud, not concealed.** If `password-enc` loses a
-version that rows were written under, `openPhc` raises `KeyError` and the
-request becomes `internal_error`, not `invalid_credentials`. During that window
-the response for an affected account differs from the response for an account
-that does not exist. The alternative — concealing it — would turn an operator
-mistake into a silent mass lockout logged as "wrong password" (E-175).
+**A destroyed key version is loud at startup, silent per request.**
+`assertStoredKeyVersionsAreKnown` is where an operator learns of it. On the
+sign-in path the row simply fails to verify like any other, because a `throw`
+there would break S-TIM-1 and would also partition accounts into those written
+before a rotation and those written after — an enumeration channel open for the
+whole of any rotation window (E-179, superseding E-175).
+
+### Cost ceilings on a stored credential
+
+The memory a verification claims is a parameter of the credential, and an
+import writes it. Without a ceiling, S-DOS-3's bound — semaphore size × the
+memory parameter — is really semaphore size × the largest value any import ever
+wrote. Four fixed ceilings apply to every stored credential; a credential above
+any of them is refused, which routes the user to the reset path (E-182).
+
+| Constant | Value | Applies to |
+|---|---|---|
+| `MAXIMUM_STORED_MEMORY_KIB` | `65536` | Argon2 `m`, and `128 · 2^ln · r` for scrypt and Firebase scrypt |
+| `MAXIMUM_STORED_ARGON2_ITERATIONS` | `64` | Argon2 `t` |
+| `MAXIMUM_STORED_PARALLELISM` | `64` | Argon2 and scrypt `p` |
+| `MAXIMUM_STORED_PBKDF2_ITERATIONS` | `2_000_000` | PBKDF2 `i` |
+
+They are not configurable. Raising a denial-of-service ceiling is a weakening,
+and every documented source sits far below them: Better Auth's scrypt at 32 MiB,
+Firebase at 16 MiB, Django's PBKDF2 at 1.2 million iterations.
+`argon2CostIsAcceptable`, `scryptCostIsAcceptable` and `pbkdf2CostIsAcceptable`
+are the three predicates that apply them.
+
+### Startup
+
+#### `assertStoredKeyVersionsAreKnown({ driver, keys, schema? })`
+
+Reads `SELECT DISTINCT key_version FROM velve.password_credential` and holds
+each value against the `password-enc` ring. Throws `PasswordKeyRingError` —
+`code: "stored_key_version_unknown"`, `missingVersions: readonly number[]` —
+naming every version the ring no longer holds.
+
+**Call this once at assembly, before the instance serves anything.** L-2 makes
+the key ring a precondition for every stored password, so a version that has
+left the ring locks out everyone whose row was written under it. This is the
+only place that says so: on the sign-in path such a row fails to verify like any
+other, because a throw there would break S-TIM-1 and would partition accounts
+by when they were written (E-179).
+
+The check is exported rather than wired in, because assembling the instance is
+not this module's business. Until a caller invokes it, the operator error is
+silent.
+
+### Every exported name
+
+`src/core/password` is not reachable from a package entry point yet; the wiring
+belongs to whoever owns `src/index.ts`. This is the full surface a caller sees
+once it is.
+
+| Name | Kind | File |
+|---|---|---|
+| `parsePhc`, `formatPhc`, `integerParameter`, `bytesParameter` | function | `phc.ts` |
+| `PhcString` | interface | `phc.ts` |
+| `encodeStandardBase64`, `decodeStandardBase64` | function | `base64.ts` |
+| `PasswordConfig`, `ResolvedPasswordConfig`, `PasswordPolicy`, `Argon2idParameters` | interface | `config.ts` |
+| `resolvePasswordConfig` | function | `config.ts` |
+| `ARGON2ID_FLOOR`, `ARGON2ID_SALT_BYTES`, `ARGON2ID_HASH_BYTES`, `ARGON2ID_VERSION`, `MINIMUM_LENGTH_FLOOR`, `MAXIMUM_LENGTH_CEILING_IN_BYTES` | const | `config.ts` |
+| `PasswordConfigurationError`, `PasswordConfigurationErrorCode` | class, type | `errors.ts` |
+| `PasswordScheme`, `LegacyScheme` | type | `scheme.ts` |
+| `LEGACY_SCHEMES`, `CREATED_SCHEME` | const | `scheme.ts` |
+| `schemeOfStoredHash`, `isLegacyScheme` | function | `scheme.ts` |
+| `AcceptedPassword` | interface | `policy.ts` |
+| `acceptSubmittedPassword`, `acceptNewPassword` | function | `policy.ts` |
+| `KdfSemaphore`, `KdfSemaphoreOptions` | interface | `semaphore.ts` |
+| `createKdfSemaphore`, `DEFAULT_WAIT_LIMIT_IN_MILLISECONDS` | function, const | `semaphore.ts` |
+| `Secret`, `DerivedKey` | type | `secret.ts` |
+| `asDerivedKey`, `derivedKeysAreEqual` | function | `secret.ts` |
+| `Argon2Variant` | type | `argon2.ts` |
+| `Argon2Request`, `Argon2Engine` | interface | `argon2.ts` |
+| `nobleArgon2` | const | `argon2.ts` |
+| `selectArgon2Engine`, `deriveArgon2`, `createArgon2idHash` | function | `argon2.ts` |
+| `verifyArgon2`, `verifyBcrypt`, `verifyScrypt`, `verifyPbkdf2`, `verifyFirebaseScrypt` | function | `verifiers/` |
+| `deriveScrypt` | function | `verifiers/scrypt.ts` |
+| `verifyAgainstScheme` | function | `verify-switch.ts` |
+| `MAXIMUM_STORED_MEMORY_KIB`, `MAXIMUM_STORED_ARGON2_ITERATIONS`, `MAXIMUM_STORED_PARALLELISM`, `MAXIMUM_STORED_PBKDF2_ITERATIONS` | const | `limits.ts` |
+| `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable` | function | `limits.ts` |
+| `PasswordCredentialRow`, `SealedPhc`, `PasswordCredentialRepository`, `PasswordCredentialRepositoryOptions` | interface | `credential.ts` |
+| `PASSWORD_ENC_PURPOSE`, `PASSWORD_CREDENTIAL_SCHEMA`, `PASSWORD_CREDENTIAL_TABLE` | const | `credential.ts` |
+| `sealPhc`, `openPhc`, `createPasswordCredentialRepository` | function | `credential.ts` |
+| `needsRehash`, `needsRewrite` | function | `rehash.ts` |
+| `DummyCredential`, `PasswordEnvironment` | interface | `verify.ts` |
+| `PasswordCheck` | type | `verify.ts` |
+| `ABSENT_USER_ID` | const | `verify.ts` |
+| `createDummyCredential`, `checkPassword`, `setPassword` | function | `verify.ts` |
+| `PasswordKeyRingError`, `StoredKeyVersionCheckOptions` | class, interface | `startup.ts` |
+| `assertStoredKeyVersionsAreKnown` | function | `startup.ts` |
+
+`needsRewrite(row, phc, currentKeyVersion, config)` is `needsRehash` plus the
+key version: it is what `checkPassword` calls, so key rotation travels the same
+compare-and-swap path as a parameter increase (L-2).
+
+`deriveArgon2` and `deriveScrypt` are the two derivations a verifier calls;
+`nobleArgon2` is the pure engine, named so that a test can compare the
+accelerator against it. `DerivedKey` is `Secret<"derived-key">`, the branded
+type that makes S-TIM-3 checkable; `asDerivedKey` mints one and
+`derivedKeysAreEqual` is the only thing that compares two.
