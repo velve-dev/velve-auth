@@ -3111,25 +3111,289 @@ on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
 
 ## TOTP and recovery codes
 
-Reserved for `factor-totp` (wave 3). Architecture 3.6: RFC 6238 verification
-with the encrypted secret and the `velve.totp_used_step` replay guard, the
-pending-authentication state and the five attempts it allows, and the recovery
-codes, which share all of that — the same state, the same `token-pepper` HMAC,
-the same `DELETE … RETURNING` consumption. One feature owns both; §6 of
-`CLAUDE.md` says why they are not split.
+Two second factors, one feature. They share the pending-authentication state,
+the `token-pepper` HMAC and the rule that a used artefact is removed by the
+statement that reads it, so architecture 3.6 introduces them together and this
+chapter documents them together.
 
-It stands here because everything it uses stands above it. The pending state is
-entered from a password check, its HMAC comes from Key management, its
-consumption is the one-time artefact pattern, and what it produces is a session
-— so it can only be read after all four chapters that define those.
+Everything here is a service. The routes of the table in architecture 3.15 D.3
+— `/factor/totp/enroll/start`, `/factor/totp/enroll/finish`,
+`/factor/totp/verify`, `/factor/totp/remove`, `/factor/recovery/generate`,
+`/factor/recovery/verify` and `/factor/recovery/remaining` — are assembled by
+the instance, not declared here.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `factor-totp`'s
-partition of this file: that feature appends here and nowhere else, and removing
-this paragraph is the first thing it does.
+### `createTotpService(options)`
 
-### Nothing is documented here yet
+Returns a `TotpService`. RFC 6238 with SHA-1, six digits, a thirty-second
+period and a tolerance of one step in each direction (architecture 3.6).
 
-`factor-totp` replaces this heading with its own sub-tree.
+| Option | Type | Required | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | yes | The PostgreSQL driver. Never imported; always passed. |
+| `keys` | `KeyProvider` | yes | Supplies the `totp-enc` key. The secret is encrypted under it and the version is stored beside the ciphertext. |
+| `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
+| `issuer` | `string` | yes | The issuer shown in the authenticator app and written into the key URI. |
+| `clock` | `Clock` | yes | The only time the module reads. There is no default: architecture 6.19 says the core reads the time through `clock` alone, and a default would be a second source. Tests pass `createTestClock()` from `@velve/auth/testing`. |
+| `schema` | `string` | no | Defaults to `velve`. |
+
+#### `totp.enroll.start({ actor, accountName })`
+
+Draws a fresh 160-bit secret, encrypts it under `totp-enc` and writes
+`velve.totp_credential` with `confirmed_at = NULL`. Returns
+`TotpEnrollment`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `secretBase32` | `string` | RFC 4648 base32, the form an authenticator app accepts when the URI cannot be scanned. |
+| `otpauthUri` | `string` | `otpauth://totp/<issuer>:<accountName>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30`. Every parameter is written out even where it equals the format's default, so an app that changed a default cannot silently disagree. |
+
+While `confirmed_at` is `NULL` the factor counts as absent: an abandoned
+attempt is data residue, not a locked-out user, and calling `start` again
+replaces it with a new secret. A **confirmed** credential makes `start` raise
+`factor_already_enrolled`.
+
+`accountName` is what the authenticator app shows beside the issuer. The
+library does not choose it; the caller passes the account's e-mail address or
+username.
+
+#### `totp.enroll.finish({ actor, code })`
+
+Verifies `code` against the unconfirmed secret, claims the time step it
+matched, and sets `confirmed_at`. Raises `factor_not_enrolled` when no
+enrolment was started, `factor_already_enrolled` when one is already
+confirmed, and `invalid_factor_code` when the code does not match.
+
+The confirming code is written into `velve.totp_used_step` like any accepted
+code. RFC 6238 §5.2 asks that an accepted code be refused for the rest of its
+step and does not ask why it was accepted; without the claim, the code typed to
+finish enrolment would still work as a second factor for up to sixty seconds.
+
+#### `totp.verify({ pendingToken, code })`
+
+The second-factor check. Resolves the pending state, verifies the code against
+the confirmed secret, claims the matched time step, and returns the
+`PendingResolution` — it does **not** consume the pending row. S-FIX-1 wants
+the row removed in the same transaction that inserts the session, and that
+transaction belongs to whoever issues the session.
+
+| Raised | When |
+|---|---|
+| `invalid_pending_authentication` | The token names no live pending state. |
+| `invalid_factor_code` | The code does not match, its step is already spent, the account has no confirmed credential, or the stored secret cannot be decrypted. |
+| `too_many_factor_attempts` | The failure that exhausted L-8's budget. The pending row is gone with it. |
+
+The causes behind `invalid_factor_code` differ only in the logged reason —
+`totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`. This route is
+reached with a pending state rather than a session, so answering "this account
+has no TOTP" there would say which accounts carry a second factor.
+
+#### `totp.remove({ actor, code })`
+
+Removes the credential and, in the same transaction, every row this account has
+in `velve.totp_used_step` — a re-enrolment must not inherit the previous
+secret's replay ledger. Demands a valid code: whoever can remove the factor
+without holding it has no factor. Raises `factor_not_enrolled` or
+`invalid_factor_code`.
+
+#### When the secret cannot be decrypted
+
+`decryptWithPurposeKey` raises `KeyError` when the stored `key_version` is no
+longer in the ring (`key_version_unknown`, S-KEY-4) or when the ciphertext does
+not authenticate under it (`authentication_failed`). `KeyError` is neither a
+`VelveError` nor a `ConcealedError`, so letting it out answers 500 — a status
+none of the three declaring routes carries, and one only an account whose secret
+predates a rotation can produce.
+
+Every path that decrypts therefore answers `invalid_factor_code` with the logged
+reason `totp_not_confirmed`: a secret the server cannot read is a credential
+nobody can hold.
+
+**This makes the failure uniform; it does not make it diagnosable.** Dropping a
+key version that TOTP secrets were written under turns second-factor sign-in
+into a refusal with no explanation for the operator. The check that belongs
+above this is an assembly-time one — hold every distinct
+`totp_credential.key_version` against the ring when the instance is built, and
+refuse to start on one that has left it — so the operator is told once, when
+they drop the version. That check is the instance's; this module only makes sure
+the request path says nothing an attacker can count on.
+
+#### `totp.isEnrolled({ userId })`
+
+True only for a **confirmed** credential. Takes a user id rather than an
+`Actor` because the pending-state path has no actor to offer.
+
+### The replay guard
+
+`S-REPLAY-4` in one statement:
+
+```sql
+INSERT INTO velve.totp_used_step (user_id, time_step, expires_at)
+VALUES ($1, $2, now() + make_interval(secs => $3::double precision))
+ON CONFLICT (user_id, time_step) DO NOTHING
+RETURNING time_step
+```
+
+No row back means the step was already spent. The conflict is swallowed rather
+than raised because `Driver` promises nothing about the shape of a driver's
+error, and a refusal that depends on reading SQLSTATE 23505 changes with the
+driver. The primary key is still the whole check, and it is what serialises
+fifty concurrent submissions of one code onto one winner (`S-RACE-3`).
+
+**The step written is the one that matched, not the one the clock is in.** With
+a tolerance of ±1 an accepted code can belong to the step before or after the
+current one; recording the current step would leave the matched one free for a
+second use.
+
+Rows are kept `TOTP_USED_STEP_RETENTION_SECONDS` — the full tolerance window
+plus two minutes — and are swept by `auth.maintenance.sweep()` (L-11).
+
+### TOTP constants
+
+| Name | Value | Why |
+|---|---|---|
+| `TOTP_ALGORITHM` | `"SHA1"` | Architecture 3.6. Every authenticator app implements it. |
+| `TOTP_DIGITS` | `6` | Architecture 3.6. The RFC's own vectors use eight; the library generates six. |
+| `TOTP_PERIOD_SECONDS` | `30` | Architecture 3.6. |
+| `TOTP_TOLERANCE_STEPS` | `1` | One step either side, so ninety seconds are accepted at any moment. |
+| `TOTP_SECRET_BYTES` | `20` | 160 bit. RFC 4226 §4 requires 128 and recommends 160. |
+| `TOTP_USED_STEP_RETENTION_SECONDS` | `210` | The widest accepted window (90 s) plus two minutes (L-11). |
+
+`timeStepAt(instant)` is the counter for an instant; `acceptedTimeSteps(instant)`
+is the three steps a submission at that instant may match;
+`totpCodeForStep(secretBytes, step)` is the code for one step; and
+`matchingTimeStep({ secretBytes, submittedCode, at })` answers with the matched
+step or `null`. It compares against every candidate without leaving early and
+in constant time, so the position of a match inside the window is not readable
+from the duration. `normaliseTotpCode` strips spaces and hyphens, because an
+authenticator app shows the code in two groups and a reader retypes the gap.
+
+### `createRecoveryCodeService(options)`
+
+| Option | Type | Required | Meaning |
+|---|---|---|---|
+| `driver` | `Driver` | yes | The PostgreSQL driver. |
+| `keys` | `KeyProvider` | yes | Supplies the `token-pepper` key the codes are HMAC'd under. |
+| `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
+| `schema` | `string` | no | Defaults to `velve`. |
+
+#### `recovery.generate({ actor })`
+
+Draws ten codes of 160 bit, deletes every code the account already has and
+writes the ten new ones — in one transaction, and after taking the row lock on
+`velve.user` that CLAUDE.md §7 requires of any transaction that takes one.
+Returns `{ codes }`.
+
+**This is the only moment the plaintext codes exist outside the caller's
+process.** What is stored is `HMAC-SHA256(token-pepper, canonical code)`, so
+there is no operation that shows a code again — a lost set is regenerated, not
+recovered.
+
+The set is always replaced whole. A partially renewed set is a set whose age
+nobody knows.
+
+#### `recovery.verify({ pendingToken, code })`
+
+Resolves the pending state, finds the row by HMAC and removes it with
+`DELETE … RETURNING`. Returns the `PendingResolution`; like TOTP it does not
+consume the pending row.
+
+| Raised | When |
+|---|---|
+| `invalid_pending_authentication` | The token names no live pending state. |
+| `invalid_recovery_code` | No such code for this account, or the account has no codes whose pepper version is still in the ring. |
+| `too_many_factor_attempts` | The failure that exhausted L-8's budget. |
+
+#### `recovery.remaining({ actor })`
+
+Returns `{ remainingCount }` and nothing else. The count is the only thing the
+stored form can answer.
+
+### The shape of a recovery code
+
+Ten codes, 160 bit each, pairwise distinct (`S-RAND-3`). Encoded in Crockford's
+base32 — the alphabet without `I`, `L`, `O` and `U` — as thirty-two characters
+shown in four groups of eight:
+
+```
+K3M7QR8V-2XN4TZ9B-5PWJ0HC6-Y1DFGS7A
+```
+
+The reader normalises before it hashes: upper-cases, drops anything that is not
+a digit or a letter, and maps `I` and `L` to `1` and `O` to `0`. A code retyped
+in lower case, without its groups, or with a `0` read as an `O` still finds its
+row.
+
+| Name | Value |
+|---|---|
+| `RECOVERY_CODE_COUNT` | `10` |
+| `RECOVERY_CODE_ENTROPY_BYTES` | `20` |
+| `RECOVERY_CODE_GROUP_LENGTH` | `8` |
+
+`createRecoveryCodeSet()` draws a set, `normaliseRecoveryCode(submitted)` is the
+canonical form, and `formatRecoveryCode(canonical)` puts the groups back.
+
+### How a recovery code is stored
+
+`velve.recovery_code` is one row per code:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `user_id` | `uuid` | The owner. Cascades on deletion of the account. |
+| `code_hmac` | `bytea` | `HMAC-SHA256(token-pepper, canonical code)`. Part of the primary key, so a lookup is an index hit and a redemption is one row. |
+| `key_version` | `integer` | The `token-pepper` version the HMAC was taken under (L-3). Without it a rotation would void every code, which in `identity: "username"` is the only way back into an account. |
+| `created_at` | `timestamptz` | When the set was written. |
+
+Because the version decides the HMAC, a redemption first reads which versions
+this account's codes span — `SELECT DISTINCT key_version … WHERE user_id = $1` —
+computes the HMAC under each version still in the ring, and then deletes. The
+read touches no value that decides validity; the whole validity predicate stays
+in the `WHERE` of the statement that removes the row (`S-RACE-2`). A code whose
+version has left the ring cannot be recomputed and answers exactly as a wrong
+code does.
+
+`generate` always writes the whole set under the current version, so in practice
+the ring read finds one version and the redemption is one statement.
+
+### `velve.totp_credential` and `velve.totp_used_step`
+
+| Column | Type | Meaning |
+|---|---|---|
+| `totp_credential.user_id` | `uuid` | Primary key. One TOTP factor per account. |
+| `totp_credential.secret_enc` | `bytea` | AES-256-GCM over the raw secret under the `totp-enc` purpose (`S-REST-4`). |
+| `totp_credential.key_version` | `integer` | The `totp-enc` version the ciphertext was written under (`S-KEY-3`). |
+| `totp_credential.confirmed_at` | `timestamptz` | `NULL` until a code has proved the app holds the secret. While it is `NULL` the factor does not exist. |
+| `totp_credential.created_at` | `timestamptz` | Set again when an unconfirmed enrolment is replaced. |
+| `totp_used_step.user_id` | `uuid` | With `time_step`, the primary key that is the replay check. |
+| `totp_used_step.time_step` | `bigint` | The step that was accepted. |
+| `totp_used_step.expires_at` | `timestamptz` | When `sweep()` may remove the row. |
+
+### The five attempts a pending state allows
+
+`verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for both
+factors. It resolves the state, runs the verification, and on failure calls
+`registerFailedAttempt`. The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the
+pending module and is not restated here.
+
+A correct code spends no attempt. Wrong codes one to four answer
+`invalid_factor_code`; the wrong code that exhausts the budget answers
+`too_many_factor_attempts` and takes the pending row with it, which is what
+makes the 429 in the route table reachable — a request made after the row is
+gone answers `invalid_pending_authentication` instead.
+
+### `identity: "username"` requires recovery codes
+
+`assertRecoveryCodesAreConfigured({ identityMode, recoveryCodes })` raises
+`RecoveryCodesRequiredError` — code `recovery_codes_required` — when
+`identityMode` is `"username"` and `recoveryCodes` is not on. This is
+`S-DEFAULT-4`. An account with no e-mail address has no address a reset can be
+sent to, so a configuration that offers neither recovery codes nor a mailbox
+ships a lockout.
+
+`recoveryCodesAreMandatoryFor(identityMode)` is the same decision as a
+predicate, for a caller that wants to ask rather than to catch.
+
+The check belongs at start-up and is called by the instance; this module is the
+mechanism it calls.
 
 ## WebAuthn
 

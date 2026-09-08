@@ -2228,7 +2228,6 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 
 **Price.** Nothing is fixed here, for the same reason as E-393: `token` owns both files. What this entry adds is the evidence that the remedy E-393 proposed — seed the generator — would have fixed one of the two and left the other, so whoever picks this up should expect to calibrate a race threshold as well as a statistical one. Two consecutive red nightlies from a branch that did not touch either file is also the concrete form of E-393's price: T-RATE-6 rides in that tier, and the habit of dismissing a red nightly is being trained right now.
 
-
 ### The global counter is a threshold in one module and a bucket in the other
 `E-356` · auth-core · rate limiting, after the merge
 
@@ -2260,3 +2259,219 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 **Rejected.** Renumbering the block so the citations come true.
 **Reason.** That is the failure §6 removes by never renumbering, and it would have been the second instance of it on this branch. The citations move instead. Both were found by reading, not by a check: neither dangles, so `test/decision-log.test.ts` passes, and §6 says exactly this case out loud — *"a citation left behind does not dangle, it resolves to the wrong decision. Nothing detects that."*
 **Price.** The reserved-range mechanism is aimed at renumbering, and this arrived by **insertion**, which it does not cover: a range removes the pressure to move existing numbers and does nothing about a comment that names a number before the entry exists. Two of the six citations this branch added were wrong, which is a rate, not an accident. The habit that produces it is writing the citation while drafting; the habit that would prevent it is citing only numbers already written down, and nothing enforces either. Both branches queued behind this one import the pending barrel and will read these comments, which is why this is a correction rather than a note.
+
+### The second factor is a service, and the two routes that carry it are not written here
+`E-405` · factor-totp · scope, hand-off
+
+**Context.** The brief said to build the `enroll` and management routes first and to pick up `verify` when `auth-core` publishes its barrel. Reading `src/` first showed that no feature has ever called `defineRoute`: `session` and `token` of wave 2 both stop at a service, and `src/core/auth/` is still a `.gitkeep`. So the instruction to build routes described something the repository has no precedent for.
+**Rejected.** (a) Writing the four session-caller routes anyway, since `RequestContext.session` carries a `userId` and they would compile. (b) Writing the two pending-caller routes with an invented way of getting the account out of the pending state.
+**Reason.** (b) is impossible without inventing: `PendingAuthentication` in `core/http/caller.ts` is the public shape of `GET /pending` and deliberately holds no account. (a) is possible and was still dropped, because the route table, its filtering by identity mode and the API snapshot are `auth-core`'s, and a route declared here would be the first one in the repository — it would set the convention rather than follow it. What is built instead is the shape wave 2 built: `createTotpService` and `createRecoveryCodeService`, each taking an `Actor` where the caller is a session and a resolved pending state where it is not.
+**Price.** Six of the seven routes in the table row for this feature exist as service methods and as nothing an HTTP client can reach, so `T-COOKIE-3`, `T-FIX-4` and the status codes in the route table cannot be exercised end to end on this branch. The three status codes that could be checked were checked by mapping the thrown value through `toVisibleFailure`, which is the same function the handler will use — that is a weaker test than a request, and it is the strongest one available here.
+
+### The primary-key conflict is caught in SQL rather than raised as an error the driver has to name
+`E-406` · factor-totp · S-REPLAY-4, storage
+
+**Context.** S-REPLAY-4 says the check *is* an `INSERT` into `velve.totp_used_step` whose failure on the primary key is the refusal. Written literally, that means letting PostgreSQL raise SQLSTATE 23505 and catching it.
+**Rejected.** Letting the insert raise and reading the driver's error for `23505`.
+**Reason.** `Driver` in `core/db/driver.ts` is three lines and promises nothing about what `query` throws. `pg`, `postgres.js` and the neon driver each surface the SQLSTATE differently, and the library ships an adapter for all three; a refusal that depends on reading one of them is a refusal that changes with the driver. `ON CONFLICT (user_id, time_step) DO NOTHING RETURNING time_step` leaves the primary key as the sole arbiter — the fifty writers still serialise on the key, and the loser gets no row instead of an exception. The empty result is the refusal.
+**Price.** The statement no longer reads the way the requirement is worded, and a reviewer checking the letter of S-REPLAY-4 will find `DO NOTHING` where the requirement says the insert fails. It does fail; it just fails quietly. Written here because the next reader will have the same objection.
+
+### T-REPLAY-4's prose and its threshold do not describe the same five submissions
+`E-407` · factor-totp · test plan, deviation
+
+**Context.** T-REPLAY-4 gives the sequence as: fix the clock, compute a code, submit twice; advance thirty seconds, submit a new code; submit the previous step's code; submit the step-before-that's code. The threshold is `200, 401, 200, 200, 401`. The fourth submission cannot be both "the previous step's code" and a 200: that step was spent by the first submission, so the guard refuses it. The two halves of the cell contradict each other.
+**Rejected.** (a) Implementing the prose and asserting `200, 401, 200, 401, 401`. (b) Asking for the plan to be corrected before writing the test.
+**Reason.** The threshold is what the requirement is about. S-REPLAY-4's second clause — "eingetragen wird der tatsächlich passende Zeitschritt, nicht der aktuelle" — needs a submission that matches a step the clock is **not** in, and the only such step that is still unspent at that point in the sequence is the one **after** the current one, which the tolerance of ±1 accepts. That reading produces `200, 401, 200, 200, 401` exactly and exercises the clause the prose never mentions. (b) would have cost a round trip to change a cell whose numbers are already right.
+**Price.** A test whose fourth step is not the step the plan names, defended by an argument rather than by the plan. The case the prose describes is asserted as well, in its own `it`, and it answers 401 — so if the plan meant what it says, this branch has recorded both the answer it gives and the disagreement.
+
+### The five-attempt counter is a port here and an implementation nowhere
+`E-408` · factor-totp · L-8, hand-off
+
+**Context.** L-8 caps a pending state at five attempts and then deletes the row. The brief assigned the requirement and the test to this feature and the counter itself to `auth-core`, which had published nothing. Both cannot be satisfied by writing the counter.
+**Rejected.** (a) Writing a second `pending_authentication` repository under `src/core/factor/totp/`. (b) Leaving L-8 entirely to `auth-core` and testing nothing.
+**Reason.** (a) is the duplicate the brief forbids by name, and two writers of the same table is how a state machine ends up with two answers. (b) leaves a limit nobody checks. What is here instead is `PendingFactorAttempt` — `userId`, `spendAttempt()` returning the new count or null, `discard()` — and `spendPendingAttemptOn`, which holds the whole policy: spend first, run the verification, and on failure at the fifth spend delete the state and answer `too_many_factor_attempts` instead of `invalid_factor_code`. `auth-core` supplies the implementation; the test supplies one over the real table so the policy is exercised against PostgreSQL and `auth-core` has the statement to copy.
+**Price.** The `UPDATE … RETURNING` that raises the counter lives in `test/totp-fixtures.ts` and in no shipped file, so a reader looking for L-8 in `src/` finds a policy over an interface and no SQL. If `auth-core` implements the port differently — a row lock, a read-then-write, a counter held in the cookie — nothing here notices. That is the same class of hand-off as E-243, and it is recorded so it is a decision rather than a gap.
+
+### Where the 429 sits: the fifth wrong code answers it, the sixth request finds nothing
+`E-409` · factor-totp · L-8, reading
+
+**Context.** L-8 says at most five attempts and then the row is deleted. The route table lists `429 too_many_factor_attempts` on `/factor/totp/verify` and `/factor/recovery/verify`. Read strictly, deleting the row *after* the fifth attempt makes the sixth request answer `invalid_pending_authentication`, and the 429 is unreachable.
+**Rejected.** Deleting the row after the fifth attempt and letting the sixth request answer `invalid_pending_authentication`.
+**Reason.** A status code in the route table that no input can produce is a documented lie. Attempts one to four answer `invalid_factor_code`; the fifth wrong code deletes the state and answers `too_many_factor_attempts`. Five attempts are allowed, the row is gone afterwards, and the 429 is the attempt that spends the budget.
+**Price.** A caller that submits the correct code on its fifth attempt succeeds, and a caller that submits a wrong one gets a different code than on the four before it — so the 429 tells an attacker that the budget is spent. That is information the specification asks to be given.
+
+### Completing the second factor cannot call `reissue`, and this branch does not fix it
+`E-410` · factor-totp · S-FIX-1, hand-off
+
+**Context.** The brief cites E-243: second-factor completion calls `reissue`, not `reissueAfterCredentialChange`. `SessionService.reissue` takes a `previousToken` and goes through `replaceSession`, which deletes a row from `velve.session` by token hash and throws `PreviousSessionMissingError` when there is none. S-FIX-4 says the state before the second factor is **not** a session row. So there is no previous session to replace, and the call E-243 prescribes throws `session_not_found` on the first user who ever completes a second factor.
+**Rejected.** (a) Calling `issue` here and treating E-243 as superseded. (b) Adding a variant to `SessionService` that replaces a pending row with a session row.
+**Reason.** Neither is this feature's to make: (b) is a change to `core/session/`, which belongs to no wave-3 feature, and (a) would decide the S-FIX-1 question for the second factor from the wrong side of the seam. S-FIX-1 demands the new session row and the deletion of the previous artefact in **one** transaction, and the previous artefact here is the `pending_authentication` row — so the operation `auth-core` needs is "delete this pending row and insert this session in one transaction", which exists nowhere. The verification returns void; whoever issues the session owns that transaction.
+**Price.** S-FIX-1 is unfulfilled for two of its eight trust-level events until `auth-core` writes that transaction, and `T-FIX-1` will fail on those two rows when someone writes it. E-243 stands in the log saying the second factor is "the most frequent caller of `reissue`", which is a claim about a method that cannot serve it; this entry does not correct E-243, because correcting it would mean rewriting an argument its author actually made.
+
+### `fileParallelism` inside a project block is accepted and does nothing
+`E-411` · factor-totp · gate defect, out of area
+
+**Context.** E-156 put `fileParallelism: false` in the `concurrency` project so its files would run one at a time and no two would hold fifty PostgreSQL connections at once. Adding a second fifty-connection file to that project made every one of them fail with `sorry, too many clients already`, including `test/token-race.test.ts`, which has been green since wave 2. Vitest reads `fileParallelism` only at the root of the configuration; inside a project it is accepted and ignored. Measured: `--project concurrency` fails three files, `--project concurrency --no-file-parallelism` passes all seven. Project-level `maxWorkers: 1` and a single-fork pool were tried and change nothing.
+**Rejected.** (a) Reporting it and leaving `pnpm test` red. (b) Yielding from inside the two new files — an advisory lock, a retry on `too many clients`, a wait for headroom in `pg_stat_activity`.
+**Reason.** (b) was worked through and does not close: with three files wanting fifty connections out of a hundred, any scheme where the new files yield lets the pre-existing file lose the race instead, and a scheme where nobody yields deadlocks. There is no fix inside the files this feature owns. (a) leaves the definition of done unmet by a branch that caused the breakage. `vitest.config.ts` belongs to gate and infrastructure and not to this feature; the change made is one line moved to the root, with the constant named for what it does and the old comment left standing.
+**Price.** A file edited outside this feature's ownership set, which §5 says to report rather than edit — this reports it *and* edits it, and the reviewer should treat the edit as gate-and-infrastructure's to keep or replace. It also costs the unit project its file parallelism: the blocking tier goes from roughly fifteen seconds to forty-two on this machine, because the root setting serialises all 117 files and not only the seven that need it. A narrower fix — a second `vitest` invocation for the concurrency project — is a change to `package.json`, which is further outside the set, so the wider and cheaper-to-review one was taken. E-156's own comment says the files run "one file at a time"; it has said that since wave 2 and it was not true when it was written.
+
+### The settable clock stays in the test file, and `clock` stops being optional
+`E-412` · factor-totp · testing seam, hand-off
+
+**Context.** Architecture 6.19 requires a settable `Clock` in `@velve/auth/testing`. `src/testing/index.ts` is `export {};`. Both wave-3 factor features need one.
+**Rejected.** (a) Writing the settable clock into `src/testing/index.ts`. (b) Giving `TotpServiceOptions.clock` a default of `{ now: () => new Date() }` so tests could omit it.
+**Reason.** (a) is a file no wave-3 feature owns and two features needing it is a decision rather than a coincidence, so it is reported instead. (b) was written first and then removed, because `test/keys-static-scan.test.ts` forbids `new Date(` anywhere in `src/core/` — a rule this branch did not know about and would not have found by reading, since the scan lives in another feature's test file. The rule is right: 6.19 says the core reads the time only through the configured clock, and a default is a second source. `clock` is now required.
+**Price.** Every construction of `createTotpService` has to supply a clock, including the ones `auth-core` will write, and the settable clock lives in `test/totp-fixtures.ts` where `factor-webauthn` cannot import it without reaching into this feature's test fixtures. The duplication is the price of not writing a fifth party's file.
+
+### A recovery code is Crockford's base32, and the reader normalises before it hashes
+`E-413` · factor-totp · S-RAND-3, encoding
+
+**Context.** S-RAND-3 fixes 160 bit, ten codes, pairwise distinct, shown in groups. It fixes no alphabet. Whatever is chosen is what a locked-out user retypes from paper, possibly over the phone.
+**Rejected.** (a) base64url, as the session token uses. (b) Hex. (c) RFC 4648 base32, as the TOTP secret uses.
+**Reason.** (a) is case-sensitive and contains both `l` and `I`; a code read aloud is unrecoverable. (b) doubles the length to forty characters. (c) contains `I`, `L`, `O` and `U`. Crockford's alphabet drops exactly those four, 160 bit lands on thirty-two characters with no padding, and the reader maps `I` and `L` to `1` and `O` to `0`, upper-cases, and strips anything that is not a digit or a letter — so the stored HMAC is taken over one canonical form no matter how the code was retyped or grouped.
+**Price.** Two encodings in one feature: the TOTP secret is RFC 4648 base32 because that is what authenticator apps read, and the recovery code is Crockford's because a human reads it. A reader who sees `base32` twice will assume one function serves both.
+
+### The pepper version is read before the delete, and the delete still decides alone
+`E-414` · factor-totp · L-3, S-RACE-2
+
+**Context.** L-3 puts `key_version` on `velve.recovery_code` so a rotation of `token-pepper` does not void the codes. The consequence is that the HMAC of a submitted code cannot be computed without knowing which version the row was written under, and the row cannot be found without the HMAC. `KeyProvider` offers `current` and `byVersion` and no way to enumerate the ring.
+**Rejected.** (a) Computing the HMAC under every version of the ring — there is no way to ask for them. (b) Encoding the version in the code the user holds.
+**Reason.** (b) spends characters of a code someone retypes on a number that is not a secret and tells an attacker when the pepper was rotated. What is done instead is a `SELECT DISTINCT key_version FROM recovery_code WHERE user_id = $1`, one HMAC per version found, and then the `DELETE … RETURNING`. S-RACE-2 forbids a read of the row before its consumption; this reads only which key versions exist for the account and nothing that decides validity, and the whole validity predicate still sits in the `WHERE` of the statement that removes the row. The two live in different repository methods, which is also what keeps them out of T-RACE-2's static rule.
+**Price.** A read on the path S-RACE-2 is about, defended by what it does not read. The statement that removes the row is unaffected and the fifty-way race still resolves one-to-one, which is measured; the argument is nonetheless that a rule was satisfied in spirit, and a reviewer is entitled to disagree.
+
+### One statement per candidate version, because a `bytea[]` parameter is spelled differently by every driver
+`E-415` · factor-totp · driver portability
+
+**Context.** With several candidate HMACs to try, the obvious statement is `DELETE … WHERE user_id = $1 AND code_hmac = ANY($2::bytea[])`, one round trip whatever the ring holds.
+**Rejected.** The array parameter, which was written first and then removed.
+**Reason.** `Driver.query` takes `unknown[]`. `pg` turns a `Buffer[]` into a `bytea[]`; the test connection in `test/db-postgres-connection.ts` throws on any array, and building the literal by hand means writing `{"\\x…"}` with the escaping each driver expects. That is a portability bug hiding in a parameter. One `bytea` per statement is spelled the same everywhere, and in practice the ring holds one version, so it is one statement.
+**Price.** A rotation that leaves two versions live costs two round trips on a wrong code, and the number of statements is now visible to anyone timing the endpoint — it says how many pepper versions the account's codes span, which is a fact about the operator and not about the account.
+
+### An identifier forty-three characters long is a token
+`E-416` · factor-totp · gate finding
+
+**Context.** `test/token-review-leakage.test.ts` fails on any forty-three-character run of base64url characters anywhere under `src/`, because that is exactly a 32-byte token. `MAXIMUM_ATTEMPTS_PER_PENDING_AUTHENTICATION` is forty-three characters.
+**Rejected.** Widening the scan's pattern.
+**Reason.** The scan is another feature's and it is right: a committed token is unrecoverable once it ships, and the cost of the rule is that long identifiers are occasionally illegal. The constant is now `MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE`, forty-one characters, and it reads better.
+**Price.** Nothing, this time. It is written down because the failure message says "no plaintext token is committed" and points at a constant, and the next person to hit it will spend the same ten minutes looking for a secret that is not there.
+
+### Removing the factor takes its replay ledger with it
+`E-417` · factor-totp · S-REPLAY-4, consequence
+
+**Context.** `totp_used_step` is keyed by `(user_id, time_step)` and not by the credential. Nothing in the schema removes those rows when the credential goes, and nothing in the architecture says to.
+**Rejected.** Leaving them to `auth.maintenance.sweep()`, which L-11 has deleting expired rows anyway.
+**Reason.** The sweep is a named operation nobody is obliged to run, and the retention is minutes, so in practice the rows would be gone. In the minutes they survive, a user who removes the factor and immediately enrols a new one is refused the first code of the new secret if it lands on a step the old one spent — a failure at exactly the moment someone is proving the new factor works, with no message that explains it. `removeCredential` deletes both in one transaction.
+**Price.** A second statement in the removal path and a rule that has to hold for any future writer of `totp_used_step`: the ledger belongs to the credential even though the key does not say so.
+
+### The verification path cannot say the factor is missing
+`E-418` · factor-totp · error surface
+
+**Context.** `factor_not_enrolled` is a declared error of `enroll.finish` and `remove`, both of which are reached with a session. `/factor/totp/verify` is reached with a pending state and its declared errors are `invalid_pending_authentication`, `invalid_factor_code` and `too_many_factor_attempts` — `factor_not_enrolled` is not among them. The first draft raised it from a shared helper used by all three.
+**Rejected.** Adding `factor_not_enrolled` to the verify route's error list.
+**Reason.** The pending state proves a password, and the account it names is one an attacker may have chosen. Answering "this account has no TOTP" there is an oracle over which accounts carry a second factor. On the verify path a missing credential, an unconfirmed one and a wrong code all raise a `ConcealedError` that `error-map.ts` turns into `invalid_factor_code`; the three differ only in the logged reason, which is S-ENUM-6's shape.
+**Price.** A user whose factor was removed in another session while a pending state was open is told the code is wrong. That is the correct answer to give and the wrong one to read.
+
+### Confirming an enrolment spends the step it was confirmed with
+`E-419` · factor-totp · S-REPLAY-4, scope
+
+**Context.** `enroll.finish` verifies a code to prove the authenticator holds the secret. Whether that code should also be written into `totp_used_step` is not stated anywhere: the guard is described in 3.6 under verification, not under enrolment.
+**Rejected.** Verifying the enrolment code without claiming its step.
+**Reason.** RFC 6238 §5.2 asks that an accepted code be refused for the rest of its step, and it does not distinguish why it was accepted. Without the claim, the code the user types to finish enrolment stays valid as a second factor for up to sixty seconds — over a phishing proxy that is one code that works twice.
+**Price.** A test that enrols and immediately verifies at the same instant is refused, which cost this branch three failing tests before the reason was remembered, and will cost the next writer the same. It also means `totp_used_step` holds one row per account from the moment of enrolment, which the race test had to work around by writing the confirmed credential directly rather than through `enroll.finish`.
+
+### The two race tests run in the blocking tier, though the plan schedules them nightly
+`E-420` · factor-totp · test tiering
+
+**Context.** T-RACE-3 and T-RACE-4 are both marked "CI nächtlich" in section 6. `pnpm test` is the blocking tier and `pnpm test:nightly` adds the statistical cases.
+**Rejected.** Gating both behind `VELVE_NIGHTLY=1`.
+**Reason.** `test/token-race.test.ts` runs T-RACE-1 and T-RACE-2 unconditionally, and both carry the same nightly marking; following the sibling costs less surprise than following the plan. The measured cost is under a second per file for twenty rounds of fifty, because the fifty run in parallel over fifty connections and a round is one round trip, not fifty. CLAUDE.md also asks that a skipped test state its reason in the code, and "the plan says nightly" is a poor one for a check that takes a second.
+**Price.** The blocking tier now holds three files that each want fifty connections, which is what surfaced E-411. Had these two been gated behind `VELVE_NIGHTLY=1` the configuration defect would have shipped invisible until the nightly run, so the decision made for a scheduling reason paid off for an unrelated one.
+
+### The pending seam landed and the port was deleted rather than adapted
+`E-421` · factor-totp · L-8, correction to E-408
+
+**Context.** E-408 built `PendingFactorAttempt` and `spendPendingAttemptOn` because the pending state did not exist yet. It exists now, on `feature/auth-core`, and its shape is not the port's: `resolve(token)` yields the account, `registerFailedAttempt(token)` is called **only after a failure** and answers `attempts_remain` or `exhausted`, and `consume(token)` removes the row.
+**Rejected.** (a) Keeping the port and writing an adapter from the real service to it. (b) Keeping `MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE` as a local constant beside `MAXIMUM_PENDING_ATTEMPTS`.
+**Reason.** (a) would leave two vocabularies for one state machine, and the port's "spend before verifying" is not what the real service does — the real one charges nothing for a correct code, which is better and is not what E-408 designed. (b) is two sources of truth for a number L-8 fixes once; the constant is gone and nothing in this feature spells the five. What remains is `verifyUnderPendingAttemptLimit`, which resolves, verifies, and on failure maps `exhausted` to `too_many_factor_attempts`.
+**Price.** E-408's argument for the port was sound and its design was wrong in one respect that only the real implementation revealed: charging an attempt before the verification means a correct code costs one, which is visible to anyone reading `attempts` and would have made the fifth *successful* sign-in fail. The test written against the port asserted that behaviour and passed. A test can only be as right as the interface it was written against.
+
+### `createTestClock` replaced the clock this branch wrote for itself
+`E-422` · factor-totp · testing seam, correction to E-412
+
+**Context.** E-412 kept a settable clock inside `test/totp-fixtures.ts` because `src/testing/index.ts` was `export {};` and belonged to no wave-3 feature. It is now `createTestClock` on `feature/auth-core`.
+**Rejected.** Keeping the local one and passing it where a `Clock` is wanted, which would have compiled.
+**Reason.** Two settable clocks in one repository is the thing 6.19 asks for one of, and the local one had `advanceSeconds` where the shared one has `advanceBy(milliseconds)` — a difference small enough to survive a review and produce a test that advances a thousand times too far. Every test file here now imports `createTestClock`; `settableClock` is deleted, not deprecated.
+**Price.** E-412 also recorded that `clock` became a required option because `test/keys-static-scan.test.ts` forbids `new Date(` in `src/core/`. That half stands and is the more useful half: the rule was found by a failing scan and not by reading, and it is the reason this feature has no default clock to fall back to.
+
+### The API snapshot was updated for a surface this feature does not own
+`E-423` · factor-totp · gate finding, out of area
+
+**Context.** Merging `origin/feature/auth-core` to compile against the pending module turned `test/api-surface.test.ts` red: that branch exports `TestClock` and `createTestClock` from `@velve/auth/testing` and left `test/__snapshots__/api-surface.md` saying `export { };`. The check CLAUDE.md describes as "the public surface has not changed unannounced" is failing on their branch for exactly the change it exists to catch, and it fails here because the merge brought it along.
+**Rejected.** (a) Leaving `pnpm test` red and reporting only. (b) Silently regenerating the snapshot as part of another commit.
+**Reason.** (b) is the failure mode itself — the snapshot's whole value is that a surface change is announced by someone. (a) leaves a branch that cannot pass its own gate for a reason it did not cause. The snapshot is regenerated in a commit of its own whose message says whose surface it is, so the change is announced even though the wrong feature announced it.
+**Price.** A file outside this feature's set, changed for the second time on this branch after `vitest.config.ts` — and this one is a file `auth-core` will very likely also change, so the merge conflicts. It resolves to whichever side has the correct generated content, which is cheap, but it is a conflict this wave's file partition was designed to make impossible. The finding stands whatever happens to the snapshot: `feature/auth-core` shipped an export without the snapshot line that announces it.
+
+### A planted fault that passed, and the test that was missing under it
+`E-424` · factor-totp · review method
+
+**Context.** Twelve faults were planted to prove the checks fail on them. Eleven did. The twelfth — raising `factor_not_enrolled` from the helper the verifying path uses, where the route declares only three codes and that is not one of them — passed every test in the suite. Nothing in this feature ever verified against an account with no credential row at all: every test that reached `verify` had enrolled first.
+**Rejected.** Recording the plant as inconclusive and moving on.
+**Reason.** A plant that passes is a finding about the tests, not about the plant. `test/totp-concealment.test.ts` now asks the question the plant was aiming at: a missing credential, an unconfirmed one, a wrong code and an already-spent step answer with the same code, the same status and the same message, and differ only in the logged reason. Re-planted, the fault fails two of its three cases.
+**Price.** The gap existed because the fixtures made enrolment the easy path and a bare account the awkward one, so no test took the awkward one. That is a general hazard of a helper that sets up the happy case, and nothing here fixes it beyond this one instance.
+
+### A citation in a comment resolved to the wrong entry, and only reading it caught that
+`E-425` · factor-totp · decision log
+
+**Context.** The comment added to `vitest.config.ts` cited `E-410` for the `fileParallelism` finding. That finding is `E-411`; `E-410` is the entry about the second factor not being able to call `reissue`. The two were written minutes apart and the numbers were assigned by counting. `test/decision-log.test.ts` was green throughout, because `E-410` exists.
+**Rejected.** Nothing — there was no alternative to fix, only a mistake to record.
+**Reason.** §6 says in as many words that the check catches a citation resolving to *no* entry and cannot catch one resolving to the *wrong* entry, and names reserved ranges as the mechanism that removes the renumber. Reserved ranges remove the renumber; they do not remove a writer miscounting inside their own range. This one was found by reading the diff before pushing, which is not a mechanism.
+**Price.** Every `E-` citation this branch writes is worth what a reader's attention is worth. Five were checked by hand after this one was found; all five were right, and that is a sample of six, not a proof.
+
+### The barrels were unused until the tests were made to consume them
+`E-426` · factor-totp · knip
+
+**Context.** `src/core/factor/totp/index.ts` and `src/core/factor/recovery/index.ts` were written as the import point the instance will use, and the tests imported the concrete modules directly. `knip` reported both barrels as unused files and eleven exports as unused, because nothing at all imported them.
+**Rejected.** (a) Deleting the barrels until a caller in `src/` exists. (b) Adding the barrels to `knip.json` as entry points.
+**Reason.** (a) is E-245's argument in reverse and loses: the barrel is the module's interface upwards, and upwards there is nothing yet. (b) edits a file this feature was told to leave alone, and would suppress a real finding rather than answer it. The tests now import from the barrels, which is what the pending module already does and what makes the barrel a thing that is exercised rather than declared. Two re-exports with no caller anywhere were dropped instead — `pepperRecoveryCodeUnder` and `totpEnrollment` are used inside their own modules and by nothing else.
+**Price.** The tests now depend on the barrel's contents, so removing a name from a barrel breaks test files that have nothing to do with it. That is the cost of using `knip`'s definition of "used", and it is cheaper than a barrel nobody imports.
+
+### The test that named S-KEY-4 asserted a different branch, and that is why the defect above was invisible
+`E-427` · factor-totp · S-KEY-4, correction to the test
+
+**Context.** `test/totp-enrolment.test.ts` carried an `it` called *"refuses to decrypt a secret whose key version has left the ring (S-KEY-4)"*. It built its second provider with `testKeyProvider(2)`, which is `testKeyRing(2).providerAt(2)` with `availableVersions` left undefined — so the ring still held versions 1 **and** 2, and version 1 had not left it. What it actually asserted was `authentication_failed`: an AES-GCM tag mismatch against fresh root material, which is a different branch of `decryptWithPurposeKey` from the `key_version_unknown` one S-KEY-4 is about. Green, named after a requirement, and never touching it.
+**Rejected.** Adding the missing `[2]` and leaving the test otherwise as it was.
+**Reason.** That alone fixes the label and would have turned the test red, which is the point — but it would have left the two branches conflated in one assertion. There are now two: one drives a secret written under version 1 through a ring holding only version 2 and asserts `key_version_unknown`; the other drives it through a ring holding version 1 under other material and asserts `authentication_failed`. Both go at the envelope directly, so the branch under test is named rather than inferred.
+**Price.** The recovery side got this right on the first try — `providerAt(2, [2])`, asserted in `test/recovery-codes.test.ts` — and the TOTP side, written by the same hand on the same day, did not. The difference is that the recovery test was written to answer "what happens after a rotation" and the TOTP one to answer "does S-KEY-4 have a test". The second question is answerable without reaching the thing it names, and that is the whole hazard §5 describes.
+
+### A secret the server cannot read answers as a factor nobody can hold
+`E-428` · factor-totp · S-KEY-4, error surface, and a fourth hand-off
+
+**Context.** `decryptSecret` let `KeyError` out. `KeyError` is neither `VelveError` nor `ConcealedError`, so `toVisibleFailure` mapped it to `internal_error`, 500, `unhandled_exception`. Measured on the verify path: `code=internal_error status=500 logged=unhandled_exception`, against 401 for every other failure there. §3.15 D.3 declares 200, 401 and 429 for that route. So an account whose TOTP secret predates a key rotation was distinguishable from every other account by status code, and S-KEY-4's carefully named error was raised at the throw site and thrown away at the boundary.
+**Rejected.** (a) Leaving it and naming only the assembly-time check that would prevent it. (b) Adding a `totp_secret_unreadable` reason to `ConcealedReason`.
+**Reason.** (a) leaves a live oracle in the request path against a hazard that only a future feature removes. (b) is the honest reason to log and it means editing `src/core/http/error-map.ts`, which decides what the outside learns and belongs to no wave-3 feature — so it is reported instead of taken. Of the three reasons that already exist on this path, `totp_not_confirmed` is the one whose class actually contains this case: a secret the server cannot read is a credential that cannot serve as a factor, exactly like one that was never confirmed. The `KeyError` is caught at the single place the secret is decrypted, so all three paths that decrypt answer alike.
+**Price.** Two, and both are real. The operator now sees `totp_not_confirmed` where the true cause is a dropped key version, which is a worse diagnostic than the 500 it replaces — the 500 at least carried the `KeyError` message as the failure's `diagnostic` field. That is the cost of not owning `error-map.ts`, and it is why the second half of this matters: **`auth-core` should hold every distinct `totp_credential.key_version` against the ring at assembly time and refuse to start on one that has left it**, so the operator is told once, at the moment they drop the version, rather than never. That is E-179's shape, it is the fourth hand-off this feature owes and the first one it did not name in advance, and until it exists the only signal a dropped version produces is users who cannot sign in.
+
+### E-410 says the verification returns void, and it returns the resolution
+`E-429` · factor-totp · correction to E-410
+
+**Context.** E-410's closing sentence reads "The verification returns void; whoever issues the session owns that transaction." The first half was true when it was written and stopped being true two commits later, when `verify` began returning the `PendingResolution` so the caller does not resolve the pending state twice. The comments in `service.ts` that cite E-410 say it correctly; only the entry does not.
+**Rejected.** Editing the sentence in E-410.
+**Reason.** §6: new information about an old decision belongs in a new entry that cites the old one, never in the old entry's text. The argument E-410 makes is unaffected — the point was that this feature issues no session and consumes no pending row, and that is still what it does.
+**Price.** A reader of E-410 alone gets the return type wrong. That is the cost of the rule, and it is cheaper than a log whose entries are quietly kept current.
+
+### This branch made a knip exemption stale and did not say so
+`E-430` · factor-totp · knip, report
+
+**Context.** `knip.json` lists `otpauth` in `ignoreDependencies`. This is the first feature to import it, so the exemption is now stale: on `main` knip emits one configuration hint, on this branch two. `knip` still exits 0, and the file is correctly outside this feature's set. E-426 discusses knip at length and does not mention it.
+**Rejected.** Removing the entry from `knip.json`, which the brief for this feature forbids by name.
+**Reason.** §5 says a feature that needs a change outside its area stops **and reports it**. The stopping happened; the reporting did not, and an unreported finding that produces a hint instead of a failure is exactly the kind that stays unreported for a wave. `@simplewebauthn/server` is in the same line and will go stale the same way when `factor-webauthn` lands; both belong to one central cleanup.
+**Price.** Nothing operational — a hint is a hint. The entry exists because the omission was found by a reviewer reading the diff and not by this writer noticing a number change from one to two.
+
+### T-REST-3's third leg was not asserted
+`E-431` · factor-totp · test plan coverage
+
+**Context.** T-REST-3's threshold is "3/3: success, refusal, success". The suite asserted the first two — a code is accepted, the same code is then refused — and never redeemed a second, different code afterwards. The behaviour was correct; the assertion was absent.
+**Rejected.** Treating the existing "spends the code that was used and leaves the other nine" as the third leg.
+**Reason.** That test counts rows, and a count is not a redemption: a set could hold nine rows none of which can be spent, and it would pass. The third leg is now its own case — accepted, `invalid_recovery_code`, accepted, with eight left. A planted fault that makes a partly-spent set unreadable turns it red at exactly that assertion.
+**Price.** The gap came from writing the tests around the storage rule rather than around the threshold's three words, and nothing but reading the threshold catches that.
