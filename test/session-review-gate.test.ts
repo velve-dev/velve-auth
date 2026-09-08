@@ -73,10 +73,17 @@ describe("how far the blindness reaches", () => {
 		expect(scanned.statementsScanned).toBeGreaterThan(0);
 	});
 
-	it("cannot reach the module through the built package, which does not contain it", () => {
+	/**
+	 * This claimed the opposite until `createVelveAuth` came into being: nothing imported the session
+	 * repository, so nothing shipped it, and the built-package scan was blind to it whatever it held.
+	 * The assembly gives it a caller, the artefact is now in `dist`, and the scan reads it. Changed by
+	 * `auth-core`, outside its file ownership, because the fact the expectation pinned has changed.
+	 */
+	it("reaches the module through the built package, which now contains it", () => {
 		const built = scanBuiltPackage();
 
 		expect(built.built).toBe(true);
-		expect(existsSync(`${repositoryRoot}dist/core/db/repositories/session.mjs`)).toBe(false);
+		expect(existsSync(`${repositoryRoot}dist/core/db/repositories/session.mjs`)).toBe(true);
+		expect(built.offenders).toEqual([]);
 	});
 });

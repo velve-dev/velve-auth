@@ -93,6 +93,33 @@ not a dependency of this package — the parameter is typed structurally.
 `assertSchemaUpToDate` is the version contract: a database behind the package is
 a startup error, not a warning.
 
+**The instance**, from `@velve/auth`. `createVelveAuth` reads the configuration,
+refuses to start on one that cannot be made safe — a root key shorter than 32
+bytes, an empty origin list, a username-only mode without recovery codes, Argon2
+parameters below the floor — and returns the route table, the server methods and
+the maintenance sweep. Sessions, sign-out and the state between password and
+second factor work end to end today; sign-up, sign-in, the password flows, the
+second factors and OAuth are being added by the features behind this one.
+
+```ts
+import { createVelveAuth, rootKeyProvider } from "@velve/auth";
+
+const auth = createVelveAuth({
+  database: driver,
+  identity: { mode: "email" },
+  keys: rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: process.env.VELVE_ROOT_KEY! } }),
+  origins: ["https://app.example.com"],
+  email: { send: async (message) => { /* … */ } },
+});
+
+await auth.migrate();
+```
+
+Every security-relevant setting defaults to the safe value, and an installation
+that weakens one gets a line in its log at start naming the option. There is no
+option that switches off the origin check, the rate limiter, PKCE or the state
+check, and none that keeps other sessions alive across a password change.
+
 [`DOCUMENTATION.md`](./DOCUMENTATION.md) has the schema table by table and every
 option of both functions.
 

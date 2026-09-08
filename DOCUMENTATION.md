@@ -3155,23 +3155,291 @@ this paragraph is the first thing it does.
 
 ## The instance
 
-Reserved for `auth-core` (wave 3). Architecture 3.12 and 3.15: `createVelveAuth`
-and the configuration it takes, the errors a bad configuration raises at start,
-the namespaces of the surface it returns, the route table every module's routes
-are assembled into, the package entry points those become, and the API snapshot
-the main gate compares a branch against.
+`createVelveAuth` is the assembly point. It reads the configuration, refuses to
+start on a configuration that cannot be made safe, builds the modules the
+chapters above describe, and returns one object carrying the route table, the
+server methods and the maintenance sweep.
 
-It stands last because it is the assembly point. Every chapter above describes a
-module as it is imported from `src/core/…`; this one describes what wires them
-together and what `@velve/auth` finally exports. It is the "whoever owns
-`src/index.ts`" the Passwords chapter defers to and the "instance the assembling
-feature builds" the Sessions chapter names, and it cannot be written before the
-things it assembles are.
+```ts
+import { createVelveAuth, rootKeyProvider } from "@velve/auth";
+import { createNodePostgresDriver } from "@velve/auth/pg";
+import { toWebHandler } from "@velve/auth/http";
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `auth-core`'s
-partition of this file: that feature appends here and nowhere else, and removing
-this paragraph is the first thing it does.
+const auth = createVelveAuth({
+  database: createNodePostgresDriver(pool),
+  identity: { mode: "email" },
+  keys: rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: process.env.VELVE_ROOT_KEY! } }),
+  origins: ["https://app.example.com"],
+  email: { send: async (message) => { /* … */ } },
+});
 
-### Nothing is documented here yet
+await auth.migrate();
+export default toWebHandler(auth);
+```
 
-`auth-core` replaces this heading with its own sub-tree.
+`createVelveAuth` is synchronous. Everything that needs the database — the
+migrations and the key-ring report — is in `migrate`, which is the one
+asynchronous start step and is meant to be awaited before the first request.
+
+### `createVelveAuth(config)`
+
+```ts
+createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M>
+```
+
+`M` is inferred from `config.identity.mode`, and everything downstream hangs off
+it: in `"email"` the instance has no `username` namespace at all, so reading
+`auth.username` is a compile error that names the mode rather than a runtime
+`undefined`.
+
+`VelveAuthConfig<M>` is `BaseConfig<M> & RecoveryCodesRequirement<M>`. The second
+half is one line and carries a whole requirement: in the mode `"username"` there
+is no address to send a reset to, so `recoveryCodes` is **required**, and leaving
+it out is a compile error before it is a start error (S-DEFAULT-4).
+
+Both of those sentences depend on one detail that is easy to undo. `M` has
+exactly one inference site — `identity`, whose type is `IdentityConfigurationInput
+& { readonly mode: M }`, and the `{ mode: M }` half is what TypeScript infers
+from. Written as a single conditional type, which reads more naturally, the whole
+position becomes non-inferrable: `M` falls back to the union, the conditional
+distributes, and both promises above quietly stop holding while still compiling.
+It shipped that way once. If you change the shape of `identity`, check that
+`createVelveAuth` on a `"username"` mode without `recoveryCodes` still fails to
+compile (E-349).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `database` | `Driver` | — | the driver from `@velve/auth/pg`, `/postgres-js` or `/neon`; the only way a connection enters |
+| `identity` | `IdentityConfig<M>` | — | which sign-in names exist; decides the CHECK constraint and the instance type |
+| `keys` | `KeyProvider` | — | the root key and the ring; all six purpose keys are derived from it |
+| `origins` | `readonly string[]` | — | the allowed origins; an empty list is a start error, not a blanket permission |
+| `password` | `PasswordConfig` | Passwords chapter | Argon2id parameters, legacy schemes, length bounds, `validate` |
+| `session` | `Partial<SessionConfig>` | Sessions chapter | deadlines, cookie name, `SameSite`, freshness window |
+| `sessionMetadata` | `"truncated" \| "full" \| "none"` | `"truncated"` | how much of the address and the user agent is stored (L-10) |
+| `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts |
+| `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
+| `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
+| `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
+| `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
+| `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
+| `schema` | `string` | `"velve"` | the PostgreSQL schema name |
+| `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
+| `log` | `(level, message, fields?) => void` | a sink that drops everything | where the true reason of a refusal is written |
+
+There is no option that disables the origin check, the rate limiter, PKCE or the
+state check, and none that keeps the other sessions alive across a password
+change (S-DEFAULT-2, S-DEFAULT-3). Those names are absent from the type, and a
+test reads the list of them from a constant and searches the assembly for each.
+
+**`log` has no default sink.** The core may not write to `console`, so a library
+that ships one would have to break its own rule; the default therefore drops
+everything, and an installation that wants to see the true reason behind a
+refusal (S-ENUM-6) has to pass a sink. This is the one place in the reference
+where a default is *not* the safe choice made for you, and it is called out here
+because nothing else would tell you.
+
+### What refuses to start
+
+`VelveStartupError` carries a `code`:
+
+| `code` | Raised when |
+|---|---|
+| `keys_missing` | `keys` is absent or is not a `KeyProvider` (S-KEY-6) |
+| `keys_unusable` | the provider answers for no purpose, so nothing protected could be written |
+| `origins_empty` | `origins` is empty |
+| `email_callback_missing` | the mode has addresses and `email.send` is absent |
+| `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
+
+Two more refusals come from the modules and keep their own error types: a root
+key shorter than 32 bytes raises `KeyError` while `rootKeyProvider` is being
+built, and Argon2id parameters below the floor raise
+`PasswordConfigurationError` inside `createVelveAuth` (S-DEFAULT-6). Five start
+attempts, four refusals, one instance — that is the shape T-KEY-6 asks for.
+
+### `SECURITY_OPTIONS`
+
+```ts
+SECURITY_OPTIONS: readonly { option: OptionKey; safeDefault: string; weakenedBy: string }[]
+```
+
+Every key of the configuration type appears here with the value the library uses
+when the key is absent and with the sentence that says what weakening it looks
+like. It is not documentation about the defaults; it *is* the list a test reads,
+and a key added to the configuration without a row here fails that test rather
+than surfacing in an advisory (S-DEFAULT-1, T-DEFAULT-1).
+
+At start the assembly writes one `warn` line per weakened option, naming the
+option and the value chosen — never two lines for the same option, so the lines
+can be counted. An option left at its default produces nothing.
+
+A default configuration writes no line at all. The counters live in
+`velve.rate_bucket`, through `createRateLimiter` from `core/limit`; the assembly
+translates `globalPerRoute.alertThresholdPerMinute` into the bucket rule that
+module takes, which is the same statement in its vocabulary (E-356).
+
+### `TRUST_LEVEL_EVENTS`
+
+```ts
+TRUST_LEVEL_EVENTS: readonly ["sign_in_password", "sign_in_passkey", "second_factor_totp",
+  "second_factor_webauthn", "second_factor_recovery_code", "password_change",
+  "password_reset", "identity_linked"]
+TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS: Readonly<Record<TrustLevelEvent, boolean>>
+```
+
+The eight events after which the previous session row is gone and a new token
+has been issued (S-FIX-1). The second constant answers the question that
+separates the two re-issue methods: `password_change` and `password_reset` take
+every other session with them, the other six do not. Both were single call sites
+waiting to be got wrong; a table-driven test reads the length of the first
+constant and fails if the number of cases does not match it.
+
+### The instance
+
+```ts
+interface AuthInternals {
+  readonly routes: readonly AnyRoute[];
+  readonly identityMode: IdentityMode;
+  readonly errorCodes: readonly VelveErrorCode[];
+  readonly maintenance: { sweep(): Promise<SweepReport> };
+  migrate(): Promise<MigrationReport>;
+  close(): Promise<void>;
+  readonly http: HttpEnvironment;
+}
+```
+
+`routes` is the data structure `toWebHandler` reads and the client will be built
+from; it is present at runtime because a client that has to guess is a client
+that guesses wrong. `http` is what `toWebHandler(auth)` takes.
+
+`migrate()` applies the core migrations for the configured mode, then asks the
+key provider for every purpose, then holds the `key_version` values already
+stored in `password_credential` against the ring. A version that has left the
+ring locks out everyone whose row was written under it; the report is addressed
+to the operator and is made here, once, rather than on every sign-in, where it
+would also split accounts into those written before a rotation and those written
+after.
+
+`close()` resolves without doing anything. The connection came from the
+application and goes back to it; the library never opened one.
+
+`maintenance.sweep()` deletes expired rows from the seven tables that carry a
+`*_sweep_idx` — `session`, `one_time_token`, `pending_authentication`,
+`totp_used_step`, `webauthn_challenge`, `oauth_flow` and `rate_bucket` — and
+reports how many rows went from each (L-11). It has no HTTP route, on purpose.
+
+### The namespaces
+
+| Namespace | Methods |
+|---|---|
+| `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
+| `auth.session` | `resolve`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
+| `auth.pending` | `resolve`, `cancel` |
+| `auth.user` | `findById`, `findByEmail`, `disable`, `enable`, `delete` |
+| `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
+
+Every method reached through a route takes the five call fields beside its own
+input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
+`ipAddress` and `userAgent`. `origin` is required and not optional because a
+security field that may be omitted is omitted; the origin check runs on the
+direct server call exactly as it runs on the HTTP path (S-CSRF-1).
+
+`auth.user.*` has no routes and never will. The library has no permission model
+and cannot decide who may call `disable`; taking that over HTTP unchecked would
+be the opposite of a safeguard. `disable` takes a `reason`, which is written to
+the log and never stored — an audit log is out of scope — and it leaves the
+session rows standing, so each of them ends at its next resolution with
+`account_disabled`.
+
+`auth.pending.resolve` names only the factors still open and never any user
+data, and it mints no actor: the intermediate state is structurally unable to
+become a session.
+
+### The intermediate state between password and second factor
+
+`velve.pending_authentication` holds it, `__Host-velve_pending` carries its
+token, and it lives five minutes. Exactly four routes accept it —
+`POST /factor/totp/verify`, `POST /factor/webauthn/authenticate/start`,
+`POST /factor/webauthn/authenticate/finish` and `POST /factor/recovery/verify` —
+and those four names are one constant, `PENDING_CALLER_ROUTES`, so the count a
+test reads and the list a route is named from cannot drift apart (S-CACHE-4).
+Every other route ignores the cookie completely, and answers a request carrying
+only it byte for byte as it answers a request carrying no cookie at all.
+
+```ts
+createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationService
+```
+
+| Method | Meaning |
+|---|---|
+| `begin({ userId, factorsCompleted, availableFactors })` | writes the row and draws the token |
+| `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
+| `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
+| `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
+| `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
+
+```ts
+createSecondFactorCompletion({ driver, schema?, session?, sessionMetadata? })
+  .complete({ pendingToken, factor, observed }): Promise<IssuedSession>
+```
+
+The operation that finishes a second factor: it consumes the pending row and
+inserts the session **in one transaction**, so a failure between the two leaves
+neither effect. Without it the two halves live in different features — the
+pending row in this module, the session in `core/session` — and each can only
+reach one of them, which is how a spent intermediate state ends up with no
+session behind it. The resulting session carries the factors the pending row had
+completed plus the one just proved (S-FIX-1, S-RACE-5).
+
+Five attempts, then the row is deleted and the attempt starts again at the
+password (L-8). The count and the deletion are one transaction, so a fifth
+failure cannot leave the row behind. A token the service cannot find is reported
+as exhausted rather than as a fresh budget.
+
+`resolve` reads the row, the account's `disabled_at` and the factors the account
+has actually enrolled in one statement, so no second round trip decides what the
+caller may try. An unconfirmed TOTP enrolment counts as no factor: an abandoned
+setup is a leftover row, not a locked-out user.
+
+A disabled account answers as an unknown state rather than with the code L-4
+reserves for a disabled account. That code belongs to the resolution of a
+session that already exists; this is a sign-in still in progress.
+
+### `@velve/auth/testing`
+
+```ts
+createTestClock(start?: Date): TestClock   // { now(), set(instant), advanceBy(ms) }
+```
+
+The `Clock` a test hands to `clock`. It answers a copy of its instant, so a
+caller cannot move it by mutating an answer, and it starts at a fixed instant
+when it is given none, so a test that forgets to set one is still deterministic.
+
+Two barriers stand around this subpath and are checked with a count: the core
+imports it zero times, and every name it exports appears in `dist/testing.mjs`
+and in no other shipped artefact.
+
+The deterministic-randomness setter architecture 6.19 also asks for is **not
+here**, and the reason is a check rather than an oversight: the library draws
+every secret in `core/token/random.ts`, and a test asserts that the name
+`crypto.getRandomValues` appears in that file and nowhere else in anything the
+package ships. Every way of redirecting the generator from this subpath names it
+here and fails that scan. The switch belongs in `core/token/random.ts` as a
+module-level settable source; until it is built there, a test that needs a
+reproducible seed brings its own generator.
+
+### What is not assembled yet
+
+The instance is real and the routes it declares work end to end, but it is not
+the full table of 3.15 D.3. Absent, because the modules behind them belong to
+other features and this one may not write their files:
+
+- `signUp`, `signIn` and the password flows — the password module exists, the
+  flows over it do not.
+- `factor.totp`, `factor.webauthn`, `factor.recovery` and `signIn.passkey`.
+- everything OAuth, and the plugin interface.
+- `GET /pending` and `POST /pending/cancel`. The HTTP layer decides which routes
+  may read `__Host-velve_pending` by their `caller` being `"pending"`, and these
+  two need to read the cookie without being among the four that accept it as
+  authorization. Resolving that needs a change in `core/http/web-handler.ts`.
+  The two methods exist on the surface and take the token directly.
+

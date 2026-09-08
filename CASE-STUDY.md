@@ -1744,6 +1744,303 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 
 **Renumbered.** These five entries are numbered E-500 … E-504. They were written as E-149 … E-153, and those numbers now belong to `docs/wave-3-preparation` — so anything citing them for this branch's decisions resolves to the wrong entries, which is precisely the failure §6 names and the reason this is written down instead of renumbered silently. The gate-and-infrastructure block E-140 … E-159 was handed to three branches in the same hour, and this branch and `docs/wave-3-preparation` both drew from the same block upward for entirely different decisions. No writer took a number it did not own. The coordinator who made the allocation had been told by a gate two hours earlier, in as many words, to close the membership-versus-ownership gap before wave 3, precisely because four parallel writers would hit it; that was not done, and the same allocation then created the first instance of it. Each branch stayed green on its own because `test/decision-log.test.ts` asked whether a number falls inside *some* declared range and never whether it falls inside the range its branch was given — membership is not ownership, and the check tested only the first. §6 calls the reserved range the mechanism and the test the backstop; this is the case where the mechanism failed and the backstop could not see it. That gap is closed on `main` by E-159, which is why this entry can state the rule and point at the check that now enforces it. The reallocation itself moved twice: this branch was first given E-495 … E-499, and by the time it could be applied `docs/wave-3-preparation` had spent those five on its own corrections, so the numbers are E-500 … E-504 — which is the same allocation pressure that caused the collision, one round later and caught before it landed rather than after.
 
+### The intermediate state is built before the assembly, because two features wait on it
+`E-320` · auth-core · ordering
+
+**Context.** This feature owns both `src/core/factor/pending/**` and `createVelveAuth`. The assembly is the larger and more interesting piece; the pending module is small. `factor-totp` and `factor-webauthn` cannot write their verify routes without the signatures the pending module publishes, and both were already running.
+**Rejected.** Building the assembly first and the pending module afterwards, in the order of importance.
+**Reason.** Importance is the wrong sort order when other people are blocked. The barrel was written, tested against a real database, committed and pushed before a single line of `createVelveAuth` existed, and the commit message names the four route names the factor features have to use. The cost of getting the assembly slightly later is borne by one feature; the cost of the barrel arriving late is borne by two, and they cannot even guess at the shape while they wait.
+**Price.** The pending module was designed without the assembly that consumes it in front of the author, so its signatures were chosen from 3.6 and B.6 rather than from a call site. `begin` takes `availableFactors` as an argument even though `resolve` computes the same list from the database — a caller could pass a list that disagrees with the row. Nobody noticed until the assembly was written, and by then two features had the signature.
+
+### No method here takes an actor, and the narrower rule is why
+`E-321` · auth-core · ownership
+
+**Context.** `velve.pending_authentication` has a `user_id` column, and S-OWNER-1 says every repository method reaching a table with one takes an `Actor`. There is no actor to take: the row is written between the password and the second factor, when there is no session, and every method addresses the row by `token_sha256`.
+**Rejected.** (a) Threading an actor through anyway, minted from the user id the password path just resolved. (b) Writing the methods without an actor and without saying anything.
+**Reason.** (a) is the hole E-93 walls up — a string in, an actor out, and nothing in the signature says where the string came from. E-242 already found the rule's true form for exactly this case: *every method that reaches rows through their owner demands an actor; whoever reaches them through a secret has already proven it.* Each statement here carries the marker `/* no owner predicate: S-OWNER-2, E-242, … */` that `test/db-static-sql.test.ts` demands, so the exception is a named reason and not an omission.
+**Price.** The rule now has two forms in three modules, and only the longer one is true. A reader who arrives with S-OWNER-1 in mind reads four signatures without an actor and has to find E-242 to learn that this is the rule rather than a breach of it. The marker points at the requirement, not at the entry that narrowed it.
+
+### The factors still open are read in the same statement as the row
+`E-322` · auth-core · pending
+
+**Context.** `PendingAuthentication.availableFactors` is not a column. It follows from what the account has enrolled: a confirmed TOTP credential, any WebAuthn credential, any recovery code. Those three tables belong to the two factor features.
+**Rejected.** (a) An injected `enrolledFactorsOf(userId)` seam the assembly fills. (b) A second query after the row is found.
+**Reason.** (a) would have made the module the factor features are blocked on depend on the factor features — they would have had to supply a reader before they could use the barrel. (b) is two round trips where S-CACHE-2 answers the same question for a session in one, and the second one would be a place a cache could later be introduced. Ownership is about files, not tables: three `EXISTS` subqueries in this feature's own SQL touch no file another feature writes.
+**Price.** This module now knows what "enrolled" means for three factors it does not own. If `factor-totp` decides that a credential with `confirmed_at` set but a revoked secret is not enrolled, the predicate here is wrong and nothing connects the two definitions. The predicate is one line in one statement, and that is the whole of the mitigation.
+
+### The four route names are one constant, and it lives here
+`E-323` · auth-core · S-CACHE-4
+
+**Context.** S-CACHE-4 says exactly four routes carry `caller: "pending"`, and names them. Two of the four will be declared by `factor-totp` and two by `factor-webauthn`; neither can see the other's table, and this feature merges before either.
+**Rejected.** (a) Each factor feature naming its own routes and a test counting the total. (b) The test hard-coding the four names.
+**Reason.** (a) has no place where the number four is written down, so the failure mode — a fifth route — is invisible until someone counts by hand. (b) puts the list in the test, where a writer adding a route does not look. `PENDING_CALLER_ROUTES` is exported from the module both factor features already import, so the list a route is named from and the list the count is read from are one list, and a fifth entry fails the test that says there are four.
+**Price.** A constant naming routes that do not exist yet, in a module that has nothing to do with routing. It reads as misplaced until the two factor features land, and if either names a route differently the mismatch shows up as a route that is silently not in the set rather than as a compile error.
+
+### The attempt count and the deletion are two statements, because one would have been undefined
+`E-324` · auth-core · L-8
+
+**Context.** L-8 gives an intermediate state five attempts; the fifth deletes the row. The obvious form is a single statement with two data-modifying CTEs — `UPDATE … RETURNING` feeding a `DELETE` — so that a concurrent request cannot see the count without the deletion.
+**Rejected.** The single statement with two modifying CTEs.
+**Reason.** PostgreSQL executes the sub-statements of a data-modifying CTE against the same snapshot and does not support two of them touching the same row; the outcome is not merely surprising, it is undefined. It would have looked atomic, tested green on a quiet machine, and been wrong under the concurrency it exists for. Two statements inside `driver.transaction` are atomic for the same reason and are defined.
+**Price.** A round trip more on the failing path, which is the path an attacker drives. The transaction also holds a row lock on the pending row for its duration, and this module takes no lock on `velve.user` first — permitted, because it takes no explicit row lock at all, so `pnpm check:lock-order` has nothing to see and the ordering rule of §7 is neither obeyed nor broken here.
+
+### E-119 is not paid, and the reason is that paying it moves a file this feature does not own
+`E-325` · auth-core · hand-off, not closed
+
+**Context.** E-119 parked `Session` and `PendingAuthentication` in `core/http/caller.ts` and said they must be merged once `core/session` exists. It does, and this feature is the first that sees both.
+**Rejected.** Moving the two interfaces into `core/session` and `core/factor/pending` and re-exporting them from `core/http`.
+**Reason.** `core/http/caller.ts` belongs to wave 1 and every consumer of the two types imports it; moving them edits that file, `route.ts`, `pipeline.ts` and every module that reads them — five files across three features, none of them this one's. §5 is not a formality here: two of those files are being edited on other branches this week. The merge is a refactor with no behaviour, and a refactor with no behaviour is the cheapest thing to defer and the most expensive thing to collide on.
+**Price.** The entry stays open into a fourth wave, and this feature is the last one that will have a natural reason to close it — after this, `core/http/caller.ts` is simply where those types live and nobody will remember it was meant to be temporary. That is how a parked type becomes a permanent one. Whoever owns `core/http` next should close it as its first act, not its last.
+
+### The deterministic-randomness setter is not built, and a check is the reason
+`E-326` · auth-core · 6.19, not delivered
+
+**Context.** 6.19 asks `@velve/auth/testing` for a settable clock and a settable random seed, with three barriers around the second. The clock was straightforward. The seed was not.
+**Rejected.** (a) Patching `globalThis.crypto.getRandomValues` from the testing subpath — written, working, and reverted. (b) Adding a module-level settable source to `src/core/token/random.ts`.
+**Reason.** (a) was written first and passed its own tests. It then failed `test/token-review-randomness.test.ts`, which scans everything the package ships and requires the string `getRandomValues` to appear in `core/token/random.ts` and nowhere else — a check that wave 2 deliberately widened beyond `src/core` for exactly this class of second caller. Every way of redirecting the generator from this subpath names it here. (b) is the right design and edits a file this feature does not own. The check is not in the way of the work; it is telling the truth about where the work belongs.
+**Price.** One of the three requirements of 6.19 is unfulfilled, and the barrier that would have proved it — zero hits for the setter name in the shipped core entry point — has no name to search for. A test that needs a reproducible seed brings its own generator, which is precisely the "every module writes its own loop" state E-63 exists to prevent, one level up. Reported rather than worked around; the temptation to widen the scan by one file was real and would have cost the scan its meaning.
+
+### Barrier three is widened from one name to every name, because the name it was written for does not exist
+`E-327` · auth-core · 6.19
+
+**Context.** 6.19's third barrier is "zero hits for the setter name in `dist/index.js`". The setter does not exist (E-326), the package ships `.mjs` (E-04), and `unbundle: true` splits an entry point across files, so `dist/index.mjs` is a re-export and would have said nothing either way.
+**Rejected.** (a) Writing the barrier as specified and letting it pass vacuously. (b) Leaving it out until the setter exists.
+**Reason.** (a) is the failure §5 warns about in as many words: a scan that reports success because it matched no files. (b) leaves the packaging boundary unchecked while the subpath already exports something. The barrier now reads every name the testing subpath exports and asserts each appears in `dist/testing.mjs` and in no other shipped artefact — stronger than the original, non-vacuous today, and still correct on the day the setter lands.
+**Price.** A barrier that no longer matches the words of 6.19, so a reader comparing them finds a discrepancy and has to come here. The count it states — at least nine artefacts, at least two names — is a floor rather than the exact figure, because the exact figure changes with every entry point added.
+
+### The system clock lives in the entry point, one layer above the core
+`E-328` · auth-core · E-231, closed
+
+**Context.** E-231 refused a built-in fallback clock in the session service and said the default "comes into being one layer up, where `new Date()` is allowed". `createVelveAuth` is the layer that was meant, and it is in `src/core/auth/`.
+**Rejected.** Putting `const SYSTEM_CLOCK = { now: () => new Date() }` in `src/core/auth/instance.ts`, which is where the assembly is.
+**Reason.** It was put there first, and `test/keys-static-scan.test.ts` refused it: `new Date(` is forbidden anywhere in `src/core`, without exception, so that no secret grows out of a clock. The rule is blunt — a default clock is not a secret — but the assembly is inside `src/core` and the rule has no carve-out, and inventing one for the first caller that finds it inconvenient is how a scan stops meaning anything. `assembleVelveAuth(config, defaultClock)` takes the clock as a required argument and `src/index.ts` supplies it. That is E-231's price paragraph made literal: if the caller forgets, it is a type error.
+**Price.** The public entry point now contains a function body and a constant rather than only re-exports, which is a shape nobody else in this package has. `createVelveAuth` and `assembleVelveAuth` are two names for one thing, and a reader who imports from `core/auth/instance.js` directly — the tests did, until they were changed — gets the one without a default and has to know why.
+
+### The freshness window is read once and derived, not configured twice
+`E-329` · auth-core · E-233, closed
+
+**Context.** E-233 recorded that freshness is checked in two places with two configuration fields — `HttpEnvironment.freshnessWindowInSeconds` for the route gate and `SessionSettings.freshnessWindowMs` for the actor mint — and that whoever assembles the instance has to derive one from the other or two windows apply.
+**Rejected.** Exposing both fields in `VelveAuthConfig` so an operator could set them independently.
+**Reason.** Two fields for one window is two answers to one question, and the failure is silent: a route that admits a request the actor mint then refuses, or the reverse. The configuration has one field, `session.freshnessWindow`, and the assembly computes the seconds from the milliseconds the session settings resolved. A test reads both numbers off a built instance and compares them.
+**Price.** The two checks still differ in two ways the assembly cannot reconcile. The pipeline compares the **process** clock against a `created_at` the **database** wrote, and it uses `>=` where `isSessionFresh` uses `<`. A clock skew of a second between application and database now shows up as a route refusing a session the service would have called fresh, and the boundary instant belongs to different sides of the two comparisons. Deriving the window removed one of three disagreements; the other two are in files this feature does not own.
+
+### The key-ring report runs in `migrate`, because the surface is synchronous
+`E-330` · auth-core · E-179, closed as far as it can be
+
+**Context.** E-179 moved the "a stored key version has left the ring" report off the sign-in path and onto assembly, "loud, with the missing versions in the error", and recorded that until assembly calls it the operator error is silent. `assertStoredKeyVersionsAreKnown` has been exported and uncalled since wave 2.
+**Rejected.** (a) Calling it from `createVelveAuth` as a floating promise and logging the rejection. (b) Adding an `await auth.start()` to the surface.
+**Reason.** `createVelveAuth` is synchronous — 3.15 B declares it so — and the check is a query. (a) is an unhandled rejection in every application that has not migrated yet, because the table does not exist, and a loud report that fires spuriously stops being read. (b) adds a method to a surface 3.15 B fixes. `migrate()` is already asynchronous, already the step an operator runs at startup, and already the only place where the table is guaranteed to exist.
+**Price.** An application that never calls `migrate` — one that applies the shipped SQL by hand, which the schema subpath exists to support — never runs the check, and for that operator E-179's silence is unchanged. The check is also now ordered after the migrations rather than before the first request, so it reports at deploy time and not at the moment the ring actually changes.
+
+### `SECURITY_OPTIONS` covers every option, not only the security-relevant ones
+`E-331` · auth-core · S-DEFAULT-1
+
+**Context.** T-DEFAULT-1 asks for a constant holding "all security-relevant keys" of the option type, with the default of each as a fixture, and adds that the test must fail if the option type carries a key that is not in the constant.
+**Rejected.** Listing only the keys that are plausibly security-relevant — `sessionMetadata`, `trustedProxies`, `rateLimit`, `webauthn`, `session`.
+**Reason.** The two halves of the requirement contradict each other unless the list is total: a partial list cannot also be the list every key must appear in. And the judgement "this option is not security-relevant" is exactly the judgement that produced `revokeSessionsOnPasswordReset` — a field declared, never set, and read as `undefined` on the reset path. Every key stands in the list, and the ones nothing can weaken say so in a sentence rather than by being absent.
+**Price.** Sixteen rows of which eight say "nothing weakens it", which reads as padding until you notice that adding an option without a row fails a test. The `safeDefault` column is prose, not a value, so it documents the default rather than checking it — a default that drifts from its row is caught by no assertion here.
+
+### The rate counters are in memory, and the operator is told the same way as for any other weakening
+`E-332` · auth-core · rate limiting
+
+**Context.** `HttpEnvironment` requires a `RateLimiter`; 3.9 puts the buckets in `velve.rate_bucket`; `src/core/limit/` belongs to the `rate` feature of this same wave and was empty at this branch point. Without a limiter there is no instance.
+**Rejected.** (a) Taking the limiter from the configuration, so the application supplies one. (b) Declaring the seam and shipping an assembly that cannot be constructed until `rate` merges. (c) A limiter that always allows.
+**Reason.** (a) is `disableRateLimit` with a better name — S-DEFAULT-3 forbids the option, and "pass a limiter that says yes" is that option. (c) is the same thing without the honesty. (b) would have meant this feature could not test anything it built. The assembly holds the same token-bucket arithmetic in memory and reports it at start as a weakening, in the same line format as every other weakening, because a counter per worker is a counter an attacker divides by the number of workers.
+**Price.** Roughly forty lines that duplicate a sibling feature's work and are meant to be deleted, and a weakening every installation carries until they are. Worse, it is a weakening that cannot be turned off by configuration, so the S-DEFAULT-1 line appears in every start-up log and will be the line operators learn to ignore — which is what makes the next one invisible. Replacing it is one import. **Correction after the main gate:** `rate` merged while this branch was in review, and the replacement was one import, as promised. `createInProcessRateLimiter` is gone; the assembly calls `createRateLimiter` from `core/limit` with the driver, the key provider, the schema and the clock, and the standing weakening line is gone with it — a default configuration now logs nothing at all, which is what S-DEFAULT-1 always meant. The only thing the placeholder cost that could not be refunded is the two tests that asserted the standing line and had to be changed back; the forty lines were deleted unread. It is worth recording that the prediction held exactly, because the argument for writing throwaway code is usually that prediction, and it is usually wrong.
+
+### `log` has no default sink, and the reference says so where a reader will meet it
+`E-333` · auth-core · S-ENUM-6
+
+**Context.** S-ENUM-6 requires the true reason behind every refused sign-in to be written server-side. The pipeline already writes it, through `HttpEnvironment.log`. The assembly has to give that field a value.
+**Rejected.** (a) A default sink writing to `console`. (b) Making `log` a required configuration field.
+**Reason.** (a) cannot be written: `console` is forbidden in `src/core` by the style rules, and the assembly is in `src/core`. Putting the default in `src/index.ts` beside the clock was possible and was rejected for a different reason — a library that prints to standard output by default is a library that prints to standard output in production. (b) is defensible and was close; it was not taken because 3.15 A.2 does not list `log` among the required fields and this feature is not the place to add a required field to a published option table.
+**Price.** S-ENUM-6 is unfulfilled by default. An installation that configures nothing gets a sink that drops everything, and the requirement's promise — that the true reason is always recorded — holds only for installations that opted in. The reference names this explicitly as the one place a default is not the safe choice made for the reader, because nothing else in the package would tell them.
+
+### The resolution is remembered for one request, and the key is the object that request produced
+`E-334` · auth-core · S-CACHE-1
+
+**Context.** The pipeline hands a handler a `Session`. Minting an actor needs the whole `SessionResolution`, including the database instant freshness is judged against. A handler that resolves again makes two queries per request, and T-CACHE-1 fixes the ratio at exactly one.
+**Rejected.** (a) Resolving a second time in the handler. (b) Keeping a map from session id to resolution.
+**Reason.** (a) breaks the ratio the requirement states. (b) is a session cache, which is the single thing 3.5 forbids most emphatically and the cause of the comparison system's worst published flaw. What is stored is a `WeakMap` keyed by the `Session` **object** the resolver just built — a fresh object on every request, unreachable from any later one, and collected with it. It cannot answer a second request because a second request has a different key.
+**Price.** A `WeakMap` in the assembly that a reader scanning for cache structures will find, and it will look exactly like the thing that is forbidden. The comment beside it is the only thing separating the two, and a comment is what §3 says a design should not need. The alternative was worse; this one at least fails closed — a handler that receives a session the resolver did not produce gets `internal_error` rather than an unowned actor.
+
+### The two `pending` routes of D.3 are not declared, because the layer below ties reading the cookie to accepting it
+`E-335` · auth-core · S-CACHE-4, hand-off
+
+**Context.** D.3 lists `GET /pending` and `POST /pending/cancel`. Both need the value of `__Host-velve_pending`. `core/http/web-handler.ts` decides which routes see that cookie by `route.caller === "pending"`, and S-CACHE-4 says exactly four routes carry that value — and these two are not among them.
+**Rejected.** (a) Declaring them with `caller: "pending"`, making six. (b) Taking the token in the request body.
+**Reason.** (a) breaks the requirement this feature owns and is measured on, and the requirement is right: `caller: "pending"` means the intermediate state *authorises* the call, which is true of the four verify routes and false of reading the state or cancelling it. (b) puts a `__Host-` cookie's value in a body, which is the shape 3.5 exists to prevent. The two methods exist on the surface and take the token directly; only their routes are missing.
+**Price.** Two routes of the published table are absent, and a browser client cannot read or cancel a pending state without the application forwarding the cookie itself. Closing it needs either a third caller kind or a separate gate for cookie visibility in `core/http/web-handler.ts` — a file this feature does not own, and a change that touches the one function every route's response passes through.
+
+### Four expectations outside this feature's files were changed, and each is named
+`E-336` · auth-core · §5, breached deliberately
+
+**Context.** The assembly gave callers to modules that had none, shipped a repository that was not shipped before, and named tables and codes that were previously named in one file. Four tests in other features' files pinned the old facts and went red: `session-review-surface`, `session-review-gate`, `session-review-resolution` and `token-static-scan`.
+**Rejected.** (a) Leaving them red and reporting them, which §5 prescribes. (b) Arranging the assembly to avoid tripping them.
+**Reason.** (a) fails the main gate, so nothing merges and the four features behind this one wait on a report. (b) is worse than it sounds: avoiding `session-review-surface` means not calling `createSessionService`, and avoiding `token-static-scan` means the sweep does not name the table it sweeps. Three of the four were anticipated in writing — E-245 says in as many words that `createVelveAuth` is the caller that will shorten its list. What was changed is one expectation per file, each with the reason written beside it, and no source file outside this feature's set.
+**Price.** §5 says stop and report, and this did not stop. The justification — that a test expectation is a record of a fact rather than a piece of another feature's design — is a distinction §5 does not draw, and a reviewer is entitled to reject it. It is written here rather than buried in four diffs so that the rejection is possible.
+
+### S-REST-1 measures twenty-one searches, not seventy-two, and the number is stated
+`E-337` · auth-core · S-REST-1
+
+**Context.** T-REST-1 counts 24 secret values in three encodings — 72 searches, 0 hits. Sixteen of the twenty-four are produced by modules other wave-3 features build: the TOTP secret, ten recovery codes, the WebAuthn challenge, the OAuth `state`, the PKCE verifier and two foreign provider tokens.
+**Rejected.** (a) Reporting 72 searches by counting the values that cannot be created as trivially absent. (b) Skipping the test until the artefacts exist.
+**Reason.** (a) is a green number that means nothing — a value never written is a value never found, and 48 of the 72 searches would have been searches for nothing. (b) leaves the requirement unmeasured for a wave. Seven values are created for real — the password, the pending token, four one-time tokens and a session token — and the assertion states `7 × 3 = 21` in the test name and in the expectation, and separately asserts the four tables hold exactly seven rows so that the search is not searching an empty schema.
+**Price.** A requirement reported at 29 per cent of its threshold, and the sixteen remaining values need whoever builds them to extend this test rather than write their own — which nothing forces them to do. The count in the test name will be wrong the moment they do, which is the point: it has to be edited to stay true.
+
+### The dump is taken with the instrument the requirement names, and by another where the binary is absent
+`E-338` · auth-core · S-REST-1
+
+**Context.** S-REST-1 says `pg_dump`. The CI runner has a PostgreSQL service container but no guarantee of the client binary, and a test that silently skips is the failure §5 names.
+**Rejected.** (a) `pg_dump` only, failing the suite where the binary is missing. (b) Rendering every column to text only, ignoring what the requirement says.
+**Reason.** (a) makes the requirement's coverage depend on the runner image. (b) drops the instrument the requirement chose, and `pg_dump` emits things a per-row rendering does not — comments, defaults, index definitions — any of which could carry a value. `pg_dump` is used when it runs; every column of every table cast to text is used when it does not; the test asserts which of the two it read, that the text is longer than a thousand characters, and that a value known to be in the schema is found in it.
+**Price.** Two instruments, so a secret that only `pg_dump` would expose goes unseen on a runner without it, and the suite cannot tell the difference between "clean" and "clean under the weaker instrument" from the result alone — only from the assertion that names which ran. Both paths were exercised before this was trusted.
+
+### The assembly did not check the password configuration, and the test that says it must is what found out
+`E-339` · auth-core · S-DEFAULT-6, correction
+
+**Context.** S-DEFAULT-6 makes Argon2id parameters below `m = 19456, t = 2, p = 1` a start error. `resolvePasswordConfig` has raised `PasswordConfigurationError` for them since wave 2. The start checks were written, the requirement was believed covered, and the test for it was written afterwards to confirm.
+**Rejected.** Nothing — this is a defect, not a choice.
+**Reason.** `createVelveAuth` never called `resolvePasswordConfig`. It read `config.session`, `config.identity`, `config.keys` and `config.origins`, and passed `config.password` to nobody, because no route this feature declares hashes a password. A configuration naming 1024 KiB of memory started cleanly and would have hashed at that cost the moment a password route was added by another feature. The fix is one call at start; the resolved configuration is now carried on the services object where the flows will need it.
+**Price.** The requirement was written down as covered before it was, and would have shipped that way if the test had been written to match the implementation instead of to match the requirement. The order matters and this is the evidence: the test was written from S-DEFAULT-6, not from the code, and that is the only reason it failed.
+
+### Three Base64 implementations were two, and neither of them is redundant
+`E-340` · auth-core · correction to a brief
+
+**Context.** The brief for this feature stated that three Base64 implementations exist in `src/core` and that E-221's own copy is redundant now that `keys/` has an encoder, and that the removal was due and belonged to nobody.
+**Rejected.** Removing `src/core/password/base64.ts`, which was the candidate the brief pointed at.
+**Reason.** The count was taken before E-221's own addendum was applied and is false at this branch point. The third copy — the private encoder in `session/token.ts` — was already removed; that file imports `encodeBase64Url` from `keys/base64url.ts`. Two remain, and they are not duplicates: `keys/base64url.ts` encodes the URL alphabet (`-_`) and `password/base64.ts` the standard one (`+/`), which PHC strings require. Removing either breaks the other's callers.
+**Price.** Time spent verifying a figure rather than acting on it, and the general lesson costs more than this instance: a counted figure in a brief is a measurement taken at some earlier moment, and this one was two commits stale. The rule that follows — re-take any counted figure after every merge — is why this was checked at all.
+
+### The actor for the reset path is not built here either
+`E-341` · auth-core · E-234, not closed
+
+**Context.** E-234 recorded that `revokeEverySessionOfUser` demands an `Actor`, that the only lawful producer is session resolution, and that the reset path — which has no session — needs a second producer with the provenance "redeemed one-time token", to be built by the feature that redeems them.
+**Rejected.** (a) A producer in `src/core/flows/` casting a redemption result to `Actor`. (b) Adding the producer to `src/core/db/actor.ts` beside its sibling.
+**Reason.** (b) is right and edits a file this feature does not own. (a) is possible — `Actor` is exported and a cast compiles — and is exactly the hole E-93 walls up: the brand exists so that minting an actor is visible in review, and a second cast in a second file makes it two places to look instead of one. The deciding argument is that no password-reset flow ships in this feature, so the producer would have had no caller, and an unused escape hatch is the worst kind.
+**Price.** E-234 stays open a wave longer, and the requirement it carries — S-FIX-6 for the reset path — remains half satisfiable. Whoever builds `password.redeemReset` will meet it, and the right move then is still the one E-234 named: put the producer in `actor.ts`, next to the one that already exists, and let the brand keep meaning what it means. **Correction after the main gate:** the reason above is written as though no producer were *possible* from inside this feature, and that is false. This compiles today, in this feature's own area, with no cast and without tripping the scan that pins minting to `db/actor.ts`:
+
+```ts
+const issued = await sessions.issue({ userId, factors: ["password"], observed });
+const resolved = await sessions.resolve(issued.token);
+return resolved === null ? null : actorOfResolvedSession(resolved);
+```
+
+`issue` takes a bare `userId: string`, so an arbitrary string out of a request becomes a branded `Actor` in two awaits — the E-93 hole, reachable now, and reachable by anyone, not only by a feature that wanted an actor. It was not taken here, and the deciding argument was the second one this entry already gives: no reset flow ships in this feature, so the producer would have had no caller. That argument stands on its own. What does not stand is the claim that the brand made the alternative impossible; it made it *visible*, which is a weaker and more honest thing, and the laundering path belongs written down where the next reader looks for it.
+
+### The route table is the set this feature declares, named rather than counted
+`E-342` · auth-core · S-CSRF-1
+
+**Context.** D.3 has 46 routes in `username_email`. This feature can declare seven: the namespaces behind the rest are built by other features of this wave or are out of scope. The whole-table requirements — origin check, GET classification, cookie set, content type — have to be measured over something.
+**Rejected.** (a) A threshold: "at least eight routes carry `originCheck: checked`". (b) Measuring over the 46 names of D.3 and marking 39 as pending.
+**Reason.** (a) is the shape §5 warns about — it passes on an empty table for the wrong reason, and the first version of these tests said "at least eight" and passed at seven until the floor was raised and the count was checked. (b) asserts against routes that do not exist, which is a fixture pretending to be a measurement. The tests name the seven exactly, so a route added, lost or renamed shows up as a name.
+**Price.** Every one of these tests has to be edited when another feature adds a route, and the edit is in this feature's file. That is a merge conflict waiting for four branches, and the alternative — a number — is the thing that passed at seven when it was meant to pass at eight.
+
+### The user reader lives in the assembly, not in the repository directory
+`E-343` · auth-core · file ownership
+
+**Context.** `session.resolve` returns `{ session, user }`, and nothing in the package could produce a `User`. `core/identity/resolution.ts` looks up by identifier, not by id; `core/db/repositories/` has no user repository.
+**Rejected.** Adding `src/core/db/repositories/user.ts` beside the session and token repositories, which is where it belongs.
+**Reason.** That directory belongs to the `db` feature of wave 1 and to nobody in wave 3. `auth.user.*` is the assembly's own namespace by 3.15 B.3 — the surface an application calls in its own process after its own authorization decision — so the reader sitting in `core/auth/user.ts` is defensible on its own terms and not only as a workaround.
+**Price.** A repository outside the repository directory, with its own row decoding and its own `toDate` helper duplicating the one in `db/repositories/session.ts`. Two copies of a three-line function that must agree about what a driver is allowed to hand back. If the driver contract changes, one of them will be updated.
+
+### There is no release tier, and three test cases have nowhere to run
+`E-344` · auth-core · 6, reported
+
+**Context.** Section 6 assigns tests to three tiers: every commit, nightly, and **before every release**. The last tier holds T-KEY-5 (a root-key rotation survived across two restarts), T-DEFAULT-7 (`hash-wasm` present and absent produce byte-identical hashes) and the 6.19 packaging test. `package.json` has `test` and `test:nightly` and nothing else.
+**Rejected.** (a) Adding a `test:release` script and a third vitest project. (b) Moving the three into the blocking tier.
+**Reason.** (a) edits `package.json` and `vitest.config.ts`, both shared and unowned this wave, and a tier with no schedule attached to it is a script nobody runs — the nightly tier only became real when E-155 gave it a workflow. (b) puts a test that restarts a process and one that manipulates an optional dependency on every commit, which is how a blocking tier becomes a tier people skip. This is a gap in the repository's infrastructure, not in this feature, and §6's own rule is that a decision is recorded rather than filled silently.
+**Price.** Two of the three cases remain unrun anywhere. The packaging half is covered here in a different form (E-327), so the practical exposure is T-KEY-5 and T-DEFAULT-7 — a rotation path and an accelerator-equivalence path, both of which fail in ways that look like data loss.
+
+### Two words were reworded rather than excused
+`E-345` · auth-core · scans
+
+**Context.** Two existing scans went red on strings in the assembly: `keys-static-scan` forbids the word `process` anywhere in `src/core` code, and `session-review-resolution` allows the code `account_disabled` to be *named* in two files. The assembly had "counters held in this process" in a log field, and names the code in its route contract.
+**Rejected.** Adding an exclusion to either scan.
+**Reason.** For the first, the fix is one word — "in memory" says the same thing and the scan keeps its meaning. §4 already fixes this rule for the AI-attribution check: text that would trip a check gets reworded rather than excused, and the same reasoning applies to any check. The second could not be reworded: D.3 requires every route with caller `session` to declare `account_disabled` among its errors, and the instance publishes the code list. That expectation was widened, and the entry above records it.
+**Price.** A scan on a common English word now shapes the prose of every file in `src/core`, and the next author will hit it on a sentence about operating systems or background work and will not know why. The check does not say.
+
+### A test claimed a run that sets a cookie, and set none
+`E-346` · auth-core · S-COOKIE-6, correction
+
+**Context.** The S-COOKIE-6 test was written as "sets no name outside the enumerated two, over a run that sets at least one", by analogy with the non-empty guards on the other whole-table tests.
+**Rejected.** Leaving the title and adding a route that sets a cookie so the claim becomes true.
+**Reason.** The title was false and the test did not check it: no route this feature declares sets a cookie, because the routes that issue a session or a pending state belong to other features. Writing a route to make a test name accurate is the tail wagging the dog. The name now says what happens, and the test asserts the observed set is empty — a fact, and one that becomes a failure the moment a route here starts setting cookies without the enumeration being extended.
+**Price.** S-COOKIE-6's own threshold — "0 never-set entries", meaning both enumerated names are actually used somewhere in the suite — is not met and cannot be met from this feature. The half that is met is the half that matters more: no unenumerated name can be set, and `assertCookieNamesAreEnumerated` turns an attempt into a 500.
+
+### `fast-check`, `ts-morph` and `simple-statistics` were not added, because nothing here needed them
+`E-347` · auth-core · dependencies
+
+**Context.** The brief allowed this feature to add devDependencies — `@fast-check/vitest` for T-CSRF-Parser's two thousand generated hostnames, `ts-morph` for the static halves of T-CSRF-1, T-OWNER-6 and T-ENUM-7 — and asked that the addition be said loudly, `package.json` being shared and unowned.
+**Rejected.** Adding all three so that the property test and the AST rules could be written.
+**Reason.** The static halves were written without an AST at all. T-CSRF-1's static half is "count the routes with `originCheck: exempt`", and the route table is a runtime array — reading it is one filter, and `ts-morph` would have parsed the source to learn something the built object states directly. T-ENUM-7 is the same shape. T-CSRF-Parser genuinely needs `fast-check`; it also tests `core/http/origin.ts`, which this feature does not own and whose behaviour it does not change, and it is a nightly test. Adding a dependency for a test aimed at another feature's file is the wrong trade against a shared `package.json`.
+**Price.** T-CSRF-Parser is unwritten, so S-CSRF-2 and S-CSRF-3 keep only their unit coverage — three cases and eight variants against two thousand generated ones. Whoever writes it adds the dependency, and the argument for adding it will be weaker then than it is now, because it will be one test.
+
+### `close()` does nothing, and that is the contract
+`E-348` · auth-core · surface
+
+**Context.** 3.15 B lists `close(): Promise<void>` on the instance. The `Driver` interface has no close, and the connection is created by the application and handed in.
+**Rejected.** (a) Leaving the method off. (b) Requiring the driver to grow a `close`.
+**Reason.** (a) removes a published method. (b) changes an interface three driver adapters implement, in files this feature does not own, to add a capability the library never needs — it opened nothing. The method resolves and the reference says why in one sentence.
+**Price.** A method that looks like a resource release and is not, which is precisely the shape that gets called in a `finally` and trusted. An application that expects `close()` to end its pool will leak it and get no warning.
+
+
+### The mode was not inferrable, so the requirement it carries never bit
+`E-349` · auth-core · S-DEFAULT-4, correction
+
+**Context.** `RecoveryCodesRequirement<M>` was written, exported, documented and reported as closing E-207. The gate wrote four lines of ordinary configuration — `username` mode, no `recoveryCodes` — and they compiled clean.
+**Rejected.** Nothing. This is a defect, and it shipped.
+**Reason.** `M` had exactly one candidate inference site, `identity: IdentityConfig<M>`, and `IdentityConfig` was a conditional type. A conditional type is not an inference position, so `M` never got a candidate, fell back to its constraint `IdentityMode`, and `RecoveryCodesRequirement<IdentityMode>` distributed into a union whose optional branch accepts everything. The type was correct and could not fire. `IdentityConfig<M>` is now `IdentityConfigurationInput & { readonly mode: M }` — reusing the lookup table `core/identity` already keeps, with `M` in a plain property position, which is the shape `IdentityFieldsByMode` beside it had used all along.
+**Price.** Two collateral failures rode along, and both were reported as working. The `username` namespace was pruned in the one mode that has it, because `ModeHasUsername<IdentityMode>` is not `true` — so 3.15 A.1's design B, chosen precisely so the error names the mode, named the union instead. And the reference stated twice, in this feature's own chapter, that the mode is inferred and that the omission is a compile error. Both false as shipped, both now true, and the reference now says which detail they depend on, because the natural way to write that type is the way that breaks them.
+
+### A cast made the test say the same thing whether the type worked or not
+`E-350` · auth-core · S-DEFAULT-4, correction
+
+**Context.** The test for S-DEFAULT-4 wrote `createVelveAuth(withoutCodes as never)` for the failing case and the same cast for the passing one, and asserted on the runtime throw.
+**Rejected.** Keeping the cast and adding a separate type test beside it.
+**Reason.** `as never` is assignable to every parameter, so the call compiles whatever the parameter type says — the assertion could not observe the type half at all, and reported success for as long as the type was broken. §3 asks for `@ts-expect-error` next to a failing-by-design case, and the repository uses it thirteen times elsewhere; this was the one place that needed it and did not have it. The casts are gone and the directive is there, so `pnpm typecheck` fails with `Unused '@ts-expect-error' directive` the moment the type stops biting.
+**Price.** The lesson is not "use the directive"; it is that a test written *around* an inconvenience reports on something other than what it names. The cast went in to make the fixture type-check quickly, and from that moment the test measured the runtime check twice and the type check never — while its name promised both. The planted regression that proves it now fires produced exactly the error above, and produced nothing at all before.
+
+### The one value that proves the encryption ran was the one left out
+`E-351` · auth-core · S-REST-1, correction
+
+**Context.** E-337 recorded the S-REST-1 measurement as seven values in three encodings, twenty-one searches. T-REST-1 decomposes to twenty-four values; sixteen belong to modules other features build; twenty-four minus sixteen is eight.
+**Rejected.** Treating the difference as a rounding of an already-stated shortfall.
+**Reason.** The missing value is the PHC string, which T-REST-1 names separately from the password, and the separation is the whole point: Argon2id keeps the plaintext out of a dump whether or not `password-enc` encrypted anything, so searching for the plaintext proves nothing about the envelope. The PHC string is the only one of the eight that fails if the envelope silently no-ops. The test already held the key ring and had already fetched the credential row; adding the value was one `openPhc` call. The count is now eight values, twenty-four searches, and the tree agreed with itself in three places only after all three were corrected — the comment said eight while the assertion and the entry said seven.
+**Price.** The figure was reported to a coordinator and written into an entry before the decomposition it claimed to follow had been done arithmetic on. A stated count is only worth what its derivation is worth, and this one was derived from what the test happened to create rather than from the requirement. The planted fault that now proves it — the PHC written into a text column — reports `password hash (PHC) as $argon2id$v=…`, which is what a no-op envelope would have looked like.
+
+### Eight of eleven whole-table assertions passed on an empty table
+`E-352` · auth-core · S-CSRF-1, correction
+
+**Context.** E-342 rejected a threshold in favour of naming the seven routes, and said in as many words that a number "passes on an empty table for the wrong reason". The naming was applied to three assertions. The other eight iterated `routes` and asserted over the result.
+**Rejected.** A shared non-empty guard in `beforeAll`, which would have satisfied the letter.
+**Reason.** `expect(codes).toStrictEqual(routes.map(() => "403 origin_not_allowed"))` compares an empty list with an empty list, and reports that every route refuses a foreign origin having tested none. The same shape carried S-CACHE-4's pending-cookie sweep and S-CSRF-4's row-count sweep — the two assertions carrying the actual security claims of this feature. Each expectation now counts against `DECLARED_ROUTES` rather than against the list it just iterated, so the count and the thing counted have different sources. A guard in `beforeAll` would have been one assertion protecting eight; putting the count in each is what makes each one able to fail alone.
+**Price.** The entry that argued for naming over counting was written by the same author who then wrote eight assertions that counted, in the same file, in the same sitting. Knowing the failure shape is not the same as recognising it, and nothing in a green run distinguishes them — the empty-list plant does, and it is the only thing that did. Three failed before it; eight fail now, and the three that still pass are the three that never read the table.
+
+### Admitting a file to a scan's list is not the same as scanning it
+`E-353` · auth-core · S-TOKEN-1, correction
+
+**Context.** The L-11 sweep names `one_time_token`, so `test/token-static-scan.test.ts` went red on a list of the files allowed to name the table, and the list was widened to admit `auth/maintenance.ts`.
+**Rejected.** Leaving the widening as it stood.
+**Reason.** Every other assertion in that file reads the token repository's source alone. Widening the path list therefore moved the sweep into the file's scope and into none of its checks: S-TOKEN-1's requirement that every predicate against the table names `purpose` no longer saw the one statement that has none. The widening was not dishonest but it was empty, and an exemption that is granted without being bounded is the shape a scan dies of. What the sweep may do is now pinned — one statement, a DELETE, a deadline predicate, no `purpose`, no `user_id`, its own marker — and a planted `AND user_id IS NOT NULL` fails it.
+**Price.** Two things had to be looked at that the widening had passed over. The neighbouring comment still called that repository's DELETE "the one row-removing statement in the library without an owner predicate"; there are seven such markers across five files, and the sentence is now a counted assertion rather than prose, so the next one to be added has to move a number. And the sweep names the table in a list of tables while building its SQL from the configured schema, so the name and the statement never meet in one literal — the path scan matched a data structure, not a query, which is precisely why matching it proved nothing.
+
+### The pending row and the session it becomes are one transaction
+`E-354` · auth-core · S-FIX-1, S-RACE-5
+
+**Context.** Nothing in the repository consumed a pending row and inserted a session together. `factor-totp` and `factor-webauthn` each reached the gap from their own side; neither can close it, because the pending service is in one module and the session service in another and each feature owns one.
+**Rejected.** (a) Leaving it to whichever factor feature writes its verify route first. (b) Putting the operation in the assembly, where the composition belongs.
+**Reason.** (a) leaves two features to solve the same problem twice and to disagree; it is also the failure mode S-FIX-1 exists for — a spent intermediate state with no session behind it, which locks a user out of a sign-in they completed. (b) is where it belongs conceptually and is not where the callers are: both features import the pending barrel and neither imports the assembly, so a function there would have been a function they could not reach. It sits beside the pending module and binds both services to the same transaction.
+**Price.** `core/factor/pending` now imports `core/session`, which is a dependency the module did not have and does not need for anything else it does. The concurrency property it looks like it provides, it does not: fifty racers still yield exactly one session because `consume` is a single `DELETE … RETURNING`, and removing the transaction leaves that test green. What the transaction buys is the rollback, and only the rollback test sees it — which is why both are written and why the non-transactional plant fails exactly one of them.
+
+### What the eight trust-level events share is the new token, not a deleted row
+`E-355` · auth-core · S-FIX-1, correction
+
+**Context.** `TRUST_LEVEL_EVENTS` is documented as "the eight events after which the previous session row is gone and a new token has been issued".
+**Rejected.** Narrowing the list to the events that really do replace a session row.
+**Reason.** The first half of that sentence is false for three of the eight. A passkey sign-in and a password sign-in from no session replace nothing, because there is nothing; a second factor replaces a pending row, which is not a session. Narrowing the list would have been worse than the wrong sentence — the events are on it because each is a change of trust level that must hand back a new token, and that is the invariant T-FIX-1 reads them for. The comment now says which row goes in which case, and that the shared invariant is the token.
+**Price.** A comment that was three sentences and is now six, on a constant of eight strings. It earns them: the sentence it replaced was the kind that reads as a specification and is quoted as one, and the first reader to build the passkey path would have gone looking for a session row to delete.
+
 ### Two floors the specification's SQL does not have
 `E-380` · rate · deviation from 3.9, frozen
 
@@ -1930,3 +2227,36 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Reason.** One flaky test is a flaky test; two different files failing two consecutive full runs, both passing in isolation, is a property of running the tier. The first is a chi-square that can reject a sound generator by design. The second is not statistical at all — it is a race whose "teeth" assertion needs enough real interleaving to produce nineteen winners, and under a fully loaded run it got eighteen. So the tier holds at least two tests whose thresholds are calibrated against an unloaded machine, and both are in `token`, and neither is reachable from anything this branch changed.
 
 **Price.** Nothing is fixed here, for the same reason as E-393: `token` owns both files. What this entry adds is the evidence that the remedy E-393 proposed — seed the generator — would have fixed one of the two and left the other, so whoever picks this up should expect to calibrate a race threshold as well as a statistical one. Two consecutive red nightlies from a branch that did not touch either file is also the concrete form of E-393's price: T-RATE-6 rides in that tier, and the habit of dismissing a red nightly is being trained right now.
+
+
+### The global counter is a threshold in one module and a bucket in the other
+`E-356` · auth-core · rate limiting, after the merge
+
+**Context.** 3.15 A.6 states the global per-route counter as `alertThresholdPerMinute` with an `onAlert`, and this feature published that type. `core/limit` takes a `BucketRule` and reports `addressChecksObserved` (E-380 froze that deviation), so the two vocabularies had to meet at the assembly.
+**Rejected.** (a) Changing `RateLimitConfig.globalPerRoute` to the bucket form. (b) Passing the alert through untranslated.
+**Reason.** (a) would deviate the published option table from 3.15 A.6, which this feature owns and the other does not. (b) does not type-check, and would not have been better if it did: the caller's field is named `requestsInLastMinute`. A threshold of N a minute is a bucket of capacity N refilling at N/60 a second, so the translation is exact in the direction that matters — when the alert fires, the bucket has drained, and draining that bucket means N checks.
+**Price.** The number handed to the callback is not quite what its name says. `addressChecksObserved` counts the checks that drained the bucket, and refilling continues while they arrive, so the figure is the threshold to within one refill rather than a count over a sliding minute. Nobody will notice, and that is the problem with recording it only in a comment; it is here because the field name makes a promise the two modules keep to different precisions.
+
+### One counted figure moved under the branch, and the rule caught it
+`E-357` · auth-core · counting, after the merge
+
+**Context.** E-353 replaced the prose "the one row-removing statement in the library without an owner predicate" with a counted assertion: seven markers across five files. `rate` merged an hour later with a marker of its own in `token-bucket-store.ts`.
+**Rejected.** Nothing — the assertion did exactly what it was for.
+**Reason.** The count is now eight across six, and the change arrived as a red test rather than as a sentence nobody re-read. That is the whole argument for turning a figure into an assertion, and this is the first evidence in this branch that it works: the prose form had been wrong for however long it took anyone to notice, and the assertion form was wrong for one merge.
+**Price.** Every feature that adds a lawful exemption now edits a number in a test file it does not own, which is a small merge conflict on a shared file — the cost E-342 accepted for naming rather than counting, paid here in the other direction. The alternative is a sentence that drifts, and this entry exists because the branch has now seen both.
+
+### The connection budget is shared, and the file that pays is whichever runs last
+`E-358` · auth-core · concurrency, measured
+
+**Context.** The completion race wants simultaneity, and the S-RACE family fixes fifty. This branch added the seventh file to the concurrency project; `token-race.test.ts` legitimately holds fifty of this server's hundred connections for the whole of its file.
+**Rejected.** (a) Fifty, matching the requirement family. (b) Twenty-four, which was the first attempt and looked safe at under a quarter of the budget.
+**Reason.** Both were measured and both turned the nightly run red — and not in this file. `token-race` failed with `sorry, too many clients already`, while `main` without this branch was green, and `token-race` alone was green. The budget is cumulative across files even though the project runs them one at a time, because a closed socket is not a reaped backend, and the file that pays is whichever runs last rather than whichever was greedy. Eight connections, opened inside the one test that needs them and closed before it returns, prove the same statement — exactly one completion gets through — and is what `token-review-reissue-concurrency` already uses.
+**Price.** A concurrency threshold below the number its requirement family names, which a reader will take for carelessness unless they read this. And the real cost is not this file: three concurrency files now want roughly half the budget each, the project has no mechanism for bounding the total, and the next one added will turn some fourth file red at a distance. E-156 named this hazard for the peak within a run; this is the same hazard across runs, and it belongs to whoever owns `vitest.config.ts` — a shared, unowned file — not to the branch that happened to trip it.
+
+### Two citations moved because an entry was inserted in front of them
+`E-359` · auth-core · citation, correction
+
+**Context.** Two in-code comments cited E-349 and E-350; their subjects are verbatim E-350 and E-351. Both were written while the correction block was being drafted, each naming the number the entry was going to have, and each then had a new entry inserted ahead of it before the block was appended.
+**Rejected.** Renumbering the block so the citations come true.
+**Reason.** That is the failure §6 removes by never renumbering, and it would have been the second instance of it on this branch. The citations move instead. Both were found by reading, not by a check: neither dangles, so `test/decision-log.test.ts` passes, and §6 says exactly this case out loud — *"a citation left behind does not dangle, it resolves to the wrong decision. Nothing detects that."*
+**Price.** The reserved-range mechanism is aimed at renumbering, and this arrived by **insertion**, which it does not cover: a range removes the pressure to move existing numbers and does nothing about a comment that names a number before the entry exists. Two of the six citations this branch added were wrong, which is a rate, not an accident. The habit that produces it is writing the citation while drafting; the habit that would prevent it is citing only numbers already written down, and nothing enforces either. Both branches queued behind this one import the pending barrel and will read these comments, which is why this is a correction rather than a note.
