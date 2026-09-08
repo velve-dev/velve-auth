@@ -3,9 +3,9 @@ import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
 import { scryptAsync } from "@noble/hashes/scrypt.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { hash as bcryptHash } from "bcryptjs";
-import { randomBytes } from "../src/core/keys/random.js";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import type { PasswordScheme } from "../src/core/password/scheme.js";
+import { randomBytes } from "../src/core/token/random.js";
 
 /** Drawn per run, so that no password and no derived hash of one is ever committed. */
 export function drawTestPassword(): string {

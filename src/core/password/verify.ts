@@ -1,5 +1,6 @@
 import type { ConcealedReason } from "../http/error-map.js";
-import { type KeyProvider, randomBytes } from "../keys/index.js";
+import type { KeyProvider } from "../keys/index.js";
+import { randomBytes } from "../token/random.js";
 import { createArgon2idHash } from "./argon2.js";
 import { encodeStandardBase64 } from "./base64.js";
 import type { ResolvedPasswordConfig } from "./config.js";

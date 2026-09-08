@@ -7,7 +7,7 @@ import {
 	rootKeyProvider,
 } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
-import { randomBytes } from "../src/core/keys/random.js";
+import { randomBytes } from "../src/core/token/random.js";
 import { encodeBase64Url, generateRootKey } from "./keys-fixtures.js";
 
 function expectRejectedInput(input: RootKeyProviderInput, code: KeyErrorCode): void {

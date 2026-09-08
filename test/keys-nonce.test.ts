@@ -3,10 +3,10 @@ import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES } from "../src/core/keys/aes-gcm.
 import {
 	encryptWithPurposeKey,
 	openEnvelope,
-	randomBytes,
 	rootKeyProvider,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
 const HEADER_BYTES = 1 + "A256GCM".length + 4;

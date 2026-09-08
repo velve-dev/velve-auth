@@ -7,10 +7,10 @@ import {
 	KeyError,
 	openEnvelope,
 	type PurposeCiphertext,
-	randomBytes,
 	rootKeyProvider,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { asEncryptionPurpose, generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
 
 const utf8 = new TextEncoder();

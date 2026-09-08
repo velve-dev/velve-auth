@@ -1,12 +1,12 @@
 import { argon2idAsync } from "@noble/hashes/argon2.js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { randomBytes } from "../src/core/keys/index.js";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
 import { parsePhc } from "../src/core/password/phc.js";
 import { type AcceptedPassword, acceptSubmittedPassword } from "../src/core/password/policy.js";
 import { LEGACY_SCHEMES, type PasswordScheme } from "../src/core/password/scheme.js";
 import { verifyAgainstScheme } from "../src/core/password/verify-switch.js";
+import { randomBytes } from "../src/core/token/random.js";
 import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
 
 const DEFAULTS = resolvePasswordConfig();

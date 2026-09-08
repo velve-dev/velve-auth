@@ -709,11 +709,6 @@ know, `ciphertext_malformed` below the length of a nonce and a tag, and
 wrong key, a tampered byte or a rewritten header fails with
 `authentication_failed`.
 
-### `randomBytes(length)`
-
-`Uint8Array` of `length` bytes from `crypto.getRandomValues`. Every secret the
-library generates comes from here and from nowhere else (S-RAND-1, S-RAND-5).
-
 ### `equalsInConstantTime(left, right)`
 
 `boolean`. An XOR loop over two `Uint8Array`s that does not exit early on the
@@ -1136,8 +1131,6 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
-
----
 
 ## Passwords
 
@@ -1650,3 +1643,761 @@ compare-and-swap path as a parameter increase (L-2).
 accelerator against it. `DerivedKey` is `Secret<"derived-key">`, the branded
 type that makes S-TIM-3 checkable; `asDerivedKey` mints one and
 `derivedKeysAreEqual` is the only thing that compares two.
+
+## Identity
+
+Which sign-in names an instance has, how they are normalised, which columns of
+`velve.user` a new row may carry, how an identifier is turned back into an
+account, and how many ways into an account are left.
+
+Nothing in this section reads or writes a session. `findUserByIdentifier` and
+`usernameAvailability` take a `Driver`; `countSignInMethods` and
+`removeSignInMethod` additionally take the `Actor` that session
+resolution produced.
+
+### The three configurations
+
+| Mode | Sign-in name | Unique on | Reset and confirmation over |
+|---|---|---|---|
+| `email` | the address | `email` | email |
+| `username` | the username | `username_key` | recovery codes only |
+| `username_email` | username **or** address | both | email |
+
+The mode is chosen once, at initialisation. It decides which `CHECK` migration 2
+installs on `velve.user`, so changing it later is a migration and not a setting.
+
+**There is no reset by email in the `username` mode**, because there is no
+mailbox to send to. A user who forgets a password with no recovery codes has
+lost the account, so the specification makes `identity: { mode: "username" }`
+without `recoveryCodes` refuse to start, and a compile error before that, via a
+`RecoveryCodesRequirement<Mode>` on the instance options (architecture 3.4 and
+3.15 A.3, E-18). **Neither is built yet.** Both belong to the options type of
+`createVelveAuth`, which no feature has written; `core/identity` sees a mode, not
+the instance options, and cannot state a requirement about `recoveryCodes` from
+there. Until the feature that builds `createVelveAuth` carries it, choosing
+`username` without issuing recovery codes at registration is a mistake the
+library does not catch. This is a recorded hand-off, not an oversight (E-207).
+
+```ts
+type IdentityConfiguration<Mode extends IdentityMode = IdentityMode>
+```
+
+Without a type argument this is the union of all three; with one it is that
+member alone. The member for `email` has no `username` property and will not
+accept one, the other two require it — the combination "email mode with username
+rules" cannot be written down (E-15).
+
+```ts
+type IdentityConfigurationInput<Mode extends IdentityMode = IdentityMode>
+```
+
+The same three shapes, but with `username` optional and every rule inside it
+optional. This is what a caller writes; `resolveIdentityConfiguration` turns it
+into an `IdentityConfiguration`.
+
+#### `resolveIdentityConfiguration(input)`
+
+```ts
+resolveIdentityConfiguration({ mode: "username_email" })
+// { mode: "username_email", username: DEFAULT_USERNAME_RULES }
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `input.mode` | `"email" \| "username" \| "username_email"` | which sign-in names exist |
+| `input.username` | `Partial<UsernameRules>` | overrides; absent rules take their default. Not accepted in the `email` mode |
+
+Returns the configuration with every rule filled in and every reserved name
+already in its comparison form. Throws `IdentityConfigurationError` — a start
+error, not a request error — when a rule cannot work:
+
+- `allowedCharacters` can match less than a whole name. That is any of: no
+  leading `^` or no trailing `$`; a `^` or `$` anywhere else; or a top-level
+  alternation, because `/^[a-z]+|[0-9]+$/` anchors one branch and leaves the
+  other free to match anywhere. A pattern that matches part of a name accepts
+  the rest of it unexamined.
+- `allowedCharacters` carries the `g`, `y` or `m` flag. `g` and `y` keep
+  `lastIndex` between calls, so the same name is accepted and refused in turn.
+  `m` turns `^` and `$` into line anchors, so `/^[a-z0-9_-]+$/m` accepts
+  `alice\n***evil` — and a newline in the middle of a name is not something
+  `trim()` reaches.
+- `minimumLength` is not a whole number of at least 1.
+- `maximumLength` is not a whole number of at least `minimumLength`.
+
+`IdentityConfigurationError` carries `code === "invalid_identity_configuration"`.
+It is thrown while the instance is being built and never in answer to a request.
+
+### `UsernameRules` and the character allowlist
+
+```ts
+interface UsernameRules {
+  allowedCharacters: RegExp        // default /^[a-z0-9_-]+$/
+  minimumLength: number            // default 3
+  maximumLength: number            // default 32
+  reservedNames: readonly string[] // default []
+}
+```
+
+`DEFAULT_USERNAME_RULES` holds exactly those values.
+
+**Which usernames are accepted by default.** Lowercase `a`–`z`, the digits `0`–`9`,
+the underscore and the hyphen, three to thirty-two characters, and nothing else.
+Uppercase letters are accepted and kept: the allowlist is applied to the
+comparison form, which is the input folded to NFKC and lowercased, so `Alice` is
+accepted, is stored as `Alice`, and collides with `alice`.
+
+Everything else is refused. That includes every accented Latin letter, every
+non-Latin script, the full stop, the space, the at sign, and every invisible
+character — zero-width joiners, soft hyphens, bidirectional overrides. This is
+deliberate and it is the homoglyph defence: a name that cannot be spelled cannot
+be made to look like another one (E-17). Compatibility spellings are collapsed
+before the check, so a full-width `ＡＬＩＣＥ` and a name spelled with the Kelvin
+sign U+212A do not survive as separate names — they become `alice` and, for a
+name of that one character, `k`.
+
+**Widening it.** `allowedCharacters` is a configuration option, and widening it
+is a decision with consequences a caller should take on deliberately.
+
+*What the library does hold.* The comparison form the library produces is its own
+fixpoint: folding it again changes nothing, so the key written and the key looked
+up are the same value on any database. Folding one code point at a time is what
+buys that: lowercasing a whole string applies Final_Sigma, and the `οδος` it
+produces is not a form `lower()` would ever produce.
+
+Whether that form is also its own `lower()` in PostgreSQL depends on the Unicode
+data the two engines carry, and they are versioned apart. Where they disagree the
+schema CHECK refuses the row, so a form the two read differently cannot be
+stored — that is the property `test/identity-fold-agreement.test.ts` asserts,
+against whatever database it is run on. The size of the disagreement is measured
+rather than promised: against PostgreSQL 18.3 a sweep of 1,106,398 comparison
+forms finds exactly one, U+038D, an unassigned slot that the C library folds to
+`ύ` and JavaScript, correctly, leaves alone; against the PostgreSQL 16 that CI
+runs, it finds none. Run the sweep against the database you will actually run to
+learn your own number (E-212).
+
+*What that is not.* It is not a claim that two names PostgreSQL considers equal
+become one account. `lower('İstanbul') = lower('istanbul')` is true in
+PostgreSQL — its `lower()` drops the combining dot, the library's fold keeps it
+— and under an allowlist admitting `\p{M}` those are two keys and two accounts.
+The library's uniqueness is over the exact bytes of `username_key`, not over
+PostgreSQL's notion of equal names, and no allowlist wider than ASCII should be
+chosen without checking which pairs that leaves apart.
+
+*What it cannot hold.* Nothing here is a guarantee about a character that
+JavaScript and your PostgreSQL disagree on because they carry different Unicode
+versions. `username_key = lower(username_key)` is a thin net for that, not a
+safety net: it asserts only that the stored form is already its own `lower()`,
+and where two sides of a disagreement both satisfy that it says nothing. It does
+fire wherever the two engines disagree — an insert of such a comparison form is
+refused with SQLSTATE 23514 — but which inputs those are is a property of your
+database and not of this library. A different Unicode version on either side
+moves that set without warning, so test a widened allowlist against the database
+you will actually run.
+
+*And the reason the default is what it is.* Every pair of characters a wider
+list admits that a reader cannot tell apart is a name one user can wear in place
+of another. The default admits 1294 code points and gives every one of them a
+plain ASCII display form; a wider list gives that up.
+
+`reservedNames` are compared against the comparison form and are stored in it, so
+`"Admin"` and `"ＡＤＭＩＮ"` both reserve `admin`. A reserved name that the
+allowlist cannot spell is unreachable rather than an error.
+
+`minimumLength` and `maximumLength` count code points. The upper bound is
+checked against the NFKC form before `allowedCharacters` runs, because that
+pattern is the caller's and an unbounded input is work an unauthenticated
+request could ask for; it is checked again against the comparison form, because
+folding can lengthen a name.
+
+### The exported names
+
+Every name a caller of this module imports. The option bags are plain objects;
+the result types are what the functions return.
+
+| Name | Kind | Used by |
+|---|---|---|
+| `caseFolded` | function | `comparisonFormOf`, both normalisers |
+| `codePointCount` | function | `normaliseUsername`, the length bounds |
+| `comparisonFormOf` | function | `reservedNames`, the username key column |
+| `IdentityConfiguration<Mode>` | result | everything in this section |
+| `IdentityConfigurationInput<Mode>` | option bag | `resolveIdentityConfiguration` |
+| `UsernameRules` | option bag | `normaliseUsername`, `usernameAvailability` |
+| `IdentityConfigurationError` | error class | `resolveIdentityConfiguration` |
+| `Normalisation<Value, Rejection>` | result | both normalisers |
+| `EmailRejection`, `UsernameRejection` | result | both normalisers |
+| `NormalisedUsername` | result | `normaliseUsername` |
+| `IdentifierKind` | result | `REQUIRED_IDENTIFIERS`, `IdentifierRejection` |
+| `IdentityColumns` | result | `identityColumns` |
+| `ProvidedIdentifiers` | option bag | `identityColumns` |
+| `IdentifierRejection` | result | `identityColumns` |
+| `UserLookup` | option bag | `findUserByIdentifier` |
+| `ResolvedUserIdentity` | result | `findUserByIdentifier` |
+| `UsernameLookup` | option bag | `usernameAvailability` |
+| `UsernameAvailability` | result | `usernameAvailability` |
+| `SignInMethodQuery` | option bag | `countSignInMethods` |
+| `SignInMethodRemovalRequest` | option bag | `removeSignInMethod` |
+| `SignInMethodCount` | result | `countSignInMethods`, `totalSignInMethods` |
+| `SignInMethodRemoval` | option bag | both of the above |
+
+`IdentityMode` is not one of them: it comes from the migration that materialises
+it, `src/core/db/migrations/identity-mode.ts` (E-190).
+
+### The comparison form
+
+Three exported functions build the form under which usernames and addresses are
+compared and stored. Both normalisers, the reserved-name list and the username
+key column all pass through them, so no two comparison forms in this module can
+disagree.
+
+#### `caseFolded(value)`
+
+Lowercases `value` one code point at a time and joins the result. Per code point
+there is no context for the Final_Sigma rule to apply, so `ΟΔΟΣ` folds to `οδοσ`
+— what PostgreSQL's `lower()` produces. Lowercasing the whole string at once
+would give `οδος` instead, a form `lower()` never produces, and under a widened
+allowlist the two spellings would become two accounts.
+
+#### `codePointCount(value)`
+
+The length of `value` in code points rather than UTF-16 code units.
+`minimumLength` and `maximumLength` are measured with it, so a character outside
+the basic plane counts once and not twice.
+
+#### `comparisonFormOf(name)`
+
+Trims, normalises to NFKC, then applies `caseFolded`. `resolveIdentityConfiguration`
+folds every `reservedNames` entry through it, which is why `"Admin"` and
+`"ＡＤＭＩＮ"` both reserve `admin`. `normaliseUsername` takes the same three steps
+in the same order to produce the username key it stores, so for any input the two
+agree — a reserved name is compared against a key built the same way.
+
+A caller that needs to know the form a name will be compared under — to
+pre-compute a `reservedNames` entry, or to query the key column directly — calls
+this rather than reimplementing the three steps, since reimplementing them is how
+the two forms come apart.
+
+### Normalisation
+
+```ts
+type Normalisation<Value, Rejection> =
+  | { accepted: true; value: Value }
+  | { accepted: false; rejection: Rejection }
+```
+
+Both normalisers return this shape. Neither throws and neither chooses an error
+code: the caller decides whether a rejection becomes `invalid_input`,
+`username_invalid` or a `reason` in an availability answer.
+
+#### `normaliseEmail(candidate)`
+
+Trims, folds to NFKC, folds case one code point at a time, and then checks that
+the result is structurally one address: exactly one `@`, a non-empty part on each
+side, no control, formatting or separating character anywhere, and at most 254
+bytes of UTF-8 (RFC 5321). Returns `Normalisation<string, EmailRejection>`.
+
+| `EmailRejection` | Meaning |
+|---|---|
+| `"malformed"` | not one address, or carrying an invisible or separating character |
+| `"too_long"` | more than 254 bytes after normalising |
+
+There is no syntax rule beyond that, and no list of accepted domains. The
+library does not decide whether an address exists; a confirmation link does.
+
+#### `normaliseUsername(candidate, rules)`
+
+Trims and folds to NFKC — that is the display form — then folds case one code
+point at a time — that is the comparison form. Returns
+`Normalisation<NormalisedUsername, UsernameRejection>`.
+
+Case is folded per code point rather than over the whole string because
+lowercasing a whole string applies the Final_Sigma rule: `ΟΔΟΣ` would become
+`οδος` where PostgreSQL's `lower()` gives `οδοσ`, and under a widened allowlist
+the two spellings would become two accounts.
+
+```ts
+interface NormalisedUsername {
+  username: string     // velve.user.username — the display form
+  usernameKey: string  // velve.user.username_key — the comparison form
+}
+```
+
+The two go into the database together; `user_username_pairing` refuses a row that
+carries one without the other.
+
+| `UsernameRejection` | Meaning |
+|---|---|
+| `"invalid_characters"` | the comparison form is outside `allowedCharacters` |
+| `"too_short"` | fewer than `minimumLength` code points |
+| `"too_long"` | more than `maximumLength` code points |
+| `"reserved"` | the comparison form is in `reservedNames` |
+
+The order is: `too_long` first, against the NFKC form, so the caller's own
+pattern never runs on an unbounded input; then `invalid_characters`; then
+`too_short`; then `reserved`. Characters are judged before the lower bound, so a
+one-character wildcard is reported as `invalid_characters` and not as
+`too_short`. No rejection reveals more than the input already did.
+
+### The columns a configuration may write
+
+```ts
+const REQUIRED_IDENTIFIERS: Record<IdentityMode, readonly IdentifierKind[]>
+// email          -> ["email"]
+// username       -> ["username"]
+// username_email -> ["email", "username"]
+```
+
+This is the runtime statement of the `CHECK` that migration 2 installs. The two
+are kept in step by a test that reads the required identifiers out of the shipped
+migration's own SQL and then proves against a live database that nothing
+`identityColumns` accepts is a row the constraint refuses.
+
+#### `identityColumns(configuration, provided)`
+
+```ts
+identityColumns(configuration, { email: "Alice@Example.com", username: "Alice" })
+// { accepted: true, value: { email: "alice@example.com", username: "Alice", usernameKey: "alice" } }
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `configuration` | `IdentityConfiguration` | decides what is required and what is allowed |
+| `provided.email` | `string \| null \| undefined` | the address as entered, or as a provider reported it. `null` and absent mean the same: none was reported |
+| `provided.username` | `string \| null \| undefined` | the username as entered |
+
+Returns `Normalisation<IdentityColumns, IdentifierRejection>`.
+
+```ts
+type IdentityColumns = { email: string | null } & (
+  | { username: string; usernameKey: string }
+  | { username: null;   usernameKey: null }
+)
+
+interface IdentifierRejection {
+  identifier: "email" | "username"
+  rejection: EmailRejection | UsernameRejection | "required" | "not_configured"
+}
+```
+
+`"required"` means the mode insists on that identifier and none was given.
+`"not_configured"` means a username was given in the `email` mode, where there
+are no rules to normalise it against. The address is judged before the username,
+so a call that gets both wrong reports the address.
+
+**No address is ever invented.** Where a provider reports none, `email` stays
+`null` in the `username` mode, and the call is rejected with `"required"` in the
+`email` and `username_email` modes. Real providers report a missing address as
+an empty string as often as they omit the field; `""` is `"malformed"`, which
+fails the whole call rather than the address alone, so a caller that means "no
+address was reported" should pass `null` and not the provider's `""`. There is no fallback, no placeholder domain
+and no address derived from an identifier — an invalid address in the table is
+worse than no address, because everything downstream takes it for a real one
+(E-16, S-LINK-5). A test scans the whole library for the three shapes such an
+address is usually built in.
+
+### Resolving an identifier
+
+#### `findUserByIdentifier(lookup)`
+
+```ts
+await findUserByIdentifier({ driver, schema, configuration, identifier: "Alice" })
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | any driver or the transaction in hand |
+| `schema` | `string` | the schema the tables live in |
+| `configuration` | `IdentityConfiguration` | decides which columns the identifier is compared against |
+| `identifier` | `string` | whatever the caller typed |
+
+Returns `ResolvedUserIdentity | null`.
+
+```ts
+interface ResolvedUserIdentity {
+  id: string
+  email: string | null
+  username: string | null
+  emailVerified: boolean
+  disabled: boolean
+}
+```
+
+The two timestamps arrive as booleans on purpose: the driver is a parameter, and
+whether `timestamptz` reaches JavaScript as a `Date` or as a string is the
+driver's decision, not the library's. A caller that needs the moment reads the
+column itself.
+
+`disabled` is for the caller that has already proved the account is theirs.
+A sign-in path must not act on it: a disabled account answers a sign-in exactly
+as a wrong password does (L-4).
+
+**One statement, always.** The identifier is normalised as an address and as a
+username — whichever the mode configures — and then the same query runs with the
+same two parameters whatever came out. An identifier the allowlist refuses, an
+empty string and an address that names nobody all cost the same round trip as one
+that names an account, and no branch is taken before the answer is in. That is
+what keeps normalisation from becoming the enumeration oracle the rest of the
+library avoids (S-ENUM-1, E-46).
+
+The statement orders its results rather than leaving the choice to the planner.
+Under the default allowlist no identifier can match both columns, because `@` is
+not a username character; under an allowlist wide enough to admit it, one
+identifier can name one account by address and another by username. The address
+wins over the username, and the older row over the newer.
+
+#### `usernameAvailability(lookup)`
+
+```ts
+await usernameAvailability({ driver, schema, rules, candidate: "alice" })
+// { available: false, reason: "taken" }
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | any driver |
+| `schema` | `string` | the schema the tables live in |
+| `rules` | `UsernameRules` | the rules the candidate is judged by |
+| `candidate` | `string` | the name as typed |
+
+Returns `{ available: boolean; reason?: UsernameRejection \| "taken" }` and
+nothing else — no near matches, no prefix search, no count.
+
+**Usernames are enumerable, and this endpoint is how.** An availability check
+tells the asker whether a name is in use, and no amount of care changes that.
+The library offers the check, says so here, and leaves the hard per-address limit
+to the route that exposes it (S-ENUM-8). In the `email` mode there is no
+equivalent for addresses and no endpoint whose answer depends on whether an
+address exists.
+
+Unlike `findUserByIdentifier` this call does not reach the database when the
+spelling already fails: there is nothing to conceal from an asker who is being
+told about existence anyway.
+
+### The last sign-in method
+
+A user always keeps at least one of a password credential, a WebAuthn credential
+and a linked identity. Removing the last one is refused with
+`last_sign_in_method` (L-13). A confirmed address does not count, although a
+magic link works with it, and recovery codes do not count: they are a second
+factor, not a sign-in name.
+
+This is the count the WebAuthn credential removal and the identity unlinking
+will share; neither of those features is built yet.
+
+```ts
+interface SignInMethodCount {
+  password: number            // 0 or 1
+  webauthnCredentials: number
+  linkedIdentities: number
+}
+
+type SignInMethodRemoval =
+  | { method: "password" }
+  | { method: "webauthn_credential"; credentialId: string }
+  | { method: "linked_identity"; identityId: string }
+```
+
+#### `countSignInMethods(query)`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | any driver or the transaction in hand |
+| `schema` | `string` | the schema the tables live in |
+| `actor` | `Actor` | the account, from `actorOfResolvedSession` |
+| `excluding` | `SignInMethodRemoval` (optional) | a row to leave out of the count |
+
+One statement. `excluding` names a row by its identifier rather than subtracting
+one, so a credential that is already gone, or that belongs to somebody else, does
+not make the count too low.
+
+#### `totalSignInMethods(count)`
+
+Adds the three numbers. `totalSignInMethods(await countSignInMethods({ ..., excluding }))`
+is what would be left after that removal.
+
+#### `removeSignInMethod(request)`
+
+Removes the named sign-in method unless it is the last one. This is the whole
+operation, not a check to run before your own `DELETE`.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | a driver, or the transaction the caller already holds |
+| `schema` | `string` | the schema the tables live in |
+| `actor` | `Actor` | the account, from `actorOfResolvedSession` |
+| `removing` | `SignInMethodRemoval` | which sign-in method to remove |
+
+Returns nothing. Throws `VelveError("last_sign_in_method")` — HTTP 409 — when the
+account would be left with no way in, and then nothing is removed.
+
+It does not report whether a row was actually deleted. A `credentialId` that is
+already gone, or that belongs to another account, is excluded from the count by
+its identifier rather than by subtracting one, so it never makes the count too
+low; the delete then matches nothing and the call returns. A caller that needs
+to tell "removed" from "there was nothing to remove" reads the row first.
+
+```ts
+await removeSignInMethod({
+  driver,
+  schema,
+  actor,
+  removing: { method: "webauthn_credential", credentialId },
+});
+```
+
+The row is deleted with `user_id = actor` in its `WHERE`, so a credential that
+belongs to somebody else is never removed and never counted.
+
+**Why the removal is inside the call.** The check and the removal cannot be
+separated. Between a caller's check and a caller's `DELETE` there is room for a
+second removal to check, see the way in that the first is about to delete, and
+delete its own — and the account ends with none, with no error raised anywhere.
+The call therefore takes `SELECT … FOR UPDATE` on the user row, counts what
+would remain, and deletes, in that order. The locking statement declares what it
+takes in a trailing `/* locks: … */` comment, and `pnpm check:lock-order` reads
+it. What that check guarantees is narrow: that a row-locking statement carries a
+declaration at all, and that the table the declaration names is `user`. It does
+not compare the declaration against the `FROM` clause. The schema is interpolated
+from the same `request.schema` the table name is built from, so the two cannot
+disagree about the schema; that the declaration says `user` and the `FROM` clause
+also says `user` is a convention this call keeps, not something the check
+enforces. E-211 records that.
+
+**A caller who opened no transaction is safe too.** The lock is only worth
+anything for as long as a transaction holds it, and outside a transaction block
+it is gone with the statement that took it. The call notices — a row lock
+assigns a transaction id, and that id is gone by the next statement in
+autocommit — and redoes the whole sequence inside a transaction of its own.
+Nothing has been written at the point where it notices. A caller who already
+holds a transaction is unaffected: the first attempt completes, and the removal
+lands in that transaction and commits or rolls back with it.
+
+Either way, exactly one of two concurrent removals of the last two ways in
+succeeds and the other is refused with `last_sign_in_method`.
+
+## One-time artefacts
+
+Email verification, password reset, email change and magic link are the same
+object: a row in `velve.one_time_token` keyed by `sha256(token)`, carrying a
+purpose and an expiry. The plaintext token exists for exactly as long as it
+takes to hand it to the caller; nothing in the library stores it, logs it or
+puts it in an error message.
+
+### `randomBytes(length)`
+
+`Uint8Array` of `length` bytes from `crypto.getRandomValues`. Every secret the
+library generates comes from here and from nowhere else — this is the one module
+that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `length` | `number` | how many bytes to draw |
+
+### `encodeBase64Url(bytes)`
+
+`string`. Canonical base64url, no padding, written here rather than through
+`btoa` for the reason `decodeBase64Url` beside it does not use `atob`: section
+2.6 lists the runtime assumptions and neither is among them (E-62, E-257). It is
+the encoder for every secret the library hands out; the decoder beside it reads
+root keys.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `bytes` | `Uint8Array` | the bytes to encode |
+
+### `SecretToken`
+
+A `string` with a brand on it. A plain string — a user id, a session id, any
+other database key — is **not** assignable to `SecretToken`, so a key cannot
+arrive where a token is expected without `toSecretToken` being written at the
+call site. That is the half of S-RAND-6 this type provides.
+
+The other half does not hold yet: `SecretToken` is a subtype of `string`, so a
+token still flows into any parameter typed `string`, including `userId`. Closing
+that needs the `EntityId` type S-RAND-6 names, which does not exist in the core;
+T-RAND-6 asks for two negative cases that do not compile and one of them does.
+The brand is nominal in any case: it says where a value came from, not that the
+value is valid.
+
+### `createSecretToken()`
+
+The plaintext of a one-time artefact: 32 bytes from `randomBytes`, base64url
+encoded, 43 characters, 256 bit — the same width, the same source and the same
+encoding as a session token (S-RAND-4). It takes no parameters, because there is
+nothing about a secret for a caller to choose.
+
+### `toSecretToken(value)`
+
+Turns a string that arrived from outside into a `SecretToken`. It validates
+nothing, deliberately: a rejected shape would be a second answer beside "no
+row", and a malformed token would then be distinguishable from a well-formed one
+that was never issued (S-REPLAY-3). Its whole job is to make the step from
+untrusted string to lookup key a line someone wrote.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `value` | `string` | whatever arrived claiming to be a token |
+
+### `hashSecretToken(token)`
+
+The 32 bytes stored in `one_time_token.token_sha256`: SHA-256 over the token's
+UTF-8 bytes. Any string can be hashed, so a malformed token takes the same path
+as a well-formed one that was never issued.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `token` | `SecretToken` | the plaintext handed to the caller, or whatever arrived claiming to be one |
+
+### `ONE_TIME_TOKEN_PURPOSES` and `ONE_TIME_TOKEN_LIFETIME_SECONDS`
+
+The four purposes and the deadline each one carries (section 3.7).
+
+| Purpose | Deadline |
+|---|---|
+| `email_verify` | 24 hours |
+| `password_reset` | 1 hour |
+| `email_change` | 1 hour |
+| `magic_link` | 10 minutes |
+
+A deadline is not configurable and is not a parameter of any function here. The
+purpose decides it, so a caller cannot mint a reset token that outlives the hour.
+
+### `createOneTimeTokenRepository(options)`
+
+The two statements that touch `velve.one_time_token`, and the only ones in the
+library that do.
+
+| Option | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | the driver, or the one bound to an open transaction |
+| `schema` | `string` | the schema the table lives in |
+
+| Method | Does |
+|---|---|
+| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a row or `null` |
+
+`replaceOneTimeToken` runs in a transaction and takes `SELECT 1 FROM velve.user
+WHERE id = $1 FOR UPDATE` before it writes. The statement declares what it locks,
+`/* locks: <schema>.user */`, which is what `pnpm check:lock-order` reads: a
+repository builds its table name from the configured schema, so a scan cannot
+otherwise tell which table a lock takes (E-147). The replacement is one statement and
+therefore atomic, but at `READ COMMITTED` its `DELETE` works from the snapshot
+the statement began with and cannot remove a row a concurrent request inserted
+after it; without the lock, eight simultaneous requests leave up to eight live
+tokens where section 3.7 allows one.
+
+The lock is wider than the invariant it protects. While it is held, every write
+of a user-owned row for that account waits — a concurrent session insert for the
+same user blocks — and because the transaction carries the mail send, a hanging
+provider holds the lock for its whole timeout. Repository rules section 7 requires
+`velve.user` to be locked before any other table, and `pnpm check:lock-order`
+enforces it.
+
+Calling this inside `driver.transaction` rolls the whole issue back only if the
+driver joins the open transaction rather than opening a second. That is required
+of every driver under [the driver interface](#the-driver-interface) above, but it
+is a requirement on the implementation and not something the types carry:
+`Driver` is two method signatures. `createNodePostgresDriver` satisfies it, so
+the rollback of section 3.15 A.7 holds for `@velve/auth/pg` — the only driver
+that currently ships, since `@velve/auth/postgres-js` and `@velve/auth/neon`
+export nothing. A driver written elsewhere has to satisfy it too.
+
+Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
+code on it rather than one class per failure.
+
+| Code | Raised when |
+|---|---|
+| `one_time_token_owner_unknown` | the account the token would belong to does not exist — it was deleted between whatever resolved it and this call |
+| `one_time_token_purpose_unknown` | the purpose is not one of the four; only reachable from a caller that is not type-checked |
+| `one_time_token_not_written` | the insert reported no row, which is a broken invariant rather than a caller error |
+
+The first two are guards standing in front of the driver: without them the
+account case surfaces as a foreign-key violation and the purpose case as a
+not-null violation on `expires_at`, each carrying the table and the constraint
+name out of the library. The purpose guard runs before any statement, so an
+unknown purpose reaches no driver; the account guard runs on the lock, which has
+already read the row it needs. Messages are fixed per code, so nothing a caller
+passed can reach an error string. What the failure was about travels beside the
+code in `purpose`, which is one of the four or `null` for the one code that fires
+because the purpose was not one of them (E-129, E-265). All three become
+`internal_error` over HTTP.
+
+`consumeOneTimeToken` is the only way a one-time token is ever read. There is no
+method that finds one, counts them or looks one up: a read before the write is
+the gap two of the advisories behind this library walked through (S-RACE-2).
+
+It is also the one row-removing statement in the library with no owner predicate,
+and it carries `/* no owner predicate: S-TOKEN-4 */` in its own SQL to say so — a
+block comment, because a line comment swallows everything after it as soon as
+anything normalises the newlines away (E-266). The
+token is the authority there; the row names the account and nothing a caller
+sends does (E-142).
+
+Both methods demand the purpose beside the hash. A lookup without one does not
+compile, which is what S-TOKEN-1 asks for.
+
+`expiresAt` comes back as an ISO-8601 instant in UTC — a string, not a `Date`.
+The deadline is computed by the database from `now()`, so it is the database
+clock that decides both when a token expires and whether it has; and the string
+form is the one every driver agrees on.
+
+### `createOneTimeTokens(repository)`
+
+The two operations a flow needs, over that repository.
+
+| Method | Parameters | Returns |
+|---|---|---|
+| `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext `SecretToken` and its deadline |
+| `redeem` | `{ token: SecretToken, purpose }` | `{ purpose, userId, payload }`, or `null` |
+
+Requesting a token supersedes the user's earlier tokens of the same purpose, and
+holds under concurrent requests as well as sequential ones (S-TOKEN-3).
+
+`issue` returns the plaintext once. The library keeps no copy: the row holds
+the hash, and the token appears in no log line and in no error message. Issuing
+inside `driver.transaction` is what makes a rollback possible when the mail that
+carries the token cannot be sent (section 3.15 A.7) — subject to the driver
+joining the open transaction, as described under `replaceOneTimeToken` above.
+
+`redeem` answers `null` for a token that expired, for one already used, for one
+minted for a different purpose and for one that never existed. The four are the
+same answer on purpose (S-REPLAY-3): they are indistinguishable to the caller
+because they are indistinguishable to the statement, which learns only whether a
+row came back. Nothing downstream may reintroduce the difference; the visible
+code for all four is `invalid_token`, decided in `error-map.ts` and nowhere else.
+
+`userId` in the answer is the account the token was minted for, and it is the
+only account the redemption may act on. No session, cookie or input field takes
+part in that decision (S-TOKEN-4). A row that names no user is not redeemable and
+answers `null` like the rest.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `purpose` | `OneTimeTokenPurpose` | the purpose the token was minted and redeemed under |
+| `userId` | `string` | the account from `one_time_token.user_id` |
+| `payload` | `OneTimeTokenPayload` or `null` | whatever `issue` stored, for example the address an `email_change` moves to |
+
+### The types this module exports
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `SecretToken` | branded `string` | the plaintext of an artefact, above |
+| `OneTimeTokenPurpose` | `"email_verify" \| "password_reset" \| "email_change" \| "magic_link"` | every signature that touches the table |
+| `OneTimeTokenPayload` | `Readonly<Record<string, unknown>>` | what `issue` stores and `redeem` returns |
+| `OneTimeTokenRequest` | `{ purpose; userId: string; payload?: OneTimeTokenPayload }` | the argument of `issue` |
+| `IssuedOneTimeToken` | `{ token: SecretToken; expiresAt: string }` | the result of `issue` |
+| `OneTimeTokenRedemption` | `{ purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the result of `redeem` |
+| `OneTimeTokens` | `{ issue; redeem }` | the result of `createOneTimeTokens` |
+| `OneTimeTokenRepositoryOptions` | `{ driver: Driver; schema: string }` | the argument of `createOneTimeTokenRepository` |
+| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the argument of `replaceOneTimeToken` |
+| `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
+| `StoredOneTimeToken` | `{ userId: string \| null; payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns |
+| `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
+| `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
+| `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
+
+`payload` is `Readonly`: the object `redeem` hands back is the row's, not a copy
+to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in
+`StoredOneTimeToken`, because the column is nullable and a row that names no
+account is not redeemable — the service turns that row into `null` rather than
+handing a caller a target it does not have.

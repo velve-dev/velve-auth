@@ -1,5 +1,5 @@
 import { argon2dAsync, argon2iAsync, argon2idAsync } from "@noble/hashes/argon2.js";
-import { randomBytes } from "../keys/index.js";
+import { randomBytes } from "../token/random.js";
 import {
 	ARGON2ID_HASH_BYTES,
 	ARGON2ID_SALT_BYTES,

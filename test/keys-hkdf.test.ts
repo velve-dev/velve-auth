@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { derivePurposeKeyBytes } from "../src/core/keys/hkdf.js";
-import { KEY_PURPOSES, randomBytes } from "../src/core/keys/index.js";
+import { KEY_PURPOSES } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 
 describe("derivePurposeKeyBytes", () => {
 	it("derives 32 bytes for every purpose", async () => {

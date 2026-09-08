@@ -29,7 +29,7 @@ export function argon2CostIsAcceptable(
 	);
 }
 
-/** scrypt holds `128 · N · r` bytes, and `N` is `2^costExponent`, which overflows to `Infinity`
+/** scrypt holds 128 · N · r bytes, and N is two to the cost exponent, which overflows to Infinity
  * for an exponent an import can write in ten digits — the comparison catches that too. */
 export function scryptCostIsAcceptable(
 	costExponent: number,

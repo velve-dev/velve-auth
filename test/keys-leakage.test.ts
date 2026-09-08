@@ -6,11 +6,11 @@ import {
 	encryptWithPurposeKey,
 	KEY_PURPOSES,
 	openEnvelope,
-	randomBytes,
 	rootKeyProvider,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
+import { randomBytes } from "../src/core/token/index.js";
 import {
 	asEncryptionPurpose,
 	encodeBase64Url,
