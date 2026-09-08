@@ -80,8 +80,10 @@ export const nobleArgon2: Argon2Engine = {
  * The accelerator computes in one synchronous WebAssembly call and settles in a microtask, so a
  * chain of derivations never reaches the timer phase and S-DOS-4's wait limit never fires — the
  * flood is served in full and no timer in the process runs meanwhile. One `setTimeout` turn per
- * derivation restores the property the pure path gets from `asyncTick`. `scheduler.yield` would
- * not do: it returns to a continuation queue, and what has to run here is the timer phase (E-186).
+ * derivation restores the property the pure path gets from `asyncTick`, and it is the primitive
+ * the wait limit itself uses, so the yield and the deadline sit in one queue and cannot outrun
+ * each other. `scheduler.yield` reaches the timer phase just as well, but only through
+ * `node:timers/promises`, which the core may not import (E-186).
  */
 function yieldToTimerPhase(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 0));
