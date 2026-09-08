@@ -125,17 +125,20 @@ function builtFiles(directory) {
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		const path = `${directory}/${entry.name}`;
 		if (entry.isDirectory()) found.push(...builtFiles(path));
-		else if (entry.name.endsWith(".mjs")) found.push(path);
+		else if (/\.(mjs|d\.mts)$/.test(entry.name)) found.push(path);
 	}
 	return found;
 }
 
 export function scanBuiltPackage() {
 	const distribution = `${repositoryRoot}/dist`;
-	if (!existsSync(distribution)) return { offenders: [], statementsScanned: 0, built: false };
+	const files = existsSync(distribution) ? builtFiles(distribution) : [];
+	// Declarations alone are what an interrupted build leaves behind, not a build.
+	const built = files.some((path) => path.endsWith(".mjs"));
+	if (!built) return { offenders: [], statementsScanned: 0, built: false };
 	const offenders = [];
 	let statementsScanned = 0;
-	for (const path of builtFiles(distribution)) {
+	for (const path of files) {
 		for (const statement of statementsIn(readFileSync(path, "utf8"))) {
 			if (!/\b(update|merge)\b/i.test(statement)) continue;
 			statementsScanned += 1;
@@ -146,7 +149,7 @@ export function scanBuiltPackage() {
 			}
 		}
 	}
-	return { offenders, statementsScanned, built: true };
+	return { offenders, statementsScanned, built };
 }
 
 export function scanTree() {
