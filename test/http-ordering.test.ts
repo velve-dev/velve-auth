@@ -144,12 +144,12 @@ describe("ordering — S-CSRF-1, 3.11 last bullet", () => {
 	it("offers no way to run a handler from the route object alone", async () => {
 		const { environment, rateLimitRequests } = createHarness();
 		const [route] = environment.routes.filter((candidate) => candidate.name === "test.signIn");
-		const reachable = Object.entries(route ?? {}).filter(
-			([, member]) => typeof member === "function",
-		);
+		const members = Reflect.ownKeys(route ?? {});
 
-		expect(reachable.map(([member]) => member)).toEqual([]);
-		expect(Object.keys(route ?? {})).not.toContain("invoke");
+		expect(members.filter((key) => typeof key === "symbol")).toEqual([]);
+		expect(members.filter((key) => typeof Reflect.get(route ?? {}, key) === "function")).toEqual(
+			[],
+		);
 		expect(rateLimitRequests).toEqual([]);
 	});
 });

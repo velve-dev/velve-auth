@@ -49,22 +49,29 @@ export interface RouteMetadata {
 	readonly rateLimit: RateLimitRule;
 }
 
-export type RouteInvocation<Output> = (
+type RouteInvocation<Output> = (
 	rawInput: unknown,
 	resolveContext: () => Promise<RequestContext>,
 ) => Promise<Output>;
 
-/** 3.11: the invocation is reachable only through runRoute, so a route object alone cannot skip the checks in front of it. */
-const routeInvocation: unique symbol = Symbol("velve.route.invocation");
+declare const routeOutput: unique symbol;
 
+/** 3.11: the output type is carried by a phantom property, so the route object holds no member that runs it and none that Reflect.ownKeys can find. */
 export interface RunnableRoute<Output> extends RouteMetadata {
-	readonly [routeInvocation]: RouteInvocation<Output>;
+	readonly [routeOutput]?: Output;
 }
 
 export type AnyRoute = RunnableRoute<unknown>;
 
+const invocations = new WeakMap<RouteMetadata, RouteInvocation<unknown>>();
+
 export function invocationOf<Output>(route: RunnableRoute<Output>): RouteInvocation<Output> {
-	return route[routeInvocation];
+	const invocation = invocations.get(route);
+	if (invocation === undefined) {
+		throw new Error(`Route ${route.name} was not built by defineRoute`);
+	}
+	// defineRoute is the only writer, and it stores the invocation of exactly this route.
+	return invocation as RouteInvocation<Output>;
 }
 
 /** The declaration carries the handler; the route built from it does not, so no caller holding a route can reach past the checks. */
@@ -146,7 +153,7 @@ export function defineRoute<
 	assertFreshnessHasASession(declaration.name, declaration.caller, declaration.freshness);
 	assertInputLeavesTheCallEnvelopeAlone(declaration.name, declaration.input.fields);
 
-	return {
+	const route: Route<Name, Path, Input, Output, Code> = {
 		name: declaration.name,
 		method: declaration.method,
 		path: declaration.path,
@@ -156,16 +163,19 @@ export function defineRoute<
 		freshness: declaration.freshness,
 		originCheck: declaration.originCheck,
 		rateLimit: declaration.rateLimit,
-		// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
-		[routeInvocation]: async (rawInput, resolveContext) => {
-			const input = declaration.input.parse(
-				declaration.method === "GET"
-					? declaredFieldsOnly(rawInput, declaration.input.fields)
-					: rawInput,
-			);
-			return declaration.handler(input, await resolveContext());
-		},
 	};
+
+	// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
+	invocations.set(route, async (rawInput, resolveContext) => {
+		const input = declaration.input.parse(
+			declaration.method === "GET"
+				? declaredFieldsOnly(rawInput, declaration.input.fields)
+				: rawInput,
+		);
+		return declaration.handler(input, await resolveContext());
+	});
+
+	return route;
 }
 
 export interface ServerCallFields {
