@@ -4,7 +4,12 @@ import { cookiePolicyOf, type HttpEnvironment } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
 import { assertOriginAllowed } from "./origin.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
-import type { RequestContext, RouteRuntime } from "./route.js";
+import {
+	invocationOf,
+	type RequestContext,
+	type RouteMetadata,
+	type RunnableRoute,
+} from "./route.js";
 
 interface CallerTokens {
 	readonly sessionToken: string | null;
@@ -72,10 +77,7 @@ interface AccountBucket {
 }
 
 /** L-5: the key is the normalised identifier, formed before the user is resolved. */
-function createAccountBucket(
-	route: RouteRuntime<unknown>,
-	environment: HttpEnvironment,
-): AccountBucket {
+function createAccountBucket(route: RouteMetadata, environment: HttpEnvironment): AccountBucket {
 	let consumed = false;
 	return {
 		consume: async (normalisedIdentifier) => {
@@ -93,7 +95,7 @@ function createAccountBucket(
 }
 
 function warnOnUnconsumedAccountBucket(
-	route: RouteRuntime<unknown>,
+	route: RouteMetadata,
 	accountBucket: AccountBucket,
 	environment: HttpEnvironment,
 ): void {
@@ -105,7 +107,7 @@ function warnOnUnconsumedAccountBucket(
 }
 
 async function createRequestContext(
-	route: RouteRuntime<unknown>,
+	route: RouteMetadata,
 	call: RouteCall,
 	environment: HttpEnvironment,
 	cookies: CookieCollector,
@@ -132,7 +134,7 @@ async function createRequestContext(
 }
 
 async function enforceIpAddressRateLimit(
-	route: RouteRuntime<unknown>,
+	route: RouteMetadata,
 	call: RouteCall,
 	environment: HttpEnvironment,
 ): Promise<void> {
@@ -159,7 +161,7 @@ export function toLoggedFailure(
 }
 
 export async function runRoute<Output>(
-	route: RouteRuntime<Output>,
+	route: RunnableRoute<Output>,
 	call: RouteCall,
 	environment: HttpEnvironment,
 ): Promise<RouteOutcome<Output>> {
@@ -170,7 +172,7 @@ export async function runRoute<Output>(
 
 	const cookies = createCookieCollector(cookiePolicyOf(environment));
 	const accountBucket = createAccountBucket(route, environment);
-	const output = await route.invoke(await call.readInput(), () =>
+	const output = await invocationOf(route)(await call.readInput(), () =>
 		createRequestContext(route, call, environment, cookies, accountBucket),
 	);
 	warnOnUnconsumedAccountBucket(route, accountBucket, environment);

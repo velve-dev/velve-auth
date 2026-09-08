@@ -38,33 +38,48 @@ export interface RouteDeclaration<
 	readonly handler: (input: Input, context: RequestContext) => Promise<Output>;
 }
 
-export interface RouteRuntime<Output> {
+export interface RouteMetadata {
 	readonly name: string;
+	readonly method: HttpMethod;
+	readonly path: string;
+	readonly errors: readonly VelveErrorCode[];
 	readonly caller: CallerRequirement;
 	readonly freshness: FreshnessRequirement;
 	readonly originCheck: OriginRequirement;
 	readonly rateLimit: RateLimitRule;
-	readonly invoke: (
-		rawInput: unknown,
-		resolveContext: () => Promise<RequestContext>,
-	) => Promise<Output>;
 }
 
+export type RouteInvocation<Output> = (
+	rawInput: unknown,
+	resolveContext: () => Promise<RequestContext>,
+) => Promise<Output>;
+
+/** 3.11: the invocation is reachable only through runRoute, so a route object alone cannot skip the checks in front of it. */
+const routeInvocation: unique symbol = Symbol("velve.route.invocation");
+
+export interface RunnableRoute<Output> extends RouteMetadata {
+	readonly [routeInvocation]: RouteInvocation<Output>;
+}
+
+export type AnyRoute = RunnableRoute<unknown>;
+
+export function invocationOf<Output>(route: RunnableRoute<Output>): RouteInvocation<Output> {
+	return route[routeInvocation];
+}
+
+/** The declaration carries the handler; the route built from it does not, so no caller holding a route can reach past the checks. */
 export interface Route<
 	Name extends string,
 	Path extends string,
 	Input,
 	Output,
 	Code extends VelveErrorCode,
-> extends RouteDeclaration<Name, Path, Input, Output, Code>,
-		RouteRuntime<Output> {
+> extends RouteMetadata,
+		RunnableRoute<Output> {
 	readonly name: Name;
-}
-
-export interface AnyRoute extends RouteRuntime<unknown> {
-	readonly method: HttpMethod;
-	readonly path: string;
-	readonly errors: readonly VelveErrorCode[];
+	readonly path: Path;
+	readonly errors: readonly Code[];
+	readonly input: ObjectValidator<Input>;
 }
 
 function assertPathIsRoutable(path: string): void {
@@ -112,9 +127,17 @@ export function defineRoute<
 	assertFreshnessHasASession(declaration.name, declaration.caller, declaration.freshness);
 
 	return {
-		...declaration,
+		name: declaration.name,
+		method: declaration.method,
+		path: declaration.path,
+		input: declaration.input,
+		errors: declaration.errors,
+		caller: declaration.caller,
+		freshness: declaration.freshness,
+		originCheck: declaration.originCheck,
+		rateLimit: declaration.rateLimit,
 		// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
-		invoke: async (rawInput, resolveContext) => {
+		[routeInvocation]: async (rawInput, resolveContext) => {
 			const input = declaration.input.parse(
 				declaration.method === "GET"
 					? declaredFieldsOnly(rawInput, declaration.input.fields)
@@ -134,7 +157,7 @@ export interface ServerCallFields {
 }
 
 export type ServerMethodOf<R> =
-	R extends RouteDeclaration<string, string, infer Input, infer Output, VelveErrorCode>
+	R extends Route<string, string, infer Input, infer Output, VelveErrorCode>
 		? (input: Input & ServerCallFields) => Promise<Output>
 		: never;
 

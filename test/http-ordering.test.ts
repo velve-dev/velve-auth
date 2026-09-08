@@ -141,26 +141,15 @@ describe("ordering — S-CSRF-1, 3.11 last bullet", () => {
 		expect(rateLimitRequests).toEqual([]);
 	});
 
-	it("lets a caller with the route object run the handler without any check at all", async () => {
+	it("offers no way to run a handler from the route object alone", async () => {
 		const { environment, rateLimitRequests } = createHarness();
 		const [route] = environment.routes.filter((candidate) => candidate.name === "test.signIn");
+		const reachable = Object.entries(route ?? {}).filter(
+			([, member]) => typeof member === "function",
+		);
 
-		await expect(
-			route?.invoke({ identifier: "someone@example.com" }, async () => ({
-				session: null,
-				pending: null,
-				sessionToken: null,
-				ipAddress: null,
-				userAgent: null,
-				cookies: {
-					setSession: () => undefined,
-					clearSession: () => undefined,
-					setPending: () => undefined,
-					clearPending: () => undefined,
-				},
-				enforceAccountRateLimit: async () => undefined,
-			})),
-		).resolves.toEqual({ status: "signed_in", sessionToken: "session-token-value" });
+		expect(reachable.map(([member]) => member)).toEqual([]);
+		expect(Object.keys(route ?? {})).not.toContain("invoke");
 		expect(rateLimitRequests).toEqual([]);
 	});
 });

@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { VelveError } from "../src/core/http/error-map.js";
 import {
 	defineRoute,
+	invocationOf,
 	type Nest,
 	type Route,
 	type RouteDeclaration,
@@ -56,12 +57,29 @@ describe("defineRoute", () => {
 		let contextResolved = false;
 
 		await expect(
-			route.invoke({ value: 7 }, async () => {
+			invocationOf(route)({ value: 7 }, async () => {
 				contextResolved = true;
 				throw new Error("the caller must not be resolved for input that never parsed");
 			}),
 		).rejects.toThrow(new VelveError("invalid_input"));
 		expect(contextResolved).toBe(false);
+	});
+
+	it("runs the checks in front of the handler on the only path that can reach it", async () => {
+		const { environment, rateLimitRequests } = createHarness();
+		const [tableRoute] = environment.routes.filter((route) => route.name === "test.signIn");
+
+		expect(tableRoute).toBeDefined();
+		await expect(
+			createServerMethod(
+				signInRoute,
+				environment,
+			)({
+				identifier: "someone@example.com",
+				origin: "https://evil.com",
+			}),
+		).rejects.toThrow(new VelveError("origin_not_allowed"));
+		expect(rateLimitRequests).toEqual([]);
 	});
 
 	it("refuses a path that would route ambiguously", () => {
