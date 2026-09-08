@@ -7,6 +7,11 @@ import { defineConfig } from "vitest/config";
  * every other file has finished and one file at a time, so nothing else holds a connection
  * while they hold theirs (E-156). */
 const CONCURRENCY_FILES = ["test/**/*-race.test.ts", "test/**/*-concurrency.test.ts"];
+
+/** Section 6 puts three cases before every release rather than on every commit: they restart a
+ * process, remove an optional dependency, or read the packed artefact. The tier is a project of its
+ * own so that `pnpm test` cannot pick them up and `pnpm test:release` cannot miss them (E-344). */
+const RELEASE_FILES = ["test/**/*.release.test.ts"];
 const RUNS_ALONE_AFTERWARDS = { groupOrder: 1 };
 
 /** Vitest reads this only at the root; inside a project it is accepted and has no effect, so the
@@ -25,9 +30,17 @@ export default defineConfig({
 				test: {
 					name: "unit",
 					include: ["test/**/*.test.ts"],
-					exclude: CONCURRENCY_FILES,
+					exclude: [...CONCURRENCY_FILES, ...RELEASE_FILES],
 					environment: "node",
 					testTimeout: 30_000,
+				},
+			},
+			{
+				test: {
+					name: "release",
+					include: RELEASE_FILES,
+					environment: "node",
+					testTimeout: 120_000,
 				},
 			},
 			{

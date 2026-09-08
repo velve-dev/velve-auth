@@ -90,9 +90,11 @@
 		"precheck:session-owner": "tsdown",
 		"pretest": "tsdown",
 		"pretest:nightly": "tsdown",
+		"pretest:release": "tsdown",
 		"publint": "publint --strict",
-		"test": "vitest run",
-		"test:nightly": "VELVE_NIGHTLY=1 vitest run",
+		"test": "vitest run --project unit --project concurrency",
+		"test:nightly": "VELVE_NIGHTLY=1 vitest run --project unit --project concurrency",
+		"test:release": "vitest run --project release",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit"
 	},
