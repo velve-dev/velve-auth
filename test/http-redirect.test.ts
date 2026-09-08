@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VelveError } from "../src/core/http/error-map.js";
-import { readRedirectPath, redirectTo } from "../src/core/http/redirect.js";
+import { readRedirectPath, redirectTo, toRedirectPath } from "../src/core/http/redirect.js";
 import { defineRoute } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import { toWebHandler } from "../src/http/index.js";
@@ -13,6 +13,8 @@ const REJECTED_TARGETS = [
 	"evil.com",
 	"javascript:alert(1)",
 	"/app\r\nSet-Cookie: a=b",
+	"/app?token=SECRET",
+	"/app#token=SECRET",
 	"",
 ];
 
@@ -26,7 +28,10 @@ const redirectingRoute = defineRoute({
 	freshness: "not_required",
 	originCheck: "checked",
 	rateLimit: { perIpAddress: "none", perAccount: "none" },
-	handler: async () => ({ ...redirectTo("/app/welcome"), sessionToken: "session-token-value" }),
+	handler: async () => ({
+		...redirectTo(toRedirectPath("/app/welcome")),
+		sessionToken: "session-token-value",
+	}),
 });
 
 describe("redirects", () => {
@@ -50,9 +55,9 @@ describe("redirects", () => {
 		expect(response.headers.get("Location")).not.toContain("session-token-value");
 	});
 
-	it("refuses a target that is not a path without a host", () => {
+	it("refuses a target that is not a path without a host and without a query", () => {
 		for (const target of REJECTED_TARGETS) {
-			expect(() => redirectTo(target)).toThrow(VelveError);
+			expect(() => toRedirectPath(target)).toThrow(VelveError);
 			expect(() => readRedirectPath({ redirectToPath: target })).toThrow(VelveError);
 		}
 	});

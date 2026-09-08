@@ -1,30 +1,33 @@
 import { VelveError } from "./error-map.js";
 import { isRecord } from "./validators.js";
 
+export type RedirectPath = string & { readonly __brand: "RedirectPath" };
+
 interface Redirect {
-	readonly redirectToPath: string;
+	readonly redirectToPath: RedirectPath;
 }
 
-const PATH_CHARACTERS = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@%/?#]*$/;
+const PATH_CHARACTERS = /^\/[A-Za-z0-9\-._~!$&'()*+,;=:@%/]*$/;
 
-/** S-REDIR-1 and S-REDIR-3: only a path reaches Location, never a value that could carry a scheme or a host. */
-function isPathWithoutHost(path: string): boolean {
-	return PATH_CHARACTERS.test(path) && !path.startsWith("//");
+/** S-REDIR-1, S-REDIR-3 and S-REDIR-4: a path without a scheme, without a host and without a query, so no token can ride along. */
+function isRedirectPath(value: string): boolean {
+	return PATH_CHARACTERS.test(value) && !value.startsWith("//");
 }
 
-export function redirectTo(path: string): Redirect {
-	if (!isPathWithoutHost(path)) {
+export function toRedirectPath(value: string): RedirectPath {
+	if (!isRedirectPath(value)) {
 		throw new VelveError("internal_error");
 	}
+	return value as RedirectPath;
+}
+
+export function redirectTo(path: RedirectPath): Redirect {
 	return { redirectToPath: path };
 }
 
-export function readRedirectPath(output: unknown): string | null {
+export function readRedirectPath(output: unknown): RedirectPath | null {
 	if (!isRecord(output) || typeof output.redirectToPath !== "string") {
 		return null;
 	}
-	if (!isPathWithoutHost(output.redirectToPath)) {
-		throw new VelveError("internal_error");
-	}
-	return output.redirectToPath;
+	return toRedirectPath(output.redirectToPath);
 }
