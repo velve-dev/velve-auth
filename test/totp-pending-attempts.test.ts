@@ -1,21 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+	MAXIMUM_PENDING_ATTEMPTS,
+	PENDING_CALLER_ROUTES,
+	type PendingAuthenticationService,
+} from "../src/core/factor/pending/index.js";
 import { totpCodeForStep } from "../src/core/factor/totp/code.js";
 import { TOTP_PERIOD_SECONDS, timeStepAt } from "../src/core/factor/totp/parameters.js";
-import {
-	MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE,
-	spendPendingAttemptOn,
-} from "../src/core/factor/totp/pending-attempt.js";
 import { createTotpService, type TotpService } from "../src/core/factor/totp/service.js";
-import { ConcealedError, toVisibleFailure, VelveError } from "../src/core/http/error-map.js";
+import { toVisibleFailure } from "../src/core/http/error-map.js";
+import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import {
-	countingAttempt,
+	attemptsRecorded,
+	beginPendingState,
 	countRows,
-	createPendingState,
+	pendingAuthenticationsOn,
 	secretBytesOfBase32,
-	type SettableClock,
-	settableClock,
 	testKeyProvider,
 } from "./totp-fixtures.js";
 
@@ -23,7 +24,8 @@ const FIXED_INSTANT = new Date("2026-07-01T12:00:00.000Z");
 
 let connection: TestConnection;
 let schema: string;
-let clock: SettableClock;
+let clock: TestClock;
+let pending: PendingAuthenticationService;
 let totp: TotpService;
 
 async function enrolAnAccount(accountName: string) {
@@ -39,11 +41,13 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("totp_attempts");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	clock = settableClock(FIXED_INSTANT);
+	clock = createTestClock(FIXED_INSTANT);
+	pending = pendingAuthenticationsOn(connection, schema);
 	totp = createTotpService({
 		driver: connection,
 		schema,
 		keys: testKeyProvider(),
+		pending,
 		issuer: "Velve",
 		clock,
 	});
@@ -56,18 +60,19 @@ afterAll(async () => {
 
 /**
  * L-8 has no `T-` case in the test plan of architecture section 6. It is tested here anyway,
- * because a limit nobody checks is a limit nobody has.
+ * because a limit nobody checks is a limit nobody has. The number comes from the pending module,
+ * so a change there fails this file rather than passing against a second copy of the five.
  */
-describe("L-8: five attempts per pending state, then the row is gone", () => {
-	it("allows exactly five and answers the fifth with too_many_factor_attempts", async () => {
+describe("L-8: the permitted attempts per pending state, and then the row is gone", () => {
+	it("answers the attempt that exhausts the budget with too_many_factor_attempts", async () => {
 		const account = await enrolAnAccount("locked@example.com");
-		const pending = await createPendingState(connection, schema, account.userId);
+		const { token } = await beginPendingState(pending, account.userId);
 
 		const statuses: number[] = [];
 		const codes: string[] = [];
-		for (let attempt = 1; attempt <= MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE; attempt += 1) {
+		for (let attempt = 1; attempt <= MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
 			const failure = await totp
-				.verify({ attempt: pending, code: "000000" })
+				.verify({ pendingToken: token, code: "000000" })
 				.then(() => null)
 				.catch((cause: unknown) => toVisibleFailure(cause));
 			statuses.push(failure?.error.httpStatus ?? 200);
@@ -82,88 +87,65 @@ describe("L-8: five attempts per pending state, then the row is gone", () => {
 			"invalid_factor_code",
 			"too_many_factor_attempts",
 		]);
-		expect(await pending.attemptsRecorded()).toBeNull();
+		expect(await attemptsRecorded(connection, schema, account.userId)).toBeNull();
 		expect(await countRows(connection, schema, "pending_authentication", account.userId)).toBe(0);
 	});
 
-	it("counts every attempt in the row, so the count is not held in the process", async () => {
+	it("counts every failed attempt in the row, so the count is not held in the process", async () => {
 		const account = await enrolAnAccount("counted@example.com");
-		const pending = await createPendingState(connection, schema, account.userId);
+		const { token } = await beginPendingState(pending, account.userId);
 
-		await totp.verify({ attempt: pending, code: "000000" }).catch(() => undefined);
-		expect(await pending.attemptsRecorded()).toBe(1);
-		await totp.verify({ attempt: pending, code: "000000" }).catch(() => undefined);
-		expect(await pending.attemptsRecorded()).toBe(2);
+		await totp.verify({ pendingToken: token, code: "000000" }).catch(() => undefined);
+		expect(await attemptsRecorded(connection, schema, account.userId)).toBe(1);
+		await totp.verify({ pendingToken: token, code: "000000" }).catch(() => undefined);
+		expect(await attemptsRecorded(connection, schema, account.userId)).toBe(2);
 	});
 
-	it("spends an attempt on a correct code as well, and leaves the state for its caller to consume", async () => {
+	it("spends no attempt on a correct code", async () => {
 		const account = await enrolAnAccount("correct@example.com");
-		const pending = await createPendingState(connection, schema, account.userId);
-		clock.advanceSeconds(TOTP_PERIOD_SECONDS);
+		const { token } = await beginPendingState(pending, account.userId);
+		clock.advanceBy(TOTP_PERIOD_SECONDS * 1000);
 
 		await totp.verify({
-			attempt: pending,
+			pendingToken: token,
 			code: totpCodeForStep(account.secretBytes, timeStepAt(clock.now())),
 		});
 
-		expect(await pending.attemptsRecorded()).toBe(1);
+		expect(await attemptsRecorded(connection, schema, account.userId)).toBe(0);
 	});
 
 	it("answers a pending state that is gone as invalid_pending_authentication", async () => {
-		const account = await enrolAnAccount("expired@example.com");
-		const pending = await createPendingState(connection, schema, account.userId);
-		await pending.discard();
+		const account = await enrolAnAccount("cancelled@example.com");
+		const { token } = await beginPendingState(pending, account.userId);
+		await pending.cancel({ token });
 
 		const failure = await totp
-			.verify({ attempt: pending, code: "000000" })
+			.verify({ pendingToken: token, code: "000000" })
+			.then(() => null)
 			.catch((cause: unknown) => toVisibleFailure(cause));
+
 		expect(failure?.error.code).toBe("invalid_pending_authentication");
 		expect(failure?.error.httpStatus).toBe(401);
 		expect(failure?.loggedReason).toBe("pending_not_found");
 	});
 
-	it("does not raise the counter past the limit on a state that expired mid-flight", async () => {
-		const account = await enrolAnAccount("stale@example.com");
-		const pending = await createPendingState(connection, schema, account.userId, -1);
+	it("reads the account out of the pending state and never out of the request", async () => {
+		const owner = await enrolAnAccount("owner@example.com");
+		const stranger = await enrolAnAccount("stranger@example.com");
+		const { token } = await beginPendingState(pending, owner.userId);
+		clock.advanceBy(TOTP_PERIOD_SECONDS * 1000);
 
-		await expect(totp.verify({ attempt: pending, code: "000000" })).rejects.toBeInstanceOf(
-			ConcealedError,
-		);
-		expect(await pending.attemptsRecorded()).toBe(0);
-	});
-});
-
-describe("the attempt policy is the same one for every factor of the pending state", () => {
-	it("passes the result of the verification through when the budget is not spent", async () => {
-		const attempt = countingAttempt("00000000-0000-0000-0000-000000000000");
-		await expect(spendPendingAttemptOn(attempt, async () => "verified")).resolves.toBe("verified");
-		expect(attempt.spent).toEqual([1]);
-		expect(attempt.discarded()).toBe(0);
-	});
-
-	it("re-raises the verification's own failure below the limit and discards nothing", async () => {
-		const attempt = countingAttempt("00000000-0000-0000-0000-000000000000");
-		const raised = new ConcealedError("recovery_code_not_found");
 		await expect(
-			spendPendingAttemptOn(attempt, () => Promise.reject(raised)),
-		).rejects.toBe(raised);
-		expect(attempt.discarded()).toBe(0);
+			totp.verify({
+				pendingToken: token,
+				code: totpCodeForStep(stranger.secretBytes, timeStepAt(clock.now())),
+			}),
+		).rejects.toMatchObject({ reason: "totp_code_wrong" });
 	});
 
-	it("replaces the failure with too_many_factor_attempts on the attempt that exhausts the budget", async () => {
-		const attempt = countingAttempt(
-			"00000000-0000-0000-0000-000000000000",
-			MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE - 1,
-		);
-		await expect(
-			spendPendingAttemptOn(attempt, () =>
-				Promise.reject(new ConcealedError("recovery_code_not_found")),
-			),
-		).rejects.toEqual(new VelveError("too_many_factor_attempts"));
-		expect(attempt.discarded()).toBe(1);
-	});
-
-	it("keeps five as the number the specification names", () => {
-		expect(MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE).toBe(5);
+	it("names both verifying routes among the four that read the cookie (3.6)", () => {
+		expect(PENDING_CALLER_ROUTES).toHaveLength(4);
+		expect(PENDING_CALLER_ROUTES).toContain("factor.totp.verify");
+		expect(PENDING_CALLER_ROUTES).toContain("factor.recovery.verify");
 	});
 });

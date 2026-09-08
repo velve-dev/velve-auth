@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type {
+	IssuedPendingAuthentication,
+	PendingAuthenticationService,
+} from "../src/core/factor/pending/index.js";
 import {
 	createRecoveryCodeService,
 	type RecoveryCodeService,
@@ -6,7 +10,12 @@ import {
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { countingAttempt, countRows, testKeyProvider } from "./totp-fixtures.js";
+import {
+	beginPendingState,
+	countRows,
+	pendingAuthenticationsOn,
+	testKeyProvider,
+} from "./totp-fixtures.js";
 
 // T-RACE-4 fixes the thresholds: 50 simultaneous redemptions, 20 repetitions, 9 rows left.
 const ATTEMPTS = 50;
@@ -17,6 +26,7 @@ let connections: TestConnection[] = [];
 let schema: string;
 let keys: KeyProvider;
 let issuer: RecoveryCodeService;
+let pendings: PendingAuthenticationService[] = [];
 let racers: RecoveryCodeService[] = [];
 
 beforeAll(async () => {
@@ -27,9 +37,20 @@ beforeAll(async () => {
 		connections.push(await openTestConnection());
 	}
 	keys = testKeyProvider();
-	issuer = createRecoveryCodeService({ driver: connections[0] as TestConnection, schema, keys });
-	racers = connections.map((connection) =>
-		createRecoveryCodeService({ driver: connection, schema, keys }),
+	pendings = connections.map((connection) => pendingAuthenticationsOn(connection, schema));
+	issuer = createRecoveryCodeService({
+		driver: connections[0] as TestConnection,
+		schema,
+		keys,
+		pending: pendings[0] as PendingAuthenticationService,
+	});
+	racers = connections.map((connection, index) =>
+		createRecoveryCodeService({
+			driver: connection,
+			schema,
+			keys,
+			pending: pendings[index] as PendingAuthenticationService,
+		}),
 	);
 }, 120_000);
 
@@ -53,8 +74,18 @@ async function raceOneCode(): Promise<RoundOutcome> {
 	const { codes } = await issuer.generate({ actor: actorOfTestUser(userId) });
 	const code = codes[0] ?? "";
 
+	const issued = await Promise.all(
+		racers.map((_unused, index) =>
+			beginPendingState(pendings[index] as PendingAuthenticationService, userId, ["recovery"]),
+		),
+	);
 	const results = await Promise.allSettled(
-		racers.map((recovery) => recovery.verify({ attempt: countingAttempt(userId), code })),
+		racers.map((recovery, index) =>
+			recovery.verify({
+				pendingToken: (issued[index] as IssuedPendingAuthentication).token,
+				code,
+			}),
+		),
 	);
 
 	return {
@@ -65,23 +96,19 @@ async function raceOneCode(): Promise<RoundOutcome> {
 }
 
 describe("T-RACE-4: fifty redemptions of one recovery code leave one winner (S-RACE-4)", () => {
-	it(
-		"accepts exactly one in every round and leaves nine codes",
-		async () => {
-			const rounds: RoundOutcome[] = [];
-			for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
-				rounds.push(await raceOneCode());
-			}
+	it("accepts exactly one in every round and leaves nine codes", async () => {
+		const rounds: RoundOutcome[] = [];
+		for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
+			rounds.push(await raceOneCode());
+		}
 
-			expect(rounds).toHaveLength(REPETITIONS);
-			expect(rounds.filter((round) => round.accepted === 1)).toHaveLength(REPETITIONS);
-			expect(rounds.filter((round) => round.remaining === CODES_PER_SET - 1)).toHaveLength(
-				REPETITIONS,
-			);
-			expect(rounds.reduce((total, round) => total + round.accepted + round.refused, 0)).toBe(
-				REPETITIONS * ATTEMPTS,
-			);
-		},
-		300_000,
-	);
+		expect(rounds).toHaveLength(REPETITIONS);
+		expect(rounds.filter((round) => round.accepted === 1)).toHaveLength(REPETITIONS);
+		expect(rounds.filter((round) => round.remaining === CODES_PER_SET - 1)).toHaveLength(
+			REPETITIONS,
+		);
+		expect(rounds.reduce((total, round) => total + round.accepted + round.refused, 0)).toBe(
+			REPETITIONS * ATTEMPTS,
+		);
+	}, 300_000);
 });

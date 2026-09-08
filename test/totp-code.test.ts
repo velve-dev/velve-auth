@@ -75,7 +75,9 @@ describe("matching answers with the step, not with a boolean", () => {
 	it.each(["", "12345", "1234567", "abcdef", "  ", "000000000000"])(
 		"refuses the malformed submission %j",
 		(submitted) => {
-			expect(matchingTimeStep({ secretBytes: secret, submittedCode: submitted, at: AT })).toBeNull();
+			expect(
+				matchingTimeStep({ secretBytes: secret, submittedCode: submitted, at: AT }),
+			).toBeNull();
 		},
 	);
 
@@ -101,9 +103,7 @@ describe("the generated code and secret keep the shape 3.6 fixes", () => {
 	});
 
 	it("draws a different secret every time (S-RAND-1)", () => {
-		const drawn = new Set(
-			Array.from({ length: 64 }, () => totpSecretBase32(createTotpSecret())),
-		);
+		const drawn = new Set(Array.from({ length: 64 }, () => totpSecretBase32(createTotpSecret())));
 		expect(drawn.size).toBe(64);
 	});
 });

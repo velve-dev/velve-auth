@@ -4,15 +4,18 @@ import type { Clock } from "../../http/environment.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { decryptWithPurposeKey, encryptWithPurposeKey } from "../../keys/envelope.js";
 import type { KeyProvider } from "../../keys/provider.js";
+import type { PendingAuthenticationService, PendingResolution } from "../pending/service.js";
+import type { PendingToken } from "../pending/token.js";
 import { matchingTimeStep } from "./code.js";
 import { TOTP_USED_STEP_RETENTION_SECONDS } from "./parameters.js";
-import { type PendingFactorAttempt, spendPendingAttemptOn } from "./pending-attempt.js";
+import { verifyUnderPendingAttemptLimit } from "./pending-attempt.js";
 import { createTotpRepository, type StoredTotpCredential } from "./repository.js";
 import { createTotpSecret, type TotpEnrollment, totpEnrollment } from "./secret.js";
 
 export interface TotpServiceOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
+	readonly pending: PendingAuthenticationService;
 	readonly issuer: string;
 	readonly clock: Clock;
 	readonly schema?: string;
@@ -23,7 +26,11 @@ export interface TotpService {
 		start(input: { readonly actor: Actor; readonly accountName: string }): Promise<TotpEnrollment>;
 		finish(input: { readonly actor: Actor; readonly code: string }): Promise<void>;
 	};
-	verify(input: { readonly attempt: PendingFactorAttempt; readonly code: string }): Promise<void>;
+	/** The resolution is returned rather than consumed: S-FIX-1 wants the pending row removed in the same transaction that inserts the session, and that transaction belongs to whoever issues the session (E-410). */
+	verify(input: {
+		readonly pendingToken: PendingToken;
+		readonly code: string;
+	}): Promise<PendingResolution>;
 	remove(input: { readonly actor: Actor; readonly code: string }): Promise<void>;
 	isEnrolled(input: { readonly userId: string }): Promise<boolean>;
 }
@@ -119,13 +126,14 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 			},
 		},
 
-		verify({ attempt, code }) {
-			return spendPendingAttemptOn(attempt, async () => {
+		verify({ pendingToken, code }) {
+			return verifyUnderPendingAttemptLimit(options.pending, pendingToken, async (resolution) => {
 				const step = await matchConfirmedCode({
-					credential: await credentials.findCredentialOf({ userId: attempt.userId }),
+					credential: await credentials.findCredentialOf({ userId: resolution.userId }),
 					code,
 				});
-				await claimOrReject(attempt.userId, step);
+				await claimOrReject(resolution.userId, step);
+				return resolution;
 			});
 		},
 

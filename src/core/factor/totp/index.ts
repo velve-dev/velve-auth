@@ -9,11 +9,7 @@ export {
 	TOTP_USED_STEP_RETENTION_SECONDS,
 	timeStepAt,
 } from "./parameters.js";
-export type { PendingFactorAttempt } from "./pending-attempt.js";
-export {
-	MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE,
-	spendPendingAttemptOn,
-} from "./pending-attempt.js";
+export { verifyUnderPendingAttemptLimit } from "./pending-attempt.js";
 export type {
 	StoredTotpCredential,
 	TimeStepClaim,

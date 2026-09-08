@@ -1,33 +1,14 @@
 import { randomBytes as nodeRandomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
+import {
+	createPendingAuthenticationService,
+	type IssuedPendingAuthentication,
+	type PendingAuthenticationService,
+} from "../src/core/factor/pending/index.js";
 import { createTotpSecret } from "../src/core/factor/totp/secret.js";
-import type { PendingFactorAttempt } from "../src/core/factor/totp/pending-attempt.js";
-import type { Clock } from "../src/core/http/environment.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
-
-export interface SettableClock extends Clock {
-	set(instant: Date): void;
-	advanceSeconds(seconds: number): void;
-}
-
-/**
- * Architecture 6.19 wants this in `@velve/auth/testing`, which is `export {};` today. It lives
- * here until that module exists, because `src/testing/index.ts` belongs to no feature of wave 3.
- */
-export function settableClock(instant: Date): SettableClock {
-	let current = instant;
-	return {
-		now: () => current,
-		set: (next) => {
-			current = next;
-		},
-		advanceSeconds: (seconds) => {
-			current = new Date(current.getTime() + seconds * 1000);
-		},
-	};
-}
 
 export interface TestKeyRing {
 	providerAt(currentVersion: number, availableVersions?: readonly number[]): KeyProvider;
@@ -58,83 +39,32 @@ export function testKeyProvider(currentVersion = 1): KeyProvider {
 	return testKeyRing(currentVersion).providerAt(currentVersion);
 }
 
-export interface PendingStateFixture extends PendingFactorAttempt {
-	readonly tokenHash: Uint8Array;
-	attemptsRecorded(): Promise<number | null>;
+export function pendingAuthenticationsOn(
+	driver: Driver,
+	schema: string,
+): PendingAuthenticationService {
+	return createPendingAuthenticationService({ driver, schema });
 }
 
-/**
- * The pending state belongs to `auth-core`, which had published nothing when this was written.
- * This is the shape L-8 asks of it: the counter is raised with `UPDATE … RETURNING` rather than a
- * row lock, because `pnpm check:lock-order` accepts a row lock only on `velve.user`.
- */
-export async function createPendingState(
+/** The state a second factor is spent on, begun the way the sign-in path begins it. */
+export function beginPendingState(
+	pending: PendingAuthenticationService,
+	userId: string,
+	availableFactors: readonly ("totp" | "webauthn" | "recovery")[] = ["totp", "recovery"],
+): Promise<IssuedPendingAuthentication> {
+	return pending.begin({ userId, factorsCompleted: ["password"], availableFactors });
+}
+
+export async function attemptsRecorded(
 	driver: Driver,
 	schema: string,
 	userId: string,
-	lifetimeSeconds = 300,
-): Promise<PendingStateFixture> {
-	const tokenHash = nodeRandomBytes(32);
-	await driver.query(
-		`INSERT INTO ${schema}.pending_authentication
-		 (token_sha256, user_id, factors_completed, expires_at)
-		 VALUES ($1, $2, '{password}', now() + make_interval(secs => $3::double precision))`,
-		[tokenHash, userId, lifetimeSeconds],
+): Promise<number | null> {
+	const [row] = await driver.query<{ attempts: number }>(
+		`SELECT attempts FROM ${schema}.pending_authentication WHERE user_id = $1`,
+		[userId],
 	);
-
-	return {
-		userId,
-		tokenHash,
-
-		async spendAttempt() {
-			const [row] = await driver.query<{ attempts: number }>(
-				`UPDATE ${schema}.pending_authentication SET attempts = attempts + 1
-				 WHERE token_sha256 = $1 AND expires_at > now()
-				 RETURNING attempts`,
-				[tokenHash],
-			);
-			return row?.attempts ?? null;
-		},
-
-		async discard() {
-			await driver.query(
-				`DELETE FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
-				[tokenHash],
-			);
-		},
-
-		async attemptsRecorded() {
-			const [row] = await driver.query<{ attempts: number }>(
-				`SELECT attempts FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
-				[tokenHash],
-			);
-			return row?.attempts ?? null;
-		},
-	};
-}
-
-export interface CountingAttempt extends PendingFactorAttempt {
-	readonly spent: readonly number[];
-	readonly discarded: () => number;
-}
-
-export function countingAttempt(userId: string, attemptsAlreadySpent = 0): CountingAttempt {
-	const spent: number[] = [];
-	let discards = 0;
-	let counter = attemptsAlreadySpent;
-	return {
-		userId,
-		spent,
-		discarded: () => discards,
-		spendAttempt: async () => {
-			counter += 1;
-			spent.push(counter);
-			return counter;
-		},
-		discard: async () => {
-			discards += 1;
-		},
-	};
+	return row?.attempts ?? null;
 }
 
 export async function countRows(

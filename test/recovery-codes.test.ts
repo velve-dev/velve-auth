@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { PendingAuthenticationService } from "../src/core/factor/pending/index.js";
 import {
 	createRecoveryCodeSet,
 	normaliseRecoveryCode,
@@ -16,11 +17,17 @@ import { toVisibleFailure } from "../src/core/http/error-map.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
-import { countingAttempt, testKeyProvider, testKeyRing } from "./totp-fixtures.js";
+import {
+	beginPendingState,
+	pendingAuthenticationsOn,
+	testKeyProvider,
+	testKeyRing,
+} from "./totp-fixtures.js";
 
 let connection: TestConnection;
 let schema: string;
 let keys: KeyProvider;
+let pending: PendingAuthenticationService;
 let recovery: RecoveryCodeService;
 
 interface StoredCode {
@@ -40,7 +47,8 @@ beforeAll(async () => {
 	connection = migrated.connection;
 	schema = migrated.schema;
 	keys = testKeyProvider();
-	recovery = createRecoveryCodeService({ driver: connection, schema, keys });
+	pending = pendingAuthenticationsOn(connection, schema);
+	recovery = createRecoveryCodeService({ driver: connection, schema, keys, pending });
 });
 
 afterAll(async () => {
@@ -129,7 +137,10 @@ describe("S-REST-3: the stored form is an HMAC and display is impossible", () =>
 
 		const dumped = (await readStoredCodes(userId))
 			.map((row) => Buffer.from(row.code_hmac))
-			.map((value) => `${value.toString("latin1")}|${value.toString("base64")}|${value.toString("hex")}`)
+			.map(
+				(value) =>
+					`${value.toString("latin1")}|${value.toString("base64")}|${value.toString("hex")}`,
+			)
 			.join("\n");
 
 		for (const code of codes) {
@@ -158,7 +169,10 @@ describe("consumption is a DELETE … RETURNING on one row (S-RACE-4, 3.6)", () 
 		const { codes } = await recovery.generate({ actor });
 		const [first] = codes;
 
-		await recovery.verify({ attempt: countingAttempt(userId), code: first ?? "" });
+		await recovery.verify({
+			pendingToken: (await beginPendingState(pending, userId)).token,
+			code: first ?? "",
+		});
 
 		expect(await recovery.remaining({ actor })).toEqual({ remainingCount: 9 });
 	});
@@ -169,9 +183,15 @@ describe("consumption is a DELETE … RETURNING on one row (S-RACE-4, 3.6)", () 
 		const { codes } = await recovery.generate({ actor });
 		const [first] = codes;
 
-		await recovery.verify({ attempt: countingAttempt(userId), code: first ?? "" });
+		await recovery.verify({
+			pendingToken: (await beginPendingState(pending, userId)).token,
+			code: first ?? "",
+		});
 		await expect(
-			recovery.verify({ attempt: countingAttempt(userId), code: first ?? "" }),
+			recovery.verify({
+				pendingToken: (await beginPendingState(pending, userId)).token,
+				code: first ?? "",
+			}),
 		).rejects.toMatchObject({ reason: "recovery_code_not_found" });
 	});
 
@@ -182,7 +202,7 @@ describe("consumption is a DELETE … RETURNING on one row (S-RACE-4, 3.6)", () 
 		const [first] = codes;
 
 		await recovery.verify({
-			attempt: countingAttempt(userId),
+			pendingToken: (await beginPendingState(pending, userId)).token,
 			code: normaliseRecoveryCode(first ?? "").toLowerCase(),
 		});
 		expect(await recovery.remaining({ actor })).toEqual({ remainingCount: 9 });
@@ -195,7 +215,10 @@ describe("consumption is a DELETE … RETURNING on one row (S-RACE-4, 3.6)", () 
 		await recovery.generate({ actor: actorOfTestUser(stranger) });
 
 		await expect(
-			recovery.verify({ attempt: countingAttempt(stranger), code: codes[0] ?? "" }),
+			recovery.verify({
+				pendingToken: (await beginPendingState(pending, stranger)).token,
+				code: codes[0] ?? "",
+			}),
 		).rejects.toMatchObject({ reason: "recovery_code_not_found" });
 		expect(await recovery.remaining({ actor: actorOfTestUser(owner) })).toEqual({
 			remainingCount: RECOVERY_CODE_COUNT,
@@ -208,13 +231,18 @@ describe("consumption is a DELETE … RETURNING on one row (S-RACE-4, 3.6)", () 
 		await recovery.generate({ actor: actorOfTestUser(withCodes) });
 
 		const missing = await recovery
-			.verify({ attempt: countingAttempt(never), code: "AAAAAAAA-AAAAAAAA-AAAAAAAA-AAAAAAAA" })
+			.verify({
+				pendingToken: (await beginPendingState(pending, never)).token,
+				code: "AAAAAAAA-AAAAAAAA-AAAAAAAA-AAAAAAAA",
+			})
+			.then(() => null)
 			.catch((cause: unknown) => toVisibleFailure(cause));
 		const wrong = await recovery
 			.verify({
-				attempt: countingAttempt(withCodes),
+				pendingToken: (await beginPendingState(pending, withCodes)).token,
 				code: "AAAAAAAA-AAAAAAAA-AAAAAAAA-AAAAAAAA",
 			})
+			.then(() => null)
 			.catch((cause: unknown) => toVisibleFailure(cause));
 
 		expect(missing?.error.code).toBe("invalid_recovery_code");
@@ -231,14 +259,20 @@ describe("generate replaces the whole set (3.15 B.6)", () => {
 		const userId = await createUser(connection, schema);
 		const actor = actorOfTestUser(userId);
 		const first = await recovery.generate({ actor });
-		await recovery.verify({ attempt: countingAttempt(userId), code: first.codes[0] ?? "" });
+		await recovery.verify({
+			pendingToken: (await beginPendingState(pending, userId)).token,
+			code: first.codes[0] ?? "",
+		});
 
 		const second = await recovery.generate({ actor });
 
 		expect(await recovery.remaining({ actor })).toEqual({ remainingCount: RECOVERY_CODE_COUNT });
 		expect(new Set(second.codes)).not.toEqual(new Set(first.codes));
 		await expect(
-			recovery.verify({ attempt: countingAttempt(userId), code: first.codes[1] ?? "" }),
+			recovery.verify({
+				pendingToken: (await beginPendingState(pending, userId)).token,
+				code: first.codes[1] ?? "",
+			}),
 		).rejects.toMatchObject({ reason: "recovery_code_not_found" });
 	});
 
@@ -260,6 +294,7 @@ describe("L-3: the pepper version travels with the code", () => {
 		const beforeRotation = createRecoveryCodeService({
 			driver: connection,
 			schema,
+			pending,
 			keys: ring.providerAt(1, [1]),
 		});
 		const { codes } = await beforeRotation.generate({ actor });
@@ -270,9 +305,13 @@ describe("L-3: the pepper version travels with the code", () => {
 		const afterRotation = createRecoveryCodeService({
 			driver: connection,
 			schema,
+			pending,
 			keys: ring.providerAt(2),
 		});
-		await afterRotation.verify({ attempt: countingAttempt(userId), code: codes[0] ?? "" });
+		await afterRotation.verify({
+			pendingToken: (await beginPendingState(pending, userId)).token,
+			code: codes[0] ?? "",
+		});
 
 		expect(await afterRotation.remaining({ actor })).toEqual({ remainingCount: 9 });
 	});
@@ -285,11 +324,13 @@ describe("L-3: the pepper version travels with the code", () => {
 		await createRecoveryCodeService({
 			driver: connection,
 			schema,
+			pending,
 			keys: ring.providerAt(1, [1]),
 		}).generate({ actor });
 		await createRecoveryCodeService({
 			driver: connection,
 			schema,
+			pending,
 			keys: ring.providerAt(2),
 		}).generate({ actor });
 
@@ -306,16 +347,22 @@ describe("L-3: the pepper version travels with the code", () => {
 		const { codes } = await createRecoveryCodeService({
 			driver: connection,
 			schema,
+			pending,
 			keys: ring.providerAt(1, [1]),
 		}).generate({ actor });
 
 		const withoutTheOldVersion = createRecoveryCodeService({
 			driver: connection,
 			schema,
+			pending,
 			keys: ring.providerAt(2, [2]),
 		});
 		const failure = await withoutTheOldVersion
-			.verify({ attempt: countingAttempt(userId), code: codes[0] ?? "" })
+			.verify({
+				pendingToken: (await beginPendingState(pending, userId)).token,
+				code: codes[0] ?? "",
+			})
+			.then(() => null)
 			.catch((cause: unknown) => toVisibleFailure(cause));
 
 		expect(failure?.error.code).toBe("invalid_recovery_code");

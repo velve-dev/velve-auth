@@ -2,7 +2,9 @@ import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { ConcealedError } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
-import { type PendingFactorAttempt, spendPendingAttemptOn } from "../totp/pending-attempt.js";
+import type { PendingAuthenticationService, PendingResolution } from "../pending/service.js";
+import type { PendingToken } from "../pending/token.js";
+import { verifyUnderPendingAttemptLimit } from "../totp/pending-attempt.js";
 import { createRecoveryCodeSet } from "./code.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "./pepper.js";
 import { createRecoveryCodeRepository } from "./repository.js";
@@ -10,13 +12,18 @@ import { createRecoveryCodeRepository } from "./repository.js";
 export interface RecoveryCodeServiceOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
+	readonly pending: PendingAuthenticationService;
 	readonly schema?: string;
 }
 
 export interface RecoveryCodeService {
 	/** The plaintext codes leave the process here, once; what is stored is their HMAC (B.6). */
 	generate(input: { readonly actor: Actor }): Promise<{ readonly codes: readonly string[] }>;
-	verify(input: { readonly attempt: PendingFactorAttempt; readonly code: string }): Promise<void>;
+	/** As with TOTP, the resolution is returned and not consumed; the session and the removal of the pending row are one transaction elsewhere (E-410). */
+	verify(input: {
+		readonly pendingToken: PendingToken;
+		readonly code: string;
+	}): Promise<PendingResolution>;
 	remaining(input: { readonly actor: Actor }): Promise<{ readonly remainingCount: number }>;
 }
 
@@ -55,15 +62,16 @@ export function createRecoveryCodeService(
 			return { codes: plaintext };
 		},
 
-		verify({ attempt, code }) {
-			return spendPendingAttemptOn(attempt, async () => {
-				const candidates = await candidateHmacsFor(attempt.userId, code);
+		verify({ pendingToken, code }) {
+			return verifyUnderPendingAttemptLimit(options.pending, pendingToken, async (resolution) => {
+				const candidates = await candidateHmacsFor(resolution.userId, code);
 				if (candidates.length === 0) {
 					throw new ConcealedError("recovery_codes_never_generated");
 				}
-				if (!(await codes.consumeCode({ userId: attempt.userId, candidateHmacs: candidates }))) {
+				if (!(await codes.consumeCode({ userId: resolution.userId, candidateHmacs: candidates }))) {
 					throw new ConcealedError("recovery_code_not_found");
 				}
+				return resolution;
 			});
 		},
 

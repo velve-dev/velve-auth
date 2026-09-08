@@ -11,13 +11,13 @@ import {
 import { createTotpService, type TotpService } from "../src/core/factor/totp/service.js";
 import { decryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import {
 	countRows,
+	pendingAuthenticationsOn,
 	secretBytesOfBase32,
-	type SettableClock,
-	settableClock,
 	testKeyProvider,
 } from "./totp-fixtures.js";
 
@@ -25,7 +25,7 @@ const FIXED_INSTANT = new Date("2026-05-03T18:45:00.000Z");
 
 let connection: TestConnection;
 let schema: string;
-let clock: SettableClock;
+let clock: TestClock;
 let keys: KeyProvider;
 let totp: TotpService;
 
@@ -47,9 +47,16 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("totp_enrolment");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	clock = settableClock(FIXED_INSTANT);
+	clock = createTestClock(FIXED_INSTANT);
 	keys = testKeyProvider();
-	totp = createTotpService({ driver: connection, schema, keys, issuer: "Velve", clock });
+	totp = createTotpService({
+		driver: connection,
+		schema,
+		keys,
+		pending: pendingAuthenticationsOn(connection, schema),
+		issuer: "Velve",
+		clock,
+	});
 });
 
 afterAll(async () => {
@@ -168,12 +175,13 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 			driver: connection,
 			schema,
 			keys: testKeyProvider(2),
+			pending: pendingAuthenticationsOn(connection, schema),
 			issuer: "Velve",
 			clock,
 		});
-		await expect(
-			withoutTheVersion.enroll.finish({ actor, code: "000000" }),
-		).rejects.toMatchObject({ code: "authentication_failed" });
+		await expect(withoutTheVersion.enroll.finish({ actor, code: "000000" })).rejects.toMatchObject({
+			code: "authentication_failed",
+		});
 	});
 });
 
@@ -183,9 +191,12 @@ describe("removal demands the factor it removes (3.15 B.6)", () => {
 		const actor = actorOfTestUser(userId);
 		const enrollment = await totp.enroll.start({ actor, accountName: "gone@example.com" });
 		const secretBytes = secretBytesOfBase32(enrollment.secretBase32);
-		await totp.enroll.finish({ actor, code: totpCodeForStep(secretBytes, timeStepAt(clock.now())) });
+		await totp.enroll.finish({
+			actor,
+			code: totpCodeForStep(secretBytes, timeStepAt(clock.now())),
+		});
 
-		clock.advanceSeconds(TOTP_PERIOD_SECONDS);
+		clock.advanceBy(TOTP_PERIOD_SECONDS * 1000);
 		expect(await countRows(connection, schema, "totp_used_step", userId)).toBe(1);
 
 		await totp.remove({ actor, code: totpCodeForStep(secretBytes, timeStepAt(clock.now())) });

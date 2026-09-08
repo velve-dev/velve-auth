@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { IdentityMode } from "../src/core/db/migrations/identity-mode.js";
 import {
 	assertRecoveryCodesAreConfigured,
-	recoveryCodesAreMandatoryFor,
 	RecoveryCodesRequiredError,
+	recoveryCodesAreMandatoryFor,
 } from "../src/core/factor/recovery/startup.js";
 
 const EVERY_IDENTITY_MODE: readonly IdentityMode[] = ["email", "username", "username_email"];
@@ -41,16 +41,16 @@ describe("T-DEFAULT-4: identity username without recovery codes is a start error
 	it.each(EVERY_IDENTITY_MODE)("decides %s the same way in both entry points", (identityMode) => {
 		const mandatory = recoveryCodesAreMandatoryFor(identityMode);
 		expect(mandatory).toBe(identityMode === "username");
-		expect(() => assertRecoveryCodesAreConfigured({ identityMode, recoveryCodes: false })).toSatisfy(
-			(refuse: () => void) => {
-				try {
-					refuse();
-					return !mandatory;
-				} catch {
-					return mandatory;
-				}
-			},
-		);
+		expect(() =>
+			assertRecoveryCodesAreConfigured({ identityMode, recoveryCodes: false }),
+		).toSatisfy((refuse: () => void) => {
+			try {
+				refuse();
+				return !mandatory;
+			} catch {
+				return mandatory;
+			}
+		});
 	});
 
 	it("leaves the two modes that carry an e-mail address free to omit the codes", () => {

@@ -1871,3 +1871,27 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Rejected.** Gating both behind `VELVE_NIGHTLY=1`.
 **Reason.** `test/token-race.test.ts` runs T-RACE-1 and T-RACE-2 unconditionally, and both carry the same nightly marking; following the sibling costs less surprise than following the plan. The measured cost is under a second per file for twenty rounds of fifty, because the fifty run in parallel over fifty connections and a round is one round trip, not fifty. CLAUDE.md also asks that a skipped test state its reason in the code, and "the plan says nightly" is a poor one for a check that takes a second.
 **Price.** The blocking tier now holds three files that each want fifty connections, which is what surfaced E-411. Had these two been gated behind `VELVE_NIGHTLY=1` the configuration defect would have shipped invisible until the nightly run, so the decision made for a scheduling reason paid off for an unrelated one.
+
+### The pending seam landed and the port was deleted rather than adapted
+`E-421` · factor-totp · L-8, correction to E-408
+
+**Context.** E-408 built `PendingFactorAttempt` and `spendPendingAttemptOn` because the pending state did not exist yet. It exists now, on `feature/auth-core`, and its shape is not the port's: `resolve(token)` yields the account, `registerFailedAttempt(token)` is called **only after a failure** and answers `attempts_remain` or `exhausted`, and `consume(token)` removes the row.
+**Rejected.** (a) Keeping the port and writing an adapter from the real service to it. (b) Keeping `MAXIMUM_FACTOR_ATTEMPTS_PER_PENDING_STATE` as a local constant beside `MAXIMUM_PENDING_ATTEMPTS`.
+**Reason.** (a) would leave two vocabularies for one state machine, and the port's "spend before verifying" is not what the real service does — the real one charges nothing for a correct code, which is better and is not what E-408 designed. (b) is two sources of truth for a number L-8 fixes once; the constant is gone and nothing in this feature spells the five. What remains is `verifyUnderPendingAttemptLimit`, which resolves, verifies, and on failure maps `exhausted` to `too_many_factor_attempts`.
+**Price.** E-408's argument for the port was sound and its design was wrong in one respect that only the real implementation revealed: charging an attempt before the verification means a correct code costs one, which is visible to anyone reading `attempts` and would have made the fifth *successful* sign-in fail. The test written against the port asserted that behaviour and passed. A test can only be as right as the interface it was written against.
+
+### `createTestClock` replaced the clock this branch wrote for itself
+`E-422` · factor-totp · testing seam, correction to E-412
+
+**Context.** E-412 kept a settable clock inside `test/totp-fixtures.ts` because `src/testing/index.ts` was `export {};` and belonged to no wave-3 feature. It is now `createTestClock` on `feature/auth-core`.
+**Rejected.** Keeping the local one and passing it where a `Clock` is wanted, which would have compiled.
+**Reason.** Two settable clocks in one repository is the thing 6.19 asks for one of, and the local one had `advanceSeconds` where the shared one has `advanceBy(milliseconds)` — a difference small enough to survive a review and produce a test that advances a thousand times too far. Every test file here now imports `createTestClock`; `settableClock` is deleted, not deprecated.
+**Price.** E-412 also recorded that `clock` became a required option because `test/keys-static-scan.test.ts` forbids `new Date(` in `src/core/`. That half stands and is the more useful half: the rule was found by a failing scan and not by reading, and it is the reason this feature has no default clock to fall back to.
+
+### The API snapshot was updated for a surface this feature does not own
+`E-423` · factor-totp · gate finding, out of area
+
+**Context.** Merging `origin/feature/auth-core` to compile against the pending module turned `test/api-surface.test.ts` red: that branch exports `TestClock` and `createTestClock` from `@velve/auth/testing` and left `test/__snapshots__/api-surface.md` saying `export { };`. The check CLAUDE.md describes as "the public surface has not changed unannounced" is failing on their branch for exactly the change it exists to catch, and it fails here because the merge brought it along.
+**Rejected.** (a) Leaving `pnpm test` red and reporting only. (b) Silently regenerating the snapshot as part of another commit.
+**Reason.** (b) is the failure mode itself — the snapshot's whole value is that a surface change is announced by someone. (a) leaves a branch that cannot pass its own gate for a reason it did not cause. The snapshot is regenerated in a commit of its own whose message says whose surface it is, so the change is announced even though the wrong feature announced it.
+**Price.** A file outside this feature's set, changed for the second time on this branch after `vitest.config.ts` — and this one is a file `auth-core` will very likely also change, so the merge conflicts. It resolves to whichever side has the correct generated content, which is cheap, but it is a conflict this wave's file partition was designed to make impossible. The finding stands whatever happens to the snapshot: `feature/auth-core` shipped an export without the snapshot line that announces it.

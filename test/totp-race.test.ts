@@ -1,15 +1,20 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type {
+	IssuedPendingAuthentication,
+	PendingAuthenticationService,
+} from "../src/core/factor/pending/index.js";
 import { totpCodeForStep } from "../src/core/factor/totp/code.js";
 import { timeStepAt } from "../src/core/factor/totp/parameters.js";
 import { createTotpService, type TotpService } from "../src/core/factor/totp/service.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { createTestClock } from "../src/testing/index.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import {
-	countingAttempt,
+	beginPendingState,
 	countRows,
 	enrolConfirmedCredential,
-	settableClock,
+	pendingAuthenticationsOn,
 	testKeyProvider,
 } from "./totp-fixtures.js";
 
@@ -21,6 +26,7 @@ const FIXED_INSTANT = new Date("2026-09-08T07:30:00.000Z");
 let connections: TestConnection[] = [];
 let schema: string;
 let keys: KeyProvider;
+let pendings: PendingAuthenticationService[] = [];
 let racers: TotpService[] = [];
 
 /** The plan runs this nightly; it costs a few seconds and the blocking tier is where a race that stops serialising has to be caught. */
@@ -32,13 +38,15 @@ beforeAll(async () => {
 		connections.push(await openTestConnection());
 	}
 	keys = testKeyProvider();
-	racers = connections.map((connection) =>
+	pendings = connections.map((connection) => pendingAuthenticationsOn(connection, schema));
+	racers = connections.map((connection, index) =>
 		createTotpService({
 			driver: connection,
 			schema,
 			keys,
+			pending: pendings[index] as PendingAuthenticationService,
 			issuer: "Velve",
-			clock: settableClock(FIXED_INSTANT),
+			clock: createTestClock(FIXED_INSTANT),
 		}),
 	);
 }, 120_000);
@@ -63,8 +71,18 @@ async function raceOneCode(): Promise<RoundOutcome> {
 	const secretBytes = await enrolConfirmedCredential(first, schema, keys, userId);
 	const code = totpCodeForStep(secretBytes, timeStepAt(FIXED_INSTANT));
 
+	const issued = await Promise.all(
+		racers.map((_unused, index) =>
+			beginPendingState(pendings[index] as PendingAuthenticationService, userId, ["totp"]),
+		),
+	);
 	const results = await Promise.allSettled(
-		racers.map((totp) => totp.verify({ attempt: countingAttempt(userId), code })),
+		racers.map((totp, index) =>
+			totp.verify({
+				pendingToken: (issued[index] as IssuedPendingAuthentication).token,
+				code,
+			}),
+		),
 	);
 
 	return {
@@ -75,22 +93,18 @@ async function raceOneCode(): Promise<RoundOutcome> {
 }
 
 describe("T-RACE-3: fifty submissions of one code leave one winner (S-RACE-3)", () => {
-	it(
-		"accepts exactly one in every round and records exactly one used step",
-		async () => {
-			const rounds: RoundOutcome[] = [];
-			for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
-				rounds.push(await raceOneCode());
-			}
+	it("accepts exactly one in every round and records exactly one used step", async () => {
+		const rounds: RoundOutcome[] = [];
+		for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
+			rounds.push(await raceOneCode());
+		}
 
-			expect(rounds).toHaveLength(REPETITIONS);
-			expect(rounds.filter((round) => round.accepted === 1)).toHaveLength(REPETITIONS);
-			expect(rounds.filter((round) => round.usedSteps === 1)).toHaveLength(REPETITIONS);
-			expect(
-				rounds.reduce((total, round) => total + round.accepted + round.refused, 0),
-			).toBe(REPETITIONS * ATTEMPTS);
-			expect(rounds.reduce((total, round) => total + round.accepted, 0)).toBe(REPETITIONS);
-		},
-		300_000,
-	);
+		expect(rounds).toHaveLength(REPETITIONS);
+		expect(rounds.filter((round) => round.accepted === 1)).toHaveLength(REPETITIONS);
+		expect(rounds.filter((round) => round.usedSteps === 1)).toHaveLength(REPETITIONS);
+		expect(rounds.reduce((total, round) => total + round.accepted + round.refused, 0)).toBe(
+			REPETITIONS * ATTEMPTS,
+		);
+		expect(rounds.reduce((total, round) => total + round.accepted, 0)).toBe(REPETITIONS);
+	}, 300_000);
 });
