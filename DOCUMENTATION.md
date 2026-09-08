@@ -1318,3 +1318,99 @@ is not shown to the user as if it were a device that is still signed in.
 The `Driver` must decode `timestamptz` into a `Date` — `node-postgres`,
 `postgres.js` and the neon driver all do. Decoding a PostgreSQL type is the
 driver's work; the repository reads values, it does not parse them.
+
+### `createSessionService(options)`
+
+```ts
+createSessionService(options: {
+  driver: Driver
+  schema?: string                                   // "velve"
+  session?: Partial<SessionConfig>
+  sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
+  clock: Clock                                      // { now(): Date }
+}): SessionService
+```
+
+Everything the library does with sessions. `clock` has no default: the core
+takes its time from the configuration, never from a hidden source, and the
+same clock decides freshness here and in the HTTP pipeline.
+
+`service.settings` exposes the deadlines the configuration was read into,
+including `cookieName` and `cookieMaximumAgeInSeconds` for the cookie writer.
+
+#### Answering who is signed in
+
+| Method | Answer |
+|---|---|
+| `resolve(token)` | the resolution, or `null` for an unknown or expired token |
+| `refresh(token)` | the same, and it forces the idle write the interval would hold back |
+
+`resolve` is the library's only authorisation decision, and it costs exactly one
+query. It throws `account_disabled` when the account is disabled — the only
+place in the library where that code is raised, because by then the caller has
+proved the account is theirs (L-4). An account disabled between two requests
+takes effect on the next one; there is no lifetime to wait out (S-CACHE-3).
+
+As a side effect `resolve` extends the idle deadline, at most once per
+`idleWriteInterval`. Whether the write is due is decided from the database's own
+clock, which the resolving query returns with the row, so no second query and no
+comparison between two clocks is needed. `refresh` forces exactly that write and
+nothing else: never the absolute deadline, never a new token.
+
+The result of `resolve` is a `SessionResolution`. It is the only value in the
+library from which an `Actor` can be obtained (S-OWNER-7), and it is produced
+here and nowhere else.
+
+#### Issuing and re-issuing
+
+| Method | What it does |
+|---|---|
+| `issue({ userId, factors, observed })` | a new session — this is a sign-in |
+| `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
+| `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+
+`observed` is `{ ipAddress, userAgent }` as the request layer saw them; what is
+stored follows `sessionMetadata` (L-10).
+
+Every event that changes the trust level — sign-in, second factor completed,
+password changed, a new identity linked — calls `reissue`, so the token a caller
+held before the change is gone from the table and a request carrying it is
+answered exactly like a request without a cookie (S-FIX-1, S-FIX-3). A password
+change calls `reissueAfterCredentialChange`, which has no parameter that could
+keep the other sessions (S-FIX-6).
+
+Re-issue is always an `INSERT` plus a `DELETE`; `UPDATE velve.session SET
+user_id` does not exist, and a re-issue whose new row would belong to a
+different user than the row it removed is refused (E-23, S-FIX-2).
+
+#### Ending sessions
+
+| Method | Freshness | Effect |
+|---|---|---|
+| `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
+| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way |
+| `revokeEveryOther({ resolved })` | required | removes all but the calling session |
+| `revokeEvery({ resolved })` | required | removes all, including the calling one |
+| `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
+
+`revoke` answers a session of another user and a session that never existed
+identically, and changes nothing in both cases (S-OWNER-4, S-OWNER-8).
+
+`revokeEverySessionOfUser` is what the password **reset** path uses: there is no
+surviving session to resolve, so the caller brings the `Actor` its redeemed
+one-time token produced. The session module mints no actor for it.
+
+#### Freshness
+
+`isSessionFresh(session, { freshnessWindowMs, now })` answers whether a session
+is inside its freshness window; `assertSessionIsFresh` raises
+`freshness_required` when it is not.
+
+The window is measured from `created_at`, so it is time since the sign-in.
+Nothing but a new session restores it — using the session does not, and neither
+does `refresh`. A re-authentication that did not re-issue would be a second
+notion of trust standing beside `factors`, and there is only one.
+
+Every session operation that reaches rows by owner takes its actor from
+`actorOfFreshSession`, which checks freshness before it hands the actor out: an
+operation of that group cannot be written without the check.

@@ -3,7 +3,7 @@ import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
 
-export const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
+const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 	"password",
 	"totp",
 	"webauthn",
@@ -34,6 +34,8 @@ export interface SessionWithOwner {
 	readonly session: Session;
 	readonly userId: string;
 	readonly userDisabledAt: Date | null;
+	/** The database's clock at the moment it answered, so no caller has to compare its own clock with the row. */
+	readonly observedAt: Date;
 }
 
 export interface RemovedSession {
@@ -41,7 +43,7 @@ export interface RemovedSession {
 	readonly userId: string;
 }
 
-export interface SessionRepositoryOptions {
+interface SessionRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
 }
@@ -93,6 +95,7 @@ interface SessionRowShape {
 
 interface OwnedRowShape extends SessionRowShape {
 	readonly disabled_at: unknown;
+	readonly observed_at: unknown;
 }
 
 const SELECTED_COLUMNS = `id, user_id, created_at, last_used_at, idle_expires_at,
@@ -170,7 +173,7 @@ function insertStatement(table: string): string {
 function resolveStatement(table: string, users: string): string {
 	return `SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 		s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
-		u.disabled_at
+		u.disabled_at, now() AS observed_at
 	FROM ${table} s
 	JOIN ${users} u ON u.id = s.user_id
 	WHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`;
@@ -263,6 +266,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				session: toSession(row, true),
 				userId: row.user_id,
 				userDisabledAt: toOptionalDate(row.disabled_at),
+				observedAt: toDate(row.observed_at),
 			};
 		},
 
