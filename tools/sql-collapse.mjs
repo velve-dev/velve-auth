@@ -16,14 +16,46 @@ function endOfLineComment(sql, start) {
 	return newline === -1 ? sql.length : newline + 1;
 }
 
+// PostgreSQL nests block comments, so the first closing marker is not necessarily the end.
 function endOfBlockComment(sql, start) {
-	const close = sql.indexOf("*/", start + 2);
-	return close === -1 ? sql.length : close + 2;
+	let depth = 0;
+	let index = start;
+	while (index < sql.length) {
+		if (sql.startsWith("/*", index)) {
+			depth += 1;
+			index += 2;
+			continue;
+		}
+		if (sql.startsWith("*/", index)) {
+			depth -= 1;
+			index += 2;
+			if (depth === 0) return index;
+			continue;
+		}
+		index += 1;
+	}
+	return sql.length;
+}
+
+function isWordCharacter(character) {
+	return /[A-Za-z0-9_$]/.test(character);
+}
+
+/** Only `E'…'` reads a backslash as an escape; a plain `'…'` does not. */
+function backslashesEscape(sql, quote) {
+	const marker = sql[quote - 1] ?? "";
+	const beforeMarker = sql[quote - 2] ?? "";
+	return /[Ee]/.test(marker) && !isWordCharacter(beforeMarker);
 }
 
 function endOfQuoted(sql, start, quote) {
+	const escapes = quote === "'" && backslashesEscape(sql, start);
 	let index = start + 1;
 	while (index < sql.length) {
+		if (escapes && sql[index] === "\\") {
+			index += 2;
+			continue;
+		}
 		if (sql[index] !== quote) {
 			index += 1;
 			continue;
@@ -37,12 +69,21 @@ function endOfQuoted(sql, start, quote) {
 	return sql.length;
 }
 
+/** An unterminated tag ends at the end of the text. Computing it from `indexOf` returning -1
+ * gives a position behind the opener, and a walker that jumps backwards never terminates. */
+function endOfDollarQuoted(sql, start, tag) {
+	const closing = sql.indexOf(tag, start + tag.length);
+	return closing === -1 ? sql.length : closing + tag.length;
+}
+
 function dollarQuoteTag(sql, start) {
 	return /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(start))?.[0] ?? null;
 }
 
-/** The same regions PostgreSQL reads: inside any of them a `;` ends nothing and a `--` opens
- * nothing. Mirrors `boundaryAt` in src/core/db/schema-rewrite.ts. */
+/** The same regions PostgreSQL reads, and read the way the migration runner reads them: inside
+ * any of them a `;` ends nothing and a `--` opens nothing. Every branch mirrors `boundaryAt`
+ * in src/core/db/schema-rewrite.ts — nested block comments, `E'…'` backslash escapes and an
+ * unterminated dollar quote included, because a claim of mirroring is only worth its exceptions. */
 function regionAt(sql, index) {
 	if (sql.startsWith("--", index)) {
 		return { comment: true, end: endOfLineComment(sql, index) };
@@ -55,9 +96,7 @@ function regionAt(sql, index) {
 		return { comment: false, end: endOfQuoted(sql, index, character) };
 	}
 	const tag = character === "$" ? dollarQuoteTag(sql, index) : null;
-	return tag === null
-		? null
-		: { comment: false, end: sql.indexOf(tag, index + tag.length) + tag.length || sql.length };
+	return tag === null ? null : { comment: false, end: endOfDollarQuoted(sql, index, tag) };
 }
 
 export function withoutSqlComments(sql) {
