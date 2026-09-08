@@ -1241,6 +1241,13 @@ the statement began with and cannot remove a row a concurrent request inserted
 after it; without the lock, eight simultaneous requests leave up to eight live
 tokens where section 3.7 allows one.
 
+The lock is wider than the invariant it protects. While it is held, every write
+of a user-owned row for that account waits — a concurrent session insert for the
+same user blocks — and because the transaction carries the mail send, a hanging
+provider holds the lock for its whole timeout. Repository rules section 7 requires
+`velve.user` to be locked before any other table, and `pnpm check:lock-order`
+enforces it.
+
 Whether calling this inside `driver.transaction` still rolls the whole issue
 back is a property of the driver, not of the library: the `Driver` interface
 does not say that `transaction` on a bound driver joins the open one rather than
