@@ -62,3 +62,30 @@ function countedTransaction(inner: Driver, statements: string[]): Driver {
 export function statementsMatching(driver: CountedDriver, pattern: RegExp): readonly string[] {
 	return driver.statements.filter((sql) => pattern.test(sql));
 }
+
+/**
+ * The session service takes no clock, so a process-clock skew can only be introduced where the
+ * process reads one: `new Date()` and `Date.now()`. A parsing call keeps its argument, so the
+ * driver still decodes what the database sent.
+ */
+export async function withProcessClockShiftedBy<T>(
+	offsetMs: number,
+	run: () => Promise<T>,
+): Promise<T> {
+	const realDate = globalThis.Date;
+	globalThis.Date = new Proxy(realDate, {
+		construct: (target, parameters) =>
+			parameters.length === 0
+				? Reflect.construct(target, [realDate.now() + offsetMs])
+				: Reflect.construct(target, parameters),
+		get: (target, property, receiver) =>
+			property === "now"
+				? () => realDate.now() + offsetMs
+				: Reflect.get(target, property, receiver),
+	});
+	try {
+		return await run();
+	} finally {
+		globalThis.Date = realDate;
+	}
+}

@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
+import { isSessionFresh } from "../src/core/session/freshness.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { HOUR, MINUTE } from "./session-fixtures.js";
+import { HOUR, MINUTE, withProcessClockShiftedBy } from "./session-fixtures.js";
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -246,34 +247,47 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
  * accepts no clock at all, so there is no second one a skew could open a gap against (E-247).
  */
 describe("freshness is decided by the clock created_at came from", () => {
-	it("keeps a session the database created a moment ago fresh, whatever the process makes of the time", async () => {
-		const ahead = createSessionService({
-			driver: counter.driver,
-			schema: migrated.schema,
-		});
-		const issued = await ahead.issue({ userId, factors: ["password"], observed: NOWHERE });
-		const resolved = await ahead.resolve(issued.token);
+	async function resolvedSessionAgedBy(age: string) {
+		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		await shift(issued.session.id, ["created_at"], age);
+		const resolved = await service.resolve(issued.token);
 		if (resolved === null) {
 			throw new Error("the session under test did not resolve");
 		}
+		return resolved;
+	}
 
-		await expect(ahead.list({ resolved })).resolves.not.toEqual([]);
+	it("keeps a session the database created a moment ago fresh, with the process an hour ahead", async () => {
+		const resolved = await resolvedSessionAgedBy("0 seconds");
+
+		await withProcessClockShiftedBy(HOUR, async () => {
+			await expect(service.list({ resolved })).resolves.not.toEqual([]);
+		});
 	});
 
-	it("refuses a session the database created fifty minutes ago, whatever the process makes of the time", async () => {
-		const behind = createSessionService({
-			driver: counter.driver,
-			schema: migrated.schema,
-		});
-		const issued = await behind.issue({ userId, factors: ["password"], observed: NOWHERE });
-		await shift(issued.session.id, ["created_at"], "50 minutes");
-		const resolved = await behind.resolve(issued.token);
-		if (resolved === null) {
-			throw new Error("the session under test did not resolve");
-		}
+	it("refuses a session the database created fifty minutes ago, with the process an hour behind", async () => {
+		const resolved = await resolvedSessionAgedBy("50 minutes");
 
-		await expect(behind.list({ resolved })).rejects.toMatchObject({
-			code: "freshness_required",
+		await withProcessClockShiftedBy(-HOUR, async () => {
+			await expect(service.list({ resolved })).rejects.toMatchObject({
+				code: "freshness_required",
+			});
 		});
+	});
+
+	it("hands the freshness check the moment the database answered with, and no other", async () => {
+		const resolved = await resolvedSessionAgedBy("0 seconds");
+		const drift = await withProcessClockShiftedBy(
+			HOUR,
+			async () => resolved.observedAt.getTime() - Date.now(),
+		);
+
+		expect(Math.abs(drift)).toBeGreaterThan(HOUR - MINUTE);
+		expect(
+			isSessionFresh(resolved.session, {
+				freshnessWindowMs: 15 * MINUTE,
+				now: resolved.observedAt,
+			}),
+		).toBe(true);
 	});
 });
