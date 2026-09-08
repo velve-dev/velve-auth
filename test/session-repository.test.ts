@@ -139,7 +139,11 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 		expect(found?.session.id).toBe(inserted.id);
 		expect(found?.userId).toBe(ownerId);
 		expect(found?.userDisabledAt).toBeNull();
-		expect(found?.session.isCurrent).toBe(true);
+		expect(found?.observedAt.getTime()).toBeGreaterThanOrEqual(
+			found?.session.createdAt.getTime() ?? 0,
+		);
+		// 3.15 C: the field is set in session.list and nowhere else.
+		expect(found?.session.isCurrent).toBe(false);
 	});
 
 	it("answers null for a hash no row carries", async () => {

@@ -153,6 +153,9 @@ function toInterval(milliseconds: number): string {
 	return `${Math.round(milliseconds)} milliseconds`;
 }
 
+/** 3.15 C: `isCurrent` is set in `session.list` and nowhere else, so everywhere else it is false. */
+const NOT_LISTED = false;
+
 function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 	return {
 		id: row.id,
@@ -250,7 +253,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		if (row === undefined) {
 			throw new TypeError("the insert of a session returned no row");
 		}
-		return toSession(row, true);
+		return toSession(row, NOT_LISTED);
 	}
 
 	async function deleteSessionByTokenHash(
@@ -272,7 +275,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				return null;
 			}
 			return {
-				session: toSession(row, true),
+				session: toSession(row, NOT_LISTED),
 				userId: row.user_id,
 				userDisabledAt: toOptionalDate(row.disabled_at),
 				observedAt: toDate(row.observed_at),

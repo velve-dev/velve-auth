@@ -1321,7 +1321,10 @@ session of the user and issues one new one, in one transaction. There is no
 parameter that keeps the others (S-FIX-6).
 
 `listSessionsOwnedBy` lists only sessions that can still be used; an expired row
-is not shown to the user as if it were a device that is still signed in.
+is not shown to the user as if it were a device that is still signed in. It is
+also the only method that sets `Session.isCurrent`, which 3.15 C reserves for
+`session.list`; every other method leaves it `false`, including on the session
+`resolve` just answered with.
 
 The `Driver` must decode `timestamptz` into a `Date` — `node-postgres`,
 `postgres.js` and the neon driver all do. Decoding a PostgreSQL type is the
