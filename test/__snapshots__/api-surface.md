@@ -68,19 +68,4 @@ export { type AppliedMigration, type Driver, type IdentityMode, InvalidIdentifie
 
 ## testing.d.mts
 
-import { Clock } from "./core/http/environment.mjs";
-
-//#region src/testing/index.d.ts
-
-/**
- * Architecture 6.19: every expiry, window and TOTP test needs a deterministic time, and the core
- * reads the time only through `clock` and through `now()` in the database. This is the `clock` a
- * test hands to the configuration.
- */
-interface TestClock extends Clock {
-  set(instant: Date): void;
-  advanceBy(milliseconds: number): void;
-}
-declare function createTestClock(start?: Date): TestClock;
-//#endregion
-export { TestClock, createTestClock };
+export { };
