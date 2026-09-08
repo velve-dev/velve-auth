@@ -4,7 +4,7 @@ import {
 	assertRecoveryCodesAreConfigured,
 	RecoveryCodesRequiredError,
 	recoveryCodesAreMandatoryFor,
-} from "../src/core/factor/recovery/startup.js";
+} from "../src/core/factor/recovery/index.js";
 
 const EVERY_IDENTITY_MODE: readonly IdentityMode[] = ["email", "username", "username_email"];
 

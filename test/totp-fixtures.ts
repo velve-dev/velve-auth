@@ -5,17 +5,15 @@ import {
 	type IssuedPendingAuthentication,
 	type PendingAuthenticationService,
 } from "../src/core/factor/pending/index.js";
-import { createTotpSecret } from "../src/core/factor/totp/secret.js";
+import { createTotpSecret } from "../src/core/factor/totp/index.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 
-export interface TestKeyRing {
-	providerAt(currentVersion: number, availableVersions?: readonly number[]): KeyProvider;
-}
-
 /** A rotation test needs two providers over the same root keys, which two independent draws cannot give it. */
-export function testKeyRing(versions = 1): TestKeyRing {
+export function testKeyRing(versions = 1): {
+	providerAt(currentVersion: number, availableVersions?: readonly number[]): KeyProvider;
+} {
 	const rootKeys = new Map<number, string>();
 	for (let version = 1; version <= versions; version += 1) {
 		rootKeys.set(version, nodeRandomBytes(32).toString("base64url"));

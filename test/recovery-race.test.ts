@@ -6,7 +6,7 @@ import type {
 import {
 	createRecoveryCodeService,
 	type RecoveryCodeService,
-} from "../src/core/factor/recovery/service.js";
+} from "../src/core/factor/recovery/index.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";

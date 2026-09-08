@@ -2,17 +2,15 @@ import { Buffer } from "node:buffer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PendingAuthenticationService } from "../src/core/factor/pending/index.js";
 import {
+	createRecoveryCodeService,
 	createRecoveryCodeSet,
 	normaliseRecoveryCode,
+	pepperRecoveryCode,
 	RECOVERY_CODE_COUNT,
 	RECOVERY_CODE_ENTROPY_BYTES,
 	RECOVERY_CODE_GROUP_LENGTH,
-} from "../src/core/factor/recovery/code.js";
-import { pepperRecoveryCode } from "../src/core/factor/recovery/pepper.js";
-import {
-	createRecoveryCodeService,
 	type RecoveryCodeService,
-} from "../src/core/factor/recovery/service.js";
+} from "../src/core/factor/recovery/index.js";
 import { toVisibleFailure } from "../src/core/http/error-map.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";

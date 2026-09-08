@@ -4,9 +4,13 @@ import {
 	PENDING_CALLER_ROUTES,
 	type PendingAuthenticationService,
 } from "../src/core/factor/pending/index.js";
-import { totpCodeForStep } from "../src/core/factor/totp/code.js";
-import { TOTP_PERIOD_SECONDS, timeStepAt } from "../src/core/factor/totp/parameters.js";
-import { createTotpService, type TotpService } from "../src/core/factor/totp/service.js";
+import {
+	createTotpService,
+	TOTP_PERIOD_SECONDS,
+	type TotpService,
+	timeStepAt,
+	totpCodeForStep,
+} from "../src/core/factor/totp/index.js";
 import { toVisibleFailure } from "../src/core/http/error-map.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";

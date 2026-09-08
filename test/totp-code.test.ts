@@ -1,18 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+	acceptedTimeSteps,
+	createTotpSecret,
 	matchingTimeStep,
 	normaliseTotpCode,
-	totpCodeForStep,
-} from "../src/core/factor/totp/code.js";
-import {
-	acceptedTimeSteps,
 	TOTP_DIGITS,
 	TOTP_PERIOD_SECONDS,
 	TOTP_TOLERANCE_STEPS,
 	TOTP_USED_STEP_RETENTION_SECONDS,
 	timeStepAt,
-} from "../src/core/factor/totp/parameters.js";
-import { createTotpSecret, totpSecretBase32 } from "../src/core/factor/totp/secret.js";
+	totpCodeForStep,
+	totpSecretBase32,
+} from "../src/core/factor/totp/index.js";
 import { secretBytesOfBase32 } from "./totp-fixtures.js";
 
 const AT = new Date("2026-03-04T10:00:00.000Z");

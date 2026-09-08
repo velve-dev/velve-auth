@@ -1,12 +1,12 @@
 import { Secret, TOTP } from "otpauth";
 import { describe, expect, it } from "vitest";
-import { totpCodeForStep } from "../src/core/factor/totp/code.js";
 import {
 	TOTP_ALGORITHM,
 	TOTP_DIGITS,
 	TOTP_PERIOD_SECONDS,
 	timeStepAt,
-} from "../src/core/factor/totp/parameters.js";
+	totpCodeForStep,
+} from "../src/core/factor/totp/index.js";
 
 /**
  * RFC 6238 Appendix B. The seed is ASCII "12345678901234567890" repeated up to the block size of

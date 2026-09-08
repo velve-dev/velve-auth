@@ -7,7 +7,7 @@ export {
 	RECOVERY_CODE_GROUP_LENGTH,
 } from "./code.js";
 export type { PepperedRecoveryCode } from "./pepper.js";
-export { pepperRecoveryCode, pepperRecoveryCodeUnder } from "./pepper.js";
+export { pepperRecoveryCode } from "./pepper.js";
 export type { RecoveryCodeRepository, RecoveryCodeRepositoryOptions } from "./repository.js";
 export { createRecoveryCodeRepository, RecoveryCodeOwnerUnknownError } from "./repository.js";
 export type { RecoveryCodeService, RecoveryCodeServiceOptions } from "./service.js";

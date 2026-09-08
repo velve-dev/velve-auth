@@ -1,14 +1,15 @@
 import { Buffer } from "node:buffer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { totpCodeForStep } from "../src/core/factor/totp/code.js";
 import {
+	createTotpService,
 	TOTP_ALGORITHM,
 	TOTP_DIGITS,
 	TOTP_PERIOD_SECONDS,
 	TOTP_SECRET_BYTES,
+	type TotpService,
 	timeStepAt,
-} from "../src/core/factor/totp/parameters.js";
-import { createTotpService, type TotpService } from "../src/core/factor/totp/service.js";
+	totpCodeForStep,
+} from "../src/core/factor/totp/index.js";
 import { decryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";

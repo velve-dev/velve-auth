@@ -3,9 +3,12 @@ import type {
 	IssuedPendingAuthentication,
 	PendingAuthenticationService,
 } from "../src/core/factor/pending/index.js";
-import { totpCodeForStep } from "../src/core/factor/totp/code.js";
-import { timeStepAt } from "../src/core/factor/totp/parameters.js";
-import { createTotpService, type TotpService } from "../src/core/factor/totp/service.js";
+import {
+	createTotpService,
+	type TotpService,
+	timeStepAt,
+	totpCodeForStep,
+} from "../src/core/factor/totp/index.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createTestClock } from "../src/testing/index.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
