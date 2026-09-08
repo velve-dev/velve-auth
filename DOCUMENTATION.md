@@ -1235,7 +1235,10 @@ library that do.
 | `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a row or `null` |
 
 `replaceOneTimeToken` runs in a transaction and takes `SELECT 1 FROM velve.user
-WHERE id = $1 FOR UPDATE` before it writes. The replacement is one statement and
+WHERE id = $1 FOR UPDATE` before it writes. The statement declares what it locks,
+`/* locks: <schema>.user */`, which is what `pnpm check:lock-order` reads: a
+repository builds its table name from the configured schema, so a scan cannot
+otherwise tell which table a lock takes (E-147). The replacement is one statement and
 therefore atomic, but at `READ COMMITTED` its `DELETE` works from the snapshot
 the statement began with and cannot remove a row a concurrent request inserted
 after it; without the lock, eight simultaneous requests leave up to eight live

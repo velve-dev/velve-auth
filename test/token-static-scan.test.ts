@@ -63,7 +63,7 @@ function collapseWhitespace(sql: string): string {
 function asWritten(sql: string): string {
 	return collapseWhitespace(withoutSqlComments(sql))
 		.replace(/\$\{table\}/g, "velve.one_time_token")
-		.replace(/\$\{owners\}/g, "velve.user");
+		.replace(/\$\{schema\}/g, "velve");
 }
 
 /** A marker declaring a missing owner predicate (E-142) is not part of the statement. */
@@ -92,7 +92,7 @@ function predicatesIn(sql: string): readonly string[] {
 
 const statements = statementsIn(repositorySource);
 const tokenStatements = statements.filter((statement) => /\$\{table\}/.test(statement));
-const ownerStatements = statements.filter((statement) => /\$\{owners\}/.test(statement));
+const ownerStatements = statements.filter((statement) => /\bFOR UPDATE\b/.test(statement));
 
 describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 	it("has more than nothing to scan", () => {
@@ -192,6 +192,7 @@ describe("nothing reads the row before removing it (S-RACE-2)", () => {
 		expect(ownerStatements.map(asWritten)).toStrictEqual([
 			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE",
 		]);
+		expect(ownerStatements[0]).toMatch(/\/\* locks: \$\{schema\}\.user \*\//);
 	});
 
 	it("consumes in a single statement with no statement before it", () => {

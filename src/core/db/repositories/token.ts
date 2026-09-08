@@ -5,7 +5,7 @@ import {
 	type OneTimeTokenPurpose,
 } from "../../token/purpose.js";
 import type { Driver } from "../driver.js";
-import { qualifiedTableName } from "../identifier.js";
+import { assertSchemaName, qualifiedTableName } from "../identifier.js";
 
 export interface OneTimeTokenRepositoryOptions {
 	readonly driver: Driver;
@@ -77,14 +77,15 @@ function readPayload(value: unknown): OneTimeTokenPayload | null {
 export function createOneTimeTokenRepository(
 	options: OneTimeTokenRepositoryOptions,
 ): OneTimeTokenRepository {
-	const table = qualifiedTableName(options.schema, "one_time_token");
-	const owners = qualifiedTableName(options.schema, "user");
+	const schema = assertSchemaName(options.schema);
+	const table = qualifiedTableName(schema, "one_time_token");
 
 	// S-TOKEN-3: the statement below is atomic, but at READ COMMITTED its DELETE works from the
 	// snapshot the statement began with and therefore cannot remove a row a concurrent request
 	// inserted after it. Serialising the requests of one user is what makes the replacement hold
 	// under concurrency; the lock is taken before the snapshot that matters.
-	const lockOwnerStatement = `SELECT 1 FROM ${owners} WHERE id = $1 FOR UPDATE`;
+	const lockOwnerStatement = `SELECT 1 FROM ${schema}.user
+WHERE id = $1 FOR UPDATE /* locks: ${schema}.user */`;
 
 	const replaceStatement = `WITH superseded AS (
 	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
