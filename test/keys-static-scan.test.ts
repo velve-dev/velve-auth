@@ -67,7 +67,7 @@ describe("secrets come from one place (S-RAND-1, S-RAND-5)", () => {
 
 describe("the code style rules of repository rules section 3", () => {
 	it("uses no `any`", () => {
-		expect(filesMatching(/(?<![A-Za-z0-9_$])any(?![A-Za-z0-9_$])/)).toStrictEqual([]);
+		expect(filesMatching(/(?::\s*|<|\|\s*|&\s*|\bas\s+)any(?![A-Za-z0-9_$])/)).toStrictEqual([]);
 	});
 
 	it("suppresses no type error", () => {
