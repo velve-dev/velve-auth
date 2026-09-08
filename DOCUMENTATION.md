@@ -10,7 +10,15 @@ Concepts and rationale are not repeated here — they are in
 
 - [Package entry points](#package-entry-points)
 - [Schema](#schema)
+- [Migrations](#migrations)
+- [The driver interface](#the-driver-interface)
+- [Repositories](#repositories)
+- [Key management](#key-management)
 - [HTTP](#http)
+- [Passwords](#passwords)
+- [Identity](#identity)
+- [One-time artefacts](#one-time-artefacts)
+- [Sessions](#sessions)
 
 ## Package entry points
 
