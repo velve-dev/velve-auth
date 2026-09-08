@@ -1464,3 +1464,30 @@ than 16 bytes or the hash shorter than 32, or when the string does not parse at
 all. An imported credential is therefore rehashed at the first successful
 sign-in and verified with its original scheme on every sign-in until then
 (S-REST-7).
+
+### What the uniformity rule does and does not cover
+
+The rule from L-1 is that every endpoint has exactly one code path that does the
+same work regardless of the outcome. For passwords that means one key derivation
+with identical parameters, including against the dummy when no user exists.
+There is no response deadline and no artificial delay; the proof is the
+statistical test in architecture 6.1, not a number in a configuration.
+
+Two limits are worth stating plainly rather than leaving to be discovered.
+
+**A mixed estate is distinguishable by cost, not by outcome.** An account whose
+credential is still an imported bcrypt hash is verified with bcrypt, which costs
+far less than the Argon2id the dummy path runs. An observer can therefore learn
+that *some* account exists and came from an import — not which password it has,
+and not anything about accounts already on Argon2id. This follows directly from
+3.3, which verifies each record with its own scheme, and it shrinks to nothing
+as the silent rehash works through the estate. Running Argon2id in addition for
+every legacy verification would remove the signal at the price of doubling the
+cost of exactly the accounts an import made numerous; that trade is not taken.
+
+**A destroyed key version is loud, not concealed.** If `password-enc` loses a
+version that rows were written under, `openPhc` raises `KeyError` and the
+request becomes `internal_error`, not `invalid_credentials`. During that window
+the response for an affected account differs from the response for an account
+that does not exist. The alternative — concealing it — would turn an operator
+mistake into a silent mass lockout logged as "wrong password" (E-175).
