@@ -7,6 +7,8 @@ import {
 	resolveIdentityConfiguration,
 	type UsernameRules,
 } from "../src/core/identity/configuration.js";
+import { caseFolded } from "../src/core/identity/fold.js";
+import { normaliseUsername } from "../src/core/identity/normalise.js";
 
 type IsUnrepresentable<Candidate> = Candidate extends IdentityConfiguration ? false : true;
 
@@ -59,9 +61,42 @@ describe("identity configuration", () => {
 	it("stores reserved names in the comparison form they will be compared against", () => {
 		const resolved = resolveIdentityConfiguration({
 			mode: "username",
-			username: { reservedNames: ["Admin", "ＲＯＯＴ"] },
+			username: { reservedNames: ["Admin", "ＲＯＯＴ", "  spaced  "] },
 		});
-		expect(resolved.username.reservedNames).toEqual(["admin", "root"]);
+		expect(resolved.username.reservedNames).toEqual(["admin", "root", "spaced"]);
+	});
+
+	/**
+	 * A reservation folded over the whole string ends in U+03C2 where the key it is compared
+	 * against ends in U+03C3, and the reservation then matches nothing at all.
+	 */
+	it("folds a reserved name the same way the key it guards is folded", () => {
+		const greek = resolveIdentityConfiguration({
+			mode: "username",
+			username: { allowedCharacters: /^[\p{L}\p{N}\p{M}_-]+$/u, reservedNames: ["ΟΔΟΣ"] },
+		});
+		expect(greek.username.reservedNames).toEqual([caseFolded("ΟΔΟΣ".normalize("NFKC"))]);
+		expect(normaliseUsername("ΟΔΟΣ", greek.username)).toEqual({
+			accepted: false,
+			rejection: "reserved",
+		});
+		expect(normaliseUsername("οδοσ", greek.username)).toEqual({
+			accepted: false,
+			rejection: "reserved",
+		});
+	});
+
+	it("reserves every spelling that folds onto a reserved name", () => {
+		const reserved = resolveIdentityConfiguration({
+			mode: "username",
+			username: { reservedNames: ["admin"] },
+		});
+		for (const spelling of ["admin", "ADMIN", "Admin", "ＡＤＭＩＮ", " admin "]) {
+			expect([spelling, normaliseUsername(spelling, reserved.username)]).toEqual([
+				spelling,
+				{ accepted: false, rejection: "reserved" },
+			]);
+		}
 	});
 
 	it("refuses an allowlist that does not match the whole name", () => {
