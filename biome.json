@@ -1,8 +1,18 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
-	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-	"files": { "includes": ["src/**", "test/**", "*.ts", "*.json"] },
-	"formatter": { "enabled": true, "indentStyle": "tab", "lineWidth": 100 },
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["src/**", "test/**", "tools/**", "*.ts", "*.json"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 100
+	},
 	"linter": {
 		"enabled": true,
 		"rules": {
@@ -12,7 +22,9 @@
 				"noConsole": "error",
 				"noDebugger": "error"
 			},
-			"complexity": { "noExcessiveCognitiveComplexity": "warn" },
+			"complexity": {
+				"noExcessiveCognitiveComplexity": "warn"
+			},
 			"style": {
 				"noDefaultExport": "error",
 				"useConst": "error",
@@ -20,11 +32,22 @@
 			}
 		}
 	},
-	"javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always"
+		}
+	},
 	"overrides": [
 		{
 			"includes": ["*.config.ts"],
-			"linter": { "rules": { "style": { "noDefaultExport": "off" } } }
+			"linter": {
+				"rules": {
+					"style": {
+						"noDefaultExport": "off"
+					}
+				}
+			}
 		}
 	]
 }
