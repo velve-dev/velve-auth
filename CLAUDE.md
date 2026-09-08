@@ -192,6 +192,7 @@ repair anything itself.
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
 - `pnpm check:lock-order` — `velve.user` is locked before any other table
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
+- `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
@@ -469,6 +470,10 @@ pnpm check:lock-order
                  velve.user is locked before any other table
 pnpm check:reviewable
                  no NUL byte hides a file from review
+pnpm check:sql-collapse
+                 every SQL statement still says what it said once its newlines
+                 are normalised away — a marker is a block comment, never a line
+                 comment
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
