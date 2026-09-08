@@ -121,8 +121,9 @@ A reviewer checks, in this order:
 At most **four agents run at the same time**. This is a hard limit.
 
 Features in the same wave run in parallel; waves run one after another. **No two
-writers share a file.** The "touches" column of the wave tables in the build
-order is binding. A feature that needs a change outside its area stops and
+writers share a file.** The single exception is `CASE-STUDY.md`, which every
+feature appends to; §6 explains how that is made safe. The "touches" column of
+the wave tables in the build order is binding. A feature that needs a change outside its area stops and
 reports it instead of editing the file.
 
 ### Definition of done
@@ -146,6 +147,7 @@ repair anything itself.
 - `pnpm typecheck` under `strict`, no `any` in the public surface type
 - `pnpm lint` without findings, formatting applied
 - `pnpm knip` — no dead code, no unused export
+- `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
@@ -171,6 +173,32 @@ that the reasons are the actual ones and not the reconstructed ones.
 
 Do not create any other markdown file. No summary files, no progress reports, no
 `NOTES.md`.
+
+### Numbering the decision log
+
+`CASE-STUDY.md` is the one file every feature appends to. That is a deliberate
+exception to the file-ownership rule in §5, and it works only because of how the
+numbers are handed out.
+
+**Each feature is given a reserved range of decision numbers when its wave
+starts, and it uses only that range.** The range is recorded next to the feature
+in the wave table. Two features never reach for the same number, so no branch
+ever has to renumber, and the merge order does not matter.
+
+The reason this matters more than it looks: decision IDs are cited from code,
+tests and documentation — `E-23` next to the line it explains. A renumber has to
+move every citation with it, and a citation left behind does not dangle, it
+**resolves to the wrong decision**. Nothing detects that. Reserved ranges remove
+the renumber, and removing the renumber removes the whole failure class.
+
+A reserved range that is not used up leaves a gap in the numbering. That is
+fine and expected. Contiguity is worth nothing here; a silent wrong citation
+costs a great deal.
+
+`test/decision-log.test.ts` is the backstop, not the mechanism. It catches a
+number used twice, an entry missing one of its four parts, and a citation
+anywhere in the repository that resolves to no entry at all. It cannot catch a
+citation that resolves to the wrong entry — only not renumbering can.
 
 ## 7. Technical constraints
 
@@ -204,10 +232,12 @@ These follow from architecture section 2 and are not open for local decision:
 ```
 pnpm build       tsdown — ESM + .d.mts
 pnpm typecheck   tsc --noEmit, strict
-pnpm lint        biome check
-pnpm format      biome format --write
+pnpm lint        biome check, warnings included
+pnpm format      biome check --write — applies everything lint verifies
 pnpm test        vitest run
 pnpm knip        dead code and unused exports
+pnpm check:session-owner
+                 S-FIX-2: no session owner reassigned in SQL
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
