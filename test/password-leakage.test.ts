@@ -50,6 +50,14 @@ const sources = readModuleSources(MODULE_DIRECTORY);
 const CITATION =
 	/S-[A-Z]+-\d|L-\d|E-\d|T-[A-Z]+-\d|section \d|\b\d\.\d{1,2}\b|RFC|NIST|OWASP|GoTrue|PHC|crypt_blowfish|Argon2|bcrypt|scrypt|NFKC|Clerk|Auth0|Supabase|Firebase|Better Auth/;
 
+const DERIVATION = /\b(?:deriveArgon2|deriveScrypt|pbkdf2Async|scryptAsync)\(/;
+const COMPARISON = /(?:===|!==|\.startsWith\(|\.includes\(|\.localeCompare\(|\.indexOf\()/;
+const DERIVED_NAME = /\b(?:derived|encrypted)\b/;
+
+function comparesDerivedKey(line: string): boolean {
+	return COMPARISON.test(line) && DERIVED_NAME.test(line);
+}
+
 const COMMENT_LINE = /^(?:\/\/|\/\*|\*)/;
 
 interface CommentBlock {
@@ -180,6 +188,29 @@ describe("repository rules section 3 — what the module may contain", () => {
 			.map((source) => source.path);
 
 		expect(offenders).toEqual([]);
+	});
+
+	// S-TIM-3 forbids `===`, `startsWith`, `includes` and `localeCompare` on a value of the branded
+	// type. T-TIM-3 asks for a `ts-morph` rule over all of `src/core/**`; no such rule exists in the
+	// repository and `ts-morph` is not a dependency, so this stands in for it inside this module:
+	// every derived value must leave its verifier through `derivedKeysAreEqual` and no other way.
+	it("compares a derived key only through the constant-time comparison", () => {
+		const deriving = sources.filter(
+			(source) => source.path.includes("verifiers") && DERIVATION.test(source.text),
+		);
+		const offenders = deriving.flatMap((source) =>
+			source.text
+				.split("\n")
+				.map((raw, index) => ({ line: raw.trim(), number: index + 1 }))
+				.filter((entry) => !COMMENT_LINE.test(entry.line) && comparesDerivedKey(entry.line))
+				.map((entry) => `${source.path}:${entry.number}`),
+		);
+
+		expect(deriving).toHaveLength(4);
+		expect(offenders).toEqual([]);
+		for (const source of deriving) {
+			expect(source.text, source.path).toContain("derivedKeysAreEqual(");
+		}
 	});
 
 	// A module specifier that is assembled rather than written is invisible to the bundler, to the
