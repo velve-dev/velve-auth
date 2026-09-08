@@ -11,7 +11,9 @@ import { decodeStandardBase64 } from "../src/core/password/base64.js";
 import { ARGON2ID_FLOOR, resolvePasswordConfig } from "../src/core/password/config.js";
 import {
 	argon2CostIsAcceptable,
+	bcryptCostIsAcceptable,
 	MAXIMUM_STORED_ARGON2_ITERATIONS,
+	MAXIMUM_STORED_BCRYPT_COST,
 	MAXIMUM_STORED_MEMORY_KIB,
 	MAXIMUM_STORED_PARALLELISM,
 	MAXIMUM_STORED_PBKDF2_ITERATIONS,
@@ -272,6 +274,23 @@ describe("the ceiling on a stored cost parameter", () => {
 		expect(scryptCostIsAcceptable(14, 8, 1)).toBe(true);
 		expect(argon2CostIsAcceptable(19456, 2, 1)).toBe(true);
 		expect(pbkdf2CostIsAcceptable(1_200_000)).toBe(true);
+
+		// GoTrue, Auth0 and Clerk all write cost 10.
+		expect(MAXIMUM_STORED_BCRYPT_COST).toBe(14);
+		expect(bcryptCostIsAcceptable("$2b$10$abcdefghijklmnopqrstuv")).toBe(true);
+		expect(bcryptCostIsAcceptable("$2a$14$abcdefghijklmnopqrstuv")).toBe(true);
+	});
+
+	// bcrypt has no memory parameter, so the cost is the only bound there is; `$2a$31$` is about
+	// thirty years of one semaphore place.
+	it("refuses a bcrypt credential whose cost is beyond the ceiling", async () => {
+		expect(bcryptCostIsAcceptable("$2a$15$abcdefghijklmnopqrstuv")).toBe(false);
+		expect(bcryptCostIsAcceptable("$2a$31$abcdefghijklmnopqrstuv")).toBe(false);
+		expect(bcryptCostIsAcceptable("$2a$03$abcdefghijklmnopqrstuv")).toBe(false);
+		expect(bcryptCostIsAcceptable("not a bcrypt hash")).toBe(false);
+
+		const costly = stored.byScheme.bcrypt.replace(/^\$2b\$\d\d\$/, "$2b$15$");
+		expect(await verify("bcrypt", PASSWORD, costly)).toBe(false);
 	});
 
 	it("refuses at the value one past each ceiling", () => {
@@ -280,6 +299,9 @@ describe("the ceiling on a stored cost parameter", () => {
 		expect(argon2CostIsAcceptable(1024, 2, MAXIMUM_STORED_PARALLELISM + 1)).toBe(false);
 		expect(scryptCostIsAcceptable(14, 8, MAXIMUM_STORED_PARALLELISM + 1)).toBe(false);
 		expect(pbkdf2CostIsAcceptable(MAXIMUM_STORED_PBKDF2_ITERATIONS + 1)).toBe(false);
+		expect(bcryptCostIsAcceptable(`$2b$${MAXIMUM_STORED_BCRYPT_COST + 1}$abcdefghijklmnop`)).toBe(
+			false,
+		);
 	});
 
 	it("refuses a credential whose parameters would claim more than the ceiling", async () => {

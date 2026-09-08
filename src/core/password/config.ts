@@ -22,7 +22,7 @@ export const ARGON2ID_VERSION = 0x13;
 export const MINIMUM_LENGTH_FLOOR = 8;
 export const MAXIMUM_LENGTH_CEILING_IN_BYTES = 4096;
 
-const CONCURRENT_HASH_LIMIT_CEILING = 4;
+export const CONCURRENT_HASH_LIMIT_CEILING = 4;
 
 export interface PasswordPolicy {
 	readonly minimumLength: number;
@@ -71,7 +71,13 @@ export function resolvePasswordConfig(config: PasswordConfig = {}): ResolvedPass
 		throw new PasswordConfigurationError("maximum_length_below_minimum_length");
 	}
 
-	if (!Number.isInteger(concurrentHashLimit) || concurrentHashLimit < 1) {
+	// S-DOS-3 names `min(4, cpus)` as the bound of the library, not as a starting point, so the
+	// option lowers it and nothing raises it (E-188).
+	if (
+		!Number.isInteger(concurrentHashLimit) ||
+		concurrentHashLimit < 1 ||
+		concurrentHashLimit > CONCURRENT_HASH_LIMIT_CEILING
+	) {
 		throw new PasswordConfigurationError("concurrent_hash_limit_out_of_range");
 	}
 

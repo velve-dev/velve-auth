@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	ARGON2ID_FLOOR,
+	CONCURRENT_HASH_LIMIT_CEILING,
 	MAXIMUM_LENGTH_CEILING_IN_BYTES,
 	MINIMUM_LENGTH_FLOOR,
 	type PasswordConfig,
@@ -78,6 +79,17 @@ describe("password configuration", () => {
 		expect(configurationErrorCode({ concurrentHashLimit: 1.5 })).toBe(
 			"concurrent_hash_limit_out_of_range",
 		);
+		// S-DOS-3 fixes `min(4, cpus)` as the bound of the library; the option only lowers it.
+		expect(configurationErrorCode({ concurrentHashLimit: CONCURRENT_HASH_LIMIT_CEILING + 1 })).toBe(
+			"concurrent_hash_limit_out_of_range",
+		);
+		expect(configurationErrorCode({ concurrentHashLimit: 100_000 })).toBe(
+			"concurrent_hash_limit_out_of_range",
+		);
+		expect(
+			resolvePasswordConfig({ concurrentHashLimit: CONCURRENT_HASH_LIMIT_CEILING })
+				.concurrentHashLimit,
+		).toBe(CONCURRENT_HASH_LIMIT_CEILING);
 	});
 
 	it("lets the estate be narrowed but not extended", () => {

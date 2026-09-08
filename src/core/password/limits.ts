@@ -12,6 +12,8 @@ export const MAXIMUM_STORED_MEMORY_KIB = 65536;
 export const MAXIMUM_STORED_ARGON2_ITERATIONS = 64;
 export const MAXIMUM_STORED_PARALLELISM = 64;
 export const MAXIMUM_STORED_PBKDF2_ITERATIONS = 2_000_000;
+/** bcrypt's cost is an exponent: 14 is about a second, 31 about thirty years on one place. */
+export const MAXIMUM_STORED_BCRYPT_COST = 14;
 
 export function argon2CostIsAcceptable(
 	memoryKiB: number,
@@ -44,4 +46,11 @@ export function scryptCostIsAcceptable(
 
 export function pbkdf2CostIsAcceptable(iterations: number): boolean {
 	return iterations >= 1 && iterations <= MAXIMUM_STORED_PBKDF2_ITERATIONS;
+}
+
+const BCRYPT_COST = /^\$2[abyx]\$([0-9]{2})\$/;
+
+export function bcryptCostIsAcceptable(stored: string): boolean {
+	const cost = BCRYPT_COST.exec(stored)?.[1];
+	return cost !== undefined && Number(cost) >= 4 && Number(cost) <= MAXIMUM_STORED_BCRYPT_COST;
 }
