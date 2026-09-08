@@ -1136,3 +1136,373 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+## Identity
+
+Which sign-in names an instance has, how they are normalised, which columns of
+`velve.user` a new row may carry, how an identifier is turned back into an
+account, and how many ways into an account are left.
+
+Nothing in this section reads or writes a session. `findUserByIdentifier` and
+`usernameAvailability` take a `Driver`; `countSignInMethods` and
+`assertSignInMethodRemains` additionally take the `Actor` that session
+resolution produced.
+
+### The three configurations
+
+| Mode | Sign-in name | Unique on | Reset and confirmation over |
+|---|---|---|---|
+| `email` | the address | `email` | email |
+| `username` | the username | `username_key` | **not available** without recovery codes |
+| `username_email` | username **or** address | both | email |
+
+The mode is chosen once, at initialisation. It decides which `CHECK` migration 2
+installs on `velve.user`, so changing it later is a migration and not a setting.
+
+```ts
+type IdentityConfiguration<Mode extends IdentityMode = IdentityMode>
+```
+
+Without a type argument this is the union of all three; with one it is that
+member alone. The member for `email` has no `username` property and will not
+accept one, the other two require it — the combination "email mode with username
+rules" cannot be written down (E-15).
+
+```ts
+type IdentityConfigurationInput<Mode extends IdentityMode = IdentityMode>
+```
+
+The same three shapes, but with `username` optional and every rule inside it
+optional. This is what a caller writes; `resolveIdentityConfiguration` turns it
+into an `IdentityConfiguration`.
+
+#### `resolveIdentityConfiguration(input)`
+
+```ts
+resolveIdentityConfiguration({ mode: "username_email" })
+// { mode: "username_email", username: DEFAULT_USERNAME_RULES }
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `input.mode` | `"email" \| "username" \| "username_email"` | which sign-in names exist |
+| `input.username` | `Partial<UsernameRules>` | overrides; absent rules take their default. Not accepted in the `email` mode |
+
+Returns the configuration with every rule filled in and every reserved name
+already in its comparison form. Throws `IdentityConfigurationError` — a start
+error, not a request error — when a rule cannot work:
+
+- `allowedCharacters` does not begin with `^` and end with `$`. A pattern that
+  matches part of a name accepts the rest of it unexamined.
+- `allowedCharacters` carries the `g` or `y` flag. Both keep `lastIndex` between
+  calls, so the same name is accepted and refused in turn.
+- `minimumLength` is not a whole number of at least 1.
+- `maximumLength` is not a whole number of at least `minimumLength`.
+
+`IdentityConfigurationError` carries `code === "invalid_identity_configuration"`.
+It is thrown while the instance is being built and never in answer to a request.
+
+### `UsernameRules` and the character allowlist
+
+```ts
+interface UsernameRules {
+  allowedCharacters: RegExp        // default /^[a-z0-9_-]+$/
+  minimumLength: number            // default 3
+  maximumLength: number            // default 32
+  reservedNames: readonly string[] // default []
+}
+```
+
+`DEFAULT_USERNAME_RULES` holds exactly those values.
+
+**Which usernames are accepted by default.** Lowercase `a`–`z`, the digits `0`–`9`,
+the underscore and the hyphen, three to thirty-two characters, and nothing else.
+Uppercase letters are accepted and kept: the allowlist is applied to the
+comparison form, which is the input folded to NFKC and lowercased, so `Alice` is
+accepted, is stored as `Alice`, and collides with `alice`.
+
+Everything else is refused. That includes every accented Latin letter, every
+non-Latin script, the full stop, the space, the at sign, and every invisible
+character — zero-width joiners, soft hyphens, bidirectional overrides. This is
+deliberate and it is the homoglyph defence: a name that cannot be spelled cannot
+be made to look like another one (E-17). Compatibility spellings are collapsed
+before the check, so a full-width `ＡＬＩＣＥ` and a name spelled with the Kelvin
+sign U+212A do not survive as separate names — they become `alice` and, for a
+name of that one character, `k`.
+
+**Widening it.** `allowedCharacters` is a configuration option, and widening it
+is a decision with two consequences a caller should make deliberately:
+
+1. Every pair of characters the wider list admits that a reader cannot tell
+   apart is a name one user can wear in place of another.
+2. The comparison form is lowercased in JavaScript, and the database asserts
+   `username_key = lower(username_key)` in PostgreSQL. For characters outside
+   ASCII the two do not have to agree, and where they do not the insert fails
+   with a constraint violation rather than storing a wrong value. Test a widened
+   allowlist against the database you will run.
+
+`reservedNames` are compared against the comparison form and are stored in it, so
+`"Admin"` and `"ＡＤＭＩＮ"` both reserve `admin`. A reserved name that the
+allowlist cannot spell is unreachable rather than an error.
+
+`minimumLength` and `maximumLength` count code points of the comparison form.
+
+### Normalisation
+
+```ts
+type Normalisation<Value, Rejection> =
+  | { accepted: true; value: Value }
+  | { accepted: false; rejection: Rejection }
+```
+
+Both normalisers return this shape. Neither throws and neither chooses an error
+code: the caller decides whether a rejection becomes `invalid_input`,
+`username_invalid` or a `reason` in an availability answer.
+
+#### `normaliseEmail(candidate)`
+
+Trims, folds to NFKC, lowercases, and then checks that the result is structurally
+one address: exactly one `@`, a non-empty part on each side, no control,
+formatting or separating character anywhere, and at most 254 bytes of UTF-8
+(RFC 5321). Returns `Normalisation<string, EmailRejection>`.
+
+| `EmailRejection` | Meaning |
+|---|---|
+| `"malformed"` | not one address, or carrying an invisible or separating character |
+| `"too_long"` | more than 254 bytes after normalising |
+
+There is no syntax rule beyond that, and no list of accepted domains. The
+library does not decide whether an address exists; a confirmation link does.
+
+#### `normaliseUsername(candidate, rules)`
+
+Trims, folds to NFKC — that is the display form — and lowercases it — that is the
+comparison form. Returns `Normalisation<NormalisedUsername, UsernameRejection>`.
+
+```ts
+interface NormalisedUsername {
+  username: string     // velve.user.username — the display form
+  usernameKey: string  // velve.user.username_key — the comparison form
+}
+```
+
+The two go into the database together; `user_username_pairing` refuses a row that
+carries one without the other.
+
+| `UsernameRejection` | Meaning |
+|---|---|
+| `"invalid_characters"` | the comparison form is outside `allowedCharacters` |
+| `"too_short"` | fewer than `minimumLength` code points |
+| `"too_long"` | more than `maximumLength` code points |
+| `"reserved"` | the comparison form is in `reservedNames` |
+
+The order is the order of that table: characters are judged before length, so a
+one-character wildcard is reported as `invalid_characters` and not as
+`too_short`, and no rejection ever reveals more than the input already did.
+
+### The columns a configuration may write
+
+```ts
+const REQUIRED_IDENTIFIERS: Record<IdentityMode, readonly IdentifierKind[]>
+// email          -> ["email"]
+// username       -> ["username"]
+// username_email -> ["email", "username"]
+```
+
+This is the runtime statement of the `CHECK` that migration 2 installs. The two
+are kept in step by a test that reads the required identifiers out of the shipped
+migration's own SQL and then proves against a live database that nothing
+`identityColumns` accepts is a row the constraint refuses.
+
+#### `identityColumns(configuration, provided)`
+
+```ts
+identityColumns(configuration, { email: "Alice@Example.com", username: "Alice" })
+// { accepted: true, value: { email: "alice@example.com", username: "Alice", usernameKey: "alice" } }
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `configuration` | `IdentityConfiguration` | decides what is required and what is allowed |
+| `provided.email` | `string \| null \| undefined` | the address as entered, or as a provider reported it. `null` and absent mean the same: none was reported |
+| `provided.username` | `string \| null \| undefined` | the username as entered |
+
+Returns `Normalisation<IdentityColumns, IdentifierRejection>`.
+
+```ts
+type IdentityColumns = { email: string | null } & (
+  | { username: string; usernameKey: string }
+  | { username: null;   usernameKey: null }
+)
+
+interface IdentifierRejection {
+  identifier: "email" | "username"
+  rejection: EmailRejection | UsernameRejection | "required" | "not_configured"
+}
+```
+
+`"required"` means the mode insists on that identifier and none was given.
+`"not_configured"` means a username was given in the `email` mode, where there
+are no rules to normalise it against. The address is judged before the username,
+so a call that gets both wrong reports the address.
+
+**No address is ever invented.** Where a provider reports none, `email` stays
+`null` in the `username` mode, and the call is rejected with `"required"` in the
+`email` and `username_email` modes. There is no fallback, no placeholder domain
+and no address derived from an identifier — an invalid address in the table is
+worse than no address, because everything downstream takes it for a real one
+(E-16, S-LINK-5). A test scans the whole library for the three shapes such an
+address is usually built in.
+
+### Resolving an identifier
+
+#### `findUserByIdentifier(lookup)`
+
+```ts
+await findUserByIdentifier({ driver, schema, configuration, identifier: "Alice" })
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | any driver or the transaction in hand |
+| `schema` | `string` | the schema the tables live in |
+| `configuration` | `IdentityConfiguration` | decides which columns the identifier is compared against |
+| `identifier` | `string` | whatever the caller typed |
+
+Returns `ResolvedUserIdentity | null`.
+
+```ts
+interface ResolvedUserIdentity {
+  id: string
+  email: string | null
+  username: string | null
+  emailVerified: boolean
+  disabled: boolean
+}
+```
+
+The two timestamps arrive as booleans on purpose: the driver is a parameter, and
+whether `timestamptz` reaches JavaScript as a `Date` or as a string is the
+driver's decision, not the library's. A caller that needs the moment reads the
+column itself.
+
+`disabled` is for the caller that has already proved the account is theirs.
+A sign-in path must not act on it: a disabled account answers a sign-in exactly
+as a wrong password does (L-4).
+
+**One statement, always.** The identifier is normalised as an address and as a
+username — whichever the mode configures — and then the same query runs with the
+same two parameters whatever came out. An identifier the allowlist refuses, an
+empty string and an address that names nobody all cost the same round trip as one
+that names an account, and no branch is taken before the answer is in. That is
+what keeps normalisation from becoming the enumeration oracle the rest of the
+library avoids (S-ENUM-1, E-46).
+
+#### `usernameAvailability(lookup)`
+
+```ts
+await usernameAvailability({ driver, schema, rules, candidate: "alice" })
+// { available: false, reason: "taken" }
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | any driver |
+| `schema` | `string` | the schema the tables live in |
+| `rules` | `UsernameRules` | the rules the candidate is judged by |
+| `candidate` | `string` | the name as typed |
+
+Returns `{ available: boolean; reason?: UsernameRejection \| "taken" }` and
+nothing else — no near matches, no prefix search, no count.
+
+**Usernames are enumerable, and this endpoint is how.** An availability check
+tells the asker whether a name is in use, and no amount of care changes that.
+The library offers the check, says so here, and leaves the hard per-address limit
+to the route that exposes it (S-ENUM-8). In the `email` mode there is no
+equivalent for addresses and no endpoint whose answer depends on whether an
+address exists.
+
+Unlike `findUserByIdentifier` this call does not reach the database when the
+spelling already fails: there is nothing to conceal from an asker who is being
+told about existence anyway.
+
+### The last sign-in method
+
+A user always keeps at least one of a password credential, a WebAuthn credential
+and a linked identity. Removing the last one is refused with
+`last_sign_in_method` (L-13). A confirmed address does not count, although a
+magic link works with it, and recovery codes do not count: they are a second
+factor, not a sign-in name.
+
+This is the count `factor.webauthn.remove` and `identity.unlink` share.
+
+```ts
+interface SignInMethodCount {
+  password: number            // 0 or 1
+  webauthnCredentials: number
+  linkedIdentities: number
+}
+
+type SignInMethodRemoval =
+  | { method: "password" }
+  | { method: "webauthn_credential"; credentialId: string }
+  | { method: "linked_identity"; identityId: string }
+```
+
+#### `countSignInMethods(query)`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `driver` | `Driver` | any driver or the transaction in hand |
+| `schema` | `string` | the schema the tables live in |
+| `actor` | `Actor` | the account, from `actorOfResolvedSession` |
+| `excluding` | `SignInMethodRemoval` (optional) | a row to leave out of the count |
+
+One statement. `excluding` names a row by its identifier rather than subtracting
+one, so a credential that is already gone, or that belongs to somebody else, does
+not make the count too low.
+
+#### `totalSignInMethods(count)`
+
+Adds the three numbers. `totalSignInMethods(await countSignInMethods({ ..., excluding }))`
+is what would be left after that removal.
+
+#### `assertSignInMethodRemains(check)`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `transaction` | `Driver` | **the transaction that performs the removal** |
+| `schema` | `string` | the schema the tables live in |
+| `actor` | `Actor` | the account, from `actorOfResolvedSession` |
+| `removing` | `SignInMethodRemoval` | the row about to be deleted |
+
+Returns nothing and throws `VelveError("last_sign_in_method")` — HTTP 409 — when
+the account would be left with no way in.
+
+**How to call it.** Inside the transaction that deletes the row, and before the
+`DELETE`:
+
+```ts
+await driver.transaction(async (transaction) => {
+  await assertSignInMethodRemains({
+    transaction,
+    schema,
+    actor,
+    removing: { method: "webauthn_credential", credentialId },
+  });
+  await transaction.query(
+    `DELETE FROM ${schema}.webauthn_credential WHERE id = $1 AND user_id = $2`,
+    [credentialId, actor],
+  );
+});
+```
+
+The call takes `SELECT … FOR UPDATE` on the user row before it counts, which is
+why it needs the transaction and not merely a driver. Two removals running at
+once would otherwise each read before the other writes, each see the way in the
+other is deleting, and both succeed. Holding the row until commit turns that into
+one success and one `last_sign_in_method`.
+
+The check does not verify that the row belongs to the actor. That is the caller's
+`WHERE user_id = $2`, and it stays there so that ownership is enforced in the
+statement that acts, not in one that only reads.
