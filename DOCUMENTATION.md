@@ -1271,7 +1271,10 @@ not-null violation on `expires_at`, each carrying the table and the constraint
 name out of the library. The purpose guard runs before any statement, so an
 unknown purpose reaches no driver; the account guard runs on the lock, which has
 already read the row it needs. Messages are fixed per code, so nothing a caller
-passed can reach an error string. All three become `internal_error` over HTTP.
+passed can reach an error string. What the failure was about travels beside the
+code in `purpose`, which is one of the four or `null` for the one code that fires
+because the purpose was not one of them (E-129, E-265). All three become
+`internal_error` over HTTP.
 
 `consumeOneTimeToken` is the only way a one-time token is ever read. There is no
 method that finds one, counts them or looks one up: a read before the write is
@@ -1342,6 +1345,7 @@ answers `null` like the rest.
 | `StoredOneTimeToken` | `{ userId: string \| null; payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns |
 | `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
 | `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
+| `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
 
 `payload` is `Readonly`: the object `redeem` hands back is the row's, not a copy
 to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in

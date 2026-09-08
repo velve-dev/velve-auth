@@ -49,10 +49,15 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
 export class OneTimeTokenError extends Error {
 	readonly code: OneTimeTokenErrorCode;
 
-	constructor(code: OneTimeTokenErrorCode) {
+	/** E-129: what the failure was about travels in its own field, never spliced into the
+	 * message. It is null for the one code that fires because the purpose is not a purpose. */
+	readonly purpose: OneTimeTokenPurpose | null;
+
+	constructor(code: OneTimeTokenErrorCode, purpose: OneTimeTokenPurpose | null) {
 		super(MESSAGE_BY_ERROR_CODE[code]);
 		this.name = "OneTimeTokenError";
 		this.code = code;
+		this.purpose = purpose;
 	}
 }
 
@@ -99,12 +104,12 @@ RETURNING user_id, payload`;
 			// Both guards answer inputs that reach here from outside TypeScript; without them the
 			// driver raises instead, and a driver's error names the table and the constraint.
 			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
-				throw new OneTimeTokenError("one_time_token_purpose_unknown");
+				throw new OneTimeTokenError("one_time_token_purpose_unknown", null);
 			}
 			return options.driver.transaction(async (tx) => {
 				const owner = await tx.query(lockOwnerStatement, [userId]);
 				if (owner.length === 0) {
-					throw new OneTimeTokenError("one_time_token_owner_unknown");
+					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}
 				const [row] = await tx.query<{ expires_at: string }>(replaceStatement, [
 					userId,
@@ -114,7 +119,7 @@ RETURNING user_id, payload`;
 					ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
 				]);
 				if (row === undefined) {
-					throw new OneTimeTokenError("one_time_token_not_written");
+					throw new OneTimeTokenError("one_time_token_not_written", purpose);
 				}
 				return { expiresAt: row.expires_at };
 			});

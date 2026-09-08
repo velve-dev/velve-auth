@@ -193,7 +193,8 @@ describe("what the repository raises carries a code and no secret", () => {
 		expect(raises).toHaveLength(3);
 		expect(
 			raises.filter(
-				(raise) => !/^throw new OneTimeTokenError\("one_time_token_[a-z_]+"\);$/.test(raise),
+				(raise) =>
+					!/^throw new OneTimeTokenError\("one_time_token_[a-z_]+", (purpose|null)\);$/.test(raise),
 			),
 		).toStrictEqual([]);
 	});

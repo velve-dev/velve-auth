@@ -186,6 +186,7 @@ describe("what the repository refuses", () => {
 			await raise([], OWNER_FOUND, "magic_link"),
 		];
 
+		expect(raised.map((error) => error.purpose)).toStrictEqual(["magic_link", null, "magic_link"]);
 		expect(raised.map((error) => error.code)).toStrictEqual([
 			"one_time_token_owner_unknown",
 			"one_time_token_purpose_unknown",
