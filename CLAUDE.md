@@ -37,7 +37,7 @@ reproduces section 7's German verbatim. How a translation must read is fixed in
 easiest to break by accident.
 
 The rule that is decided once and does not get revisited is this one — English
-everywhere, `CASE-STUDY.md` included. The package is a public MIT library on
+everywhere, `CASE-STUDY.md` included. The package is a public Apache-2.0 library on
 npm; its readers are not assumed to read German.
 
 ## 2. Scope

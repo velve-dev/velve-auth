@@ -192,4 +192,38 @@ plainly is more useful than a plugin that half-implements them.
 
 ## Licence
 
-MIT © Velve
+Apache License 2.0 © Velve — see [`LICENSE`](./LICENSE) and
+[`NOTICE`](./NOTICE).
+
+**Why Apache 2.0 and not MIT.** Apache 2.0 is exactly as permissive as MIT: it
+is not copyleft, you may use this in a closed product, modify it, sell it, and
+keep your changes to yourself. Nothing is withheld from you that MIT would have
+given.
+
+It does ask two things of you that MIT does not, and only when you
+**redistribute**: section 4(b) wants modified files marked as modified, and
+section 4(d) wants this project's `NOTICE` attributions carried into what you
+ship. Neither touches you if you merely use the library.
+
+It adds two things MIT is silent about, and both protect the people who depend
+on this library rather than the people who wrote it.
+
+**An express patent grant.** MIT says nothing about patents. Under it, someone
+could contribute code and later assert a patent covering their own
+contribution — against this project and against everyone using it. Apache 2.0
+has every contributor grant a patent licence for what they contributed, and
+that licence terminates for anyone who brings a patent suit over it. For a
+library that sits on the authentication path of other people's products, that
+is not a theoretical comfort.
+
+**A trademark reservation.** MIT is silent on names, so a fork can argue the
+licence let it keep calling itself Velve Auth. Apache 2.0 section 6 keeps names
+and marks out of the grant explicitly. It does not prohibit anything —
+trademark law does that, under either licence — but it removes the argument
+that the licence conveyed the name.
+
+The cost is honest and small: the file is 11,358 bytes where MIT's was 1,062,
+and "MIT" is the string a developer recognises without reading. We took the trade
+because the two gaps are the two that matter to a company shipping a security
+dependency, and because relicensing is cheap now and effectively impossible
+once other people have contributed.

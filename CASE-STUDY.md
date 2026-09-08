@@ -324,6 +324,13 @@ Entscheidungen, die beim Bauen fielen.
 *Grund:* Die Leser des Pakets sind nicht die Leser des Entwurfs. Wer `@velve/auth` installiert, findet Bezeichner, Fehlercodes und `DOCUMENTATION.md` vor; deutschsprachige Bezeichner in einer öffentlichen Bibliothek schließen ohne Gegenwert aus. `CASE-STUDY.md` ist ausgenommen, weil der Auftrag die wörtliche Übernahme von E-01 bis E-46 vorschreibt — eine Übersetzung wäre eine Änderung, und die Fortschreibung muss im selben Format und derselben Sprache weiterlaufen wie der Bestand.
 *Preis:* Das Repository ist zweisprachig. Wer die Gründe sucht, liest Deutsch; wer die Bibliothek benutzt, liest Englisch.
 
+**Licence addendum.** The *Kontext* above says MIT because that is what the
+package was when this entry was written, and it stays that way. The package is
+Apache-2.0 now. `E-505` carries the decision, why Apache 2.0 rather than MIT,
+and its price. This paragraph exists because the alternative considered was to
+edit the *Kontext* line instead, and leaving the line alone tells a reader both
+what the entry said and what is true now, which the edit would not have.
+
 **E-48 — Node ab 20.19 ist Bauvoraussetzung, nicht nur Laufzeitvoraussetzung.**
 *Kontext:* Abschnitt 2.5 nennt Node 20.19 als Laufzeituntergrenze, abgeleitet aus `@noble/hashes` 2.x und den globalen Web-Crypto-Objekten. Beim Aufsetzen des Gerüsts stellte sich heraus, dass dieselbe Grenze schon für das Bauwerkzeug gilt: Die native Bindung von Rolldown, auf der `tsdown` aufsetzt, fordert `^20.19.0 || >=22.12.0`.
 *Verworfen:* Ein Bundler ohne native Bindung, um unterhalb von 20.19 bauen zu können.
@@ -2754,3 +2761,52 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 **Rejected.** Nothing — the argument for it was better than the reason it was missing.
 **Reason.** The four existing modes each break something the verifier checks *before* it checks the signature, or break the signature so badly that several checks could account for the refusal. This one leaves challenge, origin, relying-party hash and the user-verification flag all correct, and `crossOrigin` is a field the verifier does not read — so the **only** thing that can refuse it is the signature's binding to the bytes actually transmitted. `signed-without-the-client-data` tests that property obliquely; this tests it alone, and a case pins the concealed reason to `signature_invalid` rather than merely to a rejection.
 **Price.** The simulator needed one parameter and no other change, which is the good news and also the uncomfortable part: the mode was buildable from the start and the enumeration of four was a guess that stopped where it stopped. E-465 already said so — *"the enumeration is a guess at what a broken authenticator does"* — and naming the limitation did not make anyone go back and close it.
+
+### The licence moves to Apache 2.0
+`E-505` · gate · licensing, frozen
+
+**Context.** The commission fixed MIT, and MIT shipped through wave 3. Two gaps
+in it are specific to a company publishing a security dependency rather than to
+an individual publishing a utility: MIT says nothing about patents, so a
+contributor may assert one later over their own contribution against the
+project and against everyone depending on it; and MIT does not keep the name
+out of the grant, so a fork may continue to call itself Velve Auth.
+
+**Rejected.** (a) Staying on MIT, on the strength of it being the string every
+developer recognises and every competitor uses — Better Auth and Lucia are MIT,
+and Auth.js is ISC, which is MIT with two clauses removed and no more
+protective. (b) A copyleft or source-available licence. (c) Dual licensing.
+
+**Reason.** (b) fails on what this package is: a dependency that runs inside
+someone else's process. A licence that reaches the calling application makes
+the library unusable in the procurement of the firms it is aimed at, and it
+contradicts the positioning — the argument of this project is that the security
+work can be read and checked, which requires that it can be read, forked and
+vendored. (c) has nothing to sell separately. (a) is the real alternative and
+it loses on exactly two clauses. Apache 2.0 is equally permissive and closes
+both gaps. It is not obligation-free where MIT is: §4(b) requires modified
+files to be marked as modified and §4(d) requires a NOTICE's attributions to
+be carried forward, neither of which MIT asks. Both attach on redistribution
+rather than on use, so they cost a consumer nothing and a redistributor two
+lines — but the first draft of this entry claimed Apache imposed nothing
+further at all, which was false and is corrected here rather than left.
+Enterprise legal review frequently prefers it for the patent clause.
+The timing decided it as much as the substance: relicensing requires every
+contributor's consent, and today the contributor set is one person. That is the
+cheapest this change will ever be.
+
+**Price.** The file is 11,358 bytes where MIT's was 1,062, and a developer
+scanning a package page reads "Apache-2.0" a beat slower than "MIT". Two places
+outside the licence itself asserted MIT and had to move with it: `CLAUDE.md` §1
+and `README.md`. A third, E-47's *Kontext*, states MIT as the fact it was when
+that entry was written; it is left alone and carries an addendum instead. The
+in-place edit was authorised and then withdrawn once the argument for it — that
+the sentence states a fact rather than a reason — was shown to dissolve the
+rule rather than carve an exception in it, since a *Kontext* is by construction
+a statement of fact about the world at the time. Every such statement is a
+second place the licence is written down, and nothing checks that they agree
+with `package.json`. This entry first counted three and missed the two the same
+commit created — `NOTICE`, which states the licence in prose rather than as an
+SPDX token and is therefore the form a future grep is least likely to catch,
+and this paragraph. Undercounting the hazard while warning about it is the
+hazard.
