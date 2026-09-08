@@ -61,10 +61,13 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 	 * actor to filter on; the token hash is the whole authorisation (S-TOKEN-4). */
 	const REDEEMED_WITHOUT_AN_ACTOR = /DELETE\s+FROM[\s\S]*one_time_token/i;
 
+	/** `FOR UPDATE` takes a row lock and writes no row, so it is not a modification. */
+	const ROW_LOCK_CLAUSE = /\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b|\bFOR\s+(?:KEY\s+)?SHARE\b/gi;
+
 	it("gives every row-changing statement an owner predicate", () => {
 		const changing = sqlLiterals().filter((literal) =>
 			// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
-			/\b(DELETE\s+FROM|UPDATE)\b/i.test(literal.sql),
+			/\b(DELETE\s+FROM|UPDATE)\b/i.test(literal.sql.replace(ROW_LOCK_CLAUSE, "")),
 		);
 		const withoutOwner = changing
 			.filter((literal) => !REDEEMED_WITHOUT_AN_ACTOR.test(literal.sql))
