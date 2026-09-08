@@ -1150,12 +1150,31 @@ that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
 |---|---|---|
 | `length` | `number` | how many bytes to draw |
 
+### `SecretToken`
+
+A `string` with a brand on it. A user id, a session id or any other database key
+is not assignable to it, so a token cannot be confused with a key by assignment
+(S-RAND-6). The brand is nominal only: it says where a value came from, it does
+not say the value is valid.
+
 ### `createSecretToken()`
 
 The plaintext of a one-time artefact: 32 bytes from `randomBytes`, base64url
 encoded, 43 characters, 256 bit — the same width, the same source and the same
 encoding as a session token (S-RAND-4). It takes no parameters, because there is
 nothing about a secret for a caller to choose.
+
+### `toSecretToken(value)`
+
+Turns a string that arrived from outside into a `SecretToken`. It validates
+nothing, deliberately: a rejected shape would be a second answer beside "no
+row", and a malformed token would then be distinguishable from a well-formed one
+that was never issued (S-REPLAY-3). Its whole job is to make the step from
+untrusted string to lookup key a line someone wrote.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `value` | `string` | whatever arrived claiming to be a token |
 
 ### `hashSecretToken(token)`
 
@@ -1165,7 +1184,7 @@ as a well-formed one that was never issued.
 
 | Parameter | Type | Meaning |
 |---|---|---|
-| `token` | `string` | the plaintext handed to the caller, or whatever arrived claiming to be one |
+| `token` | `SecretToken` | the plaintext handed to the caller, or whatever arrived claiming to be one |
 
 ### `ONE_TIME_TOKEN_PURPOSES` and `ONE_TIME_TOKEN_LIFETIME_SECONDS`
 
@@ -1241,8 +1260,8 @@ The two operations a flow needs, over that repository.
 
 | Method | Parameters | Returns |
 |---|---|---|
-| `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext token and its deadline |
-| `redeem` | `{ token, purpose }` | `{ purpose, userId, payload }`, or `null` |
+| `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext `SecretToken` and its deadline |
+| `redeem` | `{ token: SecretToken, purpose }` | `{ purpose, userId, payload }`, or `null` |
 
 Requesting a token supersedes the user's earlier tokens of the same purpose, and
 holds under concurrent requests as well as sequential ones (S-TOKEN-3).

@@ -6,12 +6,13 @@ import type {
 	OneTimeTokenRepository,
 	OneTimeTokenRepositoryOptions,
 } from "../src/core/db/repositories/token.js";
-import type {
-	IssuedOneTimeToken,
-	OneTimeTokenPayload,
-	OneTimeTokenRedemption,
-	OneTimeTokenRequest,
-	OneTimeTokens,
+import {
+	type IssuedOneTimeToken,
+	type OneTimeTokenPayload,
+	type OneTimeTokenRedemption,
+	type OneTimeTokenRequest,
+	type OneTimeTokens,
+	toSecretToken,
 } from "../src/core/token/index.js";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
@@ -192,6 +193,8 @@ describe("what the repository raises carries a code and no secret", () => {
 // The scan above reads the statements; this reads the signature, which is the other half of
 // S-TOKEN-1: a lookup without a purpose must not compile.
 declare const repository: OneTimeTokenRepository;
+declare const tokens: OneTimeTokens;
+declare const userId: string;
 
 describe("the repository signature demands the purpose (S-TOKEN-1)", () => {
 	it("refuses a lookup that is only a hash", () => {
@@ -199,6 +202,21 @@ describe("the repository signature demands the purpose (S-TOKEN-1)", () => {
 			// @ts-expect-error a hash alone is not a lookup; the purpose is part of it.
 			repository.consumeOneTimeToken({ tokenSha256: new Uint8Array(32) });
 		expect(lookupWithoutPurpose).toBeInstanceOf(Function);
+	});
+});
+
+// S-RAND-6: a database key is not a secret. T-RAND-6 asks for the negative case to be a
+// compile error rather than a review note.
+describe("an account identifier is not a token (S-RAND-6)", () => {
+	it("refuses one where a token belongs, and takes it only when someone says so", () => {
+		const redeemWithAnAccountIdentifier = () =>
+			// @ts-expect-error a uuid is a database key; it becomes a token only by conversion.
+			tokens.redeem({ token: userId, purpose: "magic_link" });
+		const redeemWithAConversion = () =>
+			tokens.redeem({ token: toSecretToken(userId), purpose: "magic_link" });
+
+		expect(redeemWithAnAccountIdentifier).toBeInstanceOf(Function);
+		expect(redeemWithAConversion).toBeInstanceOf(Function);
 	});
 });
 

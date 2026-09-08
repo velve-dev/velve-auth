@@ -5,6 +5,7 @@ import {
 	ONE_TIME_TOKEN_PURPOSES,
 	type OneTimeTokenPurpose,
 	type OneTimeTokens,
+	type SecretToken,
 } from "../src/core/token/index.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
@@ -64,7 +65,7 @@ async function liveTokens(purpose: OneTimeTokenPurpose): Promise<number> {
 	return row?.stored ?? -1;
 }
 
-async function issueSimultaneously(purpose: OneTimeTokenPurpose): Promise<string[]> {
+async function issueSimultaneously(purpose: OneTimeTokenPurpose): Promise<SecretToken[]> {
 	let release = (): void => undefined;
 	const gate = new Promise<void>((resolve) => {
 		release = () => resolve();

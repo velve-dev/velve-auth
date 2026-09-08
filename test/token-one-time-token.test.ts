@@ -11,6 +11,7 @@ import {
 	ONE_TIME_TOKEN_PURPOSES,
 	type OneTimeTokenPurpose,
 	type OneTimeTokens,
+	toSecretToken,
 } from "../src/core/token/index.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -131,8 +132,10 @@ describe("a purpose is part of the lookup, not a check afterwards (S-TOKEN-1, S-
 		const issued = await tokens.issue({ purpose: "password_reset", userId: user });
 
 		expect(await tokens.redeem({ token: issued.token, purpose: "email_verify" })).toBeNull();
-		expect(await tokens.redeem({ token: "not-a-token", purpose: "email_verify" })).toBeNull();
-		expect(await tokens.redeem({ token: "", purpose: "email_verify" })).toBeNull();
+		expect(
+			await tokens.redeem({ token: toSecretToken("not-a-token"), purpose: "email_verify" }),
+		).toBeNull();
+		expect(await tokens.redeem({ token: toSecretToken(""), purpose: "email_verify" })).toBeNull();
 	});
 });
 
@@ -150,7 +153,7 @@ describe("expired, consumed and unknown are one answer (S-REPLAY-3)", () => {
 		const answers = [
 			await tokens.redeem({ token: consumed.token, purpose }),
 			await tokens.redeem({ token: expired.token, purpose }),
-			await tokens.redeem({ token: "never-issued", purpose }),
+			await tokens.redeem({ token: toSecretToken("never-issued"), purpose }),
 		];
 
 		expect(answers).toStrictEqual([null, null, null]);
@@ -251,7 +254,7 @@ describe("the payload travels with the token", () => {
 describe("the target account comes from the row alone (S-TOKEN-4)", () => {
 	it("rejects a row that names no user, and consumes it all the same", async () => {
 		await clear();
-		const token = "a-row-written-around-the-library";
+		const token = toSecretToken("a-row-written-around-the-library");
 		await connection.query(
 			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at)
 			 VALUES ($1, $2, now() + interval '1 hour')`,

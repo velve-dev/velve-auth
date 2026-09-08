@@ -1,7 +1,12 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { decodeBase64Url, encodeBase64Url } from "../src/core/keys/base64url.js";
-import { createSecretToken, hashSecretToken, randomBytes } from "../src/core/token/index.js";
+import {
+	createSecretToken,
+	hashSecretToken,
+	randomBytes,
+	toSecretToken,
+} from "../src/core/token/index.js";
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
@@ -50,7 +55,7 @@ describe("createSecretToken (S-RAND-4)", () => {
 
 describe("hashSecretToken", () => {
 	it("is SHA-256 over the token's UTF-8 bytes", () => {
-		expect(Buffer.from(hashSecretToken("abc")).toString("hex")).toBe(
+		expect(Buffer.from(hashSecretToken(toSecretToken("abc"))).toString("hex")).toBe(
 			"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
 		);
 	});
@@ -62,6 +67,8 @@ describe("hashSecretToken", () => {
 	});
 
 	it("differs for tokens that differ in one character", () => {
-		expect(hashSecretToken("a")).not.toStrictEqual(hashSecretToken("b"));
+		expect(hashSecretToken(toSecretToken("a"))).not.toStrictEqual(
+			hashSecretToken(toSecretToken("b")),
+		);
 	});
 });

@@ -8,6 +8,8 @@ import {
 	ONE_TIME_TOKEN_PURPOSES,
 	type OneTimeTokenPurpose,
 	type OneTimeTokens,
+	type SecretToken,
+	toSecretToken,
 } from "../src/core/token/index.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -75,7 +77,7 @@ interface Observation {
  * and whether anything was raised. */
 async function observe(
 	name: string,
-	attempt: { token: string; purpose: OneTimeTokenPurpose },
+	attempt: { token: SecretToken; purpose: OneTimeTokenPurpose },
 ): Promise<Observation> {
 	calls = [];
 	try {
@@ -112,14 +114,17 @@ async function invalidObservations(purpose: OneTimeTokenPurpose): Promise<Observ
 		await observe("consumed", { token: consumedAgain.token, purpose }),
 		await observe("expired", { token: expiredAgain.token, purpose }),
 		await observe("never existed", {
-			token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			token: toSecretToken("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
 			purpose,
 		}),
 		await observe("wrong purpose", { token: wrongPurpose.token, purpose }),
 		await observe("another user's token", { token: foreign.token, purpose }),
-		await observe("empty string", { token: "", purpose }),
-		await observe("not base64url at all", { token: "?????? not a token ??????", purpose }),
-		await observe("a megabyte of text", { token: "x".repeat(1_000_000), purpose }),
+		await observe("empty string", { token: toSecretToken(""), purpose }),
+		await observe("not base64url at all", {
+			token: toSecretToken("?????? not a token ??????"),
+			purpose,
+		}),
+		await observe("a megabyte of text", { token: toSecretToken("x".repeat(1_000_000)), purpose }),
 		await observe("consumed twice over", { token: consumed.token, purpose }),
 		await observe("expired twice over", { token: expired.token, purpose }),
 	];
@@ -189,7 +194,7 @@ describe("expired, consumed, never existed and every other failure are one answe
 	// A row the library never writes but the schema allows: no owner, therefore no target.
 	it("answers a row without an owner like every other invalid token", async () => {
 		await clear();
-		const planted = "a-row-written-around-the-library";
+		const planted = toSecretToken("a-row-written-around-the-library");
 		await connection.query(
 			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at)
 			 VALUES ($1, $2, now() + interval '1 hour')`,

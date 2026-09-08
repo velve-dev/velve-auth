@@ -6,6 +6,8 @@ import {
 	ONE_TIME_TOKEN_PURPOSES,
 	type OneTimeTokenPurpose,
 	type OneTimeTokens,
+	type SecretToken,
+	toSecretToken,
 } from "../src/core/token/index.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -93,7 +95,7 @@ describe("a token of one purpose is nothing at another (S-TOKEN-1, S-TOKEN-2)", 
 				expect(await tokens.redeem({ token: issued.token, purpose: attempted })).toBeNull();
 				expect(
 					await tokens.redeem({
-						token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+						token: toSecretToken("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
 						purpose: attempted,
 					}),
 				).toBeNull();
@@ -119,13 +121,13 @@ describe("re-issuing touches one purpose of one user (S-TOKEN-3)", () => {
 	it.each(slots)("re-issuing $owner's $purpose leaves the other seven alone", async (slot) => {
 		await clear();
 
-		const live = new Map<string, string>();
+		const live = new Map<string, SecretToken>();
 		for (const other of slots) {
 			const issued = await tokens.issue({ purpose: other.purpose, userId: idOf(other.owner) });
 			live.set(`${other.owner}/${other.purpose}`, issued.token);
 		}
 
-		const replaced = live.get(`${slot.owner}/${slot.purpose}`) ?? "";
+		const replaced = live.get(`${slot.owner}/${slot.purpose}`) ?? toSecretToken("");
 		const successor = await tokens.issue({ purpose: slot.purpose, userId: idOf(slot.owner) });
 
 		expect(await countRows(idOf(slot.owner), slot.purpose)).toBe(1);
@@ -138,7 +140,7 @@ describe("re-issuing touches one purpose of one user (S-TOKEN-3)", () => {
 			}
 			expect(await countRows(idOf(other.owner), other.purpose), key).toBe(1);
 			expect(
-				await tokens.redeem({ token: live.get(key) ?? "", purpose: other.purpose }),
+				await tokens.redeem({ token: live.get(key) ?? toSecretToken(""), purpose: other.purpose }),
 				key,
 			).not.toBeNull();
 		}
@@ -165,7 +167,7 @@ describe("a redemption yields the account the row names (S-TOKEN-4)", () => {
 
 	it("yields the owner of a row written around the library, whoever wrote it", async () => {
 		await clear();
-		const planted = "written-past-the-library-for-bob";
+		const planted = toSecretToken("written-past-the-library-for-bob");
 		await connection.query(
 			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
 			 VALUES ($1, $2, $3, now() + interval '1 hour')`,
@@ -193,7 +195,7 @@ describe("a redemption yields the account the row names (S-TOKEN-4)", () => {
 
 	it("refuses a row whose owner the schema allows to be missing, and takes the row with it", async () => {
 		await clear();
-		const planted = "an-owner-less-row";
+		const planted = toSecretToken("an-owner-less-row");
 		await connection.query(
 			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at)
 			 VALUES ($1, $2, now() + interval '1 hour')`,

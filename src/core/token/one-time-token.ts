@@ -1,6 +1,6 @@
 import type { OneTimeTokenRepository } from "../db/repositories/token.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
-import { createSecretToken, hashSecretToken } from "./secret-token.js";
+import { createSecretToken, hashSecretToken, type SecretToken } from "./secret-token.js";
 
 export interface OneTimeTokenRequest {
 	readonly purpose: OneTimeTokenPurpose;
@@ -9,7 +9,7 @@ export interface OneTimeTokenRequest {
 }
 
 export interface IssuedOneTimeToken {
-	readonly token: string;
+	readonly token: SecretToken;
 	readonly expiresAt: string;
 }
 
@@ -22,7 +22,7 @@ export interface OneTimeTokenRedemption {
 export interface OneTimeTokens {
 	issue(request: OneTimeTokenRequest): Promise<IssuedOneTimeToken>;
 	redeem(attempt: {
-		token: string;
+		token: SecretToken;
 		purpose: OneTimeTokenPurpose;
 	}): Promise<OneTimeTokenRedemption | null>;
 }
