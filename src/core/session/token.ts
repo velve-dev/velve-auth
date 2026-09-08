@@ -1,5 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
-import { randomBytes } from "../keys/random.js";
+import { randomBytes } from "../token/random.js";
 
 const SESSION_TOKEN_BYTES = 32;
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

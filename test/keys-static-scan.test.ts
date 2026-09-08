@@ -65,7 +65,7 @@ describe("the core imports no Node built-in (section 2.6, repository rules secti
 
 describe("secrets come from one place (S-RAND-1, S-RAND-5)", () => {
 	it("calls crypto.getRandomValues in exactly one module", () => {
-		expect(filesMatching(/getRandomValues/)).toStrictEqual([`${keysDirectory}/random.ts`]);
+		expect(filesMatching(/getRandomValues/)).toStrictEqual([`${coreDirectory}/token/random.ts`]);
 	});
 
 	it("never derives a secret from Math.random or a clock", () => {

@@ -101,7 +101,7 @@ function importPurposeKey(
 	keyBytes: Uint8Array<ArrayBuffer>,
 ): Promise<CryptoKey> {
 	if (isEncryptionPurpose(purpose)) {
-		// Extractable because the `@noble/ciphers` fallback needs the raw bytes (E-03).
+		// Extractable because the `@noble/ciphers` fallback needs the raw bytes (E-60).
 		return crypto.subtle.importKey("raw", keyBytes, "AES-GCM", true, ["encrypt", "decrypt"]);
 	}
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { equalsInConstantTime, randomBytes } from "../src/core/keys/index.js";
+import { equalsInConstantTime } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 
 describe("equalsInConstantTime", () => {
 	it("accepts identical byte sequences", () => {

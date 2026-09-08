@@ -1,9 +1,9 @@
+import { randomBytes } from "../token/random.js";
 import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES, selectAesGcmEngine } from "./aes-gcm.js";
 import { KeyError } from "./errors.js";
 import { isStorableKeyVersion } from "./key-version.js";
 import type { KeyProvider } from "./provider.js";
 import { type EncryptionKeyPurpose, isEncryptionPurpose, type KeyPurpose } from "./purpose.js";
-import { randomBytes } from "./random.js";
 
 const ENVELOPE_ALGORITHM = "A256GCM";
 const KEY_VERSION_BYTES = 4;

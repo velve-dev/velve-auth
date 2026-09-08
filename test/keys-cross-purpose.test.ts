@@ -5,10 +5,10 @@ import {
 	KEY_PURPOSES,
 	type KeyPurpose,
 	openEnvelope,
-	randomBytes,
 	rootKeyProvider,
 	sealEnvelope,
 } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
 // T-KEY-2 fixes the threshold as all 30 ordered pairs of the six purposes failing. Two purposes

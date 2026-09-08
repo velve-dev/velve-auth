@@ -6,7 +6,8 @@ import {
 	selectAesGcmEngine,
 	subtleAesGcm,
 } from "../src/core/keys/aes-gcm.js";
-import { KeyError, randomBytes } from "../src/core/keys/index.js";
+import { KeyError } from "../src/core/keys/index.js";
+import { randomBytes } from "../src/core/token/index.js";
 import { withLastBitFlipped } from "./keys-fixtures.js";
 
 const utf8 = new TextEncoder();
