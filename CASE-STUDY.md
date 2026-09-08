@@ -795,3 +795,15 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 *Verworfen:* Eine gemeinsame Funktion mit einem Schalter `runValidateHook: boolean`.
 *Grund:* Ein Schalter ist eine Regel, die jemand falsch setzen kann, und der Fehler wäre still: Der Einhängepunkt liefe auf dem heißen Pfad, das Klartextkennwort erreichte fremden Code bei jeder Anmeldung, und nichts an der Antwort würde sich ändern. Stattdessen nimmt der Anmeldeeintrag den Typ `PasswordPolicy` mit genau zwei Feldern. Es gibt dort kein `validate`, das aufgerufen werden könnte — die Zusicherung steht im Typ und nicht in einer Prüfung.
 *Preis:* Zwei Eintrittspunkte statt einem, und `acceptNewPassword` ruft `acceptSubmittedPassword` auf, was sich beim Lesen kurz falsch anhört. Der Name des inneren Aufrufs beschreibt die Herkunft der Eingabe, nicht die Operation.
+
+**E-166 — Die Absage des Semaphors trägt keine Wartezeit.**
+*Kontext:* `rate_limited` ist derselbe Fehlercode, den die Ratenbegrenzung aus 3.9 benutzt, und die setzt nach E-130 `retryAfterSeconds` und die Kopfzeile `Retry-After`. Der Semaphor kann denselben Code aus einem anderen Grund werfen.
+*Verworfen:* Die verbleibende Wartegrenze als `retryAfterSeconds` mitzugeben, damit jede `rate_limited`-Antwort dasselbe Feld trägt.
+*Grund:* Der Semaphor weiß nur, dass die Schlange voll war, nicht wann sie leer wird — das hängt daran, wie lange die laufenden Ableitungen noch dauern und wie viele Anfragen vor der eigenen stehen. Eine Zahl, die auf der Wartegrenze beruht, wäre eine Erfindung, und ein Client, der sie befolgt, wartet entweder zu lange oder rennt sofort wieder in dieselbe Schlange. Ein fehlendes Feld sagt „unbekannt"; ein geratenes sagt etwas Falsches mit der Autorität einer Kopfzeile.
+*Preis:* Zwei Absagen mit demselben Code verhalten sich unterschiedlich — die eine trägt `Retry-After`, die andere nicht. Ein Aufrufer, der das Feld für zugesichert hält, muss es als optional behandeln; das steht im Typ und in der Referenz.
+
+**E-167 — Die Wartegrenze läuft über einen Zeitgeber, nicht über die einstellbare Uhr.**
+*Kontext:* Der Kern liest die Zeit nach 6.19 ausschließlich über die Konfigurationsoption `clock`, damit Ablauf- und Fenstertests deterministisch sind. Die Wartegrenze des Semaphors ist aber keine Ablaufzeit, sondern eine Dauer, die vergehen muss, während der Prozess arbeitet.
+*Verworfen:* Die Wartegrenze gegen `clock.now()` zu prüfen, in einer Schleife oder beim Freiwerden eines Platzes.
+*Grund:* Eine Prüfung beim Freiwerden greift nicht: Wenn kein Platz frei wird — genau der Fall, den die Grenze abfängt —, läuft die Prüfung nie. Eine Schleife wäre ein Zeitgeber mit zusätzlichen Schritten. Abschnitt 6.19 nimmt diesen Fall ausdrücklich aus: „`vi.useFakeTimers` wird nur für die Wartegrenze des Semaphors gebraucht (S-DOS-4), weil sie über einen Zeitgeber läuft und nicht über `clock`."
+*Preis:* Ein Test der Wartegrenze muss die Zeitgeber stellen und kann nicht dieselbe einstellbare Uhr benutzen wie die übrigen Zeittests. Zwei Zeitmechanismen im selben Prüfplan, und wer beides in einem Test braucht, stellt beides.

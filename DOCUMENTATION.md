@@ -1266,3 +1266,41 @@ credential. If it throws, the caller learns `password_unacceptable` and nothing
 else — the hook's own message goes nowhere (E-163). Its shared message names
 only the length limits, which is imprecise for a hook rejection; that is the
 price recorded in E-163.
+
+### The KDF semaphore
+
+Argon2id at the default parameters holds 19 MiB for the length of one call, and
+an imported `$fbscrypt$` verification holds about 16 MiB. Without a bound, a
+sign-in flood multiplies that by the number of concurrent requests and the
+process dies of memory instead of refusing requests (architecture 5.18).
+
+#### `createKdfSemaphore({ limit, waitLimitInMilliseconds? })`
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `limit` | — | how many derivations may run at once. `resolvePasswordConfig` supplies `min(4, cpus)` |
+| `waitLimitInMilliseconds` | `5000` | how long a request may wait for a place before it is refused (L-1, E-13) |
+
+| Member | Meaning |
+|---|---|
+| `run(work)` | acquires a place, awaits `work()`, releases the place — also when `work` throws |
+| `inFlight` | how many derivations are running now |
+| `peakInFlight` | the highest value `inFlight` has reached |
+| `waiting` | how many requests are queued for a place |
+
+Places are handed out first come, first served. A request that has waited
+`waitLimitInMilliseconds` is refused with `VelveError("rate_limited")`, leaves
+the queue and never runs its work — so a refusal costs no derivation and is
+answered faster than a successful sign-in, not slower.
+
+This is a resource limit, not a timing equalisation. It depends on load and on
+nothing about the account, so it answers a request for an existing identifier
+exactly as it answers one for an identifier that does not exist (L-1, S-DOS-4).
+
+The refusal carries no `retryAfterSeconds`: the semaphore knows only that the
+queue was full, not when it will empty (E-166). The per-IP and per-account rate
+limiters, which do know, set that field themselves.
+
+Verification and the background rehash take places from the **same** semaphore,
+which is what stops a rehash wave after a parameter increase from displacing
+live sign-ins (S-DOS-6).
