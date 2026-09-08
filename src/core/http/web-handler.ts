@@ -70,11 +70,8 @@ function readRouteCall(
 		userAgent: request.headers.get("user-agent"),
 		readCallerTokens: () => {
 			const cookies = readCookies(request.headers.get("cookie"), cookiePolicyOf(environment).names);
-			return {
-				sessionToken: cookies.session,
-				// S-CACHE-4: only the four routes with caller "pending" ever see the pending cookie.
-				pendingToken: match.route.caller === "pending" ? cookies.pending : null,
-			};
+			// Which route may see the pending cookie is decided in `route.ts` and nowhere else (E-335).
+			return { sessionToken: cookies.session, pendingToken: cookies.pending };
 		},
 		readInput: () => readInput(request, url, match),
 	};

@@ -9,10 +9,18 @@ export type CallerRequirement = "anonymous" | "session" | "pending" | "server_on
 export type FreshnessRequirement = "not_required" | "required";
 export type OriginRequirement = "checked" | "exempt";
 
+/**
+ * E-335: reading `__Host-velve_pending` and being authorised by it are two questions, and
+ * `caller: "pending"` answered both. A route that reports or cancels the intermediate state needs
+ * the value without the authority.
+ */
+export type PendingCookieAccess = "hidden" | "readable";
+
 export interface RequestContext {
 	readonly session: Session | null;
 	readonly pending: ResolvedPendingAuthentication | null;
 	readonly sessionToken: string | null;
+	readonly pendingToken: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly cookies: CookieWriter;
@@ -35,6 +43,8 @@ export interface RouteDeclaration<
 	readonly freshness: FreshnessRequirement;
 	readonly originCheck: OriginRequirement;
 	readonly rateLimit: RateLimitRule;
+	/** Absent means hidden; `caller: "pending"` implies readable and may not say otherwise. */
+	readonly pendingCookie?: PendingCookieAccess;
 	readonly handler: (input: Input, context: RequestContext) => Promise<Output>;
 }
 
@@ -47,6 +57,7 @@ export interface RouteMetadata {
 	readonly freshness: FreshnessRequirement;
 	readonly originCheck: OriginRequirement;
 	readonly rateLimit: RateLimitRule;
+	readonly pendingCookie: PendingCookieAccess;
 }
 
 type RouteInvocation<Output> = (
@@ -147,6 +158,25 @@ function assertFreshnessHasASession(
 	}
 }
 
+function pendingCookieAccessOf(
+	name: string,
+	caller: CallerRequirement,
+	declared: PendingCookieAccess | undefined,
+): PendingCookieAccess {
+	if (caller !== "pending") {
+		return declared ?? "hidden";
+	}
+	if (declared === "hidden") {
+		throw new Error(`Route ${name} is authorised by the pending state and cannot hide its cookie`);
+	}
+	return "readable";
+}
+
+/** S-CACHE-4: the one predicate that says whether a route may see `__Host-velve_pending`. */
+export function readsPendingCookie(route: RouteMetadata): boolean {
+	return route.pendingCookie === "readable";
+}
+
 export function defineRoute<
 	Name extends string,
 	Path extends string,
@@ -173,6 +203,11 @@ export function defineRoute<
 		freshness: declaration.freshness,
 		originCheck: declaration.originCheck,
 		rateLimit: declaration.rateLimit,
+		pendingCookie: pendingCookieAccessOf(
+			declaration.name,
+			declaration.caller,
+			declaration.pendingCookie,
+		),
 	};
 
 	// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
