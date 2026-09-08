@@ -174,12 +174,18 @@ describe("a one-time artefact is a row, not a signed string (S-REPLAY-1)", () =>
 	});
 });
 
-describe("no plaintext token reaches a message", () => {
-	it("interpolates nothing but the table and the purpose into the one error it raises", () => {
-		const thrown = repositorySource.match(/throw new Error\([\s\S]*?\);/g) ?? [];
-		expect(thrown).toHaveLength(1);
-		expect(thrown[0]).toMatch(/\$\{purpose\}/);
-		expect(thrown[0]).not.toMatch(/token|payload|userId/);
+describe("what the repository raises carries a code and no secret", () => {
+	it("raises one error, and it is the coded one", () => {
+		expect(repositorySource.match(/throw new [A-Za-z]+\([\s\S]*?\);/g)).toStrictEqual([
+			"throw new OneTimeTokenNotWrittenError(table, purpose);",
+		]);
+		expect(repositorySource).toMatch(/readonly code = "one_time_token_not_written"/);
+	});
+
+	it("builds one message, from the table and the purpose alone", () => {
+		const messages = repositorySource.match(/super\(`[^`]*`\)/g) ?? [];
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).not.toMatch(/token|payload|userId|sha256/i);
 	});
 });
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { InvalidIdentifierError } from "../src/core/db/identifier.js";
-import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
+import {
+	createOneTimeTokenRepository,
+	OneTimeTokenNotWrittenError,
+} from "../src/core/db/repositories/token.js";
 import { ONE_TIME_TOKEN_LIFETIME_SECONDS } from "../src/core/token/index.js";
 
 interface Call {
@@ -148,6 +151,22 @@ describe("what the repository refuses", () => {
 				payload: null,
 			}),
 		).rejects.toThrow("velve.one_time_token accepted no row for purpose magic_link");
+	});
+
+	it("gives that failure a stable code", async () => {
+		const { repository } = repositoryReturning([]);
+
+		const raised = await repository
+			.replaceOneTimeToken({
+				tokenSha256: HASH,
+				purpose: "magic_link",
+				userId: "0d1b6c8e-0000-4000-8000-000000000001",
+				payload: null,
+			})
+			.catch((error: unknown) => error);
+
+		expect(raised).toBeInstanceOf(OneTimeTokenNotWrittenError);
+		expect((raised as OneTimeTokenNotWrittenError).code).toBe("one_time_token_not_written");
 	});
 
 	it("refuses a schema name that is not an identifier", () => {

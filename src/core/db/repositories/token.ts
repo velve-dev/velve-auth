@@ -33,6 +33,15 @@ export interface OneTimeTokenRepository {
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
 }
 
+export class OneTimeTokenNotWrittenError extends Error {
+	readonly code = "one_time_token_not_written";
+
+	constructor(table: string, purpose: OneTimeTokenPurpose) {
+		super(`${table} accepted no row for purpose ${purpose}`);
+		this.name = "OneTimeTokenNotWrittenError";
+	}
+}
+
 const EXPIRY_AS_ISO_8601 = `to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 /** A driver may hand back `jsonb` decoded or as the text PostgreSQL sent; both arrive here. */
@@ -82,7 +91,7 @@ RETURNING user_id, payload`;
 					ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
 				]);
 				if (row === undefined) {
-					throw new Error(`${table} accepted no row for purpose ${purpose}`);
+					throw new OneTimeTokenNotWrittenError(table, purpose);
 				}
 				return { expiresAt: row.expires_at };
 			});
