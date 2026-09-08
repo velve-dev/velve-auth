@@ -29,9 +29,17 @@ function readQuery(url: URL): Record<string, string> {
 	return query;
 }
 
-async function readInput(request: Request, match: RouteMatch): Promise<unknown> {
+function requestUrl(request: Request): URL | null {
+	try {
+		return new URL(request.url);
+	} catch {
+		return null;
+	}
+}
+
+async function readInput(request: Request, url: URL, match: RouteMatch): Promise<unknown> {
 	if (match.route.method === "GET") {
-		return { ...readQuery(new URL(request.url)), ...match.pathParameters };
+		return { ...readQuery(url), ...match.pathParameters };
 	}
 	const text = await request.text();
 	if (text === "") {
@@ -51,6 +59,7 @@ async function readInput(request: Request, match: RouteMatch): Promise<unknown> 
 
 function readRouteCall(
 	request: Request,
+	url: URL,
 	match: RouteMatch,
 	environment: HttpEnvironment,
 	readClientAddress: (request: Request) => string | null,
@@ -67,7 +76,7 @@ function readRouteCall(
 				pendingToken: match.route.caller === "pending" ? cookies.pending : null,
 			};
 		},
-		readInput: () => readInput(request, match),
+		readInput: () => readInput(request, url, match),
 	};
 }
 
@@ -126,17 +135,14 @@ export function toWebHandler(
 	const readClientAddress = options.clientAddress ?? (() => null);
 
 	return async (request) => {
-		const match = matchRoute(
-			environment.routes,
-			request.method,
-			new URL(request.url).pathname,
-			basePath,
-		);
-		if (match === null) {
+		const url = requestUrl(request);
+		const match =
+			url === null ? null : matchRoute(environment.routes, request.method, url.pathname, basePath);
+		if (url === null || match === null) {
 			return bodilessResponse(404, []);
 		}
 		try {
-			const call = readRouteCall(request, match, environment, readClientAddress);
+			const call = readRouteCall(request, url, match, environment, readClientAddress);
 			return toResponse(await runRoute(match.route, call, environment), environment);
 		} catch (cause) {
 			return errorResponse(toLoggedFailure(cause, match.route.name, environment), []);

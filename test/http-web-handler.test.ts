@@ -441,6 +441,33 @@ describe("web handler", () => {
 		expect(rateLimitRequests[0]?.scope).toEqual({ kind: "ip_address", ipAddress: "203.0.113.7" });
 	});
 
+	it("answers a request whose url does not parse", async () => {
+		const { environment } = createHarness();
+		const request = requestTo("/test/echo", { body: { value: "x" } });
+		Object.defineProperty(request, "url", { value: "not a url", configurable: true });
+
+		const response = await toWebHandler({ http: environment })(request);
+
+		expect(response.status).toBe(404);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(response.headers.get("Vary")).toBe("Cookie");
+	});
+
+	it("answers even when the logger throws", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({
+			http: {
+				...environment,
+				log: () => {
+					throw new Error("the log sink is down");
+				},
+			},
+		})(requestTo("/test/echo", { origin: "https://evil.com", body: { value: "x" } }));
+
+		expect(response.status).toBe(403);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+	});
+
 	it("says nothing about an unexpected failure", async () => {
 		const { environment, logs } = createHarness({ routes: [failingRoute] });
 		const response = await toWebHandler({ http: environment })(requestTo("/test/broken"));

@@ -1,6 +1,6 @@
 import type { PendingAuthentication, Session } from "./caller.js";
 import { type CookieCollector, type CookieInstruction, createCookieCollector } from "./cookies.js";
-import { cookiePolicyOf, type HttpEnvironment } from "./environment.js";
+import { cookiePolicyOf, type HttpEnvironment, type LogLevel } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
 import { assertOriginAllowed } from "./origin.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
@@ -100,7 +100,7 @@ function warnOnUnconsumedAccountBucket(
 	environment: HttpEnvironment,
 ): void {
 	if (route.rateLimit.perAccount !== "none" && !accountBucket.wasConsumed()) {
-		environment.log("warn", "route declares an account rate limit it never consumed", {
+		write(environment, "warn", "route declares an account rate limit it never consumed", {
 			route: route.name,
 		});
 	}
@@ -147,13 +147,27 @@ async function enforceIpAddressRateLimit(
 	}
 }
 
+/** A logger that throws must not cost the caller its answer. */
+function write(
+	environment: HttpEnvironment,
+	level: LogLevel,
+	message: string,
+	fields: Readonly<Record<string, unknown>>,
+): void {
+	try {
+		environment.log(level, message, fields);
+	} catch {
+		return;
+	}
+}
+
 export function toLoggedFailure(
 	cause: unknown,
 	routeName: string,
 	environment: HttpEnvironment,
 ): VelveError {
 	const failure = toVisibleFailure(cause);
-	environment.log(failure.error.httpStatus >= 500 ? "error" : "warn", "request rejected", {
+	write(environment, failure.error.httpStatus >= 500 ? "error" : "warn", "request rejected", {
 		route: routeName,
 		reason: failure.loggedReason,
 	});
