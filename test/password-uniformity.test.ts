@@ -289,7 +289,9 @@ describe("S-TIM-2 — the dummy is a real credential read by the real verifier",
 
 		expect(dummy.scheme).toBe("argon2id");
 		expect(dummy.userId).toBe(verify.ABSENT_USER_ID);
-		expect(dummy.phc[0]).not.toBe("$".charCodeAt(0));
+		// Not the first byte: the column is nonce, ciphertext and tag with no header, so byte zero
+		// is random and matches `$` about once in a hundred and seventy runs.
+		expect(new TextDecoder().decode(dummy.phc)).not.toContain("$argon2id$");
 		expect(opened).toMatch(
 			new RegExp(
 				`^\\$argon2id\\$v=19\\$m=${PRODUCTION_ARGON2ID.memoryKiB},t=${PRODUCTION_ARGON2ID.iterations},p=${PRODUCTION_ARGON2ID.parallelism}\\$`,

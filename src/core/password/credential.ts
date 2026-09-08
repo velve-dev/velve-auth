@@ -112,8 +112,8 @@ export function createPasswordCredentialRepository(
 				[userId, sealed.ciphertext, sealed.keyVersion, scheme],
 			);
 
-			// A false `DO UPDATE … WHERE` does not raise, it updates nothing; without this the
-			// caller is told the password was stored when it was not (E-185).
+			// A conflict predicate that is false does not raise, it updates nothing; without this
+			// the caller is told the password was stored when it was not (E-185).
 			if (written.length !== 1) {
 				throw new CredentialWriteError("credential_not_written");
 			}

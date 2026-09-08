@@ -1444,9 +1444,8 @@ Both paths refuse two things before they write. A `scheme` that disagrees with
 the identifier of the credential is `CredentialWriteError`
 `scheme_does_not_match_credential`: such a row could never verify (E-177,
 E-187). And a statement that changed no row is `credential_not_written` —
-`ON CONFLICT … DO UPDATE … WHERE` does not raise when its predicate is false, it
-silently updates nothing, and the caller must not be told a password was stored
-when it was not (E-185).
+a conflict predicate that is false does not raise, it silently changes nothing,
+and the caller must not be told a password was stored when it was not (E-185).
 
 ### Checking a password
 

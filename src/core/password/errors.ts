@@ -46,8 +46,8 @@ const CREDENTIAL_WRITE_MESSAGES: Record<CredentialWriteErrorCode, string> = {
 
 // E-177 holds the column and the credential to the same function at verification time; this is the
 // same agreement as a precondition for writing, so a row that could never verify is never stored.
-// `credential_not_written` is the other half: `ON CONFLICT … DO UPDATE … WHERE` does not raise
-// when its predicate is false, it silently updates nothing (E-187).
+// `credential_not_written` is the other half: a conflict predicate that is false does not raise,
+// it silently changes nothing (E-187).
 export class CredentialWriteError extends Error {
 	readonly code: CredentialWriteErrorCode;
 
