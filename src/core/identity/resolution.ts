@@ -63,6 +63,8 @@ function usernamePredicateValue(
 /**
  * One statement, always executed, whatever the identifier turns out to be — an identifier
  * the allowlist rejects costs the same round trip as one that names an account (S-ENUM-1, E-46).
+ * An allowlist wide enough to admit `@` can let one identifier match two accounts, so the
+ * address wins over the username and the older row over the newer, rather than the planner.
  */
 export async function findUserByIdentifier(
 	lookup: UserLookup,
@@ -76,6 +78,7 @@ export async function findUserByIdentifier(
 		        (disabled_at IS NOT NULL) AS disabled
 		 FROM ${table}
 		 WHERE email = $1 OR username_key = $2
+		 ORDER BY (email = $1) IS TRUE DESC, created_at, id
 		 LIMIT 1`,
 		[
 			emailPredicateValue(lookup.configuration, lookup.identifier),
