@@ -61,8 +61,9 @@ import { AppliedMigration, Migration, MigrationReport } from "./core/db/migratio
 import { MigrationRefusedError, MigrationRunnerOptions, runMigrations } from "./core/db/migration-runner.mjs";
 import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
 import { coreMigrations } from "./core/db/migrations/index.mjs";
+import { UnrewritableMigrationError } from "./core/db/schema-rewrite.mjs";
 import { SchemaStatus, SchemaStatusOptions, SchemaVersionMismatchError, assertSchemaUpToDate, readSchemaStatus } from "./core/db/schema-status.mjs";
-export { type AppliedMigration, type Driver, type IdentityMode, InvalidIdentifierError, type Migration, MigrationRefusedError, type MigrationReport, type MigrationRunnerOptions, MissingCascadeError, type SchemaStatus, type SchemaStatusOptions, SchemaVersionMismatchError, assertSchemaUpToDate, coreMigrations, readSchemaStatus, runMigrations };
+export { type AppliedMigration, type Driver, type IdentityMode, InvalidIdentifierError, type Migration, MigrationRefusedError, type MigrationReport, type MigrationRunnerOptions, MissingCascadeError, type SchemaStatus, type SchemaStatusOptions, SchemaVersionMismatchError, UnrewritableMigrationError, assertSchemaUpToDate, coreMigrations, readSchemaStatus, runMigrations };
 
 ## testing.d.mts
 

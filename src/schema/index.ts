@@ -9,6 +9,7 @@ export {
 } from "../core/db/migration-runner.js";
 export type { IdentityMode } from "../core/db/migrations/identity-mode.js";
 export { coreMigrations } from "../core/db/migrations/index.js";
+export { UnrewritableMigrationError } from "../core/db/schema-rewrite.js";
 export {
 	assertSchemaUpToDate,
 	readSchemaStatus,

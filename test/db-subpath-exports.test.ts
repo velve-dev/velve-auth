@@ -26,6 +26,7 @@ import {
 	readSchemaStatus,
 	runMigrations,
 	SchemaVersionMismatchError,
+	UnrewritableMigrationError,
 } from "../src/schema/index.js";
 
 const driver: Driver = {
@@ -72,6 +73,7 @@ describe("@velve/auth/schema", () => {
 			"migration_duplicate_version",
 		);
 		expect(new MissingCascadeError("x").code).toBe("migration_missing_cascade");
+		expect(new UnrewritableMigrationError("x").code).toBe("migration_unrewritable_body");
 		const status: SchemaStatus = {
 			currentVersion: 1,
 			expectedVersion: 2,
