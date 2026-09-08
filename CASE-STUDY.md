@@ -1895,3 +1895,27 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Rejected.** (a) Leaving `pnpm test` red and reporting only. (b) Silently regenerating the snapshot as part of another commit.
 **Reason.** (b) is the failure mode itself — the snapshot's whole value is that a surface change is announced by someone. (a) leaves a branch that cannot pass its own gate for a reason it did not cause. The snapshot is regenerated in a commit of its own whose message says whose surface it is, so the change is announced even though the wrong feature announced it.
 **Price.** A file outside this feature's set, changed for the second time on this branch after `vitest.config.ts` — and this one is a file `auth-core` will very likely also change, so the merge conflicts. It resolves to whichever side has the correct generated content, which is cheap, but it is a conflict this wave's file partition was designed to make impossible. The finding stands whatever happens to the snapshot: `feature/auth-core` shipped an export without the snapshot line that announces it.
+
+### A planted fault that passed, and the test that was missing under it
+`E-424` · factor-totp · review method
+
+**Context.** Twelve faults were planted to prove the checks fail on them. Eleven did. The twelfth — raising `factor_not_enrolled` from the helper the verifying path uses, where the route declares only three codes and that is not one of them — passed every test in the suite. Nothing in this feature ever verified against an account with no credential row at all: every test that reached `verify` had enrolled first.
+**Rejected.** Recording the plant as inconclusive and moving on.
+**Reason.** A plant that passes is a finding about the tests, not about the plant. `test/totp-concealment.test.ts` now asks the question the plant was aiming at: a missing credential, an unconfirmed one, a wrong code and an already-spent step answer with the same code, the same status and the same message, and differ only in the logged reason. Re-planted, the fault fails two of its three cases.
+**Price.** The gap existed because the fixtures made enrolment the easy path and a bare account the awkward one, so no test took the awkward one. That is a general hazard of a helper that sets up the happy case, and nothing here fixes it beyond this one instance.
+
+### A citation in a comment resolved to the wrong entry, and only reading it caught that
+`E-425` · factor-totp · decision log
+
+**Context.** The comment added to `vitest.config.ts` cited `E-410` for the `fileParallelism` finding. That finding is `E-411`; `E-410` is the entry about the second factor not being able to call `reissue`. The two were written minutes apart and the numbers were assigned by counting. `test/decision-log.test.ts` was green throughout, because `E-410` exists.
+**Rejected.** Nothing — there was no alternative to fix, only a mistake to record.
+**Reason.** §6 says in as many words that the check catches a citation resolving to *no* entry and cannot catch one resolving to the *wrong* entry, and names reserved ranges as the mechanism that removes the renumber. Reserved ranges remove the renumber; they do not remove a writer miscounting inside their own range. This one was found by reading the diff before pushing, which is not a mechanism.
+**Price.** Every `E-` citation this branch writes is worth what a reader's attention is worth. Five were checked by hand after this one was found; all five were right, and that is a sample of six, not a proof.
+
+### The barrels were unused until the tests were made to consume them
+`E-426` · factor-totp · knip
+
+**Context.** `src/core/factor/totp/index.ts` and `src/core/factor/recovery/index.ts` were written as the import point the instance will use, and the tests imported the concrete modules directly. `knip` reported both barrels as unused files and eleven exports as unused, because nothing at all imported them.
+**Rejected.** (a) Deleting the barrels until a caller in `src/` exists. (b) Adding the barrels to `knip.json` as entry points.
+**Reason.** (a) is E-245's argument in reverse and loses: the barrel is the module's interface upwards, and upwards there is nothing yet. (b) edits a file this feature was told to leave alone, and would suppress a real finding rather than answer it. The tests now import from the barrels, which is what the pending module already does and what makes the barrel a thing that is exercised rather than declared. Two re-exports with no caller anywhere were dropped instead — `pepperRecoveryCodeUnder` and `totpEnrollment` are used inside their own modules and by nothing else.
+**Price.** The tests now depend on the barrel's contents, so removing a name from a barrel breaks test files that have nothing to do with it. That is the cost of using `knip`'s definition of "used", and it is cheaper than a barrel nobody imports.
