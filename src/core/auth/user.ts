@@ -150,14 +150,17 @@ export function createUserRepository(options: {
 
 		async setEmailVerifiedAt({ userId, verifiedAt }) {
 			await options.driver.query(
-				`UPDATE ${users} SET email_verified_at = $2, updated_at = now() WHERE id = $1`,
+				`UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
+				SET email_verified_at = $2, updated_at = now()
+				WHERE id = $1`,
 				[userId, verifiedAt],
 			);
 		},
 
 		async updateEmail({ userId, email, emailVerifiedAt }) {
 			await options.driver.query(
-				`UPDATE ${users} SET email = $2, email_verified_at = $3, updated_at = now()
+				`UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
+				SET email = $2, email_verified_at = $3, updated_at = now()
 				WHERE id = $1`,
 				[userId, email, emailVerifiedAt],
 			);
