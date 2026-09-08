@@ -5,6 +5,7 @@ import { encodeStandardBase64 } from "./base64.js";
 import type { ResolvedPasswordConfig } from "./config.js";
 import {
 	openPhc,
+	PASSWORD_ENC_PURPOSE,
 	type PasswordCredentialRepository,
 	type PasswordCredentialRow,
 	sealPhc,
@@ -26,7 +27,10 @@ export const ABSENT_USER_ID = "00000000-0000-0000-0000-000000000000";
  * configured parameters, sealed like any other, so the absent-user path performs the same
  * decryption and calls the same verifier — not the creation function (S-TIM-2).
  */
-export type DummyCredential = PasswordCredentialRow;
+export interface DummyCredential extends PasswordCredentialRow {
+	/** Held open so that a decryption which fails still costs exactly one attempt (E-179). */
+	readonly openedPhc: string;
+}
 
 export interface PasswordEnvironment {
 	readonly config: ResolvedPasswordConfig;
@@ -66,6 +70,7 @@ export async function createDummyCredential(
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: CREATED_SCHEME,
+		openedPhc: phc,
 	};
 }
 
@@ -88,9 +93,9 @@ export async function checkPassword(
 	const usable = row !== null && isAcceptedScheme(row.scheme, environment.config) ? row : null;
 	const source = usable ?? environment.dummy;
 
-	const phc = await openPhc(environment.keys, source);
+	const opened = await openCredential(environment, source);
 	const matched = await environment.semaphore.run(() =>
-		verifyAgainstScheme(source.scheme, accepted, phc),
+		verifyAgainstScheme(opened.scheme, accepted, opened.phc),
 	);
 
 	const reason = refusalReason({ row, usable, matched, userId: input.userId });
@@ -98,8 +103,8 @@ export async function checkPassword(
 		return { outcome: "refused", reason };
 	}
 
-	const current = await environment.keys.current("password-enc");
-	if (!needsRewrite(source, phc, current.version, environment.config)) {
+	const current = await environment.keys.current(PASSWORD_ENC_PURPOSE);
+	if (!needsRewrite(source, opened.phc, current.version, environment.config)) {
 		return { outcome: "verified", userId: source.userId };
 	}
 
@@ -142,6 +147,21 @@ async function rewriteCredential(
 		phc,
 		scheme: CREATED_SCHEME,
 	});
+}
+
+/**
+ * S-TIM-1: a key version that has left the ring must not become a throw between step 2 and step 4.
+ * The loud report is `assertStoredKeyVersionsAreKnown`, once at assembly and addressed to the
+ * operator; here the row simply fails to verify like any other (E-179).
+ */
+async function openCredential(
+	environment: PasswordEnvironment,
+	row: PasswordCredentialRow,
+): Promise<{ phc: string; scheme: PasswordScheme }> {
+	return openPhc(environment.keys, row).then(
+		(phc) => ({ phc, scheme: row.scheme }),
+		() => ({ phc: environment.dummy.openedPhc, scheme: environment.dummy.scheme }),
+	);
 }
 
 function isAcceptedScheme(scheme: PasswordScheme, config: ResolvedPasswordConfig): boolean {

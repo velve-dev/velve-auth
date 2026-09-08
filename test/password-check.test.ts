@@ -15,6 +15,10 @@ import { needsRehash } from "../src/core/password/rehash.js";
 import type { PasswordScheme } from "../src/core/password/scheme.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import {
+	assertStoredKeyVersionsAreKnown,
+	PasswordKeyRingError,
+} from "../src/core/password/startup.js";
+import {
 	ABSENT_USER_ID,
 	checkPassword,
 	createDummyCredential,
@@ -49,6 +53,12 @@ function recordingDriver(): Recorder {
 	const driver: Driver = {
 		async query<T>(sql: string, params: unknown[]): Promise<T[]> {
 			calls.push({ sql: sql.replace(/\s+/g, " ").trim(), params: [...params] });
+
+			if (sql.includes("SELECT DISTINCT key_version")) {
+				return [...new Set([...rows.values()].map((row) => row.keyVersion))]
+					.sort((left, right) => left - right)
+					.map((keyVersion) => ({ key_version: keyVersion })) as T[];
+			}
 
 			if (sql.includes("SELECT")) {
 				const row = rows.get(String(params[0]));
@@ -379,5 +389,93 @@ describe("needsRehash and the silent rehash", () => {
 		const afterRotation = await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, rotated);
 		expect(afterRotation.outcome).toBe("verified");
 		expect(afterRotation.outcome === "verified" && afterRotation.rehash).toBeDefined();
+	}, 60_000);
+});
+
+describe("the key ring is checked at startup, not per sign-in", () => {
+	async function keysWithout(versions: readonly number[]): Promise<PasswordEnvironment["keys"]> {
+		const inner = environment.keys;
+		return {
+			current: inner.current.bind(inner),
+			byVersion: async (purpose, version) =>
+				purpose === "password-enc" && versions.includes(version)
+					? null
+					: inner.byVersion(purpose, version),
+		};
+	}
+
+	it("passes when every stored version is in the ring", async () => {
+		await setPassword({ userId: USER_ID, plaintext: PASSWORD }, environment);
+
+		await expect(
+			assertStoredKeyVersionsAreKnown({ driver: recorder.driver, keys: environment.keys }),
+		).resolves.toBeUndefined();
+	}, 30_000);
+
+	it("passes on an empty table, and asks the database once", async () => {
+		recorder.calls.length = 0;
+
+		await assertStoredKeyVersionsAreKnown({
+			driver: recorder.driver,
+			keys: environment.keys,
+		});
+
+		expect(recorder.calls).toHaveLength(1);
+		expect(recorder.calls[0]?.sql).toContain("SELECT DISTINCT key_version");
+	});
+
+	it("names every version the ring no longer holds", async () => {
+		await setPassword({ userId: USER_ID, plaintext: PASSWORD }, environment);
+
+		const failure = await assertStoredKeyVersionsAreKnown({
+			driver: recorder.driver,
+			keys: await keysWithout([1]),
+		}).catch((thrown: unknown) => thrown);
+
+		expect(failure).toBeInstanceOf(PasswordKeyRingError);
+		expect((failure as PasswordKeyRingError).missingVersions).toEqual([1]);
+		expect((failure as PasswordKeyRingError).code).toBe("stored_key_version_unknown");
+	}, 30_000);
+
+	it("refuses the sign-in without throwing when the check was skipped", async () => {
+		await setPassword({ userId: USER_ID, plaintext: PASSWORD }, environment);
+		const blinded: PasswordEnvironment = { ...environment, keys: await keysWithout([1]) };
+
+		expect(await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, blinded)).toEqual({
+			outcome: "refused",
+			reason: "password_mismatch",
+		});
+		expect(await checkPassword({ userId: null, plaintext: PASSWORD }, blinded)).toEqual({
+			outcome: "refused",
+			reason: "user_not_found",
+		});
+	}, 60_000);
+
+	it("costs one decryption attempt whether the key is there or not", async () => {
+		await setPassword({ userId: USER_ID, plaintext: PASSWORD }, environment);
+		const attempts: number[] = [];
+
+		for (const missing of [[], [1]]) {
+			let opened = 0;
+			const inner = environment.keys;
+			const counted: PasswordEnvironment = {
+				...environment,
+				keys: {
+					current: inner.current.bind(inner),
+					byVersion: async (purpose, version) => {
+						opened += purpose === "password-enc" ? 1 : 0;
+						return missing.includes(version) && purpose === "password-enc"
+							? null
+							: inner.byVersion(purpose, version);
+					},
+				},
+			};
+
+			await checkPassword({ userId: USER_ID, plaintext: WRONG_PASSWORD }, counted);
+			attempts.push(opened);
+		}
+
+		expect(attempts[0]).toBe(1);
+		expect(attempts[1]).toBe(1);
 	}, 60_000);
 });

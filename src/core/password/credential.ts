@@ -1,11 +1,16 @@
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
-import { decryptWithPurposeKey, encryptWithPurposeKey, type KeyProvider } from "../keys/index.js";
+import {
+	decryptWithPurposeKey,
+	type EncryptionKeyPurpose,
+	encryptWithPurposeKey,
+	type KeyProvider,
+} from "../keys/index.js";
 import type { PasswordScheme } from "./scheme.js";
 
-const PURPOSE = "password-enc";
-const DEFAULT_SCHEMA = "velve";
-const TABLE = "password_credential";
+export const PASSWORD_ENC_PURPOSE: EncryptionKeyPurpose = "password-enc";
+export const PASSWORD_CREDENTIAL_SCHEMA = "velve";
+export const PASSWORD_CREDENTIAL_TABLE = "password_credential";
 
 const utf8 = new TextEncoder();
 
@@ -25,12 +30,12 @@ export interface SealedPhc {
 
 /** The one place a PHC string turns into what the column holds; there is no other write path. */
 export function sealPhc(keys: KeyProvider, phc: string): Promise<SealedPhc> {
-	return encryptWithPurposeKey(keys, PURPOSE, utf8.encode(phc));
+	return encryptWithPurposeKey(keys, PASSWORD_ENC_PURPOSE, utf8.encode(phc));
 }
 
 export async function openPhc(keys: KeyProvider, row: PasswordCredentialRow): Promise<string> {
 	return new TextDecoder().decode(
-		await decryptWithPurposeKey(keys, PURPOSE, row.keyVersion, row.phc),
+		await decryptWithPurposeKey(keys, PASSWORD_ENC_PURPOSE, row.keyVersion, row.phc),
 	);
 }
 
@@ -61,7 +66,10 @@ export interface PasswordCredentialRepositoryOptions {
 export function createPasswordCredentialRepository(
 	options: PasswordCredentialRepositoryOptions,
 ): PasswordCredentialRepository {
-	const table = qualifiedTableName(options.schema ?? DEFAULT_SCHEMA, TABLE);
+	const table = qualifiedTableName(
+		options.schema ?? PASSWORD_CREDENTIAL_SCHEMA,
+		PASSWORD_CREDENTIAL_TABLE,
+	);
 
 	return {
 		async findByUserId(userId) {
