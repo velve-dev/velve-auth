@@ -69,8 +69,7 @@ function refusedFlagIn(flags: string): string | undefined {
 	return Object.keys(REFUSED_FLAGS).find((flag) => flags.includes(flag));
 }
 
-/** Escapes and character-class contents become dots, so only structure is left to read. */
-function structureOf(source: string): string {
+function structureWithoutLiterals(source: string): string {
 	let structure = "";
 	let insideCharacterClass = false;
 	for (let index = 0; index < source.length; index += 1) {
@@ -105,9 +104,8 @@ function hasTopLevelAlternation(structure: string): boolean {
 	return false;
 }
 
-/** Reports why the pattern can match less than a whole name, or nothing if it cannot (E-193). */
 function partialMatchIn(source: string): string | undefined {
-	const structure = structureOf(source);
+	const structure = structureWithoutLiterals(source);
 	if (hasTopLevelAlternation(structure)) {
 		return "each branch of a top-level alternation would need its own anchors";
 	}

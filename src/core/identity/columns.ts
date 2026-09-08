@@ -41,8 +41,9 @@ function resolveEmailColumn(
 	configuration: IdentityConfiguration,
 	provided: string | null | undefined,
 ): Normalisation<string | null, IdentifierRejection> {
+	// Nothing is invented for an address nobody reported: the column stays NULL where the
+	// configuration allows it and the call is refused where it does not (E-16, S-LINK-5).
 	if (provided === null || provided === undefined) {
-		// A provider that reports no address leaves the column NULL; nothing is invented (E-16, S-LINK-5).
 		return isRequired(configuration, "email")
 			? { accepted: false, rejection: { identifier: "email", rejection: "required" } }
 			: { accepted: true, value: null };

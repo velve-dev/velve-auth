@@ -120,13 +120,13 @@ async function removeUnderALockThatHolds(
 	if (totalSignInMethods(remaining) === 0) {
 		throw new VelveError("last_sign_in_method");
 	}
-	// A row lock assigns a transaction id, and outside a transaction block it is gone by the
-	// next statement — which is how this asks whether the lock it just took still holds.
-	const [held] = await driver.query<{ readonly lock_outlives_its_statement: boolean }>(
-		`SELECT pg_current_xact_id_if_assigned() IS NOT NULL AS lock_outlives_its_statement`,
+	// Any assigned transaction id proves a transaction block is open, and the lock taken above
+	// is therefore still held; an id assigned by an earlier statement proves it just as well.
+	const [open] = await driver.query<{ readonly inside_a_transaction_block: boolean }>(
+		`SELECT pg_current_xact_id_if_assigned() IS NOT NULL AS inside_a_transaction_block`,
 		[],
 	);
-	if (held?.lock_outlives_its_statement !== true) {
+	if (open?.inside_a_transaction_block !== true) {
 		return false;
 	}
 	const removal = removalStatement(request.schema, request.removing);

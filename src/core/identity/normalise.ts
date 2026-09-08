@@ -58,8 +58,8 @@ export function normaliseUsername(
 		return reject("too_long");
 	}
 	const usernameKey = caseFolded(username);
-	// The allowlist is applied to the comparison form so that case alone never decides
-	// acceptance, and homoglyphs are refused before they can reach the unique index (E-17).
+	// Judged on the comparison form so that case alone never decides acceptance; whether a
+	// homoglyph gets through is the caller's pattern to answer, not this line's (E-17).
 	if (!rules.allowedCharacters.test(usernameKey)) {
 		return reject("invalid_characters");
 	}
