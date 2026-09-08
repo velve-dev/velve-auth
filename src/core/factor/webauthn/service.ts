@@ -28,7 +28,6 @@ import {
 	type CredentialOwner,
 	createWebAuthnCredentialRepository,
 	DuplicateWebAuthnCredentialError,
-	ownerIdOf,
 	type StoredWebAuthnCredential,
 	type WebAuthnCredential,
 	type WebAuthnCredentialRepository,
@@ -180,17 +179,13 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		}
 	}
 
-	async function requestOptionsFor(
-		owner: CredentialOwner | null,
+	async function issueAuthenticationChallenge(
+		subject: string | null,
+		allowCredentials: CredentialDescriptor[] | undefined,
 	): Promise<WebAuthnAuthenticationChallenge> {
-		const allowCredentials =
-			owner === null ? [] : (await credentials.listDescriptorsOwnedBy({ owner })).map(descriptorOf);
-		if (owner !== null && allowCredentials.length === 0) {
-			throw new VelveError("factor_not_enrolled");
-		}
 		const { challengeToken, challengeBytes } = await challenges.issue({
 			purpose: "authenticate",
-			userId: owner === null ? null : ownerIdOf(owner),
+			userId: subject,
 		});
 		const publicKeyOptions = await generateAuthenticationOptions({
 			rpID: settings.relyingPartyId,
@@ -199,9 +194,17 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			/* Architecture 3.6 and 3.15 A.8: fixed at both verification points, and there is no
 			   configuration that lowers it. A second factor without user verification is not one. */
 			userVerification: "required",
-			...(owner === null ? {} : { allowCredentials }),
+			...(allowCredentials === undefined ? {} : { allowCredentials }),
 		});
 		return { publicKeyOptions, challengeToken };
+	}
+
+	async function enrolledDescriptorsOf(owner: CredentialOwner): Promise<CredentialDescriptor[]> {
+		const enrolled = await credentials.listDescriptorsOwnedBy({ owner });
+		if (enrolled.length === 0) {
+			throw new VelveError("factor_not_enrolled");
+		}
+		return enrolled.map(descriptorOf);
 	}
 
 	async function verifyAssertion(input: {
@@ -325,7 +328,9 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		},
 
 		authenticate: {
-			start: ({ pending }) => requestOptionsFor(pending),
+			async start({ pending }) {
+				return issueAuthenticationChallenge(pending.userId, await enrolledDescriptorsOf(pending));
+			},
 
 			async finish({ pending, challengeToken, response }) {
 				await consumeChallengeOrReject({
@@ -345,7 +350,9 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		},
 
 		passkey: {
-			start: () => requestOptionsFor(null),
+			/** Architecture 3.6: nothing names an account — the authenticator offers whatever
+			 * discoverable credential it holds, and the account is learned from the answer. */
+			start: () => issueAuthenticationChallenge(null, undefined),
 
 			async finish({ challengeToken, response }) {
 				await consumeChallengeOrReject({

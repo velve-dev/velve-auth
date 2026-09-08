@@ -11,7 +11,7 @@ import type { PendingResolution } from "../pending/index.js";
  */
 export type CredentialOwner = Actor | PendingResolution;
 
-export function ownerIdOf(owner: CredentialOwner): string {
+function ownerIdOf(owner: CredentialOwner): string {
 	return typeof owner === "string" ? owner : owner.userId;
 }
 

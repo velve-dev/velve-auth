@@ -1,5 +1,5 @@
 import { verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { createSecretToken } from "../src/core/token/index.js";
 import { ORIGIN, RELYING_PARTY_ID } from "./webauthn-fixtures.js";
@@ -146,6 +146,4 @@ describe("the virtual authenticator", () => {
 		expect(der[2]).toBe(0x02);
 		expect(der[4]).toBe(0x00);
 	});
-
-	afterAll(() => undefined);
 });

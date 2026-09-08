@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
+import { createWebAuthnCredentialRepository } from "../src/core/factor/webauthn/credential-repository.js";
 import { toErrorBody, toVisibleFailure } from "../src/core/http/error-map.js";
 import {
 	createAccount,
@@ -150,5 +151,30 @@ describe("owning a webauthn credential", () => {
 
 		expect(answers[0]).toBe(answers[1]);
 		expect(await credentialCountOf(fixture, account)).toBe(2);
+	});
+});
+
+/**
+ * E-459: the owner predicate takes a resolved session or a resolved intermediate state, and a
+ * bare string is neither — which is what a request body carries (S-OWNER-7). The assertion is
+ * the compile error, so this case exists to fail if the union ever admits `string`.
+ */
+describe("who may name an owner", () => {
+	it("does not take a user identifier that came from nowhere", () => {
+		const repository = createWebAuthnCredentialRepository({
+			driver: {
+				query: async () => [],
+				transaction: (run) =>
+					run({ query: async () => [], transaction: (inner) => inner as never }),
+			},
+			schema: "velve",
+		});
+
+		expect(() =>
+			repository.listDescriptorsOwnedBy({
+				// @ts-expect-error a plain string is neither proof of ownership this library accepts
+				owner: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+			}),
+		).not.toThrow();
 	});
 });
