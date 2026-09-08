@@ -17,9 +17,9 @@ export interface WebHandlerOptions {
 	readonly clientAddress?: (request: Request) => string | null;
 }
 
-/** The same rule as S-COOKIE-5: a repeated name is rejected rather than one of its values chosen. */
+/** The same rule as S-COOKIE-5: a repeated name is rejected rather than one of its values chosen. A prototypeless object so that "__proto__" is an own property like any other name. */
 function readQuery(url: URL): Record<string, string> {
-	const query: Record<string, string> = {};
+	const query: Record<string, string> = Object.create(null);
 	for (const [name, value] of url.searchParams) {
 		if (Object.hasOwn(query, name)) {
 			throw new VelveError("invalid_input");

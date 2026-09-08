@@ -111,6 +111,19 @@ describe("web handler", () => {
 		expect(response.status).toBe(400);
 	});
 
+	it("counts a repeated __proto__ as the duplicate it is", async () => {
+		const { environment } = createHarness();
+		const response = await toWebHandler({ http: environment })(
+			requestTo("/test/callback/google?__proto__=a&__proto__=b", {
+				method: "GET",
+				origin: null,
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect({}.toString).toBeDefined();
+	});
+
 	it("still rejects a POST body field the route does not declare", async () => {
 		const { environment } = createHarness();
 		const response = await toWebHandler({ http: environment })(
