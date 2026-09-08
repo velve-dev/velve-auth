@@ -4,7 +4,8 @@ export { };
 
 ## http.d.mts
 
-export { };
+import { WebHandlerOptions, toWebHandler } from "./core/http/web-handler.mjs";
+export { type WebHandlerOptions, toWebHandler };
 
 ## import.d.mts
 

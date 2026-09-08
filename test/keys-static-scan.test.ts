@@ -20,8 +20,16 @@ const coreSources = sourceFilesUnder(coreDirectory).map((path) => ({
 
 const keysSources = coreSources.filter((source) => source.path.startsWith(keysDirectory));
 
+/** These rules govern code. Prose about them is not a violation, and comments are
+ * where the words `process` and `any` legitimately appear in English. */
+function withoutComments(text: string): string {
+	return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+}
+
 function filesMatching(pattern: RegExp): readonly string[] {
-	return coreSources.filter((source) => pattern.test(source.text)).map((source) => source.path);
+	return coreSources
+		.filter((source) => pattern.test(withoutComments(source.text)))
+		.map((source) => source.path);
 }
 
 describe("the core takes no key from the environment (section 2.6)", () => {
