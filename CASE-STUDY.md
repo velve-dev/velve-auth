@@ -1919,3 +1919,43 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Rejected.** (a) Deleting the barrels until a caller in `src/` exists. (b) Adding the barrels to `knip.json` as entry points.
 **Reason.** (a) is E-245's argument in reverse and loses: the barrel is the module's interface upwards, and upwards there is nothing yet. (b) edits a file this feature was told to leave alone, and would suppress a real finding rather than answer it. The tests now import from the barrels, which is what the pending module already does and what makes the barrel a thing that is exercised rather than declared. Two re-exports with no caller anywhere were dropped instead — `pepperRecoveryCodeUnder` and `totpEnrollment` are used inside their own modules and by nothing else.
 **Price.** The tests now depend on the barrel's contents, so removing a name from a barrel breaks test files that have nothing to do with it. That is the cost of using `knip`'s definition of "used", and it is cheaper than a barrel nobody imports.
+
+### The test that named S-KEY-4 asserted a different branch, and that is why the defect above was invisible
+`E-427` · factor-totp · S-KEY-4, correction to the test
+
+**Context.** `test/totp-enrolment.test.ts` carried an `it` called *"refuses to decrypt a secret whose key version has left the ring (S-KEY-4)"*. It built its second provider with `testKeyProvider(2)`, which is `testKeyRing(2).providerAt(2)` with `availableVersions` left undefined — so the ring still held versions 1 **and** 2, and version 1 had not left it. What it actually asserted was `authentication_failed`: an AES-GCM tag mismatch against fresh root material, which is a different branch of `decryptWithPurposeKey` from the `key_version_unknown` one S-KEY-4 is about. Green, named after a requirement, and never touching it.
+**Rejected.** Adding the missing `[2]` and leaving the test otherwise as it was.
+**Reason.** That alone fixes the label and would have turned the test red, which is the point — but it would have left the two branches conflated in one assertion. There are now two: one drives a secret written under version 1 through a ring holding only version 2 and asserts `key_version_unknown`; the other drives it through a ring holding version 1 under other material and asserts `authentication_failed`. Both go at the envelope directly, so the branch under test is named rather than inferred.
+**Price.** The recovery side got this right on the first try — `providerAt(2, [2])`, asserted in `test/recovery-codes.test.ts` — and the TOTP side, written by the same hand on the same day, did not. The difference is that the recovery test was written to answer "what happens after a rotation" and the TOTP one to answer "does S-KEY-4 have a test". The second question is answerable without reaching the thing it names, and that is the whole hazard §5 describes.
+
+### A secret the server cannot read answers as a factor nobody can hold
+`E-428` · factor-totp · S-KEY-4, error surface, and a fourth hand-off
+
+**Context.** `decryptSecret` let `KeyError` out. `KeyError` is neither `VelveError` nor `ConcealedError`, so `toVisibleFailure` mapped it to `internal_error`, 500, `unhandled_exception`. Measured on the verify path: `code=internal_error status=500 logged=unhandled_exception`, against 401 for every other failure there. §3.15 D.3 declares 200, 401 and 429 for that route. So an account whose TOTP secret predates a key rotation was distinguishable from every other account by status code, and S-KEY-4's carefully named error was raised at the throw site and thrown away at the boundary.
+**Rejected.** (a) Leaving it and naming only the assembly-time check that would prevent it. (b) Adding a `totp_secret_unreadable` reason to `ConcealedReason`.
+**Reason.** (a) leaves a live oracle in the request path against a hazard that only a future feature removes. (b) is the honest reason to log and it means editing `src/core/http/error-map.ts`, which decides what the outside learns and belongs to no wave-3 feature — so it is reported instead of taken. Of the three reasons that already exist on this path, `totp_not_confirmed` is the one whose class actually contains this case: a secret the server cannot read is a credential that cannot serve as a factor, exactly like one that was never confirmed. The `KeyError` is caught at the single place the secret is decrypted, so all three paths that decrypt answer alike.
+**Price.** Two, and both are real. The operator now sees `totp_not_confirmed` where the true cause is a dropped key version, which is a worse diagnostic than the 500 it replaces — the 500 at least carried the `KeyError` message as the failure's `diagnostic` field. That is the cost of not owning `error-map.ts`, and it is why the second half of this matters: **`auth-core` should hold every distinct `totp_credential.key_version` against the ring at assembly time and refuse to start on one that has left it**, so the operator is told once, at the moment they drop the version, rather than never. That is E-179's shape, it is the fourth hand-off this feature owes and the first one it did not name in advance, and until it exists the only signal a dropped version produces is users who cannot sign in.
+
+### E-410 says the verification returns void, and it returns the resolution
+`E-429` · factor-totp · correction to E-410
+
+**Context.** E-410's closing sentence reads "The verification returns void; whoever issues the session owns that transaction." The first half was true when it was written and stopped being true two commits later, when `verify` began returning the `PendingResolution` so the caller does not resolve the pending state twice. The comments in `service.ts` that cite E-410 say it correctly; only the entry does not.
+**Rejected.** Editing the sentence in E-410.
+**Reason.** §6: new information about an old decision belongs in a new entry that cites the old one, never in the old entry's text. The argument E-410 makes is unaffected — the point was that this feature issues no session and consumes no pending row, and that is still what it does.
+**Price.** A reader of E-410 alone gets the return type wrong. That is the cost of the rule, and it is cheaper than a log whose entries are quietly kept current.
+
+### This branch made a knip exemption stale and did not say so
+`E-430` · factor-totp · knip, report
+
+**Context.** `knip.json` lists `otpauth` in `ignoreDependencies`. This is the first feature to import it, so the exemption is now stale: on `main` knip emits one configuration hint, on this branch two. `knip` still exits 0, and the file is correctly outside this feature's set. E-426 discusses knip at length and does not mention it.
+**Rejected.** Removing the entry from `knip.json`, which the brief for this feature forbids by name.
+**Reason.** §5 says a feature that needs a change outside its area stops **and reports it**. The stopping happened; the reporting did not, and an unreported finding that produces a hint instead of a failure is exactly the kind that stays unreported for a wave. `@simplewebauthn/server` is in the same line and will go stale the same way when `factor-webauthn` lands; both belong to one central cleanup.
+**Price.** Nothing operational — a hint is a hint. The entry exists because the omission was found by a reviewer reading the diff and not by this writer noticing a number change from one to two.
+
+### T-REST-3's third leg was not asserted
+`E-431` · factor-totp · test plan coverage
+
+**Context.** T-REST-3's threshold is "3/3: success, refusal, success". The suite asserted the first two — a code is accepted, the same code is then refused — and never redeemed a second, different code afterwards. The behaviour was correct; the assertion was absent.
+**Rejected.** Treating the existing "spends the code that was used and leaves the other nine" as the third leg.
+**Reason.** That test counts rows, and a count is not a redemption: a set could hold nine rows none of which can be spent, and it would pass. The third leg is now its own case — accepted, `invalid_recovery_code`, accepted, with eight left. A planted fault that makes a partly-spent set unreadable turns it red at exactly that assertion.
+**Price.** The gap came from writing the tests around the storage rule rather than around the threshold's three words, and nothing but reading the threshold catches that.

@@ -2960,14 +2960,13 @@ transaction belongs to whoever issues the session.
 | Raised | When |
 |---|---|
 | `invalid_pending_authentication` | The token names no live pending state. |
-| `invalid_factor_code` | The code does not match, its step is already spent, or the account has no confirmed credential. |
+| `invalid_factor_code` | The code does not match, its step is already spent, the account has no confirmed credential, or the stored secret cannot be decrypted. |
 | `too_many_factor_attempts` | The failure that exhausted L-8's budget. The pending row is gone with it. |
 
-The three causes behind `invalid_factor_code` differ only in the logged
-reason — `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`. This
-route is reached with a pending state rather than a session, so answering
-"this account has no TOTP" there would say which accounts carry a second
-factor.
+The causes behind `invalid_factor_code` differ only in the logged reason —
+`totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`. This route is
+reached with a pending state rather than a session, so answering "this account
+has no TOTP" there would say which accounts carry a second factor.
 
 #### `totp.remove({ actor, code })`
 
@@ -2976,6 +2975,28 @@ in `velve.totp_used_step` — a re-enrolment must not inherit the previous
 secret's replay ledger. Demands a valid code: whoever can remove the factor
 without holding it has no factor. Raises `factor_not_enrolled` or
 `invalid_factor_code`.
+
+#### When the secret cannot be decrypted
+
+`decryptWithPurposeKey` raises `KeyError` when the stored `key_version` is no
+longer in the ring (`key_version_unknown`, S-KEY-4) or when the ciphertext does
+not authenticate under it (`authentication_failed`). `KeyError` is neither a
+`VelveError` nor a `ConcealedError`, so letting it out answers 500 — a status
+none of the three declaring routes carries, and one only an account whose secret
+predates a rotation can produce.
+
+Every path that decrypts therefore answers `invalid_factor_code` with the logged
+reason `totp_not_confirmed`: a secret the server cannot read is a credential
+nobody can hold.
+
+**This makes the failure uniform; it does not make it diagnosable.** Dropping a
+key version that TOTP secrets were written under turns second-factor sign-in
+into a refusal with no explanation for the operator. The check that belongs
+above this is an assembly-time one — hold every distinct
+`totp_credential.key_version` against the ring when the instance is built, and
+refuse to start on one that has left it — so the operator is told once, when
+they drop the version. That check is the instance's; this module only makes sure
+the request path says nothing an attacker can count on.
 
 #### `totp.isEnrolled({ userId })`
 
