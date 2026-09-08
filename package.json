@@ -89,6 +89,7 @@
 		"lint": "biome check --error-on-warnings .",
 		"precheck:session-owner": "tsdown",
 		"pretest": "tsdown",
+		"pretest:nightly": "tsdown",
 		"publint": "publint --strict",
 		"test": "vitest run",
 		"test:nightly": "VELVE_NIGHTLY=1 vitest run",
