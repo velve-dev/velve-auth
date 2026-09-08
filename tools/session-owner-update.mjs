@@ -48,9 +48,8 @@ function endOfQuoted(source, index) {
 /** `--` opens a comment in SQL but is a decrement in TypeScript, and `//` the
  * reverse, so the file's language decides which one blinds the scanner. */
 function commentEndsAt(source, index, lineCommentOpener) {
-	const pair = source.slice(index, index + 2);
-	if (pair === "/*") return endOfBlockComment(source, index);
-	if (pair === lineCommentOpener) return endOfLineComment(source, index);
+	if (source.startsWith("/*", index)) return endOfBlockComment(source, index);
+	if (source.startsWith(lineCommentOpener, index)) return endOfLineComment(source, index);
 	return null;
 }
 
@@ -87,11 +86,26 @@ export function reassignsSessionOwner(statement) {
 	return REASSIGNMENT.some((pattern) => pattern.test(statement));
 }
 
-/** The rule governs SQL that runs, so prose about it — the specification, the
- * decision log — is out of scope. No executable file is exempt: this detector's
- * own cases live in a JSON fixture precisely so none has to be. */
-const EXECUTABLE_SOURCE = /\.(m?[jt]sx?|c[jt]s|sql|psql|ddl|sh)$/;
-const LINE_COMMENT_OPENER = { sql: "--", psql: "--", ddl: "--", sh: "#" };
+/** Naming every extension that might execute is an unbounded list; naming the
+ * files that only describe the rule is a short one. No executable file is exempt:
+ * this detector's own cases live in a JSON fixture precisely so none has to be. */
+const DESCRIBES_THE_RULE = new Set([
+	"VELVE-AUTH-ARCHITEKTUR.md",
+	"CASE-STUDY.md",
+	"CLAUDE.md",
+	"DOCUMENTATION.md",
+	"README.md",
+	"test/fixtures/session-owner-sql.json",
+]);
+const NOT_TEXT = /^assets\//;
+const HASH_COMMENT = /\.(sh|bash|zsh|ksh|ya?ml|py|rb|toml)$/;
+const DOUBLE_DASH_COMMENT = /\.(sql|psql|pgsql|ddl)$/;
+
+function lineCommentOpenerFor(path) {
+	if (DOUBLE_DASH_COMMENT.test(path)) return "--";
+	if (HASH_COMMENT.test(path)) return "#";
+	return "//";
+}
 
 function executableSourceFiles() {
 	const listed = execFileSync(
@@ -102,15 +116,15 @@ function executableSourceFiles() {
 	return listed
 		.split("\0")
 		.filter(Boolean)
-		.filter((path) => EXECUTABLE_SOURCE.test(path));
+		.filter((path) => !NOT_TEXT.test(path))
+		.filter((path) => !DESCRIBES_THE_RULE.has(path));
 }
 
 export function scanTree() {
 	const offenders = [];
 	let statementsScanned = 0;
 	for (const path of executableSourceFiles()) {
-		const extension = path.split(".").pop() ?? "";
-		const opener = LINE_COMMENT_OPENER[extension] ?? "//";
+		const opener = lineCommentOpenerFor(path);
 		for (const statement of statementsIn(
 			readFileSync(`${repositoryRoot}/${path}`, "utf8"),
 			opener,
