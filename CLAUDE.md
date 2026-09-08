@@ -334,6 +334,11 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-450 … E-494 | wave 3 · `factor-webauthn` |
 | E-495 … E-514 | gate and infrastructure, second range |
 | E-515 … E-539 | gate and infrastructure, third range |
+| E-540 … E-594 | wave 4 · `oauth` |
+| E-595 … E-634 | wave 4 · `email-flows` |
+| E-635 … E-669 | wave 4 · `plugin` |
+| E-670 … E-699 | wave 4 · `client` |
+| E-700 … E-734 | gate and infrastructure, fourth range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -390,6 +395,49 @@ Wave 3 is cut against that ratio instead of against a round thirty.
   source of gate numbers that exists. That block is where every broken-check
   finding lands; there are already thirty-eight of those in the log, running at
   roughly four per feature, and wave 3 runs four features at once.
+
+Wave 3 has merged, so the ratio has a second measurement. Counted against
+`CASE-STUDY.md` on `main`, wave 3 used `auth-core` **40 of 60**, `rate`
+**17 of 25**, `factor-totp` **27 of 45**, `factor-webauthn` **35 of 45**, the
+gate's second range **11 of 20** and its third range **24 of 25**.
+
+Two things fall out of that, and they point in opposite directions. Every
+**feature** range came in between sixty and eighty per cent, so cutting wave 3
+against the ratio rather than against a round thirty was right and none of those
+four needed a second row. Every **gate** range that was actually worked ran to
+its edge: the first block is exhausted at twenty of twenty, and the third stopped
+one number short. The second block reads as slack and is not — it was cut for the
+wave-3 preparation and the relicensing, the seam cut ran beside it and had to
+take a disjoint range, and its nine unused numbers are the gap §6 says a range
+leaves behind, not headroom anyone can reach for.
+
+Wave 4 is cut against that.
+
+- **`oauth` gets fifty-five.** It owns fourteen requirements, `S-LINK-1` to
+  `S-LINK-7` among them, and two of its test cases are corpora rather than
+  cases: T-LINK-2's twelve-way state matrix and T-REDIR-2's corpus of at least a
+  hundred and twenty malicious redirect targets. On top of that, architecture
+  3.10 and 3.15 A.8 hand it seven options with no `S-` number behind them —
+  `trustedProviders`, `storeTokens`, the JWKS allowlist, `genericOAuth` — and an
+  option with no requirement number has to be argued in the log or it is argued
+  nowhere. It is the widest feature of the wave and the only one that could
+  plausibly fill its range.
+- **`email-flows` gets forty.** It owns `S-LINK-4`, which is the rule the linking
+  chapter has to cite rather than restate, and the whole `request…`/`redeem…`
+  verb pair of 3.15's rule 2.
+- **`plugin` gets thirty-five.** The registry, the topological sort, the frozen
+  context and the enumerated hook points are each a boundary that 3.11 states as
+  a prohibition, and a prohibition is the kind of thing that generates a decision
+  when it is enforced rather than when it is written.
+- **`client` gets thirty.** It is the narrowest feature of the wave for the same
+  reason `rate` was of wave 3: the route table already exists, and the client is
+  derived from it (3.15 E).
+- **Gate and infrastructure gets a fourth block of thirty-five, not
+  twenty-five.** The measurement above is what argues it. The largest single gate
+  cut so far took twenty-four numbers, and a twenty-five-wide block against a
+  measured twenty-four is one number of slack — which is exactly the shape this
+  section already identifies as a range that ran out. Thirty-five is one clear
+  step above the largest cut observed.
 
 Over-reserving costs a gap in the numbering, which §6 has already said is fine.
 Under-reserving costs a mid-branch request for numbers at the moment the writer
