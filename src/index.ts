@@ -75,6 +75,29 @@ export { VelveError, type VelveErrorCode } from "./core/http/error-map.js";
 export type { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.js";
 export type { UsernameRules } from "./core/identity/configuration.js";
 export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";
+export type {
+	GenericProviderConfig,
+	KnownProvider,
+	OAuthConfig,
+	ProviderCredentials,
+} from "./core/oauth/config.js";
+export type {
+	FrozenContext,
+	FrozenRepositories,
+	PluginActor,
+	PluginHooks,
+	PluginMigration,
+	PluginRoute,
+	RevokeReason,
+	SessionCreatedEvent,
+	SessionCreateEvent,
+	SessionRevokeEvent,
+	SignInCompletedEvent,
+	SignInEvent,
+	UserCreatedEvent,
+	UserCreateEvent,
+	VelvePlugin,
+} from "./core/plugin/config.js";
 
 /** E-231: the one place in the package where a clock is read, and the layer above the core. */
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };

@@ -3892,7 +3892,10 @@ restatement of the first, which is the reading CVE-2026-53516 shipped.
 
 Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `oauth`'s partition of
 this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does.
+paragraph is the first thing it does. Its configuration seam is
+`src/core/oauth/config.ts`, which is open and is `oauth`'s file — the field on
+`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
+edited for it.
 
 ### Nothing is documented here yet
 
@@ -4191,6 +4194,13 @@ modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
 `core/plugin/routes.ts` — and the last three return nothing today, so a feature
 adds a row by editing its own file.
 
+The configuration seam is open the same way. `config.oauth` is an `OAuthConfig`
+from `core/oauth/config.ts` and `config.plugins` a list of `VelvePlugin` from
+`core/plugin/config.ts`; both types are declared and exported, both fields are
+optional, and neither is read by the assembly yet — `pluginRoutes` is where
+`plugins` will be consumed. The types are documented by the chapters that own
+them, which are empty until wave 4.
+
 `GET /pending` and `POST /pending/cancel` are no longer among the missing.
 `pendingCookie: "readable"` is what they needed and did not have; both are
 declared, both read `__Host-velve_pending` and neither is authorised by it. The
@@ -4216,7 +4226,10 @@ runner, which stands further above still.
 
 Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `plugin`'s partition of
 this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does.
+paragraph is the first thing it does. Its configuration seam is
+`src/core/plugin/config.ts`, which is open and is `plugin`'s file — the field on
+`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
+edited for it.
 
 ### Nothing is documented here yet
 
