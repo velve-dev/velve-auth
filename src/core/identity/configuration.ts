@@ -68,39 +68,55 @@ function refusedFlagIn(flags: string): string | undefined {
 	return Object.keys(REFUSED_FLAGS).find((flag) => flags.includes(flag));
 }
 
-/** Reports why the pattern can match less than a whole name, or nothing if it cannot (E-193). */
-function partialMatchIn(source: string): string | undefined {
-	let groupDepth = 0;
+/** Escapes and character-class contents become dots, so only structure is left to read. */
+function structureOf(source: string): string {
+	let structure = "";
 	let insideCharacterClass = false;
-	let anchoredAtStart = false;
-	let anchoredAtEnd = false;
 	for (let index = 0; index < source.length; index += 1) {
 		const character = source[index];
 		if (character === "\\") {
 			index += 1;
+			structure += "..";
 		} else if (insideCharacterClass) {
 			insideCharacterClass = character !== "]";
+			structure += ".";
 		} else if (character === "[") {
 			insideCharacterClass = true;
-		} else if (character === "(") {
+			structure += ".";
+		} else {
+			structure += character;
+		}
+	}
+	return structure;
+}
+
+function hasTopLevelAlternation(structure: string): boolean {
+	let groupDepth = 0;
+	for (const character of structure) {
+		if (character === "(") {
 			groupDepth += 1;
 		} else if (character === ")") {
 			groupDepth -= 1;
 		} else if (character === "|" && groupDepth === 0) {
-			return "each branch of a top-level alternation would need its own anchors";
-		} else if (character === "^") {
-			if (index !== 0) {
-				return "a ^ anywhere but at the start anchors only part of the name";
-			}
-			anchoredAtStart = true;
-		} else if (character === "$") {
-			if (index !== source.length - 1) {
-				return "a $ anywhere but at the end anchors only part of the name";
-			}
-			anchoredAtEnd = true;
+			return true;
 		}
 	}
-	return anchoredAtStart && anchoredAtEnd ? undefined : "it needs a leading ^ and a trailing $";
+	return false;
+}
+
+/** Reports why the pattern can match less than a whole name, or nothing if it cannot (E-193). */
+function partialMatchIn(source: string): string | undefined {
+	const structure = structureOf(source);
+	if (hasTopLevelAlternation(structure)) {
+		return "each branch of a top-level alternation would need its own anchors";
+	}
+	if (!structure.startsWith("^") || structure.indexOf("^", 1) !== -1) {
+		return "a ^ belongs at the start and nowhere else";
+	}
+	if (!structure.endsWith("$") || structure.slice(0, -1).includes("$")) {
+		return "a $ belongs at the end and nowhere else";
+	}
+	return undefined;
 }
 
 function assertWholeStringPattern(pattern: RegExp): RegExp {
