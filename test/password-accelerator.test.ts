@@ -5,10 +5,6 @@ import { type AcceptedPassword, acceptSubmittedPassword } from "../src/core/pass
 import { verifyAgainstScheme } from "../src/core/password/verify-switch.js";
 import { drawTestPassword } from "./password-fixtures.js";
 
-// The optional dependency is named nowhere as a literal, because the module under test does not
-// name it either (E-170) and the dead-code check of the main gate fails on a literal reference.
-const ACCELERATOR_SPECIFIER = ["hash", "wasm"].join("-");
-
 // T-DEFAULT-7: the same twenty passwords hashed once with the accelerator present and once with it
 // absent, then cross-verified — 20 byte-identical strings and 40 successful cross-checks.
 const PASSWORD_COUNT = 20;
@@ -27,14 +23,14 @@ function accepted(plaintext: string): AcceptedPassword {
 
 async function withoutAccelerator(): Promise<typeof import("../src/core/password/argon2.js")> {
 	vi.resetModules();
-	vi.doMock(ACCELERATOR_SPECIFIER, () => {
+	vi.doMock("hash-wasm", () => {
 		throw new Error("the optional accelerator is not installed");
 	});
 	return import("../src/core/password/argon2.js");
 }
 
 afterAll(() => {
-	vi.doUnmock(ACCELERATOR_SPECIFIER);
+	vi.doUnmock("hash-wasm");
 	vi.resetModules();
 });
 

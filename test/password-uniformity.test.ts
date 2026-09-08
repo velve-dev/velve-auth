@@ -21,9 +21,8 @@ vi.mock("@noble/hashes/argon2.js", async (importOriginal) => {
 });
 
 // The optional accelerator has to be out of the way for the counters above to see every Argon2
-// derivation. Its specifier is assembled rather than written (E-170), so the mock is registered
-// under an assembled name too — naming the package here would trip the dead-code check.
-vi.doMock(["hash", "wasm"].join("-"), () => {
+// derivation; it derives in WebAssembly and calls none of the functions counted here (E-180).
+vi.doMock("hash-wasm", () => {
 	throw new Error("the accelerator is out of the way for this measurement");
 });
 

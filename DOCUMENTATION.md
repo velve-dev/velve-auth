@@ -1213,7 +1213,7 @@ ones architecture 3.3 fixes.
 | `acceptLegacy` | `readonly LegacyScheme[]` | all seven | which imported schemes are still verified. Naming fewer narrows the estate; naming an unknown scheme is a start error |
 | `minimumLength` | `number` | `8` | in characters, counted after NFKC. Below 8 is a start error |
 | `maximumLengthInBytes` | `number` | `4096` | in UTF-8 bytes. Above 4096 is a start error; lowering it is allowed |
-| `concurrentHashLimit` | `number` | `min(4, cpus)` | how many key derivations may run at once (S-DOS-3) |
+| `concurrentHashLimit` | `number` | `min(4, cpus)` | how many key derivations may run at once. `1` to `4`; above four is a start error, because S-DOS-3 names `min(4, cpus)` as the bound of the library and not as a starting point (E-188) |
 | `validate` | `(plaintext: string) => Promise<void>` | none | the one hook for an application password policy (L-7) |
 
 `LegacyScheme` is `"argon2i" | "argon2d" | "bcrypt" | "scrypt" |
@@ -1298,12 +1298,18 @@ process dies of memory instead of refusing requests (architecture 5.18).
 
 Places are handed out first come, first served. A request that has waited
 `waitLimitInMilliseconds` is refused with `VelveError("rate_limited")`, leaves
-the queue and never runs its work — so a refusal costs no derivation and is
-answered faster than a successful sign-in, not slower.
+the queue and never runs its work, so a refusal costs no derivation. It is not
+*quick*: it arrives after the full wait limit, five seconds by default, where a
+successful sign-in takes about twenty milliseconds. What it costs is nothing,
+and what it depends on is load.
 
-This is a resource limit, not a timing equalisation. It depends on load and on
-nothing about the account, so it answers a request for an existing identifier
-exactly as it answers one for an identifier that does not exist (L-1, S-DOS-4).
+This is a resource limit, not a timing equalisation. Nothing about it varies
+with the account: a request for an identifier that resolved to an account and
+one for an identifier that resolved to nobody wait the same time and are refused
+the same way (L-1, S-DOS-4). The semaphore is entered after the credential query
+and the decryption, so it is not the thing that keeps those two uniform — that
+is `checkPassword`'s single code path. The rate limiter of architecture 3.9 is
+what runs before the user is resolved.
 
 The refusal carries no `retryAfterSeconds`: the semaphore knows only that the
 queue was full, not when it will empty (E-166). The per-IP and per-account rate
@@ -1325,9 +1331,20 @@ matches. Eleven prefixes map onto eight schemes — bcrypt contributes four.
 #### `verifyAgainstScheme(scheme, password, stored)`
 
 Runs the verifier the scheme names and answers `true` or `false`. It answers
-`false` — it does not throw — for a malformed stored value, an unreadable
-parameter, or a derivation that refuses its own inputs, so that nothing between
-step 2 and step 4 of the sequence in 3.3 can leave the path early (S-TIM-1).
+`false` — it does not throw — for every one of these, so that nothing between
+step 2 and step 4 of the sequence in 3.3 can leave the path early (S-TIM-1):
+
+- a scheme the table does not name;
+- a stored value that is not a PHC string, or not one of the scheme it is filed
+  under;
+- **an identifier inside the credential that disagrees with the `scheme`
+  column** — `acceptLegacy` is applied to the column, which L-2 keeps readable
+  without a key, so the column and the credential have to name the same
+  function or the policy would gate on one while the verifier acted on the
+  other (E-177). An import that writes a mismatched column produces rows that
+  never verify; the two write paths refuse to create one (E-187);
+- a parameter that is missing, not a decimal, or above a cost ceiling;
+- a derivation that refuses its own inputs.
 
 | Scheme | Verified with |
 |---|---|
@@ -1378,8 +1395,15 @@ ignores it, computing version 1.3 whichever value it is given. Any version other
 than 1.3 therefore stays on `@noble/hashes` (E-168). Since the library only ever
 creates version 1.3, this affects imported hashes alone.
 
-The dependency is loaded through an assembled specifier so that a consumer's
-bundler does not try to resolve a package that is allowed to be absent (E-170).
+The dependency is loaded through a literal `import("hash-wasm")`, so a
+dependency or advisory scanner can see that an advisory against the package
+reaches this line; `knip.json` exempts it by name instead (E-180, which reversed
+E-170).
+
+Because the accelerator computes in one synchronous WebAssembly call, each
+accelerated derivation yields a `setTimeout` turn before it starts. Without it a
+flood is served in one microtask drain, no timer in the process fires, and
+S-DOS-4's wait limit never comes due (E-186).
 
 ### The stored credential
 
@@ -1409,12 +1433,20 @@ caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 | Method | Statement |
 |---|---|
 | `findByUserId(userId)` | `SELECT … WHERE user_id = $1` |
-| `write({ userId, phc, scheme })` | `INSERT … ON CONFLICT (user_id) DO UPDATE` |
+| `write({ userId, phc, scheme })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
 | `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
 
 `replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
 the stored **ciphertext**, not the PHC string, so a password the user changed
 while a rehash was running is never overwritten by it (L-2, E-11).
+
+Both paths refuse two things before they write. A `scheme` that disagrees with
+the identifier of the credential is `CredentialWriteError`
+`scheme_does_not_match_credential`: such a row could never verify (E-177,
+E-187). And a statement that changed no row is `credential_not_written` —
+`ON CONFLICT … DO UPDATE … WHERE` does not raise when its predicate is false, it
+silently updates nothing, and the caller must not be told a password was stored
+when it was not (E-185).
 
 ### Checking a password
 
@@ -1514,12 +1546,17 @@ any of them is refused, which routes the user to the reset path (E-182).
 | `MAXIMUM_STORED_ARGON2_ITERATIONS` | `64` | Argon2 `t` |
 | `MAXIMUM_STORED_PARALLELISM` | `64` | Argon2 and scrypt `p` |
 | `MAXIMUM_STORED_PBKDF2_ITERATIONS` | `2_000_000` | PBKDF2 `i` |
+| `MAXIMUM_STORED_BCRYPT_COST` | `14` | the cost field of a bcrypt hash |
+
+bcrypt has no memory parameter, so its cost — an exponent — is the only bound
+there is: `$2a$14$` is about a second of one semaphore place and `$2a$31$` is
+about thirty years. GoTrue, Auth0 and Clerk all write cost 10.
 
 They are not configurable. Raising a denial-of-service ceiling is a weakening,
 and every documented source sits far below them: Better Auth's scrypt at 32 MiB,
 Firebase at 16 MiB, Django's PBKDF2 at 1.2 million iterations.
-`argon2CostIsAcceptable`, `scryptCostIsAcceptable` and `pbkdf2CostIsAcceptable`
-are the three predicates that apply them.
+`argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable` and
+`bcryptCostIsAcceptable` are the four predicates that apply them.
 
 ### Startup
 
@@ -1554,8 +1591,9 @@ once it is.
 | `encodeStandardBase64`, `decodeStandardBase64` | function | `base64.ts` |
 | `PasswordConfig`, `ResolvedPasswordConfig`, `PasswordPolicy`, `Argon2idParameters` | interface | `config.ts` |
 | `resolvePasswordConfig` | function | `config.ts` |
-| `ARGON2ID_FLOOR`, `ARGON2ID_SALT_BYTES`, `ARGON2ID_HASH_BYTES`, `ARGON2ID_VERSION`, `MINIMUM_LENGTH_FLOOR`, `MAXIMUM_LENGTH_CEILING_IN_BYTES` | const | `config.ts` |
+| `ARGON2ID_FLOOR`, `ARGON2ID_SALT_BYTES`, `ARGON2ID_HASH_BYTES`, `ARGON2ID_VERSION`, `MINIMUM_LENGTH_FLOOR`, `MAXIMUM_LENGTH_CEILING_IN_BYTES`, `CONCURRENT_HASH_LIMIT_CEILING` | const | `config.ts` |
 | `PasswordConfigurationError`, `PasswordConfigurationErrorCode` | class, type | `errors.ts` |
+| `CredentialWriteError`, `CredentialWriteErrorCode` | class, type | `errors.ts` |
 | `PasswordScheme`, `LegacyScheme` | type | `scheme.ts` |
 | `LEGACY_SCHEMES`, `CREATED_SCHEME` | const | `scheme.ts` |
 | `schemeOfStoredHash`, `isLegacyScheme` | function | `scheme.ts` |
@@ -1572,8 +1610,8 @@ once it is.
 | `verifyArgon2`, `verifyBcrypt`, `verifyScrypt`, `verifyPbkdf2`, `verifyFirebaseScrypt` | function | `verifiers/` |
 | `deriveScrypt` | function | `verifiers/scrypt.ts` |
 | `verifyAgainstScheme` | function | `verify-switch.ts` |
-| `MAXIMUM_STORED_MEMORY_KIB`, `MAXIMUM_STORED_ARGON2_ITERATIONS`, `MAXIMUM_STORED_PARALLELISM`, `MAXIMUM_STORED_PBKDF2_ITERATIONS` | const | `limits.ts` |
-| `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable` | function | `limits.ts` |
+| `MAXIMUM_STORED_MEMORY_KIB`, `MAXIMUM_STORED_ARGON2_ITERATIONS`, `MAXIMUM_STORED_PARALLELISM`, `MAXIMUM_STORED_PBKDF2_ITERATIONS`, `MAXIMUM_STORED_BCRYPT_COST` | const | `limits.ts` |
+| `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable`, `bcryptCostIsAcceptable` | function | `limits.ts` |
 | `PasswordCredentialRow`, `SealedPhc`, `PasswordCredentialRepository`, `PasswordCredentialRepositoryOptions` | interface | `credential.ts` |
 | `PASSWORD_ENC_PURPOSE`, `PASSWORD_CREDENTIAL_SCHEMA`, `PASSWORD_CREDENTIAL_TABLE` | const | `credential.ts` |
 | `sealPhc`, `openPhc`, `createPasswordCredentialRepository` | function | `credential.ts` |

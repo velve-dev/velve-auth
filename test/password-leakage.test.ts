@@ -217,8 +217,8 @@ describe("repository rules section 3 — what the module may contain", () => {
 
 	// A module specifier that is assembled rather than written is invisible to the bundler, to the
 	// dead-code check and to a dependency audit — the connection between this library and the
-	// package it loads cannot be found by reading or by tooling. E-170 records the reason and asks
-	// the gate to undo it; until then the specifier is a literal nowhere.
+	// package it loads cannot be found by reading or by tooling. E-180 restored the literal after
+	// `knip.json` gained the exemption E-170 asked for; this keeps it that way.
 	it("writes every dynamic import specifier as a literal", () => {
 		const offenders: string[] = [];
 		for (const source of sources) {

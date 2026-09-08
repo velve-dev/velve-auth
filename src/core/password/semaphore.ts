@@ -1,6 +1,7 @@
 import { VelveError } from "../http/error-map.js";
 
-/** L-1: a resource limit, not a timing equalisation — it applies before the user is resolved. */
+/** L-1: a resource limit, not a timing equalisation — it refuses on load, and identically for an
+ * identifier that resolved to an account and one that resolved to nobody. */
 export const DEFAULT_WAIT_LIMIT_IN_MILLISECONDS = 5000;
 
 export interface KdfSemaphoreOptions {
