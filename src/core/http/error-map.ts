@@ -225,15 +225,29 @@ interface ErrorBody {
 	};
 }
 
+const RETRY_AFTER_LIMIT_IN_SECONDS = 86_400;
+
+/** A wait the caller cannot act on is not a wait, and it reaches neither the body nor the Retry-After header. */
+export function writableWaitInSeconds(retryAfterSeconds: number | undefined): number | null {
+	if (retryAfterSeconds === undefined) {
+		return null;
+	}
+	const seconds = Math.ceil(retryAfterSeconds);
+	return Number.isInteger(seconds) && seconds >= 0 && seconds <= RETRY_AFTER_LIMIT_IN_SECONDS
+		? seconds
+		: null;
+}
+
 export function toErrorBody(error: VelveError): ErrorBody {
-	if (error.retryAfterSeconds === undefined) {
+	const wait = writableWaitInSeconds(error.retryAfterSeconds);
+	if (wait === null) {
 		return { error: { code: error.code, message: MESSAGE_BY_ERROR_CODE[error.code] } };
 	}
 	return {
 		error: {
 			code: error.code,
 			message: MESSAGE_BY_ERROR_CODE[error.code],
-			retryAfterSeconds: error.retryAfterSeconds,
+			retryAfterSeconds: wait,
 		},
 	};
 }
