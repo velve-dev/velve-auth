@@ -88,10 +88,12 @@ describe("the parameters the repository sends", () => {
 			payload: null,
 		});
 
-		expect(calls.map((call) => call.sql.split("\n")[0])).toStrictEqual([
-			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE",
-			"WITH superseded AS (",
-		]);
+		const collapsed = calls.map((call) => call.sql.replace(/\s+/g, " ").trim());
+		expect(collapsed).toHaveLength(2);
+		expect(collapsed[0]).toBe(
+			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE /* locks: velve.user */",
+		);
+		expect(collapsed[1]).toMatch(/^WITH superseded AS \( DELETE FROM velve\.one_time_token/);
 	});
 
 	it("sends the hash and the purpose together for a lookup", async () => {
