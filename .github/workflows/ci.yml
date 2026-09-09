@@ -203,19 +203,24 @@ jobs:
 
           # A repository with no .gitattributes at all is the wanted state, so this is
           # the first surface whose emptiness is an answer rather than a failure to look.
-          # It is tested for content before xargs reads it, because xargs over an empty
-          # list still runs grep, which then exits as though it had looked at something.
+          # The paths are read into an array rather than piped through xargs, which
+          # documents itself as reporting 123 for any invocation exiting 1 to 125 and so
+          # returns one status for the no-match this scan expects and the error it must
+          # refuse on.
           read_surface ".gitattributes" "$SCAN_DIR/attributes" \
             git ls-files --cached --others --exclude-standard -- '*.gitattributes'
           echo "Checking $(lines_in "$SCAN_DIR/attributes") .gitattributes files"
           if [ -s "$SCAN_DIR/attributes" ]; then
-            HIDDEN=$(xargs grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)' \
-              < "$SCAN_DIR/attributes" || true)
-            if [ -n "$HIDDEN" ]; then
-              echo "::error::a .gitattributes marks a path binary or -diff, which hides it from review"
-              echo "$HIDDEN"
-              fail=1
-            fi
+            ATTRIBUTE_FILES=()
+            while IFS= read -r attribute_file; do
+              ATTRIBUTE_FILES+=("$attribute_file")
+            done < "$SCAN_DIR/attributes"
+            ATTRIBUTE_STATUS=0
+            grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)' "${ATTRIBUTE_FILES[@]}" \
+              > "$SCAN_DIR/attribute-hits" || ATTRIBUTE_STATUS=$?
+            report ".gitattributes" \
+              "a .gitattributes marks a path binary or -diff, which hides it from review" \
+              "$ATTRIBUTE_STATUS" "$SCAN_DIR/attribute-hits"
           fi
 
           # A single NUL byte makes git classify a source file as binary, which hides
