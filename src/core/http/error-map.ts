@@ -94,7 +94,7 @@ const PLUGIN_ERRORS = new Map<PluginErrorCode, PluginErrorDefinition>();
 const PLUGIN_ERROR_STATUS_FLOOR = 400;
 const PLUGIN_ERROR_STATUS_CEILING = 599;
 
-/** `Object.hasOwn` and not `in`: `in` walks the prototype, so `toString` read as a core code (E-657). */
+/** `Object.hasOwn` and not `in`: `in` walks the prototype, so `toString` read as a core code (E-663). */
 function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
 	return !Object.hasOwn(MESSAGE_BY_ERROR_CODE, code);
 }

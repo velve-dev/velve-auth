@@ -4407,10 +4407,9 @@ declare. What is still not built is listed at the end of this chapter.
 
 ### Start errors
 
-Thirteen configurations refuse the start with a `VelveStartupError` — twelve
-codes only a plugin can trip and `route_namespace_conflict`, which a plugin can
-trip and so can the core. None of them is a warning, because each leaves a
-question with no answer:
+Fourteen configurations refuse the start with a `VelveStartupError` — twelve
+codes only a plugin can trip, and two more a plugin can trip and so can a core
+route. None of them is a warning, because each leaves a question with no answer:
 
 | Code | When |
 |---|---|
@@ -4427,6 +4426,7 @@ question with no answer:
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
 | `plugin_rate_limit_rule_unmatched` | A `rateLimitRules` key names no route this plugin contributes. |
 | `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
+| `route_name_segment_reserved` | A route name has a segment every object already carries — `__proto__`, `constructor` or `prototype`. |
 
 `plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
 core route is a start error and not a warning. The type constraint already
@@ -4511,37 +4511,60 @@ prefix its name begins with.
 
 #### What a plugin migration may do
 
-The runner reads the shape of every table in the schema before the migration
-runs and again after, **inside the migration's own transaction**, and compares
-the two. The rule is what the comparison says, not what the SQL looks like:
+Three measurements, taken **inside the migration's own transaction**, and none of
+them reads the migration's SQL:
 
-- it may create exactly the tables `createsTables` names, no more and no fewer;
-- every one of them carries the `<id>_` prefix;
-- no other table's columns change, and no table disappears.
+1. **What it created or altered.** Every table whose catalogue row this
+   transaction wrote — its `pg_class` row or one of its `pg_attribute` rows —
+   in **any** schema of the database. That is attribution rather than a
+   before-and-after picture: a picture of every schema is a picture of other
+   people's work, and it moves while a migration runs.
+2. **What tables the configured schema gained and lost**, which is a
+   before-and-after, and safe to take because the schema is the instance's own.
+3. **What rows it wrote**, as the difference between two readings of this
+   transaction's write counters, per table, in any schema.
 
-A migration that breaks any of these is refused with a `MigrationRefusedError`
-and its transaction rolls back, so the schema is as it was and the ledger has no
-row for it.
+The rule those three carry:
+
+- a migration may create exactly the tables `createsTables` names, no more and no
+  fewer, all of them in the configured schema and all carrying the `<id>_`
+  prefix;
+- **inside its own tables it may do as it likes** — a later migration may alter,
+  fill or drop a table an earlier one of the same plugin created;
+- **outside them nothing at all**: no table created, altered, emptied or removed
+  in any schema, and no row written in any table.
+
+A migration that breaks any of it is refused with a `MigrationRefusedError` and
+its transaction rolls back, so the schema is as it was and the ledger has no row
+for it.
 
 | `code` | When |
 |---|---|
 | `migration_duplicate_version` | Two of one plugin's migrations claim the same `version`. |
 | `migration_checksum_changed` | A migration's SQL changed after it was applied. |
-| `migration_table_undeclared` | The set of tables that appeared is not the set `createsTables` names. |
-| `migration_table_unprefixed` | A table appeared that does not carry the plugin's prefix. |
-| `migration_foreign_table_changed` | A table the plugin does not own lost, gained or changed a column, or went. |
+| `migration_table_undeclared` | The set of tables that appeared in the schema is not the set `createsTables` names. |
+| `migration_table_unprefixed` | It reached a table of the configured schema that does not carry the plugin's prefix. |
+| `migration_table_outside_the_schema` | It reached a table in another schema, `public` included. |
+| `migration_foreign_table_changed` | It altered, emptied or removed a table it does not own. |
+| `migration_wrote_a_foreign_table` | It wrote a row into a table it does not own. |
+| `migration_write_check_unavailable` | `track_counts` is off, so what it wrote cannot be read. The migration is refused rather than run unmeasured. |
 | `migration_missing_cascade` | S-TOKEN-6: a `user_id` without a foreign key to `velve.user` that cascades. |
 
-Measuring rather than parsing is the point. A statement the runner cannot read —
-and it does not try to read any of them — cannot smuggle a table past the
-declaration, and there is no second SQL dialect to keep the rule in step with.
+Measuring rather than parsing is the point, and the boundary is only as wide as
+the three measurements. What they do **not** see: an object that is not a table —
+a function, a type, a sequence, an extension, a grant; a table dropped in another
+schema, which leaves no catalogue row to attribute; and a change to a system
+catalogue, which needs privileges a library cannot assume it lacks. A plugin
+migration is arbitrary SQL from a package the application installed, on the same
+footing as any other dependency it installs, and this is a guardrail against the
+accident rather than a sandbox — the same distinction `ownTables.query` makes.
 
 **Qualify every name with `velve.`**, as the core's own migrations do:
 `CREATE TABLE velve.audit_entry (…)`. An unqualified `CREATE TABLE audit_entry`
 creates the table wherever the connection's `search_path` points, which is not
 the configured schema — the cascade guard would not see it, `ownTables.query`
 would resolve the name to the schema and never find it, and it would not be
-dropped with the schema. It is refused as a declared table that did not appear.
+dropped with the schema. It is refused as a table reached outside the schema.
 3.15 G.1's example writes exactly that and would be refused; the fault is the
 example's.
 
@@ -4832,17 +4855,18 @@ the route's name.
 - **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. Six of the seven are still waiting for the operation that fires them; nothing is said at start about registering one, because a plugin that registers it is not wrong to have done so.
 - **A plugin cannot roll a migration back.** There is no `down`, and removing a
   plugin from the configuration leaves its tables and its ledger rows standing.
-  Dropping them is the application's to do, by hand, and a plugin migration that
-  drops one of the plugin's own tables is refused like any other removal.
+  Dropping them is the application's to do, by hand — or the plugin's, in a
+  later migration of its own, which may drop a table an earlier one created.
 - **`auth.migrate()` says nothing about a plugin's migrations.** Its report is
   about the core schema, and widening it would change a return type documented in
   a chapter this feature does not own. `velve.plugin_schema_migration` is where
   the answer is.
-- **Nothing bounds what a plugin migration does inside its own tables**, and
-  nothing bounds the SQL it writes. The measurement compares tables and their
-  columns; a migration that fills a table of its own with a hundred million rows,
-  or takes a lock, or calls a function, is a migration the application chose to
-  install, on the same footing as any other dependency it installs.
+- **Nothing bounds what a plugin migration does inside its own tables**, nor how
+  long it takes. A migration that fills a table of its own with a hundred million
+  rows, or takes a lock, or calls a function, is a migration the application
+  chose to install. What it may not reach is [listed with the three measurements
+  above](#what-a-plugin-migration-may-do), and so is what those measurements do
+  not see.
 
 ## The client
 

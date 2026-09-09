@@ -52,7 +52,7 @@ export interface PluginRuntime {
 	/**
 	 * The codes every configured plugin declares. They are published to the process-wide registry by
 	 * the assembly and not here, because a start that refuses after this returns must leave nothing
-	 * behind (E-659).
+	 * behind (E-665).
 	 */
 	readonly declaredErrorCodes: readonly PluginErrorCode[];
 	readonly hooks: PluginHookDispatcher;
@@ -313,7 +313,7 @@ type ContributedDeclaration = RouteDeclaration<string, string, unknown, unknown,
  * The rule is layered over the declaration rather than copied out of it. `defineRoute` reads every
  * field by property access, and a copy would take own enumerable properties only — which would
  * silently drop a field a plugin from JavaScript carries on a prototype, `handler` included, and
- * would make E-781's reason for the `in` above false (E-658).
+ * would make E-781's reason for the `in` above false (E-666).
  */
 function withTheRuleTheMapNames(
 	declaration: ContributedDeclaration,

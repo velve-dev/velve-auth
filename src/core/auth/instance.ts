@@ -394,7 +394,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	};
 
 	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
-	// E-659: the last statement of the start, because the registry it writes to is process-wide and
+	// E-665: the last statement of the start, because the registry it writes to is process-wide and
 	// a refusal above it must leave nothing of a plugin behind.
 	registerDeclaredPluginErrorCodes(pluginRuntime.declaredErrorCodes);
 	return surface as VelveAuth<M>;

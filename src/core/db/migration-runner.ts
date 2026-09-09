@@ -33,7 +33,7 @@ WHERE namespace_.nspname = $1 AND child.relkind IN ('r', 'p')`;
 /**
  * Every table this transaction created or altered, in any schema, read out of the catalogue rows it
  * wrote rather than out of a before-and-after picture of the database — a picture of every schema
- * is a picture of other people's work, and it moves while a migration runs (E-660).
+ * is a picture of other people's work, and it moves while a migration runs (E-664).
  */
 const TABLES_THIS_TRANSACTION_TOUCHED = `
 SELECT namespace_.nspname AS schema_name, child.relname AS table_name
@@ -48,10 +48,10 @@ WHERE child.relkind IN ('r', 'p')
 /**
  * The rows written into each user table, as the backend has them so far. A catalogue row cannot
  * show a row of data, so it cannot show a migration that disables every account in one statement —
- * writing a core table is the thing 3.11 forbids in so many words (E-661). It is read twice and
+ * writing a core table is the thing 3.11 forbids in so many words (E-664). It is read twice and
  * differenced: the counters carry whatever the backend has not yet reported, which reaches back
  * before this transaction began. The statement this sentence may not quote is E-768's rule, met a
- * second time (E-662).
+ * second time (E-664).
  */
 const ROWS_WRITTEN_SO_FAR = `
 SELECT schemaname AS schema_name, relname AS table_name,
@@ -242,7 +242,7 @@ function localNameOf(qualified: string): string {
  * What a migration did is measured rather than read out of its SQL, so a statement the runner
  * cannot parse cannot get past the declaration either (E-637). Outside the plugin's own tables
  * nothing may be created, altered or removed; inside them the plugin may do as it likes, which is
- * what lets a later migration alter a table an earlier one created (E-660).
+ * what lets a later migration alter a table an earlier one created (E-664).
  */
 function assertNothingButItsOwnTablesChanged(
 	migration: OwnedMigration,
@@ -291,7 +291,7 @@ function assertNothingButItsOwnTablesChanged(
 
 /**
  * The row-level half, as the difference between two readings, because the counters are the
- * backend's pending totals rather than this transaction's alone (E-661).
+ * backend's pending totals rather than this transaction's alone (E-664).
  */
 function assertNoForeignTableWasWritten(
 	migration: OwnedMigration,

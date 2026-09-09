@@ -19,7 +19,7 @@ export interface OwnedMigration extends Migration {
 
 export type RunnableMigration = Migration | OwnedMigration;
 
-/** `Object.hasOwn` and not `in`, so no prototype decides which ledger a migration is recorded in (E-657). */
+/** `Object.hasOwn` and not `in`, so no prototype decides which ledger a migration is recorded in (E-663). */
 export function isOwnedMigration(migration: RunnableMigration): migration is OwnedMigration {
 	return Object.hasOwn(migration, "owner");
 }

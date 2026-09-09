@@ -10,7 +10,7 @@ function isNamespace(value: unknown): value is Record<string, unknown> {
 /**
  * A segment every object already carries. `__proto__` is the one that matters — reading it walks
  * to `Object.prototype` and writing it moves the prototype — and the other two are refused beside
- * it because a namespace shadowing them reads as something it is not (E-656).
+ * it because a namespace shadowing them reads as something it is not (E-663).
  */
 const SEGMENTS_NO_ROUTE_NAME_MAY_USE: readonly string[] = ["__proto__", "constructor", "prototype"];
 

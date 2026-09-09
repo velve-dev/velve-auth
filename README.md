@@ -179,15 +179,22 @@ the start rather than warning, among them a duplicate id, two ids where one is
 the other's table prefix, a dependency on a plugin that is not configured, a
 cycle, a route that collides with a core one, a route reaching for one of those
 cookies or skipping the origin check, an error code outside the plugin's own
-namespace, and a field the interface does not enumerate — which is how a plugin
-trying to put a middleware in front of the origin check is answered.
+namespace, a route name folding onto something every object already has, and a
+field the interface does not enumerate — which is how a plugin trying to put a
+middleware in front of the origin check is answered.
 
 A plugin's migrations run in the same versioned runner the core's do, recorded
 under the plugin's own id so its version numbers are its own. What such a
-migration created is measured before and after it runs: it may add exactly the
-tables it declares, each carrying its prefix, and it may not touch a table it
-does not own — the refusal rolls the whole migration back. There is no rollback
-of an applied one, and removing a plugin leaves its tables where they are.
+migration did is measured while it runs, not read out of its SQL: the tables it
+created or altered are read out of the catalogue rows its own transaction wrote,
+and the rows it wrote out of the transaction's write counters. It may add exactly
+the tables it declares, each carrying its prefix, and inside its own tables it
+may do as it likes; it may not create, alter, empty or remove a table it does not
+own, in any schema, and it may not write a row into one. The refusal rolls the
+whole migration back. What the measurements do not see — objects that are not
+tables, and a table dropped in a schema of its own — is written down in the
+reference rather than glossed here. There is no rollback of an applied
+migration, and removing a plugin leaves its tables where they are.
 
 ## Mounting it
 

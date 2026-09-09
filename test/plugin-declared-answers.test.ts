@@ -242,7 +242,7 @@ describe("a plugin route cannot exempt itself from the origin check (S-CSRF-6)",
 /**
  * A route name folds into an object path (3.15 D.2), and `${Id}.${string}` admits a segment every
  * object already carries. The fold refuses these by name; it also builds the path out of own
- * properties, so neither half depends on the other (E-656).
+ * properties, so neither half depends on the other (E-663).
  */
 describe("a route name may not fold onto something every object has", () => {
 	function namedRoute(name: string): Readonly<Record<string, unknown>> {
