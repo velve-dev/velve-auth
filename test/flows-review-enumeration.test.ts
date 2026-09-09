@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import { type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
+import { difference, postTo as request } from "./flows-fixtures.js";
 
 let mounted: MountedAuth;
 
@@ -15,54 +16,6 @@ const FREE = "free..address@example.com";
 const PASSWORD = "correct horse battery staple";
 const BROWSER =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0";
-
-/**
- * T-ENUM-1's method, extended by what a sign-up answer carries that a sign-in answer does not: an
- * identifier, three instants, a token — all random on both paths — and the address, which 3.15 C
- * puts in `User` and which the caller sent. Everything else must survive the normalisation.
- */
-function normalisedBody(text: string): Buffer {
-	return Buffer.from(
-		text
-			.replaceAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<id>")
-			.replaceAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, "<instant>")
-			.replaceAll(/[A-Za-z0-9_-]{43}/g, "<secret>")
-			.replaceAll(/[a-z.]+@example\.com/g, "<address>"),
-		"utf8",
-	);
-}
-
-function normalisedHeaders(answer: Response): string {
-	return [...answer.headers]
-		.filter(([name]) => name !== "date")
-		.map(([name, value]) => `${name}: ${value.replaceAll(/[A-Za-z0-9_-]{43}/g, "<secret>")}`)
-		.sort()
-		.join("\n");
-}
-
-function request(path: string, body: unknown, headers: Record<string, string> = {}): Request {
-	return new Request(`https://api.example.com${path}`, {
-		method: "POST",
-		headers: { Origin: TEST_ORIGIN, "Content-Type": "application/json", ...headers },
-		body: JSON.stringify(body),
-	});
-}
-
-async function difference(a: Response, b: Response): Promise<string[]> {
-	const found: string[] = [];
-	if (a.status !== b.status) {
-		found.push(`status ${a.status} against ${b.status}`);
-	}
-	if (normalisedHeaders(a) !== normalisedHeaders(b)) {
-		found.push(`headers\n${normalisedHeaders(a)}\nagainst\n${normalisedHeaders(b)}`);
-	}
-	const first = normalisedBody(await a.text());
-	const second = normalisedBody(await b.text());
-	if (Buffer.compare(first, second) !== 0) {
-		found.push(`body ${first.toString()} against ${second.toString()}`);
-	}
-	return found;
-}
 
 describe("S-ENUM-3: POST /sign-up answers a taken address as it answers a free one", () => {
 	beforeEach(async () => {

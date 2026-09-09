@@ -80,9 +80,10 @@ function randomLocalPart(length: number): string {
 /**
  * The address the cover registration is written under. It cannot be the one the caller sent — that
  * one is taken, and inserting it would raise where the free path inserts — so the domain the caller
- * sent is kept and the local part is drawn, at the length the caller's own local part had. Nothing
- * is invented: no domain is made up and no literal address appears here, which is what S-LINK-5's
- * scan is about, and the equal length keeps the index insert the same size (E-628, E-629).
+ * sent is kept and the local part is drawn. Nothing is invented: no domain is made up and no literal
+ * address appears here, which is what S-LINK-5's scan is about. The drawn part is the caller's own
+ * length or the sixty-four-bit floor, whichever is longer, so a local part under sixteen characters
+ * gets a cover longer than the address the caller sent (E-628, E-931).
  */
 function coverColumns(columns: IdentityColumns): IdentityColumns {
 	if (columns.email === null) {
@@ -194,6 +195,15 @@ async function removeTheAccountNobodyWasToldAbout(flow: SignUpFlow, userId: stri
 }
 
 /**
+ * What the address turned out to be. A lost insert race leaves `taken` with no owner: the unique
+ * index says the address is held, and the account holding it was gone again by the time it was
+ * looked for, so there is nobody to write to (E-930).
+ */
+type AddressOccupancy =
+	| { readonly kind: "free" }
+	| { readonly kind: "taken"; readonly owner: string | null };
+
+/**
  * The one message either branch sends, after the transaction has committed and the account's row
  * lock has gone (E-630). A `send` that throws undoes what stands: the artefact on the free branch
  * and the account with it. The cover branch has nothing committed to undo.
@@ -201,33 +211,27 @@ async function removeTheAccountNobodyWasToldAbout(flow: SignUpFlow, userId: stri
 async function announce(
 	flow: SignUpFlow,
 	registration: Registration,
-	collision: { readonly address: string | null; readonly taken: string | null },
+	address: string | null,
+	occupancy: AddressOccupancy,
 ): Promise<void> {
-	const { address, taken } = collision;
-	if (flow.email === undefined || address === null) {
-		return;
-	}
-	const { driver, schema } = flow.environment.services;
 	// An address means an artefact: `register` mints one whenever it writes a row carrying an
 	// address, and the cover writes one too — which is what makes the two branches the same length.
 	const minted = registration.artefact;
-	if (minted === null) {
+	if (flow.email === undefined || address === null || minted === null) {
 		return;
 	}
-	const message =
-		taken === null
-			? confirmationOf(registration.result.user, address, minted)
-			: noticeOf(taken, address);
-	try {
-		await sendOrUndo(
-			{ driver, schema, email: flow.email },
-			taken === null ? minted : null,
-			message,
-		);
-	} catch (failure) {
-		if (taken === null) {
-			await removeTheAccountNobodyWasToldAbout(flow, registration.userId);
+	const { driver, schema } = flow.environment.services;
+	const mailer = { driver, schema, email: flow.email };
+	if (occupancy.kind === "taken") {
+		if (occupancy.owner !== null) {
+			await sendOrUndo(mailer, null, noticeOf(occupancy.owner, address));
 		}
+		return;
+	}
+	try {
+		await sendOrUndo(mailer, minted, confirmationOf(registration.result.user, address, minted));
+	} catch (failure) {
+		await removeTheAccountNobodyWasToldAbout(flow, registration.userId);
 		throw failure;
 	}
 }
@@ -244,6 +248,78 @@ async function addressOwner(
 		address,
 	]);
 	return row?.taken_by ?? null;
+}
+
+const UNIQUE_VIOLATION = "23505";
+
+/** `pg` and `postgres.js` name it `code`, the test connection names it `sqlState`; both carry the
+ * five characters PostgreSQL sent. */
+function isUniqueViolation(cause: unknown): boolean {
+	if (typeof cause !== "object" || cause === null) {
+		return false;
+	}
+	const fields = cause as { readonly code?: unknown; readonly sqlState?: unknown };
+	return fields.code === UNIQUE_VIOLATION || fields.sqlState === UNIQUE_VIOLATION;
+}
+
+/**
+ * Which unique index a lost race hit is not in the error every driver hands over, so it is asked
+ * for: a name that is now taken is told so (3.4), an address that is now taken is answered by the
+ * cover, and a violation neither of them explains is not this function's to translate (E-930).
+ */
+async function whatTookTheIdentifiers(
+	environment: FlowEnvironment,
+	columns: IdentityColumns,
+): Promise<AddressOccupancy | null> {
+	if (columns.usernameKey !== null) {
+		const named = await environment.services.users.findUserByUsernameKey(columns.usernameKey);
+		if (named !== null) {
+			throw new VelveError("username_taken");
+		}
+	}
+	if (columns.email === null) {
+		return null;
+	}
+	return { kind: "taken", owner: await addressOwner(environment, columns.email) };
+}
+
+/**
+ * 3.13 fixes what a taken address is answered with, and occupancy is read before the transaction
+ * that inserts — so a concurrent registration can take the address in between and the unique index
+ * is the only thing that says so. A caller that loses that race is a caller registering a taken
+ * address, and gets what one gets; `/sign-up` declares no code for the failure and 3.15 D.1 makes
+ * that declaration a contract (E-930).
+ */
+async function registerAgainst(
+	flow: SignUpFlow,
+	context: RequestContext,
+	columns: IdentityColumns,
+	derived: DerivedPassword | null,
+	owner: string | null,
+): Promise<{ readonly registration: Registration; readonly occupancy: AddressOccupancy }> {
+	const discarding = async (
+		occupancy: AddressOccupancy,
+	): Promise<{ registration: Registration; occupancy: AddressOccupancy }> => ({
+		registration: await register(flow, context, columns, derived, true),
+		occupancy,
+	});
+	if (owner !== null) {
+		return discarding({ kind: "taken", owner });
+	}
+	try {
+		return {
+			registration: await register(flow, context, columns, derived, false),
+			occupancy: { kind: "free" },
+		};
+	} catch (failure) {
+		const winner = isUniqueViolation(failure)
+			? await whatTookTheIdentifiers(flow.environment, columns)
+			: null;
+		if (winner === null) {
+			throw failure;
+		}
+		return discarding(winner);
+	}
 }
 
 export async function signUp(
@@ -275,9 +351,14 @@ export async function signUp(
 		}
 	}
 
-	const taken = await addressOwner(environment, columns.email);
-	const registration = await register(flow, context, columns, derived, taken !== null);
-	context.cookies.setSession(registration.result.sessionToken);
-	await announce(flow, registration, { address: columns.email, taken });
-	return registration.result;
+	const attempted = await registerAgainst(
+		flow,
+		context,
+		columns,
+		derived,
+		await addressOwner(environment, columns.email),
+	);
+	context.cookies.setSession(attempted.registration.result.sessionToken);
+	await announce(flow, attempted.registration, columns.email, attempted.occupancy);
+	return attempted.registration.result;
 }
