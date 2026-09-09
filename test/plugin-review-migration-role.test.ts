@@ -5,7 +5,7 @@ import { coreMigrations } from "../src/core/db/migrations/index.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
-import { dropSchema, uniqueSchemaName } from "./db-fixtures.js";
+import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
 
@@ -151,5 +151,75 @@ describe("what the restricted role closes and what it does not (3.11)", () => {
 		const outcome = await outcomeOf(schema, migrationOf(sql), true);
 
 		expect(outcome.code).toBeUndefined();
+	});
+});
+
+/**
+ * `SET ROLE` changes `current_user` and leaves `session_user` alone, and `RESET ROLE` puts it back.
+ * A guard that reads `current_user` alone is therefore one statement from being undone — and a test
+ * harness that reaches the restricted role by `SET ROLE` from a superuser connection is exactly the
+ * configuration in which the guard cannot be observed to work at all (E-929).
+ */
+describe("a migration that resets the role it was checked under (3.11)", () => {
+	it("refuses a migration that resets the role and rewrites an address", async () => {
+		const schema = await freshSchema();
+		const driver = await connection();
+		const victim = await createUser(driver, schema, { email: "victim@example.com" });
+
+		const outcome = await outcomeOf(
+			schema,
+			migrationOf(
+				`RESET ROLE;
+				SET LOCAL track_counts = off;
+				UPDATE velve.user SET email = 'attacker@example.com' WHERE id = '${victim}';
+				SET LOCAL track_counts = on`,
+			),
+			true,
+		);
+
+		expect(outcome.code).toBeDefined();
+		const rows = await driver.query<{ email: string }>(
+			`SELECT email FROM ${schema}.user WHERE id = $1`,
+			[victim],
+		);
+		expect(rows[0]?.email).toBe("victim@example.com");
+	});
+
+	it("checks the connection again for the second plugin, not once for the run", async () => {
+		const schema = await freshSchema();
+		const driver = await connection();
+
+		const outcome = await asMigrationRole(driver, () =>
+			createVelveAuth(
+				configFor({
+					database: driver as Driver,
+					schema,
+					plugins: [
+						{
+							id: "first",
+							migrations: [{ version: 1, name: "escape", createsTables: [], sql: "RESET ROLE" }],
+						} as unknown as VelvePlugin,
+						{
+							id: "second",
+							migrations: [
+								{
+									version: 1,
+									name: "reach",
+									createsTables: [],
+									sql: `SET LOCAL track_counts = off;
+										DELETE FROM velve.session;
+										SET LOCAL track_counts = on`,
+								},
+							],
+						} as unknown as VelvePlugin,
+					],
+				}),
+			)
+				.migrate()
+				.then(() => ({}) as { code?: string })
+				.catch((error: { code?: string }) => error),
+		);
+
+		expect(outcome.code).toBeDefined();
 	});
 });

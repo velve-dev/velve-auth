@@ -233,3 +233,117 @@ describe("what a plugin may still do to what it created itself (3.11)", () => {
 		expect(await relationExists(schema, "audit_entry_user")).toBe(false);
 	});
 });
+
+/**
+ * The snapshot exempts what belongs to a table the plugin declared, so `createsTables` is what
+ * decides the exemption — and a declaration is something a plugin says rather than something it has
+ * done. Two ways that reached a core relation: a core **index** name is declarable, because the
+ * check on `createsTables` subtracts core table names and an index is not a table; and the declared
+ * set was aggregated across every migration of the plugin before the first one ran, so a later
+ * version's declaration exempted an earlier version's target (E-928).
+ */
+describe("what a declaration may exempt, and when (3.11)", () => {
+	async function migrateTwo(
+		schema: string,
+		id: string,
+		first: { name: string; createsTables: readonly string[]; sql: string },
+		second: { name: string; createsTables: readonly string[]; sql: string },
+	): Promise<{ readonly code?: string }> {
+		const driver = await connection();
+		return asMigrationRole(driver, () =>
+			createVelveAuth(
+				configFor({
+					database: driver as Driver,
+					schema,
+					plugins: [
+						{
+							id,
+							migrations: [
+								{ version: 1, ...first },
+								{ version: 2, ...second },
+							],
+						} as unknown as VelvePlugin,
+					],
+				}),
+			)
+				.migrate()
+				.then(() => ({}) as { code?: string })
+				.catch((error: { code?: string }) => error),
+		);
+	}
+
+	it("refuses a later migration's declaration reaching back over an earlier one's drop", async () => {
+		const schema = await freshSchema();
+		const driver = await connection();
+		await createUser(driver, schema, { email: "two@example.com" });
+
+		const refusal = await migrateTwo(
+			schema,
+			"user_email",
+			{ name: "drop", createsTables: [], sql: "DROP INDEX velve.user_email_key" },
+			{
+				name: "claim",
+				createsTables: ["user_email_key"],
+				sql: "CREATE TABLE velve.user_email_key (id integer PRIMARY KEY)",
+			},
+		);
+
+		expect(refusal.code).toBeDefined();
+		await expect(createUser(driver, schema, { email: "two@example.com" })).rejects.toThrow();
+	});
+
+	it("refuses declaring a name that is already a core relation of another kind", async () => {
+		const schema = await freshSchema();
+		const driver = await connection();
+
+		const refusal = await asMigrationRole(driver, () =>
+			createVelveAuth(
+				configFor({
+					database: driver as Driver,
+					schema,
+					plugins: [
+						{
+							id: "user_username",
+							migrations: [
+								{
+									version: 1,
+									name: "claim",
+									createsTables: ["user_username_key_key"],
+									sql: "CREATE TABLE velve.user_username_key_key (id integer PRIMARY KEY)",
+								},
+							],
+						} as unknown as VelvePlugin,
+					],
+				}),
+			)
+				.migrate()
+				.then(() => ({}) as { code?: string })
+				.catch((error: { code?: string }) => error),
+		);
+
+		expect(refusal.code).toBeDefined();
+	});
+
+	/**
+	 * The case that must stay green, told apart from the one above it: the index is exempt because
+	 * this plugin's own earlier migration created it, not because a name it declared matches one.
+	 */
+	it("lets a second migration drop an index its own first migration created, declaring nothing", async () => {
+		const schema = await freshSchema();
+
+		const refusal = await migrateTwo(
+			schema,
+			"audit",
+			{
+				name: "create",
+				createsTables: ["audit_entry"],
+				sql: `CREATE TABLE velve.audit_entry (id uuid PRIMARY KEY, note text);
+					CREATE INDEX audit_entry_note ON velve.audit_entry (note);`,
+			},
+			{ name: "drop_the_index", createsTables: [], sql: "DROP INDEX velve.audit_entry_note;" },
+		);
+
+		expect(refusal.code).toBeUndefined();
+		expect(await relationExists(schema, "audit_entry_note")).toBe(false);
+	});
+});
