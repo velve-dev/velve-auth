@@ -3,7 +3,7 @@ import type { Driver } from "../src/core/db/driver.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import { createVelveAuth, type VelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
-import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { asJavaScriptPlugin } from "./plugin-fixtures.js";
 
@@ -193,7 +193,66 @@ describe("what a plugin migration is refused for", () => {
 			],
 		} satisfies VelvePlugin<"audit">);
 
-		expect(refusal.code).toBe("migration_table_undeclared");
+		expect(refusal.code).toBe("migration_table_outside_the_schema");
+	});
+
+	it("refuses a migration that empties a core table without changing a column of it", async () => {
+		const migrated = await migratedSchema();
+
+		const refusal = await refusalOf(migrated, {
+			id: "audit",
+			migrations: [
+				{
+					version: 1,
+					name: "empty_the_sessions",
+					createsTables: [],
+					sql: "TRUNCATE velve.session;",
+				},
+			],
+		} satisfies VelvePlugin<"audit">);
+
+		expect(refusal.code).toBe("migration_foreign_table_changed");
+	});
+
+	// A statement that matches no row writes nothing, so the account has to exist for this to be a write.
+	it("refuses a migration that writes a row into a core table", async () => {
+		const migrated = await migratedSchema();
+		await createUser(migrated.connection, migrated.schema);
+
+		const refusal = await refusalOf(migrated, {
+			id: "audit",
+			migrations: [
+				{
+					version: 1,
+					name: "disable_every_account",
+					createsTables: [],
+					sql: "UPDATE velve.user SET disabled_at = now();",
+				},
+			],
+		} satisfies VelvePlugin<"audit">);
+
+		expect(refusal.code).toBe("migration_wrote_a_foreign_table");
+	});
+
+	it("lets a later migration alter a table an earlier one created", async () => {
+		const migrated = await migratedSchema();
+		const audit = auditPlugin();
+		const evolving: VelvePlugin<"audit"> = {
+			id: "audit",
+			migrations: [
+				...(audit.migrations ?? []),
+				{
+					version: 2,
+					name: "widen_audit_entry",
+					createsTables: [],
+					sql: "ALTER TABLE velve.audit_entry ADD COLUMN weight integer;",
+				},
+			],
+		};
+
+		await migrated.start([evolving]).migrate();
+
+		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1", "audit@2"]);
 	});
 
 	it("refuses a table that does not carry the plugin's prefix", async () => {

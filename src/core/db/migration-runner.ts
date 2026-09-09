@@ -23,24 +23,53 @@ import {
 const DEFAULT_SCHEMA = "velve";
 const ADVISORY_LOCK_NAMESPACE = 0x76656c76;
 
-const COLUMNS_OF_EVERY_TABLE = `
-SELECT child.relname AS table_name,
-       column_.attname AS column_name,
-       format_type(column_.atttypid, column_.atttypmod) AS column_type,
-       column_.attnotnull AS not_null
+/** The tables of the configured schema, which is the one schema the runner has to itself. */
+const TABLES_OF_THE_SCHEMA = `
+SELECT child.relname AS table_name
 FROM pg_class child
 JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
-JOIN pg_attribute column_ ON column_.attrelid = child.oid
-  AND column_.attnum > 0 AND NOT column_.attisdropped
-WHERE namespace_.nspname = $1 AND child.relkind IN ('r', 'p')
-ORDER BY child.relname, column_.attname`;
+WHERE namespace_.nspname = $1 AND child.relkind IN ('r', 'p')`;
+
+/**
+ * Every table this transaction created or altered, in any schema, read out of the catalogue rows it
+ * wrote rather than out of a before-and-after picture of the database — a picture of every schema
+ * is a picture of other people's work, and it moves while a migration runs (E-660).
+ */
+const TABLES_THIS_TRANSACTION_TOUCHED = `
+SELECT namespace_.nspname AS schema_name, child.relname AS table_name
+FROM pg_class child
+JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
+WHERE child.relkind IN ('r', 'p')
+  AND (child.xmin = pg_current_xact_id()::xid
+       OR EXISTS (SELECT 1 FROM pg_attribute column_
+                  WHERE column_.attrelid = child.oid
+                    AND column_.xmin = pg_current_xact_id()::xid))`;
+
+/**
+ * The rows written into each user table, as the backend has them so far. A catalogue row cannot
+ * show a row of data, so it cannot show a migration that disables every account in one statement —
+ * writing a core table is the thing 3.11 forbids in so many words (E-661). It is read twice and
+ * differenced: the counters carry whatever the backend has not yet reported, which reaches back
+ * before this transaction began. The statement this sentence may not quote is E-768's rule, met a
+ * second time (E-662).
+ */
+const ROWS_WRITTEN_SO_FAR = `
+SELECT schemaname AS schema_name, relname AS table_name,
+       n_tup_ins + n_tup_upd + n_tup_del AS written
+FROM pg_stat_xact_user_tables`;
+
+/** The counters above are kept only while `track_counts` is on, and a check that cannot run is not a pass. */
+const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
 type MigrationRefusalCode =
 	| "migration_duplicate_version"
 	| "migration_checksum_changed"
 	| "migration_table_undeclared"
 	| "migration_table_unprefixed"
-	| "migration_foreign_table_changed";
+	| "migration_table_outside_the_schema"
+	| "migration_foreign_table_changed"
+	| "migration_wrote_a_foreign_table"
+	| "migration_write_check_unavailable";
 
 export class MigrationRefusedError extends Error {
 	readonly code: MigrationRefusalCode;
@@ -58,16 +87,14 @@ export interface MigrationRunnerOptions {
 	readonly schema?: string;
 }
 
-interface ColumnRow {
+interface WrittenTableRow {
+	readonly schema_name: string;
 	readonly table_name: string;
-	readonly column_name: string;
-	readonly column_type: string;
-	readonly not_null: boolean;
+	readonly written: number;
 }
 
-/** Every table of the schema with the shape of its columns, so one comparison answers whether a
- * table appeared, went, or grew a column. */
-type SchemaShape = ReadonlyMap<string, string>;
+/** The rows written per table, keyed `schema.table`, as at the moment it was read. */
+type WriteCounters = ReadonlyMap<string, number>;
 
 function schemaLockKey(schema: string): number {
 	const digest = sha256(utf8ToBytes(schema));
@@ -169,13 +196,30 @@ async function readLedger(driver: Driver, schema: string): Promise<AppliedMigrat
 	);
 }
 
-async function readSchemaShape(tx: Driver, schema: string): Promise<SchemaShape> {
-	const shape = new Map<string, string>();
-	for (const row of await tx.query<ColumnRow>(COLUMNS_OF_EVERY_TABLE, [schema])) {
-		const column = `${row.column_name} ${row.column_type}${row.not_null ? " NOT NULL" : ""}`;
-		shape.set(row.table_name, `${shape.get(row.table_name) ?? ""}${column}, `);
+async function readWriteCounters(tx: Driver, migration: OwnedMigration): Promise<WriteCounters> {
+	const [counters] = await tx.query<{ enabled: string }>(COUNTERS_ARE_KEPT, []);
+	if (counters?.enabled !== "on") {
+		refuseOwned(
+			"migration_write_check_unavailable",
+			migration,
+			"track_counts is off, so what the migration wrote cannot be read",
+		);
 	}
-	return shape;
+	const written = new Map<string, number>();
+	for (const row of await tx.query<WrittenTableRow>(ROWS_WRITTEN_SO_FAR, [])) {
+		written.set(`${row.schema_name}.${row.table_name}`, Number(row.written));
+	}
+	return written;
+}
+
+async function readTableNames(tx: Driver, schema: string): Promise<ReadonlySet<string>> {
+	const rows = await tx.query<{ table_name: string }>(TABLES_OF_THE_SCHEMA, [schema]);
+	return new Set(rows.map((row) => `${schema}.${row.table_name}`));
+}
+
+async function readTablesTouched(tx: Driver): Promise<readonly string[]> {
+	const rows = await tx.query<WrittenTableRow>(TABLES_THIS_TRANSACTION_TOUCHED, []);
+	return rows.map((row) => `${row.schema_name}.${row.table_name}`).sort();
 }
 
 function refuseOwned(code: MigrationRefusalCode, migration: OwnedMigration, what: string): never {
@@ -185,45 +229,79 @@ function refuseOwned(code: MigrationRefusalCode, migration: OwnedMigration, what
 	);
 }
 
-/**
- * The tables a migration created are measured rather than read out of its SQL, so a statement the
- * runner cannot parse cannot smuggle a table past the declaration either (E-637).
- */
-function assertOnlyTheDeclaredTablesAppeared(
-	migration: OwnedMigration,
-	before: SchemaShape,
-	after: SchemaShape,
-): void {
-	const created = [...after.keys()].filter((table) => !before.has(table)).sort();
-	const removed = [...before.keys()].filter((table) => !after.has(table)).sort();
-	const declared = [...new Set(migration.createsTables)].sort();
+/** 3.11: a plugin's tables are the ones in the configured schema carrying its own prefix. */
+function isOwnedTable(qualified: string, migration: OwnedMigration, schema: string): boolean {
+	return qualified.startsWith(`${schema}.${migration.owner}_`);
+}
 
-	if (removed.length > 0) {
-		refuseOwned("migration_foreign_table_changed", migration, `it removed ${removed.join(", ")}`);
-	}
-	for (const table of created) {
-		if (!table.startsWith(`${migration.owner}_`)) {
+function localNameOf(qualified: string): string {
+	return qualified.slice(qualified.indexOf(".") + 1);
+}
+
+/**
+ * What a migration did is measured rather than read out of its SQL, so a statement the runner
+ * cannot parse cannot get past the declaration either (E-637). Outside the plugin's own tables
+ * nothing may be created, altered or removed; inside them the plugin may do as it likes, which is
+ * what lets a later migration alter a table an earlier one created (E-660).
+ */
+function assertNothingButItsOwnTablesChanged(
+	migration: OwnedMigration,
+	schema: string,
+	before: ReadonlySet<string>,
+	after: ReadonlySet<string>,
+	touched: readonly string[],
+): void {
+	for (const table of touched) {
+		if (isOwnedTable(table, migration, schema)) {
+			continue;
+		}
+		if (!table.startsWith(`${schema}.`)) {
 			refuseOwned(
-				"migration_table_unprefixed",
+				"migration_table_outside_the_schema",
 				migration,
-				`it created ${table}, which does not carry the prefix ${migration.owner}_`,
+				`it reached ${table}, and a plugin's tables live in ${schema}`,
 			);
 		}
+		refuseOwned(
+			before.has(table) ? "migration_foreign_table_changed" : "migration_table_unprefixed",
+			migration,
+			`it reached ${table}, which is not one of the tables named ${migration.owner}_`,
+		);
 	}
-	if (created.join(",") !== declared.join(",")) {
+
+	for (const table of before) {
+		if (!after.has(table) && !isOwnedTable(table, migration, schema)) {
+			refuseOwned("migration_foreign_table_changed", migration, `it removed ${table}`);
+		}
+	}
+
+	const declared = [...new Set(migration.createsTables)].sort();
+	const appeared = [...after]
+		.filter((table) => !before.has(table))
+		.map(localNameOf)
+		.sort();
+	if (appeared.join(",") !== declared.join(",")) {
 		refuseOwned(
 			"migration_table_undeclared",
 			migration,
-			`it declares [${declared.join(", ")}] and created [${created.join(", ")}]`,
+			`it declares [${declared.join(", ")}] and created [${appeared.join(", ")}]`,
 		);
 	}
-	for (const [table, columns] of before) {
-		if (after.get(table) !== columns) {
-			refuseOwned(
-				"migration_foreign_table_changed",
-				migration,
-				`it changed the columns of ${table}`,
-			);
+}
+
+/**
+ * The row-level half, as the difference between two readings, because the counters are the
+ * backend's pending totals rather than this transaction's alone (E-661).
+ */
+function assertNoForeignTableWasWritten(
+	migration: OwnedMigration,
+	schema: string,
+	before: WriteCounters,
+	after: WriteCounters,
+): void {
+	for (const [table, written] of after) {
+		if (written > (before.get(table) ?? 0) && !isOwnedTable(table, migration, schema)) {
+			refuseOwned("migration_wrote_a_foreign_table", migration, `it wrote rows in ${table}`);
 		}
 	}
 }
@@ -283,9 +361,22 @@ async function applyOwnedMigration(
 			return;
 		}
 
-		const before = await readSchemaShape(tx, schema);
+		const writtenBefore = await readWriteCounters(tx, migration);
+		const before = await readTableNames(tx, schema);
 		await applyStatements(tx, schema, migration);
-		assertOnlyTheDeclaredTablesAppeared(migration, before, await readSchemaShape(tx, schema));
+		assertNoForeignTableWasWritten(
+			migration,
+			schema,
+			writtenBefore,
+			await readWriteCounters(tx, migration),
+		);
+		assertNothingButItsOwnTablesChanged(
+			migration,
+			schema,
+			before,
+			await readTableNames(tx, schema),
+			await readTablesTouched(tx),
+		);
 		await tx.query(
 			`INSERT INTO ${ledger} (plugin_id, version, name, checksum) VALUES ($1, $2, $3, $4)`,
 			[migration.owner, migration.version, migration.name, migrationChecksum(migration)],

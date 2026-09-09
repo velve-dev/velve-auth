@@ -238,3 +238,37 @@ describe("a plugin route cannot exempt itself from the origin check (S-CSRF-6)",
 		expect(exempt.filter((name) => name !== "signIn.oauth.callback")).toStrictEqual([]);
 	});
 });
+
+/**
+ * A route name folds into an object path (3.15 D.2), and `${Id}.${string}` admits a segment every
+ * object already carries. The fold refuses these by name; it also builds the path out of own
+ * properties, so neither half depends on the other (E-656).
+ */
+describe("a route name may not fold onto something every object has", () => {
+	function namedRoute(name: string): Readonly<Record<string, unknown>> {
+		return {
+			name,
+			method: "POST",
+			path: "/x/quota/spend",
+			input: object({}),
+			errors: [],
+			caller: "anonymous",
+			freshness: "not_required",
+			originCheck: "checked",
+			rateLimit: { perIpAddress: "none", perAccount: "none" },
+			handler: () => Promise.resolve({ seen: true }),
+		};
+	}
+
+	it("refuses constructor as the last segment of a route name", async () => {
+		await expect(
+			mount([asJavaScriptPlugin({ id: "quota", routes: [namedRoute("quota.constructor")] })]),
+		).rejects.toMatchObject({ code: "route_name_segment_reserved" });
+	});
+
+	it("refuses __proto__ as a segment in the middle of one", async () => {
+		await expect(
+			mount([asJavaScriptPlugin({ id: "quota", routes: [namedRoute("quota.__proto__.spend")] })]),
+		).rejects.toMatchObject({ code: "route_name_segment_reserved" });
+	});
+});

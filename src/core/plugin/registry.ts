@@ -1,11 +1,7 @@
 import { VelveStartupError } from "../auth/startup.js";
 import type { OwnedMigration } from "../db/migration.js";
-import {
-	type AnyErrorCode,
-	type PluginErrorCode,
-	registerDeclaredPluginErrorCodes,
-	VELVE_ERROR_CODES,
-} from "../http/error-map.js";
+import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
+import type { RateLimitRule } from "../http/rate-limit.js";
 import {
 	type AnyRoute,
 	defineRoute,
@@ -53,6 +49,12 @@ export interface PluginRuntime {
 	readonly routes: readonly AnyRoute[];
 	/** 3.11: the same versioned runner, in the same dependency order, each under its own id (E-635). */
 	readonly migrations: readonly OwnedMigration[];
+	/**
+	 * The codes every configured plugin declares. They are published to the process-wide registry by
+	 * the assembly and not here, because a start that refuses after this returns must leave nothing
+	 * behind (E-659).
+	 */
+	readonly declaredErrorCodes: readonly PluginErrorCode[];
 	readonly hooks: PluginHookDispatcher;
 	contextOf(route: RouteMetadata): FrozenContext;
 	/** Whether any plugin listens at a point, so a caller can skip the work an event costs to build. */
@@ -305,24 +307,39 @@ function ownedMigrationsOf(plugins: readonly VelvePlugin[]): readonly OwnedMigra
 	);
 }
 
+type ContributedDeclaration = RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>;
+
+/**
+ * The rule is layered over the declaration rather than copied out of it. `defineRoute` reads every
+ * field by property access, and a copy would take own enumerable properties only — which would
+ * silently drop a field a plugin from JavaScript carries on a prototype, `handler` included, and
+ * would make E-781's reason for the `in` above false (E-658).
+ */
+function withTheRuleTheMapNames(
+	declaration: ContributedDeclaration,
+	rule: RateLimitRule | undefined,
+): ContributedDeclaration {
+	if (rule === undefined) {
+		return declaration;
+	}
+	const layered: ContributedDeclaration = Object.create(declaration);
+	Object.defineProperty(layered, "rateLimit", { value: rule, enumerable: true });
+	return layered;
+}
+
 function routesOf(plugin: VelvePlugin): readonly AnyRoute[] {
 	assertNoRouteReadsACoreCookie(plugin);
 	assertNoRouteExemptsItselfFromTheOriginCheck(plugin);
-	const rules = plugin.rateLimitRules ?? {};
-	return (plugin.routes ?? []).map((declaration) => {
-		const rule = (rules as Readonly<Record<string, RateLimitRuleOf<typeof declaration>>>)[
-			declaration.name
-		];
-		return defineRoute({
-			...(declaration as RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>),
-			...(rule === undefined ? {} : { rateLimit: rule }),
-		});
-	});
+	const rules: Readonly<Record<string, RateLimitRule>> = plugin.rateLimitRules ?? {};
+	return (plugin.routes ?? []).map((declaration) =>
+		defineRoute(
+			withTheRuleTheMapNames(
+				declaration as ContributedDeclaration,
+				Object.hasOwn(rules, declaration.name) ? rules[declaration.name] : undefined,
+			),
+		),
+	);
 }
-
-type RateLimitRuleOf<Declaration> = Declaration extends { readonly rateLimit: infer Rule }
-	? Rule
-	: never;
 
 function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatcher {
 	async function run<Event>(
@@ -371,9 +388,6 @@ export function createPluginRuntime(options: {
 		assertEveryDeclaredTableIsItsOwn(plugin);
 	}
 	const ordered = inDependencyOrder(options.plugins);
-	registerDeclaredPluginErrorCodes(
-		ordered.flatMap((plugin) => (plugin.errorCodes ?? []) as readonly PluginErrorCode[]),
-	);
 
 	const registered: RegisteredPlugin[] = [];
 	const hooks = dispatcher(registered);
@@ -410,6 +424,9 @@ export function createPluginRuntime(options: {
 		plugins: ordered,
 		routes,
 		migrations: ownedMigrationsOf(ordered),
+		declaredErrorCodes: ordered.flatMap(
+			(plugin) => (plugin.errorCodes ?? []) as readonly PluginErrorCode[],
+		),
 		hooks,
 		contextOf: (route) => contextByRoute.get(route) ?? coreContext,
 		listensTo,

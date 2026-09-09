@@ -22,7 +22,8 @@ type StartupErrorCode =
 	| "plugin_error_code_not_namespaced"
 	| "plugin_error_code_undeclared"
 	| "plugin_rate_limit_rule_unmatched"
-	| "route_namespace_conflict";
+	| "route_namespace_conflict"
+	| "route_name_segment_reserved";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: the six purpose keys are derived from a root key of 32 bytes",
@@ -59,6 +60,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a plugin declares a rateLimitRules entry for a route it does not contribute, so the rule would limit nothing",
 	route_namespace_conflict:
 		"two route names fold onto the same object path, so one server method would shadow the other",
+	route_name_segment_reserved:
+		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
 };
 
 export class VelveStartupError extends Error {
