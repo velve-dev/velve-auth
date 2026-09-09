@@ -1,26 +1,40 @@
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const workflow = readFileSync(`${repositoryRoot}/.github/workflows/ci.yml`, "utf8");
 
 const STEP = "- name: Reject AI attribution";
 const BLOCK_SCALAR = /^(\s*)run: \|\s*$/;
+const ASSISTANTS = /^\s*ASSISTANTS: '([^']+)'/m;
 
 /**
- * The step's own convention: a search reports three states, and the third ends the job.
- * Nothing enforced it, so the fourth scan in the step went back to discarding its
- * consumer's status and only a plant found it (E-807). This is that enforcement.
+ * The step's own convention: a status is read for every state it can carry, and the one
+ * meaning "could not look" ends the job. Nothing enforced it, so the fourth scan in the
+ * step went back to discarding its consumer's status and only a plant found it (E-807).
  *
- * The matchers are enumerated rather than inferred, so a scan built on a command not
- * named here is invisible to every assertion below (E-812).
+ * The structural half below is one spelling deep by construction and cannot see a
+ * refusal that is deleted or inverted rather than misspelt; the behavioural half is what
+ * covers the semantic, and E-815 is why both are here.
  */
 const MATCHER = /(?:^|[|;&(]|\bxargs\s+)\s*(?:git\s+)?(?:grep|awk|cmp)\b/;
 const STATUS_CAPTURED = /\|\|\s*([A-Za-z_][A-Za-z0-9_]*)=\$\?\s*$/;
 const STATUS_DISCARDED = /\|\|\s*(?::|true)\s*(?:$|[;)])/;
 const PIPELINE_AS_CONDITION = /^(?:if|while|until)\b[^\n]*[^|]\|[^|]/;
 const VARIABLE_REFERENCE = /"\$([A-Za-z_][A-Za-z0-9_]*)"|\bcase\s+"\$([A-Za-z_][A-Za-z0-9_]*)"/g;
+const CASE_OPENER = /^case\s/;
 const DEFAULT_BRANCH = /^\*\)/;
 const REFUSES = /\brefuse\b/;
 
@@ -73,9 +87,10 @@ function capturedStatus(command: string): string | undefined {
 	return STATUS_CAPTURED.exec(command)?.[1];
 }
 
+const body = attributionStepBody();
+const commands = commandLines(body);
+
 describe("the attribution step reads every status it depends on", () => {
-	const body = attributionStepBody();
-	const commands = commandLines(body);
 	const matchers = commands.filter((command) => MATCHER.test(command));
 	const captures = commands.map(capturedStatus).filter((name) => name !== undefined);
 
@@ -108,10 +123,15 @@ describe("the attribution step reads every status it depends on", () => {
 		expect(consumed).toEqual(captures);
 	});
 
-	/** Every default branch, not merely one of them: neutering either leaves the other. */
-	it("refuses in every default branch it has", () => {
+	/**
+	 * Counted against the cases that exist, not against the branches that survive: an
+	 * assertion over "every default branch" is satisfied by deleting one (E-815).
+	 */
+	it("refuses in the default branch of every case it opens", () => {
+		const cases = commands.filter((command) => CASE_OPENER.test(command));
 		const defaults = commands.filter((command) => DEFAULT_BRANCH.test(command));
-		expect(defaults.length).toBeGreaterThan(0);
+		expect(cases.length).toBeGreaterThan(0);
+		expect(defaults.length).toEqual(cases.length);
 		expect(defaults.filter((command) => !REFUSES.test(command))).toEqual([]);
 	});
 
@@ -121,5 +141,89 @@ describe("the attribution step reads every status it depends on", () => {
 
 	it("reads no pipeline as a condition", () => {
 		expect(commands.filter((command) => PIPELINE_AS_CONDITION.test(command))).toEqual([]);
+	});
+});
+
+/** The literal would itself be a finding in this file, so it is assembled (CLAUDE.md §4). */
+const PLANTED_MARKER = ["Gener", "ated ", "with"].join("");
+
+const scratchDirectories: string[] = [];
+
+function plantedRepository(build: (directory: string) => void): string {
+	const directory = mkdtempSync(join(tmpdir(), "velve-attribution-"));
+	scratchDirectories.push(directory);
+	const git = (...args: string[]) =>
+		execFileSync("git", args, { cwd: directory, stdio: "pipe", encoding: "utf8" });
+	git("init", "-q", "-b", "main");
+	git("config", "user.email", "plant@example.invalid");
+	git("config", "user.name", "Plant");
+	writeFileSync(join(directory, "README.md"), "a repository with nothing to find\n");
+	build(directory);
+	git("add", "-A");
+	git("commit", "-q", "-m", "chore: start");
+	git("update-ref", "refs/remotes/origin/main", "HEAD");
+	return directory;
+}
+
+function runStep(directory: string, brokenCommand?: string): number {
+	const script = join(directory, "attribution-step.sh");
+	writeFileSync(script, body);
+	let path = String(process.env.PATH);
+	if (brokenCommand !== undefined) {
+		const shims = join(directory, "shims");
+		mkdirSync(shims, { recursive: true });
+		const shim = join(shims, brokenCommand);
+		writeFileSync(shim, "#!/bin/sh\nexit 2\n");
+		chmodSync(shim, 0o755);
+		path = `${shims}:${path}`;
+	}
+	const assistants = ASSISTANTS.exec(workflow)?.[1];
+	if (assistants === undefined) {
+		throw new Error("the step declares no ASSISTANTS");
+	}
+	const finished = spawnSync("bash", ["-e", script], {
+		cwd: directory,
+		env: { ...process.env, PATH: path, ASSISTANTS: assistants },
+		encoding: "utf8",
+	});
+	return finished.status ?? -1;
+}
+
+afterAll(() => {
+	for (const directory of scratchDirectories) {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+/**
+ * A refusal that is deleted or inverted rather than misspelt passes every structural
+ * assertion above, and both mutations restore a false pass at runtime (E-815). Only
+ * running the step catches that, so these run it.
+ */
+describe("the attribution step refuses when a scan cannot run", () => {
+	it("passes a repository with nothing to find", () => {
+		expect(runStep(plantedRepository(() => {}))).toBe(0);
+	});
+
+	it("fails on a marker in a tracked file", () => {
+		const directory = plantedRepository((where) => {
+			writeFileSync(join(where, "planted.txt"), `${PLANTED_MARKER} something.\n`);
+		});
+		expect(runStep(directory)).toBe(1);
+	});
+
+	it("fails when grep cannot run", () => {
+		expect(runStep(plantedRepository(() => {}), "grep")).toBe(1);
+	});
+
+	it("fails when awk cannot run", () => {
+		const directory = plantedRepository((where) => {
+			symlinkSync("README.md", join(where, "planted-link.md"));
+		});
+		expect(runStep(directory, "awk")).toBe(1);
+	});
+
+	it("fails when cmp cannot run", () => {
+		expect(runStep(plantedRepository(() => {}), "cmp")).toBe(1);
 	});
 });
