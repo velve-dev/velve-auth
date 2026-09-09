@@ -28,6 +28,9 @@ function start(overrides: Partial<VelveAuthConfig<"email">>): () => unknown {
 
 const CREDENTIALS = { clientId: "id", clientSecret: "secret" };
 
+/** The callback route's own URL: every provider's `redirect_uri` is this with the id appended (E-540). */
+const CALLBACK_BASE_URL = "https://api.example.com/sign-in/oauth/callback";
+
 const GENERIC_ENDPOINTS = {
 	authorizationEndpoint: "https://issuer.example/authorize",
 	tokenEndpoint: "https://issuer.example/token",
@@ -42,12 +45,14 @@ const GENERIC_ENDPOINTS = {
 const NAMED_PROVIDER_ONLY: OAuthConfig = {
 	providers: { google: { clientId: "id", clientSecret: "secret" } },
 	trustedProviders: ["google"],
+	callbackBaseUrl: CALLBACK_BASE_URL,
 };
 
 const GENERIC_PROVIDER_ONLY: OAuthConfig = {
 	providers: { mycorp: { clientId: "id", clientSecret: "secret", ...GENERIC_ENDPOINTS } },
 	trustedProviders: [],
 	storeTokens: true,
+	callbackBaseUrl: CALLBACK_BASE_URL,
 };
 
 const BOTH_KINDS: OAuthConfig = {
@@ -56,6 +61,7 @@ const BOTH_KINDS: OAuthConfig = {
 		mycorp: { clientId: "id", clientSecret: "secret", ...GENERIC_ENDPOINTS, subjectClaim: "oid" },
 	},
 	trustedProviders: ["github"],
+	callbackBaseUrl: CALLBACK_BASE_URL,
 };
 
 /**
@@ -89,7 +95,13 @@ describe("the fourteen providers of 3.10 are one list, written twice", () => {
 	it("starts for every one of them configured with credentials alone", () => {
 		for (const provider of KNOWN_PROVIDERS) {
 			expect(
-				start({ oauth: { providers: { [provider]: CREDENTIALS }, trustedProviders: [] } }),
+				start({
+					oauth: {
+						providers: { [provider]: CREDENTIALS },
+						trustedProviders: [],
+						callbackBaseUrl: CALLBACK_BASE_URL,
+					},
+				}),
 				provider,
 			).not.toThrow();
 		}
@@ -112,6 +124,7 @@ describe("the oauth configuration seam (3.15 A.8)", () => {
 		const incomplete = {
 			providers: { mycorp: { clientId: "id", clientSecret: "secret" } },
 			trustedProviders: [],
+			callbackBaseUrl: CALLBACK_BASE_URL,
 		} satisfies OAuthConfig;
 
 		expect(start({ oauth: incomplete })).toThrowError(VelveStartupError);
@@ -122,6 +135,7 @@ describe("the oauth configuration seam (3.15 A.8)", () => {
 		const incomplete = {
 			providers: { mycorp: { clientId: "id", clientSecret: "secret" } },
 			trustedProviders: [],
+			callbackBaseUrl: CALLBACK_BASE_URL,
 		} satisfies OAuthConfig;
 
 		try {

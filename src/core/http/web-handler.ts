@@ -39,11 +39,27 @@ function requestUrl(request: Request): URL | null {
 	}
 }
 
+/** The same rule as `readQuery`: a repeated name is refused rather than one of its values chosen. */
+function readForm(text: string): Record<string, string> {
+	const fields: Record<string, string> = Object.create(null);
+	for (const [name, value] of new URLSearchParams(text)) {
+		if (Object.hasOwn(fields, name)) {
+			throw new VelveError("invalid_input");
+		}
+		fields[name] = value;
+	}
+	return fields;
+}
+
 async function readInput(request: Request, url: URL, match: RouteMatch): Promise<unknown> {
 	if (match.route.method === "GET") {
 		return { ...readQuery(url), ...match.pathParameters };
 	}
 	const text = await request.text();
+	// Section 1 C50: the `form_post` callback is posted by the provider, not by the application.
+	if (match.route.requestBody === "form") {
+		return { ...readForm(text), ...match.pathParameters };
+	}
 	if (text === "") {
 		return { ...match.pathParameters };
 	}

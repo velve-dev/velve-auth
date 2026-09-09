@@ -121,11 +121,10 @@ async function register(
 			...written,
 			emailVerifiedAt: null,
 		});
-		const issued = await sessions.issue({
+		const issued = await sessions.boundTo(transaction).issue({
 			userId: created.id,
 			factors: derived === null ? [] : ["password"],
 			observed: observedIn(context),
-			transaction,
 		});
 		if (derived !== null) {
 			await writePassword(

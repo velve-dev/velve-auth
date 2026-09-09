@@ -136,9 +136,33 @@ option of both functions.
 
 ### Third-party sign-in
 
-Not built yet. The configuration is declared — `oauth.providers` takes the
-fourteen providers of architecture 3.10 by name and any other id with its own
-endpoints, beside `trustedProviders` and `storeTokens` — and no route reads it.
+Built. The authorisation-code flow with PKCE S256 — not optional, and with no
+branch that downgrades it — a `state` that lives in the database while the
+cookie holds only a pointer to it, a `nonce` under OIDC, the `iss` check of
+RFC 9207, and the ID token verified against the provider's JWKS under a list of
+asymmetric algorithms that does not contain `none`. Fourteen providers are built
+in and any other is a set of endpoints and a subject claim in your
+configuration; no discovery document is ever fetched, so an endpoint the library
+calls is one you wrote down.
+
+`auth.signIn.oauth.start` hands you an authorisation URL and the cookie
+instruction that belongs to it; the callback answers 302 to a path you chose,
+and that redirect is the only `Location` this library emits. In an existing
+session, `auth.identity.link.start` links a second provider to the account you
+are signed in as — the account and the session are both fixed server-side, so no
+callback can point either somewhere else — and `auth.identity.unlink` refuses to
+remove your last way in. Linking re-issues the session it was started from, a new
+token in place of the old row, and leaves your other devices signed in; a link
+whose own session was revoked or signed out while it was outstanding is refused
+rather than handing back a fresh one.
+
+**The linking rule is the part that does not bend.** `(provider, subject)` is
+the only key; the e-mail address is an attribute and never a link. An identity
+is joined to an existing account automatically only when the provider reports
+the address verified **and** the local account is verified **and** the provider
+stands in `trustedProviders` — three conditions, no switch that removes one. The
+library invents no address for a provider that reports none, and creates no
+account it cannot name.
 
 ### Email flows
 

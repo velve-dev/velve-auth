@@ -46,16 +46,16 @@ export interface SessionServiceOptions {
 
 export interface SessionService {
 	readonly settings: SessionSettings;
+	/**
+	 * The same service over another driver. A caller that must write a session inside a transaction
+	 * it already owns needs one carrying the configured deadlines and metadata mode, and no seam
+	 * hands those on beside the service itself (E-969).
+	 */
+	boundTo(driver: Driver): SessionService;
 	issue(input: {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
-		/**
-		 * A caller that already has a transaction open issues the session inside it. Without this a
-		 * flow has to insert the row itself to make it part of its own transaction, and it cannot:
-		 * the metadata mode of L-10 lives here and nowhere a route can reach it (E-625).
-		 */
-		readonly transaction?: Driver;
 	}): Promise<IssuedSession>;
 	reissue(input: {
 		readonly previousToken: string;
@@ -65,6 +65,18 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	reissueAfterCredentialChange(input: {
 		readonly resolved: SessionResolution;
+		readonly factors: readonly AuthenticationFactor[];
+		readonly observed: ObservedRequest;
+	}): Promise<IssuedSession>;
+	/**
+	 * S-FIX-1 where the proof of ownership is a consumed row and not a session cookie: the caller
+	 * names the one session to replace, and every other session of the account is left alone. A
+	 * named row that is no longer there raises `PreviousSessionMissingError` unmapped, because what
+	 * the outside is told about it depends on which artefact named the row (E-961).
+	 */
+	reissueSessionOfUser(input: {
+		readonly actor: Actor;
+		readonly previousSessionId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
@@ -103,14 +115,10 @@ function resolutionOf(userId: string, session: Session, observedAt: Date): Sessi
 export function createSessionService(options: SessionServiceOptions): SessionService {
 	const settings = sessionSettingsOf(options.session);
 	const metadataMode = options.sessionMetadata ?? DEFAULT_SESSION_METADATA_MODE;
-	const schema = options.schema ?? "velve";
-	const sessions = createSessionRepository({ driver: options.driver, schema });
-
-	function sessionsWithin(transaction: Driver | undefined): typeof sessions {
-		return transaction === undefined
-			? sessions
-			: createSessionRepository({ driver: transaction, schema });
-	}
+	const sessions = createSessionRepository({
+		driver: options.driver,
+		schema: options.schema ?? "velve",
+	});
 
 	function metadataOf(observed: ObservedRequest): SessionMetadata {
 		return sessionMetadataFor(metadataMode, observed);
@@ -172,9 +180,11 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	return {
 		settings,
 
-		async issue({ userId, factors, observed, transaction }) {
+		boundTo: (driver) => createSessionService({ ...options, driver }),
+
+		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();
-			const session = await sessionsWithin(transaction).insertSession(
+			const session = await sessions.insertSession(
 				insertFor(userId, factors, observed, issued.tokenHash),
 			);
 			return { token: issued.token, session };
@@ -198,6 +208,16 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
 				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash),
+			});
+			return { token: issued.token, session };
+		},
+
+		async reissueSessionOfUser({ actor, previousSessionId, factors, observed }) {
+			const issued = createSessionToken();
+			const session = await sessions.replaceSessionOwnedBy({
+				actor,
+				previousSessionId,
+				insert: insertFor(actor, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},

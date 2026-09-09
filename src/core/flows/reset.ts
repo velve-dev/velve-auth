@@ -72,11 +72,10 @@ async function replacePassword(
 		driver: input.transaction,
 		schema,
 	}).deleteEverySessionOwnedBy({ actor: input.actor });
-	const issued = await sessions.issue({
+	const issued = await sessions.boundTo(input.transaction).issue({
 		userId: input.userId,
 		factors: ["password"],
 		observed: observedIn(context),
-		transaction: input.transaction,
 	});
 	// L-12: the session this password was stored by, written with it in one statement (E-626).
 	await writePassword(
