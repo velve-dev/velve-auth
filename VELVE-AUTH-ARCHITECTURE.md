@@ -137,7 +137,7 @@ Source references are relative to `/home/claude/better-auth/` and come from the 
 | A51 Health endpoint `GET /ok` | Delivers `{ok:true}` (`api/routes/ok.ts`) | Omit | The application takes it over. A health check belongs to the application, not to a library that runs in the same process. |
 | A52 Error page `GET /error` | HTML in dev, 302 in prod (`api/routes/error.ts:374-437`) | Omit | Nobody renders HTML. Velve Auth delivers stable error codes (section 3.13); the application displays them. Reflecting a query parameter back as HTML was GHSA-9x4v-xfq5-m8x5. |
 
-**A: Adopt 26 · Solve differently 11 · Omit 12 · Surpass 3**
+**A: Adopt 23 · Solve differently 14 · Omit 12 · Surpass 3**
 
 ---
 
@@ -620,7 +620,7 @@ row names why the capability is better placed there.
 | I4 Connector `AND` / `OR` | `AND` default, `OR` optional (`access.ts:87-104`) | Omit | The application takes it over; connective semantics belong to the rule, not to the library. |
 | I5 Default statements organization | `organization[…]`, `member[…]`, `invitation[…]`, `team[…]` (`organization/access/statement.ts:3-41`) | Omit | The application takes it over. A bundled vocabulary for organisations presupposes that organisations exist — here they do not. |
 
-#### I.2 Organization plugin (44)
+#### I.2 Organization plugin (54)
 
 | Feature | Better Auth | Velve Auth | Reasoning |
 |---|---|---|---|

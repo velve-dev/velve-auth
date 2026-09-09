@@ -135,7 +135,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | A51 Health-Endpunkt `GET /ok` | Liefert `{ok:true}` (`api/routes/ok.ts`) | Weglassen | Die Anwendung übernimmt. Ein Health-Check gehört zur Anwendung, nicht zu einer Bibliothek, die im selben Prozess läuft. |
 | A52 Fehlerseite `GET /error` | HTML in Dev, 302 in Prod (`api/routes/error.ts:374-437`) | Weglassen | Niemand rendert HTML. Velve Auth liefert stabile Fehlercodes (Abschnitt 3.13); die Anwendung stellt sie dar. Das Zurückspiegeln eines Query-Parameters als HTML war GHSA-9x4v-xfq5-m8x5. |
 
-**A: Übernehmen 26 · Anders lösen 11 · Weglassen 12 · Übertreffen 3**
+**A: Übernehmen 23 · Anders lösen 14 · Weglassen 12 · Übertreffen 3**
 
 ---
 
@@ -618,7 +618,7 @@ Zeile nennt, warum die Fähigkeit dort besser aufgehoben ist.
 | I4 Connector `AND` / `OR` | `AND` Vorgabe, `OR` optional (`access.ts:87-104`) | Weglassen | Die Anwendung übernimmt; Verknüpfungssemantik gehört zur Regel, nicht zur Bibliothek. |
 | I5 Vorgabe-Statements Organization | `organization[…]`, `member[…]`, `invitation[…]`, `team[…]` (`organization/access/statement.ts:3-41`) | Weglassen | Die Anwendung übernimmt. Ein mitgeliefertes Vokabular für Organisationen setzt voraus, dass es Organisationen gibt — die gibt es hier nicht. |
 
-#### I.2 Organization-Plugin (44)
+#### I.2 Organization-Plugin (54)
 
 | Funktion | Better Auth | Velve Auth | Begründung |
 |---|---|---|---|
