@@ -3863,6 +3863,8 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 - **S-TIM-6:** Every endpoint whose response must be identical for existing and non-existing accounts has exactly one code path that performs the same work regardless of the outcome: at password endpoints one KDF call with identical parameters (S-TIM-2), at endpoints without a KDF — request reset, request magic link; the confirmation is requested only from a session and has no non-existence branch (B.5) — the same sequence of database queries and in every case exactly one call of the send callback, in which it is only then decided which message goes out. The account-related rate counter is advanced on the same row for both cases (S-RATE-7). There is no configurable minimum response duration. *(Section 3.16, L-1; section 3.13: "Server-side the true reason is always logged")*
 - **S-TIM-7:** The state `email_verified_at IS NULL` does not influence the sign-in: it delivers the same session as with a confirmed address, and the state is visible exclusively as `User.emailVerifiedAt` in the result. There is no lock on unconfirmed accounts (section 1, A5). *(Section 3.15, B.1 and B.5)*
 
+---
+
 ### 5.2 FIX — Session fixation
 
 **(a) The error class.** Fixation exists when a session identifier that the attacker knows survives a change of trust level. With opaque database tokens the classic URL variant falls away; three real routes remain: an anonymous row is promoted to the authenticated row by `UPDATE session SET user_id`; a privilege change (completion of the second factor, password change) changes only one field instead of replacing the row; or the old cookie survives because the new one carries a different `Path` or `Domain` and the browser sends both.
