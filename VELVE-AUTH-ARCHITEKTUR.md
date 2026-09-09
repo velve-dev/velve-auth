@@ -1292,6 +1292,7 @@ CREATE TABLE velve.oauth_flow (
   nonce           text,
   redirect_path   text,            -- ein Pfad, niemals eine vollständige URL
   link_to_user_id uuid REFERENCES velve.user(id) ON DELETE CASCADE,
+  link_from_session_id uuid,       -- die Sitzung, in der die Verknüpfung gestartet wurde; kein Fremdschlüssel
   created_at      timestamptz NOT NULL DEFAULT now(),
   expires_at      timestamptz NOT NULL
 );
@@ -1543,6 +1544,16 @@ Der Schlüssel enthält den **aufgelösten Routennamen**, nicht den rohen Pfad �
 Autorisierungscode-Fluss mit **PKCE S256 verpflichtend**, `state` serverseitig
 in `velve.oauth_flow` (Cookie hält nur den Zeiger), `nonce` bei OIDC, Prüfung
 von `iss` nach RFC 9207, ID-Token-Signatur gegen JWKS.
+
+Die Flow-Zeile hält neben `link_to_user_id` auch `link_from_session_id`: die
+Sitzung, in der die Verknüpfung gestartet wurde. S-FIX-1 verlangt beim
+Verknüpfen eine neue Sitzungszeile und das Löschen der vorherigen in derselben
+Transaktion, und der Callback kann die vorherige Zeile ohne diesen Wert nicht
+benennen. Ein Fremdschlüssel auf `velve.session` steht ausdrücklich nicht dabei:
+`ON DELETE CASCADE` würde den ganzen Fluss löschen und die Verknüpfung
+verweigern, wenn der Nutzer sich mittendrin abmeldet, und `ON DELETE SET NULL`
+bringt nichts, was ein besitzergebundenes Löschen mit null getroffenen Zeilen
+nicht ohnehin gibt.
 
 Anbieter zum Start: Google, GitHub, Apple, Microsoft/Entra, GitLab, Discord,
 Facebook, LinkedIn, Twitch, Spotify, Slack, Notion, Zoom, Dropbox — plus

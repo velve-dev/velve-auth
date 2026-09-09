@@ -1294,6 +1294,7 @@ CREATE TABLE velve.oauth_flow (
   nonce           text,
   redirect_path   text,            -- a path, never a complete URL
   link_to_user_id uuid REFERENCES velve.user(id) ON DELETE CASCADE,
+  link_from_session_id uuid,       -- the session the linking was started in; no foreign key
   created_at      timestamptz NOT NULL DEFAULT now(),
   expires_at      timestamptz NOT NULL
 );
@@ -1544,6 +1545,15 @@ The key contains the **resolved route name**, not the raw path —
 Authorisation code flow with **PKCE S256 mandatory**, `state` server-side
 in `velve.oauth_flow` (the cookie holds only the pointer), `nonce` with OIDC, checking
 of `iss` per RFC 9207, ID token signature against JWKS.
+
+Beside `link_to_user_id` the flow row also holds `link_from_session_id`: the
+session the linking was started in. S-FIX-1 requires linking to create a new
+session row and to delete the previous one in the same transaction, and without
+that value the callback cannot name the previous row. A foreign key to
+`velve.session` is deliberately absent: `ON DELETE CASCADE` would delete the
+whole flow and refuse the link when the user signs out in the middle of it, and
+`ON DELETE SET NULL` gives nothing that an owner-scoped delete matching zero rows
+does not give anyway.
 
 Providers at the start: Google, GitHub, Apple, Microsoft/Entra, GitLab, Discord,
 Facebook, LinkedIn, Twitch, Spotify, Slack, Notion, Zoom, Dropbox — plus
