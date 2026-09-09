@@ -190,9 +190,9 @@ function twoSidedNormalDeviate(alpha: number): number {
 	return Math.sqrt(chiSquareCriticalValue(alpha, 1));
 }
 
-/** A deliberate deviation from architecture section 6, which fixes `Chi-Quadrat je Position
- * p > 0,001` — per position, not per file — and so states a per-case rate that the file repeats
- * 45 times. Read literally it turns 4.4 per cent of nightly runs red with a sound generator, and
+/** A deliberate deviation from architecture section 6, whose T-RAND-Verteilung row fixes the
+ * chi-square threshold *per position* rather than per file, and so states a per-case rate that
+ * the file repeats 45 times. Read literally it turns 4.4 per cent of nightly runs red, and
  * that cost one investigation and one retracted explanation (E-993, E-995). The 0.001 is kept and
  * spent on the file instead. Section 6 has not been amended; this is reported, not settled. */
 const FILE_FALSE_FAILURE_RATE = 0.001;
