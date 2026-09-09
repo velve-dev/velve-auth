@@ -21,6 +21,7 @@ import { createRateLimiter } from "../limit/index.js";
 import { type OAuthSurface, oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
+import type { VelvePlugin } from "../plugin/config.js";
 import type { FrozenContextServices } from "../plugin/context.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
@@ -55,6 +56,8 @@ const ERROR_CODES = VELVE_ERROR_CODES;
 /**
  * 3.15 B names the namespaces of the instance surface. A plugin id equal to one of them would put
  * its routes under a key the surface already owns, so the registry refuses it at start (3.11).
+ * `assertEveryNamespaceIsDeclared` holds this list against the surface actually built, so it
+ * cannot fall behind it (E-740, closed by E-777).
  */
 const RESERVED_SURFACE_NAMESPACES: readonly string[] = [
 	"signUp",
@@ -160,6 +163,24 @@ function callerResolver(
 			return resolved;
 		},
 	};
+}
+
+/**
+ * The reserved list is a second statement of 3.15 B's namespaces, and this is what holds it to the
+ * first: a namespace the surface gains without the list gaining it would let a plugin of that id
+ * shadow it, and the collision check would not see it.
+ */
+function assertEveryNamespaceIsDeclared(
+	surface: Readonly<Record<string, unknown>>,
+	plugins: readonly VelvePlugin[],
+): void {
+	const declared = new Set([...RESERVED_SURFACE_NAMESPACES, ...plugins.map((plugin) => plugin.id)]);
+	const undeclared = Object.keys(surface).filter((name) => !declared.has(name));
+	if (undeclared.length > 0) {
+		throw new TypeError(
+			`the instance surface carries ${undeclared.join(", ")}, which RESERVED_SURFACE_NAMESPACES does not name`,
+		);
+	}
 }
 
 function reportedWeakenings<M extends IdentityMode>(
@@ -362,5 +383,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				}),
 	};
 
+	assertEveryNamespaceIsDeclared(surface, pluginRuntime.plugins);
 	return surface as VelveAuth<M>;
 }
