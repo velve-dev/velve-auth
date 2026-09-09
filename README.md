@@ -260,6 +260,15 @@ It carries no copy of the documentation. Every answer comes from the files in th
 repository, fetched live, because a stale copy of an authentication library's
 interface is worse than none: it is confidently wrong.
 
+That is also why it needs updating so rarely. It states method and no fact about the
+library, so a release that adds a feature or moves a section leaves it current and you
+have nothing to do. Its version is the `Skill version` line at the top of
+[`CLAUDE-SKILL.md`](./CLAUDE-SKILL.md) — one number, in one place, and not repeated
+here — and it moves only when the instructions themselves change. The skill checks it
+against yours once per session, tells you in one line which version is running, and
+asks before writing anything into your files. That check costs one fetch at the start
+of each session that touches Velve Auth.
+
 ### Claude Code
 
 Two commands, and it is available in every project:
@@ -283,6 +292,11 @@ curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SK
   -o .claude/skills/velve-auth/SKILL.md
 ```
 
+**Updating it is the same command.** `curl … -o …` overwrites, so whichever of the two
+you ran is also how you install a newer version; there is no second procedure. Restart
+Claude Code afterwards — skills are loaded at start, so until you do, the old one is
+the one running.
+
 ### Codex, and other agents that take one instruction file
 
 [`CODEX-SKILL.md`](./CODEX-SKILL.md) is the same expertise as a single
@@ -296,6 +310,9 @@ curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CODEX-SKI
 Or paste it at the start of a conversation. It works either way, and it tells the
 agent what to do if it cannot reach the network — ask you for the files, rather
 than answer from memory.
+
+The same command updates it, for the same reason. There is nothing to restart: the
+file is read when you hand it over.
 
 ### What it will not do for you
 

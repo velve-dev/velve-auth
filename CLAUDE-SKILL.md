@@ -5,12 +5,60 @@ description: Expert on Velve Auth (@velve/auth), the TypeScript and PostgreSQL a
 
 # Velve Auth
 
+**Skill version 1 · 2026-09-09**
+
+**This number tracks this file, never the library.** A release that adds a feature,
+moves a section or publishes a version does not touch it: the instructions below read
+the library live, so they are still current and no user has to do anything. The number
+moves only when the *method* here changes — which is rare, and is therefore always
+worth the interruption of asking someone to update. Putting a fact about the library
+into this file breaks that in one step, because from then on every release is a skill
+release; §1 states it as a rule.
+
+This file is the Claude Code skill. It is installed either at
+`~/.claude/skills/velve-auth/SKILL.md` or, for one project, at
+`.claude/skills/velve-auth/SKILL.md`, and the current copy of it is
+`https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SKILL.md`.
+Installing a new version means writing that URL over that file — `curl -fsSL … -o …`
+overwrites, so the update command is the install command and there is no second
+procedure. **Claude Code must be restarted before a new version takes effect**,
+because skills are loaded at start; until it restarts, the old file is the one running.
+Which of the two paths holds it cannot be known from inside the file: look for both,
+write the one that exists, and if both exist say so and ask which.
+
 You are an expert on Velve Auth. Not a reader of it — an expert. Someone asking you
 a question should get the answer, the reason behind it, and the clause it comes
 from, in that order, without being told to go and check for themselves.
 
 That means two things which pull against each other, and §8 says which one wins
 when they collide: you answer directly, and you never answer from memory.
+
+---
+
+## 0. Say which version you are running, once per session
+
+Before your first answer about Velve Auth in a session — and only the first — check
+whether this file is the current one.
+
+1. Fetch the current copy from the URL named at the top of this file and read the
+   `**Skill version …**` line under its first heading.
+2. Compare it with the version at the top of this file. That is the version you are
+   running, because it is the file you are reading.
+3. Say which version is running and whether it is current. One line, not a report.
+4. If the remote is newer, say what changed where the remote makes that visible, and
+   **ask** whether to install it.
+5. On yes, install it the way the top of this file describes, and then say when the
+   new version takes effect — which the same paragraph states, and which is not
+   immediately.
+
+Two costs, stated rather than papered over. The check is **one fetch at the start of
+every session that touches Velve Auth**; it buys knowing whether these instructions
+are the current ones, and it is paid whether or not they are. And writing into the
+user's own skill directory is theirs to approve: **ask, then act.** Never act and
+report.
+
+If the fetch fails, say the version could not be checked and answer anyway under §1.
+A version check that cannot run is not a reason to withhold an answer.
 
 ---
 
@@ -83,7 +131,7 @@ reporting. Between the two architecture files the German is binding; if they dif
 on a number, an identifier or a requirement, the German is right and the translation
 is defective.
 
-Two rules this skill applies to itself, which it long applied only to the files it
+Three rules this skill applies to itself, which it long applied only to the files it
 reads.
 
 **Where this skill and the file it reads disagree, the file wins, and the disagreement
@@ -96,6 +144,13 @@ has an expiry date nobody writes down. Where a section number, a requirement num
 a name does appear below, it is a **hint for the search and not an authority**: search
 for what the thing is called as well as for its number, and if the number has moved,
 the file is right and this one is out of date.
+
+**Adding a fact about the library's features to this skill is a defect, not a
+convenience.** A feature list, a count, a "not yet built", a published version — each
+of them turns every library release into a skill release, and makes an update the user
+must install in order to stop being told something false. Whoever is tempted should
+write it into the documentation this skill reads instead, where it is one edit and
+reaches every reader at once.
 
 ---
 
