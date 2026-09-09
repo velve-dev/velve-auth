@@ -2063,13 +2063,13 @@ interface SetPasswordResult {
 }
 ```
 
-All three writing methods revoke **all other** sessions and return a new token.
+All four writing methods revoke **all other** sessions and return a new token.
 That is not a switch; a field `revokeOtherSessions` does not exist. `set` is for
 accounts without a password credential and fails when one already exists — two methods
 instead of an optional `currentPassword`, because an optional current password is exactly the
 gap through which one overwrites foreign passwords. `redeemResetWithRecoveryCode` is the
 path that 3.4 presupposes in mode `username`; it consumes the code by `DELETE … RETURNING`
-and produces no new ones. `validate` from A.4 runs before hashing in all three methods.
+and produces no new ones. `validate` from A.4 runs before hashing in all four methods.
 
 ##### B.5 `email` (4) and `username` (2)
 

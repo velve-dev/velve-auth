@@ -2062,13 +2062,13 @@ interface SetPasswordResult {
 }
 ```
 
-Alle drei schreibenden Methoden widerrufen **alle anderen** Sitzungen und geben ein neues Token
+Alle vier schreibenden Methoden widerrufen **alle anderen** Sitzungen und geben ein neues Token
 zurück. Das ist kein Schalter; ein Feld `revokeOtherSessions` existiert nicht. `set` ist für
 Konten ohne Passwort-Credential und schlägt fehl, wenn bereits eines existiert — zwei Methoden
 statt eines optionalen `currentPassword`, weil ein optionales aktuelles Kennwort genau die
 Lücke ist, durch die man fremde Kennwörter überschreibt. `redeemResetWithRecoveryCode` ist der
 Weg, den 3.4 im Modus `username` voraussetzt; er verbraucht den Code per `DELETE … RETURNING`
-und erzeugt keine neuen. `validate` aus A.4 läuft bei allen drei Methoden vor dem Hashen.
+und erzeugt keine neuen. `validate` aus A.4 läuft bei allen vier Methoden vor dem Hashen.
 
 ##### B.5 `email` (4) und `username` (2)
 
