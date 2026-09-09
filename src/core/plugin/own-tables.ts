@@ -67,8 +67,9 @@ export function createOwnTables(options: {
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
+	// The refusal is a rejection and never a synchronous throw, so one `catch` covers both outcomes.
 	return Object.freeze({
-		query: <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {
+		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {
 			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema);
 			return options.driver.query<Row>(sql, [...params]);
 		},

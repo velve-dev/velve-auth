@@ -146,8 +146,24 @@ them do not.
 
 ### Plugins
 
-Not built yet. `VelvePlugin` is declared and `error-map.ts` already resolves a
-plugin's own error codes; the registry that runs the hooks does not exist.
+Half built. A plugin declared in `plugins` is registered at start: its routes
+join the route table under `/x/<plugin-id>/…` and become methods on the
+instance, its `dependsOn` is sorted topologically, and its hooks run at the seven
+enumerated points — `beforeSignIn`, `afterSignIn`, `beforeSessionCreate`,
+`afterSessionCreate`, `beforeUserCreate`, `afterUserCreate` and
+`beforeSessionRevoke`. A hook can refuse by throwing and observe by returning; it
+cannot replace the answer, because every one of them returns `Promise<void>`.
+
+The context a hook is given is frozen, carries no writing method on the user, the
+password, the TOTP secret or the recovery codes, and bounds a plugin's own SQL to
+tables carrying its own prefix. Origin checking and rate limiting run before any
+plugin code, on the HTTP path and on the direct server call alike. Four ways of
+configuring plugins wrongly refuse the start rather than warning: a duplicate id,
+a dependency on a plugin that is not configured, a cycle, and a route that
+collides with a core one.
+
+What is not built is the rest: plugin migrations do not run yet, and declared
+error codes and rate-limit rules are not read.
 
 ## Mounting it
 

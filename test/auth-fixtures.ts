@@ -98,6 +98,10 @@ export interface MountedAuth {
 	readonly email: EmailOutbox;
 }
 
+/**
+ * The overrides come last, so a test that needs providers, plugins or its own send callback
+ * mounted names them and everything else stays at the default this function fixes.
+ */
 export function configFor(
 	overrides: Partial<VelveAuthConfig<"email">> & { database: Driver },
 ): VelveAuthConfig<"email"> {
@@ -110,12 +114,21 @@ export function configFor(
 	} as VelveAuthConfig<"email">;
 }
 
-export async function mountAuth(prefix = "auth"): Promise<MountedAuth> {
+export async function mountAuth(
+	prefix = "auth",
+	overrides: Omit<Partial<VelveAuthConfig<"email">>, "database" | "schema"> = {},
+): Promise<MountedAuth> {
 	const { connection, schema } = await openMigratedSchema(prefix);
 	const log = createLogSink();
 	const email = createEmailOutbox();
 	const auth = createVelveAuth(
-		configFor({ database: connection, schema, log: log.write, email: { send: email.send } }),
+		configFor({
+			database: connection,
+			schema,
+			log: log.write,
+			email: { send: email.send },
+			...overrides,
+		}),
 	);
 	return { auth, handler: toWebHandler(auth), connection, schema, log, email };
 }
