@@ -3958,13 +3958,20 @@ taken, `password_unacceptable` when the password fails the length policy or the
 **A taken address is not an error.** `username_taken` exists because usernames
 are enumerable by construction (architecture 3.4) and the library says so. An
 address is not: a registration on one that already has an account answers with
-the same status, the same headers and a body of the same shape as a successful
-one, writes nothing at all, and sends `sign_up_attempt_on_existing_account` to
-the existing address instead of `email_verification` to a new one.
+the same status, the same headers and a byte-identical body, and sends
+`sign_up_attempt_on_existing_account` to the existing address instead of
+`email_verification` to a new one.
+
+It answers identically because it **is** a registration. The collision path runs
+the same statements in the same order — the account, the session, the credential,
+the confirmation artefact — against an address built from the caller's own
+domain and a local part drawn at random, inside a transaction that is then rolled
+back. Nothing is fabricated, so no field can drift out of step with what a
+success answers.
 
 The consequence for the application: **the identifiers in that answer name
-nothing.** The `user.id` and the session token in a collision answer do not
-exist in the database, and resolving the session immediately afterwards yields
+nothing.** The `user.id` and the session token in a collision answer were rolled
+back with the rest, and resolving the session immediately afterwards yields
 `null`. An application that keys its own rows on `user.id` must resolve the
 session first, or read the account back through `auth.user.findByEmail` from a
 context that is allowed to. This is the cost of the cover; architecture 3.13
@@ -4172,18 +4179,23 @@ Requesting an artefact deletes the account's previous artefact of the same
 purpose in the same transaction, so a user who clicks "send it again" invalidates
 the first link.
 
-### `email.send` runs inside a transaction
+### `email.send` runs after the transaction, not inside it
 
-A `send` that throws fails the operation and rolls the artefact back — a reset
+A `send` that throws fails the operation and takes the artefact with it — a reset
 token whose message never arrived is of use to nobody but an attacker. On
-sign-up the account creation is inside the same transaction, so a throwing
-`send` leaves no account behind either.
+sign-up the account goes with it too, so no account is left behind that nobody
+was told about.
 
-The price is that the callback runs while the transaction holds a row lock on
-`velve.user` for that account. **`email.send` should enqueue and return, not
-deliver.** A callback that opens an SMTP connection and waits for it blocks
-every other write of that account's rows for as long as its own timeout, and
-nothing in the library can detect that it does.
+It is undone rather than rolled back. The transaction that wrote the artefact
+commits first, so the row lock it took on `velve.user` is released **before** the
+application's callback is entered: a slow `send` no longer makes every other
+write of that account's rows wait for it. A `send` that throws is answered by
+spending the token through the one statement that spends tokens, and by deleting
+the account on the sign-up path.
+
+The difference from a rollback is one window: a process that dies between the
+commit and the compensation leaves a live artefact whose message never arrived.
+It expires on its own deadline like any other.
 
 ### The six message kinds
 
@@ -4198,11 +4210,11 @@ Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 | `sign_up_attempt_on_existing_account` | sign-up on a taken address | **no** |
 | `request_for_unknown_address` | reset or magic link, unknown address | **no** |
 
-The fifth carries no token on purpose: it leads to a sign-in, not to a
-confirmation nobody asked for. Note that architecture 5.3's `S-ENUM-4` describes
-it as containing a sign-in link, and 3.15 A.7 declares it without one; the
-declaration is what this library implements, so the application should render
-"you already have an account — sign in" rather than a link it cannot build.
+The fifth carries no token on purpose, and that satisfies `S-ENUM-4` rather
+than deviating from it: the library builds no URL on any path, so the
+confirmation link is the application's work too, and the sign-in link the
+requirement asks for is a link to the application's own sign-in page, which needs
+no artefact. Render "you already have an account — sign in" and link to it.
 
 ### `velve.password_credential.set_by_session_id`
 
@@ -4217,8 +4229,11 @@ the answer at the moment the first-confirmation rule asks for it — which is a
 moment at which that rule revokes sessions.
 
 Written by the sign-up routes and by both reset redemptions, each naming the
-session it has just issued. Any other path that stores a password leaves it
-NULL, and NULL is a different session.
+session it has just issued — in the same statement that writes the credential,
+because `PasswordCredentialRepository.write` requires the field. A caller may
+answer `null`, and `null` is a different session, but it cannot decline to
+answer: a credential that could not say who stored it is one this rule cannot
+judge.
 
 ### What this feature deliberately does not do
 

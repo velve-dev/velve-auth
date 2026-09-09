@@ -150,18 +150,20 @@ recovery code instead of an address.
 The library sends nothing itself. It calls `email.send` with one of six message
 kinds and the token, and the application builds the URL and delivers it — so no
 `redirectTo` from a request has to be validated against an allowlist, because
-none exists. A `send` that throws rolls the artefact back, and on sign-up it
-rolls the account back too, so **`email.send` must enqueue rather than
-deliver**: it runs inside the transaction that wrote the row.
+none exists. A `send` that throws takes the artefact with it, and on sign-up the
+account too; it runs after the transaction has committed, so a slow callback
+never holds a lock on the account it is about.
 
 Two answers are deliberately uninformative. A registration on an address that
-already has an account answers exactly as a free one does and writes nothing;
-the difference is that a message goes to the existing address instead. A reset
-or magic link for an address that names no account runs the same statements as
-one that does and calls `send` the same single time. And when an address is
-confirmed for the first time, a password that was set in a different session is
-deleted and every session revoked — the account-takeover path of
-GHSA-qq9h-g4jm-xgf3, closed by construction rather than by a flag.
+already has an account answers byte for byte as a free one does, because it runs
+the same registration and rolls it back; the difference is that a message goes to
+the existing address instead. Telling the two apart takes a second request —
+resolving the session the answer hands back — and no further. A reset or magic
+link for an address that names no account runs the same statements as one that
+does and calls `send` the same single time. And when an address is confirmed for
+the first time, a password that was set in a different session is deleted and
+every session revoked — the account-takeover path of GHSA-qq9h-g4jm-xgf3, closed
+by construction rather than by a flag.
 
 ### Plugins
 

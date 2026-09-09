@@ -67,13 +67,14 @@ afterAll(async () => {
 /**
  * CLAUDE.md §7 on what a row lock costs: "while it is held, every write of a user-owned row for that
  * account waits, and if the transaction contains an outbound call the wait is that call's timeout."
- * A.7 requires the artefact to roll back when `send` throws, so the send is inside a transaction;
- * E-600 puts it inside the `SELECT … FOR UPDATE` on `velve.user` that minting takes as well. This
- * pins what that costs rather than asserting it away, because closing it is a change to where the
- * lock is taken and not to this feature (E-621).
+ * This case measured that cost while `send` ran inside the minting transaction, and the finding is
+ * what moved the call: the transaction now commits and the lock goes before the application's
+ * callback is entered, and a `send` that throws is answered by spending the token rather than by
+ * rolling it back (E-630). What it pins now is the absence — a bystanding write of the account's row
+ * completes while the callback is still held, and the control below shows the case can still fail.
  */
-describe("the send callback runs while the account's row lock is held", () => {
-	it("makes a concurrent write of the account's row wait for the mail callback", async () => {
+describe("the send callback runs after the account's row lock has gone", () => {
+	it("lets a concurrent write of the account's row through while the mail callback is held", async () => {
 		const [account] = await bystander.query<{ id: string }>(
 			`SELECT id FROM ${schema}.user WHERE email = $1`,
 			[OWNER],
@@ -88,13 +89,53 @@ describe("the send callback runs while the account's row lock is held", () => {
 				bystanderFinished = true;
 			});
 		await new Promise((resolve) => setTimeout(resolve, WHILE_THE_SEND_IS_HELD_MS));
-		const blockedWhileHeld = !bystanderFinished;
+		const finishedWhileTheSendWasHeld = bystanderFinished;
 
 		releaseTheSend();
 		await requesting;
 		await writing;
 
-		expect(blockedWhileHeld).toBe(true);
+		expect(finishedWhileTheSendWasHeld).toBe(true);
+	}, 60_000);
+
+	/**
+	 * The control the case needs to be worth anything: a transaction on the mailing connection that
+	 * holds the same row lock over the same wait does block the bystander, so the expectation above
+	 * measures where the callback runs and not whether the probe can detect a lock at all.
+	 */
+	it("blocks the same write when the row lock really is held across the wait", async () => {
+		const [account] = await bystander.query<{ id: string }>(
+			`SELECT id FROM ${schema}.user WHERE email = $1`,
+			[OWNER],
+		);
+		let bystanderFinished = false;
+		let releaseTheLock: () => void = () => undefined;
+		const holding = mailing.transaction(async (transaction) => {
+			await transaction.query(
+				`SELECT id FROM ${schema}.user WHERE id = $1 FOR UPDATE /* locks: ${schema}.user */`,
+				[account?.id],
+			);
+			await new Promise<void>((resolve) => {
+				releaseTheLock = resolve;
+			});
+		});
+		// The lock has to be taken before the bystander asks for the row, or the two race and the
+		// control measures whichever won.
+		await new Promise((resolve) => setTimeout(resolve, WHILE_THE_SEND_IS_HELD_MS));
+
+		const writing = bystander
+			.query(`UPDATE ${schema}.user SET updated_at = now() WHERE id = $1`, [account?.id])
+			.then(() => {
+				bystanderFinished = true;
+			});
+		await new Promise((resolve) => setTimeout(resolve, WHILE_THE_SEND_IS_HELD_MS));
+		const finishedWhileTheLockWasHeld = bystanderFinished;
+
+		releaseTheLock();
+		await holding;
+		await writing;
+
+		expect(finishedWhileTheLockWasHeld).toBe(false);
 		expect(bystanderFinished).toBe(true);
 	}, 60_000);
 });
