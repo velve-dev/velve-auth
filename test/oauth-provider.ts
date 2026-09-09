@@ -1,9 +1,9 @@
 import { exportJWK, generateKeyPair, type JWK, type KeyObject, SignJWT } from "jose";
 import type { OAuthConfig } from "../src/core/oauth/config.js";
 
-export const PROVIDER_ORIGIN = "https://provider.example";
+const PROVIDER_ORIGIN = "https://provider.example";
 export const CALLBACK_BASE_URL = "https://api.example.com/sign-in/oauth/callback";
-export const CLIENT_ID = "velve-test-client";
+const CLIENT_ID = "velve-test-client";
 
 interface KeyPair {
 	readonly privateKey: KeyObject | CryptoKey;
@@ -17,7 +17,7 @@ export interface ProviderClaims {
 	readonly [claim: string]: unknown;
 }
 
-export interface StubProviderOptions {
+interface StubProviderOptions {
 	readonly claims: ProviderClaims;
 	/** Absent means the provider issues no ID token and the claims come from `userinfo`. */
 	readonly openIdConnect?: boolean;

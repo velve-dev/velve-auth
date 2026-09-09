@@ -4385,3 +4385,11 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Repairing either, in code or in the specification.
 **Reason.** `CLAUDE.md` says a contradiction is reported and never repaired in passing, and both of these are decisions about what the library promises rather than about how this feature is built.
 **Price.** Both are shipped as they stand: third-party sign-in creates accounts only in the `email` mode, and `storeTokens: true` writes columns nothing can read back. Whoever answers them owns a change to the specification, and until then this entry is the only place either is written down.
+
+### Two planted faults, predicted before they were run
+`E-568` · oauth · the gate, measurement
+
+**Context.** §5 asks for a planted fault before a check is trusted, with the outcome predicted first and the case chosen to be the embarrassing one. The two here are the faults this feature exists to prevent: the missing second condition of `S-LINK-2`, which is CVE-2026-53516 itself, and a pointer check that accepts any cookie, which is `S-CSRF-5`.
+**Rejected.** Planting something cheaper — a wrong status code, a missing field — which would prove only that the suite runs.
+**Reason.** Prediction one: dropping `localAccountHasEmailVerifiedAt` from the three-condition predicate reddens **two** cases, the eight-way matrix and the end-to-end case where a trusted provider meets an unverified local account. Prediction two: making `pointerBelongsToState` answer true for any non-empty pair reddens **one**, the case that presents a foreign pointer, because the missing-cookie half is a separate branch. Run: **2 and 1, exactly those.** Both files were restored and the suite is green again.
+**Price.** Two predictions borne out say nothing about the cases nobody thought to plant — the third condition, `trustedProviders`, was not planted, and neither was the address-collision refusal.
