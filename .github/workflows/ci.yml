@@ -228,13 +228,22 @@ jobs:
           read_surface "NUL byte" "$SCAN_DIR/text-files" git ls-files -- . ':!assets/**'
           require_content "NUL byte" "$SCAN_DIR/text-files"
           echo "Checking $(lines_in "$SCAN_DIR/text-files") files for a NUL byte"
-          BINARY=$(while read -r f; do
-            [ -f "$f" ] || continue
-            if ! tr -d '\000' < "$f" | cmp -s - "$f"; then echo "$f"; fi
-          done < "$SCAN_DIR/text-files")
-          if [ -n "$BINARY" ]; then
+          # The loop is not a command substitution, because `refuse` inside one exits the
+          # subshell and leaves the job running.
+          : > "$SCAN_DIR/binary"
+          while read -r text_file; do
+            [ -f "$text_file" ] || continue
+            COMPARISON_STATUS=0
+            tr -d '\000' < "$text_file" | cmp -s - "$text_file" || COMPARISON_STATUS=$?
+            case "$COMPARISON_STATUS" in
+              0) ;;
+              1) echo "$text_file" >> "$SCAN_DIR/binary" ;;
+              *) refuse "the NUL byte scan could not read $text_file" ;;
+            esac
+          done < "$SCAN_DIR/text-files"
+          if [ -s "$SCAN_DIR/binary" ]; then
             echo "::error::text files contain a NUL byte and escape review and scanning"
-            echo "$BINARY"
+            cat "$SCAN_DIR/binary"
             fail=1
           fi
 
