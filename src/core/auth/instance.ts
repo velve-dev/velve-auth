@@ -122,7 +122,7 @@ export interface AuthInternals {
  * and `ServerSurface` folds the dotted names into the namespaces they name. A seam that is still
  * empty contributes `unknown`, which intersects away.
  */
-export type SeamSurface = ServerSurface<ReturnType<typeof oauthRoutes>> &
+type SeamSurface = ServerSurface<ReturnType<typeof oauthRoutes>> &
 	ServerSurface<ReturnType<typeof emailFlowRoutes>>;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &

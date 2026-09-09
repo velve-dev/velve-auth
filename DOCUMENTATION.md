@@ -4231,6 +4231,11 @@ browser. Its attributes are always `SameSite=Lax`, whatever `session.cookie` is
 configured to, because a `Strict` cookie is not sent on the provider's top-level
 cross-site GET.
 
+`CookieInstruction` — `{ name, value, maximumAgeInSeconds, attributes }` — and
+`CookieAttributes`, the two-member union its `attributes` field is typed as, are
+exported with the results, because an application handed a `stateCookie` has to
+be able to name what it is holding.
+
 `auth.user.*` has no routes and never will. The library has no permission model
 and cannot decide who may call `disable`; taking that over HTTP unchecked would
 be the opposite of a safeguard. `disable` takes a `reason`, which is written to
@@ -4398,10 +4403,27 @@ a warning, because each leaves a question with no answer:
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
 | `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route, with another plugin's, or its first name segment is one of the namespaces the instance surface occupies. |
+| `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 
-The last one is the one 3.11 states in terms: a name collision with a core route
-is a start error and not a warning. The type constraint already refuses it at
-compile time; this is the half that holds for a plugin written in JavaScript.
+`plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
+core route is a start error and not a warning. The type constraint already
+refuses it at compile time; this is the half that holds for a plugin written in
+JavaScript.
+
+`plugin_field_unknown` is the other half of that, and it is what answers
+`S-CSRF-6`. A plugin written in JavaScript can carry any field it likes, so a
+`middleware` array or an `assertOriginAllowed` beside the six declared fields
+would otherwise be dropped without a word and its author left believing it runs.
+3.11 says the extension points are **enumerated**; a field outside the
+enumeration is refused rather than ignored. It sees own enumerable properties, so
+a field carried on a prototype or behind a symbol is not seen.
+
+A field the interface **does** declare and this version does not read is a
+different case and is not refused: it is a promise the library owes, and refusing
+it would make a documented field unusable. `migrations`, `errorCodes` and
+`rateLimitRules` each write one `warn` line at start naming the plugin and the
+field. That line goes to the configured `log` sink, which by default drops
+everything — so an installation that passes no sink sees nothing.
 
 ### The seven hook points
 
@@ -4425,6 +4447,37 @@ awaited before the next. A throw stops the rest and travels out through the same
 error map every other failure does — so a plugin's own namespaced code answers
 with what `registerPluginErrorCodes` recorded for it, and an unregistered code
 answers `500 internal_error` without the plugin's text.
+
+#### Which points fire today
+
+**One of the seven has a producer in this version.** The dispatcher runs all
+seven and the paragraph above describes all seven, but six of them are reached by
+nothing, because the operations that would reach them are not built.
+
+| Point | Reached from |
+|---|---|
+| `beforeSessionRevoke` | `POST /sign-out`, `POST /session/revoke`, `POST /session/revoke-others`, `POST /session/revoke-all` |
+| `beforeSignIn`, `afterSignIn` | nothing yet — the sign-in flows are not built |
+| `beforeSessionCreate`, `afterSessionCreate` | nothing yet |
+| `beforeUserCreate`, `afterUserCreate` | nothing yet — sign-up is not built |
+
+A plugin may register the other six; they will not run, and nothing says so at
+start. This table is the only thing that does.
+
+`beforeSessionRevoke` fires **once per session about to go**, and always before
+the rows go, so a hook that throws leaves them standing and the caller gets
+`500 internal_error` with nothing of the hook's message in it. The three
+revocation routes list the sessions the account owns and announce the ones the
+operation is about to remove — so a `session.revoke` naming a session that is not
+the caller's announces nothing, which is the same answer S-OWNER-4 gives the
+caller. `signOut` needs no listing: it announces the session it already resolved.
+
+The announcement and the deletion are **not one transaction**. A plugin is told
+about a revocation that a later failure could still prevent, and on
+`/session/revoke-others` it is told about every one of them before any goes.
+
+The listing is skipped entirely where no plugin listens at that point, so the
+default configuration issues exactly the statements it issued before.
 
 **Hooks run behind the security middleware, on both paths (S-CSRF-6).** They are
 reached only from a route handler, and a handler runs after the origin check and
@@ -4483,9 +4536,33 @@ driver sees the statement.
 It is a guardrail and not a sandbox, and the distinction is worth stating: a
 plugin runs inside the application's own process and can reach the driver by
 other means entirely. What this refuses is the accident — a join onto
-`velve.user` that seemed harmless — not an attacker. The check reads the
-identifier standing after `FROM`, `JOIN`, `INTO` and `UPDATE`, outside comments
-and quoted text; a name it cannot classify is refused rather than allowed.
+`velve.user` that seemed harmless, or a `"velve"."user"` written that way because
+`user` is a reserved word — not an attacker.
+
+**A statement it cannot read is refused, not passed.** Finding no table in a
+statement is finding nothing, and nothing is not permission. Six refusals follow
+from not recognising something:
+
+| Refused | Because |
+|---|---|
+| quoting that never closes | the text could not be read to the end |
+| a `;` anywhere | a second statement the walk would not reach |
+| a `$` that is not a parameter placeholder | dollar-quoted text the walk cannot delimit |
+| a leading keyword outside `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH` | the walk cannot find the tables of any other kind — this is what refuses `TRUNCATE`, `DROP`, `ALTER` and `COPY` |
+| a table position holding anything but a name or `(` | the target could not be identified |
+| a token qualified with the configured schema and not carrying the plugin's prefix | a core table, wherever it stands |
+
+A string literal becomes an empty literal, a comment becomes a space, and a
+quoted identifier becomes the bare name it stands for — so `"velve"."user"` is
+read as `velve.user` rather than disappearing.
+
+**Known false refusals.** The strictness is paid for in statements that are
+harmless and are refused anyway: `EXTRACT(month FROM x)`, `SUBSTRING(x FROM 1)`
+and `TRIM(BOTH ' ' FROM x)` put a column where a table is expected; a CTE whose
+name does not carry the plugin's prefix; every DDL statement, including one that
+alters the plugin's own table; a batch of two statements; and dollar-quoted text.
+Each fails with the plugin id and the schema in the message. Use `date_part` in
+place of `EXTRACT`, and prefix your CTE names.
 
 A core route's context carries the field, because 3.15 D.1 gives every request
 context one, and its `query` rejects: a core route owns no tables of its own.
@@ -4510,6 +4587,10 @@ These belong to `plugin` (wave 5) and are the rest of this chapter:
   and no message and `registerPluginErrorCodes` needs both.
 - **`rateLimitRules` are not read**, because a plugin route already declares its
   own `rateLimit` and which of the two wins is a decision.
+- **Six of the seven hook points have no producer**, as the table above sets out.
+
+Each of the three fields announces itself at start; the six hook points do not,
+because a plugin that registers one is not wrong to have registered it.
 
 ## The client
 

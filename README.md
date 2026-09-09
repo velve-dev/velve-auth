@@ -148,22 +148,31 @@ them do not.
 
 Half built. A plugin declared in `plugins` is registered at start: its routes
 join the route table under `/x/<plugin-id>/…` and become methods on the
-instance, its `dependsOn` is sorted topologically, and its hooks run at the seven
-enumerated points — `beforeSignIn`, `afterSignIn`, `beforeSessionCreate`,
-`afterSessionCreate`, `beforeUserCreate`, `afterUserCreate` and
-`beforeSessionRevoke`. A hook can refuse by throwing and observe by returning; it
-cannot replace the answer, because every one of them returns `Promise<void>`.
+instance, and its `dependsOn` is sorted topologically. A hook can refuse by
+throwing and observe by returning; it cannot replace the answer, because every
+one of them returns `Promise<void>`.
+
+**Of the seven hook points, one fires today.** `beforeSessionRevoke` runs on
+sign-out and on all three revocation routes, before the rows go, so a hook that
+throws leaves the session standing. The other six — `beforeSignIn`,
+`afterSignIn`, `beforeSessionCreate`, `afterSessionCreate`, `beforeUserCreate`
+and `afterUserCreate` — are declared, dispatched and reached by nothing, because
+the sign-in and sign-up flows that would reach them are not built. A plugin can
+register them and they will not run.
 
 The context a hook is given is frozen, carries no writing method on the user, the
 password, the TOTP secret or the recovery codes, and bounds a plugin's own SQL to
 tables carrying its own prefix. Origin checking and rate limiting run before any
-plugin code, on the HTTP path and on the direct server call alike. Four ways of
+plugin code, on the HTTP path and on the direct server call alike. Five ways of
 configuring plugins wrongly refuse the start rather than warning: a duplicate id,
-a dependency on a plugin that is not configured, a cycle, and a route that
-collides with a core one.
+a dependency on a plugin that is not configured, a cycle, a route that collides
+with a core one, and a field the interface does not enumerate — which is how a
+plugin trying to put a middleware in front of the origin check is answered.
 
-What is not built is the rest: plugin migrations do not run yet, and declared
-error codes and rate-limit rules are not read.
+What is not built is the rest: plugin migrations do not run, and declared error
+codes and rate-limit rules are not read. Each of those three writes a line to
+your log at start naming the plugin and the field, so a declaration that does
+nothing says so.
 
 ## Mounting it
 

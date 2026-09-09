@@ -24,7 +24,6 @@ export type {
 export type {
 	AuthInternals,
 	PendingNamespace,
-	SeamSurface,
 	SessionNamespace,
 	UserNamespace,
 	UsernameNamespace,
@@ -83,6 +82,8 @@ export type {
 	PendingAuthentication,
 	Session,
 } from "./core/http/caller.js";
+/** 3.15 C declares it in the same block as `OAuthRedirect`, whose `stateCookie` an application is handed (E-753). */
+export type { CookieAttributes, CookieInstruction } from "./core/http/cookies.js";
 export type { Clock } from "./core/http/environment.js";
 export {
 	type AnyErrorCode,

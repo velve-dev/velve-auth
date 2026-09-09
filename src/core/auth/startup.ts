@@ -14,6 +14,7 @@ type StartupErrorCode =
 	| "plugin_dependency_missing"
 	| "plugin_dependency_cycle"
 	| "plugin_route_conflict"
+	| "plugin_field_unknown"
 	| "route_namespace_conflict";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
@@ -33,6 +34,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 	plugin_dependency_cycle: "the plugins depend on one another in a cycle, which has no order",
 	plugin_route_conflict:
 		"a plugin route collides with a core route or with another plugin's; 3.11 makes that a start error and not a warning",
+	plugin_field_unknown:
+		"a plugin carries a field the interface does not enumerate; the extension points are enumerated and the security middleware is not one of them (S-CSRF-6)",
 	route_namespace_conflict:
 		"two route names fold onto the same object path, so one server method would shadow the other",
 };

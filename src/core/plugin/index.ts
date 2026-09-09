@@ -19,4 +19,3 @@ export type {
 	UserCreateEvent,
 	VelvePlugin,
 } from "./config.js";
-export type { PluginHookDispatcher, PluginRuntime } from "./registry.js";

@@ -12,7 +12,12 @@ import type {
 	UserCreateEvent,
 	VelvePlugin,
 } from "./config.js";
-import { createCoreContext, createPluginContext, type FrozenContextServices } from "./context.js";
+import {
+	createCoreContext,
+	createPluginContext,
+	type FrozenContextServices,
+	type LogSink,
+} from "./context.js";
 
 /**
  * 3.11: a hook may refuse by throwing and observe by returning, and it cannot replace the answer
@@ -34,11 +39,80 @@ export interface PluginRuntime {
 	readonly routes: readonly AnyRoute[];
 	readonly hooks: PluginHookDispatcher;
 	contextOf(route: RouteMetadata): FrozenContext;
+	/** Whether any plugin listens at a point, so a caller can skip the work an event costs to build. */
+	listensTo(point: keyof PluginHooks): boolean;
 }
 
 interface RegisteredPlugin {
 	readonly plugin: VelvePlugin;
 	readonly context: FrozenContext;
+}
+
+/** The seven fields 3.15 G enumerates, and the seven hook points of 3.11. Nothing else is read. */
+const DECLARED_PLUGIN_FIELDS: readonly string[] = [
+	"id",
+	"dependsOn",
+	"migrations",
+	"routes",
+	"hooks",
+	"errorCodes",
+	"rateLimitRules",
+];
+
+const HOOK_POINTS: readonly (keyof PluginHooks)[] = [
+	"beforeSignIn",
+	"afterSignIn",
+	"beforeSessionCreate",
+	"afterSessionCreate",
+	"beforeUserCreate",
+	"afterUserCreate",
+	"beforeSessionRevoke",
+];
+
+/** Declared by 3.15 G and read by nothing yet, so the start says so rather than leaving the author to assume (E-748, E-758). */
+const DECLARED_AND_UNREAD_FIELDS: readonly string[] = [
+	"migrations",
+	"errorCodes",
+	"rateLimitRules",
+];
+
+/**
+ * S-CSRF-6 and T-CSRF-6: a plugin from JavaScript can carry any field, and dropping the ones the
+ * interface does not enumerate leaves its author believing a middleware of theirs runs ahead of the
+ * origin check. The extension points are enumerated (3.11), so an unenumerated one is a start error.
+ */
+function assertNoFieldOutsideTheInterface(plugins: readonly VelvePlugin[]): void {
+	const declared = new Set(DECLARED_PLUGIN_FIELDS);
+	const points = new Set<string>(HOOK_POINTS);
+	for (const plugin of plugins) {
+		for (const field of Object.keys(plugin)) {
+			if (!declared.has(field)) {
+				throw new VelveStartupError("plugin_field_unknown");
+			}
+		}
+		for (const point of Object.keys(plugin.hooks ?? {})) {
+			if (!points.has(point)) {
+				throw new VelveStartupError("plugin_field_unknown");
+			}
+		}
+	}
+}
+
+function reportEveryFieldNothingReads(plugins: readonly VelvePlugin[], log: LogSink): void {
+	for (const plugin of plugins) {
+		for (const field of DECLARED_AND_UNREAD_FIELDS) {
+			if (Object.hasOwn(plugin, field)) {
+				try {
+					log("warn", "a plugin declares a field this version does not read", {
+						pluginId: plugin.id,
+						field,
+					});
+				} catch {
+					return;
+				}
+			}
+		}
+	}
 }
 
 function assertNoIdIsTakenTwice(plugins: readonly VelvePlugin[]): void {
@@ -152,8 +226,10 @@ export function createPluginRuntime(options: {
 	readonly plugins: readonly VelvePlugin[];
 	readonly services: FrozenContextServices;
 }): PluginRuntime {
+	assertNoFieldOutsideTheInterface(options.plugins);
 	assertNoIdIsTakenTwice(options.plugins);
 	assertEveryDependencyIsRegistered(options.plugins);
+	reportEveryFieldNothingReads(options.plugins, options.services.log);
 	const ordered = inDependencyOrder(options.plugins);
 
 	const registered: RegisteredPlugin[] = ordered.map((plugin) => ({
@@ -176,5 +252,6 @@ export function createPluginRuntime(options: {
 		routes,
 		hooks: dispatcher(registered),
 		contextOf: (route) => contextByRoute.get(route) ?? coreContext,
+		listensTo: (point) => registered.some((entry) => entry.plugin.hooks?.[point] !== undefined),
 	};
 }
