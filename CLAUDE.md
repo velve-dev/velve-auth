@@ -446,13 +446,43 @@ made them (E-538). The check is structurally blind to an edit of an entry the
 same branch introduced, because at the merge base that entry did not exist. That
 blindness is exactly right: it is the case this rule permits.
 
-**The loss the step actually prevents is a merge conflict resolved badly.** Four
-features append to `CASE-STUDY.md` in every wave, so a branch that merges `main`
-gets a conflict in it, and resolving that conflict by keeping one's own side
-drops a sibling's entries silently — the branch is green, the entries are gone,
-and the sibling has already merged. That is a routine mistake with no other
-detector. The in-branch edit E-538 records is the narrower case and the one the
-step cannot see.
+**The loss the step guards against is a merge conflict resolved badly, and it
+guards one of the two directions.** Features append to `CASE-STUDY.md` in every
+wave — three of them in wave 5 — so a branch that merges `main` gets a conflict
+in it, and a conflict offers two bad resolutions rather than one. The step
+answers them differently, and the difference is the whole of what follows.
+
+**Keeping one's own side** drops what `main` carries. Those entries are at the
+merge base by construction, because `main` is the base, so dropping them is a
+deletion and the **first** clause fires. Reconstructed at `27e291e`: the step
+reports 764 lines lost and exits 1, and `test/decision-log.test.ts` is red on 74
+citations resolving to no entry (E-1131).
+
+**Keeping `main`'s side** drops the branch's own entries, which were never at the
+base — so nothing is deleted, and the first clause sees nothing. What fires
+instead is the **second**, `commits > 0 && additions === 0`, and it fires only
+while the branch has added no line to the file at all. **Any addition anywhere in
+the file defeats it.** Two lines of unrelated comment turn a resolution that lost
+68 entries green at `+2 −0` (E-1132). **And its window is the merge commit and
+nothing after it**, because the next commit is the one recording the merge, which
+item 5 of the definition of done requires: measured one commit later at `+44 −0`,
+exit 0, with the same 68 entries still missing (E-1133).
+
+So `check:log-append` is a **detector of one direction, at one commit** — not the
+mechanism against a badly resolved conflict. **`test/decision-log.test.ts` is the
+mechanism**, which is the mirror of what this section says of it under the range
+table below: decision identifiers are cited from code, tests and documentation,
+and a citation resolving to no entry is a failure whichever side was dropped. It
+is red in both directions and stays red after the commits that close the other
+step's window (E-1134).
+
+**What a merger does with that.** Run `pnpm check:log-append` on the merge commit
+itself, before committing anything on top of it — or do not lean on it and read
+`pnpm test`'s decision-log failure instead. Run after the entries that record the
+merge, it is being run outside the window in which it can answer.
+
+The in-branch edit E-538 records is the narrower case and the one the step cannot
+see.
 
 ### Numbering the decision log
 
