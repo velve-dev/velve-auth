@@ -5,7 +5,7 @@ import type {
 	SignInResult,
 } from "../auth/results.js";
 import type { RouteServices } from "../auth/routes.js";
-import { createUserRepository, type User } from "../auth/user.js";
+import { createUserRepository, type User, type UserRepository } from "../auth/user.js";
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { PreviousSessionMissingError } from "../db/repositories/session.js";
@@ -171,6 +171,18 @@ function assertClaimsAnswerForTheIssuer(input: {
 	}
 }
 
+/**
+ * L-4 puts `account_disabled` on the resolution of an existing session; a flow still in progress
+ * answers as an invalid flow instead, which is what `factor/pending/service.ts` does for the pending
+ * row. It is asked here because this is the one replacement whose authority is a stored artefact
+ * rather than a resolution performed in the same request (E-976).
+ */
+function assertTheAccountIsEnabled(user: User | null): void {
+	if (user === null || user.disabledAt !== null) {
+		throw new ConcealedError("user_disabled_on_oauth_flow");
+	}
+}
+
 async function insertOrRefuse(
 	repository: OAuthIdentityRepository,
 	userId: string,
@@ -314,43 +326,24 @@ export function createOAuthService(input: {
 	): Promise<ResolvedAccount> {
 		return driver.transaction(async (transaction) => {
 			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
+			const users: UserRepository = createUserRepository({ driver: transaction, schema });
 			const existing = await owned.findIdentityBySubject({
 				provider: provider.id,
 				subject: account.subject,
 			});
 
 			if (existing !== null) {
+				assertTheAccountIsEnabled(await users.findUserById(existing.userId));
 				return { userId: existing.userId, identity: await owned.refreshIdentity(facts) };
 			}
 
-			const joinable = await accountAnAutomaticLinkMayJoin({
-				users: createUserRepository({ driver: transaction, schema }),
-				account,
-				provider,
-			});
+			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
+			if (joinable !== null) {
+				assertTheAccountIsEnabled(joinable);
+			}
 			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
 			return { userId: owner.id, identity: await insertOrRefuse(owned, owner.id, facts) };
 		});
-	}
-
-	/** 3.15 B.7: the account is the flow row's, so the linking rule here is a comparison, not a search. */
-	async function linkedIdentityOf(
-		owned: OAuthIdentityRepository,
-		account: ProviderAccount,
-		facts: IdentityFacts,
-		userId: string,
-	): Promise<Identity> {
-		const existing = await owned.findIdentityBySubject({
-			provider: facts.provider,
-			subject: account.subject,
-		});
-		if (existing === null) {
-			return insertOrRefuse(owned, userId, facts);
-		}
-		if (existing.userId !== userId) {
-			throw new VelveError("identity_already_linked");
-		}
-		return owned.refreshIdentity(facts);
 	}
 
 	async function issueSessionAround(
@@ -404,6 +397,9 @@ export function createOAuthService(input: {
 	 * The identity is written in that same transaction, because a linked identity is a sign-in method
 	 * under L-13: a link refused its session must not leave a credential behind (E-969). Both outbound
 	 * calls are finished before it opens, so nothing here waits on a third party.
+	 *
+	 * A re-completion for an identity the account already holds inserts nothing and re-issues nothing:
+	 * S-FIX-1 is „jede Verknüpfung einer neuen Identität" and no trust level has changed (E-979).
 	 */
 	async function linkIdentityAndReissue(input: {
 		readonly linked: LinkedSession;
@@ -415,7 +411,12 @@ export function createOAuthService(input: {
 		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
 		const written = await driver.transaction(async (transaction) => {
 			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
-			const identity = await linkedIdentityOf(owned, input.account, input.facts, userId);
+			assertTheAccountIsEnabled(
+				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
+			);
+			// S-LINK-7 is „einer weiteren Identität": a link only ever inserts, and the unique pair
+			// refuses every identity that already exists — this account's included (E-979).
+			const identity = await insertOrRefuse(owned, userId, input.facts);
 			const issued = await services.sessions
 				.boundTo(transaction)
 				.reissueSessionOfUser({

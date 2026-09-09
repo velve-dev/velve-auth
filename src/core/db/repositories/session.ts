@@ -96,9 +96,10 @@ export interface SessionRepository {
 	}): Promise<Session>;
 	/**
 	 * The replacement a caller reaches with a session id rather than a token. The delete must match
-	 * exactly one **live** row: a caller whose authority *is* the previous row has none left once
-	 * that row is gone or past either deadline, so zero rows raises `PreviousSessionMissingError`
-	 * and the insert rolls back with it (E-971).
+	 * exactly one **live** row of an **enabled** account: a caller whose authority *is* the previous
+	 * row has none left once that row is gone, past either deadline, or owned by a disabled account,
+	 * so zero rows raises `PreviousSessionMissingError` and the insert rolls back with it
+	 * (E-971, E-976).
 	 */
 	replaceSessionOwnedBy(input: {
 		readonly actor: Actor;
@@ -235,13 +236,16 @@ function deleteOwnedStatement(table: string): string {
 /**
  * The statement above has no deadline predicate, because revoking a session the sweep has not yet
  * removed must still remove it (E-765, E-766). A replacement asks a different question — whether the
- * row still authorises anything — and an expired row does not, so this one is its own (E-971).
+ * row still authorises anything — and neither an expired row nor a row of a disabled account does,
+ * so this one is its own and joins `user` for the same reason the resolution does (L-4, E-971, E-976).
  */
-function deleteLiveOwnedStatement(table: string): string {
-	return `DELETE FROM ${table}
-	WHERE id = $1 AND user_id = $2
-		AND idle_expires_at > now() AND absolute_expires_at > now()
-	RETURNING id`;
+function deleteLiveOwnedStatement(table: string, users: string): string {
+	return `DELETE FROM ${table} s
+	USING ${users} u
+	WHERE s.id = $1 AND s.user_id = $2 AND u.id = s.user_id
+		AND u.disabled_at IS NULL
+		AND s.idle_expires_at > now() AND s.absolute_expires_at > now()
+	RETURNING s.id`;
 }
 
 function deleteEveryOwnedStatement(table: string): string {
@@ -284,7 +288,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
 	const deleteByIdSql = deleteByIdStatement(table);
 	const deleteOwnedSql = deleteOwnedStatement(table);
-	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table);
+	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
 	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
 	const listOwnedSql = listOwnedStatement(table);
