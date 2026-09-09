@@ -1987,11 +1987,11 @@ interface SweepReport     { deletedRowsByTable: Readonly<Record<string, number>>
 
 `routes` ist kein Implementierungsdetail, sondern die Datenstruktur, aus der Teil D den
 HTTP-Handler und Teil E den Client baut. Sie liegt zur Laufzeit vor, weil der Client sonst
-raten müsste. `AuthSurface` hat 54 Methoden im Modus `username_email`, 51 in `email`, 45 in
+raten müsste. `AuthSurface` hat 55 Methoden im Modus `username_email`, 52 in `email`, 46 in
 `username`. `maintenance.sweep` löscht abgelaufene Zeilen aus den sieben Tabellen mit
 `*_sweep_idx` (L-11); `@velve/auth/schema` liefert dasselbe als SQL für `pg_cron`.
 
-##### B.1 `signUp` (2), `signIn` (7), `signOut` (1)
+##### B.1 `signUp` (2), `signIn` (8), `signOut` (1)
 
 ```ts
 interface SignUpNamespace<M extends IdentityMode> {
@@ -2008,7 +2008,9 @@ interface SignInNamespace<M extends IdentityMode> {
   }
   oauth: {
     start(input: { provider: string; redirectPath?: string }): Promise<OAuthRedirect>
-    finish(input: { provider: string; code: string; state: string; issuer?: string })
+    callback(input: { provider: string; code: string; state: string; iss?: string })
+      : Promise<OAuthCallbackResult>
+    callbackFormPost(input: { provider: string; code: string; state: string; iss?: string })
       : Promise<OAuthCallbackResult>
   }
   magicLink: OnlyWhen<ModeHasEmail<M>, {
@@ -2205,7 +2207,7 @@ den Prozess genau hier, genau einmal. `remaining` gibt nur eine Zahl zurück, ge
 ```ts
 interface IdentityNamespace {
   list(input: { sessionToken: SessionToken }): Promise<Identity[]>
-  linkOAuth: {
+  link: {
     start(input: { sessionToken: SessionToken; provider: string; redirectPath?: string })
       : Promise<OAuthRedirect>
   }
@@ -2218,10 +2220,13 @@ interface PendingNamespace {
 }
 ```
 
-`linkOAuth.start` hat kein eigenes `finish`: Der Anbieter leitet auf genau eine Callback-Adresse
+`link.start` hat keinen eigenen Callback: Der Anbieter leitet auf genau eine Callback-Adresse
 zurück, und `velve.oauth_flow` weiß über `link_to_user_id` bereits, ob verknüpft oder angemeldet
-wird; ein zweites `finish` mit identischer Eingabe wäre eine Verzweigung, die der Client raten
-müsste.
+wird; ein zweiter Callback mit identischer Eingabe wäre eine Verzweigung, die der Client raten
+müsste. Zwei Callback-Methoden gibt es trotzdem, `callback` und `callbackFormPost`, und der Grund
+ist keine Verzweigung, sondern die Zustellform: Beide Routen liegen auf demselben Pfad, eine als
+GET und eine als `form_post` (Abschnitt 1, C50 und C70), und aus jeder Route entsteht genau eine
+Servermethode.
 
 **Die Regel der letzten Anmeldemöglichkeit (L-13).** `unlink` schlägt mit
 `last_sign_in_method` fehl, wenn danach keine Anmeldemöglichkeit übrig bliebe. Gezählt werden:
@@ -2261,7 +2266,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `signIn.password` | — | — | IP+Konto | `invalid_credentials` (schließt Deaktivierung ein, L-4) |
 | `signIn.passkey.start`, `signIn.oauth.start` | — | — | IP | `provider_not_configured` (nur oauth) |
 | `signIn.passkey.finish` | — | — | IP | `webauthn_challenge_invalid`, `webauthn_credential_rejected` |
-| `signIn.oauth.finish` | — | — | IP | `oauth_flow_invalid`, `oauth_provider_error`, `identity_already_linked` |
+| `signIn.oauth.callback`, `signIn.oauth.callbackFormPost` | — | — | IP | `oauth_flow_invalid`, `oauth_provider_error`, `identity_already_linked` |
 | `signIn.magicLink.request` | — | — | IP+Konto | — |
 | `signIn.magicLink.redeem` | — | — | IP | `invalid_token` |
 | `signOut`, `session.refresh`, `pending.cancel` | session/pending | — | IP | `session_required` (nur `refresh`) |
@@ -2288,7 +2293,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `factor.webauthn.remove`, `identity.unlink` | session | **ja** | IP | `session_required`, `freshness_required`, `last_sign_in_method` |
 | `factor.recovery.generate` | session | **ja** | IP | `session_required`, `freshness_required` |
 | `factor.recovery.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_recovery_code`, `too_many_factor_attempts` |
-| `identity.linkOAuth.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
+| `identity.link.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
 
 `session.resolve` und `pending.resolve` sind nicht ratenbegrenzt: Sie laufen bei jeder Anfrage
 der Anwendung, ein Zähler darauf wäre eine Selbstblockade.

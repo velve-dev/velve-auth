@@ -5926,3 +5926,25 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** It is written down with an owner instead, which is the mechanism this repository already has for exactly this — E-576 did it for the exempt-route count and E-1096 is that promise being kept. The distinction the amendment will need is the one E-530 already found and did not carry into the document: S-CACHE-4 conflates **authority** over the pending state, which is four routes and is `caller: "pending"`, with **readership** of the cookie, which is six and is `pendingCookie`. Splitting those two is a decision about what the requirement is for, not a count to be corrected, and it belongs to whoever owns 3.6. There was no third option to weigh: repairing it and reporting it were the two.
 
 **Price.** Four clauses of a binding document stay wrong on purpose, and the entry that says so is in a log rather than in the document. `test/auth-route-table.test.ts` is the only thing holding the number, it holds six, and a reader who trusts the specification over the test will build against four. If the amendment does not happen, this entry is the record that it was promised — the same sentence E-576 wrote, which is a worse sign the second time.
+
+### Repairing a route's name in one table while another still declares the old one
+`E-1102` · specfix · specification, corrected — introduced by this branch
+
+**Context.** E-1096 wrote `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` into S-CSRF-1 and T-CSRF-1 because those are the names in the tree. Two thousand lines above them, 3.15 B.1's `SignInNamespace` still declared `oauth.finish` and B.9's rate-limit table still had a `signIn.oauth.finish` row; B.7's `IdentityNamespace` declared `linkOAuth.start`, its prose explained `linkOAuth.start`, and B.9 had an `identity.linkOAuth.start` row. `nestServerMethods` (`src/core/auth/surface.ts:15-35`) splits each route name on `.` and hangs one method at the leaf, so the shipped surface has no `finish` and no `linkOAuth` at all.
+
+**Rejected.** Renaming the tree to match the document. The route names are shipped public surface guarded by the API snapshot, `identity.link.start` matches the path `/identity/link/start` that D.3 already carried, and a specification branch that edits `src/` to make its own prose true has inverted the direction the whole review structure runs in.
+
+**Reason.** Six places moved, in each language: the `oauth` namespace gains `callback` and `callbackFormPost` in place of `finish`, B.1's heading count goes from `signIn` (7) to (8), B.9's row names both, `linkOAuth` becomes `link` in the interface, in the prose and in B.9's row. The prose kept its argument — one callback address, `link_to_user_id` already knows which — and gained the sentence it now needs: there are two callback **methods** and that is not a branch the client must guess but the two delivery forms of one path, because out of every route comes exactly one server method.
+
+**Price.** This is a defect the branch introduced, not one it found. The name was checked against the tree at the site being repaired and nowhere else, which is precisely the failure E-1100 accuses an earlier entry of and which E-1104 below records this branch committing in its own turn. A document with the same identifier in two shapes reads as two things where there is one, and the only reason it was caught is that a reviewer read the file rather than the diff.
+
+### One count moved and its sibling did not
+`E-1103` · specfix · specification, corrected — introduced by this branch
+
+**Context.** E-1096 added a row to 3.15 D.3 and moved its three route counts, 46 · 44 · 38 to 47 · 45 · 39. `AuthSurface`'s method counts sit in B's preamble — 54 in `username_email`, 51 in `email`, 45 in `username` — and did not move. `nestServerMethods` creates exactly one method per route, so the two counts are locked together by construction and the added route is present in every mode, OAuth being mode-independent.
+
+**Rejected.** Deleting all six numbers on the ground that neither set is checkable against a tree with 27 routes. It throws away the one property the numbers still have — they are checkable against the document's own tables, which is how the 46 · 44 · 38 split was verified in the first place — to avoid maintaining an arithmetic relation that is two subtractions wide.
+
+**Reason.** 55 · 52 · 46, one more in each mode, derived from the mechanism rather than by recounting a surface that does not exist yet. The gaps between the two sets are unchanged at 8 · 7 · 7 and are the methods with no route — `user.*`, `maintenance.sweep`, the four resolvers B.3 exempts — which is what makes the increment safe to apply without enumerating the whole surface.
+
+**Price.** Two coupled counts, in two languages, with nothing checking the coupling; the next added route has the same two-of-four chance of moving one pair and not the other. B.1's `signIn` (8) is now a third number in the same relation, so the coupling is three-way and stated nowhere the reader looks.
