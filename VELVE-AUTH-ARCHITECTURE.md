@@ -557,7 +557,7 @@ plugins themselves are already contained in A–M and are not counted twice here
 | H15 `advanced.cookiePrefix` | The prefix of all auth cookies freely choosable (`cookies/index.ts:95`) | Omit | Nobody. `__Host-` is not an ornament but the guarantee; a free prefix lifts it. |
 | H16 `advanced.cookies[x].name` | Override individual cookie names (`cookies/index.ts:96-98`) | Omit | Like H15. A renamed cookie without a `__Host-` prefix loses the guarantee just as a renamed prefix does. |
 | H17 `advanced.cookies[x].attributes` | Override attributes per cookie — wins over everything, `httpOnly` included (`cookies/index.ts:102-114`) | Omit | Nobody. An option with which one can switch `httpOnly` off is an option with which one delivers the session token to JavaScript. |
-| H18 `advanced.defaultCookieAttributes` | Global default attributes, e.g. `SameSite=None`, `Partitioned` (`cookies/index.ts:102-114`) | Omit | Like H17. `SameSite=None` is not provided for with `__Host-` and the origin check; in Better Auth no CSRF protection remains in this configuration (inventory N3-23). |
+| H18 `advanced.defaultCookieAttributes` | Global default attributes, e.g. `SameSite=None`, `Partitioned` (`cookies/index.ts:102-114`) | Omit | Like H17. Globally settable cookie attributes do not exist; in Better Auth no CSRF protection remains in this configuration (inventory N3-23). `SameSite=None` is carried by exactly one cookie: the state pointer of a `form_post` flow (3.10). It authenticates nothing, and the route that reads it has no origin check to lose anyway. |
 | H19 `useSecureCookies` + `__Secure-` | A four-stage resolution, `__Secure-` with `secure` (`cookies/index.ts:65-75`) | Surpass | `__Host-` enforces `Secure`, forbids `Domain` and binds to `Path=/` — cookie tossing from a subdomain is thereby structurally excluded. Better Auth defines the constant but never uses it (`cookies/cookie-utils.ts:34-35`, inventory N3-22). |
 | H20 `crossSubDomainCookies` | `enabled`, `domain`, `additionalCookies` (`cookies/index.ts:76-90`) | Omit | The application takes it over, over a common origin or a token handover of its own. `__Host-` forbids `Domain`; subdomain-wide session cookies trust every subdomain, the forgotten one too. |
 | H21 Cookie signing | HMAC-SHA256 over the value with `ctx.secret` (`better-call dist/crypto.mjs:21-31`) | Solve differently | The session cookie carries a 256 bit random token whose validity is decided exclusively by the database — a signature would be ineffective and would suggest integrity where existence counts. Signing happens only where a pointer has to stay intact, with the HKDF-derived key `cookie-sig`. |
@@ -2340,7 +2340,9 @@ interface PendingAuthentication {
 }
 interface OAuthRedirect { authorizationUrl: string; stateCookie: CookieInstruction }
 interface CookieInstruction { name: string; value: string; maximumAgeInSeconds: number
-                              attributes: "HttpOnly; Secure; SameSite=Lax; Path=/" }
+                              attributes: "HttpOnly; Secure; SameSite=Lax; Path=/"
+                                        | "HttpOnly; Secure; SameSite=Strict; Path=/"
+                                        | "HttpOnly; Secure; SameSite=None; Path=/" }
 interface PasskeyAuthenticationChallenge  { publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;  challengeToken: string }
 interface WebAuthnAuthenticationChallenge { publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;  challengeToken: string }
 interface WebAuthnRegistrationChallenge   { publicKeyOptions: PublicKeyCredentialCreationOptionsJSON; challengeToken: string }

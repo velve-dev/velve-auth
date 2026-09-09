@@ -5948,3 +5948,14 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** 55 · 52 · 46, one more in each mode, derived from the mechanism rather than by recounting a surface that does not exist yet. The gaps between the two sets are unchanged at 8 · 7 · 7 and are the methods with no route — `user.*`, `maintenance.sweep`, the four resolvers B.3 exempts — which is what makes the increment safe to apply without enumerating the whole surface.
 
 **Price.** Two coupled counts, in two languages, with nothing checking the coupling; the next added route has the same two-of-four chance of moving one pair and not the other. B.1's `signIn` (8) is now a third number in the same relation, so the coupling is three-way and stated nowhere the reader looks.
+
+### H18 is four rows below the H14 this branch repaired
+`E-1104` · specfix · specification, corrected — the defect this branch named and then committed
+
+**Context.** Section 1 H18 says *„`SameSite=None` ist mit `__Host-` und der Origin-Prüfung nicht vorgesehen"*. The library sets it: `CROSS_SITE_ATTRIBUTES` (`src/core/http/cookies.ts:78`) on the state pointer of a `form_post` flow, and the code above it quotes H18 and declares itself a deviation. 3.15 C's `CookieInstruction.attributes` compounds it — a single string literal, `SameSite=Lax`, where the tree's `CookieAttributes` is a three-way union and `OAuthRedirect.stateCookie` returns a value the declared type cannot hold.
+
+**Rejected.** Marking H18 *„Anders gelöst"* and describing the deviation there. The row is about `advanced.defaultCookieAttributes`, a **globally settable** attribute default, and that really is omitted; changing the verdict would say the library offers something it does not, to fix a sentence in the justification column.
+
+**Reason.** The verdict stays `Weglassen` and the false half of the justification goes: globally settable cookie attributes do not exist, and `SameSite=None` is carried by exactly one cookie — the state pointer of a `form_post` flow — which authenticates nothing on a route that has no origin check to lose. That is E-582's bound restated where the claim was, not a new argument. `CookieInstruction.attributes` becomes the three-literal union the tree exports.
+
+**Price.** **E-1100's own Price criticises an earlier entry for reporting H18 and never looking at H14** — *"what a report scoped to the clause you deviated from looks like from the outside"* — and this branch then repaired H14 and did not look at H18, four rows below it, in the same table, in the same commit. The same defect, in the entry that names it. What makes it worth more than an apology is the pattern behind both: a clause is checked at the point where somebody had a reason to look, and its neighbours are not, whoever is looking and however recently they wrote the rule about it.
