@@ -87,6 +87,47 @@ describe("replaceSessionOwnedBy (S-FIX-1)", () => {
 		expect(await countRows(ownerId)).toBe(0);
 	});
 
+	/**
+	 * An expired row lives until `maintenance.sweep()` removes it, so a delete without a deadline
+	 * predicate matches it and the replacement succeeds — the same request granted or refused
+	 * depending on whether garbage collection has run (E-971).
+	 */
+	it("refuses a row that is past its deadline but not yet swept", async () => {
+		await sessions.deleteEverySessionOwnedBy({ actor: owner });
+		const previous = await sessions.insertSession(sessionInsertFor(ownerId));
+		await migrated.connection.query(
+			`UPDATE ${migrated.schema}.session
+			 SET idle_expires_at = now() - interval '1 second',
+			     absolute_expires_at = now() - interval '1 second'
+			 WHERE id = $1`,
+			[previous.id],
+		);
+
+		await expect(
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: previous.id,
+				insert: sessionInsertFor(ownerId),
+			}),
+		).rejects.toBeInstanceOf(PreviousSessionMissingError);
+		expect(await countRows(ownerId)).toBe(1);
+		expect(await sessions.listSessionsOfUser({ userId: ownerId })).toEqual([]);
+	});
+
+	// The revoke path must still remove such a row, which is why the two deletes are separate statements.
+	it("still lets a revocation remove the row a replacement refused", async () => {
+		await sessions.deleteEverySessionOwnedBy({ actor: owner });
+		const previous = await sessions.insertSession(sessionInsertFor(ownerId));
+		await migrated.connection.query(
+			`UPDATE ${migrated.schema}.session SET idle_expires_at = now() - interval '1 second'
+			 WHERE id = $1`,
+			[previous.id],
+		);
+
+		expect(await sessions.deleteSessionOwnedBy({ sessionId: previous.id, actor: owner })).toBe(1);
+		expect(await countRows(ownerId)).toBe(0);
+	});
+
 	// S-OWNER-4: another account's session is neither replaced nor distinguishable from one that never existed.
 	it("refuses a row that belongs to another account and leaves it standing", async () => {
 		await sessions.deleteEverySessionOwnedBy({ actor: owner });

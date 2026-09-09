@@ -1,13 +1,16 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
+import { toWebHandler } from "../src/core/http/web-handler.js";
 import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
 import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
+import type { SessionConfig } from "../src/core/session/config.js";
 import { createSessionService } from "../src/core/session/service.js";
-import { registerPluginErrorCodes, VelveError } from "../src/index.js";
-import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
-import { dropSchema } from "./db-fixtures.js";
+import { createVelveAuth, registerPluginErrorCodes, VelveError } from "../src/index.js";
+import { configFor, type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
+import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import {
 	CALLBACK_BASE_URL,
 	codeCarrying,
@@ -32,6 +35,7 @@ async function mountWith(input: {
 	readonly responseMode?: "query" | "form_post";
 	readonly omitIssuer?: boolean;
 	readonly plugins?: readonly VelvePlugin[];
+	readonly session?: Partial<SessionConfig>;
 }): Promise<Mounted> {
 	const provider = await createStubProvider({
 		claims: input.claims,
@@ -47,6 +51,7 @@ async function mountWith(input: {
 		}),
 		fetch: provider.fetch,
 		...(input.plugins === undefined ? {} : { plugins: input.plugins }),
+		...(input.session === undefined ? {} : { session: input.session }),
 	});
 	mountedInstances.push(auth);
 	return { auth, provider };
@@ -824,6 +829,138 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(await countRows(mounted, "session")).toBe(1);
 		expect(await countRows(mounted, "identity")).toBe(2);
 		expect(await stillHeld.json()).not.toBeNull();
+	});
+
+	/**
+	 * An expired session is still a row until `maintenance.sweep()` removes it, so a delete with no
+	 * deadline predicate matched it and the link minted a fully live session — resetting an
+	 * `absolute_expires_at` the specification says is *„nie verlängert"*, on an account the caller
+	 * proved nothing about at completion time. Granted or refused by whether the sweep had run
+	 * (E-971).
+	 */
+	it("refuses a link flow whose session expired while it was outstanding", async () => {
+		const mounted = await mountWith({
+			claims: VERIFIED_CLAIMS,
+			session: {
+				idleTimeout: "2s",
+				absoluteTimeout: "3s",
+				idleWriteInterval: "1s",
+				freshnessWindow: "3s",
+			},
+		});
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "expired-mid-flow", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		await mounted.auth.connection.query(
+			`UPDATE ${mounted.auth.schema}.session
+			 SET idle_expires_at = now() - interval '1 second',
+			     absolute_expires_at = now() - interval '1 second'`,
+			[],
+		);
+		const expired = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: session }),
+		);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(await expired.json()).toBeNull();
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
+		expect(sessionCookieOf(refused)).toBeNull();
+		expect(await countRows(mounted, "identity")).toBe(1);
+	});
+
+	/** The idle deadline alone is enough; the row is unswept either way. */
+	it("refuses a link flow whose session passed only its idle deadline", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "idled-out", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		await mounted.auth.connection.query(
+			`UPDATE ${mounted.auth.schema}.session SET idle_expires_at = now() - interval '1 second'`,
+			[],
+		);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(refused.status).toBe(400);
+		expect(await countRows(mounted, "identity")).toBe(1);
+	});
+
+	/**
+	 * 3.11's veto and §7's warning are one requirement here: a hook is arbitrary plugin code that may
+	 * call out over the network, and a transaction open while one runs is a lock whose length a third
+	 * party chooses. Nothing else measures the ordering — E-970's plant moves the hook inside the
+	 * transaction and every tier stays green — and `createAccountFor` already awaits two hooks inside
+	 * the sign-in path's transaction, so the hazard is realised in this file and not hypothetical
+	 * (E-973).
+	 */
+	it("resolves the veto before it opens the transaction", async () => {
+		const provider = await createStubProvider({ claims: VERIFIED_CLAIMS });
+		const { connection, schema } = await openMigratedSchema("oauthhookorder");
+		const order: string[] = [];
+		const watched: Driver = {
+			query: <Row>(sql: string, parameters: unknown[]) => connection.query<Row>(sql, parameters),
+			transaction: <T>(run: (tx: Driver) => Promise<T>) => {
+				order.push("transaction");
+				return connection.transaction(run);
+			},
+		};
+		const recorder: VelvePlugin = {
+			id: "recorder",
+			hooks: {
+				beforeSessionCreate: () => {
+					order.push("beforeSessionCreate");
+					return Promise.resolve();
+				},
+			},
+		};
+		const handler = toWebHandler(
+			createVelveAuth(
+				configFor({
+					database: watched,
+					schema,
+					oauth: oauthConfigFor({ openIdConnect: false }),
+					fetch: provider.fetch,
+					plugins: [recorder],
+				}),
+			),
+		);
+
+		const flowOf = async (path: string, cookie?: string): Promise<StartedFlow> => {
+			const response = await handler(
+				requestTo(path, {
+					body: { provider: "stubby" },
+					...(cookie === undefined ? {} : { cookie }),
+				}),
+			);
+			const body = (await response.json()) as {
+				authorizationUrl: string;
+				stateCookie: { value: string };
+			};
+			const authorizationUrl = new URL(body.authorizationUrl);
+			return {
+				pointer: body.stateCookie.value,
+				state: authorizationUrl.searchParams.get("state") ?? "",
+				nonce: null,
+				authorizationUrl,
+			};
+		};
+
+		const signedIn = await handler(callbackRequest(await flowOf("/sign-in/oauth/start")));
+		const session = sessionCookieOf(signedIn) ?? "";
+		provider.reportClaims({ sub: "ordered", email: "second@example.com" });
+		const linkFlow = await flowOf("/identity/link/start", session);
+		order.length = 0;
+		const linked = await handler(callbackRequest(linkFlow));
+
+		await dropSchema(connection, schema);
+		await connection.close();
+
+		expect(linked.status).toBe(302);
+		expect(order.slice(0, 2)).toEqual(["beforeSessionCreate", "transaction"]);
 	});
 
 	it("refuses to move an identity that belongs to another account", async () => {
