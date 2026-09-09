@@ -165,7 +165,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of eleven overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of thirteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 

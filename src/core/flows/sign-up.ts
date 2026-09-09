@@ -203,6 +203,11 @@ type AddressOccupancy =
 	| { readonly kind: "free" }
 	| { readonly kind: "taken"; readonly owner: string | null };
 
+interface Attempt {
+	readonly registration: Registration;
+	readonly occupancy: AddressOccupancy;
+}
+
 /**
  * The one message either branch sends, after the transaction has committed and everything it held
  * has gone (E-630, E-931). A `send` that throws undoes what stands: the artefact on the free branch
@@ -265,31 +270,60 @@ function isUniqueViolation(cause: unknown): boolean {
 
 /**
  * Which unique index a lost race hit is not in the error every driver hands over, so it is asked
- * for: a name that is now taken is told so (3.4), an address that is now taken is answered by the
- * cover, and a violation neither of them explains is not this function's to translate (E-930).
+ * for. A registration can meet exactly two: the name and the address. A name that is now taken is
+ * told so (3.4), and so is a violation on a row that carries no address, because then the name is
+ * the only index there was. Returning means the address was the one (E-930, E-947).
  */
-async function whatTookTheIdentifiers(
+async function refuseTheNameIfItWasTheName(
 	environment: FlowEnvironment,
 	columns: IdentityColumns,
-): Promise<AddressOccupancy | null> {
-	if (columns.usernameKey !== null) {
-		const named = await environment.services.users.findUserByUsernameKey(columns.usernameKey);
-		if (named !== null) {
-			throw new VelveError("username_taken");
+): Promise<void> {
+	if (columns.usernameKey === null) {
+		return;
+	}
+	const named = await environment.services.users.findUserByUsernameKey(columns.usernameKey);
+	if (named !== null || columns.email === null) {
+		throw new VelveError("username_taken");
+	}
+}
+
+/** A second draw at sixty-four bits; a third would be arguing with the arithmetic (E-947). */
+const COVER_DRAWS = 2;
+
+/**
+ * The cover registration races too. `coverColumns` draws a new local part and keeps the name, so in
+ * mode `username_email` the cover insert meets the same name index the caller's would have, and a
+ * name taken by then is answered as the guard before the transaction would have answered it. A
+ * cover address that collided is drawn again (E-947).
+ */
+async function cover(
+	flow: SignUpFlow,
+	context: RequestContext,
+	columns: IdentityColumns,
+	derived: DerivedPassword | null,
+	occupancy: AddressOccupancy,
+): Promise<Attempt> {
+	let collided: unknown;
+	for (let draw = 0; draw < COVER_DRAWS; draw += 1) {
+		try {
+			return { registration: await register(flow, context, columns, derived, true), occupancy };
+		} catch (failure) {
+			if (!isUniqueViolation(failure)) {
+				throw failure;
+			}
+			await refuseTheNameIfItWasTheName(flow.environment, columns);
+			collided = failure;
 		}
 	}
-	if (columns.email === null) {
-		return null;
-	}
-	return { kind: "taken", owner: await addressOwner(environment, columns.email) };
+	throw collided;
 }
 
 /**
  * 3.13 fixes what a taken address is answered with, and occupancy is read before the transaction
  * that inserts — so a concurrent registration can take the address in between and the unique index
  * is the only thing that says so. A caller that loses that race is a caller registering a taken
- * address, and gets what one gets; `/sign-up` declares no code for the failure and 3.15 D.1 makes
- * that declaration a contract (E-930).
+ * address, and gets what one gets: S-ENUM-3 wants the two answers identical to the byte, and a
+ * failure where the other branch answers 200 is the widest difference there is (E-930, E-955).
  */
 async function registerOrCover(
 	flow: SignUpFlow,
@@ -297,15 +331,9 @@ async function registerOrCover(
 	columns: IdentityColumns,
 	derived: DerivedPassword | null,
 	owner: string | null,
-): Promise<{ readonly registration: Registration; readonly occupancy: AddressOccupancy }> {
-	const discarding = async (
-		occupancy: AddressOccupancy,
-	): Promise<{ registration: Registration; occupancy: AddressOccupancy }> => ({
-		registration: await register(flow, context, columns, derived, true),
-		occupancy,
-	});
+): Promise<Attempt> {
 	if (owner !== null) {
-		return discarding({ kind: "taken", owner });
+		return cover(flow, context, columns, derived, { kind: "taken", owner });
 	}
 	try {
 		return {
@@ -313,13 +341,14 @@ async function registerOrCover(
 			occupancy: { kind: "free" },
 		};
 	} catch (failure) {
-		const winner = isUniqueViolation(failure)
-			? await whatTookTheIdentifiers(flow.environment, columns)
-			: null;
-		if (winner === null) {
+		if (!isUniqueViolation(failure)) {
 			throw failure;
 		}
-		return discarding(winner);
+		await refuseTheNameIfItWasTheName(flow.environment, columns);
+		return cover(flow, context, columns, derived, {
+			kind: "taken",
+			owner: await addressOwner(flow.environment, columns.email),
+		});
 	}
 }
 

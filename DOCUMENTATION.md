@@ -3987,7 +3987,20 @@ started. Four callers submitting the same form at once therefore get four
 identical 200s and leave one account behind. A **username** taken in the same
 race still answers `username_taken`, because architecture 3.4 makes names
 enumerable and says so; which of the two indexes the race hit is asked for, not
-read out of the driver's error.
+read out of the driver's error. The cover registration races on the same two
+indexes and is answered the same way — it keeps the name the caller sent and
+only the address is drawn afresh, so in `username_email` its insert can meet the
+name index too.
+
+**In `username_email` the cover does not durably claim the name.** It rolls
+back, so a registration on a taken address leaves the name it was sent free,
+where a registration on a free address takes it. Two sequential requests read
+that off: register `{email: <under test>, username: N}`, then register
+`{email: <fresh>, username: N}`. The second answers 200 when the first address
+was taken and `username_taken` when it was free. Closing it needs a cover that
+persists, which is a real account for every address an attacker guesses, so this
+is the residual the cover leaves in that mode — the same shape as the cover's
+session naming no row, one identifier further out.
 
 ### `auth.signIn.magicLink.request(input)`
 

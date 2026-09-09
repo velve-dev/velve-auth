@@ -29,7 +29,7 @@ const WHILE_THE_ROW_IS_HELD_MS = 750;
 
 /**
  * How far apart the two branches may be, and how far apart the control may be before the run has
- * measured nothing. Ten runs on 2026-09-09 against a local PostgreSQL 14: with the row lock in
+ * measured nothing. Ten runs on 2026-09-09 against a local PostgreSQL 18.3: with the row lock in
  * place the case separated 1.48, 1.66, 1.82, 1.85 and 1.88; with the subject lock, 1.06, 1.06,
  * 1.09, 1.18 and 1.20. Controls ranged 1.00 to 1.25 on both. What is left on the closed side is
  * work rather than waiting — the known branch supersedes a row where the cover branch supersedes

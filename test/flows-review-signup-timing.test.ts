@@ -139,7 +139,7 @@ function median(samples: readonly number[]): number {
 }
 
 /**
- * One run of this on 2026-09-09, in process against a local PostgreSQL 14, 1000 measurements per
+ * One run of this on 2026-09-09, in process against a local PostgreSQL 18.3, 1000 measurements per
  * group interleaved and the first 100 of each discarded: Welch t on 10 per cent trimmed means
  * -128.87 against a limit of 4.5, Cliff's delta -0.947 against a limit of 0.147, median 402666 ns
  * on a taken address against 752125 ns on a free one. The measurement is in process rather than

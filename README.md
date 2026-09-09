@@ -159,8 +159,12 @@ already has an account answers byte for byte as a free one does, because it runs
 the same registration and rolls it back; the difference is that a message goes to
 the existing address instead. A registration that loses a race to the same
 address is that answer too, so simultaneous submissions of one form come back
-identical. Telling a taken address from a free one takes a second request —
-resolving the session the answer hands back — and no further. A reset or magic
+alike. Telling a taken address from a free one takes a second request —
+resolving the session the answer hands back — and no further. In
+`username_email` there is a second identifier and the cover does not durably
+claim it: a registration on a taken address leaves the name it sent free, where
+one on a free address takes it, so a second registration of that name tells the
+two apart. A reset or magic
 link for an address that names no account runs the same statements as one that
 does, calls `send` the same single time, and waits the same, because the two
 serialise on the address and neither takes a lock on the account's row. And when
