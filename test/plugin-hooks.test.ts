@@ -209,7 +209,7 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 		},
 	};
 
-	/** An expired-but-unswept row is still a row `revokeAll` deletes, which is the case that was wrong (E-764). */
+	/** An expired-but-unswept row is still a row `revokeAll` deletes, which is the case that was wrong (E-765). */
 	async function insertSession(expired = false): Promise<{ token: string; id: string }> {
 		const issued = createSessionToken();
 		const idleDeadline = expired ? "now() - interval '1 hour'" : "now() + interval '7 days'";

@@ -59,7 +59,7 @@ vi.mock("../src/core/oauth/routes.js", async () => {
 	return { oauthRoutes: () => [declares, silent] };
 });
 
-/** A plugin with routes, so every reader set below is measured on the table that ships (E-763). */
+/** A plugin with routes, so every reader set below is measured on the table that ships (E-764). */
 const MOUNTED_PLUGIN: VelvePlugin<"demo"> = {
 	id: "demo",
 	routes: [
