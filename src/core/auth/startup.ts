@@ -1,5 +1,6 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
+import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
 
 type StartupErrorCode =
@@ -7,7 +8,8 @@ type StartupErrorCode =
 	| "keys_unusable"
 	| "origins_empty"
 	| "email_callback_missing"
-	| "recovery_codes_required";
+	| "recovery_codes_required"
+	| "oauth_provider_incomplete";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: the six purpose keys are derived from a root key of 32 bytes",
@@ -18,6 +20,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		'email.send is required in the identity modes "email" and "username_email"',
 	recovery_codes_required:
 		'identity.mode "username" requires recoveryCodes: without an address there is no other way back into an account',
+	oauth_provider_incomplete:
+		"a provider id that is not one of the fourteen built in needs authorizationEndpoint, tokenEndpoint and subjectClaim",
 };
 
 export class VelveStartupError extends Error {
@@ -69,6 +73,33 @@ function assertEmailCallbackWhereAddressesExist(mode: IdentityMode, email: unkno
 }
 
 /**
+ * The type admits credentials alone for every id so that a known provider needs no endpoints; only
+ * an id the library has no endpoints for has to carry its own, and 3.11 makes that a start error.
+ */
+function assertEveryUnknownProviderCarriesItsEndpoints(oauth: unknown): void {
+	if (typeof oauth !== "object" || oauth === null) {
+		return;
+	}
+	const providers = (oauth as { providers?: unknown }).providers;
+	if (typeof providers !== "object" || providers === null) {
+		return;
+	}
+	for (const [id, entry] of Object.entries(providers as Record<string, unknown>)) {
+		if (KNOWN_PROVIDERS.includes(id as (typeof KNOWN_PROVIDERS)[number])) {
+			continue;
+		}
+		const generic = entry as Partial<GenericProviderConfig> | null;
+		if (
+			typeof generic?.authorizationEndpoint !== "string" ||
+			typeof generic.tokenEndpoint !== "string" ||
+			typeof generic.subjectClaim !== "string"
+		) {
+			throw new VelveStartupError("oauth_provider_incomplete");
+		}
+	}
+}
+
+/**
  * The synchronous half of the start, run while `createVelveAuth` builds the instance. What needs
  * the database — the stored key versions of E-179 — cannot run here, because the interface of 3.15
  * B is synchronous; `migrate` carries it.
@@ -80,6 +111,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertOriginsAreNamed(config.origins);
 	assertRecoveryCodesWhereTheyAreTheOnlyWayBack(config.identity.mode, config.recoveryCodes);
 	assertEmailCallbackWhereAddressesExist(config.identity.mode, config.email);
+	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 }
 
 /** S-KEY-6, second half: a provider that answers for no purpose protects nothing. */

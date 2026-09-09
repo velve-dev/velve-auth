@@ -259,14 +259,10 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 
 		expect(files.length).toBeGreaterThan(20);
 		expect(raising).toEqual(["session/service.ts"]);
-		// The assembly names the code without raising it: once in the route contract D.3 fixes for
-		// every route with caller `session`, once in the list of codes the instance publishes.
-		expect(naming).toEqual([
-			"auth/instance.ts",
-			"auth/routes.ts",
-			"http/error-map.ts",
-			"session/service.ts",
-		]);
+		// The assembly names the code without raising it, once, in the route contract D.3 fixes for
+		// every route with caller `session`. It named it a second time until `instance.ts` stopped
+		// keeping its own copy of the twenty-five codes and read the error map's own list (E-734).
+		expect(naming).toEqual(["auth/routes.ts", "http/error-map.ts", "session/service.ts"]);
 	});
 
 	it("is reachable from no method that issues a session", async () => {

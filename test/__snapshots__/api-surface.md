@@ -14,22 +14,24 @@ export { };
 ## index.d.mts
 
 import { AuthenticationFactor, PendingAuthentication, Session } from "./core/http/caller.mjs";
-import { VelveError, VelveErrorCode } from "./core/http/error-map.mjs";
+import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
 import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
 import { Clock } from "./core/http/environment.mjs";
 import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
 import { UsernameRules } from "./core/identity/configuration.mjs";
 import { KeyProvider } from "./core/keys/provider.mjs";
-import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
+import { GenericProviderConfig, KnownProvider, OAuthConfig, ProviderCredentials } from "./core/oauth/config.mjs";
 import { EntityId, IdentityId, ProviderId, SessionId, UserId, WebAuthnCredentialId, toEntityId } from "./core/db/entity-id.mjs";
 import { Actor, ConsumedOAuthFlow, RedeemedOneTimeToken, ResolvedSession, actorOfConsumedOAuthFlow, actorOfRedeemedOneTimeToken, actorOfResolvedSession } from "./core/db/actor.mjs";
+import { ImportSource, User } from "./core/auth/user.mjs";
+import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
+import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
-import { ImportSource, User } from "./core/auth/user.mjs";
+import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
 import { SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
-import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
 import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, createOwnedRowRepository } from "./core/db/repositories/owned-row-repository.mjs";
@@ -38,7 +40,7 @@ import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, crea
 declare function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M>;
 declare const VELVE_AUTH_VERSION = "0.0.0";
 //#endregion
-export { type Actor, type AnyRoute, type AuthInternals, type AuthenticationFactor, type BaseConfig, type CallerRequirement, type Clock, type ConsumedOAuthFlow, type EmailConfig, type EmailMessage, type EntityId, type IdentityConfig, type IdentityFields, type IdentityId, type IdentityMode, type ImportSource, type KeyProvider, type ModeHasEmail, type ModeHasUsername, type OnlyWhen, type OriginRequirement, type OwnedRowRepository, type OwnedRowRepositoryOptions, type PendingAuthentication, type PendingNamespace, type PendingToken, type ProviderId, type RateAlert, type RateLimitConfig, type RecoveryCodesConfig, type RecoveryCodesRequirement, type RedeemedOneTimeToken, type ResolvedSession, type ResolvedSessionView, SECURITY_OPTIONS, type SecurityOption, type Session, type SessionId, type SessionNamespace, type SignInLookup, type SweepReport, TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, type TotpConfig, type TrustLevelEvent, UnknownColumnError, type User, type UserId, type UserNamespace, type UsernameNamespace, type UsernameRules, VELVE_AUTH_VERSION, type VelveAuth, type VelveAuthConfig, VelveError, type VelveErrorCode, VelveStartupError, type WebAuthnConfig, type WebAuthnCredentialId, actorOfConsumedOAuthFlow, actorOfRedeemedOneTimeToken, actorOfResolvedSession, createOwnedRowRepository, createVelveAuth, rootKeyProvider, toEntityId };
+export { type Actor, type AnyErrorCode, type AnyRoute, type AuthInternals, type AuthenticationFactor, type BaseConfig, type CallerRequirement, type Clock, type ConsumedOAuthFlow, type EmailConfig, type EmailMessage, type EntityId, type FrozenContext, type FrozenRepositories, type GenericProviderConfig, type IdentityConfig, type IdentityFields, type IdentityId, type IdentityMode, type ImportSource, type KeyProvider, type KnownProvider, type ModeHasEmail, type ModeHasUsername, type OAuthConfig, type OnlyWhen, type OriginRequirement, type OwnedRowRepository, type OwnedRowRepositoryOptions, type PendingAuthentication, type PendingNamespace, type PendingToken, type PluginActor, type PluginErrorCode, type PluginErrorDefinition, type PluginHooks, type PluginMigration, type PluginRoute, type ProviderCredentials, type ProviderId, type RateAlert, type RateLimitConfig, type RecoveryCodesConfig, type RecoveryCodesRequirement, type RedeemedOneTimeToken, type ResolvedSession, type ResolvedSessionView, type RevokeReason, SECURITY_OPTIONS, type SecurityOption, type Session, type SessionCreateEvent, type SessionCreatedEvent, type SessionId, type SessionNamespace, type SessionRevokeEvent, type SignInCompletedEvent, type SignInEvent, type SignInLookup, type SweepReport, TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, type TotpConfig, type TrustLevelEvent, UnknownColumnError, type User, type UserCreateEvent, type UserCreatedEvent, type UserId, type UserNamespace, type UsernameNamespace, type UsernameRules, VELVE_AUTH_VERSION, type VelveAuth, type VelveAuthConfig, VelveError, type VelveErrorCode, type VelvePlugin, VelveStartupError, type WebAuthnConfig, type WebAuthnCredentialId, actorOfConsumedOAuthFlow, actorOfRedeemedOneTimeToken, actorOfResolvedSession, createOwnedRowRepository, createVelveAuth, registerPluginErrorCodes, resolveErrorCode, rootKeyProvider, toEntityId };
 
 ## neon.d.mts
 

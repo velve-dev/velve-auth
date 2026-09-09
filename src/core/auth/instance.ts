@@ -3,6 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
+import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
 	type PendingAuthenticationService,
@@ -11,7 +12,7 @@ import {
 import { emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
-import { ConcealedError, type VelveErrorCode } from "../http/error-map.js";
+import { ConcealedError, VELVE_ERROR_CODES, type VelveErrorCode } from "../http/error-map.js";
 import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
@@ -22,6 +23,7 @@ import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import { pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
+import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
@@ -43,33 +45,7 @@ const MILLISECONDS_IN_A_SECOND = 1000;
 
 const NO_SINK: HttpEnvironment["log"] = () => undefined;
 
-const ERROR_CODES: readonly VelveErrorCode[] = [
-	"invalid_input",
-	"origin_not_allowed",
-	"rate_limited",
-	"invalid_credentials",
-	"account_disabled",
-	"session_required",
-	"freshness_required",
-	"invalid_token",
-	"invalid_factor_code",
-	"invalid_recovery_code",
-	"invalid_pending_authentication",
-	"too_many_factor_attempts",
-	"password_unacceptable",
-	"username_taken",
-	"username_invalid",
-	"factor_not_enrolled",
-	"factor_already_enrolled",
-	"last_sign_in_method",
-	"identity_already_linked",
-	"provider_not_configured",
-	"oauth_flow_invalid",
-	"oauth_provider_error",
-	"webauthn_challenge_invalid",
-	"webauthn_credential_rejected",
-	"internal_error",
-];
+const ERROR_CODES = VELVE_ERROR_CODES;
 
 export interface SessionNamespace {
 	resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
@@ -193,6 +169,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
+	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
+
 	const services: RouteServices = {
 		sessions,
 		pending,
@@ -203,6 +181,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		password,
 		driver,
 		schema,
+		keys: config.keys,
+		clock,
+		oneTimeTokens,
+		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
+		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+		...(config.email === undefined ? {} : { email: config.email }),
+		...(config.plugins === undefined ? {} : { plugins: config.plugins }),
 	};
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);

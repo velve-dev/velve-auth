@@ -81,27 +81,3 @@ describe("the assembly composes the route table from every feature module", () =
 		);
 	});
 });
-
-describe("the three modules are empty until their feature fills them", () => {
-	it("returns nothing from any of them today", async () => {
-		const oauth = await vi.importActual<typeof import("../src/core/oauth/routes.js")>(
-			"../src/core/oauth/routes.js",
-		);
-		const flows = await vi.importActual<typeof import("../src/core/flows/routes.js")>(
-			"../src/core/flows/routes.js",
-		);
-		const plugin = await vi.importActual<typeof import("../src/core/plugin/routes.js")>(
-			"../src/core/plugin/routes.js",
-		);
-		const services = undefined as unknown as Parameters<typeof oauth.oauthRoutes>[0];
-
-		const contributed = [
-			oauth.oauthRoutes(services),
-			flows.emailFlowRoutes(services),
-			plugin.pluginRoutes(services),
-		];
-
-		expect(contributed).toHaveLength(3);
-		expect(contributed.flat()).toStrictEqual([]);
-	});
-});

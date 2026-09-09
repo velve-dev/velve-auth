@@ -6,6 +6,17 @@ the implementation; a feature is not finished until it is documented here.
 Concepts and rationale are not repeated here — they are in
 [`CASE-STUDY.md`](./CASE-STUDY.md). This file states what things do.
 
+Chapters run in dependency order: everything a chapter uses stands above it.
+Where two chapters use nothing of each other, the architecture's section order
+decides between them, and where that does not either, the wider of the two is
+read second.
+
+A chapter reserved for a feature that has not been written yet says so at its
+head, and that chapter is the only region of this file that feature writes into
+— `CLAUDE.md` §5 makes the chapter the partition. The reminder is repeated in
+each stub and the stub is deleted by the writer who fills it, so it is stated
+here as well, where nothing removes it.
+
 ## Contents
 
 - [Package entry points](#package-entry-points)
@@ -22,7 +33,11 @@ Concepts and rationale are not repeated here — they are in
 - [Sessions](#sessions)
 - [TOTP and recovery codes](#totp-and-recovery-codes)
 - [WebAuthn](#webauthn)
+- [Email flows](#email-flows)
+- [OAuth and identity linking](#oauth-and-identity-linking)
 - [The instance](#the-instance)
+- [Plugins](#plugins)
+- [The client](#the-client)
 
 ## Package entry points
 
@@ -929,7 +944,7 @@ that declaration; the client is derived from the same types.
 | `method` | `"GET" \| "POST"` | `GET` is for reading routes only. |
 | `path` | `string` | Absolute, no empty segments, no trailing slash. A `:name` segment captures a path parameter into the input. |
 | `input` | `ObjectValidator<Input>` | Built from `object()`, `string()` and `optional()`. A `POST` body with an undeclared key is rejected; on a `GET` route the undeclared query parameters are ignored, because providers append their own to the OAuth callback. |
-| `errors` | `readonly VelveErrorCode[]` | The codes this route may produce. A contract, not a comment. |
+| `errors` | `readonly AnyErrorCode[]` | The codes this route may produce. A contract, not a comment. `AnyErrorCode` is `VelveErrorCode` widened by the namespaced form a plugin registers; a core route declares core codes only. |
 | `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | Who may call, not what may be read. `session` resolves the session cookie or fails with `session_required`; `pending` resolves `__Host-velve_pending` into the account it names, and only the four routes of 3.6 declare it (S-CACHE-4); `server_only` has no HTTP route and answers 404. |
 | `pendingCookie` | `"hidden" \| "readable"` (optional) | Whether the route sees the value of `__Host-velve_pending`, which is a different question from whether it is authorised by it. Absent means `hidden`. `caller: "pending"` implies `readable`, and a declaration that says `hidden` there is refused at definition. A `readable` route with another caller — `GET /pending`, `POST /pending/cancel` — receives `context.pendingToken` and no authority. |
 | `freshness` | `"not_required" \| "required"` | `required` needs `caller: "session"` and fails with `freshness_required` outside the freshness window. |
@@ -1219,9 +1234,11 @@ the second.
 
 ### Error codes
 
-Every failure carries one of 25 stable codes. The status, the message and the
-mapping from internal reason to visible code live in
-`src/core/http/error-map.ts`, and no other module decides what a caller sees.
+Every failure of the core carries one of 25 stable codes. The status, the
+message and the mapping from internal reason to visible code live in
+`src/core/http/error-map.ts`, and no other module decides what a caller sees. A
+plugin adds codes of its own without widening that union; they are described
+under [A plugin's own codes](#a-plugins-own-codes) below.
 
 | Code | Status | Code | Status |
 |---|---|---|---|
@@ -1238,6 +1255,9 @@ mapping from internal reason to visible code live in
 | `invalid_pending_authentication` | 401 | `username_taken` | 409 |
 | `too_many_factor_attempts` | 429 | `username_invalid` | 400 |
 | `internal_error` | 500 | | |
+
+This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
+which are not part of that union and are resolved separately.
 
 `account_disabled` never appears while signing in — a disabled account is
 indistinguishable from a wrong password there (L-4). It appears only when an
@@ -1266,6 +1286,51 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+### A plugin's own codes
+
+Architecture 3.11 lets a plugin contribute error codes, and 3.15 G types them
+`` `${Id}.${string}` ``. They do not enter `VelveErrorCode`: that union stays a
+closed literal so that a `switch` over it stays exhaustive and the two tables
+above stay total maps the compiler checks. One resolver answers both kinds.
+
+```ts
+type PluginErrorCode = `${string}.${string}`
+type AnyErrorCode = VelveErrorCode | PluginErrorCode
+
+interface PluginErrorDefinition { readonly httpStatus: number; readonly message: string }
+
+declare function registerPluginErrorCodes(
+  definitions: Readonly<Record<PluginErrorCode, PluginErrorDefinition>>
+): void
+declare function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition
+```
+
+| Name | Meaning |
+|---|---|
+| `PluginErrorCode` | Any code carrying a namespace: one dot, non-empty on both sides. A plugin's own codes all begin with its `id`, which `PluginRoute<Id>` enforces at the type level. |
+| `AnyErrorCode` | What a route may declare in `errors` and what `VelveError` accepts. |
+| `PluginErrorDefinition` | The two things the outside learns about a code: the HTTP status and the message. Nothing else is registrable, because nothing else reaches a caller. |
+| `registerPluginErrorCodes(definitions)` | Records what each code answers with. Applied all-or-nothing: a definition that is refused leaves none of the batch registered. |
+| `resolveErrorCode(code)` | The single resolver. A core code reads the two tables above; a namespaced one reads the registry. |
+
+`registerPluginErrorCodes` refuses three things, each by throwing before it
+writes anything: a code that is already a core code, a status outside 4xx and
+5xx, and a second definition of a code already registered with a different
+answer.
+
+An unregistered namespaced code is **not** an error at the call site — it
+resolves to `internal_error`'s status and message, with the code itself still
+carried in the body. A plugin that raises a code it never registered therefore
+leaks no text of its own, and the caller sees a 500 rather than an invented
+answer.
+
+The registry is process-wide, not per instance. Two instances in one process
+share it, which is why a conflicting re-registration is refused rather than
+overwriting: the refusal turns a collision into a start-time error instead of
+letting whichever instance started last decide what the other's callers read.
+Two instances that genuinely need different text for the same code cannot both
+have it today.
 
 ## Rate limiting
 
@@ -3821,12 +3886,86 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
   application's markup; the library supplies the options, not the form
   (architecture 1 D35).
 
+## Email flows
+
+Reserved for `email-flows` (wave 5). Architecture 3.7 and 3.15 B.1, B.4 and
+B.5: the artefacts that arrive by mail and are redeemed — the confirmation
+link, the address change, the password reset and the magic link — each with the
+deadline 3.7 fixes for it, and `S-LINK-4`, the rule that a first confirmation
+deletes a password set in a different session and revokes every session that
+predates it (L-12).
+
+It stands here because everything it uses stands above it. Its artefacts are the
+one-time tokens of that chapter and its deadlines are read from there, the
+credential `S-LINK-4` deletes is the Passwords chapter's, and the sessions it
+revokes are the Sessions chapter's. What holds it below the two factor chapters
+is the result type: `signIn.magicLink.redeem` returns a `SignInResult`, whose
+`second_factor_required` branch carries `availableFactors` over `"totp"`,
+`"webauthn"` and `"recovery"` (3.15 C.1), so a magic link can end in the pending
+state offering a factor those chapters define rather than in a session. The reset
+family is not all mailed either — `password.redeemResetWithRecoveryCode` consumes
+a recovery code, which is documented two chapters above.
+
+`S-LINK-4`'s deletion is **unconditional**, and the last-way-in count of L-13 is
+not a guard on it. That count refuses exactly two operations, `webauthn.remove`
+and `identity.unlink`, and a confirmed address is excluded from it although a
+magic link works with one (3.15 B.7). L-12's attack is a pre-account whose only
+credential is the attacker's password, so a flow that declined to delete it for
+leaving no way in would fail closed on precisely the account the rule exists for.
+
+`T-LINK-4` pins that as a number rather than leaving it to reading: on the
+attacker path it requires `password_credential` at **0 rows**, every session
+created before the confirmation revoked, and the original password refused with
+`invalid_credentials` — and it runs on every commit. An implementation that adds
+the last-way-in check leaves 1 row and turns the case red. The counter-case in
+the same row is the one to keep beside it: the same registration with the
+confirmation redeemed **in the same session** keeps `password_credential` at 1
+row and leaves the session valid. What separates the two is the provenance of the
+password, not a count of credentials.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `email-flows`'
+partition of this file: that feature appends here and nowhere else, and removing
+this paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`email-flows` replaces this heading with its own sub-tree.
+
+## OAuth and identity linking
+
+Reserved for `oauth` (wave 5). Architecture 3.10 and 3.15 B.1 and B.7: the
+authorisation-code flow with PKCE S256 mandatory, `state` held server-side in
+`velve.oauth_flow` with the cookie carrying only the pointer, `nonce` under
+OIDC, the `iss` check of RFC 9207, the ID-token signature against JWKS, and the
+linking rule — `(provider, subject)` is the only key and the address is never
+one (`S-LINK-1` … `S-LINK-7`).
+
+It follows Email flows because the linking rule cites it rather than restating
+it. `S-LINK-4` belongs to that chapter, and the three conditions `S-LINK-2` puts
+on an automatic link read `email_verified_at` on the local row — the state those
+flows produce. A reader who has not read them takes the second condition for a
+restatement of the first, which is the reading CVE-2026-53516 shipped.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `oauth`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does. Its configuration seam is
+`src/core/oauth/config.ts`, which is open and is `oauth`'s file — the field on
+`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
+edited for it.
+
+### Nothing is documented here yet
+
+`oauth` replaces this heading with its own sub-tree.
+
 ## The instance
 
 `createVelveAuth` is the assembly point. It reads the configuration, refuses to
-start on a configuration that cannot be made safe, builds the modules the
-chapters above describe, and returns one object carrying the route table, the
-server methods and the maintenance sweep.
+start on a configuration that cannot be made safe, builds the modules the other
+chapters describe, and returns one object carrying the route table, the server
+methods and the maintenance sweep. Two chapters stand below this one rather than
+above it, and both for the same reason: a plugin contributes to the route table
+and is refused at start, and the client is derived from the finished table, so
+each is read against what this chapter returns.
 
 ```ts
 import { createVelveAuth, rootKeyProvider } from "@velve/auth";
@@ -3887,6 +4026,8 @@ compile (E-349).
 | `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts; it reaches the handler through `auth.http`, so `toWebHandler` needs no second copy |
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
+| `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register; declared in `core/plugin/config.ts` and read by no route yet |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -3917,6 +4058,7 @@ because nothing else would tell you.
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
+| `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
 
 Two more refusals come from the modules and keep their own error types: a root
 key shorter than 32 bytes raises `KeyError` while `rootKeyProvider` is being
@@ -4111,9 +4253,68 @@ modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
 `core/plugin/routes.ts` — and the last three return nothing today, so a feature
 adds a row by editing its own file.
 
+The configuration seam is open the same way. `config.oauth` is an `OAuthConfig`
+from `core/oauth/config.ts` and `config.plugins` a list of `VelvePlugin` from
+`core/plugin/config.ts`; both types are declared and exported, both fields are
+optional, and neither is read by the assembly yet — `pluginRoutes` is where
+`plugins` will be consumed. The types are documented by the chapters that own
+them, which are empty until wave 4.
+
 `GET /pending` and `POST /pending/cancel` are no longer among the missing.
 `pendingCookie: "readable"` is what they needed and did not have; both are
 declared, both read `__Host-velve_pending` and neither is authorised by it. The
 two methods of `auth.pending` still exist beside them and take the token
 directly, for a caller that is not a browser.
 
+## Plugins
+
+Reserved for `plugin` (wave 5). Architecture 3.11 and 3.15 G: the registry, the
+topological sort over `dependsOn`, the frozen context, the seven enumerated hook
+points and the veto a hook holds, and what a plugin may contribute — routes under
+`/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
+and its own dependency declaration, which is how 3.11's first list reads. Also
+the six things it may not, which that section states as prohibitions rather than
+as omissions.
+
+It stands after The instance because every one of those is contributed **to**
+something the assembly owns, and the refusal that guards them is a start error. A
+route name colliding with a core route is not a warning; the moment it is
+detected is the moment `createVelveAuth` runs. So a chapter listing what a plugin
+may add can only be read after the chapter that says what it is added to and what
+happens when the addition is refused. Its migrations are the same versioned
+runner, which stands further above still.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `plugin`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does. Its configuration seam is
+`src/core/plugin/config.ts`, which is open and is `plugin`'s file — the field on
+`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
+edited for it.
+
+### Nothing is documented here yet
+
+`plugin` replaces this heading with its own sub-tree.
+
+## The client
+
+Reserved for `client` (wave 6, last — the client is derived from a route table
+the waves before it are still adding rows to). Architecture 3.15 E: `createVelveClient`, the
+`ClientSurface` derived from the same route declaration the server surface is,
+the result object that makes `ok` checkable instead of throwable, `unwrap` for a
+caller who wants the server's symmetry back, and `VelveTransportError` for the
+two failures that can carry no code.
+
+It stands last because it is generated from the route table and adds nothing to
+it. The table is assembled by The instance and extended by a plugin; the client
+iterates it once at construction and builds an ordinary nested object out of the
+`name` fields, so every route this chapter describes is declared in a chapter
+above it. There is no `Proxy` and no path assembled from property names, which is
+why nothing here can exist that is not written down there.
+
+Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `client`'s partition of
+this file: that feature appends here and nowhere else, and removing this
+paragraph is the first thing it does.
+
+### Nothing is documented here yet
+
+`client` replaces this heading with its own sub-tree.

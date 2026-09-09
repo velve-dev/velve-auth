@@ -138,18 +138,18 @@ At most **four agents run at the same time**. This is a hard limit.
 Features in the same wave run in parallel; waves run one after another. **No two
 writers share a file.**
 
-There are exactly two sanctioned exceptions, and both are safe for the same
-reason: the file is **partitioned before the wave starts**, and a feature writes
-only inside the partition it was given. The exception is never "this file is
-shared" — it is "this file has disjoint parts, and one of them is yours".
+There are exactly three sanctioned exceptions, and all of them are safe for the
+same reason: the file is **partitioned before the wave starts**, and a feature
+writes only inside the partition it was given. The exception is never "this file
+is shared" — it is "this file has disjoint parts, and one of them is yours".
 
 - **`CASE-STUDY.md`** — every feature appends entries to it. The partition is a
   reserved range of decision numbers, handed out before the writer starts; §6
   sets the ranges out and `test/decision-log.test.ts` enforces them.
 - **`DOCUMENTATION.md`** — every feature documents itself in it, because item 3
   of the definition of done below requires it. The partition is the chapter:
-  **a feature owns the `##` chapter named for it — one, for every feature of
-  wave 3 — and appends nowhere else in the file.** The chapter, its position and
+  **a feature owns the `##` chapter named for it — one for every feature of the
+  wave — and appends nowhere else in the file.** The chapter, its position and
   its `## Contents` line are created as empty stubs before the wave starts, so
   no writer inserts a heading and no two writers ever touch the same region.
   **This one is enforced by the reviewer noticing, not by a check.** Nothing
@@ -158,6 +158,13 @@ shared" — it is "this file has disjoint parts, and one of them is yours".
   paragraph written into a neighbour's chapter fails nowhere. The two bullets
   look alike and are not equally enforced, and the second is worth exactly what
   the reviewer checking it is worth.
+- **`README.md`** — item 4 of the definition of done points every feature at it
+  whenever the outside picture changes, and wave 4 changes that picture three
+  times. The partition is the `###` region under **What works today** named for
+  what the feature builds, cut before the wave like a chapter. A feature rewrites
+  its own region and nothing else in the file; the sentence above the regions
+  that says what works end to end belongs to no feature, so a change to it is
+  reported rather than made.
 
 A feature that needs a change in another feature's chapter, or in a chapter no
 feature owns, stops and reports it — exactly as it would for any other file it
@@ -170,7 +177,7 @@ cannot fall behind the headings without the pre-wave pass having skipped one.
 It fell to three of eleven entries before this rule existed, because chapters
 were added by whoever wrote them and the index was owned by nobody.
 
-Both exceptions rest on the partition existing **beforehand**. Until wave 3 there
+All three exceptions rest on the partition existing **beforehand**. Until wave 3 there
 was no chapter partition, and the contradiction between this rule and item 3 of
 the definition of done was resolved by editing `DOCUMENTATION.md` anyway; all
 four wave-2 features did. That merged cleanly by luck, not by construction —
@@ -201,11 +208,13 @@ repair anything itself.
 - `pnpm build` without errors **and without warnings**
 - `pnpm typecheck` under `strict`, no `any` in the public surface type
 - `pnpm lint` without findings, formatting applied
-- `pnpm knip` — no dead code, no unused export
+- `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
 - `pnpm check:lock-order` — `velve.user` is locked before any other table
-- `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
+- `pnpm check:log-append` — the decision log deletes no line it had at the merge
+  base, and the branch has added at least one (§6, E-538)
+- `pnpm knip` — no dead code, no unused export
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
 - `pnpm attw` — the types resolve under every module mode the package claims
@@ -304,6 +313,50 @@ nobody had.
 New information about an old decision belongs in a new entry that cites the old
 one, never in the old entry's text.
 
+### Correcting an entry before it merges
+
+**On your own branch, before merge, a measurement may be restated in place; a
+reason may not. An entry that existed at the merge base is never edited.**
+
+The rule above protects a reason from being rewritten *after it has been read*,
+and an entry on an unmerged branch has been read by nobody. Forbidding the
+in-branch correction produces the opposite of what that rule wants: a writer who
+may not change `ten of thirteen` to `eleven of fourteen` in their own unpublished
+entry has to publish a number they know is wrong and aim a second entry at it,
+and the wrong number becomes permanent.
+
+**A measurement is a number or a count the entry states about the work** — `ten
+of thirteen cases`, `six plants`, `40 of 60`. Everything else in an entry is a
+reason, including a statement about what the specification says, which is
+checkable but is not a measurement. The distinction is the whole load-bearing
+part of this rule and it has already needed adjudicating once, in E-538.
+
+The sharp edge is the honest half. The same latitude covers rewriting a **reason**
+on an unmerged branch, which is retroactive rationalisation, and **no diff of any
+form separates the two cases** — an edit to an entry the branch itself introduced
+nets out to an addition against the merge base whichever way the edit went. This
+rule needs a human. E-536 found that boundary; E-538 records an instance where a
+wrong reason was corrected in place anyway, deliberately and disclosed in the
+entry, which is what disclosure is for and is not a precedent for doing it
+quietly.
+
+What a script can read is the second sentence, and `pnpm check:log-append` reads
+it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
+deletions. The **three-dot** form is the form. Two-dot is not a stricter version
+of the property but a wrong one — where the base has moved and has not been
+merged, it counts deletions `main`'s own commits made as though this branch had
+made them (E-538). The check is structurally blind to an edit of an entry the
+same branch introduced, because at the merge base that entry did not exist. That
+blindness is exactly right: it is the case this rule permits.
+
+**The loss the step actually prevents is a merge conflict resolved badly.** Four
+features append to `CASE-STUDY.md` in every wave, so a branch that merges `main`
+gets a conflict in it, and resolving that conflict by keeping one's own side
+drops a sibling's entries silently — the branch is green, the entries are gone,
+and the sibling has already merged. That is a routine mistake with no other
+detector. The in-branch edit E-538 records is the narrower case and the one the
+step cannot see.
+
 ### Numbering the decision log
 
 `CASE-STUDY.md` is the one file every feature appends to. That is a deliberate
@@ -334,6 +387,13 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-450 … E-494 | wave 3 · `factor-webauthn` |
 | E-495 … E-514 | gate and infrastructure, second range |
 | E-515 … E-539 | gate and infrastructure, third range |
+| E-540 … E-594 | wave 5 · `oauth` |
+| E-595 … E-634 | wave 5 · `email-flows` |
+| E-635 … E-669 | wave 5 · `plugin` |
+| E-670 … E-699 | wave 6 · `client` |
+| E-700 … E-734 | gate and infrastructure, fourth range |
+| E-735 … E-794 | wave 4 · `spine` |
+| E-795 … E-819 | gate and infrastructure, fifth range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -390,6 +450,83 @@ Wave 3 is cut against that ratio instead of against a round thirty.
   source of gate numbers that exists. That block is where every broken-check
   finding lands; there are already thirty-eight of those in the log, running at
   roughly four per feature, and wave 3 runs four features at once.
+
+Wave 3 has merged, so the ratio has a second measurement. Counted against
+`CASE-STUDY.md` on `main`, wave 3 used `auth-core` **40 of 60**, `rate`
+**17 of 25**, `factor-totp` **27 of 45**, `factor-webauthn` **35 of 45**, the
+gate's second range **11 of 20** and its third range **24 of 25**.
+
+Two things fall out of that, and they point in opposite directions. Every
+**feature** range came in between sixty and eighty per cent, so cutting wave 3
+against the ratio rather than against a round thirty was right and none of those
+four needed a second row. Every **gate** range that was actually worked ran to
+its edge: the first block is exhausted at twenty of twenty, and the third stopped
+one number short. The second block reads as slack and is not — it was cut for the
+wave-3 preparation and the relicensing, the seam cut ran beside it and had to
+take a disjoint range, and its nine unused numbers are the gap §6 says a range
+leaves behind, not headroom anyone can reach for.
+
+Wave 4 is cut against that, and it is **one feature**.
+
+- **The spine gets sixty, and is wave 4 on its own.** Between the services wave 3
+  built and the flows the next wave wants there is an assembly layer that does not
+  exist: `RequestContext` has no `plugin` field (3.15 D.1) and no OAuth state
+  token, the seven hook points of 3.11 have no dispatcher and no ordering behind
+  the security middleware (`S-CSRF-6`), `signIn.oauth.*` and `signIn.magicLink.*`
+  belong to the one `signIn` namespace 3.15 B.1 declares, `SignInResult`,
+  `SignUpResult`, `OAuthRedirect` and `OAuthCallbackResult` appear nowhere in the
+  tree, nothing computes `availableFactors` (3.6), `mountAuth` takes no overrides,
+  and `src/index.ts` and the API snapshot belong to nobody. Each of those has
+  specification behind it and all three of the following features depend on all of
+  them. A thing with its own requirements that three features depend on is a
+  feature, not a seam — sixty because it is the same kind of work `auth-core` was
+  and `auth-core` used forty of sixty.
+- **`oauth`, `email-flows` and `plugin` are wave 5**, three writers, genuinely
+  independent once the spine exists. Their ranges are unchanged.
+- **`client` is wave 6**, for the reason below.
+
+- **`oauth` gets fifty-five.** `S-LINK-1` to `S-LINK-7` are its, and that number
+  is checkable: 5.11 lists exactly seven. Requirements from four other classes
+  reach it too — `S-REDIR-6` for outbound endpoints, `S-KEY-7` for the JWKS
+  algorithm allowlist, `S-REST-4` and `S-REST-6` for `pkce_verifier_enc` and the
+  stored provider tokens — but the specification draws no feature-to-requirement
+  map, so any total across classes is a judgement and is not offered as a count.
+  Two of its test cases are corpora rather than cases: T-LINK-2's twelve-way
+  state matrix and T-REDIR-2's corpus of at least a hundred and twenty malicious
+  redirect targets. 3.10 names fourteen providers plus `genericOAuth`, and a
+  generic one is a set of endpoints and a subject claim rather than a credential
+  pair. It is the widest feature of the wave and the only one that could
+  plausibly fill its range. A requirement number does not remove the need for an
+  entry, either: the linking rule is where three of the advisories in 5.11 came
+  from, and `S-LINK-2`'s three conditions are exactly where a reasonable-looking
+  relaxation reintroduces one.
+- **`email-flows` gets forty.** It owns `S-LINK-4`, which is the rule the linking
+  chapter has to cite rather than restate, and the whole `request…`/`redeem…`
+  verb pair of 3.15's rule 2.
+- **`plugin` gets thirty-five.** The registry, the topological sort, the frozen
+  context and the enumerated hook points are each a boundary that 3.11 states as
+  a prohibition, and a prohibition is the kind of thing that generates a decision
+  when it is enforced rather than when it is written.
+- **`client` gets thirty and is last.** It is narrow for the same reason
+  `rate` was of wave 3 — the route table already exists and the client is derived
+  from it (3.15 E) — and that derivation is what moves it. 3.15 E requires
+  `@velve/auth/client` to carry the table as a value with no server core behind
+  it, and under `unbundle: true` every import in a route module survives into
+  `dist/client.mjs`. A handler-free table therefore needs either a per-feature
+  metadata split, which touches every file the other three writers own, or a
+  second table that the first of them to merge makes stale. Neither is a
+  partition, so `client` is written after the route surface settles. Its range is
+  reserved and untouched; nothing is renumbered.
+
+A wave of one needs no partition, so the spine writes wherever the specification
+puts it — `## The instance` and `## HTTP` included — and the three files §5
+partitions are partitioned for wave 5, not for it.
+- **Gate and infrastructure gets a fourth block of thirty-five, not
+  twenty-five.** The measurement above is what argues it. The largest single gate
+  cut so far took twenty-four numbers, and a twenty-five-wide block against a
+  measured twenty-four is one number of slack — which is exactly the shape this
+  section already identifies as a range that ran out. Thirty-five is one clear
+  step above the largest cut observed.
 
 Over-reserving costs a gap in the numbering, which §6 has already said is fine.
 Under-reserving costs a mid-branch request for numbers at the moment the writer
@@ -499,6 +636,14 @@ pnpm check:sql-collapse
                  every SQL statement still says what it said once its newlines
                  are normalised away — a marker is a block comment, never a line
                  comment
+pnpm check:log-append
+                 no line CASE-STUDY.md had at the merge base is deleted or
+                 rewritten, and the branch has added at least one. Refuses the
+                 run if the base cannot be resolved; VELVE_LOG_BASE names a base
+                 other than origin/main. Alone among the gate's steps it reads
+                 committed history and not the working tree, so an uncommitted
+                 deletion is invisible to it — and to every other step as well,
+                 which is why §6 states it rather than a check catching it
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

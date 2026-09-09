@@ -1,6 +1,6 @@
 import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import type { CookieWriter } from "./cookies.js";
-import type { VelveErrorCode } from "./error-map.js";
+import type { AnyErrorCode } from "./error-map.js";
 import type { RateLimitRule } from "./rate-limit.js";
 import { isRecord, type ObjectValidator } from "./validators.js";
 
@@ -32,7 +32,7 @@ export interface RouteDeclaration<
 	Path extends string,
 	Input,
 	Output,
-	Code extends VelveErrorCode,
+	Code extends AnyErrorCode,
 > {
 	readonly name: Name;
 	readonly method: HttpMethod;
@@ -52,7 +52,7 @@ export interface RouteMetadata {
 	readonly name: string;
 	readonly method: HttpMethod;
 	readonly path: string;
-	readonly errors: readonly VelveErrorCode[];
+	readonly errors: readonly AnyErrorCode[];
 	readonly caller: CallerRequirement;
 	readonly freshness: FreshnessRequirement;
 	readonly originCheck: OriginRequirement;
@@ -91,7 +91,7 @@ export interface Route<
 	Path extends string,
 	Input,
 	Output,
-	Code extends VelveErrorCode,
+	Code extends AnyErrorCode,
 > extends RouteMetadata,
 		RunnableRoute<Output> {
 	readonly name: Name;
@@ -182,7 +182,7 @@ export function defineRoute<
 	Path extends string,
 	Input,
 	Output,
-	Code extends VelveErrorCode,
+	Code extends AnyErrorCode,
 >(
 	declaration: RouteDeclaration<Name, Path, Input, Output, Code>,
 ): Route<Name, Path, Input, Output, Code> {
@@ -232,7 +232,7 @@ export interface ServerCallFields {
 }
 
 export type ServerMethodOf<R> =
-	R extends Route<string, string, infer Input, infer Output, VelveErrorCode>
+	R extends Route<string, string, infer Input, infer Output, AnyErrorCode>
 		? (input: Input & ServerCallFields) => Promise<Output>
 		: never;
 

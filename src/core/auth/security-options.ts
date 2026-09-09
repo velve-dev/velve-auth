@@ -61,6 +61,22 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 		weakenedBy: NOTHING_WEAKENS_IT,
 	},
 	{
+		option: "oauth",
+		safeDefault: "no default: third-party sign-in is optional, and no token is stored",
+		weakenedBy:
+			"an entry in trustedProviders, which is the third of S-LINK-2's three conditions, or storeTokens: true",
+	},
+	{
+		option: "fetch",
+		safeDefault: "globalThis.fetch",
+		weakenedBy: "any other implementation, because it sees every outbound provider request",
+	},
+	{
+		option: "plugins",
+		safeDefault: "[]",
+		weakenedBy: "any entry, because a hook can refuse a sign-in the core would have allowed",
+	},
+	{
 		option: "webauthn",
 		safeDefault: "no default: the relying party is optional",
 		weakenedBy: '"preferred" user verification, which admits an unverified second factor',
@@ -152,6 +168,24 @@ const DETECTORS: readonly Detector[] = [
 			? { option: "recoveryCodes", chosen: `${count} codes` }
 			: null;
 	},
+
+	(config) => {
+		const trusted = config.oauth?.trustedProviders ?? [];
+		const stored = config.oauth?.storeTokens === true;
+		if (trusted.length === 0 && !stored) {
+			return null;
+		}
+		const parts = [
+			trusted.length > 0 ? `${trusted.length} trusted provider(s)` : null,
+			stored ? "provider tokens stored" : null,
+		].filter((part): part is string => part !== null);
+		return { option: "oauth", chosen: parts.join(", ") };
+	},
+
+	(config) =>
+		config.plugins !== undefined && config.plugins.length > 0
+			? { option: "plugins", chosen: config.plugins.map((plugin) => plugin.id).join(", ") }
+			: null,
 
 	(config) =>
 		config.clock === undefined ? null : { option: "clock", chosen: "a clock the caller supplied" },

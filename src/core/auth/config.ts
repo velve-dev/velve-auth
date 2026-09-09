@@ -4,7 +4,9 @@ import type { Clock } from "../http/environment.js";
 import type { BucketRule } from "../http/rate-limit.js";
 import type { IdentityConfigurationInput } from "../identity/configuration.js";
 import type { KeyProvider } from "../keys/provider.js";
+import type { OAuthConfig } from "../oauth/config.js";
 import type { PasswordConfig } from "../password/config.js";
+import type { VelvePlugin } from "../plugin/config.js";
 import type { SessionConfig } from "../session/config.js";
 import type { SessionMetadataMode } from "../session/metadata.js";
 
@@ -126,6 +128,10 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly trustedProxies?: readonly string[];
 	readonly rateLimit?: Partial<RateLimitConfig>;
 	readonly email?: EmailConfig;
+	readonly oauth?: OAuthConfig;
+	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
+	readonly fetch?: typeof globalThis.fetch;
+	readonly plugins?: readonly VelvePlugin[];
 	readonly webauthn?: WebAuthnConfig;
 	readonly totp?: Partial<TotpConfig>;
 	readonly schema?: string;
