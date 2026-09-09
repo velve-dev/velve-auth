@@ -4393,8 +4393,26 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 | T-RAND-4 | S-RAND-4 | Unit | Je 1000 Werte für Einmal-Token, `state`, PKCE-Verifier und WebAuthn-Challenge. | jeweils **≥ 256 bit** dekodiert; PKCE-Verifier zusätzlich 43–128 Zeichen (RFC 7636) | CI bei jedem Commit |
 | T-RAND-5 | S-RAND-5 | Statisch | AST-Scan: Aufrufe von `crypto.getRandomValues` außerhalb des Zufallsmoduls. | **0 Treffer außerhalb** von `core/token/random.ts` | CI bei jedem Commit |
 | T-RAND-6 | S-RAND-6 | Statisch + Integration | Typprüfung: eine Funktion, die `EntityId` erwartet, nimmt kein `Secret` an und umgekehrt (`expectTypeOf`). Integrationstest durchsucht alle `Set-Cookie`- und Körperwerte der gesamten Suite nach `uuid`-Werten aus `velve.session.id`. | **0 Typfehler fehlen** (2 Negativfälle kompilieren nicht); **0 Treffer** über alle Integrationsantworten | CI bei jedem Commit |
-| T-RAND-Verteilung | S-RAND-2/3/4 (ergänzend) | Statistisch | N = 100 000 Tokens je Artefakttyp; Zeichenhäufigkeit je Position; Monobit- und Runs-Test auf Bitebene (NIST SP 800-22). | Chi-Quadrat je Position **p > 0,001**; Monobit **p > 0,001**; Runs **p > 0,001** | CI nächtlich |
+| T-RAND-Verteilung | S-RAND-2/3/4 (ergänzend) | Statistisch | N = 100 000 Tokens je Artefakttyp; Zeichenhäufigkeit je Position (42 volle Positionen und die letzte, die nur 16 Zeichen tragen kann); Monobit- und Runs-Test auf Bitebene (NIST SP 800-22) — zusammen **k = 45** Einzeltests über dieselbe Stichprobe. | **Familienweise p > 0,001** über alle k Einzeltests dieser Datei gemeinsam; je Einzeltest daher α = 1 − (1 − 0,001)^(1/k) nach Šidák — heute k = 45 und α ≈ 0,0000222. Jeder zusätzliche Fall verschiebt α. | CI nächtlich |
 | T-RAND-Kollision | S-RAND-2 (ergänzend) | Nebenläufigkeit | 1 Mio. Tokens in 8 parallelen Arbeitern erzeugen, in eine Menge schreiben. | `set.size === 1_000_000` | CI nächtlich |
+
+**Warum die Schwelle familienweise gilt.** Bis zu dieser Fassung stand in der Zeile ein α **je
+Position**: „Chi-Quadrat je Position p > 0,001; Monobit p > 0,001; Runs p > 0,001". Das ist eine
+Schwelle für einen Test, der nicht allein vorkommt. Die 45 Einzeltests liegen in einer Datei und
+färben sie gemeinsam rot. Wären sie unabhängig, ergäbe α = 0,001 je Test eine Fehlalarmrate von
+1 − (1 − 0,001)^45, also rund 4,4 %. Ganz unabhängig sind sie nicht — Monobit und Runs lesen
+dieselben Bits, aus denen die Positionstests ihre Zeichen nehmen —, und deshalb gilt die Messung
+und nicht das Modell: **4,29191 % über 1 000 020 Durchläufe**, ein ehrlicher Lauf von
+dreiundzwanzig.
+
+**Was die Korrektur kostet.** Sie ist nicht umsonst und wird hier nicht so hingeschrieben. Šidák
+drückt α je Einzeltest von 0,001 auf rund 0,0000222 und damit die Trennschärfe: Gegen eine
+Verzerrung am heutigen Erkennungspunkt fällt die Erkennungswahrscheinlichkeit bei N = 100 000 von
+49,90 % auf 17,27 %. Der Verlust liegt vollständig in einem schmalen Band — zwischen etwa 11,4 %
+und 13,4 % Ausdünnung eines einzelnen Zeichens an einer Position; außerhalb dieses Bandes
+entscheiden beide Fassungen gleich. **N bleibt bei 100 000.** Um die alte Trennschärfe zu halten,
+wären 139 284 nötig; das wäre eine zweite Abweichung, genommen um die erste weichzuspülen, und sie
+wird nicht genommen.
 
 ---
 

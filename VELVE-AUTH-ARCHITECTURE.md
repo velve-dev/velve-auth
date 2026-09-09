@@ -4392,8 +4392,24 @@ To each of the 123 requirements from section 5 belongs a test case. The test ID 
 | T-RAND-4 | S-RAND-4 | Unit | 1000 values each for one-time tokens, `state`, PKCE verifier and WebAuthn challenge. | **≥ 256 bit** decoded in each case; PKCE verifier additionally 43–128 characters (RFC 7636) | CI on every commit |
 | T-RAND-5 | S-RAND-5 | Static | AST scan: calls to `crypto.getRandomValues` outside the randomness module. | **0 hits outside** `core/token/random.ts` | CI on every commit |
 | T-RAND-6 | S-RAND-6 | Static + Integration | Type check: a function that expects an `EntityId` does not accept a `Secret` and vice versa (`expectTypeOf`). An integration test searches all `Set-Cookie` and body values of the entire suite for `uuid` values from `velve.session.id`. | **0 type errors missing** (2 negative cases do not compile); **0 hits** across all integration responses | CI on every commit |
-| T-RAND-Verteilung | S-RAND-2/3/4 (supplementary) | Statistical | N = 100,000 tokens per artefact type; character frequency per position; monobit and runs test at bit level (NIST SP 800-22). | Chi-square per position **p > 0.001**; monobit **p > 0.001**; runs **p > 0.001** | CI nightly |
+| T-RAND-Verteilung | S-RAND-2/3/4 (supplementary) | Statistical | N = 100,000 tokens per artefact type; character frequency per position (42 full positions plus the last, which can carry only 16 characters); monobit and runs test at bit level (NIST SP 800-22) — **k = 45** individual tests together, over the same sample. | **Family-wise p > 0.001** across all k individual tests of this file together; per individual test therefore α = 1 − (1 − 0.001)^(1/k) by Šidák — today k = 45 and α ≈ 0.0000222. Every additional case moves α. | CI nightly |
 | T-RAND-Kollision | S-RAND-2 (supplementary) | Concurrency | Create 1 million tokens in 8 parallel workers, write them into a set. | `set.size === 1_000_000` | CI nightly |
+
+**Why the threshold is family-wise.** Up to this version the row carried an α **per position**:
+"Chi-square per position p > 0.001; monobit p > 0.001; runs p > 0.001". That is a threshold for a
+test that does not occur alone. The 45 individual tests lie in one file, which they turn red
+together. Were they independent, α = 0.001 per test would give a false-alarm rate of
+1 − (1 − 0.001)^45, about 4.4%. Fully independent they are not — monobit and runs both read the
+same bits from which the position tests take their characters — so the measurement holds rather
+than the model: **4.29191% over 1,000,020 trials**, one honest run in twenty-three.
+
+**What the correction costs.** It is not free, so it is not written down here as though it were.
+Šidák pushes α per individual test from 0.001 to about 0.0000222, along with the power: against a
+bias at today's detection point, the detection probability at N = 100,000 falls from 49.90% to
+17.27%. The loss lies wholly in a narrow band — between about 11.4% and 13.4% depletion of
+a single character at one position; outside that band both versions decide alike. **N stays at
+100,000.** Holding the old power would need 139,284; that would be a second deviation, taken to
+soften the first, so it is declined.
 
 ---
 
