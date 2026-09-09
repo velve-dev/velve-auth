@@ -148,16 +148,17 @@ them do not.
 
 ### Plugins
 
-Half built. A plugin declared in `plugins` is registered at start: its routes
-join the route table under `/x/<plugin-id>/…` and become methods on the
-instance, and its `dependsOn` is sorted topologically. A hook can refuse by
-throwing and observe by returning; it cannot replace the answer, because every
-one of them returns `Promise<void>`.
+A plugin declared in `plugins` is registered at start: its routes join the route
+table under `/x/<plugin-id>/…` and become methods on the instance, its
+`dependsOn` is sorted topologically, its migrations run, its error codes answer
+and its rate-limit rules apply. A hook can refuse by throwing and observe by
+returning; it cannot replace the answer, because every one of them returns
+`Promise<void>`.
 
 **A hook point only fires if an operation reaches it, and most of the operations
-are not built yet.** `beforeSessionRevoke` runs today, on sign-out and on all
-three revocation routes, before the rows go, so a hook that throws leaves the
-session standing. Which of the seven have a producer is a table in
+are not built yet.** `beforeSessionRevoke` runs today, on sign-out, on all three
+revocation routes and on a revocation a plugin performs itself, before the rows
+go, so a hook that throws leaves the session standing. Which of the seven have a producer is a table in
 [`DOCUMENTATION.md`](./DOCUMENTATION.md) and is stated there and not here: a
 plugin can register a point nothing reaches, and it will not run.
 
@@ -171,18 +172,22 @@ inside a string literal the database later executes is not seen. The reference
 says exactly what it refuses, what it lets through and where that hole is.
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
-and on the direct server call alike, and a plugin route cannot make itself a
-reader of the cookie that carries a half-finished sign-in. Six ways of
-configuring plugins wrongly refuse the start rather than warning: a duplicate id,
-a dependency on a plugin that is not configured, a cycle, a route that collides
-with a core one, a route reaching for one of those cookies, and a field the
-interface does not enumerate — which is how a plugin trying to put a middleware
-in front of the origin check is answered.
+and on the direct server call alike; a plugin route cannot make itself a reader
+of the cookie that carries a half-finished sign-in, and it cannot declare itself
+exempt from the origin check. Twelve ways of configuring plugins wrongly refuse
+the start rather than warning, among them a duplicate id, two ids where one is
+the other's table prefix, a dependency on a plugin that is not configured, a
+cycle, a route that collides with a core one, a route reaching for one of those
+cookies or skipping the origin check, an error code outside the plugin's own
+namespace, and a field the interface does not enumerate — which is how a plugin
+trying to put a middleware in front of the origin check is answered.
 
-What is not built is the rest: plugin migrations do not run, and declared error
-codes and rate-limit rules are not read. Each of those three writes a line to
-your log at start naming the plugin and the field, so a declaration that does
-nothing says so.
+A plugin's migrations run in the same versioned runner the core's do, recorded
+under the plugin's own id so its version numbers are its own. What such a
+migration created is measured before and after it runs: it may add exactly the
+tables it declares, each carrying its prefix, and it may not touch a table it
+does not own — the refusal rolls the whole migration back. There is no rollback
+of an applied one, and removing a plugin leaves its tables where they are.
 
 ## Mounting it
 

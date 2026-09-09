@@ -4162,3 +4162,154 @@ Its Reason is also a little wider than it needs to be. *"Any entry stating one i
 **Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
 
 One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
+### A plugin's migrations are keyed on the plugin, not on a number nobody coordinates
+`E-635` · plugin · the schema, frozen
+
+**Context.** 3.11 puts a plugin's migrations in the same versioned runner, the runner keys its ledger on `version` alone, and 3.15 G.1's example numbers its first migration `1` — the number the core's first carries. E-748 declined to take this because it is a schema decision.
+**Rejected.** (a) Offsetting a plugin's versions into a band derived from its id, by hash or by its position in the configuration. (b) Refusing a version the core already uses.
+**Reason.** (a) fails on both derivations: a hash collides silently and a position changes when the application reorders `plugins`, which would make an applied migration look unapplied. (b) makes the version numbers of one plugin depend on the core's and on every other plugin's, so adding a core migration could break an installed plugin. The owner is what the version is scoped by — `(plugin_id, version)` — and then no number is coordinated with anyone. 3.11 says the same runner, and it is the same runner: same advisory lock, same transaction per migration, same checksum rule, same schema rewriting, same cascade guard.
+**Price.** Two ledgers to reason about instead of one, and a plugin's applied versions are not in `MigrationReport`. Nothing carries a plugin's migrations back out of `migrate()` at all, so an operator who wants to know what ran reads a table (E-652).
+
+### The plugins' ledger is a table of its own rather than a column on the core's
+`E-636` · plugin · the schema, frozen
+
+**Context.** Keying on `(plugin_id, version)` can be done by adding an `owner` column to `velve.schema_migration` and widening its primary key, or by a second table.
+**Rejected.** The `owner` column.
+**Reason.** The core ledger's shape is stated in three places — `createLedger` in the runner, migration 1's own SQL, and the shipped `migrations/0001_initial_schema.sql`. Widening it means either editing migration 1, which changes its checksum and makes every database that has already run it refuse to migrate, or leaving migration 1 describing a shape the runner then alters, so that the SQL an operator applies by hand and the SQL the library runs disagree. A second table needs neither: it is created by the runner, and only where a plugin actually brings a migration, so an installation without one has exactly the schema `migrations/*.sql` describes and `test/db-schema-conformance.test.ts` compares against.
+**Price.** The plugin ledger is in no shipped SQL file, so an operator who applies the shipped migrations by hand and then runs a plugin gets a table the files never mentioned. And the argument against editing migration 1 rests on a checksum that protects databases nobody has yet: the package is at 0.0.0 and has never been published, so the cost avoided here is a developer's local database, not a deployment.
+
+### What a plugin migration created is measured, not read out of its SQL
+`E-637` · plugin · the boundary, frozen
+
+**Context.** `PluginMigration.createsTables` types the tables as `${Id}_${string}`, and a plugin from JavaScript is not typed. Something has to check that a migration creates what it declared and nothing else.
+**Rejected.** Parsing the migration's SQL for `CREATE TABLE`, which is what `coreTableNames` does for the core's own migrations.
+**Reason.** `ownTables.query` has already been through two rounds of a reviewer finding a table reference in a position the walk did not model (E-756, E-762), and a migration's SQL is arbitrary DDL rather than the five statement kinds that walk handles. So the runner reads the shape of every table in the schema before the migration and again after, inside its transaction, and compares: the tables that appeared must be exactly the declared ones, each prefixed, and no other table may lose, gain or change a column, or disappear. A statement the runner cannot read cannot get past a comparison that never reads it.
+**Price.** Two extra queries per plugin migration, which is nothing, and a rule that is coarser than it sounds: it compares tables and columns, so an index, a constraint, a trigger, a function or a row written into a core table is invisible to it. A plugin migration is arbitrary SQL from a package the application installed, and this is a guardrail against the accident on the same footing as `ownTables` — not a sandbox.
+
+### The ledger is a table no migration creates, so the name census could not see it
+`E-638` · plugin · the boundary, finding
+
+**Context.** `coreTableNames()` reads the core table names out of the SQL that creates them (E-761), and `ownTables.query` refuses any of them wherever they stand. `velve.plugin_schema_migration` is created by the runner and by no migration, so the census does not contain it — and a plugin whose id is `plugin` owns the prefix `plugin_`, which is what that name begins with. That plugin could have read and written the ledger recording its own migrations.
+**Rejected.** Creating the ledger in a new core migration so the census would find it by parsing.
+**Reason.** A new core migration would put the table into every installation, including the ones with no plugins, which is what E-636 is avoiding. The census exists so that no *second list* of names falls behind the first; adding a name that has exactly one definition, imported from it, is not a second list. `coreTableNames()` is the parsed names plus `PLUGIN_LEDGER_TABLE`, and `test/plugin-own-tables.test.ts` reads the case with a plugin actually called `plugin`.
+**Price.** The census is now two things joined — what the SQL says and what the runner names — and the join is a line somebody has to remember when the runner grows a third table. The number in the reference moves from sixteen to seventeen, which is the second time that count has had to be restated.
+
+### A plugin route could exempt itself from the origin check
+`E-639` · plugin · S-CSRF-6, finding
+
+**Context.** S-CSRF-6 says a plugin can neither replace the origin check, nor bypass it, nor run ahead of it. Wave 4 answered the first and the third: the context has no route to the check and an unenumerated field is a start error, with `test/plugin-security-order.test.ts` proving the order on both call paths. `PluginRoute` kept `originCheck: OriginRequirement`, and `pipeline.ts` runs the check only where a route says `"checked"` — so a plugin route declaring itself `"exempt"` skipped it, with nothing to replace and nothing to run ahead of. `test/auth-route-table.test.ts` reads S-CSRF-1 over the whole table and mounts without plugins, so it could not have seen it.
+**Rejected.** Removing `originCheck` from `PluginRoute` entirely.
+**Reason.** 3.15 G.1's example declares `originCheck: "checked"`, and a specification example that fails to start is a worse defect than a field with one legal value. The type narrows it to that value, and the start refuses anything else — `undefined` included, because a JavaScript plugin that omits it reaches the pipeline as a route the check skips. The case is now read over a table mounted *with* a plugin, which is the half `auth-route-table.test.ts` cannot cover.
+**Price.** The field is in the declaration and cannot be chosen, which reads as ceremony until you know why. And this was found by reading S-CSRF-6 against the type rather than by any check: the four words that matter, *weder ersetzen noch umgehen*, had been answered for *ersetzen* only, and nothing in the tree distinguishes the two.
+
+### The owner is read before the row goes, because the event names it and a deleted row cannot be asked
+`E-640` · plugin · 3.15 G, decided
+
+**Context.** `SessionRevokeEvent` carries `sessionId`, `userId` and `reason`; `revokeSession` is given a session id and no owner. `deleteSessionById` returns the owner, but only after the row is gone, and 3.11 makes the announcement precede the deletion so a hook can refuse it.
+**Rejected.** Announcing inside the deleting transaction, from the `RETURNING` row, so the hook runs before the commit.
+**Reason.** That would hold a write transaction open across arbitrary plugin code — a hook with an outbound call holds it for that call's timeout — and worse, what a hook sees while it runs would depend on the driver: on a pooled driver its own queries run on another connection and see the row still there, on a single-connection driver they join the open transaction and do not. A read before the delete costs one statement, matches what the three revocation routes already do, and leaves the announcement and the deletion in the same relation to each other everywhere.
+**Price.** One more statement per plugin revocation, and the same gap the HTTP path has: the announcement and the deletion are not one transaction, so a plugin can be told about a revocation a later failure prevents.
+
+### The re-entry guard is a context, not a flag
+`E-641` · plugin · E-766 closed, boundary
+
+**Context.** E-766 refused to announce a plugin's own revocation because a hook that revokes would re-enter its own hook, and named the missing re-entry guard as this feature's. The asymmetry it left is a plugin auditing revocations seeing the HTTP ones and missing the plugin ones.
+**Rejected.** (a) A flag or a depth counter held by the runtime. (b) Leaving the asymmetry.
+**Reason.** (a) is wrong for the reason it looks right: hooks await, so two revocations from two requests interleave, and a process-wide flag or counter is a measure of concurrency rather than of depth — request B's announcement would be suppressed because request A is inside a hook. Threading a depth through the call would need an async context the library does not have. So the guard is the object: a `beforeSessionRevoke` hook is handed a context whose own `revokeSession` announces nothing. Nothing is shared between requests, the loop cannot start, and the other six points keep the announcing context, so a plugin revoking from `afterSignIn` still announces. E-766's price is closed with it.
+**Price.** A hook that stashes the context it was given at another point and revokes through that one inside `beforeSessionRevoke` is announcing again and can build the loop by hand. The guard is structural and structure is what a plugin runs around; what it protects against is the plausible plugin E-766 named, not a determined one. And a plugin now holds two context objects rather than one, which are equal in everything except this.
+
+### Two plugin ids, one table prefix
+`E-642` · plugin · S-DEFAULT-5, decided
+
+**Context.** S-DEFAULT-5 makes a name conflict between two plugins a start error and names three kinds: route, **table prefix** and error code. Distinct ids were taken to settle the table prefix, because each plugin's tables begin with its own id. They do not: `audit` and `audit_trail` are two ids, and `audit_trail_entry` carries both prefixes. Either plugin can read and write it through `ownTables.query`, and either can declare it in `createsTables`.
+**Rejected.** Nothing. There is no reading under which the two ids do not overlap.
+**Reason.** An id that another id extends with an underscore is refused at start. It is the only one of the three conflicts S-DEFAULT-5 names that was not already answered, and T-DEFAULT-5 asks for exactly this case.
+**Price.** Two plugins that could have coexisted are refused when one is named for the other — `billing` and `billing_reports` are a plausible pair, and the second has to be renamed. The alternative is a table two plugins own, so the refusal is the cheaper end of it.
+
+### An error code is refused outside its own namespace, and a route may not name one nobody declared
+`E-643` · plugin · S-DEFAULT-5, decided
+
+**Context.** 3.15 G types an error code as `${Id}.${string}`, which a plugin written in JavaScript does not read. S-DEFAULT-5 makes an error code conflict between two plugins a start error.
+**Rejected.** Detecting the conflict itself — two plugins declaring the same code — instead of the namespace.
+**Reason.** Detecting the conflict answers the case in T-DEFAULT-5 and nothing else. The namespace rule answers it and more: ids are unique, so two plugins can only collide on a code if at least one wrote outside its namespace, and a code outside the namespace is also a plugin claiming a name it does not own even when nobody else has claimed it.
+**Price.** The start error names the namespace and not the collision, so a reader who meets it while both plugins are configured has to work out which of the two ids the code was supposed to carry.
+
+### `errors` is a contract, so a code nobody declared cannot be in it
+`E-644` · plugin · 3.15 D.1, decided
+
+**Context.** 3.15 D.1 makes `errors` mandatory and says the handler may throw only the codes it names, so a client can handle them exhaustively. A plugin route can name `${Id}.${string}` in `errors` without declaring it in `errorCodes`, and an undeclared code answers `internal_error` (E-647) — so the route would promise a code the caller can never receive.
+**Rejected.** Registering whatever a route names in `errors`, which would make `errorCodes` unnecessary.
+**Reason.** That inverts the declaration: `errorCodes` is what 3.15 G gives a plugin to say which codes are its own, and inferring them from route declarations would leave a plugin unable to declare a code it throws from a hook rather than from a route. The route's list is checked against the plugin's at start instead, which is the moment both are known.
+**Price.** A plugin that throws a code from a hook still has to declare it, and nothing checks *that* — the check reads route declarations, which is where the contract is stated, and a hook has no error list to read.
+
+### The rate-limit map wins, and it is applied where the route is built
+`E-645` · plugin · 3.15 G against 3.15 D.1, decided
+
+**Context.** 3.15 G gives a plugin `rateLimitRules` keyed on a route name and 3.15 D.1 puts a `rateLimit` in every route declaration, which is mandatory. The specification does not say which wins.
+**Rejected.** (a) The declaration wins, which makes the map dead. (b) Refusing a plugin that states both for one route, so exactly one statement exists.
+**Reason.** (b) is the rule this repository keeps reaching for and it cannot apply here: `rateLimit` is mandatory in the declaration, so every map entry for a plugin's own route is necessarily a second statement, and the rule would leave the map able to name only routes that do not exist. So the map wins. It is resolved where the registry builds the route, not where the pipeline reads one, so the route object carries the effective rule and nothing downstream ever sees two. A key naming a route the plugin does not contribute is a start error — which is also what keeps a plugin's rule off a core route's bucket, since there is no key it could write that reaches a route it does not own.
+**Price.** A route declaration can now be false read on its own: it says a limit that the map beside it may replace. The documentation says so and nothing enforces that a reader noticed.
+
+### A declared error code answers 400 with the library's words
+`E-646` · plugin · 3.15 G against 3.15 F, decided
+
+**Context.** 3.15 G gives a plugin `errorCodes` as a bare list of strings. 3.15 F's contract is a status and a message per code, and `registerPluginErrorCodes` needs both. The list cannot carry either, which is why E-748 left the field unread.
+**Rejected.** (a) Widening the declaration to a record of code to status and message, which is what a resolver needs. (b) Leaving the field unread.
+**Reason.** (a) contradicts 3.15 G's type, and the interface is the specification's rather than this feature's. So the library supplies both halves, identically for every declared code: 400, because a code a plugin declares is a refusal the caller caused rather than a fault of the server, and one fixed message, because the declaration carries no text and inventing one for a plugin is worse than saying nothing. What the declaration buys is the **code** — it survives to the caller instead of being replaced, and it answers 400 rather than 500. A plugin that needs its own status calls `registerPluginErrorCodes` itself.
+**Price.** Every plugin code answers 400, so a plugin cannot express a failure of its own dependency as anything but `internal_error`, and the message on the wire is the same sentence for every plugin in the process. The first shape of this decision was worse and the tests caught it: registering the declared answer into the same map as the explicit ones made a start *block* an application that registered a richer answer for the same code afterwards, because the map refuses a second, different answer. Declarations are held in a set of their own now, and the explicit registration wins in either order.
+
+### A code nobody declared reaches the caller as `internal_error`, the string included
+`E-647` · plugin · the error map, decided
+
+**Context.** `resolveErrorCode` answered an unregistered namespaced code with `internal_error`'s status and message, and `toErrorBody` wrote `error.code` unchanged — so the body carried `500`, the core message, and the plugin's own code string. A wave-4 test asserted exactly that.
+**Rejected.** Leaving it, on the argument that the string was authored by a plugin the application installed and leaks nothing.
+**Reason.** §3 puts the decision about what the outside learns in one place, and a code nobody declared is not part of any published interface: it cannot appear in a route's `errors` (E-644), so a client has nothing to match it against, and what it names is a mistake inside a plugin rather than a contract. The body now carries `internal_error` when the code resolves to nothing. The wave-4 test that asserted the old behaviour is changed rather than worked around, and its own name — "answers an unregistered namespaced code as an internal error" — is what it now measures.
+**Price.** An unregistered code is harder to diagnose from the outside: the operator sees `internal_error` and has to read the log line, which carries the real code. That is the same trade every merged code in 3.15 F.1 makes, and it is stated here rather than assumed to be obvious.
+
+### Eleven plants, two of which measured something else
+`E-648` · plugin · §6, method
+
+**Context.** Every check this feature adds was planted against the committed tree, with the outcome predicted first: eleven plants over five files.
+**Rejected.** Planting against a probe in the scratchpad, which E-785 records as producing numbers a reader cannot reproduce.
+**Reason.** The predictions and the results, in the order run. Removing the created-table measurement: predicted five red, **five** — the undeclared table, the table created outside the schema, the unprefixed table, the column added to `velve.user` and the dropped `velve.rate_bucket`, with the cascade case staying green, which is the point that it is a separate guard. Keying the plugin ledger on the version alone: predicted one, **one**. Removing the prefix-overlap refusal: predicted one, **one**. Removing the unmatched-rate-limit-key refusal: one, **one**. Ignoring the rate-limit map: one, **one**. Removing the origin-check refusal: two, **two**. Handing the announcing context to `beforeSessionRevoke`: one, **one**. Removing the undeclared-route-error refusal: one, **one**. Removing the error-code namespace refusal: one, **one**. Letting an undeclared code into the body: two, **two**. Not registering a declared code: one, **one**.
+**Price.** Two of the eleven first came back with a number that was not a measurement of anything, and both looked like results. The ledger plant read ten red because the plant itself left `$1` unreferenced in the statement, which PostgreSQL refuses outright — a broken plant, not a broken check. The prefix plant read two red because an *earlier* plant had committed a table into `public`: the case that proves an unqualified `CREATE TABLE` lands outside the schema creates one for real once the refusal that rolls it back is removed. Both were found by asking which test failed rather than how many, and the fix for the second is in the tree — that case now names its table for itself and drops it in the cleanup. A plant is a change to the code under test *and* to the database beside it, and this branch did not know the second half until it happened.
+
+### Four changes, one commit, and the reason is not a good one
+`E-649` · plugin · §4, decided
+
+**Context.** §4 asks for one self-contained change per commit. The migrations, the error codes, the rate-limit rules, the origin-check narrowing and the revocation announcement are five, and they all edit `src/core/plugin/registry.ts`.
+**Rejected.** Splitting them, which needs five hand-written intermediate versions of that file.
+**Reason.** The honest reason is cost: each intermediate version has to compile and to keep the wave-4 warning for the fields not yet read, and writing five of them was judged more expensive than the granularity is worth. That is a trade rather than a principle, and it is written here because a commit that says what it does is the minimum the rule is protecting.
+**Price.** A reviewer bisecting this branch has one commit that changes six files and answers four requirements, and cannot land one of the four without the others. The commit message carries the whole of it, so the information is in the history — but in one message rather than in the shape of the history, which is what §4 asked for.
+
+### Two claims in the chapter this feature inherited were not true
+`E-650` · plugin · the documentation, finding
+
+**Context.** Wave 4 wrote most of the `## Plugins` chapter and handed it over. Two of its statements did not describe the tree.
+**Rejected.** Repairing them silently, which would leave the next reader unable to tell a correction from an original.
+**Reason.** The first: the chapter says `plugin_route_conflict` reads the namespaces "from the surface the assembly just built, not from a list of them". E-778 built exactly that and E-779 undid it — a derived list released five namespaces whose routes wave 5 has not written — so the check reads `SURFACE_NAMESPACES`, a list, and the chapter describes the version that was reverted. The second: "Six configurations refuse the start" over a table of seven rows, of which six are `plugin_*` codes and the seventh is `route_namespace_conflict`. Both are corrected in place with the reason named, and the count is now measured rather than repeated: twelve `plugin_*` codes and that seventh, thirteen rows.
+**Price.** Both were written by a feature that also wrote the code, one round before, which is the strongest possible argument that documentation is not checked by anything. Nothing added here changes that: the chapter is still prose that no test reads, and the next false sentence will be found the same way this one was, by somebody reading it against the code for another reason.
+
+### 3.15 G.1's example creates its table where nobody will find it
+`E-651` · plugin · 3.15 G.1, contradiction reported
+
+**Context.** The example plugin in 3.15 G.1 writes `CREATE TABLE sign_in_log_entry (…)` and `CREATE INDEX … ON sign_in_log_entry`, both unqualified, and declares `createsTables: ["sign_in_log_entry"]`. The core's own migrations qualify every name with `velve.`, which the runner rewrites to the configured schema.
+**Rejected.** Making the runner qualify an unqualified name, or setting `search_path` for the connection.
+**Reason.** An unqualified `CREATE TABLE` lands wherever the application's `search_path` points, which is not the configured schema. The cascade guard scans the schema and would not see the table, `ownTables.query` resolves an unqualified name to the schema and would never find it, and dropping the schema would leave it behind. Rewriting names for the plugin means parsing its DDL, which E-637 exists not to do; setting `search_path` means the library changing a session setting of a connection the application owns. So the example is refused, as a declared table that did not appear, and the contradiction is reported rather than repaired: 3.15 G.1's plugin does not run as written.
+**Price.** The specification's only worked example of a plugin is one this implementation refuses, and a reader who copies it meets an error message about a table that was declared and did not appear — which is true but does not say *qualify it*. The reference says it; the specification still does not.
+
+### `migrate()` says nothing about what a plugin's migrations did
+`E-652` · plugin · the report, open
+
+**Context.** `MigrationReport` is `{ appliedVersions, currentVersion }` and is what `auth.migrate()` returns. Plugin migrations are recorded in a ledger of their own, so neither field can name one without meaning two things at once — a plugin numbering a migration 900 would set `currentVersion` to 900.
+**Rejected.** Adding a `plugins` field to `MigrationReport`.
+**Reason.** It is a public return type documented in `## Migrations`, a chapter this feature does not own and §5 forbids it to edit. Reporting through the log sink was the other option and the runner has no sink; giving it one is a change to the same chapter's subject. So `migrate()`'s report stays about the core schema and `velve.plugin_schema_migration` is where the answer is, said in this chapter.
+**Price.** An operator who runs `migrate()` and wants to know whether a plugin's migration ran has to query a table, and nothing in the return value hints that there is one. This is a real gap with a named owner — whoever next owns `## Migrations` — and naming an owner is not closing it (E-777).
+
+### What this feature did not build, and what it left standing
+`E-653` · plugin · the scope, decided
+
+**Context.** Four things were in reach and are not here.
+**Rejected.** Building them because they were nearby.
+**Reason.** There is no `down` for a plugin migration and none for the core's either, so adding one for plugins alone would make the two halves of one runner disagree. Removing a plugin from the configuration leaves its tables and its ledger rows standing, because deleting a user's data on a configuration change is not a decision a library takes. The other six hook points still have no producer and that is wave 5's other two features' work, not a gap here. And the plugin error registry stays process-wide: making it per-instance means threading a resolver from the environment into `toErrorBody`, which is `response.ts`, `web-handler.ts` and `server-method.ts` — three files two sibling features are writing in this same wave. What changed is that the failure it was disclosed for cannot arise any more: every declared code answers identically, so two instances declaring one code cannot disagree.
+**Price.** The last of those is a schedule reason rather than a design one, and it should be read as such. A code declared by one instance's plugin stays known to the process after that instance is discarded, which in a test suite means the order of files can decide what a code resolves to; `forgetPluginErrorCodes` exists for that and is not exported from the package.
