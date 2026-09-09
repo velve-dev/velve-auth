@@ -32,7 +32,7 @@ function actorOf(services: RouteServices, session: Session | null): Actor {
 }
 
 function userIdOf(services: RouteServices, session: Session | null): string {
-	return actorOf(services, session) as string;
+	return actorOf(services, session);
 }
 
 /** 3.15 C: the pointer reaches the browser as a cookie and the caller as a `CookieInstruction`. */
