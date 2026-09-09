@@ -93,7 +93,7 @@ export function reassignsSessionOwner(statement) {
  * and a scan that forbade that would forbid testing the rule. Prose about the
  * rule is excluded for the same reason. */
 const PROVES_OR_DESCRIBES_THE_RULE =
-	/^(test\/|VELVE-AUTH-ARCHITEKTUR\.md$|CASE-STUDY\.md$|CLAUDE\.md$|DOCUMENTATION\.md$|README\.md$)/;
+	/^(test\/|VELVE-AUTH-ARCHITEKTUR\.md$|VELVE-AUTH-ARCHITECTURE\.md$|CASE-STUDY\.md$|CLAUDE\.md$|CLAUDE-SKILL\.md$|CODEX-SKILL\.md$|DOCUMENTATION\.md$|README\.md$)/;
 const NOT_TEXT = /^assets\//;
 const HASH_COMMENT = /\.(sh|bash|zsh|ksh|ya?ml|py|rb|toml)$/;
 const DOUBLE_DASH_COMMENT = /\.(sql|psql|pgsql|ddl)$/;
