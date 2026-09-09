@@ -165,12 +165,14 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of eleven overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of fourteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
-		expect(markers).toHaveLength(11);
-		expect(carrying).toHaveLength(6);
+		// Three more since wave 5: the flow row is reached by its state hash and the identity row by
+		// the pair that identifies it, neither of which an owner predicate could narrow (E-565).
+		expect(markers).toHaveLength(14);
+		expect(carrying).toHaveLength(8);
 		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
 });
