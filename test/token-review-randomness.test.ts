@@ -192,7 +192,8 @@ function twoSidedNormalDeviate(alpha: number): number {
 
 /** A deliberate deviation from architecture section 6, whose T-RAND-Verteilung row fixes the
  * chi-square threshold *per position* rather than per file, and so states a per-case rate that
- * the file repeats 45 times. Read literally it turns 4.4 per cent of nightly runs red, and
+ * the file repeats once per case. Read literally against all 45 live cases it turns 4.40 per cent
+ * of nightly runs red; the file as it stood on `main` had 44 live and measured 4.29 (E-1068), and
  * that cost one investigation and one retracted explanation (E-993, E-995). The 0.001 is kept and
  * spent on the file instead. Section 6 has not been amended; this is reported, not settled. */
 const FILE_FALSE_FAILURE_RATE = 0.001;
