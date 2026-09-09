@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
 import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
+import { createSessionService } from "../src/core/session/service.js";
 import { registerPluginErrorCodes, VelveError } from "../src/index.js";
 import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
@@ -712,6 +713,109 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
 		expect(await countRows(mounted, "identity")).toBe(1);
 		expect(await countRows(mounted, "session")).toBe(1);
+	});
+
+	/**
+	 * A34: *„Ein Reset, der die Sitzung des Angreifers stehen lässt, ist kein Reset."* Without the
+	 * refusal the pair of columns is a ten-minute bearer artefact that mints a session against an
+	 * account whose sessions were all deleted, over the public interface and with no capability
+	 * beyond having held one (E-961).
+	 */
+	it("refuses a link flow whose session was revoked while it was outstanding", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "revoked-mid-flow", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		const revoked = await mounted.auth.handler(
+			requestTo("/session/revoke-all", { body: {}, cookie: session }),
+		);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(revoked.status).toBe(200);
+		expect(await countRows(mounted, "session")).toBe(0);
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
+		expect(await countRows(mounted, "session")).toBe(0);
+	});
+
+	it("refuses a link flow whose session signed out while it was outstanding", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "signed-out-mid-flow", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		const signedOut = await mounted.auth.handler(
+			requestTo("/sign-out", { body: {}, cookie: session }),
+		);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(signedOut.status).toBe(204);
+		expect(refused.status).toBe(400);
+		expect(sessionCookieOf(refused)).toBeNull();
+		expect(await countRows(mounted, "session")).toBe(0);
+	});
+
+	/**
+	 * The transfer to S-FIX-6: `replaceEverySessionOfUser` runs the same delete, so a password change
+	 * or reset with a flow in flight would leave the flow redeemable. Driven through the session
+	 * service rather than a route because this build mounts no password routes (E-961).
+	 */
+	it("refuses a link flow whose session a credential change replaced", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+		const sessions = createSessionService({
+			driver: mounted.auth.connection,
+			schema: mounted.auth.schema,
+		});
+
+		mounted.provider.reportClaims({ sub: "credential-changed", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		const resolved = await sessions.resolve(session.split("=")[1] ?? "");
+		if (resolved === null) {
+			throw new Error("the session the credential change replaces must resolve");
+		}
+		await sessions.reissueAfterCredentialChange({
+			resolved,
+			factors: ["oauth"],
+			observed: { ipAddress: null, userAgent: null },
+		});
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
+		expect(await countRows(mounted, "session")).toBe(1);
+	});
+
+	/**
+	 * S-FIX-1 deletes *die vorherige Zeile*, and for the second of two flows started from one session
+	 * that row is the one the first link issued — the token the caller is holding. Two flows from one
+	 * session yielded two live sessions; n flows yielded n (E-962).
+	 */
+	it("refuses the second of two flows started from the same session", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "first-of-two", email: "second@example.com" });
+		const first = await startLink(mounted, session);
+		const second = await startLink(mounted, session);
+		const linked = await mounted.auth.handler(callbackRequest(first));
+		const held = sessionCookieOf(linked) ?? "";
+
+		mounted.provider.reportClaims({ sub: "second-of-two", email: "third@example.com" });
+		const refused = await mounted.auth.handler(callbackRequest(second));
+		const stillHeld = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: held }),
+		);
+
+		expect(linked.status).toBe(302);
+		expect(refused.status).toBe(400);
+		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await stillHeld.json()).not.toBeNull();
 	});
 
 	it("refuses to move an identity that belongs to another account", async () => {
