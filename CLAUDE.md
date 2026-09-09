@@ -496,6 +496,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-870 … E-879 | outside the waves · `notice` — the attribution line and the licence appendix |
 | E-880 … E-899 | outside the waves · `skillver` — the skill's version and its staleness |
 | E-900 … E-929 | wave 5 · `plugin`, second range |
+| E-1000 … E-1029 | wave 5 · `plugin`, third range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
