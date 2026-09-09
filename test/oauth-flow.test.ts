@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
 import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
+import type { VelvePlugin } from "../src/core/plugin/config.js";
+import { registerPluginErrorCodes, VelveError } from "../src/index.js";
 import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 import {
@@ -28,6 +30,7 @@ async function mountWith(input: {
 	readonly storeTokens?: boolean;
 	readonly responseMode?: "query" | "form_post";
 	readonly omitIssuer?: boolean;
+	readonly plugins?: readonly VelvePlugin[];
 }): Promise<Mounted> {
 	const provider = await createStubProvider({
 		claims: input.claims,
@@ -42,6 +45,7 @@ async function mountWith(input: {
 			...(input.omitIssuer === undefined ? {} : { omitIssuer: input.omitIssuer }),
 		}),
 		fetch: provider.fetch,
+		...(input.plugins === undefined ? {} : { plugins: input.plugins }),
 	});
 	mountedInstances.push(auth);
 	return { auth, provider };
@@ -616,6 +620,74 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(linked.status).toBe(302);
 		expect(sessionCookieOf(linked)).not.toBe(firstSession);
 		expect(await countRows(mounted, "session")).toBe(1);
+	});
+
+	/**
+	 * The case the two above cannot see: both begin with one session, so neither tells replacing the
+	 * one from revoking them all. `TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS` states
+	 * `identity_linked: false` and S-FIX-6 names only the two credential changes; this is what says
+	 * so in the database (E-588). The callback carries no session cookie, so the row that goes is
+	 * named by `oauth_flow.link_from_session_id` and by nothing the request could carry.
+	 */
+	it("replaces the session the link began in and leaves the other device signed in", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const deviceA =
+			sessionCookieOf(await mounted.auth.handler(callbackRequest(await start(mounted)))) ?? "";
+		const deviceB =
+			sessionCookieOf(await mounted.auth.handler(callbackRequest(await start(mounted)))) ?? "";
+		expect(await countRows(mounted, "session")).toBe(2);
+
+		mounted.provider.reportClaims({ sub: "linked-on-device-b", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, deviceB);
+		const linked = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		const stillSignedIn = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: deviceA }),
+		);
+		const replaced = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: deviceB }),
+		);
+
+		expect(linked.status).toBe(302);
+		expect(sessionCookieOf(linked)).not.toBe(deviceB);
+		expect(await countRows(mounted, "session")).toBe(2);
+		expect(await stillSignedIn.json()).not.toBeNull();
+		expect(await replaced.json()).toBeNull();
+	});
+
+	/**
+	 * 3.11 makes a hook a listener with a veto, and a veto at `beforeSessionCreate` must leave the
+	 * account as it was: the removal of the old row and the insert of the new one are one
+	 * transaction that the refusal never reaches (E-590).
+	 */
+	it("leaves the previous session standing when a plugin refuses the new one", async () => {
+		registerPluginErrorCodes({ "linkguard.refused": { httpStatus: 409, message: "Refused." } });
+		let refuseTheNextSession = false;
+		const linkguard: VelvePlugin = {
+			id: "linkguard",
+			hooks: {
+				beforeSessionCreate: () =>
+					refuseTheNextSession
+						? Promise.reject(new VelveError("linkguard.refused"))
+						: Promise.resolve(),
+			},
+		};
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, plugins: [linkguard] });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		refuseTheNextSession = true;
+		mounted.provider.reportClaims({ sub: "refused-by-the-plugin", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+		const survivor = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: session }),
+		);
+
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toMatchObject({ error: { code: "linkguard.refused" } });
+		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await survivor.json()).not.toBeNull();
 	});
 
 	it("refuses to move an identity that belongs to another account", async () => {
