@@ -172,9 +172,9 @@ function assertClaimsAnswerForTheIssuer(input: {
 }
 
 /**
- * L-4 puts `account_disabled` on the resolution of an existing session; a flow still in progress
- * answers as an invalid flow instead, which is what `factor/pending/service.ts` does for the pending
- * row. It is asked here because this is the one replacement whose authority is a stored artefact
+ * L-4 puts its own code on the resolution of an existing session, and `session/service.ts` is the
+ * one place that raises it; a flow still in progress answers as an invalid flow instead, which is
+ * what `factor/pending/service.ts` does for the pending row. It is asked here because this is the one replacement whose authority is a stored artefact
  * rather than a resolution performed in the same request (E-976).
  */
 function assertTheAccountIsEnabled(user: User | null): void {
