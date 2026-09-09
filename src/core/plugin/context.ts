@@ -3,7 +3,13 @@ import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import type { SessionRepository } from "../db/repositories/session.js";
 import type { Session } from "../http/caller.js";
 import type { Clock, LogLevel } from "../http/environment.js";
-import type { FrozenContext, FrozenRepositories, PluginActor, RevokeReason } from "./config.js";
+import type {
+	FrozenContext,
+	FrozenRepositories,
+	PluginActor,
+	RevokeReason,
+	SessionRevokeEvent,
+} from "./config.js";
 import { createNoOwnTables, createOwnTables, type OwnTables } from "./own-tables.js";
 
 class PluginActorError extends Error {
@@ -30,6 +36,21 @@ export interface FrozenContextServices {
 	readonly driver: import("../db/driver.js").Driver;
 	readonly log: LogSink;
 }
+
+/**
+ * What a revocation performed through `FrozenRepositories` announces. The silent one is what a
+ * `beforeSessionRevoke` hook is given, and it is the re-entry guard E-766 asked for: a hook that
+ * revokes while being told about a revocation cannot be told about its own (E-641).
+ */
+export interface RevocationAnnouncement {
+	announce(event: SessionRevokeEvent): Promise<void>;
+	readonly listened: boolean;
+}
+
+export const SILENT_REVOCATION: RevocationAnnouncement = {
+	announce: () => Promise.resolve(),
+	listened: false,
+};
 
 function assertActorIsNamed(actor: PluginActor): PluginActor {
 	if (
@@ -67,7 +88,10 @@ function recorded(
  * `recovery_code`, and the absence is the requirement — a plugin that could write a password or a
  * factor would be a co-owner of the core rather than a listener with a veto.
  */
-function createFrozenRepositories(services: FrozenContextServices): FrozenRepositories {
+function createFrozenRepositories(
+	services: FrozenContextServices,
+	revocation: RevocationAnnouncement,
+): FrozenRepositories {
 	return Object.freeze({
 		findUserById: (input: { userId: string; actor: PluginActor }): Promise<User | null> => {
 			recorded(services.log, "findUserById", assertActorIsNamed(input.actor));
@@ -84,8 +108,21 @@ function createFrozenRepositories(services: FrozenContextServices): FrozenReposi
 			reason: RevokeReason;
 			actor: PluginActor;
 		}): Promise<void> => {
-			// E-766: the `reason` is the only record this revocation leaves; no hook is dispatched for it.
 			recorded(services.log, "revokeSession", assertActorIsNamed(input.actor), input.reason);
+			// 3.11: the announcement is before the row goes, so a hook that throws leaves it standing.
+			if (revocation.listened) {
+				const userId = await services.sessions.findUserIdOfSession({
+					sessionId: input.sessionId,
+				});
+				if (userId === null) {
+					return;
+				}
+				await revocation.announce({
+					sessionId: input.sessionId,
+					userId,
+					reason: input.reason,
+				});
+			}
 			await services.sessions.deleteSessionById({ sessionId: input.sessionId });
 		},
 	});
@@ -114,15 +151,23 @@ function freezeContext(
 export function createPluginContext(
 	services: FrozenContextServices,
 	pluginId: string,
+	revocation: RevocationAnnouncement,
 ): FrozenContext {
 	return freezeContext(
 		services,
-		createFrozenRepositories(services),
+		createFrozenRepositories(services, revocation),
 		createOwnTables({ driver: services.driver, schema: services.schema, pluginId }),
 	);
 }
 
 /** 3.15 D.1: every route carries a context, and a core route's has no tables of its own behind it. */
-export function createCoreContext(services: FrozenContextServices): FrozenContext {
-	return freezeContext(services, createFrozenRepositories(services), createNoOwnTables());
+export function createCoreContext(
+	services: FrozenContextServices,
+	revocation: RevocationAnnouncement,
+): FrozenContext {
+	return freezeContext(
+		services,
+		createFrozenRepositories(services, revocation),
+		createNoOwnTables(),
+	);
 }

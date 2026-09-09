@@ -115,7 +115,9 @@ export type PluginCallerRequirement = "anonymous" | "session" | "server_only";
 /**
  * 3.15 G writes the input and output as `any`; `AnyRoute` already sets `unknown` as the form. The
  * error type admits the plugin's own namespaced codes beside the core ones, which `error-map.ts`
- * resolves rather than the core union absorbing them (E-720).
+ * resolves rather than the core union absorbing them (E-720). `originCheck` is narrowed to the one
+ * value S-CSRF-1 allows a route that is not the OAuth callback: exempting a route of its own is how
+ * a plugin bypasses the origin check without replacing anything (S-CSRF-6, E-639).
  */
 export type PluginRoute<Id extends string> = Omit<
 	RouteDeclaration<
@@ -125,8 +127,8 @@ export type PluginRoute<Id extends string> = Omit<
 		unknown,
 		VelveErrorCode | `${Id}.${string}`
 	>,
-	"caller" | "pendingCookie" | "oauthStateCookie"
-> & { readonly caller: PluginCallerRequirement };
+	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie"
+> & { readonly caller: PluginCallerRequirement; readonly originCheck: "checked" };
 
 /**
  * The namespace constraint is a type, not a runtime check: a plugin that wants to overwrite a core
