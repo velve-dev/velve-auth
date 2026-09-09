@@ -4,10 +4,14 @@ export type HostPrefixedCookieName = `__Host-${string}`;
 
 export type CookieSameSite = "lax" | "strict";
 
-/** S-COOKIE-2: the only two attribute sets the library can express — no Domain, no way to drop HttpOnly or Secure. */
+/** S-COOKIE-2: the only three attribute sets the library can express — no Domain, no way to drop HttpOnly or Secure. */
 export type CookieAttributes =
 	| "HttpOnly; Secure; SameSite=Lax; Path=/"
-	| "HttpOnly; Secure; SameSite=Strict; Path=/";
+	| "HttpOnly; Secure; SameSite=Strict; Path=/"
+	| "HttpOnly; Secure; SameSite=None; Path=/";
+
+/** How a provider hands the authorization code back: in the query of a redirect, or in a posted form. */
+export type OAuthResponseDelivery = "query" | "form_post";
 
 export interface CookieNames {
 	readonly session: HostPrefixedCookieName;
@@ -51,6 +55,8 @@ export interface CookieWriter {
 	setPending(token: string): void;
 	clearPending(): void;
 	setOAuthState(pointer: string): void;
+	/** The `form_post` flow of section 1 C50, whose callback the browser reaches by a cross-site POST. */
+	setCrossSiteOAuthState(pointer: string): void;
 	clearOAuthState(): void;
 }
 
@@ -64,15 +70,39 @@ const COOKIE_MAXIMUM_AGE_LIMIT_IN_SECONDS = 34_560_000;
 
 const LAX_ATTRIBUTES = "HttpOnly; Secure; SameSite=Lax; Path=/";
 const STRICT_ATTRIBUTES = "HttpOnly; Secure; SameSite=Strict; Path=/";
-const WRITABLE_ATTRIBUTES = new Set<string>([LAX_ATTRIBUTES, STRICT_ATTRIBUTES]);
+const CROSS_SITE_ATTRIBUTES = "HttpOnly; Secure; SameSite=None; Path=/";
+const WRITABLE_ATTRIBUTES = new Set<string>([
+	LAX_ATTRIBUTES,
+	STRICT_ATTRIBUTES,
+	CROSS_SITE_ATTRIBUTES,
+]);
 
 /**
  * 5.9 (a): the provider returns through a top-level cross-site GET, and a `SameSite=Strict` cookie
  * is not sent on one — the pointer would be missing exactly where the callback needs it. What
  * secures the callback is the server-side `state` and PKCE (3.10), not this attribute, so the
  * state cookie keeps `Lax` whatever the session cookie is configured to.
+ *
+ * A provider answering with `form_post` returns through a cross-site **POST**, which not even
+ * `Lax` is sent on, so that flow's pointer is the one cookie of the library that carries
+ * `SameSite=None` — and it carries nothing but a pointer at a row (section 1 C50, E-541).
  */
-const OAUTH_STATE_ATTRIBUTES: CookieAttributes = LAX_ATTRIBUTES;
+const OAUTH_STATE_ATTRIBUTES: Readonly<Record<OAuthResponseDelivery, CookieAttributes>> = {
+	query: LAX_ATTRIBUTES,
+	form_post: CROSS_SITE_ATTRIBUTES,
+};
+
+export function oauthStateCookieFor(
+	pointer: string,
+	delivery: OAuthResponseDelivery,
+): CookieInstruction {
+	return {
+		name: DEFAULT_COOKIE_NAMES.oauthState,
+		value: pointer,
+		maximumAgeInSeconds: OAUTH_STATE_COOKIE_MAXIMUM_AGE_IN_SECONDS,
+		attributes: OAUTH_STATE_ATTRIBUTES[delivery],
+	};
+}
 
 function cookieAttributesFor(sameSite: CookieSameSite): CookieAttributes {
 	return sameSite === "lax" ? LAX_ATTRIBUTES : STRICT_ATTRIBUTES;
@@ -123,6 +153,10 @@ export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 		instructions.set(name, { name, value, maximumAgeInSeconds, attributes });
 	}
 
+	function writeInstruction(instruction: CookieInstruction): void {
+		instructions.set(instruction.name, instruction);
+	}
+
 	return {
 		setSession: (token) => {
 			write(written.session, token, policy.sessionMaximumAgeInSeconds, chosen);
@@ -137,15 +171,13 @@ export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 			write(written.pending, "", 0, chosen);
 		},
 		setOAuthState: (pointer) => {
-			write(
-				written.oauthState,
-				pointer,
-				OAUTH_STATE_COOKIE_MAXIMUM_AGE_IN_SECONDS,
-				OAUTH_STATE_ATTRIBUTES,
-			);
+			writeInstruction(oauthStateCookieFor(pointer, "query"));
+		},
+		setCrossSiteOAuthState: (pointer) => {
+			writeInstruction(oauthStateCookieFor(pointer, "form_post"));
 		},
 		clearOAuthState: () => {
-			write(written.oauthState, "", 0, OAUTH_STATE_ATTRIBUTES);
+			write(written.oauthState, "", 0, OAUTH_STATE_ATTRIBUTES.query);
 		},
 		collect: () => [...instructions.values()],
 	};

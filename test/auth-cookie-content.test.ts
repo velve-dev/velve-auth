@@ -102,12 +102,15 @@ describe("what the session cookie carries (S-COOKIE-4)", () => {
 			"setPending",
 			"clearPending",
 			"setOAuthState",
+			// The same pointer under the attributes a `form_post` provider's cross-site POST needs (E-541).
+			"setCrossSiteOAuthState",
 			"clearOAuthState",
 		] as const;
 
 		expect(Object.keys(collector).sort()).toStrictEqual([...methods, "collect"].sort());
 		// One parameter, and it is the token: there is no second one a caller could pass state in.
 		expect(collector.setSession).toHaveLength(1);
+		expect(collector.setCrossSiteOAuthState).toHaveLength(1);
 		expect(collector.clearSession).toHaveLength(0);
 	});
 });

@@ -24,6 +24,12 @@ export type PendingCookieAccess = "hidden" | "readable";
  */
 export type OAuthStateCookieAccess = "hidden" | "readable";
 
+/**
+ * How the body of a POST arrives. `form` exists for the one route a provider posts to itself —
+ * Apple's `form_post` callback of section 1 C50 — and nothing else in the library reads a form.
+ */
+export type RequestBodyFormat = "json" | "form";
+
 export interface RequestContext {
 	readonly session: Session | null;
 	readonly pending: ResolvedPendingAuthentication | null;
@@ -58,6 +64,8 @@ export interface RouteDeclaration<
 	readonly pendingCookie?: PendingCookieAccess;
 	/** Absent means hidden; no caller requirement implies it, so the route that reads the pointer says so. */
 	readonly oauthStateCookie?: OAuthStateCookieAccess;
+	/** Absent means JSON, which is what every route the application itself calls sends. */
+	readonly requestBody?: RequestBodyFormat;
 	readonly handler: (input: Input, context: RequestContext) => Promise<Output>;
 }
 
@@ -72,6 +80,7 @@ export interface RouteMetadata {
 	readonly rateLimit: RateLimitRule;
 	readonly pendingCookie: PendingCookieAccess;
 	readonly oauthStateCookie: OAuthStateCookieAccess;
+	readonly requestBody: RequestBodyFormat;
 }
 
 type RouteInvocation<Output> = (
@@ -122,7 +131,7 @@ function assertPathIsRoutable(path: string): void {
 	}
 }
 
-/** A GET route reads its input from the query string, where a provider appends parameters no declaration can enumerate. */
+/** A GET route reads its input from the query string, and a posted form from a provider carries the same problem: parameters no declaration can enumerate. */
 function declaredFieldsOnly(rawInput: unknown, fields: readonly string[]): unknown {
 	if (!isRecord(rawInput)) {
 		return rawInput;
@@ -229,12 +238,13 @@ export function defineRoute<
 			declaration.pendingCookie,
 		),
 		oauthStateCookie: declaration.oauthStateCookie ?? "hidden",
+		requestBody: declaration.requestBody ?? "json",
 	};
 
 	// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
 	invocations.set(route, async (rawInput, resolveContext) => {
 		const input = declaration.input.parse(
-			declaration.method === "GET"
+			declaration.method === "GET" || route.requestBody === "form"
 				? declaredFieldsOnly(rawInput, declaration.input.fields)
 				: rawInput,
 		);
