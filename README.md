@@ -299,10 +299,11 @@ than answer from memory.
 
 ### What it will not do for you
 
-It will tell you no. If you ask it for roles, permissions, organisations, teams,
-an audit log or a billing module, it will say that Velve Auth does not do that,
-give you the reason, tell you where that belongs instead, and stop — rather than
-building you half of one inside your authentication layer.
+It will tell you no. If you ask it for something this library deliberately does not do
+— the list above is the one it reads — it will say so, give you the reason, tell you
+where that belongs instead, and stop, rather than building you half of one inside your
+authentication layer. It reads that list from this README every time rather than
+carrying its own copy, so it cannot refuse you something the library has since grown.
 
 ## Licence
 
