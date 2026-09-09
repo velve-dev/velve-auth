@@ -9,6 +9,7 @@ import {
 	accountOfRedemption,
 	type FlowEnvironment,
 	mailerOf,
+	readAccountOfSession,
 	readUserOrRefuse,
 	sessionIdOfCaller,
 } from "./environment.js";
@@ -35,7 +36,7 @@ export async function requestVerification(
 	context: RequestContext,
 	userId: string,
 ): Promise<void> {
-	const user = await readUserOrRefuse(environment, environment.services.driver, userId);
+	const user = await readAccountOfSession(environment, userId);
 	const address = user.email;
 	if (address === null) {
 		throw new VelveError("invalid_input");
@@ -102,7 +103,7 @@ export async function requestChange(
 	const address = normalised.value;
 	await context.enforceAccountRateLimit(address);
 
-	const user = await readUserOrRefuse(environment, environment.services.driver, userId);
+	const user = await readAccountOfSession(environment, userId);
 	const previousEmail = user.email ?? "";
 	await mintAndMail(mailerOf(environment, email), {
 		purpose: "email_change",

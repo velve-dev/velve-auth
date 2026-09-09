@@ -65,6 +65,22 @@ export async function accountOfRedemption(
 }
 
 /**
+ * The account behind a caller's session. An account that has gone while a session still names it is
+ * answered as a session that does not resolve, because the route that reads it declares
+ * `session_required` and not `invalid_token` (E-615).
+ */
+export async function readAccountOfSession(
+	environment: FlowEnvironment,
+	userId: string,
+): Promise<User> {
+	const user = await environment.services.users.findUserById(userId);
+	if (user === null) {
+		throw new ConcealedError("session_not_found");
+	}
+	return user;
+}
+
+/**
  * The session the confirming request arrived with, or `null` when it carried none or the token in
  * it names nothing. L-12 reads `null` as a different session, so a request whose session cannot be
  * resolved fails closed towards the attacker path rather than towards the credential (S-LINK-4).

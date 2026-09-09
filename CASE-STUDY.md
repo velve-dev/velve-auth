@@ -4321,3 +4321,11 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Stopping. Each of the four changes is load-bearing for a requirement assigned to this feature, and none of the owning features is running.
 **Reason.** They are reported in the hand-off rather than asked for in advance, because the wave has no writer for `db`, `token`, `password` or `factor-totp` to ask.
 **Price.** Four features' files changed by somebody else's branch, and the reviewer's brief is the architecture rather than those features' decisions — so the person best placed to notice that E-253 has been overturned is not the person reading this branch. Six test files changed with them, three of them census assertions that were written to catch exactly this kind of drift and that this branch has now widened rather than tripped.
+
+### The two session routes claimed a code they do not declare
+`E-615` · email-flows · route contract, frozen
+
+**Context.** `email.requestVerification` and `email.requestChange` read the account behind the caller's session through the same helper the redeeming routes use, and that helper answers a missing account with `token_not_found`, which the error map turns into `invalid_token`. Neither route declares `invalid_token`. 3.15 D.1 makes `errors` a contract — "the handler may throw only the codes named" — so the two declarations were wrong.
+**Rejected.** Adding `invalid_token` to the two declarations, which makes the contract true and the answer absurd: there is no token on either route.
+**Reason.** An account that has gone while a session still names it is a session that no longer resolves, and `session_required` is what both routes declare for that. A second helper answers with it.
+**Price.** **The branch is unreachable.** The pipeline resolves a `caller: "session"` route's session with a join on `velve.user`, and deleting an account cascades its sessions away, so a request never reaches a handler with a session whose account is missing. So this fixes a contract rather than a behaviour, and no test can drive it — which is also why the fault was found by reading the declarations against the handlers rather than by anything running. There is no check in the repository that compares a route's `errors` with what its handler can throw; the specification asks for one and this branch did not build it.
