@@ -1911,6 +1911,7 @@ nie ankam, nützt nur einem Angreifer.
 interface OAuthConfig {
   providers: Partial<Record<KnownProvider, ProviderCredentials>>
            & { [customId: string]: GenericProviderConfig }
+  callbackBaseUrl: string                       // absolut; die Anbieter-Id wird angehängt (S-REDIR-6)
   trustedProviders: readonly string[]
   storeTokens: boolean                          // Vorgabe false
 }

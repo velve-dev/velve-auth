@@ -1910,6 +1910,7 @@ never arrived is of use only to an attacker.
 interface OAuthConfig {
   providers: Partial<Record<KnownProvider, ProviderCredentials>>
            & { [customId: string]: GenericProviderConfig }
+  callbackBaseUrl: string                       // absolute; the provider id is appended (S-REDIR-6)
   trustedProviders: readonly string[]
   storeTokens: boolean                          // default false
 }

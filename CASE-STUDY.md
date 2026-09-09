@@ -5959,3 +5959,14 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The verdict stays `Weglassen` and the false half of the justification goes: globally settable cookie attributes do not exist, and `SameSite=None` is carried by exactly one cookie — the state pointer of a `form_post` flow — which authenticates nothing on a route that has no origin check to lose. That is E-582's bound restated where the claim was, not a new argument. `CookieInstruction.attributes` becomes the three-literal union the tree exports.
 
 **Price.** **E-1100's own Price criticises an earlier entry for reporting H18 and never looking at H14** — *"what a report scoped to the clause you deviated from looks like from the outside"* — and this branch then repaired H14 and did not look at H18, four rows below it, in the same table, in the same commit. The same defect, in the entry that names it. What makes it worth more than an apology is the pattern behind both: a clause is checked at the point where somebody had a reason to look, and its neighbours are not, whoever is looking and however recently they wrote the rule about it.
+
+### Nothing in the specification can configure OAuth
+`E-1105` · specfix · specification, corrected
+
+**Context.** 3.15 A.8's `OAuthConfig` declares `providers`, `trustedProviders` and `storeTokens`. `callbackBaseUrl` is a non-optional field of the shipped interface (`src/core/oauth/config.ts:82`) and builds every provider's `redirect_uri`; S-REDIR-6 is why it exists rather than being derived from a request header (E-540). The string `callbackBaseUrl` appears zero times in either specification file, so a reader building from 3.15 A.8 alone cannot start the library.
+
+**Rejected.** Deriving the field's description from the code comment beside it. The comment says what the value is; the reason it is configured rather than derived is a requirement, so the clause cites `S-REDIR-6` and the code's own wording is not copied in.
+
+**Reason.** One line in the interface, marked absolute and with the provider id appended, citing `S-REDIR-6`.
+
+**Price.** One further divergence in the same interface is **reported and not repaired**: the tree's custom-provider index signature is `ProviderCredentials | GenericProviderConfig` where the document has `GenericProviderConfig` alone. Widening it in the document would declare a configuration legal, which is a design question and not a transcription, and this branch has no ruling on it. It joins E-1101's list.
