@@ -320,6 +320,12 @@ comparison lie. `CODEX-SKILL.md` is generated from `CLAUDE-SKILL.md` and states 
 same line, so the two rise together. `pnpm check:skill-version` enforces it against
 the merge base.
 
+**The unit is the change that merges, not the commit.** The check measures against
+the merge base, so a branch that touches a skill file five times raises the version
+once, and a branch that introduces the version line raises it from nothing. Raising
+it per commit would publish version numbers no reader ever saw and could never
+compare against.
+
 A version raised without a change is **not** a fault and the check permits one. The
 rule is that a change raises the version, not that a raise accompanies a change, and
 refusing a lone raise would refuse the repair of a commit that forgot one.
