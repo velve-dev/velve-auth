@@ -260,6 +260,15 @@ It carries no copy of the documentation. Every answer comes from the files in th
 repository, fetched live, because a stale copy of an authentication library's
 interface is worse than none: it is confidently wrong.
 
+That is also why it needs updating so rarely. It states method and no fact about the
+library, so a release that adds a feature or moves a section leaves it current and you
+have nothing to do. Its version is the `Skill version` line at the top of
+[`CLAUDE-SKILL.md`](./CLAUDE-SKILL.md) — one number, in one place, and not repeated
+here — and it moves only when the instructions themselves change. The skill checks it
+against yours once per session, tells you in one line which version is running, and
+asks before writing anything into your files. That check costs one fetch at the start
+of each session that touches Velve Auth.
+
 ### Claude Code
 
 Two commands, and it is available in every project:
@@ -283,6 +292,16 @@ curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SK
   -o .claude/skills/velve-auth/SKILL.md
 ```
 
+**Updating it is the same command.** `curl … -o …` overwrites, so whichever of the two
+you ran is also how you install a newer version; there is no second procedure, and the
+new version takes effect on the next invocation. Claude Code watches the skill
+directories, so there is nothing to restart.
+
+The one time you do need to restart is the **first** install, and only if the command
+above had to create `~/.claude/skills/` (or the project's `.claude/skills/`) for you: a
+directory that did not exist when the session started is not being watched yet. Restart
+once, and it is watched from then on.
+
 ### Codex, and other agents that take one instruction file
 
 [`CODEX-SKILL.md`](./CODEX-SKILL.md) is the same expertise as a single
@@ -297,12 +316,16 @@ Or paste it at the start of a conversation. It works either way, and it tells th
 agent what to do if it cannot reach the network — ask you for the files, rather
 than answer from memory.
 
+The same command updates it, for the same reason. There is nothing to restart: the
+file is read when you hand it over.
+
 ### What it will not do for you
 
-It will tell you no. If you ask it for roles, permissions, organisations, teams,
-an audit log or a billing module, it will say that Velve Auth does not do that,
-give you the reason, tell you where that belongs instead, and stop — rather than
-building you half of one inside your authentication layer.
+It will tell you no. If you ask it for something this library deliberately does not do
+— the list above is the one it reads — it will say so, give you the reason, tell you
+where that belongs instead, and stop, rather than building you half of one inside your
+authentication layer. It reads that list from this README every time rather than
+carrying its own copy, so it cannot refuse you something the library has since grown.
 
 ## Licence
 
