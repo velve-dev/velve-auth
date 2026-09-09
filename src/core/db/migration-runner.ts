@@ -76,16 +76,6 @@ JOIN pg_class target ON target.oid = rule_.ev_class
 JOIN pg_namespace namespace_ ON namespace_.oid = target.relnamespace
 WHERE rule_.xmin = pg_current_xact_id()::xid AND rule_.rulename <> '_RETURN'`;
 
-/** The tables the plugin's own tables point at, which are the ones a write of its own may read. */
-const TABLES_ITS_OWN_TABLES_REFERENCE = `
-SELECT DISTINCT referenced_ns.nspname AS schema_name, referenced.relname AS table_name
-FROM pg_constraint constraint_
-JOIN pg_class child ON child.oid = constraint_.conrelid
-JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
-JOIN pg_class referenced ON referenced.oid = constraint_.confrelid
-JOIN pg_namespace referenced_ns ON referenced_ns.oid = referenced.relnamespace
-WHERE constraint_.contype = 'f' AND child_ns.nspname = $1 AND child.relname LIKE $2`;
-
 /**
  * The rows written into each user table, as the backend has them so far. A catalogue row cannot
  * show a row of data, so it cannot show a migration that disables every account in one statement —
@@ -294,18 +284,6 @@ async function readRelationsTouched(tx: Driver): Promise<Relations> {
 	return new Map(rows.map((row) => [`${row.schema_name}.${row.table_name}`, row.kind]));
 }
 
-async function readTablesItMayRead(
-	tx: Driver,
-	migration: OwnedMigration,
-	schema: string,
-): Promise<ReadonlySet<string>> {
-	const rows = await tx.query<RelationRow>(TABLES_ITS_OWN_TABLES_REFERENCE, [
-		schema,
-		`${migration.owner}_%`,
-	]);
-	return new Set(rows.map((row) => `${row.schema_name}.${row.table_name}`));
-}
-
 function refuseOwned(code: MigrationRefusalCode, migration: OwnedMigration, what: string): never {
 	throw new MigrationRefusedError(
 		code,
@@ -430,15 +408,16 @@ function assertNoCodeWasLeftBehind(migration: OwnedMigration, left: readonly Cod
  * The row-level half, as the difference between two readings, because the counters are the
  * backend's pending totals rather than this transaction's alone (E-664). A read is measured beside
  * a write: a plugin that may not write a core table may not copy one into a table of its own
- * either, and a view was one way of doing that (E-903). What it may read is its own tables and the
- * ones they reference, because a foreign key is checked by reading the table it points at.
+ * either, and a view was one way of doing that (E-903). Its own tables and nothing else — the
+ * allowance for the tables a foreign key of its own points at was granted for the sake of the
+ * constraint check and bought a complete copy of the table instead, and no counter here separates
+ * the two (E-908).
  */
 function assertNoForeignTableWasReachedByARow(
 	migration: OwnedMigration,
 	schema: string,
 	before: WriteCounters,
 	after: WriteCounters,
-	mayRead: ReadonlySet<string>,
 ): void {
 	const none: TableCounters = { written: 0, scanned: 0 };
 	for (const [table, counters] of after) {
@@ -447,10 +426,18 @@ function assertNoForeignTableWasReachedByARow(
 			continue;
 		}
 		if (counters.written > previously.written) {
-			refuseOwned("migration_wrote_a_foreign_table", migration, `it wrote rows in ${table}`);
+			refuseOwned(
+				"migration_wrote_a_foreign_table",
+				migration,
+				`it wrote rows in ${table}, and a plugin migration writes its own tables only`,
+			);
 		}
-		if (counters.scanned > previously.scanned && !mayRead.has(table)) {
-			refuseOwned("migration_read_a_foreign_table", migration, `it read rows of ${table}`);
+		if (counters.scanned > previously.scanned) {
+			refuseOwned(
+				"migration_read_a_foreign_table",
+				migration,
+				`it read rows of ${table}, and a plugin migration reads its own tables only: declaring a foreign key needs no read, and a row referencing an account is written after migrate() rather than inside it`,
+			);
 		}
 	}
 }
@@ -525,7 +512,6 @@ async function applyOwnedMigration(
 			schema,
 			writtenBefore,
 			await readWriteCounters(tx, migration),
-			await readTablesItMayRead(tx, migration, schema),
 		);
 		await tx.query(
 			`INSERT INTO ${ledger} (plugin_id, version, name, checksum) VALUES ($1, $2, $3, $4)`,

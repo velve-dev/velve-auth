@@ -395,9 +395,9 @@ describe("what a plugin migration is refused for", () => {
 		expect(refusal.code).toBe("migration_read_a_foreign_table");
 	});
 
-	it("lets a table of its own reference the user and be filled", async () => {
+	it("lets a table of its own reference the user, which reads no row of it", async () => {
 		const migrated = await migratedSchema();
-		const userId = await createUser(migrated.connection, migrated.schema);
+		await createUser(migrated.connection, migrated.schema);
 
 		await migrated
 			.start([
@@ -411,8 +411,7 @@ describe("what a plugin migration is refused for", () => {
 							sql: `CREATE TABLE velve.audit_seed (
 								id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 								user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE
-							);
-							INSERT INTO velve.audit_seed (user_id) VALUES ('${userId}');`,
+							);`,
 						},
 					],
 				} satisfies VelvePlugin<"audit">,
@@ -420,6 +419,35 @@ describe("what a plugin migration is refused for", () => {
 			.migrate();
 
 		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1"]);
+	});
+
+	/**
+	 * The price of reading nothing at all: the constraint check a seeded row costs is one index
+	 * probe of `velve.user`, and no counter tells that probe from a copy of the table (E-908).
+	 */
+	it("refuses a row of its own that references an account, and says where to write it instead", async () => {
+		const migrated = await migratedSchema();
+		const userId = await createUser(migrated.connection, migrated.schema);
+
+		const refusal = await refusalOf(migrated, {
+			id: "audit",
+			migrations: [
+				{
+					version: 1,
+					name: "seed",
+					createsTables: ["audit_seed"],
+					sql: `CREATE TABLE velve.audit_seed (
+						id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+						user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE
+					);
+					INSERT INTO velve.audit_seed (user_id) VALUES ('${userId}');`,
+				},
+			],
+		} satisfies VelvePlugin<"audit">);
+
+		expect(refusal.code).toBe("migration_read_a_foreign_table");
+		expect((refusal as { message?: string }).message).toContain("after migrate()");
+		expect(await pluginLedgerOf(migrated)).toStrictEqual([]);
 	});
 
 	/** S-TOKEN-6, along the path a plugin actually takes. */
