@@ -3048,7 +3048,7 @@ Three numbers refuse the write run as long as they are not explicitly acknowledg
 
 #### 4.0.3 Idempotence
 
-**Decision: a mapping table `velve.import_mapping` **plus** `ON CONFLICT DO NOTHING` on every target table. Both, not one of the two.**
+**Decision: a mapping table `velve.import_mapping` plus `ON CONFLICT DO NOTHING` on every target table. Both, not one of the two.**
 
 `imported_from` alone is not enough: the column holds only a source name (section 3.2), no source ID; a second run could not decide whether *this* record is already there. Nor can the source ID simply become `velve.user.id`, because in three of five sources it is not a UUID — Clerk `user_2abc…`, Auth0 `auth0|abc123`, Firebase `OzDdXA7LwoR7lX2MH7AXaEmmn5u2`. And `ON CONFLICT DO NOTHING` alone is likewise not enough: the natural conflict would be the email, which in section 3.2 is nullable and unique only through a partial unique index — for users without an email there is no conflict at all, and a second run duplicates them.
 
@@ -3774,7 +3774,7 @@ Better Auth style "salt_hex:hash_hex":
     scheme = "scrypt"          (N = 16384 = 2^14, r = 16, p = 1, dkLen = 64; section 3.3)
 ```
 
-Two peculiarities of the Better Auth format, documented in `@better-auth/utils` (findings report `findings/06-krypto-bibliotheken.md`, "Die präfixlosen Formate"): the salt goes into scrypt as an **ASCII hex string of 32 bytes**, not as the 16 decoded bytes — hence `ascii(salt_hex)` and not `hexToBytes(salt_hex)`. And the password is **NFKC-normalised** before the call (`password.normalize("NFKC")`, `packages/better-auth/src/crypto/password.test.ts:75–76`). `Section 3.3 lays down NFKC before every KDF call; converted Better Auth hashes therefore also verify for passwords outside ASCII. The `verify()` test vector for this format must therefore contain a non-ASCII password.
+Two peculiarities of the Better Auth format, documented in `@better-auth/utils` (findings report `findings/06-krypto-bibliotheken.md`, "Die präfixlosen Formate"): the salt goes into scrypt as an **ASCII hex string of 32 bytes**, not as the 16 decoded bytes — hence `ascii(salt_hex)` and not `hexToBytes(salt_hex)`. And the password is **NFKC-normalised** before the call (`password.normalize("NFKC")`, `packages/better-auth/src/crypto/password.test.ts:75–76`). Section 3.3 lays down NFKC before every KDF call; converted Better Auth hashes therefore also verify for passwords outside ASCII. The `verify()` test vector for this format must therefore contain a non-ASCII password.
 
 Everything else goes through `passwordSource.custom`, a pure function `(raw: string) => PasswordOutcome`. It may only issue into one of the PHC strings from section 3.3 or return `unusable` — it may **not** invent a new format. `ESTIMATE:` bcrypt via `bcryptjs` is the most widespread in Auth.js projects; that is not documented. `verify()` is mandatory here too: a self-built password field is the most error-prone of all five sources, because nobody but the project knows what is in it.
 
