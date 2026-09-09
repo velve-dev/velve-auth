@@ -2903,6 +2903,8 @@ Der Angriff: Ein Angreifer registriert `opfer@example.com` mit einem Kennwort, d
 
 Die Regel: **Wird eine E-Mail-Adresse erstmals bestätigt, und wurde das vorhandene Kennwort in einer anderen Sitzung gesetzt als der, die jetzt bestätigt, dann wird die Kennwortanmeldung gelöscht und jede bestehende Sitzung widerrufen.** Der rechtmäßige Inhaber setzt danach ein Kennwort. Es geht nichts verloren außer einem Zugang, den nie jemand nachgewiesen hat.
 
+Damit die Frage überhaupt beantwortbar ist, trägt `velve.password_credential` die Spalte `set_by_session_id` (3.17). Ein Fremdschlüssel auf `velve.session` steht nicht dabei: `ON DELETE CASCADE` würde die Anmeldedaten löschen, sobald die eintragende Sitzung widerrufen wird, und `ON DELETE SET NULL` würde die Antwort genau in dem Moment löschen, in dem diese Regel sie braucht, denn der bestätigende Ablauf widerruft Sitzungen. **NULL heißt unbekannt und wird als eine andere Sitzung gelesen** — eine nicht aufgezeichnete Herkunft kostet also das Kennwort und hebelt die Regel nicht aus.
+
 **L-13 — Der letzte Anmeldeweg darf nicht entfernt werden.**
 Ein Nutzer behält immer mindestens eines aus {Kennwort, WebAuthn-Anmeldedaten, verknüpfte Identität}. Der Versuch, das letzte zu entfernen, wird mit `last_sign_in_method` abgelehnt. Für zweite Faktoren gilt dasselbe nur dann, wenn die Konfiguration einen zweiten Faktor verlangt.
 
@@ -2915,6 +2917,11 @@ Zusammengeführt mit den Ergänzungen aus dem Migrationsmodul (Abschnitt 4) ergi
 -- umbenennen). Ergebnis in velve.password_credential:
 --   phc          bytea   NOT NULL             -- AES-256-GCM über den kanonischen PHC-String
 --   key_version  integer NOT NULL DEFAULT 1
+
+-- L-12: macht S-LINK-4 entscheidbar. Kein Fremdschlüssel auf velve.session, und
+-- NULL heißt unbekannt und wird als eine andere Sitzung gelesen.
+ALTER TABLE velve.password_credential
+  ADD COLUMN set_by_session_id uuid;
 
 -- L-3
 ALTER TABLE velve.recovery_code

@@ -2904,6 +2904,8 @@ The attack: an attacker registers `opfer@example.com` with a password that he kn
 
 The rule: **if an email address is verified for the first time, and the existing password was set in a different session from the one that is verifying now, then the password sign-in is deleted and every existing session is revoked.** The rightful owner sets a password afterwards. Nothing is lost except an access that nobody ever proved.
 
+So that the question can be answered at all, `velve.password_credential` carries the column `set_by_session_id` (3.17). A foreign key to `velve.session` is absent: `ON DELETE CASCADE` would delete the credential as soon as the session that wrote it is revoked, and `ON DELETE SET NULL` would erase the answer at the exact moment this rule needs it, because the verifying flow revokes sessions. **NULL means unknown and is read as a different session** — an unrecorded provenance therefore costs the password and does not defeat the rule.
+
 **L-13 — The last way to sign in may not be removed.**
 A user always keeps at least one of {password, WebAuthn credential, linked identity}. The attempt to remove the last one is rejected with `last_sign_in_method`. For second factors the same holds only if the configuration requires a second factor.
 
@@ -2916,6 +2918,11 @@ Merged with the additions from the migration module (section 4), the following d
 -- rename). Result in velve.password_credential:
 --   phc          bytea   NOT NULL             -- AES-256-GCM over the canonical PHC string
 --   key_version  integer NOT NULL DEFAULT 1
+
+-- L-12: makes S-LINK-4 decidable. No foreign key to velve.session, and NULL
+-- means unknown and is read as a different session.
+ALTER TABLE velve.password_credential
+  ADD COLUMN set_by_session_id uuid;
 
 -- L-3
 ALTER TABLE velve.recovery_code
