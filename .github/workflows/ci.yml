@@ -145,9 +145,9 @@ jobs:
             fi
           }
 
-          # awk and cmp report "could not look" through their exit status and "found
-          # something" through their output, so they need the refusal without the
-          # three-way reading `report` does for grep.
+          # awk exits 0 whether or not it printed anything, so it carries no match status
+          # for `report` to read: it reports only "could not look", through its status,
+          # and a finding through its output. This is the refusal without that reading.
           refuse_unless_zero() {
             if [ "$2" -ne 0 ]; then
               refuse "the $1 scan could not run, so it proves nothing"
@@ -245,6 +245,9 @@ jobs:
           : > "$SCAN_DIR/binary"
           while read -r text_file; do
             [ -f "$text_file" ] || continue
+            # cmp -s carries grep's three states with the polarity swapped: 0 is a file
+            # with no NUL byte, 1 is the finding, and anything above is a scan that
+            # could not run.
             COMPARISON_STATUS=0
             tr -d '\000' < "$text_file" | cmp -s - "$text_file" || COMPARISON_STATUS=$?
             case "$COMPARISON_STATUS" in
