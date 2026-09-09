@@ -138,7 +138,7 @@ async function register(
 				? null
 				: await mintArtefact(transaction, schema, {
 						purpose: "email_verify",
-						userId: created.id,
+						subject: { userId: created.id },
 					});
 		return {
 			// The answer names what the caller sent, never the cover address the row carries.

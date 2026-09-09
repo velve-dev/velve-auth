@@ -43,7 +43,7 @@ export async function requestVerification(
 	await context.enforceAccountRateLimit(address);
 	const { driver, schema } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, { purpose: "email_verify", userId: user.id }),
+		mintArtefact(transaction, schema, { purpose: "email_verify", subject: { userId: user.id } }),
 	);
 	await sendOrUndo(mailerOf(environment, email), minted, {
 		kind: "email_verification",
@@ -108,7 +108,7 @@ export async function requestChange(
 	const minted = await driver.transaction((transaction) =>
 		mintArtefact(transaction, schema, {
 			purpose: "email_change",
-			userId: user.id,
+			subject: { userId: user.id },
 			payload: { [CHANGED_ADDRESS]: address },
 		}),
 	);

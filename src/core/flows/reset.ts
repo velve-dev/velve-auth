@@ -8,7 +8,7 @@ import { ConcealedError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
-import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
+import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
 import type { SetPasswordResult } from "./results.js";
@@ -33,7 +33,7 @@ export async function requestReset(
 	const minted = await driver.transaction((transaction) =>
 		mintArtefact(transaction, schema, {
 			purpose: "password_reset",
-			userId: owner === null ? null : owner.id,
+			subject: subjectOfAddress(owner, address),
 		}),
 	);
 	await sendOrUndo(

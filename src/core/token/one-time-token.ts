@@ -1,14 +1,13 @@
 import type { RedeemedOneTimeToken } from "../db/actor.js";
 import type { OneTimeTokenRepository } from "../db/repositories/token.js";
-import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
+import type { OneTimeTokenPayload, OneTimeTokenPurpose, OneTimeTokenSubject } from "./purpose.js";
 import { createSecretToken, hashSecretToken, type SecretToken } from "./secret-token.js";
 
-export interface OneTimeTokenRequest {
+/** `userId: null` asks for the cover artefact an address that names no account is answered with (E-597). */
+export type OneTimeTokenRequest = {
 	readonly purpose: OneTimeTokenPurpose;
-	/** `null` asks for the cover artefact an address that names no account is answered with (E-597). */
-	readonly userId: string | null;
 	readonly payload?: OneTimeTokenPayload;
-}
+} & OneTimeTokenSubject;
 
 export interface IssuedOneTimeToken {
 	readonly token: SecretToken;
@@ -34,13 +33,12 @@ export interface OneTimeTokens {
 
 export function createOneTimeTokens(repository: OneTimeTokenRepository): OneTimeTokens {
 	return {
-		async issue({ purpose, userId, payload }) {
+		async issue(request) {
 			const token = createSecretToken();
 			const { expiresAt } = await repository.replaceOneTimeToken({
+				...request,
 				tokenSha256: hashSecretToken(token),
-				purpose,
-				userId,
-				payload: payload ?? null,
+				payload: request.payload ?? null,
 			});
 			return { token, expiresAt };
 		},

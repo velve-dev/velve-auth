@@ -77,7 +77,7 @@ function predicatesIn(sql: string): readonly string[] {
 
 const statements = statementsIn(repositorySource);
 const tokenStatements = statements.filter((statement) => /\$\{table\}/.test(statement));
-const ownerStatements = statements.filter((statement) => /\bFOR UPDATE\b/.test(statement));
+const ownerStatements = statements.filter((statement) => /\$\{schema\}\.user\b/.test(statement));
 
 describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 	it("has more than nothing to scan", () => {
@@ -191,11 +191,12 @@ describe("nothing reads the row before removing it (S-RACE-2)", () => {
 
 	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259); it decides
 	// nothing about the row it precedes, which is what S-RACE-2 forbids.
-	it("reads only the owner row, and only to lock it", () => {
+	it("reads only the owner row, and takes no row lock while doing it", () => {
 		expect(ownerStatements.map(asWritten)).toStrictEqual([
-			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE",
+			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
 		]);
-		expect(ownerStatements[0]).toMatch(/\/\* locks: \$\{schema\}\.user \*\//);
+		expect(repositorySource).not.toMatch(/\bFOR (NO KEY )?UPDATE\b/);
 	});
 
 	it("consumes in a single statement with no statement before it", () => {
@@ -239,7 +240,7 @@ describe("what the repository raises carries a code and no secret", () => {
 	 */
 	it("raises nothing that is not a coded refusal or the driver-contract guard", () => {
 		const raises = repositorySource.match(/throw new [A-Za-z]+\([\s\S]*?\);/g) ?? [];
-		expect(raises).toHaveLength(4);
+		expect(raises).toHaveLength(5);
 		expect(
 			raises.filter(
 				(raise) =>

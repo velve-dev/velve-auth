@@ -7,7 +7,11 @@ import {
 	type IssuedOneTimeToken,
 	type OneTimeTokenRedemption,
 } from "../token/one-time-token.js";
-import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "../token/purpose.js";
+import type {
+	OneTimeTokenPayload,
+	OneTimeTokenPurpose,
+	OneTimeTokenSubject,
+} from "../token/purpose.js";
 import { toSecretToken } from "../token/secret-token.js";
 
 export interface MintedArtefact extends IssuedOneTimeToken {
@@ -24,18 +28,29 @@ export async function mintArtefact(
 	schema: string,
 	request: {
 		readonly purpose: OneTimeTokenPurpose;
-		readonly userId: string | null;
+		readonly subject: OneTimeTokenSubject;
 		readonly payload?: OneTimeTokenPayload;
 	},
 ): Promise<MintedArtefact> {
 	const issued = await createOneTimeTokens(
 		createOneTimeTokenRepository({ driver: transaction, schema }),
 	).issue({
+		...request.subject,
 		purpose: request.purpose,
-		userId: request.userId,
 		...(request.payload === undefined ? {} : { payload: request.payload }),
 	});
 	return { ...issued, purpose: request.purpose };
+}
+
+/**
+ * 3.13's two request rows resolve an address the caller sent, and one of the two branches finds no
+ * account. Both say what the request is about, so both wait where the other waits (E-931).
+ */
+export function subjectOfAddress(
+	owner: { readonly id: string } | null,
+	address: string,
+): OneTimeTokenSubject {
+	return owner === null ? { userId: null, serialisedOn: address } : { userId: owner.id };
 }
 
 export interface ArtefactMailer {

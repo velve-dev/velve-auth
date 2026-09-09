@@ -2,7 +2,7 @@ import type { EmailConfig } from "../auth/config.js";
 import type { SignInResult } from "../auth/results.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
-import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
+import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
 	accountOfRedemption,
@@ -35,7 +35,7 @@ export async function requestMagicLink(
 	const minted = await driver.transaction((transaction) =>
 		mintArtefact(transaction, schema, {
 			purpose: "magic_link",
-			userId: owner === null ? null : owner.id,
+			subject: subjectOfAddress(owner, address),
 		}),
 	);
 	await sendOrUndo(

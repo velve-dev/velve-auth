@@ -15,7 +15,7 @@ interface Call {
 	readonly params: readonly unknown[];
 }
 
-const OWNER_FOUND = [{ locked: 1 }];
+const OWNER_FOUND = [{ owner_exists: 1 }];
 
 function driverReturning(
 	rows: readonly unknown[],
@@ -25,7 +25,7 @@ function driverReturning(
 	const driver: Driver = {
 		query<T>(sql: string, params: unknown[]): Promise<T[]> {
 			calls.push({ sql, params });
-			return Promise.resolve((/FOR UPDATE/.test(sql) ? ownerRows : rows) as T[]);
+			return Promise.resolve((/pg_advisory_xact_lock/.test(sql) ? ownerRows : rows) as T[]);
 		},
 		transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T> {
 			return fn(driver);
@@ -56,8 +56,11 @@ describe("the parameters the repository sends", () => {
 		});
 
 		expect(calls).toHaveLength(2);
-		expect(calls[0]?.sql).toContain("FOR UPDATE");
-		expect(calls[0]?.params).toStrictEqual(["0d1b6c8e-0000-4000-8000-000000000001"]);
+		expect(calls[0]?.sql).toContain("pg_advisory_xact_lock");
+		expect(calls[0]?.params).toStrictEqual([
+			"0d1b6c8e-0000-4000-8000-000000000001",
+			"0d1b6c8e-0000-4000-8000-000000000001",
+		]);
 		expect(calls[1]?.params).toStrictEqual([
 			"0d1b6c8e-0000-4000-8000-000000000001",
 			"password_reset",
@@ -95,7 +98,8 @@ describe("the parameters the repository sends", () => {
 		const collapsed = calls.map((call) => call.sql.replace(/\s+/g, " ").trim());
 		expect(collapsed).toHaveLength(2);
 		expect(collapsed[0]).toBe(
-			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE /* locks: velve.user */",
+			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
 		);
 		expect(collapsed[1]).toMatch(/^WITH superseded AS \( DELETE FROM velve\.one_time_token/);
 	});
@@ -187,7 +191,7 @@ describe("what the repository refuses", () => {
 		const written = [{ expires_at: EXPIRY }];
 		const unknownPurpose = "totp_step" as unknown as OneTimeTokenPurpose;
 		const raised = [
-			await raise(written, [], "magic_link"),
+			await raise(written, [{ owner_exists: null }], "magic_link"),
 			await raise(written, OWNER_FOUND, unknownPurpose),
 			await raise([], OWNER_FOUND, "magic_link"),
 		];
@@ -205,7 +209,7 @@ describe("what the repository refuses", () => {
 	});
 
 	it("writes nothing when the account is gone", async () => {
-		const { repository, calls } = repositoryReturning([], []);
+		const { repository, calls } = repositoryReturning([], [{ owner_exists: null }]);
 
 		await repository
 			.replaceOneTimeToken({
@@ -217,7 +221,7 @@ describe("what the repository refuses", () => {
 			.catch(() => undefined);
 
 		expect(calls).toHaveLength(1);
-		expect(calls[0]?.sql).toContain("FOR UPDATE");
+		expect(calls[0]?.sql).toContain("pg_advisory_xact_lock");
 	});
 
 	it("reaches no driver at all for a purpose it does not know", async () => {
