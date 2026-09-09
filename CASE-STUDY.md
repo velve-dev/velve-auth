@@ -4162,3 +4162,113 @@ Its Reason is also a little wider than it needs to be. *"Any entry stating one i
 **Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
 
 One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
+
+### The check that enforces §4 could not tell a clean tree from a tree it never read
+`E-797` · gate · gate, frozen
+
+**Context.** The attribution job's three scans each read their result from `if <pipeline>; then echo ::error; fail=1; fi`. `grep` exits 1 both where it looked and matched nothing and where nothing arrived to look at, and neither the step nor the shell inspected the producer. So a failing `git` — off the PATH, an unresolvable ref, a `git grep` returning its error status rather than its no-match status — made the condition false for the wrong reason and the job printed "No AI attribution found". Reproduced here with a shim in which only `git log` and `git grep` fail: an attribution marker sitting in a tracked file, and the job exits 0.
+
+**Rejected.** Adding `set -e` to the step, which was the first thing tried and is worse than nothing here — the step already runs under the default `bash -e {0}`, so `-e` was on the whole time, and it does not reach inside an `if` condition, which is exactly where all three faults lived. Also rejected: `set -o pipefail` as the fix, which was already set and for the same reason changed nothing.
+
+**Reason.** A scan has three outcomes and the shape used had room for two. Reading the producer's exit status separately from the matcher's is the only way to keep them apart, so each scan now writes its surface to a file — the producer's failure is then a failed redirection and not an empty match — and reads `grep`'s status as a three-way `case`: 0 a hit, 1 nothing found, anything else a scan that could not run and ends the job.
+
+**Price.** The step grew from 79 lines to 172, and three of the four helper functions exist only to make the three states visible. A reader now has to hold `refuse`, `read_surface`, `require_content` and `report` in mind before reading a single scan, where before each scan was one line that could be read in place and was wrong.
+
+### Capture-and-test is the rule here, not this job's local taste
+`E-798` · gate · gate, frozen
+
+**Context.** Two of this job's checks — the symlink scan and the `.gitattributes` scan — already captured their output into a variable and tested the variable, with a comment saying why. The three attribution scans, in the same step, did not. §5 of the rules names three shapes of broken check that have already happened in this repository, and this job carried two of the three.
+
+**Rejected.** Fixing only the pipeline exit status and leaving the pattern to the next reader to notice. It would have closed the reported fault and left the job as an example of both shapes side by side, which is how the three scans came to be written this way in the first place: the correct examples were three lines further up and nobody read them as a rule.
+
+**Reason.** The distinction §5 draws — found nothing against could not look — is a property of every check, so the shape that preserves it belongs to the repository and not to whoever wrote a given step. Writing it as four named functions rather than four inline repetitions is what makes it citable: the next check added to this job either calls `read_surface` and `report` or visibly does not.
+
+**Price.** A convention that lives in one workflow step and is enforced by nothing. There is no check for the check, and a fifth scan added below these four can go back to `if <pipeline>` without anything failing. The only thing standing between this and a recurrence is a reviewer reading the step.
+
+### Every scan says how much it read
+`E-799` · gate · gate, frozen
+
+**Context.** The second shape §5 names is a scan that reports success because it matched no files. Nothing in the job distinguished "searched 375 files, found nothing" from "searched nothing". The output was `Scanning tree` either way.
+
+**Rejected.** Counting only the tree scan, which is where the failure is easiest to picture. Also rejected: an assertion on an expected number of files, which would be a census — the log already records at `E-795` that a census counting a property of the whole tree, kept in one place and owned by nobody, is a coupling that costs other features a round.
+
+**Reason.** A positive count is a lower bound with no maintenance: it says the surface existed without saying how big it should be. Each scan prints its own unit — commits for the message scan, files for the tree scan, bytes for the diff scan — and a surface that came back empty ends the job rather than adding to `fail`, because an empty surface and a failed producer are the same event seen from different sides.
+
+**Price.** The counts are printed and not asserted, so they detect nothing on their own; they turn a silent zero into a visible one and rely on a person reading the log. A run that scans one file instead of 375 still passes, and prints `Scanning 1 tracked files` to say so.
+
+### Two surfaces are legitimately empty, and the control plant is what found the second
+`E-800` · gate · gate, correction
+
+**Context.** The first version of this change refused the run on any empty surface, uniformly. It was written, committed to the working tree, and then run against a control plant — a clean branch carrying only the `ci.yml` commit — which it failed with `the branch diff scan had nothing to search`. The diff scan excludes three paths, `ci.yml` among them, so a branch that changes only `ci.yml` produces a diff of zero bytes with nothing wrong.
+
+**Rejected.** Removing `ci.yml` from the exempt list, which would make the diff non-empty and make the job scan its own patterns and fail on them. Also rejected: dropping the emptiness check on the diff scan without saying why, which is how a rule turns into a special case nobody can date.
+
+**Reason.** Emptiness is an answer for exactly two of these surfaces, and both are named where they are read: a repository with no `.gitattributes` at all is the wanted state, and a branch whose every change is in an exempt path has nothing for the diff scan to see. What proves the diff scan looked is the commit count of its range, which is checked before any scan runs. Every other surface is empty only where the repository could not be read.
+
+**Price.** The diff scan's own emptiness is now unguarded, so the third shape §5 names — an exclusion that deletes the text it was meant to examine — is detectable here only as a printed `0 bytes` that a person has to notice. A fourth entry added to `EXEMPT` that happened to cover the whole branch would read as this same legitimate case. The honest mitigation is a check on what `EXEMPT` contains rather than on what survives it, and it is not written here.
+
+### The empty range is removed rather than reported
+`E-801` · gate · gate, frozen
+
+**Context.** The range is `origin/main..HEAD` where `origin/main` resolves and `HEAD` otherwise. On `main` itself `origin/main` resolves and equals `HEAD`, so the range selects no commit: the commit-message scan and the diff scan both read nothing, on every push to `main`, and the job reported clean. That is the same fault as the rest of this entry's neighbours and it was standing in the range choice rather than in a scan.
+
+**Rejected.** Failing the job on an empty range, which is what the brief for this work asked for and what the other surfaces do. It would redden `main` on every merge, permanently, for a state that is not an error.
+
+**Reason.** A range that selects nothing cannot be told from a range that could not be read, so the repair is to stop producing one: `origin/main..HEAD` is taken only where `HEAD` is ahead of it, and the whole history is the surface otherwise. The zero check then remains, and what it now catches is a `git` that failed rather than a branch that is level. On this repository the fallback reads 35 commits and 4,631,745 bytes of diff where it previously read none.
+
+**Price.** A push to `main` now scans the entire history on every run, and that cost grows with the repository while the thing it protects — commits already scanned on their own branch — stays the same. It is also a change to the range choice, which the brief for this work said to preserve; what is preserved is which commits are scanned when there are branch commits to scan, and the case that changed is the one where the old choice scanned nothing at all.
+
+### The statuses are captured with `|| VAR=$?` because `-e` was always on
+`E-802` · gate · gate, frozen
+
+**Context.** The step declares `set -uo pipefail` and no `set -e`, which reads as though `errexit` were off. It is not: a `run` step with no `shell` key runs under `bash -e {0}`, so `errexit` has been on since the job was written. The old shape hid this because every `grep` sat inside an `if` condition, where `-e` does not reach.
+
+**Rejected.** `STATUS=$?` on the line after a bare `grep`, which is the readable form and which ends the job at the first scan that matches nothing — that is, on every clean run. This was written first and caught by the control plant, not by reading.
+
+**Reason.** `grep … || VAR=$?` puts the command in a compound the shell does not treat as a failure, and leaves `$?` holding `grep`'s own status. It is three characters of noise for a property of the runner that is not visible in the file, so the reason is stated in the comment above `report` rather than left to be rediscovered.
+
+**Price.** The reason lives in a comment because it cannot be expressed in the code: nothing in the step says which shell it runs under, and a maintainer who moves this body to a script with a different shebang gets a step that is correct for a reason that is no longer true.
+
+### Nine plants, and what each one was run against
+`E-803` · gate · gate, frozen
+
+**Context.** §5 says a check must be proved to fail on a planted fault before its passing is trusted. The step body was extracted from `ci.yml` by parsing the workflow, so the text under test is the text that ships, and run under `bash -e` against a throwaway clone per plant. Every plant was run against both the old step and the new one.
+
+**Rejected.** Testing the new step alone. Half of what needed proving is that the old step passed, and a plant that reddens the new step proves nothing about the fault it is supposed to be about unless the old step is green on the same tree.
+
+**Reason.** The results, old exit against new exit. Clean branch carrying only the `ci.yml` commit: 0, 0. Marker in a commit message: 1, 1. Marker in a tracked file: 1, 1. Marker added and removed by a later commit, caught by the diff scan alone: 1, 1. `git log` and `git grep` stubbed to fail with a marker in the tree: **0, 1** — this is the reported fault. `grep` stubbed to exit 2 on a clean tree: **0, 1**. A repository with history and no tracked file: **0, 1**. A `.gitattributes` marking a path binary: 1, 1. A tracked symlink: 1, 1. A NUL byte in a tracked file: 1, 1. The last three exist because this change restructured those scans too and their detection had to be shown intact.
+
+**Price.** The harness is a scratch script and is not committed, so these numbers are reproducible only by rebuilding it. Committing it was considered and would put a second copy of the step's semantics in the repository — the extractor reads the real `ci.yml`, but the plants encode what each scan is supposed to see, and that is a test of the workflow with nothing keeping it in step with the workflow. What is committed is this entry.
+
+### Two plants did not behave as the finding described, and one of those is the finding itself
+`E-804` · gate · gate, finding
+
+**Context.** The reported fault says a failing-`git` PATH shim left the old job printing "No AI attribution found" and exiting 0. A shim in which *every* `git` invocation fails does not do that under `bash -e`: it dies at the NUL-byte check, whose `BINARY=$(git ls-files … | while …)` has no `|| true`, so `pipefail` and `errexit` end the step at exit 1 — with no `::error::` line, no mention of attribution, and nothing in the log saying a scan was skipped.
+
+**Rejected.** Reporting the finding as reproduced, on the ground that a marker went undetected either way. The exit status is the half of the claim that matters to a merge gate, and it was wrong.
+
+**Reason.** Two variants reproduce it exactly and are what the numbers in `E-803` are from. A shim failing only `git log` and `git grep` — the commands the three scans use, leaving the earlier checks working — gives old 0, new 1. The total shim run without `errexit` gives old 0, new 1. So the fault is real and the mechanism is as described; the total shim under the runner's own shell is the case that fails for a different reason, and its exit 1 is luck rather than detection. The other plant that did not redden is the empty range: it passes under the new step by construction, because `E-801` removed the state instead of failing on it.
+
+**Price.** The log now carries a correction to a finding that was right about the defect and wrong about one observation, which is the kind of entry that reads as pedantry until someone reruns the plant and gets 1 where the record says 0. Three earlier rounds in this repository were lost to plant numbers that did not reproduce, which is why this is an entry rather than a footnote.
+
+### The three checks the finding called correct were correct in the half it examined
+`E-805` · gate · gate, finding
+
+**Context.** The reported fault names the symlink, `.gitattributes` and NUL-byte checks as already using the capture-and-test pattern, and they do: each captures its output and tests the variable rather than the pipeline. None of them checked the exit status of the `git` that produced the output. With `git` failing, the symlink and `.gitattributes` checks each set an empty variable and add nothing to `fail`, and the NUL check ends the step silently.
+
+**Rejected.** Leaving them, on the ground that they are outside the reported fault and that the whole step fails anyway once the commit-message scan refuses. That is true today and true only because of the order the scans run in.
+
+**Reason.** They are in the same file, they are the same fault class, and each was one call to `read_surface` away from being right. Capturing the output is half of capture-and-test; the other half is knowing the output came from a command that succeeded. Their detection is unchanged and was replanted to show it — a `.gitattributes` marking a path binary, a tracked symlink and a NUL byte each still redden the job.
+
+**Price.** This is more than the reported fault asked for, in a file three wave-5 branches are not touching but which belongs to nobody in particular. It is recorded here rather than assumed to be welcome, and a reviewer who disagrees can revert three lines without touching the rest.
+
+### What is carried forward instead of fixed
+`E-806` · gate · hand-off, open
+
+**Context.** Two sibling faults of the same class were found alongside this one and are deliberately outside this change: `test/api-surface.test.ts` calls `readdirSync` without `{ recursive: true }`, so the API snapshot records only the top-level `dist/*.d.mts` and misses every type body, and `test/auth-route-table.test.ts` does not see eleven routes that now exist. Both live in files all three wave-5 branches are editing.
+
+**Rejected.** Fixing them here because they are small and because they are the same shape. The file-ownership rule in §5 does not have an exception for a change being small, and a snapshot regenerated on this branch collides with three others.
+
+**Reason.** They are reported and not touched. A search for the `if <pipeline>; then` shape across `.github/`, `tools/` and `package.json` found it in exactly the four lines this change rewrote and nowhere else, so there is no third instance of this particular shape outside `ci.yml` — which is a statement about that shape and not about the class, and the two faults above are the class showing up in a form no grep finds.
+
+**Price.** An entry naming two known defects that no branch owns. `E-795` already records that this repository's hand-offs are numerous enough to be their own finding, and this is another; the API snapshot in particular is a check that has been reporting success over a surface it was not reading, for however long `{ recursive: true }` has been missing, and nothing dates that.
