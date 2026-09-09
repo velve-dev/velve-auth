@@ -72,7 +72,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	factor_not_enrolled: "The factor is not enrolled.",
 	factor_already_enrolled: "The factor is already enrolled.",
 	last_sign_in_method: "The last remaining sign-in method cannot be removed.",
-	identity_already_linked: "The identity belongs to another account.",
+	identity_already_linked: "This provider identity is already linked to an account.",
 	provider_not_configured: "The provider is not configured.",
 	oauth_flow_invalid: "The authorization flow is not valid.",
 	oauth_provider_error: "The provider did not answer correctly.",

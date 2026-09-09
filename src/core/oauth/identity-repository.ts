@@ -40,7 +40,7 @@ export interface OAuthIdentityRepository {
 		readonly provider: string;
 		readonly subject: string;
 	}): Promise<OwnedIdentity | null>;
-	/** Null means the pair already belongs to another account — `identity_already_linked`. */
+	/** Null means the pair is already linked — to this account or to another (E-989). */
 	insertIdentity(input: { readonly userId: string } & IdentityFacts): Promise<Identity | null>;
 	/** S-LINK-6: the provider's verification state is written per identity on every sign-in. */
 	refreshIdentity(input: IdentityFacts): Promise<Identity>;
