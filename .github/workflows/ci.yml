@@ -77,6 +77,9 @@ jobs:
       - name: A changed skill raises its version
         run: pnpm check:skill-version
 
+      - name: The Codex skill is generated, not written
+        run: pnpm check:codex-skill
+
       - name: Dead code
         run: pnpm knip
 

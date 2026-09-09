@@ -223,6 +223,8 @@ repair anything itself.
   base, and the branch has added at least one (§6, E-538)
 - `pnpm check:skill-version` — a skill file changed against the merge base raises
   the version it states, and both skill files state the same one (§6)
+- `pnpm check:codex-skill` — `CODEX-SKILL.md` is byte-identical to what
+  `CLAUDE-SKILL.md` produces, so it is generated and not written (§6)
 - `pnpm knip` — no dead code, no unused export
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
@@ -276,8 +278,10 @@ and this is the complete list:
 - **`CODEX-SKILL.md`** — the same instructions for an agent that takes one file.
   It is **produced from `CLAUDE-SKILL.md` rather than written**, because the two
   carried different rules once and the one shipping without skill machinery was the
-  weaker. Nothing in the gate enforces that, so a change to one is a change to both
-  and the reviewer is what catches a divergence.
+  weaker. `tools/codex-skill.mjs` is that transform and is therefore this file's
+  definition; `pnpm check:codex-skill` regenerates it and fails on any difference,
+  so a hand-edit of it does not survive the gate. Regenerate with
+  `node tools/check-codex-skill.mjs --write` — never by editing the file.
 
 Do not create any markdown file in the repository root outside that list. No summary
 files, no progress reports, no `NOTES.md`. Markdown that belongs to something else —
@@ -727,6 +731,13 @@ pnpm check:skill-version
                  check:log-append and unlike every other step, it reads committed
                  history and not the working tree, so an uncommitted edit to a
                  skill file is invisible to it
+pnpm check:codex-skill
+                 CODEX-SKILL.md is byte-identical to what tools/codex-skill.mjs
+                 produces from CLAUDE-SKILL.md. Refuses the run if the skill
+                 cannot be read or if the transform no longer applies to it — a
+                 rewording it can no longer find is a refusal, not a pass. Add
+                 --write to regenerate the file instead of comparing it, which is
+                 the only way the file is ever changed
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

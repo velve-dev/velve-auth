@@ -15,8 +15,8 @@ before asking it about Velve Auth. It is self-contained: paste it, attach it, or
 it as `AGENTS.md` in the project root.
 
 The Claude Code skill at [`CLAUDE-SKILL.md`](./CLAUDE-SKILL.md) carries the same
-instructions. This file is produced from it rather than written, so that the two do
-not drift; nothing automated enforces that, so a change to one is a change to both.
+instructions. This file is produced from it rather than written: `pnpm check:codex-skill`
+regenerates it and refuses a copy that differs by a byte, so the two cannot drift.
 
 These instructions are installed as `AGENTS.md` in a project, and their current copy
 is `https://raw.githubusercontent.com/velve-dev/velve-auth/main/CODEX-SKILL.md`.
