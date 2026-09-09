@@ -690,6 +690,30 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(await survivor.json()).not.toBeNull();
 	});
 
+	/**
+	 * A row carrying an account without the session it began in is not one `beginFlow` wrote. Refusing
+	 * it is what keeps a link flow from quietly becoming a sign-in, which would run the automatic
+	 * linking rule over an account the caller already proved nothing about (E-588).
+	 */
+	it("refuses a link flow whose row names no session", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "a-row-nobody-wrote", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		await mounted.auth.connection.query(
+			`UPDATE ${mounted.auth.schema}.oauth_flow SET link_from_session_id = NULL`,
+			[],
+		);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
+		expect(await countRows(mounted, "identity")).toBe(1);
+		expect(await countRows(mounted, "session")).toBe(1);
+	});
+
 	it("refuses to move an identity that belongs to another account", async () => {
 		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
 		await mounted.auth.handler(callbackRequest(await start(mounted)));
