@@ -139,3 +139,35 @@ describe("what ownTables lets through to the driver (3.11, 3.15 G)", () => {
 		);
 	});
 });
+
+/**
+ * The plugins' ledger is created by the runner and by no migration, so the names read out of the
+ * migrations cannot find it. A plugin called `plugin` owns the prefix `plugin_`, which is what the
+ * ledger's name begins with (E-638).
+ */
+describe("the ledger a plugin's own migrations are recorded in", () => {
+	async function reachedTheDriverAs(
+		pluginId: string,
+		statements: readonly string[],
+	): Promise<readonly string[]> {
+		const driver = recordingDriver();
+		const ownTables = createOwnTables({ driver, schema: "velve", pluginId });
+		for (const sql of statements) {
+			await ownTables.query(sql, []).catch(() => undefined);
+		}
+		return driver.reached;
+	}
+
+	it("is refused for a plugin whose own prefix its name carries", async () => {
+		const reachingForTheLedger = [
+			"SELECT * FROM plugin_schema_migration",
+			"DELETE FROM plugin_schema_migration WHERE plugin_id = $1",
+			"SELECT * FROM velve.plugin_schema_migration",
+		];
+
+		expect(await reachedTheDriverAs("plugin", reachingForTheLedger)).toStrictEqual([]);
+		expect(await reachedTheDriverAs("plugin", ["SELECT * FROM plugin_entry"])).toStrictEqual([
+			"SELECT * FROM plugin_entry",
+		]);
+	});
+});
