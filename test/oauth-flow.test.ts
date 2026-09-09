@@ -658,8 +658,9 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 
 	/**
 	 * 3.11 makes a hook a listener with a veto, and a veto at `beforeSessionCreate` must leave the
-	 * account as it was: the removal of the old row and the insert of the new one are one
-	 * transaction that the refusal never reaches (E-590).
+	 * account as it was: the hook runs before the transaction opens, so neither the identity nor the
+	 * session is written. Planted with the hook moved after the transaction, the session count goes
+	 * to two (E-590, E-970).
 	 */
 	it("leaves the previous session standing when a plugin refuses the new one", async () => {
 		registerPluginErrorCodes({ "linkguard.refused": { httpStatus: 409, message: "Refused." } });
@@ -688,6 +689,8 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(refused.status).toBe(409);
 		expect(await refused.json()).toMatchObject({ error: { code: "linkguard.refused" } });
 		expect(await countRows(mounted, "session")).toBe(1);
+		// The veto now precedes the identity as well as the session, so the link is not half-made (E-970).
+		expect(await countRows(mounted, "identity")).toBe(1);
 		expect(await survivor.json()).not.toBeNull();
 	});
 
@@ -738,6 +741,8 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(refused.status).toBe(400);
 		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
 		expect(await countRows(mounted, "session")).toBe(0);
+		// L-13 counts a linked identity as a way in, so a refused link must leave no credential (E-969).
+		expect(await countRows(mounted, "identity")).toBe(1);
 	});
 
 	it("refuses a link flow whose session signed out while it was outstanding", async () => {
@@ -756,6 +761,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(refused.status).toBe(400);
 		expect(sessionCookieOf(refused)).toBeNull();
 		expect(await countRows(mounted, "session")).toBe(0);
+		expect(await countRows(mounted, "identity")).toBe(1);
 	});
 
 	/**
@@ -788,6 +794,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(refused.status).toBe(400);
 		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
 		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await countRows(mounted, "identity")).toBe(1);
 	});
 
 	/**
@@ -815,6 +822,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(linked.status).toBe(302);
 		expect(refused.status).toBe(400);
 		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await countRows(mounted, "identity")).toBe(2);
 		expect(await stillHeld.json()).not.toBeNull();
 	});
 
