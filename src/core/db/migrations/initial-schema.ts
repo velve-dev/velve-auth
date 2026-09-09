@@ -167,15 +167,16 @@ CREATE TABLE velve.webauthn_challenge (
 CREATE INDEX webauthn_challenge_sweep_idx ON velve.webauthn_challenge (expires_at);
 
 CREATE TABLE velve.oauth_flow (
-  state_sha256      bytea PRIMARY KEY,
-  provider          text NOT NULL,
-  pkce_verifier_enc bytea NOT NULL,
-  key_version       integer NOT NULL,
-  nonce             text,
-  redirect_path     text,
-  link_to_user_id   uuid REFERENCES velve.user(id) ON DELETE CASCADE,
-  created_at        timestamptz NOT NULL DEFAULT now(),
-  expires_at        timestamptz NOT NULL
+  state_sha256         bytea PRIMARY KEY,
+  provider             text NOT NULL,
+  pkce_verifier_enc    bytea NOT NULL,
+  key_version          integer NOT NULL,
+  nonce                text,
+  redirect_path        text,
+  link_to_user_id      uuid REFERENCES velve.user(id) ON DELETE CASCADE,
+  link_from_session_id uuid,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  expires_at           timestamptz NOT NULL
 );
 CREATE INDEX oauth_flow_sweep_idx ON velve.oauth_flow (expires_at);
 

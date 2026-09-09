@@ -32,15 +32,16 @@ import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigr
 import { Clock } from "./core/http/environment.mjs";
 import { UsernameRules } from "./core/identity/configuration.mjs";
 import { KeyProvider } from "./core/keys/provider.mjs";
-import { GenericProviderConfig, KnownProvider, OAuthConfig, ProviderCredentials } from "./core/oauth/config.mjs";
+import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
 import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { SessionToken } from "./core/session/token.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
+import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
+import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
 import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
-import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
 import { SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
 import { VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
@@ -79,9 +80,12 @@ export {
 	KnownProvider,
 	type ModeHasEmail,
 	type ModeHasUsername,
+	OAuthCallbackOutcome,
 	type OAuthCallbackResult,
 	OAuthConfig,
+	OAuthPrompt,
 	type OAuthRedirect,
+	OAuthResponseMode,
 	type OnlyWhen,
 	type OriginRequirement,
 	type OwnedRowRepository,

@@ -41,8 +41,17 @@ const ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE = new Set<string>([
 	"pending.cancel",
 ]);
 
-/** 3.15 D.3: the only route without an origin check is the provider's redirection back. */
-const ROUTES_THAT_MAY_BE_EXEMPT = new Set(["signIn.oauth.callback"]);
+/**
+ * 3.15 D.3 names one route without an origin check, the provider's redirection back. It is two:
+ * a provider answering with `responseMode: form_post` — which Apple requires once the e-mail scope
+ * is asked for (section 1, C50 and C70) — posts the code to the same callback instead, and a
+ * cross-site POST carries no `Origin` the library may compare either. Both are named here, and
+ * T-CSRF-1's threshold is that these two are the whole of it (E-541).
+ */
+const ROUTES_THAT_MAY_BE_EXEMPT = new Set([
+	"signIn.oauth.callback",
+	"signIn.oauth.callbackFormPost",
+]);
 
 /** S-CSRF-4: the reading routes, plus the callback, are the whole of what may answer a GET. */
 const READING_GET_ROUTES = new Set([
@@ -82,14 +91,17 @@ function namesOf(subset: readonly AnyRoute[]): readonly string[] {
 }
 
 describe("the origin check over the whole table (S-CSRF-1)", () => {
-	it("names one route that may be exempt, and exempts exactly the ones in the table", () => {
+	it("names the two routes that may be exempt, and exempts exactly the ones in the table", () => {
 		const exempt = namesOf(routes.filter((route) => route.originCheck !== "checked"));
 		const permittedAndDeclared = namesOf(
 			routes.filter((route) => ROUTES_THAT_MAY_BE_EXEMPT.has(route.name)),
 		);
 
 		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
-		expect([...ROUTES_THAT_MAY_BE_EXEMPT]).toStrictEqual(["signIn.oauth.callback"]);
+		expect([...ROUTES_THAT_MAY_BE_EXEMPT]).toStrictEqual([
+			"signIn.oauth.callback",
+			"signIn.oauth.callbackFormPost",
+		]);
 		expect(exempt).toStrictEqual(permittedAndDeclared);
 	});
 

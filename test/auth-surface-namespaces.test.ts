@@ -57,16 +57,17 @@ describe("the namespaces a plugin may not take (3.11, 3.15 B)", () => {
 		expect(carried.filter((name) => !SURFACE_NAMESPACES.includes(name))).toStrictEqual([]);
 	});
 
-	/** The wave-4 build assembles a fraction of 3.15 B, and the list covers what it has not built. */
+	/**
+	 * The build assembles a fraction of 3.15 B, and the list covers what it has not built. `oauth`
+	 * removed two of them: `signIn.oauth.*` and the three `identity` rows are in the table now.
+	 */
 	it("reserves more than the build carries, which is the point of it being a list", () => {
 		const carried = new Set(Object.keys(mounted.auth as unknown as Record<string, unknown>));
 
 		expect(SURFACE_NAMESPACES.filter((name) => !carried.has(name)).sort()).toStrictEqual([
 			"email",
 			"factor",
-			"identity",
 			"password",
-			"signIn",
 			"signUp",
 			"username",
 		]);
