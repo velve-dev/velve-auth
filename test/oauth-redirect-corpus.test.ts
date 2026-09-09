@@ -201,23 +201,18 @@ function isAccepted(value: string): boolean {
 }
 
 /**
- * S-REDIR-2 fixes the depth at **one** percent decoding, and after one decoding none of these
- * begins with `//` or `/\\`, carries a scheme or names a host: `/%252F%252Fevil.example` decodes to
- * `/%2F%2Fevil.example`, which a browser resolves as a path on the library's own origin. T-REDIR-2
- * asks the same corpus for `0 falsch-negativ` over a family it calls `doppelt kodiert`. The two
- * cannot both hold, so this list is the measurement rather than a threshold: it is what the tree
- * accepts today, named one by one, and a tenth vector or a flipped one fails here (E-570).
+ * S-REDIR-2 reads "the check happens after exactly one percent decoding **and is applied again
+ * afterwards**", which the tree now does: three readings over two decodings. Seven of the nine
+ * vectors this list held under a single reading are refused by the second application; the two
+ * that remain are what a third decoding would be needed for, and neither leaves the origin —
+ * `/%252e%252e%252fevil.example` reads as `/../evil.example`, a path, and `/%2525252Fevil.example`
+ * needs four readings to become `//evil.example`. T-REDIR-2 asks the same corpus for
+ * `0 falsch-negativ`, so this list is still a measurement rather than a threshold: it is what the
+ * tree accepts today, named one by one, and a third vector or a flipped one fails here (E-581).
  */
-const DOUBLE_ENCODED_ACCEPTED_AT_ONE_DECODING: readonly string[] = [
-	"/%252F%252Fevil.example",
-	"/%252f%252fevil.example",
-	"/%255Cevil.example",
-	"/%255c%255cevil.example",
+const DOUBLE_ENCODED_ACCEPTED_AT_TWO_DECODINGS: readonly string[] = [
 	"/%252e%252e%252fevil.example",
-	"/%25%32%46evil.example",
-	"/%252F%252Fevil.example/app",
 	"/%2525252Fevil.example",
-	"/%252F%252Fapp.example.com@evil.example",
 ];
 
 describe("T-REDIR-2: the corpus and its size (S-REDIR-2)", () => {
@@ -241,17 +236,17 @@ describe("T-REDIR-2: the corpus and its size (S-REDIR-2)", () => {
 		expect(falseNegatives).toStrictEqual([]);
 	});
 
-	it("accepts exactly the nine double-encoded vectors one decoding does not reach", () => {
+	it("accepts exactly the two double-encoded vectors two decodings do not reach", () => {
 		const accepted = CORPUS.filter(
 			(one) => one.family === "double-encoded" && isAccepted(one.value),
 		).map((one) => one.value);
 
-		expect(accepted).toStrictEqual(DOUBLE_ENCODED_ACCEPTED_AT_ONE_DECODING);
-		expect(accepted).toHaveLength(9);
+		expect(accepted).toStrictEqual(DOUBLE_ENCODED_ACCEPTED_AT_TWO_DECODINGS);
+		expect(accepted).toHaveLength(2);
 	});
 
 	it("keeps every value it accepts a same-origin path once a browser has read it", () => {
-		const resolved = DOUBLE_ENCODED_ACCEPTED_AT_ONE_DECODING.map(
+		const resolved = DOUBLE_ENCODED_ACCEPTED_AT_TWO_DECODINGS.map(
 			(one) => new URL(one, "https://api.example.com").origin,
 		);
 
@@ -340,6 +335,18 @@ function callbackFor(started: Started): Request {
 	);
 }
 
+/** The sixth route of the feature answers the same 302, so the sweep below has to reach it too. */
+function postedCallbackFor(started: Started): Request {
+	return new Request("https://api.example.com/sign-in/oauth/callback/stubby", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/x-www-form-urlencoded",
+			Cookie: `__Host-velve_oauth_state=${started.pointer}`,
+		},
+		body: new URLSearchParams({ code: codeCarrying(null), state: started.state }),
+	});
+}
+
 describe("S-REDIR-3: the only Location is the callback's, and it is the stored path", () => {
 	it("carries the path the start route was given, and no scheme or host", async () => {
 		const mount = await mountWith();
@@ -382,6 +389,10 @@ describe("S-REDIR-3: the only Location is the callback's, and it is the stored p
 				),
 			],
 			["signIn.oauth.callback", await mount.auth.handler(callbackFor(started))],
+			[
+				"signIn.oauth.callbackFormPost",
+				await mount.auth.handler(postedCallbackFor(await startWith(mount, "/app"))),
+			],
 		];
 		for (const [name, answer] of answers) {
 			if (answer.headers.has("Location")) {
@@ -389,7 +400,7 @@ describe("S-REDIR-3: the only Location is the callback's, and it is the stored p
 			}
 		}
 
-		expect(withLocation).toStrictEqual(["signIn.oauth.callback"]);
+		expect(withLocation).toStrictEqual(["signIn.oauth.callback", "signIn.oauth.callbackFormPost"]);
 	});
 
 	it("refuses a start whose redirect target is not a path", async () => {
