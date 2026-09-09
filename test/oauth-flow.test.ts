@@ -1038,7 +1038,13 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		);
 
 		expect(refused.status).toBe(409);
-		expect(await refused.json()).toMatchObject({ error: { code: "identity_already_linked" } });
+		// The message may not say whose the identity is, or it re-opens the oracle E-979 closed.
+		expect(await refused.json()).toMatchObject({
+			error: {
+				code: "identity_already_linked",
+				message: "This provider identity is already linked to an account.",
+			},
+		});
 		expect(await countRows(mounted, "identity")).toBe(1);
 		expect(after?.id).toBe(before?.id);
 		expect(after?.created_at).toStrictEqual(before?.created_at);
@@ -1059,6 +1065,13 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		);
 
 		expect(refused.status).toBe(409);
+		// Byte-identical to the answer for the caller's own identity: neither says whose it is (E-989).
+		expect(await refused.json()).toMatchObject({
+			error: {
+				code: "identity_already_linked",
+				message: "This provider identity is already linked to an account.",
+			},
+		});
 		expect(await countRows(mounted, "identity")).toBe(2);
 		expect(await countRows(mounted, "user")).toBe(2);
 	});
