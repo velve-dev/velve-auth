@@ -1,5 +1,6 @@
 import { VelveStartupError } from "../auth/startup.js";
 import type { OwnedMigration } from "../db/migration.js";
+import { namesTableOfPlugin } from "../db/migrations/index.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
 import type { BucketRule, RateLimitRule } from "../http/rate-limit.js";
 import {
@@ -407,7 +408,7 @@ function assertEveryRateLimitRuleNamesAContributedRoute(plugin: VelvePlugin): vo
 function assertEveryDeclaredTableIsItsOwn(plugin: VelvePlugin): void {
 	for (const migration of plugin.migrations ?? []) {
 		for (const table of migration.createsTables) {
-			if (!table.startsWith(`${plugin.id}_`)) {
+			if (!namesTableOfPlugin(table, plugin.id)) {
 				throw new VelveStartupError("plugin_migration_table_not_prefixed");
 			}
 		}

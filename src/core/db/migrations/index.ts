@@ -26,3 +26,25 @@ export function coreTableNames(): readonly string[] {
 	);
 	return [...new Set([...named, PLUGIN_LEDGER_TABLE])];
 }
+
+let coreTables: ReadonlySet<string> | undefined;
+
+/** E-775: an empty set would make the rule both plugin boundaries rest on permit everything, silently. */
+export function coreTableNameSet(): ReadonlySet<string> {
+	coreTables ??= new Set(coreTableNames());
+	if (coreTables.size === 0) {
+		throw new TypeError("no core table name could be read out of the migrations that create them");
+	}
+	return coreTables;
+}
+
+/**
+ * Ownership as **both** plugin boundaries decide it — `ownTables.query` at runtime and the
+ * migration runner at startup — so neither can widen without the other. The prefix alone does not
+ * decide it, because a core table name carries `_` as well: `one_time_token` begins with the prefix
+ * of a plugin called `one`, and that plugin could mint a password reset token against any account
+ * (E-907).
+ */
+export function namesTableOfPlugin(tableName: string, pluginId: string): boolean {
+	return tableName.startsWith(`${pluginId}_`) && !coreTableNameSet().has(tableName.toLowerCase());
+}

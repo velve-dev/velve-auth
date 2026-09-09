@@ -14,6 +14,7 @@ import {
 	PLUGIN_LEDGER_TABLE,
 	type RunnableMigration,
 } from "./migration.js";
+import { namesTableOfPlugin } from "./migrations/index.js";
 import {
 	applySchemaName,
 	assertNoSchemaNameInsideDollarQuoting,
@@ -312,13 +313,21 @@ function refuseOwned(code: MigrationRefusalCode, migration: OwnedMigration, what
 	);
 }
 
-/** 3.11: a plugin's own objects are the ones in the configured schema carrying its own prefix. */
-function isOwnedTable(qualified: string, migration: OwnedMigration, schema: string): boolean {
-	return qualified.startsWith(`${schema}.${migration.owner}_`);
-}
-
 function localNameOf(qualified: string): string {
 	return qualified.slice(qualified.indexOf(".") + 1);
+}
+
+/**
+ * 3.11: a plugin's own objects are the ones in the configured schema carrying its own prefix and
+ * belonging to no core table. `ownTables.query` decides ownership from the same predicate, so the
+ * boundary a plugin meets at runtime and the one its migration meets cannot answer differently
+ * (E-907).
+ */
+function isOwnedTable(qualified: string, migration: OwnedMigration, schema: string): boolean {
+	return (
+		qualified.startsWith(`${schema}.`) &&
+		namesTableOfPlugin(localNameOf(qualified), migration.owner)
+	);
 }
 
 /** A relation the plugin does not own, in the schema or out of it, and however it got there. */
