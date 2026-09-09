@@ -74,6 +74,54 @@ describe("what ownTables lets through to the driver (3.11, 3.15 G)", () => {
 		expect(await reachedTheDriver(foreign)).toStrictEqual([]);
 	});
 
+	/**
+	 * E-770: the position walk is documented as incomplete (E-762), so the statements that matter are the
+	 * ones putting a core table where no walk looks: a qualified column reference, a cast target, a
+	 * clause after the table list. What refuses them is the name rule, and the assertion is the
+	 * refusal rather than which rule produced it.
+	 */
+	it("stops a core table named where no table walk looks", async () => {
+		const foreign = [
+			"SELECT velve.user.id FROM demo_entry",
+			"SELECT session.id FROM demo_entry",
+			"SELECT $1::velve.recovery_code FROM demo_entry",
+			"SELECT * FROM demo_entry ORDER BY velve.password_credential.phc",
+			"WITH x AS (SELECT 1) SELECT velve.totp_credential.secret_enc FROM demo_entry",
+			"SELECT velve.other_plugin_entry.note FROM demo_entry",
+		];
+
+		expect(await reachedTheDriver(foreign)).toStrictEqual([]);
+	});
+
+	/** The four shapes the review was asked to probe: a statement kind, a lateral, a function and a CTE. */
+	it("stops a MERGE, a lateral, a set-returning function and a CTE that shadows a core name", async () => {
+		const foreign = [
+			"MERGE INTO demo_entry USING demo_other ON true WHEN MATCHED THEN DO NOTHING",
+			"MERGE INTO velve.user USING demo_entry ON true WHEN MATCHED THEN DO NOTHING",
+			"SELECT * FROM demo_entry d, LATERAL (SELECT id FROM velve.session) s",
+			"SELECT * FROM demo_entry d, LATERAL (SELECT 1) s",
+			"SELECT * FROM json_to_recordset((SELECT to_json(u) FROM velve.user u)) AS x(id uuid)",
+			"SELECT * FROM generate_series(1, 3)",
+			'WITH "user" AS (SELECT 1) SELECT * FROM "user"',
+			"WITH demo_x AS (SELECT * FROM velve.user) SELECT * FROM demo_x",
+		];
+
+		expect(await reachedTheDriver(foreign)).toStrictEqual([]);
+	});
+
+	/** A core table reached through the quoting the position walk used to lose entirely (E-751). */
+	it("stops a quoted, spaced or comment-split core table name", async () => {
+		const foreign = [
+			'SELECT * FROM "velve"."user"',
+			'INSERT INTO "velve"."user" (email) VALUES ($1)',
+			"SELECT * FROM velve . user",
+			"SELECT * FROM velve/*x*/.user",
+			'SELECT * FROM "velve"./*x*/"session"',
+		];
+
+		expect(await reachedTheDriver(foreign)).toStrictEqual([]);
+	});
+
 	it("names the plugin and the schema it is bounded to when it refuses", async () => {
 		const ownTables = createOwnTables({
 			driver: recordingDriver(),
