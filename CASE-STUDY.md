@@ -4162,3 +4162,226 @@ Its Reason is also a little wider than it needs to be. *"Any entry stating one i
 **Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
 
 One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
+### The callback URL the specification never declares
+`E-540` · oauth · configuration, frozen
+
+**Context.** RFC 6749 §4.1.3 makes `redirect_uri` part of the token request and requires it to be the one the authorization request carried, so the library has to know its own callback URL as an absolute string. `OAuthConfig` in architecture 3.15 A.8 declares `providers`, `trustedProviders` and `storeTokens`, and nothing else; the route table gives the path but not the scheme and host, and the HTTP layer never tells a handler which host it was reached on.
+**Rejected.** Deriving it from the request — from `Host`, from `X-Forwarded-Host`, or from the `Origin` the start route already checks. Also rejected: an optional field that fails at the first flow with `provider_not_configured`.
+**Reason.** The derived form is the shape of GHSA-569q-mpph-wgww, where `X-Forwarded-Host` poisoned the base path; an outbound value built from a header is a value an attacker writes. The optional form moves a certain, permanent misconfiguration from start to run time, which is the opposite of what 3.11 does everywhere else. So `callbackBaseUrl` is a required field, the provider id is appended to it, and a per-provider `redirectUri` overrides it whole (section 1, C74).
+**Price.** It widens a type the specification writes out in full, which is a deviation from 3.15 A.8 and not a gap it left open — the gap is real, but choosing the field's name and shape was this feature's decision and no requirement constrains it. It also made six object literals in `test/oauth-config-seam.test.ts`, a merged wave-4 test, fail to compile until each got the field.
+
+### Apple's `form_post` callback is a second route, not a second entrance
+`E-541` · oauth · route table, frozen
+
+**Context.** Section 1 C50 and C70 adopt `responseMode: form_post`, which Apple requires as soon as the e-mail scope is asked for. 3.15 D.3 lists one callback row, and T-CSRF-1 fixed *exactly one* route carrying `originCheck: "exempt"`. A `form_post` provider posts `code` and `state` as a cross-site form, which no `SameSite=Lax` cookie is sent on, so the pointer `S-CSRF-5` demands would be missing exactly where the callback reads it.
+**Rejected.** Converting the POST into a GET redirect, which is what the comparison system does. Rejected: it emits a second `Location` carrying the code in a query string, and S-REDIR-3 allows the library exactly one `Location` — the callback's own 302 — while S-REDIR-4 forbids a code or token in any query string it produces.
+**Reason.** The decision the owner took and this feature implemented: a second declared route on the same path with method POST, `originCheck: "exempt"` for the same reason as the first (a provider's cross-site POST carries no `Origin` the library may compare), and the flow pointer written with `SameSite=None; Secure` for that flow. T-CSRF-1's threshold becomes *exactly two*, both named in `test/auth-route-table.test.ts`. The code never enters a query string and no redirect is added.
+**Price.** Three costs, and none of them is theoretical. The library's cookie vocabulary grows from two attribute sets to three, and `CookieAttributes` is public. A `SameSite=None` cookie is sent on every cross-site request to the callback host, so the pointer is reachable from any site that can make the browser hit that URL — what protects the flow is still the row and PKCE, and the pointer alone spends nothing, but the cookie is no longer a second barrier there. And it is written per flow rather than per configuration: the owner's wording was "when a `form_post` provider is configured", and a narrower reading was implemented — only a flow whose own provider posts gets the weaker attribute — so an installation mixing Apple with Google gives `Lax` to the Google flow.
+
+### What of section 1's OAuth mechanics is built, and what is not
+`E-542` · oauth · scope, frozen
+
+**Context.** Section 1 C.2 marks forty-nine mechanics rows, twenty-three of them "adopt". Several of them are per-request options in the comparison system — `prompt`, `login_hint`, `additionalParams`, `disableSignUp`, `disableImplicitSignUp` — and 3.15 D.3 fixes this library's start input as `{ provider, redirectPath? }`, which carries none of them.
+**Rejected.** Widening the route input to carry them, and adding a configuration field per row.
+**Reason.** The input is specified and a route that takes more than D.3 says is a change to the public HTTP surface for a convenience. `prompt` and `responseMode` are enumerated values a provider is configured with once, so they became per-provider configuration; `login_hint` is per sign-in attempt by nature and has nowhere to live; `additionalParams` is a configured hole through which arbitrary authorization parameters reach a provider, and the reserved-parameter blocklist it needs exists to make a feature safe that nothing here asks for. `disableSignUp` and `disableImplicitSignUp` are policy switches, and S-DEFAULT-1 would put them in `SECURITY_OPTIONS`, a file this feature does not own.
+**Price.** Five adopted rows of section 1 are not implemented, and section 1 is part of the specification. This is a scope decision taken by the writer, not a requirement being met, and the next wave that wants a per-request option will have to widen D.3's input or add configuration this entry argued against.
+
+### The provider table is resolved once, while the instance is built
+`E-543` · oauth · start behaviour, frozen
+
+**Context.** Each configured provider is a descriptor merged with the operator's fields: credentials, scopes, endpoint overrides, the redirect URI, the trust flag. That merge could run per request or once.
+**Rejected.** Resolving per request, which would let a bad endpoint reach the first sign-in rather than the start.
+**Reason.** `oauthRoutes` runs while `createVelveAuth` assembles the instance, so a provider whose endpoint is not an absolute `https` URL refuses the start with `VelveStartupError("oauth_provider_incomplete")` — the code wave 4 already declared for an incompletely configured provider. Nothing else in the request path re-reads `trustedProviders` either, which keeps S-LINK-2's third condition one lookup at one moment.
+**Price.** The start error reuses a code whose message names the three missing endpoint fields, so an operator who wrote `http://` in one of them reads a message about a missing field. A second code would have meant editing `core/auth/startup.ts`, which this feature does not own.
+
+### Provider endpoints are library data, and no discovery document is fetched
+`E-544` · oauth · outbound calls, frozen
+
+**Context.** Four of the ten helper providers section 1 C37–C46 names are OIDC servers with a discovery document, and fetching `/.well-known/openid-configuration` would spare an operator three fields.
+**Rejected.** Discovery, in every form: at start, cached, or per callback.
+**Reason.** S-REDIR-6 says every endpoint URL the server calls comes from the configuration at initialisation, and a discovery document is a response body that becomes a URL the server then calls. T-REDIR-6 tests exactly that with a provider whose discovery document names other endpoints, and expects them not to be called.
+**Price.** Fourteen descriptors are written into `providers.ts` by hand, and an endpoint a provider moves is a released version of this library rather than a refresh. That is the failure the comparison system's shipped presets have (C37–C46, "mitgelieferte Voreinstellungen veralten still"), and the answer here is only that a built-in provider's endpoints can be overridden in configuration.
+
+### The code is exchanged outside any transaction
+`E-545` · oauth · transaction boundary, frozen
+
+**Context.** Section 1 C49 says code redemption, identity resolution and session creation happen "in one transaction". The redemption is an HTTP call to the provider.
+**Rejected.** The literal reading — opening a transaction, consuming the flow row, calling the provider inside it, and committing after the session exists.
+**Reason.** `CLAUDE.md` §7 names the hazard in the sentence about row locks: a transaction that contains an outbound call holds for that call's timeout. This one would hold a pooled connection for up to ten seconds against a third party, on the path every sign-in takes. The flow row is consumed by a single `DELETE … RETURNING`, which is atomic on its own and is what makes a state unspendable twice; the identity and any new account are written in one transaction afterwards; the session is issued after that.
+**Price.** A deliberate deviation from a row of section 1, and a real window: a crash between the identity write and the session issue leaves an account with an identity and no session, and the user signs in again. The alternative window — a provider that hangs while holding a database connection — is worse under load, and that is the whole argument.
+
+### The pointer is the secret and the state is its hash
+`E-546` · oauth · flow binding, frozen
+
+**Context.** 3.10 says the `state` lives server-side in `velve.oauth_flow` and "the cookie holds only the pointer to it"; S-CSRF-5 says a callback with a valid state but a missing or foreign pointer cookie is refused. The table has one addressable column, `state_sha256`, so there is no second column a separate pointer could be stored in.
+**Rejected.** Putting the state itself in the cookie, which is the obvious reading and one statement shorter.
+**Reason.** That reading collapses the two values the specification names into one: the cookie *is* the state, and "the cookie holds only the pointer" describes nothing. So the cookie holds 256 random bits, the state handed to the provider is their SHA-256, and the row is keyed by the SHA-256 of that. The callback checks both halves — the pointer hashes to the state, and the state finds a row.
+**Price.** Two hashes where one would do, and a reader has to hold both in mind to see why the check is not circular. The security difference over the rejected form is small and this entry does not claim otherwise: both forms need the cookie, and neither is broken by a state that leaks alone. What decided it is the specification naming two things.
+
+### An `iss` the library cannot check is refused, not ignored
+`E-547` · oauth · RFC 9207, frozen
+
+**Context.** RFC 9207 adds `iss` to the authorization response so that a client cannot be tricked into sending a code to the wrong issuer. Most of the fourteen providers do not send it yet, and a generic OAuth2 provider may be configured without an `issuer`.
+**Rejected.** Comparing only where both are present and passing over the case where `iss` arrives and no issuer is configured.
+**Reason.** That case is the one a check "cannot tell found-nothing from found-a-fault" in: the parameter is there, nothing compares it, and the flow proceeds. It is refused instead, and the operator's fix is to configure `issuer`. A missing `iss` is accepted, because requiring it would break every provider that has not implemented RFC 9207.
+**Price.** A provider that starts sending `iss` breaks that installation's sign-in until `issuer` is configured, and the error the user sees is the same `oauth_flow_invalid` as every other flow fault. Accepting an absent `iss` also means the protection is only as good as the provider's adoption, which is the state RFC 9207 is in.
+
+### A nonce nothing answered fails the flow
+`E-548` · oauth · OIDC, frozen
+
+**Context.** The nonce is minted for a provider that declares a JWKS and stored in the flow row; it is checked against the ID token's `nonce` claim. A provider can answer the token request without an ID token.
+**Rejected.** Falling back to the userinfo endpoint in that case and letting the nonce go unchecked.
+**Reason.** An unchecked nonce is a replay window that looks like a working sign-in, and the fallback would open it on exactly the providers where the specification asks for the check. So a flow that minted a nonce and received no ID token ends as `oauth_flow_invalid`, with `nonce_mismatch` in the log.
+**Price.** A provider that stops issuing ID tokens for a configuration that still declares a JWKS fails closed for every user at once, and the log line says "nonce mismatch" where the truth is "no ID token arrived".
+
+### The JWKS is fetched for every callback
+`E-549` · oauth · outbound calls, revisit when a cache is measured
+
+**Context.** Verifying an ID token needs the provider's public keys. `jose` offers `createRemoteJWKSet`, which fetches and caches behind its own timers, and `createLocalJWKSet`, which takes a key set the caller fetched.
+**Rejected.** `createRemoteJWKSet`.
+**Reason.** It fetches through its own path, which is one more place an outbound URL is used and one this library's `fetch` parameter does not reach; S-REDIR-6 and the configured `fetch` both want every provider call to go through the same hardened function. The local form takes the key set the library fetched itself.
+**Price.** One extra HTTP request per OIDC sign-in, on the sign-in path, uncached. That is a measurable cost and it is not measured here: no benchmark was run, and the number of requests per sign-in went from two to three by counting the calls in the code, not by timing them.
+
+### A redirect path is judged twice, before and after one decoding
+`E-550` · oauth · S-REDIR-2, frozen
+
+**Context.** S-REDIR-2 requires the check to run after exactly one percent decoding and to be applied again. `core/http/redirect.ts` holds the one definition of what a path may look like and does not decode.
+**Rejected.** Copying the character rule into this feature so that both readings could run against a local regular expression.
+**Reason.** Two copies of a security-relevant pattern drift, and the one in `core/http` is the one T-REDIR-1 and the rest of the library read. `acceptedRedirectPath` calls the existing `toRedirectPath` twice — once on the input and once on its single decoding — and turns its refusal into the caller's `invalid_input`.
+**Price.** The refusal of a malformed path now depends on a function that throws `internal_error` for its own callers, so the conversion is a `try` around a call whose failure mode is documented nowhere but here.
+
+### The callback always answers 302, and the default target is `/`
+`E-551` · oauth · route behaviour, frozen
+
+**Context.** `redirectPath` is optional on both start routes, and `velve.oauth_flow.redirect_path` is nullable. 3.15 D.3 gives the callback one success status, 302.
+**Rejected.** Answering 200 with the result body when no path was named.
+**Reason.** Two success shapes on one route is a branch every caller has to handle, and the row in D.3 names one. A flow that named no target redirects to `/`.
+**Price.** `/` is invented by this feature; nothing in the specification names a default. An application mounted under a base path that expects to land somewhere else has to pass `redirectPath` on every start.
+
+### The ID token wins over userinfo, and a provider with neither is a 502
+`E-552` · oauth · claims, frozen
+
+**Context.** Claims can come from a verified ID token or from a userinfo request. Some providers offer both, some only one, and 3.15 A.8 makes `userInfoEndpoint` and `jwksUri` optional independently.
+**Rejected.** Merging both, and preferring userinfo.
+**Reason.** The ID token is signed and bound to this flow's nonce and this client's audience; the userinfo response is a bearer-authenticated body with no binding beyond the token that fetched it. Where both exist the signed one is read. A configured provider with neither cannot name a subject, and the callback answers `oauth_provider_error`.
+**Price.** A provider whose ID token omits the address while its userinfo carries it yields `email IS NULL`, and this feature will not merge the two to fix it. And a configuration that can never work — neither endpoint — starts happily and fails at the first sign-in, which E-557 argues about at more length.
+
+### Three ciphertexts under one key-version column
+`E-553` · oauth · S-REST-4, frozen
+
+**Context.** `velve.identity` carries `access_token_enc`, `refresh_token_enc` and `id_token_enc` and one `token_key_version` for all three. The envelope helper answers with the version it used per call.
+**Rejected.** Writing the envelope form, whose header carries its own version, and leaving the column informational.
+**Reason.** The column is in the schema and S-REST-4 names it; a column that duplicates a value nothing reads is worse than one that is the value. The three encryptions run under the current key, and the three versions are compared: if a rotation landed between them the write is refused with `internal_error` rather than storing a row whose column names the wrong key for two of its three columns.
+**Price.** A rotation exactly between two encryptions of one sign-in loses that sign-in — the user retries and the second attempt is consistent. The window is one process's `keys.current` calls apart and no test provokes it, so the branch is written and unexercised.
+
+### The provider's profile is overwritten on every sign-in, and the account is not
+`E-554` · oauth · C78, frozen
+
+**Context.** Section 1 C78 replaces the comparison system's `overrideUserInfoOnSignIn` with: `velve.identity.profile` is overwritten with the current claims on every sign-in, `velve.user` stays untouched.
+**Rejected.** Nothing; this is the specification's answer, implemented.
+**Reason.** There are no profile fields in `velve.user` to compete with, so there is no policy to choose. The claims are written as `jsonb` and the library never reads them back.
+**Price.** The whole claim set is stored, which is whatever the provider chose to send — a data-minimisation question the application answers with its scopes, not with a field list here.
+
+### `identity.list` answers with no token, and there is no method that hands one out
+`E-555` · oauth · surface, frozen
+
+**Context.** 3.15 C's `Identity` names the provider, the subject, the address, the verification flag, the raw claims, the scopes and the token expiry — no token. Section 1 C91 and C92 drop the access-token endpoints on the grounds that an application enabling `storeTokens` "bekommt sie die entschlüsselten Tokens".
+**Rejected.** Adding a method that decrypts and returns them.
+**Reason.** 3.15 C is the return type and it has no token field; adding one would be a public surface this feature invented. The three statements that read `velve.identity` name their columns and none of them names a token column, so the ciphertext cannot reach a response by accident.
+**Price.** `storeTokens: true` writes three encrypted columns that no library method ever reads, and the sentence in C91 that says the application gets them is, as things stand, false — the application has to read the columns and decrypt them itself, without a key provider it can reach. That is a gap in the specification and it is reported rather than closed here.
+
+### `microsoft` carries no fixed issuer
+`E-556` · oauth · descriptor, frozen
+
+**Context.** Entra ID's `iss` claim is `https://login.microsoftonline.com/<tenant>/v2.0`, and the tenant differs per directory. The descriptor is one value for every installation.
+**Rejected.** Writing `https://login.microsoftonline.com/common/v2.0` into the descriptor.
+**Reason.** No token ever carries that value, so the check would refuse every real sign-in. The descriptor names the common JWKS and no issuer; the signature, the audience and the nonce still bind the token.
+**Price.** For `microsoft` the `iss` claim is not checked, so a token signed by Microsoft's keys for another tenant is refused only by the audience check. An operator who needs the issuer bound configures Entra as a generic provider with their tenant's `issuer` — which this entry states and no code enforces.
+
+### A provider with neither JWKS nor userinfo may start
+`E-557` · oauth · start behaviour, corrected during the build
+
+**Context.** The first cut of `providers.ts` refused the start for a configured provider that declares neither `jwksUri` nor `userInfoEndpoint`, on the ground that it can never name a subject.
+**Rejected.** Keeping that check.
+**Reason.** It reddened `test/oauth-config-seam.test.ts`, a merged wave-4 test whose subject is that 3.15 A.8's generic provider — credentials, two endpoints and a subject claim — is a startable configuration. Both endpoint fields are optional in A.8 and the check made a configuration the specification permits a start error. The alternative was to edit that test to accommodate a rule this feature invented, which is the direction §5 forbids.
+**Price.** A configuration that cannot complete a single sign-in starts without a word, and fails with `oauth_provider_error` at the first callback. There is no log sink in `RouteServices`, so not even a warning is available; the reference documents it instead.
+
+### A provider's claim verifies an address only where the provider is trusted
+`E-558` · oauth · S-LINK-2, frozen
+
+**Context.** When OAuth creates a new account, `email_verified_at` has to be set or left null. The provider reported the address, and possibly reported it verified.
+**Rejected.** Trusting the claim from any provider, which is what makes the account immediately linkable by the next provider that reports the same address.
+**Reason.** `trustedProviders` is the operator saying "I believe this provider's verified flag", and it is condition three of S-LINK-2. A new account gets `email_verified_at` only where the provider reported the address verified *and* stands in that list; otherwise the address is stored unverified and the account has to confirm it by the e-mail flow.
+**Price.** With an untrusted provider a user who signed in through it has an unverified address until they confirm it, and confirmation belongs to `email-flows`, which is being written in parallel. Until that merges, such an account cannot become verified at all.
+
+### No identifier is invented, so the account is refused instead
+`E-559` · oauth · S-LINK-5, frozen
+
+**Context.** S-LINK-5 forbids a placeholder address; the comparison system invents one in nine places. A new account also needs whatever the identity mode requires: an address in `email`, a username in `username`, both in `username_email`.
+**Rejected.** Generating anything — an address from the subject, a username from the address.
+**Reason.** `core/identity`'s `identityColumns` already answers "may this account exist with these identifiers" for every mode, so it is asked, and its refusal ends the flow. A provider that reports no address gives `oauth_provider_error`; a mode that requires a username gives `oauth_flow_invalid`, because no provider claim can supply one.
+**Price.** In the `username` and `username_email` modes, third-party sign-in cannot create an account at all — it works only as an explicit link inside an existing session. That is a real capability gap, it is not stated anywhere in the specification, and S-LINK-5's own wording ("in the configurations `username` and `username_email` `velve.user.email` stays NULL") reads as though account creation in those modes were expected. The contradiction is reported, not repaired.
+
+### An address that already belongs to another account ends the flow
+`E-560` · oauth · S-LINK-2, frozen
+
+**Context.** If the automatic link is refused — because one of S-LINK-2's three conditions fails — the flow reaches "then a new account". In the `email` modes the address is unique, and the address is already taken by the account the link was refused over.
+**Rejected.** Letting the insert hit the unique index, which surfaces as `internal_error`; and creating the account with a null address, which the mode's CHECK forbids.
+**Reason.** The refusal is checked before the insert and answers `oauth_flow_invalid`. The important half is what it does *not* do: it does not link, and it does not verify anything. An attacker who can make an untrusted provider assert the victim's address gets a refusal and nothing else.
+**Price.** It is an oracle: a caller learns that some account holds that address. It is a weak one — the attacker must already control a configured provider's assertion of that address — but it is a distinguishable answer, and S-ENUM would rather it were not. The check is also racy against a concurrent creation of the same address, and that race still ends in the unique index and a 500.
+
+### The callback's return type carries a path beside 3.15 C.1
+`E-561` · oauth · surface, frozen
+
+**Context.** D.3 gives the callback status 302 over HTTP; 3.15 B.1 gives the server method `OAuthCallbackResult`. One handler produces both.
+**Rejected.** A second route, or a handler that reads whether it was called over HTTP.
+**Reason.** Wave 4 built `readRedirectPath` into the web handler for exactly this: a handler returns its result with `redirectToPath` beside it, the HTTP layer turns that into the 302 and drops the body, and the server method keeps the object. The output type is therefore `OAuthCallbackResult & { redirectToPath }`.
+**Price.** The server method returns one property more than 3.15 B.1 says, and that property is public. A caller reading the result in its own process sees a path it has no use for.
+
+### The route names D.3 fixes and the method names B.1 fixes disagree
+`E-562` · oauth · specification, reported
+
+**Context.** A route's dotted `name` is its server method's object path, so one string decides both. T-CSRF-1 names the exempt route `signIn.oauth.callback`; 3.15 B.1 and B.9 name the method `signIn.oauth.finish`. D.3's callback query carries `iss`; B.1's method parameter is `issuer`. B.7 names the link method `identity.linkOAuth.start`; D.3's path is `/identity/link/start`.
+**Rejected.** Declaring aliases so that both names exist.
+**Reason.** A second route for one operation is a second exempt route (the count T-CSRF-1 fixes), or a second name for a method the client type would then carry twice. The names the tests and the route table read were taken — `signIn.oauth.callback`, `iss`, `identity.link.start` — and the divergence is reported rather than repaired, because deciding which half of the specification is wrong is not this feature's to decide.
+**Price.** An application written from 3.15 B.1 calls `auth.signIn.oauth.finish` and gets `undefined`, and one written from B.7 calls `auth.identity.linkOAuth.start`. Three names in the specification are wrong or three names in the code are, and nothing in the gate can tell which.
+
+### The pending row is written and withdrawn again
+`E-563` · oauth · second factor, revisit when a sign-in path shares it
+
+**Context.** 3.6 puts an account with a second factor into a pending state instead of a session. Which factors an account can offer is computed where the pending row is written, in the statement that writes it, and there is no other query in the library that answers "does this account have a second factor".
+**Rejected.** Writing that query in this feature.
+**Reason.** It would be a second definition of what counts as a second factor, in a module that owns none of the three tables it would read. So the pending row is written, its `availableFactors` are read, and the row is deleted again when the account has none.
+**Price.** An insert and a delete on every OAuth sign-in of an account without a second factor, which is the common case — two statements bought to avoid one duplicated definition. The next feature that needs the same answer should hoist it into the pending module rather than repeat this.
+
+### The census of `account_disabled` grows to four files
+`E-564` · oauth · the gate, measurement
+
+**Context.** `test/session-review-resolution.test.ts` asserts which files under `src/core/` so much as name `account_disabled`: it is raised in one place, and named in three.
+**Rejected.** Nothing.
+**Reason.** `core/oauth/routes.ts` names it in the `errors` list of the three `identity` rows, which have `caller: "session"` and therefore carry it by D.3's contract. The file is added to the expected list, which keeps the test a statement about where the code can be *raised* rather than a count that drifts.
+**Price.** The list is now four files and every future feature with a session route adds another; the test's value comes from someone reading the diff, and it says nothing about whether the new entry is legitimate.
+
+### The census of the owner-predicate marker grows to fourteen
+`E-565` · oauth · the gate, measurement
+
+**Context.** `test/token-static-scan.test.ts` counts the `no owner predicate` markers in the source: **eleven** in six files before this feature.
+**Rejected.** Nothing.
+**Reason.** Three statements here reach a row by something other than an owner: the flow row by its state hash, and the identity row by `(provider, subject)` in a lookup and in the sign-in refresh. Each says so in its own text and names the requirement that permits it, which is what `test/db-static-sql.test.ts` enforces — the first spelling of these two markers put the prose before the requirement id and that test caught it. The counts are now **fourteen markers in eight files**.
+**Price.** Both numbers were wrong in the first draft of this entry: they were written from the code before the run, and the run said fourteen and eight. The census only works if the number in the test is the number the scan produced, and the way to get that is to run it.
+
+### What this feature changed outside its own area
+`E-566` · oauth · file ownership, disclosed
+
+**Context.** §5 fixes the set of files a feature may touch. This one changed **three** files under `src/core/http/` and **eight** test files it does not own.
+**Rejected.** Building the `form_post` callback without them, which is not possible: the web handler parses a POST body as JSON, `route.ts` decides which routes drop undeclared fields, and `cookies.ts` holds every attribute set the library can express.
+**Reason.** `cookies.ts` gained the third attribute set and a writer for it (E-541); `route.ts` gained `requestBody`, defaulting to `json`, so exactly one route reads a form; `web-handler.ts` reads a form body for a route that declares one. The eight test files are censuses and fixtures that count what the tree contains — the exempt-route list, the cookie-writer method list, the `account_disabled` and owner-predicate counts, the namespace list, the API snapshot, the seam test's configuration literals, and the test driver, which learned to send a `Date`.
+**Price.** Two of those files are plausibly wanted by the siblings of this wave — `test/auth-surface-namespaces.test.ts`, where `email-flows` will also remove `signIn`, and `test/db-postgres-connection.ts` — so a merge conflict is likely and its resolution is a person reading both sides. The edits were kept small for that reason and for no other.
+
+### Two places where the specification contradicts itself
+`E-567` · oauth · specification, reported
+
+**Context.** Two findings from building against 3.10 and 5.11. First: S-LINK-5 says that in the configurations `username` and `username_email` a provider reporting no address leaves `velve.user.email` NULL — but migration 2 puts `CHECK (username IS NOT NULL)` on both modes, and no provider claim can supply a username, so an OAuth sign-in cannot create an account in either mode (E-559). In `username_email` the same CHECK also requires the address, so the sentence cannot hold there at all. Second: section 1 C91 justifies dropping the access-token endpoints by saying an application that enables `storeTokens` "gets the decrypted tokens", and no method in 3.15 returns one (E-555).
+**Rejected.** Repairing either, in code or in the specification.
+**Reason.** `CLAUDE.md` says a contradiction is reported and never repaired in passing, and both of these are decisions about what the library promises rather than about how this feature is built.
+**Price.** Both are shipped as they stand: third-party sign-in creates accounts only in the `email` mode, and `storeTokens: true` writes columns nothing can read back. Whoever answers them owns a change to the specification, and until then this entry is the only place either is written down.
