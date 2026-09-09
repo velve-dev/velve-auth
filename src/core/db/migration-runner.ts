@@ -321,6 +321,27 @@ function localNameOf(qualified: string): string {
 	return qualified.slice(qualified.indexOf(".") + 1);
 }
 
+/** A relation the plugin does not own, in the schema or out of it, and however it got there. */
+function refuseTheForeignRelation(
+	migration: OwnedMigration,
+	schema: string,
+	relation: string,
+	before: Relations,
+): never {
+	if (!relation.startsWith(`${schema}.`)) {
+		refuseOwned(
+			"migration_table_outside_the_schema",
+			migration,
+			`it reached ${relation}, and a plugin's tables live in ${schema}`,
+		);
+	}
+	refuseOwned(
+		before.has(relation) ? "migration_foreign_table_changed" : "migration_table_unprefixed",
+		migration,
+		`it reached ${relation}, which is not one of the tables named ${migration.owner}_`,
+	);
+}
+
 /**
  * What a migration did is measured rather than read out of its SQL, so a statement the runner
  * cannot parse cannot get past the declaration either (E-637). Outside the plugin's own relations
@@ -329,27 +350,15 @@ function localNameOf(qualified: string): string {
  * that is not a table, or one of the objects a table brings with it, is refused whatever it is
  * called: a view carries a query, and a query of its own reads what it likes (E-903).
  */
-function assertNothingButItsOwnTablesChanged(
+function assertEveryRelationItTouchedIsItsOwn(
 	migration: OwnedMigration,
 	schema: string,
 	before: Relations,
-	after: Relations,
 	touched: Relations,
 ): void {
 	for (const [relation, kind] of touched) {
 		if (!isOwnedTable(relation, migration, schema)) {
-			if (!relation.startsWith(`${schema}.`)) {
-				refuseOwned(
-					"migration_table_outside_the_schema",
-					migration,
-					`it reached ${relation}, and a plugin's tables live in ${schema}`,
-				);
-			}
-			refuseOwned(
-				before.has(relation) ? "migration_foreign_table_changed" : "migration_table_unprefixed",
-				migration,
-				`it reached ${relation}, which is not one of the tables named ${migration.owner}_`,
-			);
+			refuseTheForeignRelation(migration, schema, relation, before);
 		}
 		if (!KINDS_A_TABLE_BRINGS_WITH_IT.has(kind)) {
 			refuseOwned(
@@ -359,13 +368,26 @@ function assertNothingButItsOwnTablesChanged(
 			);
 		}
 	}
+}
 
+function assertItRemovedNothingOfAnybodyElses(
+	migration: OwnedMigration,
+	schema: string,
+	before: Relations,
+	after: Relations,
+): void {
 	for (const relation of before.keys()) {
 		if (!after.has(relation) && !isOwnedTable(relation, migration, schema)) {
 			refuseOwned("migration_foreign_table_changed", migration, `it removed ${relation}`);
 		}
 	}
+}
 
+function assertTheTablesThatAppearedAreTheDeclaredOnes(
+	migration: OwnedMigration,
+	before: Relations,
+	after: Relations,
+): void {
 	const declared = [...new Set(migration.createsTables)].sort();
 	const appeared = [...after]
 		.filter(([relation, kind]) => !before.has(relation) && TABLE_KINDS.has(kind))
@@ -484,13 +506,10 @@ async function applyOwnedMigration(
 		await applyStatements(tx, schema, migration);
 		// The ownership of what it touched is read first, so a relation it should not have made is
 		// refused for what it is rather than for the scan that making it recorded.
-		assertNothingButItsOwnTablesChanged(
-			migration,
-			schema,
-			before,
-			await readRelations(tx, schema),
-			await readRelationsTouched(tx),
-		);
+		const after = await readRelations(tx, schema);
+		assertEveryRelationItTouchedIsItsOwn(migration, schema, before, await readRelationsTouched(tx));
+		assertItRemovedNothingOfAnybodyElses(migration, schema, before, after);
+		assertTheTablesThatAppearedAreTheDeclaredOnes(migration, before, after);
 		assertNoCodeWasLeftBehind(migration, await tx.query<CodeRow>(CODE_THIS_TRANSACTION_LEFT, []));
 		assertNoForeignTableWasReachedByARow(
 			migration,
