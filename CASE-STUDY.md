@@ -4328,7 +4328,7 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Price.** `E-808` overstates the fault it fixed, in the direction that flatters the fix, and that is the same class as `E-804` — an entry this branch wrote about exactly this. Three rounds, three findings, and each time the wrong sentence was in a line believed correct rather than in code believed risky. The pattern worth naming is that the measurement was cheap in all three cases and was not taken, because the sentence sounded like something already known.
 
-### Two of the three evasions are closed; the third is enumerated, not solved
+### The evasions that are closed, and the one that is enumerated instead
 `E-812` · gate · gate, frozen
 
 **Context.** `E-808` admitted the enforcement test is structural and cannot tell whether a scan detects anything. That admission was true and too general to act on. Three concrete evasions passed it five assertions out of five: a status captured for one scan handed to `report` for another, `report`'s default branch reduced to `*) ;;` so the entire refusal semantic disappears, and a sixth scan whose status is never read.
@@ -4360,3 +4360,36 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The stronger justification is that the trade is now **compensated**, and by an instrument that already exists for another reason. The reason the `.gitattributes` fault survived a full round is that any refusal above it ended the job first, so only a shim aimed at that one scan could see it — the immediate exit did not cause the fault, it hid it. The structural test reads all six scans in one pass, in the file, regardless of which would run first or whether any of them runs at all. So the masking costs diagnosis at runtime and no longer costs coverage, and the two mechanisms fit together: the behavioural plants prove one scan at a time and the structural check sees them all at once.
 
 **Price.** The compensation is only as wide as `E-812`'s matcher list, so a scan the list does not name is both masked at runtime and unseen by the structural pass, which is the worst of both and is exactly the case that has no detector. And this argument was available when `E-809` was written and was not made, so the trade was accepted on weaker grounds than the ones that actually support it.
+
+### Fixing the quantifier did not fix the domain
+`E-815` · gate · gate, correction
+
+**Context.** `E-812` claimed two of three evasions closed. Both closures were one spelling deep. `report`'s default branch **deleted** rather than reduced to `*) ;;` passes the structural check 6 of 6, and at runtime restores the round-one finding exactly: a `.gitattributes` carrying `src/*.ts binary`, a shim failing only `grep -nE`, exit 0 and "No AI attribution found". `refuse_unless_zero` inverted from `[ "$2" -ne 0 ]` to `[ "$2" -eq 99 ]` also passes 6 of 6, and restores plant 19 — a real tracked symlink, `awk` stubbed to exit 2, exit 0.
+
+**Rejected.** Pinning the spellings: asserting the helper compares against 0, asserting the literal `-ne`. That is the move that produced both of these, one turn earlier. `-eq 99` defeats a check for `-ne 0`, `-ne 1` defeats a check for a comparison against zero, and each repair teaches the next mutation what to avoid while the property itself is never tested.
+
+**Reason.** The assertion was *every default branch refuses*, quantified over a set the mutation is free to shrink — `defaults.length > 0` is satisfied by the NUL scan's branch alone, so deleting `report`'s is invisible. That is the same lesson as `some` to `every`, one step out: the quantifier was fixed and the **domain** was not. Structurally the repair is to count against what must exist rather than what survives — every `case` the step opens must have a refusing default, so the count of defaults is tied to the count of cases. Semantically there is no structural repair at all, because a deleted or inverted refusal is not a misspelling, and that is what argues the second half: the step is now **run**. Five behavioural cases against planted repositories — a clean tree passes, a marker in a tracked file fails, and `grep`, `awk` and `cmp` each stubbed to exit 2 must fail. Mutation (a) is caught twice, by the cardinality assertion and by the `grep` case; mutation (b) is caught once, by the `awk` case, and by nothing structural, which is the point.
+
+**Price.** `E-803`'s Price argued against committing the harness: it would put a second copy of the step's semantics in the repository with nothing keeping it in step. That argument is overturned here and the overturning is narrower than it looks — these cases run the **real** step body parsed out of `ci.yml`, and assert only an exit status per planted tree, so what is duplicated is the expected outcome and not the logic. What the argument got right survives: the plants that encode *which scan* should see *what* are still not committed, because those would be the second copy. And the suite now shells out to `git` and `bash` in five subprocesses, about two seconds, in a project where every other unit test is in-process.
+
+### `cmp` was grouped with `awk` on a contract it does not have
+`E-816` · gate · gate, correction
+
+**Context.** `E-813`'s Rejected and Reason, the comment above `refuse_unless_zero`, and the pull request all say that `awk` and `cmp` "exit 0 whether or not they printed anything" and that both "get `refuse_unless_zero`". Measured: `cmp -s` gives 0 for identical, **1 for differing**, 2 for unreadable. `awk` gives 0 whether it printed or not, and 2 when it cannot read. And `refuse_unless_zero` is called exactly once in the step, for the symlink `awk`; `cmp` never reaches it.
+
+**Rejected.** Routing `cmp` through `report` to make the grouping true. `report` maps 0 to "hit" and prints the hits, and `cmp`'s 0 is a clean file — the polarity is inverted, so it would report a finding for every file with no NUL byte in it.
+
+**Reason.** `cmp -s` is a three-state matcher with exactly `grep`'s shape and the polarity swapped, and the NUL scan already reads it that way in an inline `case`: 0 clean, 1 the finding, anything above a scan that could not run. So the step has **three** status shapes for three different contracts — `report` for grep polarity, the inline `case` for cmp's inverted polarity, `refuse_unless_zero` for a matcher with no match status at all. That is defensible and is not what any of the three texts described. The comment now describes `awk` alone, and the `cmp` polarity is stated where it is read.
+
+**Price.** The justification for the helper was checkable in one command and false for half its subject, and it survived being written into three places at once because the grouping sounded right. Three status shapes in one step is also more than a reader expects to find, and nothing names them together — each is explained where it sits, so the shape of the whole is visible only to someone who reads all six scans.
+
+### The baseline `E-813` compared against, stated
+`E-817` · gate · gate, correction
+
+**Context.** `E-813` says round two's characterisation of plant 19 — that the symlink scan was "blocking correctly and merely undiagnosed" — was "a false pass and not a diagnostics problem". It did not say which state it measured against, and the answer differs by state.
+
+**Rejected.** Leaving it as a contradiction to be resolved by whoever next runs the plant.
+
+**Reason.** Three states, one plant — a real tracked symlink with `awk` stubbed to exit 2. At the merge base `a24d014`: exit 0, no error line, a false pass. At `be7d1e6`, which is what round two actually measured: exit 2, no error line — it blocks, undiagnosed. At `68fd97b`: exit 1 with a named refusal. Both descriptions are right about different trees. `E-813` used this branch's convention throughout, where *old* means the merge base, and under that convention its numbers are correct; what was missing is that the convention was never stated in the entry, and round two's claim was about a state the convention does not name.
+
+**Price.** A convention carried in a reader's head across eighteen entries and two pull request tables, and this is the second time it has produced an apparent contradiction between two true statements. Writing *old* and *new* into a table without a line saying what they are measured against was cheap every single time and is still not fixed anywhere but here.
