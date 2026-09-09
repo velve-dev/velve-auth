@@ -4185,7 +4185,7 @@ The research report records: "**every single one** would have been prevented by 
 
 ### 5.19 Coverage table: the 33 Better Auth advisories
 
-Every row names the advisory, its error class and the Velve Auth requirements that exclude this class — or the reason why the class cannot exist in Velve Auth. "Not applicable" means: the affected function is explicitly not part of the product per section 3.14. Where the function is missing but the *class* would nevertheless be structurally prevented by a requirement, this requirement is named in parentheses — it protects the plugins that could retrofit this function.
+Every row names the advisory, its error class and the Velve Auth requirements that exclude this class — or the reason why the class cannot exist in Velve Auth. "Not applicable" means: the affected function is explicitly not part of the product per section 3.14. Where the function is missing but the *class* would nevertheless be structurally prevented by a requirement, this requirement is named explicitly as the preventing one in the requirement column — it protects the plugins that could retrofit this function.
 
 | # | GHSA | CVE / CVSS | Class | Velve Auth requirement |
 |---|---|---|---|---|

@@ -4183,7 +4183,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 ### 5.19 Abdeckungstabelle: die 33 Better-Auth-Advisories
 
-Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderungen, die diese Klasse ausschließen — oder den Grund, warum die Klasse in Velve Auth nicht existieren kann. „Nicht anwendbar" bedeutet: die betroffene Funktion ist nach Abschnitt 3.14 ausdrücklich nicht Teil des Produkts. Wo die Funktion fehlt, aber die *Klasse* dennoch durch eine Anforderung strukturell verhindert wäre, ist diese Anforderung in Klammern genannt — sie schützt die Plugins, die diese Funktion nachrüsten könnten.
+Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderungen, die diese Klasse ausschließen — oder den Grund, warum die Klasse in Velve Auth nicht existieren kann. „Nicht anwendbar" bedeutet: die betroffene Funktion ist nach Abschnitt 3.14 ausdrücklich nicht Teil des Produkts. Wo die Funktion fehlt, aber die *Klasse* dennoch durch eine Anforderung strukturell verhindert wäre, ist diese Anforderung in der Spalte „Velve-Auth-Anforderung" ausdrücklich als die verhindernde genannt — sie schützt die Plugins, die diese Funktion nachrüsten könnten.
 
 | # | GHSA | CVE / CVSS | Klasse | Velve-Auth-Anforderung |
 |---|---|---|---|---|
