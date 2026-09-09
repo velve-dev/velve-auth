@@ -273,14 +273,18 @@ function rateLimitRuleOf(rule: RateLimitRule): RateLimitRule {
  */
 function asOneReading(
 	declaration: ContributedDeclaration,
-	rule: RateLimitRule | undefined,
+	rules: Readonly<Record<string, RateLimitRule>>,
 ): ContributedDeclaration {
 	const caller = declaration.caller;
 	const input = declaration.input;
+	// `name` was the tenth field and the one exception: read once to look the rule up and once to
+	// copy it, so a route could mount under one name carrying the bucket declared for another (E-910).
+	const name = declaration.name;
+	const rule = rules[name];
 	// The reading carries no cookie field, so this is the last place the declaration's own is visible.
 	assertNoRouteReadsACoreCookie(declaration, caller);
 	return {
-		name: declaration.name,
+		name,
 		method: declaration.method,
 		path: declaration.path,
 		input: { fields: [...input.fields], parse: (raw) => input.parse(raw) },
@@ -333,7 +337,7 @@ function asOneReadingOfThePlugin(plugin: VelvePlugin): VelvePlugin {
 			createsTables: [...migration.createsTables],
 		})),
 		routes: (plugin.routes ?? []).map((declaration) =>
-			asOneReading(declaration as ContributedDeclaration, rules[declaration.name]),
+			asOneReading(declaration as ContributedDeclaration, rules),
 		) as readonly PluginRoute<string>[],
 		hooks: hooksOf(plugin.hooks),
 		errorCodes: [...(plugin.errorCodes ?? [])],
@@ -470,10 +474,13 @@ export function createPluginRuntime(options: {
 	readonly plugins: readonly VelvePlugin[];
 	readonly services: FrozenContextServices;
 }): PluginRuntime {
-	assertNoFieldOutsideTheInterface(options.plugins);
+	// The list is a value the application wrote too, and indexing it twice let one index answer a
+	// clean plugin to the field check and one carrying a middleware to the reading (E-910).
+	const declared = [...options.plugins];
+	assertNoFieldOutsideTheInterface(declared);
 	// E-900: from here on the declaration is data, and every check below reads the same value the
 	// route table, the runner and the dispatcher will.
-	const plugins = options.plugins.map(asOneReadingOfThePlugin);
+	const plugins = declared.map(asOneReadingOfThePlugin);
 	assertNoIdIsTakenTwice(plugins);
 	assertNoTablePrefixContainsAnother(plugins);
 	assertEveryDependencyIsRegistered(plugins);
