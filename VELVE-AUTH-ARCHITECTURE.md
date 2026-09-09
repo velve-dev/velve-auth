@@ -4225,8 +4225,8 @@ Every row names the advisory, its error class and the Velve Auth requirements th
 | 32 | GHSA-8c5h-wx78-2cfg | —, 8.1 | SSO domain ownership: TOCTOU and missing verification | Not applicable, because Velve Auth has no domain verification (section 3.14). The TOCTOU class is prevented by S-RACE-2 |
 | 33 | GHSA-hq75-xg7r-rx6c | —, 4.9 | `better-call` routing → cache deception | Not applicable, because Velve Auth uses no third-party router: the route is declared once and the handler is generated from it (section 3.12). The class is prevented by S-RATE-5, S-CACHE-1 and `Cache-Control: no-store` on every response (L-6) |
 
-**Evaluation.** Of 33 advisories, **15 are directly transferable to Velve Auth** (#1–#5,
-#7, #9–#13, #16, #21, #24, #31 — of these #9 and #21 only partly) and **18 are not
+**Evaluation.** Of 33 advisories, **15 are directly transferable to Velve Auth** (#1–#5, #7, #9–#13, #16, #21, #24, #31 — of these #9 and #21 only partly)
+and **18 are not
 applicable, because the affected function does not exist per section 3.14**. Of the 18 not applicable ones, 15 would additionally be excluded by a structural requirement if a plugin retrofitted the function; the three remaining ones (#19, #20, #26) concern roles and token issuance, for which there is no counterpart in the core. The three requirements with the greatest leverage are S-OWNER-1 (the actor obligation, prevents the class with 10 advisories), S-RACE-2 together with S-REPLAY-2 (atomic consumption as the only path, prevents replay, race and purpose confusion) and S-LINK-1 (the email is not a key, prevents the class that was an account takeover every time).
 
 ---

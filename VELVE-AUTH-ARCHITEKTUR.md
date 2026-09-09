@@ -4223,8 +4223,8 @@ Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderung
 | 32 | GHSA-8c5h-wx78-2cfg | —, 8.1 | SSO-Domain-Eigentum: TOCTOU und fehlende Verifikation | Nicht anwendbar, weil Velve Auth keine Domain-Verifikation hat (Abschnitt 3.14). TOCTOU-Klasse verhindert durch S-RACE-2 |
 | 33 | GHSA-hq75-xg7r-rx6c | —, 4.9 | `better-call`-Routing → Cache Deception | Nicht anwendbar, weil Velve Auth keinen Fremdrouter nutzt: die Route wird einmal deklariert und daraus wird der Handler erzeugt (Abschnitt 3.12). Klasse verhindert durch S-RATE-5, S-CACHE-1 und `Cache-Control: no-store` auf jeder Antwort (L-6) |
 
-**Auswertung.** Von 33 Advisories sind **15 unmittelbar auf Velve Auth übertragbar** (#1–#5,
-#7, #9–#13, #16, #21, #24, #31 — davon #9 und #21 nur teilweise) und **18 nicht anwendbar,
+**Auswertung.** Von 33 Advisories sind **15 unmittelbar auf Velve Auth übertragbar** (#1–#5, #7, #9–#13, #16, #21, #24, #31 — davon #9 und #21 nur teilweise)
+und **18 nicht anwendbar,
 weil die betroffene Funktion nach Abschnitt 3.14 nicht existiert**. Von den 18 nicht anwendbaren wären 15 zusätzlich durch eine strukturelle Anforderung ausgeschlossen, wenn ein Plugin die Funktion nachrüstete; die drei übrigen (#19, #20, #26) betreffen Rollen und Token-Ausgabe, für die es im Kern keine Entsprechung gibt. Die drei Anforderungen mit der größten Hebelwirkung sind S-OWNER-1 (Actor-Pflicht, verhindert die Klasse mit 10 Advisories), S-RACE-2 zusammen mit S-REPLAY-2 (atomarer Konsum als einziger Weg, verhindert Replay, Race und Zweckverwechslung) und S-LINK-1 (die E-Mail ist kein Schlüssel, verhindert die Klasse, die jedes Mal eine Kontoübernahme war).
 
 ---
