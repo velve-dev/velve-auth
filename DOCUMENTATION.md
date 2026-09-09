@@ -4140,7 +4140,10 @@ The session service call behind this is
 the third re-issue shape beside `reissue`, which finds the previous row by its
 token, and `reissueAfterCredentialChange`, which replaces every row the account
 has; this one names the row by id, touches no other, and refuses when the named
-row is not there.
+row is not there. It is reached through `boundTo(driver)`, which returns the same
+session service over another driver so that the session write joins the
+transaction the identity write is already in — carrying the configured deadlines
+and metadata mode with it, which a service rebuilt from defaults would not.
 
 `identity.unlink` requires a session and freshness, and refuses with
 `last_sign_in_method` when the identity is the account's last way in — counted
