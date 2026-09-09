@@ -12,13 +12,17 @@ const BLOCK_SCALAR = /^(\s*)run: \|\s*$/;
  * The step's own convention: a search reports three states, and the third ends the job.
  * Nothing enforced it, so the fourth scan in the step went back to discarding its
  * consumer's status and only a plant found it (E-807). This is that enforcement.
+ *
+ * The matchers are enumerated rather than inferred, so a scan built on a command not
+ * named here is invisible to every assertion below (E-812).
  */
-const SEARCH_INVOCATION = /(?:^|[|;&(]|\bxargs\s+)\s*(?:git\s+)?grep\b/;
+const MATCHER = /(?:^|[|;&(]|\bxargs\s+)\s*(?:git\s+)?(?:grep|awk|cmp)\b/;
 const STATUS_CAPTURED = /\|\|\s*([A-Za-z_][A-Za-z0-9_]*)=\$\?\s*$/;
 const STATUS_DISCARDED = /\|\|\s*(?::|true)\s*(?:$|[;)])/;
 const PIPELINE_AS_CONDITION = /^(?:if|while|until)\b[^\n]*[^|]\|[^|]/;
-const REPORT_CALL = /^report\s/;
-const VARIABLE_ARGUMENT = /"\$([A-Za-z_][A-Za-z0-9_]*)"/g;
+const VARIABLE_REFERENCE = /"\$([A-Za-z_][A-Za-z0-9_]*)"|\bcase\s+"\$([A-Za-z_][A-Za-z0-9_]*)"/g;
+const DEFAULT_BRANCH = /^\*\)/;
+const REFUSES = /\brefuse\b/;
 
 /** The block scalar runs to the first line indented no further than its own `run:` key. */
 function attributionStepBody(): string {
@@ -65,30 +69,50 @@ function commandLines(body: string): string[] {
 	return joined;
 }
 
+function capturedStatus(command: string): string | undefined {
+	return STATUS_CAPTURED.exec(command)?.[1];
+}
+
 describe("the attribution step reads every status it depends on", () => {
 	const body = attributionStepBody();
 	const commands = commandLines(body);
-	const searches = commands.filter((command) => SEARCH_INVOCATION.test(command));
+	const matchers = commands.filter((command) => MATCHER.test(command));
+	const captures = commands.map(capturedStatus).filter((name) => name !== undefined);
 
-	it("finds a step body with searches in it to examine", () => {
+	it("finds a step body with matchers in it to examine", () => {
 		expect(body.length).toBeGreaterThan(0);
 		expect(commands.length).toBeGreaterThan(0);
-		expect(searches.length).toBeGreaterThan(0);
+		expect(matchers.length).toBeGreaterThan(0);
+		expect(captures.length).toBeGreaterThan(0);
 	});
 
-	it("captures the status of every search it runs", () => {
-		const uncaptured = searches.filter((command) => !STATUS_CAPTURED.test(command));
-		expect(uncaptured).toEqual([]);
+	it("captures the status of every matcher it runs", () => {
+		expect(matchers.filter((command) => capturedStatus(command) === undefined)).toEqual([]);
 	});
 
-	it("hands every captured status to report", () => {
-		const captured = searches.map((command) => String(STATUS_CAPTURED.exec(command)?.[1]));
-		const handedOver = new Set(
-			commands
-				.filter((command) => REPORT_CALL.test(command))
-				.flatMap((command) => [...command.matchAll(VARIABLE_ARGUMENT)].map((match) => match[1])),
-		);
-		expect(captured.filter((name) => !handedOver.has(name))).toEqual([]);
+	/**
+	 * Order, not membership. Handing `report` a status captured for a different scan
+	 * leaves every name still present and is exactly the evasion this catches (E-812).
+	 */
+	it("consumes each captured status before the next one is captured", () => {
+		const declared = new Set(captures);
+		const consumed: string[] = [];
+		for (const command of commands) {
+			for (const [, quoted, inCase] of command.matchAll(VARIABLE_REFERENCE)) {
+				const name = quoted ?? inCase;
+				if (name !== undefined && declared.has(name)) {
+					consumed.push(name);
+				}
+			}
+		}
+		expect(consumed).toEqual(captures);
+	});
+
+	/** Every default branch, not merely one of them: neutering either leaves the other. */
+	it("refuses in every default branch it has", () => {
+		const defaults = commands.filter((command) => DEFAULT_BRANCH.test(command));
+		expect(defaults.length).toBeGreaterThan(0);
+		expect(defaults.filter((command) => !REFUSES.test(command))).toEqual([]);
 	});
 
 	it("discards no status", () => {
