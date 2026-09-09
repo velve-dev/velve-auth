@@ -75,6 +75,8 @@ export interface SessionService {
 	}): Promise<{ revokedCount: number }>;
 	revokeEvery(input: { readonly resolved: SessionResolution }): Promise<{ revokedCount: number }>;
 	revokeEverySessionOfUser(input: { readonly actor: Actor }): Promise<{ revokedCount: number }>;
+	/** The ids a revocation is about to remove, so a hook is told about exactly those rows (E-764). */
+	listEveryIdOwnedBy(input: { readonly resolved: SessionResolution }): Promise<string[]>;
 }
 
 const WRITE_NOW = 0;
@@ -204,6 +206,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 				actor: actorOfFreshSession(resolved),
 				currentSessionId: resolved.session.id,
 			});
+		},
+
+		async listEveryIdOwnedBy({ resolved }) {
+			return sessions.listEverySessionIdOwnedBy({ actor: actorOfFreshSession(resolved) });
 		},
 
 		// S-OWNER-4: a session of another user and one that never existed both change nothing and answer the same.

@@ -87,16 +87,16 @@ function requireSession(services: RouteServices, session: Session | null): Sessi
 async function announceRevocationOf(
 	services: RouteServices,
 	resolved: SessionResolution,
-	chosen: (session: Session) => boolean,
+	chosen: (sessionId: string) => boolean,
 	reason: RevokeReason,
 ): Promise<void> {
 	if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
 		return;
 	}
-	const owned = await services.sessions.list({ resolved });
-	for (const session of owned.filter(chosen)) {
+	const owned = await services.sessions.listEveryIdOwnedBy({ resolved });
+	for (const sessionId of owned.filter(chosen)) {
 		await services.pluginRuntime.hooks.beforeSessionRevoke({
-			sessionId: session.id,
+			sessionId,
 			userId: resolved.userId,
 			reason,
 		});
@@ -201,7 +201,7 @@ export function sessionRoutes(services: RouteServices) {
 			await announceRevocationOf(
 				services,
 				resolved,
-				(session) => session.id === input.targetSessionId,
+				(sessionId) => sessionId === input.targetSessionId,
 				"revoked_by_user",
 			);
 			await services.sessions.revoke({ resolved, targetSessionId: input.targetSessionId });
@@ -229,7 +229,7 @@ export function sessionRoutes(services: RouteServices) {
 			await announceRevocationOf(
 				services,
 				resolved,
-				(session) => session.id !== resolved.session.id,
+				(sessionId) => sessionId !== resolved.session.id,
 				"revoked_by_user",
 			);
 			return services.sessions.revokeEveryOther({ resolved });

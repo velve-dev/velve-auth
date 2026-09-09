@@ -160,14 +160,22 @@ and `afterUserCreate` — are declared, dispatched and reached by nothing, becau
 the sign-in and sign-up flows that would reach them are not built. A plugin can
 register them and they will not run.
 
-The context a hook is given is frozen, carries no writing method on the user, the
-password, the TOTP secret or the recovery codes, and bounds a plugin's own SQL to
-tables carrying its own prefix. Origin checking and rate limiting run before any
-plugin code, on the HTTP path and on the direct server call alike. Five ways of
+The context a hook is given is frozen and carries no writing method on the user,
+the password, the TOTP secret or the recovery codes. A plugin's own SQL is
+checked before it reaches the driver: a statement naming any core table, in any
+position, is refused, and so is one the checker cannot read. It is a guardrail
+against the accident, not a sandbox — a plugin runs in your process and can reach
+your driver by other means — and the reference says exactly what it refuses and
+what it lets through.
+
+Origin checking and rate limiting run before any plugin code, on the HTTP path
+and on the direct server call alike, and a plugin route cannot make itself a
+reader of the cookie that carries a half-finished sign-in. Six ways of
 configuring plugins wrongly refuse the start rather than warning: a duplicate id,
 a dependency on a plugin that is not configured, a cycle, a route that collides
-with a core one, and a field the interface does not enumerate — which is how a
-plugin trying to put a middleware in front of the origin check is answered.
+with a core one, a route reaching for one of those cookies, and a field the
+interface does not enumerate — which is how a plugin trying to put a middleware
+in front of the origin check is answered.
 
 What is not built is the rest: plugin migrations do not run, and declared error
 codes and rate-limit rules are not read. Each of those three writes a line to

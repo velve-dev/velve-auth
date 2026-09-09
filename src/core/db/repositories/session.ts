@@ -73,6 +73,8 @@ export interface SessionRepository {
 	}): Promise<Session[]>;
 	/** 3.15 G: the reading half of `FrozenRepositories`, which names an account and holds no proof of owning it. */
 	listSessionsOfUser(input: { readonly userId: string }): Promise<Session[]>;
+	/** The rows a revocation will remove, deadlines included, so what a hook is told matches what goes (E-764). */
+	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
 	/** 3.15 G: `revokeSession` is given a session id and no owner, so the id is the whole predicate. */
 	deleteSessionById(input: { readonly sessionId: string }): Promise<RemovedSession | null>;
 	deleteSessionOwnedBy(input: {
@@ -227,6 +229,10 @@ function deleteEveryOtherOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE user_id = $1 AND id <> $2 RETURNING id`;
 }
 
+function listEveryIdOwnedStatement(table: string): string {
+	return `SELECT id FROM ${table} WHERE user_id = $1 ORDER BY created_at DESC, id`;
+}
+
 function listOwnedStatement(table: string): string {
 	return `SELECT ${SELECTED_COLUMNS}
 	FROM ${table}
@@ -258,6 +264,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
 	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
 	const listOwnedSql = listOwnedStatement(table);
+	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table);
 
 	async function insertSession(driver: Driver, insert: SessionInsert): Promise<Session> {
 		const [row] = await driver.query<SessionRowShape>(insertSql, insertParameters(insert));
@@ -291,6 +298,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				userDisabledAt: toOptionalDate(row.disabled_at),
 				observedAt: toDate(row.observed_at),
 			};
+		},
+
+		async listEverySessionIdOwnedBy({ actor }) {
+			const rows = await options.driver.query<{ id: string }>(listEveryIdOwnedSql, [actor]);
+			return rows.map((row) => row.id);
 		},
 
 		async listSessionsOfUser({ userId }) {

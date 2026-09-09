@@ -1,5 +1,6 @@
 import type { Driver } from "../db/driver.js";
 import { assertIdentifier, assertSchemaName } from "../db/identifier.js";
+import { coreTableNames } from "../db/migrations/index.js";
 
 class ForeignTableError extends Error {
 	readonly code = "plugin_table_not_its_own";
@@ -16,8 +17,11 @@ class ForeignTableError extends Error {
  * reads a literal naming a statement keyword as SQL and asks it for an owner predicate.
  */
 const READABLE_STATEMENT = /^(?:select|insert|update|delete|with)$/;
-const OPENS_A_TABLE_POSITION = /^(?:from|join|into)$/;
+const OPENS_A_TABLE_LIST = /^(?:from|join|into|using)$/;
 const WRITES_THROUGH_A_NAMED_TABLE = /^update$/;
+/** A comma keeps a `FROM` list open; one of these ends it. The list is not claimed complete (E-762). */
+const CLOSES_A_TABLE_LIST =
+	/^(?:where|group|order|having|limit|offset|fetch|window|on|set|select|returning|union|intersect|except|values|for|as|with|do|and|or|not)$/;
 
 const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const IDENTIFIER_OR_QUALIFIED = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/;
@@ -122,7 +126,8 @@ function readableCode(sql: string): string | null {
 		read += piece.text;
 		index = piece.next;
 	}
-	return read;
+	// `velve . user`, a wrapped `velve.\nuser` and `velve/*x*/.user` are one name, not three (E-762).
+	return read.replace(/\s*\.\s*/g, ".");
 }
 
 function namesAnOwnTable(reference: string, pluginId: string, schema: string): boolean {
@@ -140,29 +145,72 @@ function namesTheCoreSchema(token: string, pluginId: string, schema: string): bo
 	return parts.length >= 2 && parts[0] === schema && !(parts[1] ?? "").startsWith(`${pluginId}_`);
 }
 
+/**
+ * The rule that does not depend on position: a core table is refused by its **name**, wherever the
+ * name stands, so no table position has to be recognised for it to be caught (E-762).
+ */
+function namesACoreTable(token: string, coreTables: ReadonlySet<string>): boolean {
+	return token
+		.toLowerCase()
+		.split(".")
+		.some((part) => coreTables.has(part));
+}
+
 function refuse(pluginId: string, schema: string, what: string): never {
 	throw new ForeignTableError(
 		`plugin ${pluginId} may reach tables named ${pluginId}_… in schema ${schema} and no others, not ${what}`,
 	);
 }
 
-function tableAfter(tokens: readonly string[], position: number): string | undefined {
-	const next = tokens[position + 1];
-	return next?.toLowerCase() === "only" ? tokens[position + 2] : next;
-}
-
-/** An upsert's conflict clause names no table of its own: the row it writes is the one the insert already named. */
-function opensATablePosition(tokens: readonly string[], position: number): boolean {
+/**
+ * An upsert's conflict clause names no table of its own — the row it writes is the one the insert
+ * already named — and `FOR UPDATE` locks rows rather than naming a table, which §7 requires a
+ * plugin to be able to write.
+ */
+function opensATableList(tokens: readonly string[], position: number): boolean {
 	const word = tokens[position]?.toLowerCase() ?? "";
-	if (OPENS_A_TABLE_POSITION.test(word)) {
+	const before = tokens[position - 1]?.toLowerCase() ?? "";
+	if (OPENS_A_TABLE_LIST.test(word)) {
 		return true;
 	}
-	return WRITES_THROUGH_A_NAMED_TABLE.test(word) && tokens[position - 1]?.toLowerCase() !== "do";
+	return WRITES_THROUGH_A_NAMED_TABLE.test(word) && before !== "do" && before !== "for";
+}
+
+function endsTheTableList(token: string): boolean {
+	const word = token.toLowerCase();
+	return CLOSES_A_TABLE_LIST.test(word) || OPENS_A_TABLE_LIST.test(word) || token === ")";
+}
+
+/** `ONLY t` names `t`; every other word in a table position names itself. */
+function targetAt(tokens: readonly string[], index: number): { name: string; next: number } {
+	const token = tokens[index] ?? "";
+	return token.toLowerCase() === "only"
+		? { name: tokens[index + 1] ?? "", next: index + 2 }
+		: { name: token, next: index + 1 };
+}
+
+/** A comma-separated `FROM` list is as much a table position as a `JOIN`, and was not one (E-762). */
+function tableListAfter(tokens: readonly string[], position: number): readonly string[] {
+	const targets: string[] = [];
+	let index = position + 1;
+	let expectingATable = true;
+	while (index < tokens.length && !(!expectingATable && endsTheTableList(tokens[index] ?? ""))) {
+		if (expectingATable) {
+			const target = targetAt(tokens, index);
+			targets.push(target.name);
+			expectingATable = false;
+			index = target.next;
+			continue;
+		}
+		expectingATable = tokens[index] === ",";
+		index += 1;
+	}
+	return targets;
 }
 
 /**
- * Three refusals that come from not recognising something. A scan that finds no table in a
- * statement has found nothing, and nothing is not permission (E-751, E-756).
+ * Three of the five refusals that come from not recognising something; the other two are the
+ * unreadable statement above and the unidentifiable table position below (E-751, E-756).
  */
 function assertStatementIsWalkable(code: string, pluginId: string, schema: string): void {
 	if (code.includes(";")) {
@@ -177,27 +225,32 @@ function assertStatementIsWalkable(code: string, pluginId: string, schema: strin
 	}
 }
 
+function assertTargetIsTheirs(target: string, pluginId: string, schema: string): void {
+	if (target === "(") {
+		return;
+	}
+	if (target === "" || !IDENTIFIER_OR_QUALIFIED.test(target)) {
+		refuse(pluginId, schema, `a table position holding ${target === "" ? "nothing" : target}`);
+	}
+	if (!namesAnOwnTable(target, pluginId, schema)) {
+		refuse(pluginId, schema, target);
+	}
+}
+
 function assertEveryTokenIsTheirs(
 	tokens: readonly string[],
 	pluginId: string,
 	schema: string,
+	coreTables: ReadonlySet<string>,
 ): void {
 	for (const [position, token] of tokens.entries()) {
-		if (namesTheCoreSchema(token, pluginId, schema)) {
+		if (namesACoreTable(token, coreTables) || namesTheCoreSchema(token, pluginId, schema)) {
 			refuse(pluginId, schema, token);
 		}
-		if (!opensATablePosition(tokens, position)) {
-			continue;
-		}
-		const target = tableAfter(tokens, position);
-		if (target === "(") {
-			continue;
-		}
-		if (target === undefined || !IDENTIFIER_OR_QUALIFIED.test(target)) {
-			refuse(pluginId, schema, `a table position holding ${target ?? "nothing"}`);
-		}
-		if (!namesAnOwnTable(target, pluginId, schema)) {
-			refuse(pluginId, schema, target);
+		if (opensATableList(tokens, position)) {
+			for (const target of tableListAfter(tokens, position)) {
+				assertTargetIsTheirs(target, pluginId, schema);
+			}
 		}
 	}
 }
@@ -205,19 +258,20 @@ function assertEveryTokenIsTheirs(
 /**
  * 3.15 G bounds `ownTables.query` to the plugin's own prefix. It is a guardrail and not a sandbox:
  * a plugin runs in the application's own process and can reach the driver by other means, so what
- * this refuses is the accident, not the attacker (E-738, corrected by E-756).
+ * this refuses is the accident, not the attacker (E-738, corrected by E-756, restructured by E-762).
  */
 function assertEveryTableCarriesThePluginPrefix(
 	sql: string,
 	pluginId: string,
 	schema: string,
+	coreTables: ReadonlySet<string>,
 ): void {
 	const code = readableCode(sql);
 	if (code === null) {
 		refuse(pluginId, schema, "a statement whose quoting does not close");
 	}
 	assertStatementIsWalkable(code, pluginId, schema);
-	assertEveryTokenIsTheirs(code.match(TOKEN) ?? [], pluginId, schema);
+	assertEveryTokenIsTheirs(code.match(TOKEN) ?? [], pluginId, schema, coreTables);
 }
 
 export interface OwnTables {
@@ -231,10 +285,11 @@ export function createOwnTables(options: {
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
+	const coreTables = new Set(coreTableNames());
 	// E-747: the refusal is a rejection and never a synchronous throw, so one `catch` covers both.
 	return Object.freeze({
 		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {
-			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema);
+			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema, coreTables);
 			return options.driver.query<Row>(sql, [...params]);
 		},
 	});

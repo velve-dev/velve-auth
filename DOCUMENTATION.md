@@ -3163,9 +3163,17 @@ a session the caller could not use is not a device that is still signed in.
 | `revokeEveryOther({ resolved })` | required | removes all but the calling session |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
+| `listEveryIdOwnedBy({ resolved })` | required | the ids of every row the four revocations above can remove |
 
 `revoke` answers a session of another user and a session that never existed
 identically, and changes nothing in both cases (S-OWNER-4, S-OWNER-8).
+
+`listEveryIdOwnedBy` exists for the plugin hook and for nothing else, and it is
+the **only** listing here with no deadline in its predicate. `list` filters on
+`idle_expires_at` and `absolute_expires_at`, because a caller asking for its
+sessions is asking for the ones it can still use; a revocation has no such
+predicate and removes expired-but-unswept rows as well. Announcing from `list`
+would therefore have told a plugin about fewer rows than went (E-764).
 
 `revokeEverySessionOfUser` is what the password **reset** path uses: there is no
 surviving session to resolve, so the caller brings the `Actor` its redeemed
@@ -4035,7 +4043,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks run at the seven points, and four ways of configuring them wrongly refuse the start |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — of which [one has a producer in this version](#which-points-fire-today) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -4387,14 +4395,14 @@ that feature appends here and owns the rest.
 | `id` | `string` | The namespace. Every route name begins `<id>.`, every path `/x/<id>/`, every table `<id>_`, every error code `<id>.` — all four as types, so a plugin that wants a core route cannot write one that compiles. |
 | `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
 | `migrations` | `readonly PluginMigration<Id>[]?` | Declared and **not yet run**; see below. |
-| `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. |
+| `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it: see below. |
 | `hooks` | `PluginHooks?` | Any of the seven points below. |
 | `errorCodes` | `readonly \`${Id}.${string}\`[]?` | Declared and not yet registered; `registerPluginErrorCodes` needs a status and a message, which this list does not carry. |
 | `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | Declared and not yet read; a plugin route carries its own `rateLimit` in its declaration. |
 
 ### Start errors
 
-Four configurations refuse the start with a `VelveStartupError`. None of them is
+Six configurations refuse the start with a `VelveStartupError`. None of them is
 a warning, because each leaves a question with no answer:
 
 | Code | When |
@@ -4404,15 +4412,31 @@ a warning, because each leaves a question with no answer:
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
 | `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route, with another plugin's, or its first name segment is one of the namespaces the instance surface occupies. |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
+| `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie`. |
 
 `plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
 core route is a start error and not a warning. The type constraint already
 refuses it at compile time; this is the half that holds for a plugin written in
 JavaScript.
 
+#### The three fields a plugin route does not have
+
+`PluginRoute<Id>` is `RouteDeclaration` without `pendingCookie` and
+`oauthStateCookie`, and with `caller` narrowed to `"anonymous" | "session" |
+"server_only"`. 3.6 names the four routes that accept `__Host-velve_pending` and
+says every other route ignores it completely, and S-CSRF-5 says the same of the
+state pointer — a plugin route is one of the others. The type removes the fields;
+`plugin_route_reads_a_core_cookie` is the start error that holds for a plugin
+written in JavaScript, where the type is not read.
+
+Without it the rule held in the core table and not in the table that ships: a
+plugin route could declare itself a reader of the pending cookie and be handed
+the token, and `test/auth-route-table.test.ts` would not have seen it, because it
+mounts without plugins.
+
 `plugin_field_unknown` is the other half of that, and it is what answers
 `S-CSRF-6`. A plugin written in JavaScript can carry any field it likes, so a
-`middleware` array or an `assertOriginAllowed` beside the six declared fields
+`middleware` array or an `assertOriginAllowed` beside the seven declared fields
 would otherwise be dropped without a word and its author left believing it runs.
 3.11 says the extension points are **enumerated**; a field outside the
 enumeration is refused rather than ignored. It sees own enumerable properties, so
@@ -4525,13 +4549,13 @@ missing either field throws before it reaches the database.
 
 `reason` on `revokeSession` is a `RevokeReason`: `"sign_out"`,
 `"revoked_by_user"`, `"password_changed"`, `"password_reset"` or
-`"identity_linked"`.
+`"identity_linked"`. It is written to the log beside the actor and **nothing
+else**: `revokeSession` dispatches no `beforeSessionRevoke`, so a revocation a
+plugin performs is invisible to every other plugin, while the same revocation
+over HTTP is announced. That asymmetry is deliberate — a hook that revoked would
+re-enter its own hook — and it is a real gap rather than a tidy one (E-765).
 
 ### `ownTables.query`
-
-Every table a statement names must be the plugin's own: `<pluginId>_…`, either
-bare or qualified with the configured schema. Anything else is refused before the
-driver sees the statement.
 
 It is a guardrail and not a sandbox, and the distinction is worth stating: a
 plugin runs inside the application's own process and can reach the driver by
@@ -4539,9 +4563,28 @@ other means entirely. What this refuses is the accident — a join onto
 `velve.user` that seemed harmless, or a `"velve"."user"` written that way because
 `user` is a reserved word — not an attacker.
 
-**A statement it cannot read is refused, not passed.** Finding no table in a
-statement is finding nothing, and nothing is not permission. Six refusals follow
-from not recognising something:
+**Three rules, and only the first is complete.** Two rounds of review found the
+same defect in a different syntactic position: a table reference in a position
+the scan did not model. The boundary is therefore no longer carried by
+recognising positions.
+
+**Rule 1 — a core table is refused by its name, wherever the name stands.** The
+sixteen core table names are read out of the SQL that creates them, so no second
+list of them exists; a statement containing any of them, bare or qualified, in
+any position, is refused. This rule does not depend on the parse, which is why it
+is the one the boundary rests on.
+
+**Rule 2 — a table position must hold one of the plugin's own tables.** This is
+3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
+rule: it opens after `FROM`, `JOIN`, `INTO`, `USING` and `UPDATE`, and stays open
+across commas until a keyword ends the list. It is **not claimed complete.** SQL
+has more table positions than this enumeration has, and the previous two
+enumerations were also believed complete. What changed is that a position it
+misses no longer reaches a core table, because Rule 1 does not care about
+position.
+
+**Rule 3 — a statement that cannot be read is refused, not passed.** Finding no
+table in a statement is finding nothing, and nothing is not permission:
 
 | Refused | Because |
 |---|---|
@@ -4550,19 +4593,28 @@ from not recognising something:
 | a `$` that is not a parameter placeholder | dollar-quoted text the walk cannot delimit |
 | a leading keyword outside `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH` | the walk cannot find the tables of any other kind — this is what refuses `TRUNCATE`, `DROP`, `ALTER` and `COPY` |
 | a table position holding anything but a name or `(` | the target could not be identified |
-| a token qualified with the configured schema and not carrying the plugin's prefix | a core table, wherever it stands |
 
 A string literal becomes an empty literal, a comment becomes a space, and a
-quoted identifier becomes the bare name it stands for — so `"velve"."user"` is
-read as `velve.user` rather than disappearing.
+quoted identifier becomes the bare name it stands for. Whitespace and comments
+**around a dot** are then removed, so `velve . user`, a wrapped `velve.\nuser`
+and `velve/*x*/.user` are one name rather than three tokens. That normalisation
+is not what makes the boundary hold — Rule 1 refuses `user` on its own — but
+without it the two qualified rules see a different statement than PostgreSQL
+does.
 
 **Known false refusals.** The strictness is paid for in statements that are
 harmless and are refused anyway: `EXTRACT(month FROM x)`, `SUBSTRING(x FROM 1)`
 and `TRIM(BOTH ' ' FROM x)` put a column where a table is expected; a CTE whose
 name does not carry the plugin's prefix; every DDL statement, including one that
-alters the plugin's own table; a batch of two statements; and dollar-quoted text.
-Each fails with the plugin id and the schema in the message. Use `date_part` in
-place of `EXTRACT`, and prefix your CTE names.
+alters the plugin's own table; a batch of two statements; dollar-quoted text; and
+— from Rule 1 — a plugin column named after a core table, `identity` and
+`session` being the two a plugin might plausibly reach for. Each fails with the
+plugin id and the schema in the message. Use `date_part` in place of `EXTRACT`,
+and prefix your CTE names and any column that collides.
+
+`SELECT … FOR UPDATE` and `FOR UPDATE OF t` are **not** refused: §7 requires a
+row lock to be written, so refusing one would have made the rule the technical
+constraints ask for unwritable.
 
 A core route's context carries the field, because 3.15 D.1 gives every request
 context one, and its `query` rejects: a core route owns no tables of its own.

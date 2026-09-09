@@ -44,12 +44,18 @@ function assertActorIsNamed(actor: PluginActor): PluginActor {
 }
 
 /** 3.15 G, E-737: both fields are mandatory and both are logged; neither authorises anything. */
-function recorded(log: LogSink, method: string, actor: PluginActor): void {
+function recorded(
+	log: LogSink,
+	method: string,
+	actor: PluginActor,
+	revokeReason?: RevokeReason,
+): void {
 	try {
 		log("info", "a plugin reached a core repository", {
 			method,
 			pluginId: actor.pluginId,
 			reason: actor.reason,
+			...(revokeReason === undefined ? {} : { revokeReason }),
 		});
 	} catch {
 		return;
@@ -78,7 +84,8 @@ function createFrozenRepositories(services: FrozenContextServices): FrozenReposi
 			reason: RevokeReason;
 			actor: PluginActor;
 		}): Promise<void> => {
-			recorded(services.log, "revokeSession", assertActorIsNamed(input.actor));
+			// E-765: the `reason` is the only record this revocation leaves; no hook is dispatched for it.
+			recorded(services.log, "revokeSession", assertActorIsNamed(input.actor), input.reason);
 			await services.sessions.deleteSessionById({ sessionId: input.sessionId });
 		},
 	});

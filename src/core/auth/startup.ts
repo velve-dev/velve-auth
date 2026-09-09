@@ -15,6 +15,7 @@ type StartupErrorCode =
 	| "plugin_dependency_cycle"
 	| "plugin_route_conflict"
 	| "plugin_field_unknown"
+	| "plugin_route_reads_a_core_cookie"
 	| "route_namespace_conflict";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
@@ -36,6 +37,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a plugin route collides with a core route or with another plugin's; 3.11 makes that a start error and not a warning",
 	plugin_field_unknown:
 		"a plugin carries a field the interface does not enumerate; the extension points are enumerated and the security middleware is not one of them (S-CSRF-6)",
+	plugin_route_reads_a_core_cookie:
+		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes that read __Host-velve_pending and a plugin route is not one of them',
 	route_namespace_conflict:
 		"two route names fold onto the same object path, so one server method would shadow the other",
 };

@@ -105,17 +105,28 @@ export interface PluginMigration<Id extends string> {
 }
 
 /**
+ * 3.6 names the four routes that accept `__Host-velve_pending` and says every other route ignores
+ * it completely; S-CSRF-5 says the same of the state pointer. A plugin route is one of the others,
+ * so neither the caller requirement that resolves the pending state nor either cookie field is
+ * reachable from a plugin's declaration (E-763).
+ */
+export type PluginCallerRequirement = "anonymous" | "session" | "server_only";
+
+/**
  * 3.15 G writes the input and output as `any`; `AnyRoute` already sets `unknown` as the form. The
  * error type admits the plugin's own namespaced codes beside the core ones, which `error-map.ts`
  * resolves rather than the core union absorbing them (E-720).
  */
-export type PluginRoute<Id extends string> = RouteDeclaration<
-	`${Id}.${string}`,
-	`/x/${Id}/${string}`,
-	unknown,
-	unknown,
-	VelveErrorCode | `${Id}.${string}`
->;
+export type PluginRoute<Id extends string> = Omit<
+	RouteDeclaration<
+		`${Id}.${string}`,
+		`/x/${Id}/${string}`,
+		unknown,
+		unknown,
+		VelveErrorCode | `${Id}.${string}`
+	>,
+	"caller" | "pendingCookie" | "oauthStateCookie"
+> & { readonly caller: PluginCallerRequirement };
 
 /**
  * The namespace constraint is a type, not a runtime check: a plugin that wants to overwrite a core

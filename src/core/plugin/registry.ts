@@ -1,5 +1,11 @@
 import { VelveStartupError } from "../auth/startup.js";
-import { type AnyRoute, defineRoute, type RouteMetadata } from "../http/route.js";
+import type { AnyErrorCode } from "../http/error-map.js";
+import {
+	type AnyRoute,
+	defineRoute,
+	type RouteDeclaration,
+	type RouteMetadata,
+} from "../http/route.js";
 import type {
 	FrozenContext,
 	PluginHooks,
@@ -192,8 +198,32 @@ export function assertNoCoreRouteIsOverwritten(
 	}
 }
 
+const COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE: readonly string[] = [
+	"pendingCookie",
+	"oauthStateCookie",
+];
+
+/**
+ * The type refuses these three; this is the half that holds for a plugin written in JavaScript,
+ * which is where 3.15 G puts the runtime check (E-763).
+ */
+function assertNoRouteReadsACoreCookie(plugin: VelvePlugin): void {
+	for (const declaration of plugin.routes ?? []) {
+		const declared = declaration as Readonly<Record<string, unknown>>;
+		const reaches = COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE.some((field) =>
+			Object.hasOwn(declared, field),
+		);
+		if (reaches || declared.caller === "pending") {
+			throw new VelveStartupError("plugin_route_reads_a_core_cookie");
+		}
+	}
+}
+
 function routesOf(plugin: VelvePlugin): readonly AnyRoute[] {
-	return (plugin.routes ?? []).map((declaration) => defineRoute(declaration));
+	assertNoRouteReadsACoreCookie(plugin);
+	return (plugin.routes ?? []).map((declaration) =>
+		defineRoute(declaration as RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>),
+	);
 }
 
 function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatcher {
