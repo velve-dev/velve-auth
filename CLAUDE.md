@@ -10,6 +10,13 @@ interface, the security requirements `S-<class>-<n>`, the test cases
 `E-46`. Where this file and the architecture disagree, the architecture wins —
 and the disagreement is a bug in this file that must be fixed before continuing.
 
+`VELVE-AUTH-ARCHITECTURE.md` is an English translation of it, and is **not** a
+second source of truth. Read whichever you prefer; decide from the German. Where
+they differ on a number, an identifier, a threshold or a requirement, the German
+is right and the translation has a bug to be fixed — never the other way round.
+`test/architecture-translation.test.ts` compares their structure and their
+identifiers so that a divergence of that kind fails rather than waits to be noticed.
+
 ---
 
 ## 1. Language
@@ -247,8 +254,28 @@ rationalisation.** If a decision was made for a bad reason and turned out right,
 the bad reason is what gets written down. The log is written during the build so
 that the reasons are the actual ones and not the reconstructed ones.
 
-Do not create any other markdown file. No summary files, no progress reports, no
-`NOTES.md`.
+Beyond those three, exactly five markdown files exist in the repository root, and
+this is the complete list:
+
+- **`CLAUDE.md`** — this file.
+- **`VELVE-AUTH-ARCHITEKTUR.md`** — the binding specification, German.
+- **`VELVE-AUTH-ARCHITECTURE.md`** — a translation of it into English. Faithful and
+  **not binding**; where the two differ the German is right and the translation has a
+  bug. It exists because §1 makes this repository English and the specification was
+  the one holdout, and because the agent skill below points readers at it.
+- **`CLAUDE-SKILL.md`** — the `velve-auth` agent skill: instructions that make a
+  coding agent read this repository live before answering, refuse what §2 refuses,
+  and say so rather than approximating.
+- **`CODEX-SKILL.md`** — the same instructions for an agent that takes one file.
+  It is **produced from `CLAUDE-SKILL.md` rather than written**, because the two
+  carried different rules once and the one shipping without skill machinery was the
+  weaker. Nothing in the gate enforces that, so a change to one is a change to both
+  and the reviewer is what catches a divergence.
+
+Do not create any markdown file in the repository root outside that list. No summary
+files, no progress reports, no `NOTES.md`. Markdown that belongs to something else —
+a test snapshot under `test/__snapshots__/`, for instance — is not a document and is
+not covered by this rule.
 
 ### The entry format
 
@@ -394,6 +421,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-700 … E-734 | gate and infrastructure, fourth range |
 | E-735 … E-794 | wave 4 · `spine` |
 | E-795 … E-819 | gate and infrastructure, fifth range |
+| E-820 … E-844 | outside the waves · `skill` — the English specification and the agent skill |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
