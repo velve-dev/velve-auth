@@ -393,6 +393,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-670 … E-699 | wave 6 · `client` |
 | E-700 … E-734 | gate and infrastructure, fourth range |
 | E-735 … E-794 | wave 4 · `spine` |
+| E-795 … E-819 | gate and infrastructure, fifth range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
