@@ -4305,3 +4305,58 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The two categories are genuinely different and the exit shapes follow from that. A **finding** is an answer, so every one of them is collected and printed and the job fails once at the end — that is why a branch with a marker in a commit message and one in the tree sees both. A **refusal** is the absence of an answer, and there is nothing to add to it. The cost is a diagnosis that arrives one fault at a time, and it is stated here so the next person to debug this step knows the log is truncated by design and not by accident.
 
 **Price.** A run repairing several broken scans takes several rounds, each showing one refusal. More sharply: this ordering is what let a scan sit broken behind a passing gate, and nothing in the step marks the scans that did not run — the log simply stops. A line naming the scans skipped by a refusal would cost little and is not written here. Recorded alongside: `E-803`'s heading dropped its count rather than raising it from nine to ten, because `E-898` established that a count of the branch's own work goes stale before the branch ends and this one had already gone stale twice; and `E-804`'s exit status was restated in place to name the shim it depends on, both being measurements on an unmerged branch, which §6 permits.
+
+### The property said to be unmeasurable here is measurable here, and it holds
+`E-810` · gate · gate, correction
+
+**Context.** `E-807` argued that `xargs` had to go because GNU `xargs` documents itself as exiting 123 for any invocation exiting 1 to 125, collapsing the no-match this scan expects into the error it must refuse on. It then said the property "could not be measured here, because BSD `xargs` on the development machine passes 1 through unchanged", and offered the GNU documentation in place of a measurement, citing `E-893` for the discipline of not asserting from inference.
+
+**Rejected.** Leaving it on the ground that the conclusion was right and only the supporting sentence was wrong. The conclusion being right is what makes this worth an entry rather than a correction nobody needs: an argument that reaches the correct answer through a false premise is the one most likely to be reused.
+
+**Reason.** Measured on this machine, `/usr/bin/xargs`: a child exiting 1 gives 1, a child exiting 2 gives 1, a child exiting 5 gives 1. BSD `xargs` collapses the distinction exactly as GNU's 123 does, to a different value, and the collapse is directly observable here. The end-to-end plant that was never run: routing the repaired scan back through `xargs`, with the capture and the `report` call intact, gives exit 0 and "No AI attribution found" on a tree carrying the fault; as shipped it gives exit 1 and a named refusal. So the claim `E-807` hedged — that the fix would not work through `xargs` — is provable here in one plant, and the case was stronger than it was stated. The GNU half stands and remains correctly sourced as documentation.
+
+**Price.** This is the `E-895` shape a second time: an impossibility asserted where a measurement was available, in an entry whose subject is the difference between the two. `E-895` recorded the same move about a fetchable URL and this branch had already read it. What made it easy was that the false sentence was defensive — it claimed less, cited the right rule, and looked like care. Nothing detects a hedge; the only reason this one was caught is that a reader tried the measurement the entry said could not be made.
+
+### The subshell swallows a refusal in one shape and dies silently in the other
+`E-811` · gate · gate, correction
+
+**Context.** `E-808` said that moving the NUL-byte loop out of its command substitution fixed a second thing never reported: that `refuse` inside `$( … )` "exits the subshell and leaves the job running, so a refusal from inside that loop would have been swallowed". The shape in question was `BINARY=$(while read … done < …)` — an assignment.
+
+**Rejected.** Restating it in place. It is a reason, not a measurement, and §6 forbids that; the branch has already been caught once treating a claim about behaviour as a number.
+
+**Reason.** Measured under `bash -e` with the step's own `set -uo pipefail`. In the **assignment** form the `::error::` line is captured into the variable and never printed, and `errexit` fires on the failed assignment: the step ends at exit 1 with no diagnostic at all. In the **argument** form, `echo "$( … refuse … )"`, the error prints, the job continues and exits 0. Only the second is the false pass `E-808` described, and the step never had that shape. What the assignment form actually gives is a silent fail-closed hole: it blocks correctly and says nothing about why, which is worse to debug and much better to have. Moving the loop out is right either way, because a refusal should print and end the job on its own terms rather than through an assignment's failure.
+
+**Price.** `E-808` overstates the fault it fixed, in the direction that flatters the fix, and that is the same class as `E-804` — an entry this branch wrote about exactly this. Three rounds, three findings, and each time the wrong sentence was in a line believed correct rather than in code believed risky. The pattern worth naming is that the measurement was cheap in all three cases and was not taken, because the sentence sounded like something already known.
+
+### Two of the three evasions are closed; the third is enumerated, not solved
+`E-812` · gate · gate, frozen
+
+**Context.** `E-808` admitted the enforcement test is structural and cannot tell whether a scan detects anything. That admission was true and too general to act on. Three concrete evasions passed it five assertions out of five: a status captured for one scan handed to `report` for another, `report`'s default branch reduced to `*) ;;` so the entire refusal semantic disappears, and a sixth scan whose status is never read.
+
+**Rejected.** Leaving all three under the word "structural". A limit named as a category is not a limit anyone can plan around; a limit named as three cases is.
+
+**Reason.** The crossing is caught by **order rather than membership**: the sequence of statuses consumed must equal the sequence captured, so swapping two leaves every name present and still fails. The neutering is caught **per branch rather than per file** — every default branch must refuse. That distinction was itself found by a plant: the first attempt asserted that the body contained one refusing default branch, which passed while one of the two was neutered, because the other still matched. The third is caught only where the new scan uses a command the matcher list names. `grep`, `git grep`, `awk` and `cmp` are named because the step uses them; a scan built on `sed` passes every assertion, and that was planted and confirmed rather than assumed.
+
+**Price.** The matcher list is an enumeration, so it goes stale the moment the step reaches for a command nobody added to it, and nothing announces that — the test simply stops covering the new scan while still reporting six green assertions. That is the same shape as the count in `E-799`: an instrument that keeps passing over a surface it no longer reads. The honest mitigation is to invert the list and fail on any command the step is not declared to use, which would make every new scan a deliberate edit; it is not written here, and the reason is that the step's command vocabulary is not stable enough yet to be worth pinning against the churn.
+
+### The one consumer that was not read, and what it was hiding
+`E-813` · gate · gate, finding
+
+**Context.** Every consumer in the step reports three states except one: the symlink scan's `awk`, which was guarded only by `errexit`. `E-805` and `E-807` both walked past it, and the second round's repair of the `.gitattributes` consumer did not look sideways at the scan directly above it.
+
+**Rejected.** Handing `awk` to `report`. It does not fit: `grep` distinguishes match from no-match in its exit status, whereas `awk` and `cmp` exit 0 whether or not they printed anything and report only "could not look" through their status. Forcing them through `report` would mean inventing a match status they do not have.
+
+**Reason.** They get `refuse_unless_zero`, which is the refusal without the three-way reading, and the finding still comes from the output being non-empty. The distinction is real and stating it is what stops the next reader from "fixing" the asymmetry. Planted with a real symlink in the tree and `awk` stubbed to exit 2: before, exit 0 and "No AI attribution found" with the fault present; after, exit 1 and a named refusal. The scan was previously reported as blocking correctly and merely undiagnosed — with `errexit` that is true of the exit status, and the plant shows the finding itself was lost, which is a false pass and not a diagnostics problem.
+
+**Price.** Four rounds were needed to read every consumer in a step of six scans, and each round repaired the one that had just been demonstrated rather than the class. The step is uniform now, and nothing about the process that got here would have found the fourth one any faster than the third.
+
+### The structural check exists because the immediate exit hides what is below it
+`E-814` · gate · gate, frozen
+
+**Context.** `E-809` recorded that a refusal ends the job, so the first one masks every scan below it, and defended that as the right trade: a refusal means the environment cannot be trusted, and a list of six such is no more informative than the first. It named the cost as a diagnosis arriving one fault at a time.
+
+**Rejected.** Nothing new. This entry adds an argument `E-809` did not make rather than reversing one it did.
+
+**Reason.** The stronger justification is that the trade is now **compensated**, and by an instrument that already exists for another reason. The reason the `.gitattributes` fault survived a full round is that any refusal above it ended the job first, so only a shim aimed at that one scan could see it — the immediate exit did not cause the fault, it hid it. The structural test reads all six scans in one pass, in the file, regardless of which would run first or whether any of them runs at all. So the masking costs diagnosis at runtime and no longer costs coverage, and the two mechanisms fit together: the behavioural plants prove one scan at a time and the structural check sees them all at once.
+
+**Price.** The compensation is only as wide as `E-812`'s matcher list, so a scan the list does not name is both masked at runtime and unseen by the structural pass, which is the worst of both and is exactly the case that has no detector. And this argument was available when `E-809` was written and was not made, so the trade was accepted on weaker grounds than the ones that actually support it.
