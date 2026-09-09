@@ -3183,6 +3183,7 @@ The simplest case: the auth data lie in the same PostgreSQL to which the custome
 | `mfa_factors.secret` | `text` | **TOTP secret** — possibly encrypted |
 | `mfa_factors.factor_type` | `text` | `totp` / `phone` / `webauthn` |
 | `mfa_factors.friendly_name` | `text` | display name |
+| `mfa_factors.created_at` / `updated_at` | `timestamptz` | |
 | `mfa_factors.web_authn_credential` / `web_authn_aaguid` | `jsonb`/`uuid` | passkey credential / authenticator model |
 
 The identity struct has **no** token columns: GoTrue does not persist provider tokens (ibid.).
@@ -3598,7 +3599,7 @@ The CLI converts `passwordHash` and `salt` from URL-safe into normal Base64 and 
 | `disabled` | `velve.user.disabled_at` | `true` → `now()` |
 | — | `velve.user.imported_from` / `.imported_at` | `'firebase'` / `now()` |
 | `createdAt` | `velve.user.created_at` | `new Date(parseInt(s, 10))`, plausibility 2000–2100 |
-| `passwordHash` + `salt` + `hash_config` | `velve.password_credential.phc` | `$fbscrypt$` string per d), encrypted under `password-enc` (L-2) |
+| `passwordHash` + `salt` + `hash_config` from a) | `velve.password_credential.phc` | `$fbscrypt$` string per d), encrypted under `password-enc` (L-2) |
 | — | `velve.password_credential.scheme` | `'fbscrypt'`, plaintext |
 | — | `velve.password_credential.key_version` | current version of the key `password-enc` (L-2) |
 | `providerUserInfo[].providerId` | `velve.identity.provider` | strip the `.com` suffix (`google.com`→`google`, `apple.com`→`apple`, …); `password` and `phone` produce **no** identity |
