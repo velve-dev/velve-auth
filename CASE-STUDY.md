@@ -4162,3 +4162,256 @@ Its Reason is also a little wider than it needs to be. *"Any entry stating one i
 **Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
 
 One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
+
+### The check that enforces §4 could not tell a clean tree from a tree it never read
+`E-797` · gate · gate, frozen
+
+**Context.** The attribution job's three scans each read their result from `if <pipeline>; then echo ::error; fail=1; fi`. `grep` exits 1 both where it looked and matched nothing and where nothing arrived to look at, and neither the step nor the shell inspected the producer. So a failing `git` — off the PATH, an unresolvable ref, a `git grep` returning its error status rather than its no-match status — made the condition false for the wrong reason and the job printed "No AI attribution found". Reproduced here with a shim in which only `git log` and `git grep` fail: an attribution marker sitting in a tracked file, and the job exits 0.
+
+**Rejected.** Adding `set -e` to the step, which was the first thing tried and is worse than nothing here — the step already runs under the default `bash -e {0}`, so `-e` was on the whole time, and it does not reach inside an `if` condition, which is exactly where all three faults lived. Also rejected: `set -o pipefail` as the fix, which was already set and for the same reason changed nothing.
+
+**Reason.** A scan has three outcomes and the shape used had room for two. Reading the producer's exit status separately from the matcher's is the only way to keep them apart, so each scan now writes its surface to a file — the producer's failure is then a failed redirection and not an empty match — and reads `grep`'s status as a three-way `case`: 0 a hit, 1 nothing found, anything else a scan that could not run and ends the job.
+
+**Price.** The step grew from 79 lines to 172, and three of the four helper functions exist only to make the three states visible. A reader now has to hold `refuse`, `read_surface`, `require_content` and `report` in mind before reading a single scan, where before each scan was one line that could be read in place and was wrong.
+
+### Capture-and-test is the rule here, not this job's local taste
+`E-798` · gate · gate, frozen
+
+**Context.** Two of this job's checks — the symlink scan and the `.gitattributes` scan — already captured their output into a variable and tested the variable, with a comment saying why. The three attribution scans, in the same step, did not. §5 of the rules names three shapes of broken check that have already happened in this repository, and this job carried two of the three.
+
+**Rejected.** Fixing only the pipeline exit status and leaving the pattern to the next reader to notice. It would have closed the reported fault and left the job as an example of both shapes side by side, which is how the three scans came to be written this way in the first place: the correct examples were three lines further up and nobody read them as a rule.
+
+**Reason.** The distinction §5 draws — found nothing against could not look — is a property of every check, so the shape that preserves it belongs to the repository and not to whoever wrote a given step. Writing it as four named functions rather than four inline repetitions is what makes it citable: the next check added to this job either calls `read_surface` and `report` or visibly does not.
+
+**Price.** A convention that lives in one workflow step and is enforced by nothing. There is no check for the check, and a fifth scan added below these four can go back to `if <pipeline>` without anything failing. The only thing standing between this and a recurrence is a reviewer reading the step.
+
+### Every scan says how much it read
+`E-799` · gate · gate, frozen
+
+**Context.** The second shape §5 names is a scan that reports success because it matched no files. Nothing in the job distinguished "searched 375 files, found nothing" from "searched nothing". The output was `Scanning tree` either way.
+
+**Rejected.** Counting only the tree scan, which is where the failure is easiest to picture. Also rejected: an assertion on an expected number of files, which would be a census — the log already records at `E-795` that a census counting a property of the whole tree, kept in one place and owned by nobody, is a coupling that costs other features a round.
+
+**Reason.** A positive count is a lower bound with no maintenance: it says the surface existed without saying how big it should be. Each scan prints its own unit — commits for the message scan, files for the tree scan, bytes for the diff scan — and a surface that came back empty ends the job rather than adding to `fail`, because an empty surface and a failed producer are the same event seen from different sides.
+
+**Price.** The counts are printed and not asserted, so they detect nothing on their own; they turn a silent zero into a visible one and rely on a person reading the log. A run that scans one file instead of 375 still passes, and prints `Scanning 1 tracked files` to say so.
+
+### Two surfaces are legitimately empty, and the control plant is what found the second
+`E-800` · gate · gate, correction
+
+**Context.** The first version of this change refused the run on any empty surface, uniformly. It was written, committed to the working tree, and then run against a control plant — a clean branch carrying only the `ci.yml` commit — which it failed with `the branch diff scan had nothing to search`. The diff scan excludes three paths, `ci.yml` among them, so a branch that changes only `ci.yml` produces a diff of zero bytes with nothing wrong.
+
+**Rejected.** Removing `ci.yml` from the exempt list, which would make the diff non-empty and make the job scan its own patterns and fail on them. Also rejected: dropping the emptiness check on the diff scan without saying why, which is how a rule turns into a special case nobody can date.
+
+**Reason.** Emptiness is an answer for exactly two of these surfaces, and both are named where they are read: a repository with no `.gitattributes` at all is the wanted state, and a branch whose every change is in an exempt path has nothing for the diff scan to see. What proves the diff scan looked is the commit count of its range, which is checked before any scan runs. Every other surface is empty only where the repository could not be read.
+
+**Price.** The diff scan's own emptiness is now unguarded, so the third shape §5 names — an exclusion that deletes the text it was meant to examine — is detectable here only as a printed `0 bytes` that a person has to notice. A fourth entry added to `EXEMPT` that happened to cover the whole branch would read as this same legitimate case. The honest mitigation is a check on what `EXEMPT` contains rather than on what survives it, and it is not written here.
+
+### The empty range is removed rather than reported
+`E-801` · gate · gate, frozen
+
+**Context.** The range is `origin/main..HEAD` where `origin/main` resolves and `HEAD` otherwise. On `main` itself `origin/main` resolves and equals `HEAD`, so the range selects no commit: the commit-message scan and the diff scan both read nothing, on every push to `main`, and the job reported clean. That is the same fault as the rest of this entry's neighbours and it was standing in the range choice rather than in a scan.
+
+**Rejected.** Failing the job on an empty range, which is what the brief for this work asked for and what the other surfaces do. It would redden `main` on every merge, permanently, for a state that is not an error.
+
+**Reason.** A range that selects nothing cannot be told from a range that could not be read, so the repair is to stop producing one: `origin/main..HEAD` is taken only where `HEAD` is ahead of it, and the whole history is the surface otherwise. The zero check then remains, and what it now catches is a `git` that failed rather than a branch that is level. On this repository the fallback reads 35 commits and 4,631,745 bytes of diff where it previously read none.
+
+**Price.** A push to `main` now scans the entire history on every run, and that cost grows with the repository while the thing it protects — commits already scanned on their own branch — stays the same. It is also a change to the range choice, which the brief for this work said to preserve; what is preserved is which commits are scanned when there are branch commits to scan, and the case that changed is the one where the old choice scanned nothing at all.
+
+### The statuses are captured with `|| VAR=$?` because `-e` was always on
+`E-802` · gate · gate, frozen
+
+**Context.** The step declares `set -uo pipefail` and no `set -e`, which reads as though `errexit` were off. It is not: a `run` step with no `shell` key runs under `bash -e {0}`, so `errexit` has been on since the job was written. The old shape hid this because every `grep` sat inside an `if` condition, where `-e` does not reach.
+
+**Rejected.** `STATUS=$?` on the line after a bare `grep`, which is the readable form and which ends the job at the first scan that matches nothing — that is, on every clean run. This was written first and caught by the control plant, not by reading.
+
+**Reason.** `grep … || VAR=$?` puts the command in a compound the shell does not treat as a failure, and leaves `$?` holding `grep`'s own status. It is three characters of noise for a property of the runner that is not visible in the file, so the reason is stated in the comment above `report` rather than left to be rediscovered.
+
+**Price.** The reason lives in a comment because it cannot be expressed in the code: nothing in the step says which shell it runs under, and a maintainer who moves this body to a script with a different shebang gets a step that is correct for a reason that is no longer true.
+
+### The plants, and what each one was run against
+`E-803` · gate · gate, frozen
+
+**Context.** §5 says a check must be proved to fail on a planted fault before its passing is trusted. The step body was extracted from `ci.yml` by parsing the workflow, so the text under test is the text that ships, and run under `bash -e` against a throwaway clone per plant. Every plant was run against both the old step and the new one.
+
+**Rejected.** Testing the new step alone. Half of what needed proving is that the old step passed, and a plant that reddens the new step proves nothing about the fault it is supposed to be about unless the old step is green on the same tree.
+
+**Reason.** The results, old exit against new exit. Clean branch carrying only the `ci.yml` commit: 0, 0. Marker in a commit message: 1, 1. Marker in a tracked file: 1, 1. Marker added and removed by a later commit, caught by the diff scan alone: 1, 1. `git log` and `git grep` stubbed to fail with a marker in the tree: **0, 1** — this is the reported fault. `grep` stubbed to exit 2 on a clean tree: **0, 1**. A repository with history and no tracked file: **0, 1**. A `.gitattributes` marking a path binary: 1, 1. A tracked symlink: 1, 1. A NUL byte in a tracked file: 1, 1. The last three exist because this change restructured those scans too and their detection had to be shown intact.
+
+**Price.** The harness is a scratch script and is not committed, so these numbers are reproducible only by rebuilding it. Committing it was considered and would put a second copy of the step's semantics in the repository — the extractor reads the real `ci.yml`, but the plants encode what each scan is supposed to see, and that is a test of the workflow with nothing keeping it in step with the workflow. What is committed is this entry.
+
+### Two plants did not behave as the finding described, and one of those is the finding itself
+`E-804` · gate · gate, finding
+
+**Context.** The reported fault says a failing-`git` PATH shim left the old job printing "No AI attribution found" and exiting 0. A shim in which *every* `git` invocation fails does not do that under `bash -e`: it dies at the NUL-byte check, whose `BINARY=$(git ls-files … | while …)` has no `|| true`, so `pipefail` and `errexit` end the step on whatever status the shim itself returned — 1 where the shim exits 1, 128 where it exits 128, and 127 where `git` is genuinely absent from the PATH, which is the case the reported fault described. What does not depend on the shim is that the status is not 0, and that the step ends with no `::error::` line, no mention of attribution, and nothing in the log saying a scan was skipped.
+
+**Rejected.** Reporting the finding as reproduced, on the ground that a marker went undetected either way. The exit status is the half of the claim that matters to a merge gate, and it was wrong.
+
+**Reason.** Two variants reproduce it exactly and are what the numbers in `E-803` are from. A shim failing only `git log` and `git grep` — the commands the three scans use, leaving the earlier checks working — gives old 0, new 1. The total shim run without `errexit` gives old 0, new 1. So the fault is real and the mechanism is as described; the total shim under the runner's own shell is the case that fails for a different reason, and its exit 1 is luck rather than detection. The other plant that did not redden is the empty range: it passes under the new step by construction, because `E-801` removed the state instead of failing on it.
+
+**Price.** The log now carries a correction to a finding that was right about the defect and wrong about one observation, which is the kind of entry that reads as pedantry until someone reruns the plant and gets 1 where the record says 0. Three earlier rounds in this repository were lost to plant numbers that did not reproduce, which is why this is an entry rather than a footnote.
+
+### The three checks the finding called correct were correct in the half it examined
+`E-805` · gate · gate, finding
+
+**Context.** The reported fault names the symlink, `.gitattributes` and NUL-byte checks as already using the capture-and-test pattern, and they do: each captures its output and tests the variable rather than the pipeline. None of them checked the exit status of the `git` that produced the output. With `git` failing, the symlink and `.gitattributes` checks each set an empty variable and add nothing to `fail`, and the NUL check ends the step silently.
+
+**Rejected.** Leaving them, on the ground that they are outside the reported fault and that the whole step fails anyway once the commit-message scan refuses. That is true today and true only because of the order the scans run in.
+
+**Reason.** They are in the same file, they are the same fault class, and each was one call to `read_surface` away from being right. Capturing the output is half of capture-and-test; the other half is knowing the output came from a command that succeeded. Their detection is unchanged and was replanted to show it — a `.gitattributes` marking a path binary, a tracked symlink and a NUL byte each still redden the job.
+
+**Price.** This is more than the reported fault asked for, in a file three wave-5 branches are not touching but which belongs to nobody in particular. It is recorded here rather than assumed to be welcome, and a reviewer who disagrees can revert three lines without touching the rest.
+
+### What is carried forward instead of fixed
+`E-806` · gate · hand-off, open
+
+**Context.** Two sibling faults of the same class were found alongside this one and are deliberately outside this change: `test/api-surface.test.ts` calls `readdirSync` without `{ recursive: true }`, so the API snapshot records only the top-level `dist/*.d.mts` and misses every type body, and `test/auth-route-table.test.ts` does not see eleven routes that now exist. Both live in files all three wave-5 branches are editing.
+
+**Rejected.** Fixing them here because they are small and because they are the same shape. The file-ownership rule in §5 does not have an exception for a change being small, and a snapshot regenerated on this branch collides with three others.
+
+**Reason.** They are reported and not touched. A search for the `if <pipeline>; then` shape across `.github/`, `tools/` and `package.json` found it in exactly the four lines this change rewrote and nowhere else, so there is no third instance of this particular shape outside `ci.yml` — which is a statement about that shape and not about the class, and the two faults above are the class showing up in a form no grep finds.
+
+**Price.** An entry naming two known defects that no branch owns. `E-795` already records that this repository's hand-offs are numerous enough to be their own finding, and this is another; the API snapshot in particular is a check that has been reporting success over a surface it was not reading, for however long `{ recursive: true }` has been missing, and nothing dates that.
+
+### The one line this branch reported as repaired still threw its consumer's status away
+`E-807` · gate · gate, correction
+
+**Context.** `E-805` said the symlink, `.gitattributes` and NUL-byte checks were "one call to `read_surface` away from being right", and this branch made that call for all three. For the `.gitattributes` scan that sentence is false and the change it describes was not enough: `read_surface` guards the **producer**, `git ls-files`, and the consumer stayed `HIDDEN=$(xargs grep -nE … || true)`. `|| true` discards a status exactly as the `if <pipeline>` this whole branch exists to remove discards one. Planted with a `.gitattributes` containing `src/*.ts binary` and a shim failing only the `-nE` invocation: old 0, new **0**. The fault was in the tree, the scan could not run, and the job said "No AI attribution found".
+
+**Rejected.** Reading the scan's printed count as coverage. `E-799` added `Checking 1 .gitattributes files` and that line was printed on the failing run — it is a lower bound on the **surface**, not on the **search**, and here the surface was read and the search never happened. That is worse than printing nothing, because it reads as evidence of the thing it does not measure.
+
+**Reason.** The consumer's status is captured and handed to `report`, like every other search in the step. `xargs` is gone with it, and not for tidiness: GNU `xargs` documents itself as exiting 123 for any invocation that exits 1 to 125, so it returns one status for the no-match this scan expects and the error it must refuse on — the distinction cannot survive it. That could not be measured here, because BSD `xargs` on the development machine passes 1 through unchanged; it is taken from the documented behaviour and stated as such rather than as a measurement, which is the mistake `E-893` records. Reading the file into an array removes the dependency on either platform's answer. Replanted: old 0, new 1.
+
+**Price.** `E-805`'s Reason is wrong where it stands and is not edited, because a reason is not a measurement and this log corrects one with a new entry rather than in place. A reader meets the false sentence first and this entry second. What made it false is worth more than the correction: the crossing into those three checks was real work, was accepted on the merits, and stopped at the producer because "capture the output" and "check the producer" felt like the same repair — which is the same half-measure in a different place.
+
+### The convention is enforced now, because its author broke it on its own branch
+`E-808` · gate · gate, frozen
+
+**Context.** `E-798`'s Price said the convention "is enforced by nothing" and that "a fifth scan added below these four can go back to `if <pipeline>` without anything failing". That was written as a limitation to be aware of. It stopped being hypothetical in the same commit: the fourth scan in the step was already back to it, nothing failed, and only a plant found it. §5 says to prove a check fails on a planted fault before trusting it passing; that was done for nine sites and skipped for the tenth, and the tenth is the one that was broken.
+
+**Rejected.** Recording the recurrence and leaving the convention unenforced, which is what `E-798` already did once and is what produced `E-807`. Also rejected: a shell-syntax linter over the whole workflow, which is a parser this repository would then own.
+
+**Reason.** `test/attribution-scan-status.test.ts` parses the step's block scalar out of `ci.yml`, joins continuation lines, drops comments, and asserts five things: a body with searches in it was found, every search invocation captures its status, every captured status reaches `report`, no status is discarded with `|| true` or `|| :`, and no pipeline is read as a condition. It refuses rather than passes when the step cannot be found, which is the property §5 asks for. Four faults were planted against it and each reddened it: the exact `|| true` the gate found, a status captured and never handed to `report`, the original `if <pipeline>; then` restored, and the step renamed so the body could not be located — the last one errors rather than reporting zero searches. Writing it found a fifth instance nobody had named: the NUL-byte check's `if ! tr … | cmp -s …; then`, where `cmp`'s error status 2 is read as "these differ". It fails closed, so it was never going to be noticed by a false pass, and "safe by luck" is what `E-804` already objected to elsewhere; it now reads `cmp`'s status as three states. Moving that loop out of its command substitution fixed a second thing that was never reported: `refuse` inside `$( … )` exits the subshell and leaves the job running, so a refusal from inside that loop would have been swallowed.
+
+**Price.** A new file outside the set fixed for this work, which was `ci.yml`, `CASE-STUDY.md` and `DOCUMENTATION.md`. It is a file no other branch can collide with and it needed no change to `package.json` or to the workflow, but it is still a crossing and it is recorded rather than assumed. And the check is structural, not behavioural: it reads the shape of the step and cannot tell whether the step detects anything. A scan that captures its status, hands it to `report` and searches for the wrong pattern passes every one of these five assertions. What tests behaviour is still a scratch harness that is not committed, for the reason `E-803` gives.
+
+### A refusal ends the job, so the first one hides every scan below it
+`E-809` · gate · gate, finding
+
+**Context.** `refuse` exits immediately rather than setting `fail=1`, so the scans below it never run and their findings never print. That is why `E-807`'s fault stayed invisible in almost every plant: the `.gitattributes` scan is the second of six, and any refusal above it — a failing `git`, an empty surface — ends the job before it, while any refusal below it never gets the chance to contradict it. Only a plant aimed at that one scan, with everything else working, could see it.
+
+**Rejected.** Accumulating refusals like findings and reporting them all at the end, which reads as the friendlier behaviour. A refusal means the environment could not be trusted to answer; continuing to scan in it produces more results of unknown worth, and a list of six is not more informative than the first.
+
+**Reason.** The two categories are genuinely different and the exit shapes follow from that. A **finding** is an answer, so every one of them is collected and printed and the job fails once at the end — that is why a branch with a marker in a commit message and one in the tree sees both. A **refusal** is the absence of an answer, and there is nothing to add to it. The cost is a diagnosis that arrives one fault at a time, and it is stated here so the next person to debug this step knows the log is truncated by design and not by accident.
+
+**Price.** A run repairing several broken scans takes several rounds, each showing one refusal. More sharply: this ordering is what let a scan sit broken behind a passing gate, and nothing in the step marks the scans that did not run — the log simply stops. A line naming the scans skipped by a refusal would cost little and is not written here. Recorded alongside: `E-803`'s heading dropped its count rather than raising it from nine to ten, because `E-898` established that a count of the branch's own work goes stale before the branch ends and this one had already gone stale twice; and `E-804`'s exit status was restated in place to name the shim it depends on, both being measurements on an unmerged branch, which §6 permits.
+
+### The property said to be unmeasurable here is measurable here, and it holds
+`E-810` · gate · gate, correction
+
+**Context.** `E-807` argued that `xargs` had to go because GNU `xargs` documents itself as exiting 123 for any invocation exiting 1 to 125, collapsing the no-match this scan expects into the error it must refuse on. It then said the property "could not be measured here, because BSD `xargs` on the development machine passes 1 through unchanged", and offered the GNU documentation in place of a measurement, citing `E-893` for the discipline of not asserting from inference.
+
+**Rejected.** Leaving it on the ground that the conclusion was right and only the supporting sentence was wrong. The conclusion being right is what makes this worth an entry rather than a correction nobody needs: an argument that reaches the correct answer through a false premise is the one most likely to be reused.
+
+**Reason.** Measured on this machine, `/usr/bin/xargs`: a child exiting 1 gives 1, a child exiting 2 gives 1, a child exiting 5 gives 1. BSD `xargs` collapses the distinction exactly as GNU's 123 does, to a different value, and the collapse is directly observable here. The end-to-end plant that was never run: routing the repaired scan back through `xargs`, with the capture and the `report` call intact, gives exit 0 and "No AI attribution found" on a tree carrying the fault; as shipped it gives exit 1 and a named refusal. So the claim `E-807` hedged — that the fix would not work through `xargs` — is provable here in one plant, and the case was stronger than it was stated. The GNU half stands and remains correctly sourced as documentation.
+
+**Price.** This is the `E-895` shape a second time: an impossibility asserted where a measurement was available, in an entry whose subject is the difference between the two. `E-895` recorded the same move about a fetchable URL and this branch had already read it. What made it easy was that the false sentence was defensive — it claimed less, cited the right rule, and looked like care. Nothing detects a hedge; the only reason this one was caught is that a reader tried the measurement the entry said could not be made.
+
+### The subshell swallows a refusal in one shape and dies silently in the other
+`E-811` · gate · gate, correction
+
+**Context.** `E-808` said that moving the NUL-byte loop out of its command substitution fixed a second thing never reported: that `refuse` inside `$( … )` "exits the subshell and leaves the job running, so a refusal from inside that loop would have been swallowed". The shape in question was `BINARY=$(while read … done < …)` — an assignment.
+
+**Rejected.** Restating it in place. It is a reason, not a measurement, and §6 forbids that; the branch has already been caught once treating a claim about behaviour as a number.
+
+**Reason.** Measured under `bash -e` with the step's own `set -uo pipefail`. In the **assignment** form the `::error::` line is captured into the variable and never printed, and `errexit` fires on the failed assignment: the step ends at exit 1 with no diagnostic at all. In the **argument** form, `echo "$( … refuse … )"`, the error prints, the job continues and exits 0. Only the second is the false pass `E-808` described, and the step never had that shape. What the assignment form actually gives is a silent fail-closed hole: it blocks correctly and says nothing about why, which is worse to debug and much better to have. Moving the loop out is right either way, because a refusal should print and end the job on its own terms rather than through an assignment's failure.
+
+**Price.** `E-808` overstates the fault it fixed, in the direction that flatters the fix, and that is the same class as `E-804` — an entry this branch wrote about exactly this. Three rounds, three findings, and each time the wrong sentence was in a line believed correct rather than in code believed risky. The pattern worth naming is that the measurement was cheap in all three cases and was not taken, because the sentence sounded like something already known.
+
+### The evasions that are closed, and the one that is enumerated instead
+`E-812` · gate · gate, frozen
+
+**Context.** `E-808` admitted the enforcement test is structural and cannot tell whether a scan detects anything. That admission was true and too general to act on. Three concrete evasions passed it five assertions out of five: a status captured for one scan handed to `report` for another, `report`'s default branch reduced to `*) ;;` so the entire refusal semantic disappears, and a sixth scan whose status is never read.
+
+**Rejected.** Leaving all three under the word "structural". A limit named as a category is not a limit anyone can plan around; a limit named as three cases is.
+
+**Reason.** The crossing is caught by **order rather than membership**: the sequence of statuses consumed must equal the sequence captured, so swapping two leaves every name present and still fails. The neutering is caught **per branch rather than per file** — every default branch must refuse. That distinction was itself found by a plant: the first attempt asserted that the body contained one refusing default branch, which passed while one of the two was neutered, because the other still matched. The third is caught only where the new scan uses a command the matcher list names. `grep`, `git grep`, `awk` and `cmp` are named because the step uses them; a scan built on `sed` passes every assertion, and that was planted and confirmed rather than assumed.
+
+**Price.** The matcher list is an enumeration, so it goes stale the moment the step reaches for a command nobody added to it, and nothing announces that — the test simply stops covering the new scan while still reporting six green assertions. That is the same shape as the count in `E-799`: an instrument that keeps passing over a surface it no longer reads. The honest mitigation is to invert the list and fail on any command the step is not declared to use, which would make every new scan a deliberate edit; it is not written here, and the reason is that the step's command vocabulary is not stable enough yet to be worth pinning against the churn.
+
+### The one consumer that was not read, and what it was hiding
+`E-813` · gate · gate, finding
+
+**Context.** Every consumer in the step reports three states except one: the symlink scan's `awk`, which was guarded only by `errexit`. `E-805` and `E-807` both walked past it, and the second round's repair of the `.gitattributes` consumer did not look sideways at the scan directly above it.
+
+**Rejected.** Handing `awk` to `report`. It does not fit: `grep` distinguishes match from no-match in its exit status, whereas `awk` and `cmp` exit 0 whether or not they printed anything and report only "could not look" through their status. Forcing them through `report` would mean inventing a match status they do not have.
+
+**Reason.** They get `refuse_unless_zero`, which is the refusal without the three-way reading, and the finding still comes from the output being non-empty. The distinction is real and stating it is what stops the next reader from "fixing" the asymmetry. Planted with a real symlink in the tree and `awk` stubbed to exit 2: before, exit 0 and "No AI attribution found" with the fault present; after, exit 1 and a named refusal. The scan was previously reported as blocking correctly and merely undiagnosed — with `errexit` that is true of the exit status, and the plant shows the finding itself was lost, which is a false pass and not a diagnostics problem.
+
+**Price.** Four rounds were needed to read every consumer in a step of six scans, and each round repaired the one that had just been demonstrated rather than the class. The step is uniform now, and nothing about the process that got here would have found the fourth one any faster than the third.
+
+### The structural check exists because the immediate exit hides what is below it
+`E-814` · gate · gate, frozen
+
+**Context.** `E-809` recorded that a refusal ends the job, so the first one masks every scan below it, and defended that as the right trade: a refusal means the environment cannot be trusted, and a list of six such is no more informative than the first. It named the cost as a diagnosis arriving one fault at a time.
+
+**Rejected.** Nothing new. This entry adds an argument `E-809` did not make rather than reversing one it did.
+
+**Reason.** The stronger justification is that the trade is now **compensated**, and by an instrument that already exists for another reason. The reason the `.gitattributes` fault survived a full round is that any refusal above it ended the job first, so only a shim aimed at that one scan could see it — the immediate exit did not cause the fault, it hid it. The structural test reads all six scans in one pass, in the file, regardless of which would run first or whether any of them runs at all. So the masking costs diagnosis at runtime and no longer costs coverage, and the two mechanisms fit together: the behavioural plants prove one scan at a time and the structural check sees them all at once.
+
+**Price.** The compensation is only as wide as `E-812`'s matcher list, so a scan the list does not name is both masked at runtime and unseen by the structural pass, which is the worst of both and is exactly the case that has no detector. And this argument was available when `E-809` was written and was not made, so the trade was accepted on weaker grounds than the ones that actually support it.
+
+### Fixing the quantifier did not fix the domain
+`E-815` · gate · gate, correction
+
+**Context.** `E-812` claimed two of three evasions closed. Both closures were one spelling deep. `report`'s default branch **deleted** rather than reduced to `*) ;;` passes the structural check 6 of 6, and at runtime restores the round-one finding exactly: a `.gitattributes` carrying `src/*.ts binary`, a shim failing only `grep -nE`, exit 0 and "No AI attribution found". `refuse_unless_zero` inverted from `[ "$2" -ne 0 ]` to `[ "$2" -eq 99 ]` also passes 6 of 6, and restores plant 19 — a real tracked symlink, `awk` stubbed to exit 2, exit 0.
+
+**Rejected.** Pinning the spellings: asserting the helper compares against 0, asserting the literal `-ne`. That is the move that produced both of these, one turn earlier. `-eq 99` defeats a check for `-ne 0`, `-ne 1` defeats a check for a comparison against zero, and each repair teaches the next mutation what to avoid while the property itself is never tested.
+
+**Reason.** The assertion was *every default branch refuses*, quantified over a set the mutation is free to shrink — `defaults.length > 0` is satisfied by the NUL scan's branch alone, so deleting `report`'s is invisible. That is the same lesson as `some` to `every`, one step out: the quantifier was fixed and the **domain** was not. Structurally the repair is to count against what must exist rather than what survives — every `case` the step opens must have a refusing default, so the count of defaults is tied to the count of cases. Semantically there is no structural repair at all, because a deleted or inverted refusal is not a misspelling, and that is what argues the second half: the step is now **run**. Five behavioural cases against planted repositories — a clean tree passes, a marker in a tracked file fails, and `grep`, `awk` and `cmp` each stubbed to exit 2 must fail. Mutation (a) is caught twice, by the cardinality assertion and by the `grep` case; mutation (b) is caught once, by the `awk` case, and by nothing structural, which is the point.
+
+**Price.** `E-803`'s Price argued against committing the harness: it would put a second copy of the step's semantics in the repository with nothing keeping it in step. That argument is overturned here and the overturning is narrower than it looks — these cases run the **real** step body parsed out of `ci.yml`, and assert only an exit status per planted tree, so what is duplicated is the expected outcome and not the logic. What the argument got right survives: the plants that encode *which scan* should see *what* are still not committed, because those would be the second copy. And the suite now shells out to `git` and `bash` in five subprocesses, about two seconds, in a project where every other unit test is in-process.
+
+### `cmp` was grouped with `awk` on a contract it does not have
+`E-816` · gate · gate, correction
+
+**Context.** `E-813`'s Rejected and Reason, the comment above `refuse_unless_zero`, and the pull request all say that `awk` and `cmp` "exit 0 whether or not they printed anything" and that both "get `refuse_unless_zero`". Measured: `cmp -s` gives 0 for identical, **1 for differing**, 2 for unreadable. `awk` gives 0 whether it printed or not, and 2 when it cannot read. And `refuse_unless_zero` is called exactly once in the step, for the symlink `awk`; `cmp` never reaches it.
+
+**Rejected.** Routing `cmp` through `report` to make the grouping true. `report` maps 0 to "hit" and prints the hits, and `cmp`'s 0 is a clean file — the polarity is inverted, so it would report a finding for every file with no NUL byte in it.
+
+**Reason.** `cmp -s` is a three-state matcher with exactly `grep`'s shape and the polarity swapped, and the NUL scan already reads it that way in an inline `case`: 0 clean, 1 the finding, anything above a scan that could not run. So the step has **three** status shapes for three different contracts — `report` for grep polarity, the inline `case` for cmp's inverted polarity, `refuse_unless_zero` for a matcher with no match status at all. That is defensible and is not what any of the three texts described. The comment now describes `awk` alone, and the `cmp` polarity is stated where it is read.
+
+**Price.** The justification for the helper was checkable in one command and false for half its subject, and it survived being written into three places at once because the grouping sounded right. Three status shapes in one step is also more than a reader expects to find, and nothing names them together — each is explained where it sits, so the shape of the whole is visible only to someone who reads all six scans.
+
+### The baseline `E-813` compared against, stated
+`E-817` · gate · gate, correction
+
+**Context.** `E-813` says round two's characterisation of plant 19 — that the symlink scan was "blocking correctly and merely undiagnosed" — was "a false pass and not a diagnostics problem". It did not say which state it measured against, and the answer differs by state.
+
+**Rejected.** Leaving it as a contradiction to be resolved by whoever next runs the plant.
+
+**Reason.** Three states, one plant — a real tracked symlink with `awk` stubbed to exit 2. At the merge base `a24d014`: exit 0, no error line, a false pass. At `be7d1e6`, which is what round two actually measured: exit 2, no error line — it blocks, undiagnosed. At `68fd97b`: exit 1 with a named refusal. Both descriptions are right about different trees. `E-813` used this branch's convention throughout, where *old* means the merge base, and under that convention its numbers are correct; what was missing is that the convention was never stated in the entry, and round two's claim was about a state the convention does not name.
+
+**Price.** A convention carried in a reader's head across eighteen entries and two pull request tables, and this is the second time it has produced an apparent contradiction between two true statements. Writing *old* and *new* into a table without a line saying what they are measured against was cheap every single time and is still not fixed anywhere but here.
+
+### The behavioural half ranges over the commands it stubs, not the scans that must refuse
+`E-818` · gate · gate, finding
+
+**Context.** `E-815` added five behavioural cases and they cover three commands — `grep`, `awk`, `cmp` — one stub each. The step has six scans. Every planted tree is `README.md` plus at most one artefact, so the `.gitattributes` block, which sits behind `if [ -s "$SCAN_DIR/attributes" ]`, is never entered: run against that tree the real step prints `Checking 0 .gitattributes files`, in all five cases. Measured mutant — replace that scan's `report` call with a plain `if [ "$ATTRIBUTE_STATUS" -eq 0 ]` that acts on a hit and ignores every other status, adding no `case` and no `|| true`: the whole suite gives **11 passed (11)**, and at runtime, on a tree with a `.gitattributes` carrying `src/*.ts binary` and a shim failing only `grep -nE`, it gives **exit 0 and "No AI attribution found"**. The shipped step on the same tree gives exit 1 and a named refusal. That is the round-one finding restored, in the scan that produced it.
+
+**Rejected.** A sixth case. Catching this mutant needs a tree carrying a `.gitattributes` **and** a shim that fails one *invocation* rather than one command — `grep -nE` while leaving `grep -Eani` working — because a blanket `grep` stub refuses at the message scan first and the run never reaches this one. An argument-aware shim is scan-by-scan knowledge: it encodes which flags belong to which scan, which is exactly the second copy `E-803` refused to commit and `E-815` deliberately kept out when it drew the line at running the real body and asserting only an exit status.
+
+**Reason.** So the gap is named rather than closed, and naming it is worth more than the case would be. This is `E-815`'s own lesson one level out: the structural half was repaired by counting against **what must exist** rather than what survives, and the behavioural half was added in the same commit quantifying over **the three commands it stubs** rather than over the six scans that must refuse. The same error, in the fix for it, written the same afternoon. What the cases do cover, they cover by property rather than by spelling, and that half stands.
+
+**Price.** **No planted tree contains a `.gitattributes`, so that scan's refusal is covered structurally only** — the cardinality assertion sees its `report` call, and nothing runs it. A mutation that removes the refusal from that one scan without touching a `case` passes the whole suite. Closing it would cost the boundary above, and the boundary is worth more than the case; that is a judgement and it is the kind that gets revisited when the next scan is added behind a conditional. Sharper still: the `.gitattributes` scan is the founding plant of this branch, it is in the pull request's own table as the plant that mattered most, and it is the only plant in this branch's history with no committed counterpart.
+
+### The rejection of spelling-pinning can be shown, and the showing is stronger than the argument
+`E-819` · gate · gate, correction
+
+**Context.** `E-815` rejected pinning the spellings of the refusal — asserting the literal `-ne`, or a comparison against zero — on the ground that `-eq 99` defeats a check for `-ne 0` and `-ne 1` defeats a check for a comparison against zero. It argued the point and did not demonstrate it, and it understated what the alternative buys.
+
+**Rejected.** Leaving it as an argument. A claim about what a check would and would not catch is measurable in this repository in one command, and this branch has already been caught three times stating something checkable without checking it.
+
+**Reason.** Planted: `refuse_unless_zero` changed from `[ "$2" -ne 0 ]` to `[ "$2" -ne 1 ]`. The suite gives **1 failed | 10 passed (11)**, and the failure is the **clean-tree** case — `awk` exits 0 on a clean tree, and `-ne 1` turns that into a refusal. Nothing in the suite mentions `-ne`, `-eq`, or `refuse_unless_zero`; a count over the test file returns zero. That is the property being measured rather than the spelling, which is what the rejection asserted. The comparison the entry did not make: pinning the literal **would** have caught the inversion and `-ne 1`, and would **not** have caught the deletion of `report`'s default branch, because a deletion is not a misspelling. The domain fix and the behavioural half together catch all three, and two more that were not planted here — a default branch **moved** so the counts stay equal, and `report`'s `case` rewritten as an `if`-chain with no refusal — both of which defeat the cardinality assertion on its own. The composition is what works; neither half is sufficient.
+
+**Price.** A refusal and a finding are both exit 1, so these cases cannot tell them apart, and one of them leans on that. The `awk` case's tree contains a real tracked symlink, which **would** be a finding if `awk` worked; it tests the refusal only because a stubbed `awk` produces no output for the finding to come from. A mutation converting a refusal into a finding, or a finding into a refusal, passes every case in the suite. Distinguishing them means asserting on `::error::` text, which is the scan-by-scan knowledge `E-818` declines for the same reason.
