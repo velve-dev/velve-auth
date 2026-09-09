@@ -35,8 +35,8 @@ jobs:
     env:
       VELVE_TEST_DATABASE_URL: postgres://velve:velve@localhost:5432/velve_test
     steps:
-      # check:log-append needs the merge base with origin/main, and refuses a run where it
-      # cannot be computed rather than passing (CLAUDE.md §6).
+      # check:log-append and check:skill-version need the merge base with origin/main, and
+      # refuse a run where it cannot be computed rather than passing (CLAUDE.md §6).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -73,6 +73,9 @@ jobs:
 
       - name: The decision log only grows
         run: pnpm check:log-append
+
+      - name: A changed skill raises its version
+        run: pnpm check:skill-version
 
       - name: Dead code
         run: pnpm knip
