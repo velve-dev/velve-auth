@@ -12,6 +12,14 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
 interface Reach {
 	readonly id: string;
 	readonly table: string;
+	/**
+	 * A version and a column of its own for each case. Two of these ids reach two core tables each
+	 * and two of the tables are reached by two ids, so cases sharing a plugin id or a table would
+	 * otherwise refuse each other — one as `migration_checksum_changed`, one as a duplicate column —
+	 * and pass for a reason that has nothing to do with ownership (E-919).
+	 */
+	readonly version: number;
+	readonly column: string;
 }
 
 /**
@@ -25,7 +33,13 @@ function everyIdThatPrefixesACoreTable(): readonly Reach[] {
 	for (const table of coreTableNames()) {
 		for (const [index, character] of [...table].entries()) {
 			if (character === "_" && index > 0) {
-				reaches.push({ id: table.slice(0, index), table });
+				const version = reaches.length + 1;
+				reaches.push({
+					id: table.slice(0, index),
+					table,
+					version,
+					column: `taken_over_${version}`,
+				});
 			}
 		}
 	}
@@ -89,15 +103,15 @@ async function refusalOf(schema: string, plugin: VelvePlugin): Promise<{ readonl
 	}
 }
 
-function reachingMigration(id: string, table: string): VelvePlugin {
+function reachingMigration(reach: Reach): VelvePlugin {
 	return {
-		id,
+		id: reach.id,
 		migrations: [
 			{
-				version: 1,
+				version: reach.version,
 				name: "reach_the_core_table",
 				createsTables: [],
-				sql: `ALTER TABLE velve.${table} ADD COLUMN taken_over integer`,
+				sql: `ALTER TABLE velve.${reach.table} ADD COLUMN ${reach.column} integer`,
 			},
 		],
 	} as unknown as VelvePlugin;
@@ -109,18 +123,19 @@ describe("a plugin id that prefixes a core table name does not own that table (3
 		expect(REACHES.map((reach) => reach.id)).toContain("one");
 	});
 
-	it.each(REACHES)("refuses plugin $id the core table $table", async ({ id, table }) => {
+	it.each(REACHES)("refuses plugin $id the core table $table", async (reach) => {
 		const schema = await schemaForTheClass();
 
-		const refusal = await refusalOf(schema, reachingMigration(id, table));
+		const refusal = await refusalOf(schema, reachingMigration(reach));
 
 		expect(refusal.code).toBeDefined();
+		expect(refusal.code).not.toBe("migration_checksum_changed");
 		const columns = await (await connection()).query<{ present: number }>(
 			`SELECT 1 AS present FROM pg_attribute column_
 			 JOIN pg_class child ON child.oid = column_.attrelid
 			 JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
-			 WHERE namespace_.nspname = $1 AND child.relname = $2 AND column_.attname = 'taken_over'`,
-			[schema, table],
+			 WHERE namespace_.nspname = $1 AND child.relname = $2 AND column_.attname = $3`,
+			[schema, reach.table, reach.column],
 		);
 		expect(columns).toStrictEqual([]);
 	});

@@ -96,6 +96,45 @@ FROM pg_stat_xact_user_tables`;
 const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
 /**
+ * Every object that belongs to the schema, of every catalogue there is, walked from the schema
+ * itself along the dependency edges rather than looked up in a list of names. Core migrations run
+ * before any plugin migration, so what this answers before a plugin's transaction is the core — by
+ * construction, with nothing to fall behind when a table, an index or a trigger is added (E-918).
+ */
+const OBJECTS_BELONGING_TO_THE_SCHEMA = `
+WITH RECURSIVE belonging(classid, objid) AS (
+  SELECT depend.classid, depend.objid
+  FROM pg_depend depend
+  JOIN pg_namespace namespace_ ON namespace_.oid = depend.refobjid
+  WHERE depend.refclassid = 'pg_namespace'::regclass AND namespace_.nspname = $1
+  UNION
+  SELECT depend.classid, depend.objid
+  FROM pg_depend depend
+  JOIN belonging ON depend.refclassid = belonging.classid AND depend.refobjid = belonging.objid
+)
+SELECT classid::regclass::text AS catalogue, objid AS object_id,
+       pg_describe_object(classid, objid, 0) AS described
+FROM belonging`;
+
+/**
+ * The same walk from the tables the plugin declared, which is what it may alter and drop. The set
+ * comes from `createsTables` rather than from the plugin's id, so it is not widened by choosing a
+ * name (E-918).
+ */
+const OBJECTS_OF_THE_DECLARED_TABLES = `
+WITH RECURSIVE belonging(classid, objid) AS (
+  SELECT 'pg_class'::regclass, child.oid
+  FROM pg_class child
+  JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
+  WHERE namespace_.nspname = $1 AND child.relname = ANY(string_to_array($2, ','))
+  UNION
+  SELECT depend.classid, depend.objid
+  FROM pg_depend depend
+  JOIN belonging ON depend.refclassid = belonging.classid AND depend.refobjid = belonging.objid
+)
+SELECT classid::regclass::text AS catalogue, objid AS object_id FROM belonging`;
+
+/**
  * Every object this transaction created, of every catalogue there is, beside the object each one was
  * recorded as depending on. A migration that creates something PostgreSQL files nowhere this runner
  * has heard of still writes its dependency on the schema, and `pg_describe_object` names it in the
@@ -150,6 +189,12 @@ interface RelationRow {
 	readonly schema_name: string;
 	readonly table_name: string;
 	readonly kind: string;
+	readonly object_id: number;
+	readonly described: string;
+}
+
+interface BelongingRow {
+	readonly catalogue: string;
 	readonly object_id: number;
 	readonly described: string;
 }
@@ -322,6 +367,34 @@ async function readRelationsTouched(tx: Driver): Promise<Relations> {
 	return new Map(rows.map((row) => [`${row.schema_name}.${row.table_name}`, factOf(row)]));
 }
 
+type SchemaObjects = ReadonlyMap<string, string>;
+
+function objectKey(catalogue: string, id: number): string {
+	return `${catalogue}:${id}`;
+}
+
+async function readSchemaObjects(tx: Driver, schema: string): Promise<SchemaObjects> {
+	const rows = await tx.query<BelongingRow>(OBJECTS_BELONGING_TO_THE_SCHEMA, [schema]);
+	return new Map(
+		rows.map((row) => [objectKey(row.catalogue, Number(row.object_id)), row.described]),
+	);
+}
+
+async function readObjectsOfTheDeclaredTables(
+	tx: Driver,
+	schema: string,
+	declared: readonly string[],
+): Promise<ReadonlySet<string>> {
+	if (declared.length === 0) {
+		return new Set();
+	}
+	const rows = await tx.query<BelongingRow>(OBJECTS_OF_THE_DECLARED_TABLES, [
+		schema,
+		declared.join(","),
+	]);
+	return new Set(rows.map((row) => objectKey(row.catalogue, Number(row.object_id))));
+}
+
 function refuseOwned(code: MigrationRefusalCode, migration: OwnedMigration, what: string): never {
 	throw new MigrationRefusedError(
 		code,
@@ -334,12 +407,28 @@ function localNameOf(qualified: string): string {
 }
 
 /**
- * 3.11: a plugin's own objects are the ones in the configured schema carrying its own prefix and
- * belonging to no core table. `ownTables.query` decides ownership from the same predicate, so the
- * boundary a plugin meets at runtime and the one its migration meets cannot answer differently
- * (E-907).
+ * 3.11: a plugin's own tables are the ones it **declared**, not the ones whose names begin like its
+ * id. No list of names decides anything here any more — a core table's name and a core index's name
+ * are both simply names the plugin did not declare (E-918). The registry still requires every
+ * declared name to carry the prefix and to be no core table's, so this set is the narrower of the
+ * two boundaries and `ownTables.query` remains the wider.
  */
-function isOwnedTable(qualified: string, migration: OwnedMigration, schema: string): boolean {
+function isOwnedTable(qualified: string, declared: ReadonlySet<string>): boolean {
+	return declared.has(qualified);
+}
+
+/**
+ * Not a permission — a **diagnosis**. A relation carrying the prefix is one the plugin plainly meant
+ * to make, so it is reported by the rule it actually broke: an undeclared table as undeclared, a
+ * view by its kind, an index of its own by the census that finds no table of its own behind it. A
+ * relation that carries no prefix was never plausibly its own and is reported as foreign. Permission
+ * is decided by the declared set and by the snapshot, neither of which reads this (E-918).
+ */
+function carriesThePluginsPrefix(
+	qualified: string,
+	migration: OwnedMigration,
+	schema: string,
+): boolean {
 	return (
 		qualified.startsWith(`${schema}.`) &&
 		namesTableOfPlugin(localNameOf(qualified), migration.owner)
@@ -366,7 +455,7 @@ function refuseTheForeignRelation(
 		migration,
 		core
 			? `it reached ${relation}, which is a core table and is nobody's own however its name begins`
-			: `it reached ${relation}, and a plugin reaches the tables named ${migration.owner}_ and no others`,
+			: `it reached ${relation}, and a plugin migration reaches the tables it declared in createsTables and what those bring with them`,
 	);
 }
 
@@ -385,7 +474,7 @@ function assertEveryRelationItTouchedIsItsOwn(
 	touched: Relations,
 ): void {
 	for (const [relation, fact] of touched) {
-		if (!isOwnedTable(relation, migration, schema)) {
+		if (!carriesThePluginsPrefix(relation, migration, schema)) {
 			refuseTheForeignRelation(migration, schema, relation, before);
 		}
 		if (!KINDS_A_TABLE_BRINGS_WITH_IT.has(fact.kind)) {
@@ -396,24 +485,6 @@ function assertEveryRelationItTouchedIsItsOwn(
 			);
 		}
 	}
-}
-
-function objectKey(catalogue: string, id: number): string {
-	return `${catalogue}:${id}`;
-}
-
-function ownedRelationKeys(
-	relations: Relations,
-	migration: OwnedMigration,
-	schema: string,
-): ReadonlySet<string> {
-	const keys = new Set<string>();
-	for (const [relation, fact] of relations) {
-		if (isOwnedTable(relation, migration, schema)) {
-			keys.add(objectKey("pg_class", fact.objectId));
-		}
-	}
-	return keys;
 }
 
 /**
@@ -464,15 +535,33 @@ function assertEveryObjectItCreatedBelongsToItsOwnTables(
 	}
 }
 
-function assertItRemovedNothingOfAnybodyElses(
+/**
+ * Everything that was in the schema before the plugin's transaction and is not the plugin's own has
+ * to be there afterwards, under the same name. It replaces a walk over relations that could not see
+ * a dropped trigger or a dropped function at all — S-FIX-2 puts half its enforcement in one of each
+ * — and it needs no list of what the core owns, because before a plugin migration runs everything
+ * present is the core's (E-918).
+ */
+function assertItLeftEveryOtherObjectAsItFoundIt(
 	migration: OwnedMigration,
-	schema: string,
-	before: Relations,
-	after: Relations,
+	before: SchemaObjects,
+	after: SchemaObjects,
+	own: ReadonlySet<string>,
 ): void {
-	for (const relation of before.keys()) {
-		if (!after.has(relation) && !isOwnedTable(relation, migration, schema)) {
-			refuseOwned("migration_foreign_table_changed", migration, `it removed ${relation}`);
+	for (const [key, described] of before) {
+		if (own.has(key)) {
+			continue;
+		}
+		const now = after.get(key);
+		if (now === undefined) {
+			refuseOwned("migration_foreign_table_changed", migration, `it removed ${described}`);
+		}
+		if (now !== described) {
+			refuseOwned(
+				"migration_foreign_table_changed",
+				migration,
+				`it renamed ${described}, which is now ${now}`,
+			);
 		}
 	}
 }
@@ -522,14 +611,14 @@ function assertNoCodeWasLeftBehind(migration: OwnedMigration, left: readonly Cod
  */
 function assertNoForeignTableWasReachedByARow(
 	migration: OwnedMigration,
-	schema: string,
 	before: WriteCounters,
 	after: WriteCounters,
+	declared: ReadonlySet<string>,
 ): void {
 	const none: TableCounters = { written: 0, scanned: 0 };
 	for (const [table, counters] of after) {
 		const previously = before.get(table) ?? none;
-		if (isOwnedTable(table, migration, schema)) {
+		if (isOwnedTable(table, declared)) {
 			continue;
 		}
 		if (counters.written > previously.written) {
@@ -589,6 +678,7 @@ async function applyOwnedMigration(
 	driver: Driver,
 	schema: string,
 	migration: OwnedMigration,
+	declaredTables: readonly string[],
 ): Promise<void> {
 	const ledger = qualifiedTableName(schema, PLUGIN_LEDGER_TABLE);
 	assertNoSchemaNameInsideDollarQuoting(migration.sql, schema);
@@ -606,24 +696,32 @@ async function applyOwnedMigration(
 
 		const writtenBefore = await readWriteCounters(tx, migration);
 		const before = await readRelations(tx, schema);
+		const objectsBefore = await readSchemaObjects(tx, schema);
+		const ownBefore = await readObjectsOfTheDeclaredTables(tx, schema, declaredTables);
 		await applyStatements(tx, schema, migration);
 		// The ownership of what it touched is read first, so a relation it should not have made is
 		// refused for what it is rather than for the scan that making it recorded.
 		const after = await readRelations(tx, schema);
+		const own = await readObjectsOfTheDeclaredTables(tx, schema, declaredTables);
 		assertEveryRelationItTouchedIsItsOwn(migration, schema, before, await readRelationsTouched(tx));
-		assertItRemovedNothingOfAnybodyElses(migration, schema, before, after);
+		assertItLeftEveryOtherObjectAsItFoundIt(
+			migration,
+			objectsBefore,
+			await readSchemaObjects(tx, schema),
+			new Set([...ownBefore, ...own]),
+		);
 		assertTheTablesThatAppearedAreTheDeclaredOnes(migration, before, after);
 		assertNoCodeWasLeftBehind(migration, await tx.query<CodeRow>(CODE_THIS_TRANSACTION_LEFT, []));
 		assertEveryObjectItCreatedBelongsToItsOwnTables(
 			migration,
 			await tx.query<DependencyRow>(OBJECTS_THIS_TRANSACTION_CREATED, []),
-			ownedRelationKeys(after, migration, schema),
+			own,
 		);
 		assertNoForeignTableWasReachedByARow(
 			migration,
-			schema,
 			writtenBefore,
 			await readWriteCounters(tx, migration),
+			new Set(declaredTables.map((table) => `${schema}.${table}`)),
 		);
 		await tx.query(
 			`INSERT INTO ${ledger} (plugin_id, version, name, checksum) VALUES ($1, $2, $3, $4)`,
@@ -635,6 +733,14 @@ async function applyOwnedMigration(
 export async function runMigrations(options: MigrationRunnerOptions): Promise<MigrationReport> {
 	const schema = assertSchemaName(options.schema ?? DEFAULT_SCHEMA);
 	const owned = byOwnerInDependencyOrder(options.migrations.filter(isOwnedMigration));
+	// Every table the plugin declares, across all of its migrations, because migration five may alter
+	// what migration one created and the snapshot has to know that table is its own (E-918).
+	const declaredByOwner = new Map<string, string[]>();
+	for (const migration of owned) {
+		const declared = declaredByOwner.get(migration.owner) ?? [];
+		declared.push(...migration.createsTables);
+		declaredByOwner.set(migration.owner, declared);
+	}
 	const plan = inVersionOrder(
 		options.migrations.filter((migration) => !isOwnedMigration(migration)),
 		schema,
@@ -661,7 +767,12 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 
 	// The core schema is what a plugin's tables reference, so every core migration is applied first.
 	for (const migration of owned) {
-		await applyOwnedMigration(options.driver, schema, migration);
+		await applyOwnedMigration(
+			options.driver,
+			schema,
+			migration,
+			declaredByOwner.get(migration.owner) ?? [],
+		);
 	}
 
 	const versions = (await readLedger(options.driver, schema)).map((row) => row.version);
