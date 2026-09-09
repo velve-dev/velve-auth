@@ -80,6 +80,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 				userId,
 				phc,
 				scheme: scheme as PasswordCredentialRow["scheme"],
+				setBySessionId: null,
 			});
 
 			const raw = await readRaw(userId);
@@ -106,7 +107,12 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 
 	it("leaves no column of the schema carrying the PHC string in any of three encodings", async () => {
 		const userId = await createUser("dump");
-		await credentials.write({ userId, phc: stored.byScheme.argon2id, scheme: "argon2id" });
+		await credentials.write({
+			userId,
+			phc: stored.byScheme.argon2id,
+			scheme: "argon2id",
+			setBySessionId: null,
+		});
 
 		const columns = await migrated.connection.query<{ table_name: string; column_name: string }>(
 			`SELECT table_name, column_name FROM information_schema.columns
@@ -160,7 +166,12 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 
 	it("refuses the ciphertext under a different root key rather than answering wrongly", async () => {
 		const userId = await createUser("wrongkey");
-		await credentials.write({ userId, phc: stored.byScheme.argon2id, scheme: "argon2id" });
+		await credentials.write({
+			userId,
+			phc: stored.byScheme.argon2id,
+			scheme: "argon2id",
+			setBySessionId: null,
+		});
 		const raw = await readRaw(userId);
 
 		const otherKeys = rootKeyProvider({
@@ -201,7 +212,12 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 			schema: migrated.schema,
 		});
 
-		await rotatedCredentials.write({ userId, phc: stored.byScheme.argon2id, scheme: "argon2id" });
+		await rotatedCredentials.write({
+			userId,
+			phc: stored.byScheme.argon2id,
+			scheme: "argon2id",
+			setBySessionId: null,
+		});
 		const raw = await readRaw(userId);
 
 		expect(raw.key_version).toBe(7);
@@ -219,7 +235,12 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 describe("3.3 step 6 — the silent rehash is a compare and swap", () => {
 	it("replaces a legacy credential after a correct sign-in and only then", async () => {
 		const userId = await createUser("rehash");
-		await credentials.write({ userId, phc: stored.byScheme.bcrypt, scheme: "bcrypt" });
+		await credentials.write({
+			userId,
+			phc: stored.byScheme.bcrypt,
+			scheme: "bcrypt",
+			setBySessionId: null,
+		});
 
 		const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
 		const environment = {
@@ -257,7 +278,12 @@ describe("3.3 step 6 — the silent rehash is a compare and swap", () => {
 
 	it("loses to a password the user changed while it was running", async () => {
 		const userId = await createUser("race");
-		await credentials.write({ userId, phc: stored.byScheme.bcrypt, scheme: "bcrypt" });
+		await credentials.write({
+			userId,
+			phc: stored.byScheme.bcrypt,
+			scheme: "bcrypt",
+			setBySessionId: null,
+		});
 
 		const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
 		const environment = {
@@ -273,7 +299,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap", () => {
 			throw new Error("a bcrypt credential must ask to be rehashed");
 		}
 
-		await setPassword({ userId, plaintext: WRONG_PASSWORD }, environment);
+		await setPassword({ userId, plaintext: WRONG_PASSWORD, setBySessionId: null }, environment);
 		const chosen = await readRaw(userId);
 
 		expect(await check.rehash()).toBe(false);
@@ -285,7 +311,12 @@ describe("3.3 step 6 — the silent rehash is a compare and swap", () => {
 
 	it("lets exactly one of eight concurrent rehashes win", async () => {
 		const userId = await createUser("concurrent");
-		await credentials.write({ userId, phc: stored.byScheme.bcrypt, scheme: "bcrypt" });
+		await credentials.write({
+			userId,
+			phc: stored.byScheme.bcrypt,
+			scheme: "bcrypt",
+			setBySessionId: null,
+		});
 		const before = await readRaw(userId);
 
 		const settled = await Promise.all(

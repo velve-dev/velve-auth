@@ -118,7 +118,12 @@ export async function checkPassword(
 
 /** The setting and changing path: the `validate` hook runs, then Argon2id under the semaphore. */
 export async function setPassword(
-	input: { readonly userId: string; readonly plaintext: string },
+	input: {
+		readonly userId: string;
+		readonly plaintext: string;
+		/** L-12: the session storing the password, or `null` where the caller has none (E-626). */
+		readonly setBySessionId: string | null;
+	},
 	environment: PasswordEnvironment,
 ): Promise<void> {
 	const accepted = await acceptNewPassword(input.plaintext, environment.config);
@@ -127,7 +132,12 @@ export async function setPassword(
 		createArgon2idHash(accepted.bytes, environment.config.argon2id),
 	);
 
-	await environment.credentials.write({ userId: input.userId, phc, scheme: CREATED_SCHEME });
+	await environment.credentials.write({
+		userId: input.userId,
+		phc,
+		scheme: CREATED_SCHEME,
+		setBySessionId: input.setBySessionId,
+	});
 }
 
 // 3.3 step 6: silent, without user interaction, and harmless when it loses the race — the next

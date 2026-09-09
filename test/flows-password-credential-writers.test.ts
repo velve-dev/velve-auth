@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import type { PasswordCredentialRepository } from "../src/core/password/credential.js";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
 
@@ -26,52 +27,68 @@ function statementsIn(text: string): readonly string[] {
 }
 
 /**
- * Every repository builds its table name from the configured schema, so the name is never inside
- * the statement — CLAUDE.md §7 names that trap, and a scan of SQL literals alone finds only the
- * migration. What a file reaches the table with is the quoted name it hands `qualifiedTableName`.
+ * The property, not the file. A census of files that reach the table cannot tell a writer that
+ * records the provenance from one that does not — and the file that would forget was already on the
+ * list, so a future `/password/set` calling the one write path would have tripped nothing. What
+ * stops it is the signature: `write` demands `setBySessionId`, so a caller has to answer, and `null`
+ * is an answer that costs the credential rather than defeating S-LINK-4 (E-596 corrected by E-626).
  */
-const NAMES_THE_TABLE =
-	/"password_credential"|CREATE TABLE \$\{?[a-z]*\}?\.?velve\.password_credential|velve\.password_credential/;
-
-function reachesTheTable(source: { readonly text: string }): boolean {
-	return (
-		NAMES_THE_TABLE.test(source.text) ||
-		statementsIn(source.text).some((sql) => sql.includes("password_credential"))
-	);
-}
-
-/**
- * E-596: `set_by_session_id` is NULL for any credential written by a path that does not record it,
- * and NULL is read as a different session — so a writer that forgets loses the user's password at
- * their next first confirmation, in silence and on the legitimate path. Nothing can tell a writer
- * that records the provenance from one that does not, so what this pins is the set of files that
- * reach the table at all: a new one has to be added here, and reads the rule while doing it.
- */
-const FILES_THAT_REACH_THE_CREDENTIAL_TABLE: readonly string[] = [
-	"auth/user.ts",
-	"db/migrations/initial-schema.ts",
-	"flows/credential.ts",
-	"identity/sign-in-methods.ts",
-	"password/credential.ts",
-];
-
-describe("who writes velve.password_credential (E-595, E-596)", () => {
+describe("no password reaches the table without saying which session stored it (E-626)", () => {
 	it("has more than nothing to scan", () => {
 		expect(sources.length).toBeGreaterThan(20);
 	});
 
-	it("names the table in the schema, the two repositories, the removal and this feature's provenance", () => {
-		const naming = sources.filter(reachesTheTable).map((source) => source.path);
+	it("does not compile a write that leaves the provenance out", () => {
+		const withoutProvenance = (repository: PasswordCredentialRepository) =>
+			// @ts-expect-error S-LINK-4 is decided on this column, so omitting it is a compile error.
+			repository.write({
+				userId: "a",
+				phc: "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA",
+				scheme: "argon2id",
+			});
+		const withProvenance = (repository: PasswordCredentialRepository) =>
+			repository.write({
+				userId: "a",
+				phc: "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA",
+				scheme: "argon2id",
+				setBySessionId: null,
+			});
 
-		expect(naming).toStrictEqual([...FILES_THAT_REACH_THE_CREDENTIAL_TABLE]);
+		expect(withoutProvenance).toBeInstanceOf(Function);
+		expect(withProvenance).toBeInstanceOf(Function);
 	});
 
-	it("keeps the provenance column out of every statement but this feature's two", () => {
+	it("writes the column on the insert and on the conflict, so an upsert cannot leave a stale one", () => {
+		const repository = readFileSync(`${coreDirectory}/password/credential.ts`, "utf8");
+		const upsert = statementsIn(repository).find((sql) => /\bINSERT\b/i.test(sql)) ?? "";
+
+		expect(upsert).toContain("set_by_session_id)");
+		expect(upsert).toContain("set_by_session_id = EXCLUDED.set_by_session_id");
+	});
+
+	/**
+	 * The second net, and the weaker one: it says which files reach the table at all, so a writer
+	 * that bypasses the repository with its own statement has to be added here and reads the rule
+	 * while doing it. It cannot see a writer that goes through the repository — that is what the
+	 * signature above is for.
+	 */
+	it("reaches the table from the schema, the two repositories and the removal, and nowhere else", () => {
+		const namesTheTable = /"password_credential"|velve\.password_credential/;
 		const naming = sources
-			.filter((source) => source.text.includes("set_by_session_id"))
+			.filter(
+				(source) =>
+					namesTheTable.test(source.text) ||
+					statementsIn(source.text).some((sql) => sql.includes("password_credential")),
+			)
 			.map((source) => source.path);
 
-		expect(naming).toStrictEqual(["db/migrations/initial-schema.ts", "flows/credential.ts"]);
+		expect(naming).toStrictEqual([
+			"auth/user.ts",
+			"db/migrations/initial-schema.ts",
+			"flows/credential.ts",
+			"identity/sign-in-methods.ts",
+			"password/credential.ts",
+		]);
 	});
 
 	/**

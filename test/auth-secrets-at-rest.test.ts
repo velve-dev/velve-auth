@@ -35,7 +35,7 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 
 	const credentials = createPasswordCredentialRepository({ driver: connection, keys, schema });
 	await setPassword(
-		{ userId, plaintext: TEST_PASSWORD },
+		{ userId, plaintext: TEST_PASSWORD, setBySessionId: null },
 		{
 			config,
 			semaphore: createKdfSemaphore({ limit: 1 }),
