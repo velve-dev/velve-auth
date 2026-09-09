@@ -221,6 +221,8 @@ repair anything itself.
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
+- `pnpm check:skill-version` — a skill file changed against the merge base raises
+  the version it states, and both skill files state the same one (§6)
 - `pnpm knip` — no dead code, no unused export
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
@@ -248,14 +250,19 @@ documentation is "to be written" is not finished.
 - **`CASE-STUDY.md`** — grows with the build. Every design decision with its
   reason, every rejected alternative, every problem and its solution, in the
   entry format fixed below.
+- **`CLAUDE-SKILL.md`**, and `CODEX-SKILL.md` generated from it — kept current in
+  its **method**, and never in its content. What that means is the opposite of
+  what it means for the three above, so read the subsection below before touching
+  it; a reader who takes "keep it current" at face value breaks the file by
+  helping.
 
 `CASE-STUDY.md` has one rule that matters more than the others: **no retroactive
 rationalisation.** If a decision was made for a bad reason and turned out right,
 the bad reason is what gets written down. The log is written during the build so
 that the reasons are the actual ones and not the reconstructed ones.
 
-Beyond those three, exactly five markdown files exist in the repository root, and
-this is the complete list:
+Five further markdown files exist in the repository root, two of them the skill's,
+and this is the complete list:
 
 - **`CLAUDE.md`** — this file.
 - **`VELVE-AUTH-ARCHITEKTUR.md`** — the binding specification, German.
@@ -276,6 +283,42 @@ Do not create any markdown file in the repository root outside that list. No sum
 files, no progress reports, no `NOTES.md`. Markdown that belongs to something else —
 a test snapshot under `test/__snapshots__/`, for instance — is not a document and is
 not covered by this rule.
+
+### Keeping the skill current is the opposite of keeping the documentation current
+
+The documentation is kept current **by describing the features**. The skill is kept
+current **by continuing to describe none of them.**
+
+It carries no fact about the library on purpose — no feature list, no count, no
+"not built yet", no published version — because it reads the live documents at the
+moment it answers, and any fact copied into it is a copy with an expiry date nobody
+writes down. Its own §1 states that as a rule about itself.
+
+So a change to the library is a reason to **check** that the skill still navigates
+this repository correctly, and it is almost never a reason to change a sentence of
+it. What is kept current is the **method**: the sources it names, the URLs it
+fetches, the shape of the tree it walks, the paths it installs to, the identifiers
+it teaches a reader to cite. If a release looks as though it requires a sentence of
+the skill to change, read that sentence again — a fact has almost certainly leaked
+in, and the repair is to delete the fact, not to update it.
+
+**Adding a feature of the library to the skill is a defect, not an omission being
+repaired.** One such sentence turns every subsequent release into a skill release:
+the file then goes stale on a schedule the library sets, and every reader has to
+install an update to stop being told something false. That is the property this rule
+exists to protect, and it is lost in a single helpful edit.
+
+**Every change to a skill file raises its version. Always.** A typo, a reworded
+sentence, a fixed link — each of them. The version line at the top of the file is
+what the skill compares against the published copy to tell a reader whether what
+they are running is current, and a change that leaves the number alone makes that
+comparison lie. `CODEX-SKILL.md` is generated from `CLAUDE-SKILL.md` and states the
+same line, so the two rise together. `pnpm check:skill-version` enforces it against
+the merge base.
+
+A version raised without a change is **not** a fault and the check permits one. The
+rule is that a change raises the version, not that a raise accompanies a change, and
+refusing a lone raise would refuse the repair of a commit that forgot one.
 
 ### The entry format
 
@@ -675,6 +718,15 @@ pnpm check:log-append
                  committed history and not the working tree, so an uncommitted
                  deletion is invisible to it — and to every other step as well,
                  which is why §6 states it rather than a check catching it
+pnpm check:skill-version
+                 a skill file that changed since the merge base states a higher
+                 version than it did there, and both skill files state the same
+                 version line. Refuses the run if the base cannot be resolved or
+                 if a version line cannot be read in either file at HEAD;
+                 VELVE_SKILL_BASE names a base other than origin/main. Like
+                 check:log-append and unlike every other step, it reads committed
+                 history and not the working tree, so an uncommitted edit to a
+                 skill file is invisible to it
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
