@@ -3357,3 +3357,97 @@ Two corrections to `E-822`. Its fourth claim said the rehash is cited as "step 5
 Two smaller things `E-823` got wrong and are corrected here rather than there. It quotes `E-822` as saying the rehash is cited as step 5 twice and step 6 three times; `E-822` was corrected in place before `E-823` was written, so that quotation matches neither entry. And the settling evidence for the miscitation belongs on the record: 4.4 d) writes the sentence with step 6 where 4.1 d) writes the same sentence with step 5, which is what makes the second unambiguous rather than arguable.
 
 **Price.** Three entries now describe one act of counting, and a reader wanting the truth about `C.1` must reach the third. That is what the no-restatement rule costs, and it is the second time on this branch that obeying it produced a chain rather than a correction. The rule is still right — the alternative is a log whose entries quietly become true — but the chain is real, and a fourth link would be a reason to ask whether the entry should be withdrawn rather than corrected again.
+
+### Repair the twenty defects instead of recording them a fourth time
+`E-845` · specfix · specification, corrected
+
+**Context.** `E-822`, `E-823` and `E-824` record twenty defects in the binding specification and repair none of them, because a translator is not the author of what they translate. Wave 5 implements `oauth`, `email-flows` and `plugin` from that document. Nineteen of the twenty are corrected here, in the German first and then in the English translation; the twentieth was not corrected but decided, by the project rather than on this branch (`E-848`, `E-850`).
+
+**Rejected.** Correcting the German alone and letting the translation catch up later. Rejected because `test/architecture-translation.test.ts` compares the heading sequence, the identifier census, the table and row counts and the fenced-block count of the two files, so a correction applied to one is reported as the divergence — which is the point of the check. Also rejected: repairing the two markdown faults by running a formatter over the file, which would have reflowed lines nobody had inspected.
+
+**Reason.** Every number that changed was recomputed from the rows it counts, and the derivations belong on the record rather than only in a commit message. Section 1's group A line read `26 · 11 · 12 · 3`; its 52 rows carry 23 adopt, 14 solve differently, 12 omit and 3 surpass, and 2.N's per-section table already stated 23 and 14 — the total of 52 was never wrong, only the split. `I.2` was headed 44 and spans `I6` to `I59`, which is 54, and section I's 71 requires it: 5 + 54 + 10 + 2. 3.15 B.4 said three writing methods where four of the namespace's five return `SetPasswordResult`; the fifth, `requestReset`, returns void. `T-RATE-1` demanded 20/20 over twelve enumerated vectors — four IPv6 spellings of one `/64`, the IPv4-mapped pair, `::1`, `0.0.0.0`, `::`, the empty string, `not-an-ip` and the comma-separated pair — and `T-RATE-3` demanded 6/6 over three constellations, (i) to (iii). 5.7 (a) called a `/64` sixty-two-digit numbers of buckets where 5.7 (b), two lines below, states 2^64, which is twenty digits. Ten CVSS scores were written with a decimal comma against every other score in the file, 5.12 writing 9.1 with a point and 9.9 and 9.6 with commas inside one sentence.
+
+`C.1`'s eleven was left alone, as `E-824` demands: `C1` to `C47` spans 47 items, 36 + 11 = 47, `C.2` has 49 rows and section C is headed 96. The label was the fault, and the label is what changed.
+
+**Price.** Twenty-one corrections in a binding document are twenty-one chances to have changed what a requirement obliges while believing one was fixing a typo. Two thresholds now carry smaller numbers than they did — 12/12 and 3/3 — and a reader who remembers `20/20` will read that as a weakened test rather than as a threshold that was never satisfiable. The check that proves both files moved together proves only that: it compares structure and names, so a correction that changed the meaning of the German and of the English in the same way passes every assertion in it.
+
+### Three repairs the reports left underspecified
+`E-846` · specfix · specification, corrected
+
+**Context.** `E-822` and `E-823` name each defect by its symptom. Three of them admit more than one repair, and choosing between the repairs is nearer a decision than a correction.
+
+**Rejected.** Reporting all three instead of repairing them. Rejected because each has a repair that leaves every requirement meaning what it meant, and reporting them would have handed wave 5 the same document with a longer list attached.
+
+**Reason.** The first: 3.15 B.4 says "all three writing methods" and, four sentences later, "`validate` from A.4 runs before hashing in all three methods". The second sentence is a back-reference to the same set, and with the set at four the phrase names no set at all; both now say four. That settles, rather than leaves open, whether `validate` runs on `redeemReset` — A.4 and L-7 say it runs on setting and changing and never on sign-in, and `redeemReset` sets a password. The second: 4.1 c) maps `mfa_factors.updated_at` and `mfa_factors.created_at`, which 4.1 b) does not list. b) gained the row, in the shape its `users.created_at` row already uses; c) is untouched, because deleting a mapping would change what the migration writes. The third: the CVSS separator went to the point, which the 33 rows of 5.19, section 5's prose and `E-21` already use; the ten commas were the outliers. Measurements keep the German decimal comma — factor 1,6, 1,9 GB, the dudect threshold 4,5, the percentage shares in 2.N — because those are decimals in a German sentence and not scores.
+
+**Price.** The first is the one to distrust. The old sentence was wrong in a way that left the reader to guess which three of the four methods were meant, and the new one answers the question the old one raised. If the project ever meant `validate` to skip `redeemReset`, that intent is now written out of the document, and nothing in the wording marks the spot where it was lost.
+
+### Replacing a false claim means writing a true one
+`E-847` · specfix · specification, corrected
+
+**Context.** 5.19's evaluation named `S-LINK-1` as the requirement preventing the class with the highest CVSS values. The LINK rows are #16 at 8.3, #17 at 7.7 and #31 at 8.3; the table's highest are #30 at 9.9, #18 at 9.6, and #11 and #20 at 9.1. No reading makes the sentence true — not over the whole table, and not over the fifteen directly transferable advisories, whose highest is #11 at 9.1.
+
+**Rejected.** Striking the clause and leaving `S-LINK-1` in the list with no reason beside it. Also rejected: replacing it with the count alone, "prevents the class with 3 advisories", which is true and reads as an argument against keeping the requirement among the three with the greatest leverage.
+
+**Reason.** The replacement is the short summary's own characterisation of the same class: three advisories on unverified email as proof of identity, an account takeover every time. Using words the document already carries about the class it is describing is the nearest available thing to not writing a new claim at all. It is still a new claim, which is why it is recorded here rather than left in a commit message.
+
+**Price.** This is the only correction in the pass that writes a sentence instead of fixing a number, and a reader comparing the two versions cannot tell from the text that the old superlative was false rather than merely unsupported. The evaluation now offers no CVSS argument for `S-LINK-1` at all, and whether it belongs among the three requirements with the greatest leverage is a question the corrected sentence does not answer.
+
+### `T-REDIR-2` is a decision and not a repair
+`E-848` · specfix · test threshold, open
+
+**Context.** `T-REDIR-2` prescribes a vector file with at least 120 malicious inputs, fixes the threshold at 120/120 rejected with 0 false negatives, and says in the same cell that the corpus grows by the vector with every finding. A fixed number and a growing corpus cannot both stand: the first finding makes the corpus 121 and the threshold stale by construction.
+
+**Rejected.** Correcting it in either direction. Pinning the corpus at 120 drops the growth rule, and making the threshold follow the corpus replaces a number fixed in advance with one that is not, which is the property section 6 requires of a threshold. Both change what the test demands, and that is the project's to decide.
+
+**Reason.** The recommendation, offered and not applied: `n/n rejected, 0 false negatives, n ≥ 120`. It keeps the floor of 120, keeps the growth rule, keeps the demand that every vector be rejected, and is the only form of the three that is still true after the first finding is added. It is a recommendation because it is the threshold that changes, and no defect list authorises that.
+
+**Price.** The document goes to wave 5 with one of its twenty recorded defects still in it, and it is the one a reader is most likely to act on wrongly, because `120/120` reads as a decided number rather than an expired one.
+
+### Two contradictions the three reports do not name
+`E-849` · specfix · specification, reported not repaired
+
+**Context.** Confirming twenty defects means reading their neighbourhoods, and two more turned up there.
+
+**Rejected.** Repairing either of them on this branch. Rejected because both need a fact this branch does not have, and inventing it is how a repair becomes a decision.
+
+**Reason.** 4.4 a) says the Firebase export file and four hash parameters that are not in it are both needed, and that the four come by hand from the console. Section 6's procedure for obtaining an `$fbscrypt$` test vector says `firebase auth:export` delivers them in the header of its output. One of the two is wrong about the tool, and which one is a question about `firebase-tools` rather than about the document. The second is smaller: 4.2 a) and 4.2 c) call the Clerk field `external_accounts`, while 4.2 b) lists it as `externalAccounts[]` and enumerates its sub-fields. Both spellings exist in Clerk's surface, so the mapping does not dangle the way 4.4 c)'s `hash_config` did, and naming one of them correct requires knowing which surface b) describes.
+
+**Price.** Two more defects are recorded and unrepaired, which is the state the twenty were in before this branch, and this is the fourth entry in a chain about one document's mistakes. The Firebase one is the one that costs: a reader who follows section 6 to build the `$fbscrypt$` test vector and finds no parameters in the export header has no way to tell whether the tool changed or the sentence was always wrong.
+
+### `T-REDIR-2` was decided, and not on this branch
+`E-850` · specfix · test threshold, frozen
+
+**Context.** `E-848` left `T-REDIR-2` open: the cell demanded 120/120 over a corpus its own procedure grows with every finding, both directions of repair change what the test demands, and a list of defects does not authorise that. The project took the decision and named the form — `n/n abgelehnt, 0 falsch-negativ`, with `n ≥ 120`, and the English to match — and the reasoning is theirs and belongs on the record as theirs: the cell as written demands two things that cannot both hold, every vector rejected and exactly 120 of them, and the growth rule in the same cell guarantees the second becomes false at the first finding. The form keeps the floor of 120, keeps the growth rule, keeps every vector and none false-negative, and is the only wording that survives the corpus doing what the same cell requires it to do. It changes the number and not the obligation.
+
+**Rejected.** Restating `E-848` in place, so that the log would read as though this branch had decided it. Rejected under the rule this project has recorded as a finding four times: a measurement may be restated before merge and a reason may not, and `E-848`'s reason is the reason the branch did not decide. `E-848`'s Price says the document goes to wave 5 with one of its twenty recorded defects still in it. It does not, and that sentence stands as written.
+
+**Reason.** The distinction deserves its own entry because it is invisible in the diff. The specification now carries a threshold in the shape this branch proposed, and nothing in the file says who chose it. A reader who finds `n/n … n ≥ 120` and traces it to a branch named for fixing defects will read a repair where there was a decision, and whoever later wants to change it will think they are arguing with a typo rather than with the project.
+
+**Price.** Twenty recorded defects are now twenty addressed, which reads as though the list had been uniformly mechanical. It was not: nineteen were errors of fact, of arithmetic or of typography, and this one was a choice between two things the specification could demand. Only the log says which was which, and only the log names who made the choice.
+
+### Which of the two Firebase statements is the one that matters
+`E-851` · specfix · specification, reported not repaired
+
+**Context.** `E-849` records that 4.4 a) and section 6 disagree about whether `firebase auth:export` carries the four hash parameters in its output header, and leaves it unrepaired because settling it needs a fact about `firebase-tools` rather than about the document. One thing about that pair was left out: the two statements are not read by the same person, and if only one of them is ever corrected, section 6 is the one that matters.
+
+**Rejected.** Adding that sentence to `E-849`'s Price, which is where it reads most naturally and where a reader of the finding would meet it. Rejected because a measurement may be restated in place before merge and a reason may not, and a sentence telling the reader which of two sites to act on first is new material in the part of an entry that carries consequence. `E-796` records exactly this addition, disclosed in the commit message and still a violation.
+
+**Reason.** 4.4 a) is read by whoever plans a Firebase migration; section 6's procedure is read by whoever builds the `$fbscrypt$` test vector, and 4.4 a) itself makes a passed `verify()` run mandatory before the write run. A migration plan that names the wrong source for four parameters costs an afternoon of looking in the wrong place. A test vector that cannot be built costs the only check that the hash carry-over for the one source with a non-trivial scheme actually works, and it costs it before anybody has noticed.
+
+**Price.** A one-sentence ordering now costs an entry with four parts, and a reader of `E-849` reaches it only by reading forward. That is the shape the no-restatement rule produces, and it is the second chain this branch has produced for that reason in one afternoon.
+
+### The repair made a fresh instance of the defect it repaired
+`E-852` · specfix · specification, corrected
+
+**Context.** Correcting 5.13 (b) from "the most productive source of faults" to "the second most productive" was right against 5.10's ten of thirty-three. It was also incomplete: `H25`, in section 1, carried the identical phrase for the same class and named GHSA-36rg-gfq2-3h56, GHSA-vp58-j275-797x and CVE-2025-27143 — three of the five advisories 5.13 (b) lists. Before this branch `H25` and 5.13 agreed and only 5.10 disagreed with them. After the first correction they contradicted each other, which is worse than the state they were in. `H25` now says second, in both files. The gate found it; no entry named it.
+
+**Rejected.** Adding `T-RATE-3` to `E-846`'s enumeration, which would be new material in a reason. Also rejected: correcting `E-29`, whose reason calls the unverified-email class "the most frequent grave class of fault of all" over three advisories — that is a decision's argument, it is qualified by "grave", and rewriting it would change what `E-29` decided rather than what it counts. It is left as found, and named here so the next reader does not have to find it twice.
+
+**Reason.** Three things, and the first is the one worth carrying forward. **A repair's blast radius is the phrase, not the line.** A claim that ranks something turns up wherever the ranking is useful, and correcting one site of a repeated claim turns a document that was uniformly wrong into one that disagrees with itself — the reader can no longer tell which site to trust, and the contradiction is newer than the defect. The scan that catches it is one command over the phrase and its English form, it was not run when the correction was made, and running it now leaves 5.10, `E-29`, and one remark about CI runners in an unrelated domain.
+
+Second: `T-RATE-3` belongs with the repairs in `E-846` and is not in it. Lowering `6/6` to `3/3` was one of two repairs; the other was writing three more constellations so that the enumeration met the number. The judgement was the same one `T-RATE-1` got — the number follows the enumeration and not the other way round — and it is a judgement, not a reading. `E-845`'s Price discloses the consequence, that two thresholds now carry smaller numbers, but as a risk rather than as a choice between two repairs, which is what `E-846` is for.
+
+Third: the pull request claimed that `test/architecture-translation.test.ts` passing is the evidence that every correction landed in both files. The conclusion is true and the inference is not. The gate planted six one-sided reverts of these corrections and four of them passed the test: `headingShapes()` keeps a heading's level and its section number and discards the parenthesised count, so `(54)` put back to `(44)` in one file is invisible to it, and so are `23 · 14`, `12/12` and a deleted horizontal rule. Of the twenty corrections that had to land in both files, exactly one — the row added to 4.1 b) — would have failed the test one-sided, because it is the only one that changes a table's height. What actually verified the pair was the gate's hunk-by-hunk comparison: 23 German hunks against 19 English, the four German-only ones being the CVSS separators the English never needed. The pull request now says that instead.
+
+**Price.** The check keeps a blind spot that this entry describes and does not close: nothing compares the counts in parentheses in the two files' headings, nothing compares a threshold cell, and nothing compares prose. Nineteen of the twenty corrections that touch both files therefore rest on a reader having applied them twice, which is what happened and is not what a check is for. Widening `headingShapes()` to carry the count would close part of it and belongs to whoever owns that test rather than to a branch correcting the document it reads. And this entry is itself the fourth link in a chain about one document's mistakes, which `E-824` said would be the point to ask whether the chain should stop.

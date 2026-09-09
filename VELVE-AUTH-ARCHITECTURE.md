@@ -137,7 +137,7 @@ Source references are relative to `/home/claude/better-auth/` and come from the 
 | A51 Health endpoint `GET /ok` | Delivers `{ok:true}` (`api/routes/ok.ts`) | Omit | The application takes it over. A health check belongs to the application, not to a library that runs in the same process. |
 | A52 Error page `GET /error` | HTML in dev, 302 in prod (`api/routes/error.ts:374-437`) | Omit | Nobody renders HTML. Velve Auth delivers stable error codes (section 3.13); the application displays them. Reflecting a query parameter back as HTML was GHSA-9x4v-xfq5-m8x5. |
 
-**A: Adopt 26 · Solve differently 11 · Omit 12 · Surpass 3**
+**A: Adopt 23 · Solve differently 14 · Omit 12 · Surpass 3**
 
 ---
 
@@ -198,7 +198,7 @@ Source references are relative to `/home/claude/better-auth/` and come from the 
 
 ### C. Social sign-in / OAuth (96)
 
-#### C.1 Built-in providers (36) and generic OAuth helpers (11) — grouped
+#### C.1 Built-in providers (36) and generic OAuth (11) — grouped
 
 | Feature | Better Auth | Velve Auth | Reasoning |
 |---|---|---|---|
@@ -564,7 +564,7 @@ plugins themselves are already contained in A–M and are not counted twice here
 | H22 `getSessionCookie` helper | Reads the session cookie outside the handler (`cookies/index.ts:579-586`) | Adopt | Adopted, with the express note that the presence of a cookie is not an authentication. |
 | H23 `trustedOrigins` static | A list of permitted origins (`auth/trusted-origins.ts`) | Adopt | As `origins: [...]`; a mandatory statement without a default. |
 | H24 `trustedOrigins` dynamic | A function per request (`init-options.ts:1383`) | Omit | Nobody. A function per request makes the CSRF boundary dependent on application code that in the error case permits everything; tenants enter their origins into the list. |
-| H25 `trustedOrigins` wildcards | `*.example.com`, protocol-specific and protocol-agnostic (`trusted-origins.ts:125-138`) | Omit | Nobody. Only exact origins. Prefix and wildcard comparisons were the project's most productive source of errors: GHSA-36rg-gfq2-3h56 (`startsWith`), GHSA-vp58-j275-797x (token exfiltration), CVE-2025-27143 (`//evil.com`). |
+| H25 `trustedOrigins` wildcards | `*.example.com`, protocol-specific and protocol-agnostic (`trusted-origins.ts:125-138`) | Omit | Nobody. Only exact origins. Prefix and wildcard comparisons were the project's second most productive source of errors: GHSA-36rg-gfq2-3h56 (`startsWith`), GHSA-vp58-j275-797x (token exfiltration), CVE-2025-27143 (`//evil.com`). |
 | H26 Custom schemes | `myapp://`, `chrome-extension://`, `exp://**` by string decomposition instead of `new URL()` (`trusted-origins.ts:32-73`) | Solve differently | Non-HTTP schemes are entered as a complete, exact origin and compared as such; no string decomposition of one's own and no `**`. A self-built URL parser alongside the built-in one is a parser differential (cf. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect URL validation | Rejects `//`, `\`, control characters, `%2f` (`trusted-origins.ts:14-105`) | Solve differently | Complete URLs are not taken in at all: `redirect_path` is a path, held server-side (section 3.10). What one does not take in one does not have to validate — five advisories of this class (no. 1, 3, 4, 5, 25 in the security report) could not have arisen that way. |
 | H28 `originCheckMiddleware` | Origin/referer check on all non-GET routes with a cookie (`origin-check.ts:67-151`) | Adopt | Adopted and tightened: it also runs on direct server calls and is not switchable off. |
@@ -620,7 +620,7 @@ row names why the capability is better placed there.
 | I4 Connector `AND` / `OR` | `AND` default, `OR` optional (`access.ts:87-104`) | Omit | The application takes it over; connective semantics belong to the rule, not to the library. |
 | I5 Default statements organization | `organization[…]`, `member[…]`, `invitation[…]`, `team[…]` (`organization/access/statement.ts:3-41`) | Omit | The application takes it over. A bundled vocabulary for organisations presupposes that organisations exist — here they do not. |
 
-#### I.2 Organization plugin (44)
+#### I.2 Organization plugin (54)
 
 | Feature | Better Auth | Velve Auth | Reasoning |
 |---|---|---|---|
@@ -2063,13 +2063,13 @@ interface SetPasswordResult {
 }
 ```
 
-All three writing methods revoke **all other** sessions and return a new token.
+All four writing methods revoke **all other** sessions and return a new token.
 That is not a switch; a field `revokeOtherSessions` does not exist. `set` is for
 accounts without a password credential and fails when one already exists — two methods
 instead of an optional `currentPassword`, because an optional current password is exactly the
 gap through which one overwrites foreign passwords. `redeemResetWithRecoveryCode` is the
 path that 3.4 presupposes in mode `username`; it consumes the code by `DELETE … RETURNING`
-and produces no new ones. `validate` from A.4 runs before hashing in all three methods.
+and produces no new ones. `validate` from A.4 runs before hashing in all four methods.
 
 ##### B.5 `email` (4) and `username` (2)
 
@@ -3048,7 +3048,7 @@ Three numbers refuse the write run as long as they are not explicitly acknowledg
 
 #### 4.0.3 Idempotence
 
-**Decision: a mapping table `velve.import_mapping` **plus** `ON CONFLICT DO NOTHING` on every target table. Both, not one of the two.**
+**Decision: a mapping table `velve.import_mapping` plus `ON CONFLICT DO NOTHING` on every target table. Both, not one of the two.**
 
 `imported_from` alone is not enough: the column holds only a source name (section 3.2), no source ID; a second run could not decide whether *this* record is already there. Nor can the source ID simply become `velve.user.id`, because in three of five sources it is not a UUID — Clerk `user_2abc…`, Auth0 `auth0|abc123`, Firebase `OzDdXA7LwoR7lX2MH7AXaEmmn5u2`. And `ON CONFLICT DO NOTHING` alone is likewise not enough: the natural conflict would be the email, which in section 3.2 is nullable and unique only through a partial unique index — for users without an email there is no conflict at all, and a second run duplicates them.
 
@@ -3183,6 +3183,7 @@ The simplest case: the auth data lie in the same PostgreSQL to which the custome
 | `mfa_factors.secret` | `text` | **TOTP secret** — possibly encrypted |
 | `mfa_factors.factor_type` | `text` | `totp` / `phone` / `webauthn` |
 | `mfa_factors.friendly_name` | `text` | display name |
+| `mfa_factors.created_at` / `updated_at` | `timestamptz` | |
 | `mfa_factors.web_authn_credential` / `web_authn_aaguid` | `jsonb`/`uuid` | passkey credential / authenticator model |
 
 The identity struct has **no** token columns: GoTrue does not persist provider tokens (ibid.).
@@ -3235,7 +3236,7 @@ scheme(h) = h.startsWith("$2") ? "bcrypt" : h.startsWith("$argon2id$") ? "argon2
           : UNUSABLE("malformed");     phc = h    // unchanged in all cases
 ```
 
-The `$fbscrypt$` case is the reason why section 3.3 chose exactly this format: Supabase retrofitted it after Issue #1750/PR #1768 (<https://github.com/supabase/auth/issues/1750>), Velve Auth adopts it 1:1 (`FirebaseScryptKeyLen = 32` on both sides). With that, the Supabase carry-over for all three families is pure copying of the string; it is encrypted only when written (L-2). After the first login `needsRehash` is true in all three cases and the hash silently moves to Argon2id (section 3.3, step 5, and section 4.6).
+The `$fbscrypt$` case is the reason why section 3.3 chose exactly this format: Supabase retrofitted it after Issue #1750/PR #1768 (<https://github.com/supabase/auth/issues/1750>), Velve Auth adopts it 1:1 (`FirebaseScryptKeyLen = 32` on both sides). With that, the Supabase carry-over for all three families is pure copying of the string; it is encrypted only when written (L-2). After the first login `needsRehash` is true in all three cases and the hash silently moves to Argon2id (section 3.3, step 6, and section 4.6).
 
 #### e) What comes with it
 
@@ -3598,7 +3599,7 @@ The CLI converts `passwordHash` and `salt` from URL-safe into normal Base64 and 
 | `disabled` | `velve.user.disabled_at` | `true` → `now()` |
 | — | `velve.user.imported_from` / `.imported_at` | `'firebase'` / `now()` |
 | `createdAt` | `velve.user.created_at` | `new Date(parseInt(s, 10))`, plausibility 2000–2100 |
-| `passwordHash` + `salt` + `hash_config` | `velve.password_credential.phc` | `$fbscrypt$` string per d), encrypted under `password-enc` (L-2) |
+| `passwordHash` + `salt` + `hash_config` from a) | `velve.password_credential.phc` | `$fbscrypt$` string per d), encrypted under `password-enc` (L-2) |
 | — | `velve.password_credential.scheme` | `'fbscrypt'`, plaintext |
 | — | `velve.password_credential.key_version` | current version of the key `password-enc` (L-2) |
 | `providerUserInfo[].providerId` | `velve.identity.provider` | strip the `.com` suffix (`google.com`→`google`, `apple.com`→`apple`, …); `password` and `phone` produce **no** identity |
@@ -3773,7 +3774,7 @@ Better Auth style "salt_hex:hash_hex":
     scheme = "scrypt"          (N = 16384 = 2^14, r = 16, p = 1, dkLen = 64; section 3.3)
 ```
 
-Two peculiarities of the Better Auth format, documented in `@better-auth/utils` (findings report `findings/06-krypto-bibliotheken.md`, "Die präfixlosen Formate"): the salt goes into scrypt as an **ASCII hex string of 32 bytes**, not as the 16 decoded bytes — hence `ascii(salt_hex)` and not `hexToBytes(salt_hex)`. And the password is **NFKC-normalised** before the call (`password.normalize("NFKC")`, `packages/better-auth/src/crypto/password.test.ts:75–76`). `Section 3.3 lays down NFKC before every KDF call; converted Better Auth hashes therefore also verify for passwords outside ASCII. The `verify()` test vector for this format must therefore contain a non-ASCII password.
+Two peculiarities of the Better Auth format, documented in `@better-auth/utils` (findings report `findings/06-krypto-bibliotheken.md`, "Die präfixlosen Formate"): the salt goes into scrypt as an **ASCII hex string of 32 bytes**, not as the 16 decoded bytes — hence `ascii(salt_hex)` and not `hexToBytes(salt_hex)`. And the password is **NFKC-normalised** before the call (`password.normalize("NFKC")`, `packages/better-auth/src/crypto/password.test.ts:75–76`). Section 3.3 lays down NFKC before every KDF call; converted Better Auth hashes therefore also verify for passwords outside ASCII. The `verify()` test vector for this format must therefore contain a non-ASCII password.
 
 Everything else goes through `passwordSource.custom`, a pure function `(raw: string) => PasswordOutcome`. It may only issue into one of the PHC strings from section 3.3 or return `unusable` — it may **not** invent a new format. `ESTIMATE:` bcrypt via `bcryptjs` is the most widespread in Auth.js projects; that is not documented. `verify()` is mandatory here too: a self-built password field is the most error-prone of all five sources, because nobody but the project knows what is in it.
 
@@ -3818,7 +3819,7 @@ User IDs (unchanged with UUID adapters) · email and a **real confirmation times
 
 ### 4.6 Comparison with Better Auth's migration route
 
-In **all three** password guides Better Auth recommends switching the global hash hook to bcrypt — Supabase: `docs/content/docs/guides/supabase-migration-guide.mdx:969–971` ("By default, Better Auth uses the `scrypt` algorithm to hash passwords. Since Supabase uses `bcrypt`, you'll need to configure Better Auth to use bcrypt for password verification.", followed by a `password.hash`/`password.verify` pair with `bcrypt.hash(password, 10)`), word for word in `auth0-migration-guide.mdx:595` and `:608–617`, to the same effect in `clerk-migration-guide.mdx:47` and `:61–74`. That is wrong for four reasons. **First, the hook is global and not per record:** it is also used for new registrations and every password change, so a one-off carry-over measure becomes a permanent downgrade of the default scheme — the project hangs on bcrypt(10) forever and for all users, and the guides mention that nowhere. **Second, it works only with homogeneous populations:** a Supabase tenant can contain three hash families (<https://github.com/supabase/auth/issues/1750>), a Clerk tenant up to 19 (<https://clerk.com/docs/reference/backend/user/create-user>), an Auth0 tenant eleven (<https://auth0.com/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples>); a pure bcrypt hook fails on every record that is not bcrypt — as a sign-in error without explanation. The Auth0 guide half recognises this and pushes it onto the reader ("For custom password hashing algorithms, you'll need to modify the `migratePassword` function", `auth0-migration-guide.mdx:588`, to the same effect once more at `:713`). **Third, the rehash is missing:** because the global hook makes the scheme into the new constant, there is no way back; the imported hashes never get better, not even after years. **Fourth, it cements a known weakness:** bcrypt truncates inputs at 72 bytes, and whoever stays globally on bcrypt keeps this truncation permanently instead of being rid of it at the first login. — **Velve Auth does three things instead:** the scheme stands *per record* in the canonical PHC string, the switch decides on the prefix (section 3.3), and the default remains Argon2id unchanged — an import does not change the application's password policy. At the first successful login `needsRehash` is true for every foreign hash, and the record is silently, without user interaction, raised to Argon2id by compare-and-swap (section 3.3, step 5, and section 4.6). A population with three or nineteen schemes is thereby not a problem but a statistic that the dry run reports and that goes towards zero in the weeks after the switchover. In addition: Better Auth has **no guide for Firebase at all** — there are guides for Supabase, Clerk, Auth0, Auth.js and WorkOS, but for the one source with a non-trivial hash scheme of all things, none (findings report `findings/05-migrationsquellen.md`, section 6).
+In **all three** password guides Better Auth recommends switching the global hash hook to bcrypt — Supabase: `docs/content/docs/guides/supabase-migration-guide.mdx:969–971` ("By default, Better Auth uses the `scrypt` algorithm to hash passwords. Since Supabase uses `bcrypt`, you'll need to configure Better Auth to use bcrypt for password verification.", followed by a `password.hash`/`password.verify` pair with `bcrypt.hash(password, 10)`), word for word in `auth0-migration-guide.mdx:595` and `:608–617`, to the same effect in `clerk-migration-guide.mdx:47` and `:61–74`. That is wrong for four reasons. **First, the hook is global and not per record:** it is also used for new registrations and every password change, so a one-off carry-over measure becomes a permanent downgrade of the default scheme — the project hangs on bcrypt(10) forever and for all users, and the guides mention that nowhere. **Second, it works only with homogeneous populations:** a Supabase tenant can contain three hash families (<https://github.com/supabase/auth/issues/1750>), a Clerk tenant up to 19 (<https://clerk.com/docs/reference/backend/user/create-user>), an Auth0 tenant eleven (<https://auth0.com/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples>); a pure bcrypt hook fails on every record that is not bcrypt — as a sign-in error without explanation. The Auth0 guide half recognises this and pushes it onto the reader ("For custom password hashing algorithms, you'll need to modify the `migratePassword` function", `auth0-migration-guide.mdx:588`, to the same effect once more at `:713`). **Third, the rehash is missing:** because the global hook makes the scheme into the new constant, there is no way back; the imported hashes never get better, not even after years. **Fourth, it cements a known weakness:** bcrypt truncates inputs at 72 bytes, and whoever stays globally on bcrypt keeps this truncation permanently instead of being rid of it at the first login. — **Velve Auth does three things instead:** the scheme stands *per record* in the canonical PHC string, the switch decides on the prefix (section 3.3), and the default remains Argon2id unchanged — an import does not change the application's password policy. At the first successful login `needsRehash` is true for every foreign hash, and the record is silently, without user interaction, raised to Argon2id by compare-and-swap (section 3.3, step 6). A population with three or nineteen schemes is thereby not a problem but a statistic that the dry run reports and that goes towards zero in the weeks after the switchover. In addition: Better Auth has **no guide for Firebase at all** — there are guides for Supabase, Clerk, Auth0, Auth.js and WorkOS, but for the one source with a non-trivial hash scheme of all things, none (findings report `findings/05-migrationsquellen.md`, section 6).
 
 ---
 
@@ -3861,6 +3862,8 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 - **S-TIM-5:** The rehash after a successful sign-in (`needsRehash`) runs in a background task **after** the response has been sent and does not lengthen the measured response time of the sign-in. *(Section 3.3 step 6: "after sending the response in a bounded background task")*
 - **S-TIM-6:** Every endpoint whose response must be identical for existing and non-existing accounts has exactly one code path that performs the same work regardless of the outcome: at password endpoints one KDF call with identical parameters (S-TIM-2), at endpoints without a KDF — request reset, request magic link; the confirmation is requested only from a session and has no non-existence branch (B.5) — the same sequence of database queries and in every case exactly one call of the send callback, in which it is only then decided which message goes out. The account-related rate counter is advanced on the same row for both cases (S-RATE-7). There is no configurable minimum response duration. *(Section 3.16, L-1; section 3.13: "Server-side the true reason is always logged")*
 - **S-TIM-7:** The state `email_verified_at IS NULL` does not influence the sign-in: it delivers the same session as with a confirmed address, and the state is visible exclusively as `User.emailVerifiedAt` in the result. There is no lock on unconfirmed accounts (section 1, A5). *(Section 3.15, B.1 and B.5)*
+
+---
 
 ### 5.2 FIX — Session fixation
 
@@ -3951,7 +3954,7 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 ### 5.7 RATE — Rate limiting
 
-**(a) The error class.** A rate limiter consists of a key, a counter, a window and a reaction, and every part can be broken. The key faults dominate: the full IPv6 address instead of the prefix gives an attacker with a `/64` sixty-two-digit numbers of buckets; the textual representation of the same address yields several buckets; an unchecked `X-Forwarded-For` lets the client choose its bucket itself; and a raw path as a key component separates `//sign-in` from `/sign-in`. A hard account lock is not a protection but a denial of service against a known user.
+**(a) The error class.** A rate limiter consists of a key, a counter, a window and a reaction, and every part can be broken. The key faults dominate: the full IPv6 address instead of the prefix gives an attacker with a `/64` 2^64 buckets; the textual representation of the same address yields several buckets; an unchecked `X-Forwarded-For` lets the client choose its bucket itself; and a raw path as a key component separates `//sign-in` from `/sign-in`. A hard account lock is not a protection but a denial of service against a known user.
 
 **(b) The precedent.** GHSA-p6v2-xcpg-h6xw / CVE-2026-45364 (7.3 High, CWE-307, fix 1.4.17): the key was the textual IP without normalisation, so that a client with a `/64` prefix could create 2^64 buckets. GHSA-x732-6j76-qmhm (8.6 High, fix 1.4.5): the `rou3` router collapses empty path segments, so that `//sign-in/email` hits the same route but runs past path rate limits.
 
@@ -4080,7 +4083,7 @@ The research report records: "**every single one** would have been prevented by 
 
 **(a) The error class.** A URL string delivered by the client is taken over into a `Location` header entry after the completion of a flow. The check fails on parser differentials: `//evil.com` is protocol-relative, `/\evil.com` is read by browsers as a slash, `https://trusted.de.evil.com` passes a suffix test, `https://trusted.de@evil.com` hides the real host behind userinfo, and `javascript:` is not a navigation at all but script execution in its own origin. The damage is rarely the redirect itself but the `Referer`, which takes the token along.
 
-**(b) The precedent.** Five advisories, the most productive source of faults in the project: GHSA-8jhw-6pjj-8723 / CVE-2024-56734 (7.9 High, `callbackURL` without domain validation), GHSA-hjpm-7mrm-26w8 / CVE-2025-27143 (6.9 Moderate, `https://evil.com` blocked, `//evil.com` not), GHSA-vp58-j275-797x (7.1 High, "craft a malicious link containing sensitive tokens (like password-reset tokens) to enable one-click account takeover"), GHSA-36rg-gfq2-3h56 / CVE-2025-53535 (2.1 Low, `startsWith`), GHSA-86j7-9j95-vpqj (7.7 High, CWE-79/601, `javascript:` as `redirect_uri`).
+**(b) The precedent.** Five advisories, the second most productive source of faults in the project: GHSA-8jhw-6pjj-8723 / CVE-2024-56734 (7.9 High, `callbackURL` without domain validation), GHSA-hjpm-7mrm-26w8 / CVE-2025-27143 (6.9 Moderate, `https://evil.com` blocked, `//evil.com` not), GHSA-vp58-j275-797x (7.1 High, "craft a malicious link containing sensitive tokens (like password-reset tokens) to enable one-click account takeover"), GHSA-36rg-gfq2-3h56 / CVE-2025-53535 (2.1 Low, `startsWith`), GHSA-86j7-9j95-vpqj (7.7 High, CWE-79/601, `javascript:` as `redirect_uri`).
 
 **(c) The requirements.**
 
@@ -4184,7 +4187,7 @@ The research report records: "**every single one** would have been prevented by 
 
 ### 5.19 Coverage table: the 33 Better Auth advisories
 
-Every row names the advisory, its error class and the Velve Auth requirements that exclude this class — or the reason why the class cannot exist in Velve Auth. "Not applicable" means: the affected function is explicitly not part of the product per section 3.14. Where the function is missing but the *class* would nevertheless be structurally prevented by a requirement, this requirement is named in parentheses — it protects the plugins that could retrofit this function.
+Every row names the advisory, its error class and the Velve Auth requirements that exclude this class — or the reason why the class cannot exist in Velve Auth. "Not applicable" means: the affected function is explicitly not part of the product per section 3.14. Where the function is missing but the *class* would nevertheless be structurally prevented by a requirement, this requirement is named explicitly as the preventing one in the requirement column — it protects the plugins that could retrofit this function.
 
 | # | GHSA | CVE / CVSS | Class | Velve Auth requirement |
 |---|---|---|---|---|
@@ -4222,9 +4225,8 @@ Every row names the advisory, its error class and the Velve Auth requirements th
 | 32 | GHSA-8c5h-wx78-2cfg | —, 8.1 | SSO domain ownership: TOCTOU and missing verification | Not applicable, because Velve Auth has no domain verification (section 3.14). The TOCTOU class is prevented by S-RACE-2 |
 | 33 | GHSA-hq75-xg7r-rx6c | —, 4.9 | `better-call` routing → cache deception | Not applicable, because Velve Auth uses no third-party router: the route is declared once and the handler is generated from it (section 3.12). The class is prevented by S-RATE-5, S-CACHE-1 and `Cache-Control: no-store` on every response (L-6) |
 
-**Evaluation.** Of 33 advisories, **15 are directly transferable to Velve Auth** (#1–#5,
-#7, #9–#13, #16, #21, #24, #31 — of these #9 and #21 only partly) and **18 are not
-applicable, because the affected function does not exist per section 3.14**. Of the 18 not applicable ones, 15 would additionally be excluded by a structural requirement if a plugin retrofitted the function; the three remaining ones (#19, #20, #26) concern roles and token issuance, for which there is no counterpart in the core. The three requirements with the greatest leverage are S-OWNER-1 (the actor obligation, prevents the class with 10 advisories), S-RACE-2 together with S-REPLAY-2 (atomic consumption as the only path, prevents replay, race and purpose confusion) and S-LINK-1 (the email is not a key, prevents the class with the highest CVSS values).
+**Evaluation.** Of 33 advisories, **15 are directly transferable to Velve Auth** (#1–#5, #7, #9–#13, #16, #21, #24, #31 — of these #9 and #21 only partly)
+and **18 are not applicable, because the affected function does not exist per section 3.14**. Of the 18 not applicable ones, 15 would additionally be excluded by a structural requirement if a plugin retrofitted the function; the three remaining ones (#19, #20, #26) concern roles and token issuance, for which there is no counterpart in the core. The three requirements with the greatest leverage are S-OWNER-1 (the actor obligation, prevents the class with 10 advisories), S-RACE-2 together with S-REPLAY-2 (atomic consumption as the only path, prevents replay, race and purpose confusion) and S-LINK-1 (the email is not a key, prevents the class that was an account takeover every time).
 
 ---
 
@@ -4348,9 +4350,9 @@ To each of the 123 requirements from section 5 belongs a test case. The test ID 
 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
-| T-RATE-1 | S-RATE-1 | Unit, table-driven | Vector table input → expected key: `2001:db8::1`, `2001:0db8:0000:…:0001`, `2001:DB8::1`, `2001:db8:0:0:ffff::9999` → all `2001:db8::/64`; `::ffff:203.0.113.5` and `203.0.113.5` → equal; `::1`; `0.0.0.0`; `::`; empty string; `not-an-ip`; `1.2.3.4, 5.6.7.8`. | **20/20 vectors correct** | CI on every commit |
+| T-RATE-1 | S-RATE-1 | Unit, table-driven | Vector table input → expected key: `2001:db8::1`, `2001:0db8:0000:…:0001`, `2001:DB8::1`, `2001:db8:0:0:ffff::9999` → all `2001:db8::/64`; `::ffff:203.0.113.5` and `203.0.113.5` → equal; `::1`; `0.0.0.0`; `::`; empty string; `not-an-ip`; `1.2.3.4, 5.6.7.8`. | **12/12 vectors correct** | CI on every commit |
 | T-RATE-2 | S-RATE-2 | Integration | 1000 requests from 1000 addresses out of one `/64`; counter-check 1000 requests from 1000 different `/64`. | Exactly **`limit` successes** in the first case; **1000 successes** in the second | CI on every commit |
-| T-RATE-3 | S-RATE-3 | Integration | (i) `trustedProxies` empty, 100 requests with a random `X-Forwarded-For` from the same socket address. (ii) `trustedProxies = ["10.0.0.0/8"]`, socket `10.0.0.5`, `XFF: 1.2.3.4, 10.0.0.9` → key `1.2.3.4`. (iii) socket `203.0.113.1` (not trusted), `XFF: 9.9.9.9` → key `203.0.113.1`. | **6/6 constellations**; in (i) exactly `limit` successes | CI on every commit |
+| T-RATE-3 | S-RATE-3 | Integration | (i) `trustedProxies` empty, 100 requests with a random `X-Forwarded-For` from the same socket address. (ii) `trustedProxies = ["10.0.0.0/8"]`, socket `10.0.0.5`, `XFF: 1.2.3.4, 10.0.0.9` → key `1.2.3.4`. (iii) socket `203.0.113.1` (not trusted), `XFF: 9.9.9.9` → key `203.0.113.1`. | **3/3 constellations**; in (i) exactly `limit` successes | CI on every commit |
 | T-RATE-4 | S-RATE-4 | Integration | Requests without a determinable peer address (Unix socket transport or a test switch set). | After `limit` requests the rejection comes; **0 skipped checks** in the counter log | CI on every commit |
 | T-RATE-5 | S-RATE-5 | Integration | Send seven path variants of the same route mixed: `/sign-in/password`, `//sign-in/password`, `/sign-in/password/`, `/./sign-in/password`, `/sign-in//password`, `/sign-in/passw%6Frd`, `/SIGN-IN/PASSWORD`. | **All 7 share one bucket**: after `limit` requests in total the rejection comes, regardless of the mixture | CI on every commit |
 | T-RATE-6 | S-RATE-6 | Concurrency | 200 requests via `Promise.all` against real Postgres at limit 20; 50 repetitions. | **Exactly 20 successes and 180 rejections in 50/50 runs, tolerance 0** | CI nightly |
@@ -4436,7 +4438,7 @@ To each of the 123 requirements from section 5 belongs a test case. The test ID 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
 | T-REDIR-1 | S-REDIR-1 | Static | Type check of the route declaration: every field that carries a redirect target has the type `RedirectPath`, never `string` or `URL`. | **0 fields of type `string`** in this role | CI on every commit |
-| T-REDIR-2 | S-REDIR-2 | Unit, corpus | Vector file with at least 120 malicious inputs: protocol-relative, backslash, userinfo, suffix, substring, port, IDN/punycode, double-encoded, `\r\n` injection, null byte, `javascript:` in 8 spellings. | **120/120 rejected, 0 false negatives**; the corpus grows by the vector with every finding | CI on every commit |
+| T-REDIR-2 | S-REDIR-2 | Unit, corpus | Vector file with at least 120 malicious inputs: protocol-relative, backslash, userinfo, suffix, substring, port, IDN/punycode, double-encoded, `\r\n` injection, null byte, `javascript:` in 8 spellings. | **n/n rejected, 0 false negatives**, with n ≥ 120; the corpus grows by the vector with every finding | CI on every commit |
 | T-REDIR-3 | S-REDIR-3 | Integration, global | Response interceptor over the entire integration suite: capture every `Location` value and check that it begins with exactly one `/` and contains neither `:` before the first `/` segment nor `//` nor `/\`; in addition count which routes set `Location` at all. | **0 `Location` values** with a scheme or a host; `Location` occurs **only** in the response of the OAuth callback | CI on every commit |
 | T-REDIR-4 | S-REDIR-4 | Integration, global | The same interceptor searches `Location` and all query strings for the token plaintexts created in this test run. | **0 hits** over the entire suite | CI on every commit |
 | T-REDIR-5 | S-REDIR-5 | Static | AST scan over `core/http/`: no `startsWith`, `includes`, `endsWith`, `RegExp` and no wildcard character in an origin comparison. | **0 hits** | CI on every commit |

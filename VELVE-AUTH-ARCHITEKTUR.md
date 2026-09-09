@@ -18,7 +18,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 *Zweitens: die E-Mail ist Pflicht und wird notfalls erfunden.* `user.email` ist `NOT NULL UNIQUE`; die Dokumentation räumt es ein (`concepts/oauth.mdx:409`), Issue #9124 ist offen. Der Ausweg ist kein Ratschlag, sondern Produktionscode: `createPlaceholderEmail` (`core/src/utils/email.ts:24`) erzeugt Adressen der Form `<id>@<ns>.placeholder.invalid` und wird an neun Stellen in acht Modulen aufgerufen — Roblox, TikTok, WeChat, Reddit, Twitter, SIWE, Anonymous, Entra ID. An diese Adressen kann kein Plugin je etwas senden.
 
-*Drittens: die Sicherheitshistorie hat ein Muster.* Von 33 Advisories entfallen **zehn** auf dieselbe Ursache — eine Autorisierungsprüfung auf einem nutzerkontrollierten Schlüssel ohne Eigentümerbindung, mechanisch: die fehlende Zeile `AND user_id = :actor`. Fünf entfallen auf unvollständige URL- und Origin-Prüfung, drei auf unverifizierte E-Mail als Identitätsbeweis (jedes Mal eine Kontoübernahme, zweimal mit CVSS 8,3). Die höchsten Einstufungen erreichen 9,9 (SCIM-Namensraumkollision) und 9,6 (SSRF im SSO-Plugin); die schwerste im Kern-Anmeldepfad ist 9,1 und entstand aus einer Funktionskombination: Der Cookie-Cache legte die Sitzung ab, bevor der zweite Faktor geprüft war. Viele der schwersten Einstufungen hingen an einem **Vorgabewert**, nicht an einem Fehler.
+*Drittens: die Sicherheitshistorie hat ein Muster.* Von 33 Advisories entfallen **zehn** auf dieselbe Ursache — eine Autorisierungsprüfung auf einem nutzerkontrollierten Schlüssel ohne Eigentümerbindung, mechanisch: die fehlende Zeile `AND user_id = :actor`. Fünf entfallen auf unvollständige URL- und Origin-Prüfung, drei auf unverifizierte E-Mail als Identitätsbeweis (jedes Mal eine Kontoübernahme, zweimal mit CVSS 8.3). Die höchsten Einstufungen erreichen 9.9 (SCIM-Namensraumkollision) und 9.6 (SSRF im SSO-Plugin); die schwerste im Kern-Anmeldepfad ist 9.1 und entstand aus einer Funktionskombination: Der Cookie-Cache legte die Sitzung ab, bevor der zweite Faktor geprüft war. Viele der schwersten Einstufungen hingen an einem **Vorgabewert**, nicht an einem Fehler.
 
 **Die Entscheidungen, die daraus folgen.**
 
@@ -135,7 +135,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | A51 Health-Endpunkt `GET /ok` | Liefert `{ok:true}` (`api/routes/ok.ts`) | Weglassen | Die Anwendung übernimmt. Ein Health-Check gehört zur Anwendung, nicht zu einer Bibliothek, die im selben Prozess läuft. |
 | A52 Fehlerseite `GET /error` | HTML in Dev, 302 in Prod (`api/routes/error.ts:374-437`) | Weglassen | Niemand rendert HTML. Velve Auth liefert stabile Fehlercodes (Abschnitt 3.13); die Anwendung stellt sie dar. Das Zurückspiegeln eines Query-Parameters als HTML war GHSA-9x4v-xfq5-m8x5. |
 
-**A: Übernehmen 26 · Anders lösen 11 · Weglassen 12 · Übertreffen 3**
+**A: Übernehmen 23 · Anders lösen 14 · Weglassen 12 · Übertreffen 3**
 
 ---
 
@@ -196,7 +196,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 
 ### C. Soziale Anmeldung / OAuth (96)
 
-#### C.1 Eingebaute Anbieter (36) und Generic-OAuth-Helfer (11) — zusammengefasst
+#### C.1 Eingebaute Anbieter (36) und Generic OAuth (11) — zusammengefasst
 
 | Funktion | Better Auth | Velve Auth | Begründung |
 |---|---|---|---|
@@ -562,7 +562,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H22 `getSessionCookie`-Helfer | Liest das Session-Cookie außerhalb des Handlers (`cookies/index.ts:579-586`) | Übernehmen | Übernommen, mit dem ausdrücklichen Hinweis, dass die Anwesenheit eines Cookies keine Authentifizierung ist. |
 | H23 `trustedOrigins` statisch | Liste erlaubter Origins (`auth/trusted-origins.ts`) | Übernehmen | Als `origins: [...]`; Pflichtangabe ohne Vorgabe. |
 | H24 `trustedOrigins` dynamisch | Funktion pro Request (`init-options.ts:1383`) | Weglassen | Niemand. Eine Funktion pro Request macht die CSRF-Grenze von Anwendungscode abhängig, der im Fehlerfall alles erlaubt; Mandanten tragen ihre Origins in die Liste ein. |
-| H25 `trustedOrigins` Wildcards | `*.example.com`, protokollspezifisch und -agnostisch (`trusted-origins.ts:125-138`) | Weglassen | Niemand. Nur exakte Origins. Präfix- und Wildcard-Vergleiche waren die produktivste Fehlerquelle des Projekts: GHSA-36rg-gfq2-3h56 (`startsWith`), GHSA-vp58-j275-797x (Token-Exfiltration), CVE-2025-27143 (`//evil.com`). |
+| H25 `trustedOrigins` Wildcards | `*.example.com`, protokollspezifisch und -agnostisch (`trusted-origins.ts:125-138`) | Weglassen | Niemand. Nur exakte Origins. Präfix- und Wildcard-Vergleiche waren die zweitproduktivste Fehlerquelle des Projekts: GHSA-36rg-gfq2-3h56 (`startsWith`), GHSA-vp58-j275-797x (Token-Exfiltration), CVE-2025-27143 (`//evil.com`). |
 | H26 Custom Schemes | `myapp://`, `chrome-extension://`, `exp://**` per String-Zerlegung statt `new URL()` (`trusted-origins.ts:32-73`) | Anders lösen | Nicht-HTTP-Schemata werden als vollständige, exakte Origin eingetragen und als solche verglichen; keine eigene String-Zerlegung und kein `**`. Ein selbstgebauter URL-Parser neben dem eingebauten ist ein Parser-Differential (vgl. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect-URL-Validierung | Lehnt `//`, `\`, Steuerzeichen, `%2f` ab (`trusted-origins.ts:14-105`) | Anders lösen | Es werden gar keine vollständigen URLs entgegengenommen: `redirect_path` ist ein Pfad, serverseitig gehalten (Abschnitt 3.10). Was man nicht annimmt, muss man nicht validieren — fünf Advisories dieser Klasse (Nr. 1, 3, 4, 5, 25 im Sicherheitsbericht) hätten so nicht entstehen können. |
 | H28 `originCheckMiddleware` | Origin/Referer-Prüfung auf allen nicht-GET-Routen mit Cookie (`origin-check.ts:67-151`) | Übernehmen | Übernommen und verschärft: sie läuft auch bei direkten Serveraufrufen und ist nicht abschaltbar. |
@@ -618,7 +618,7 @@ Zeile nennt, warum die Fähigkeit dort besser aufgehoben ist.
 | I4 Connector `AND` / `OR` | `AND` Vorgabe, `OR` optional (`access.ts:87-104`) | Weglassen | Die Anwendung übernimmt; Verknüpfungssemantik gehört zur Regel, nicht zur Bibliothek. |
 | I5 Vorgabe-Statements Organization | `organization[…]`, `member[…]`, `invitation[…]`, `team[…]` (`organization/access/statement.ts:3-41`) | Weglassen | Die Anwendung übernimmt. Ein mitgeliefertes Vokabular für Organisationen setzt voraus, dass es Organisationen gibt — die gibt es hier nicht. |
 
-#### I.2 Organization-Plugin (44)
+#### I.2 Organization-Plugin (54)
 
 | Funktion | Better Auth | Velve Auth | Begründung |
 |---|---|---|---|
@@ -1558,7 +1558,7 @@ nur, wenn *alle* Bedingungen gelten:
 3. Der Anbieter steht in `trustedProviders`.
 
 Sonst: neues Konto oder ausdrückliche Verknüpfung in einer bestehenden Sitzung.
-Better Auth las bis CVE-2026-53516 (CVSS 8,3) die zweite Bedingung nie — das
+Better Auth las bis CVE-2026-53516 (CVSS 8.3) die zweite Bedingung nie — das
 Auto-Link-Gate prüfte nur den `emailVerified`-Claim des Anbieters. Auch nach dem
 Fix sind die Bedingungen dort nicht alle verpflichtend: Ein vertrauenswürdiger
 Anbieter ersetzt die erste, und die zweite ist über
@@ -2062,13 +2062,13 @@ interface SetPasswordResult {
 }
 ```
 
-Alle drei schreibenden Methoden widerrufen **alle anderen** Sitzungen und geben ein neues Token
+Alle vier schreibenden Methoden widerrufen **alle anderen** Sitzungen und geben ein neues Token
 zurück. Das ist kein Schalter; ein Feld `revokeOtherSessions` existiert nicht. `set` ist für
 Konten ohne Passwort-Credential und schlägt fehl, wenn bereits eines existiert — zwei Methoden
 statt eines optionalen `currentPassword`, weil ein optionales aktuelles Kennwort genau die
 Lücke ist, durch die man fremde Kennwörter überschreibt. `redeemResetWithRecoveryCode` ist der
 Weg, den 3.4 im Modus `username` voraussetzt; er verbraucht den Code per `DELETE … RETURNING`
-und erzeugt keine neuen. `validate` aus A.4 läuft bei allen drei Methoden vor dem Hashen.
+und erzeugt keine neuen. `validate` aus A.4 läuft bei allen vier Methoden vor dem Hashen.
 
 ##### B.5 `email` (4) und `username` (2)
 
@@ -3046,7 +3046,7 @@ Drei Zahlen verweigern den Schreiblauf, solange sie nicht ausdrücklich quittier
 
 #### 4.0.3 Idempotenz
 
-**Entscheidung: eine Zuordnungstabelle `velve.import_mapping` **plus** `ON CONFLICT DO NOTHING` auf jeder Zieltabelle. Beides, nicht eines von beiden.**
+**Entscheidung: eine Zuordnungstabelle `velve.import_mapping` plus `ON CONFLICT DO NOTHING` auf jeder Zieltabelle. Beides, nicht eines von beiden.**
 
 `imported_from` allein reicht nicht: Die Spalte hält nur einen Quellennamen (Abschnitt 3.2), keine Quell-ID; ein zweiter Lauf könnte nicht entscheiden, ob *dieser* Datensatz schon da ist. Die Quell-ID kann auch nicht einfach `velve.user.id` werden, denn bei drei von fünf Quellen ist sie keine UUID — Clerk `user_2abc…`, Auth0 `auth0|abc123`, Firebase `OzDdXA7LwoR7lX2MH7AXaEmmn5u2`. Und `ON CONFLICT DO NOTHING` allein reicht ebenfalls nicht: Der natürliche Konflikt wäre die E-Mail, die in Abschnitt 3.2 aber nullable und nur per partiellem Unique-Index eindeutig ist — für Nutzer ohne E-Mail gibt es gar keinen Konflikt, und ein zweiter Lauf dupliziert sie.
 
@@ -3181,6 +3181,7 @@ Der einfachste Fall: Die Auth-Daten liegen im selben PostgreSQL, auf den der Kun
 | `mfa_factors.secret` | `text` | **TOTP-Secret** — ggf. verschlüsselt |
 | `mfa_factors.factor_type` | `text` | `totp` / `phone` / `webauthn` |
 | `mfa_factors.friendly_name` | `text` | Anzeigename |
+| `mfa_factors.created_at` / `updated_at` | `timestamptz` | |
 | `mfa_factors.web_authn_credential` / `web_authn_aaguid` | `jsonb`/`uuid` | Passkey-Credential / Authenticator-Modell |
 
 Das Identity-Struct hat **keine** Tokenspalten: GoTrue persistiert Anbieter-Tokens nicht (ebd.).
@@ -3233,7 +3234,7 @@ scheme(h) = h.startsWith("$2") ? "bcrypt" : h.startsWith("$argon2id$") ? "argon2
           : UNUSABLE("malformed");     phc = h    // in allen Fällen unverändert
 ```
 
-Der `$fbscrypt$`-Fall ist der Grund, warum Abschnitt 3.3 genau dieses Format gewählt hat: Supabase hat es nach Issue #1750/PR #1768 nachgerüstet (<https://github.com/supabase/auth/issues/1750>), Velve Auth übernimmt es 1:1 (`FirebaseScryptKeyLen = 32` beidseitig). Damit ist die Supabase-Übernahme für alle drei Familien reines Kopieren des Strings; verschlüsselt wird er erst beim Schreiben (L-2). Nach dem ersten Login ist `needsRehash` in allen drei Fällen wahr und der Hash wandert still auf Argon2id (Abschnitt 3.3, Schritt 5, und Abschnitt 4.6).
+Der `$fbscrypt$`-Fall ist der Grund, warum Abschnitt 3.3 genau dieses Format gewählt hat: Supabase hat es nach Issue #1750/PR #1768 nachgerüstet (<https://github.com/supabase/auth/issues/1750>), Velve Auth übernimmt es 1:1 (`FirebaseScryptKeyLen = 32` beidseitig). Damit ist die Supabase-Übernahme für alle drei Familien reines Kopieren des Strings; verschlüsselt wird er erst beim Schreiben (L-2). Nach dem ersten Login ist `needsRehash` in allen drei Fällen wahr und der Hash wandert still auf Argon2id (Abschnitt 3.3, Schritt 6, und Abschnitt 4.6).
 
 #### e) Was mitkommt
 
@@ -3596,7 +3597,7 @@ Die CLI konvertiert `passwordHash` und `salt` von URL-safe in normales Base64 un
 | `disabled` | `velve.user.disabled_at` | `true` → `now()` |
 | — | `velve.user.imported_from` / `.imported_at` | `'firebase'` / `now()` |
 | `createdAt` | `velve.user.created_at` | `new Date(parseInt(s, 10))`, Plausibilität 2000–2100 |
-| `passwordHash` + `salt` + `hash_config` | `velve.password_credential.phc` | `$fbscrypt$`-String nach d), verschlüsselt unter `password-enc` (L-2) |
+| `passwordHash` + `salt` + `hash_config` aus a) | `velve.password_credential.phc` | `$fbscrypt$`-String nach d), verschlüsselt unter `password-enc` (L-2) |
 | — | `velve.password_credential.scheme` | `'fbscrypt'`, Klartext |
 | — | `velve.password_credential.key_version` | aktuelle Version des Schlüssels `password-enc` (L-2) |
 | `providerUserInfo[].providerId` | `velve.identity.provider` | `.com`-Suffix abschneiden (`google.com`→`google`, `apple.com`→`apple`, …); `password` und `phone` erzeugen **keine** Identität |
@@ -3771,7 +3772,7 @@ Better-Auth-Stil "salt_hex:hash_hex":
     scheme = "scrypt"          (N = 16384 = 2^14, r = 16, p = 1, dkLen = 64; Abschnitt 3.3)
 ```
 
-Zwei Eigenheiten des Better-Auth-Formats, belegt in `@better-auth/utils` (Befundbericht `findings/06-krypto-bibliotheken.md`, „Die präfixlosen Formate"): Das Salt geht als **ASCII-Hex-String von 32 Byte** in scrypt ein, nicht als die 16 dekodierten Bytes — deshalb `ascii(salt_hex)` und nicht `hexToBytes(salt_hex)`. Und das Kennwort wird vor dem Aufruf **NFKC-normalisiert** (`password.normalize("NFKC")`, `packages/better-auth/src/crypto/password.test.ts:75–76`). `Abschnitt 3.3 legt NFKC vor jedem KDF-Aufruf fest; umgewandelte Better-Auth-Hashes verifizieren damit auch für Kennwörter außerhalb von ASCII. Der `verify()`-Testvektor für dieses Format muss deshalb ein Nicht-ASCII-Kennwort enthalten.
+Zwei Eigenheiten des Better-Auth-Formats, belegt in `@better-auth/utils` (Befundbericht `findings/06-krypto-bibliotheken.md`, „Die präfixlosen Formate"): Das Salt geht als **ASCII-Hex-String von 32 Byte** in scrypt ein, nicht als die 16 dekodierten Bytes — deshalb `ascii(salt_hex)` und nicht `hexToBytes(salt_hex)`. Und das Kennwort wird vor dem Aufruf **NFKC-normalisiert** (`password.normalize("NFKC")`, `packages/better-auth/src/crypto/password.test.ts:75–76`). Abschnitt 3.3 legt NFKC vor jedem KDF-Aufruf fest; umgewandelte Better-Auth-Hashes verifizieren damit auch für Kennwörter außerhalb von ASCII. Der `verify()`-Testvektor für dieses Format muss deshalb ein Nicht-ASCII-Kennwort enthalten.
 
 Alles andere geht über `passwordSource.custom`, eine reine Funktion `(raw: string) => PasswordOutcome`. Sie darf nur in einen der PHC-Strings aus Abschnitt 3.3 münden oder `unusable` zurückgeben — sie darf **kein** neues Format erfinden. `SCHÄTZUNG:` bcrypt über `bcryptjs` ist in Auth.js-Projekten am verbreitetsten; belegt ist das nicht. `verify()` ist auch hier Pflicht: Ein selbstgebautes Kennwortfeld ist die fehleranfälligste aller fünf Quellen, weil niemand außer dem Projekt weiß, was drin steht.
 
@@ -3816,7 +3817,7 @@ Nutzer-IDs (bei UUID-Adaptern unverändert) · E-Mail und **echter Bestätigungs
 
 ### 4.6 Vergleich mit Better Auths Migrationsweg
 
-Better Auth empfiehlt in **allen drei** Passwort-Guides, den globalen Hash-Hook auf bcrypt umzustellen — Supabase: `docs/content/docs/guides/supabase-migration-guide.mdx:969–971` („By default, Better Auth uses the `scrypt` algorithm to hash passwords. Since Supabase uses `bcrypt`, you'll need to configure Better Auth to use bcrypt for password verification.", gefolgt von einem `password.hash`/`password.verify`-Paar mit `bcrypt.hash(password, 10)`), wortgleich in `auth0-migration-guide.mdx:595` und `:608–617`, sinngleich in `clerk-migration-guide.mdx:47` und `:61–74`. Das ist aus vier Gründen falsch. **Erstens ist der Hook global und nicht pro Datensatz:** Er wird auch für Neuregistrierungen und jede Kennwortänderung verwendet, aus einer einmaligen Übernahmemaßnahme wird also ein dauerhafter Downgrade des Standardverfahrens — das Projekt hängt für immer und für alle Nutzer auf bcrypt(10), und die Guides erwähnen das nirgends. **Zweitens funktioniert es nur bei homogenen Beständen:** Ein Supabase-Tenant kann drei Hash-Familien enthalten (<https://github.com/supabase/auth/issues/1750>), ein Clerk-Tenant bis zu 19 (<https://clerk.com/docs/reference/backend/user/create-user>), ein Auth0-Tenant elf (<https://auth0.com/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples>); ein reiner bcrypt-Hook scheitert an jedem Datensatz, der nicht bcrypt ist — als Anmeldefehler ohne Erklärung. Der Auth0-Guide erkennt das halb und schiebt es dem Leser zu („For custom password hashing algorithms, you'll need to modify the `migratePassword` function", `auth0-migration-guide.mdx:588`, sinngleich nochmals `:713`). **Drittens fehlt der Rehash:** Weil der globale Hook das Verfahren zur neuen Konstante macht, gibt es keinen Weg zurück; die importierten Hashes werden nie besser, auch nicht nach Jahren. **Viertens zementiert es eine bekannte Schwäche:** bcrypt schneidet Eingaben bei 72 Byte ab, und wer global auf bcrypt bleibt, behält diese Kürzung dauerhaft, statt sie beim ersten Login loszuwerden. — **Velve Auth macht stattdessen dreierlei:** Das Verfahren steht *pro Datensatz* im kanonischen PHC-String, die Weiche entscheidet am Präfix (Abschnitt 3.3), und der Standard bleibt unverändert Argon2id — ein Import ändert die Kennwortpolitik der Anwendung nicht. Beim ersten erfolgreichen Login ist `needsRehash` für jeden Fremd-Hash wahr, und der Datensatz wird still, ohne Nutzerinteraktion, per Vergleich-und-Tausch auf Argon2id gehoben (Abschnitt 3.3, Schritt 5, und Abschnitt 4.6). Ein Bestand mit drei oder neunzehn Verfahren ist damit kein Problem, sondern eine Statistik, die der Trockenlauf ausweist und die in den Wochen nach der Umstellung gegen null geht. Ergänzend: Better Auth hat **für Firebase überhaupt keinen Guide** — es gibt Anleitungen für Supabase, Clerk, Auth0, Auth.js und WorkOS, aber ausgerechnet für die einzige Quelle mit einem nicht-trivialen Hash-Verfahren keine (Befundbericht `findings/05-migrationsquellen.md`, Abschnitt 6).
+Better Auth empfiehlt in **allen drei** Passwort-Guides, den globalen Hash-Hook auf bcrypt umzustellen — Supabase: `docs/content/docs/guides/supabase-migration-guide.mdx:969–971` („By default, Better Auth uses the `scrypt` algorithm to hash passwords. Since Supabase uses `bcrypt`, you'll need to configure Better Auth to use bcrypt for password verification.", gefolgt von einem `password.hash`/`password.verify`-Paar mit `bcrypt.hash(password, 10)`), wortgleich in `auth0-migration-guide.mdx:595` und `:608–617`, sinngleich in `clerk-migration-guide.mdx:47` und `:61–74`. Das ist aus vier Gründen falsch. **Erstens ist der Hook global und nicht pro Datensatz:** Er wird auch für Neuregistrierungen und jede Kennwortänderung verwendet, aus einer einmaligen Übernahmemaßnahme wird also ein dauerhafter Downgrade des Standardverfahrens — das Projekt hängt für immer und für alle Nutzer auf bcrypt(10), und die Guides erwähnen das nirgends. **Zweitens funktioniert es nur bei homogenen Beständen:** Ein Supabase-Tenant kann drei Hash-Familien enthalten (<https://github.com/supabase/auth/issues/1750>), ein Clerk-Tenant bis zu 19 (<https://clerk.com/docs/reference/backend/user/create-user>), ein Auth0-Tenant elf (<https://auth0.com/docs/manage-users/user-migration/bulk-user-import-database-schema-and-examples>); ein reiner bcrypt-Hook scheitert an jedem Datensatz, der nicht bcrypt ist — als Anmeldefehler ohne Erklärung. Der Auth0-Guide erkennt das halb und schiebt es dem Leser zu („For custom password hashing algorithms, you'll need to modify the `migratePassword` function", `auth0-migration-guide.mdx:588`, sinngleich nochmals `:713`). **Drittens fehlt der Rehash:** Weil der globale Hook das Verfahren zur neuen Konstante macht, gibt es keinen Weg zurück; die importierten Hashes werden nie besser, auch nicht nach Jahren. **Viertens zementiert es eine bekannte Schwäche:** bcrypt schneidet Eingaben bei 72 Byte ab, und wer global auf bcrypt bleibt, behält diese Kürzung dauerhaft, statt sie beim ersten Login loszuwerden. — **Velve Auth macht stattdessen dreierlei:** Das Verfahren steht *pro Datensatz* im kanonischen PHC-String, die Weiche entscheidet am Präfix (Abschnitt 3.3), und der Standard bleibt unverändert Argon2id — ein Import ändert die Kennwortpolitik der Anwendung nicht. Beim ersten erfolgreichen Login ist `needsRehash` für jeden Fremd-Hash wahr, und der Datensatz wird still, ohne Nutzerinteraktion, per Vergleich-und-Tausch auf Argon2id gehoben (Abschnitt 3.3, Schritt 6). Ein Bestand mit drei oder neunzehn Verfahren ist damit kein Problem, sondern eine Statistik, die der Trockenlauf ausweist und die in den Wochen nach der Umstellung gegen null geht. Ergänzend: Better Auth hat **für Firebase überhaupt keinen Guide** — es gibt Anleitungen für Supabase, Clerk, Auth0, Auth.js und WorkOS, aber ausgerechnet für die einzige Quelle mit einem nicht-trivialen Hash-Verfahren keine (Befundbericht `findings/05-migrationsquellen.md`, Abschnitt 6).
 
 ---
 
@@ -3859,6 +3860,8 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 - **S-TIM-5:** Der Rehash nach erfolgreicher Anmeldung (`needsRehash`) läuft in einer Hintergrundaufgabe **nach** dem Senden der Antwort und verlängert die gemessene Antwortzeit des Anmeldevorgangs nicht. *(Abschnitt 3.3 Schritt 6: „nach dem Senden der Antwort in einer begrenzten Hintergrundaufgabe")*
 - **S-TIM-6:** Jeder Endpunkt, dessen Antwort für existierende und nicht existierende Konten identisch sein muss, hat genau einen Codepfad, der unabhängig vom Ergebnis dieselbe Arbeit verrichtet: bei Kennwortendpunkten ein KDF-Aufruf mit identischen Parametern (S-TIM-2), bei Endpunkten ohne KDF — Reset anfordern, Magic Link anfordern; die Bestätigung wird nur aus einer Sitzung angefordert und hat keinen Nichtexistenz-Zweig (B.5) — dieselbe Folge von Datenbankabfragen und in jedem Fall genau ein Aufruf des Sende-Callbacks, in dem sich erst entscheidet, welche Nachricht herausgeht. Der kontobezogene Ratenzähler wird für beide Fälle auf derselben Zeile fortgeschrieben (S-RATE-7). Es existiert keine konfigurierbare Mindestantwortdauer. *(Abschnitt 3.16, L-1; Abschnitt 3.13: „Serverseitig wird der wahre Grund immer protokolliert")*
 - **S-TIM-7:** Der Zustand `email_verified_at IS NULL` beeinflusst die Anmeldung nicht: Sie liefert dieselbe Sitzung wie bei bestätigter Adresse, und der Zustand ist ausschließlich als `User.emailVerifiedAt` im Ergebnis sichtbar. Eine Sperre unbestätigter Konten gibt es nicht (Abschnitt 1, A5). *(Abschnitt 3.15, B.1 und B.5)*
+
+---
 
 ### 5.2 FIX — Sitzungsfixierung
 
@@ -3949,7 +3952,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 ### 5.7 RATE — Ratenbegrenzung
 
-**(a) Die Fehlerklasse.** Ein Ratenbegrenzer besteht aus Schlüssel, Zähler, Fenster und Reaktion, und jeder Teil kann kaputt sein. Die Schlüsselfehler dominieren: die volle IPv6-Adresse statt des Präfixes gibt einem Angreifer mit einem `/64` zweiundsechzigstellige Zahlen an Eimern; die textuelle Repräsentation derselben Adresse ergibt mehrere Eimer; ein ungeprüfter `X-Forwarded-For` lässt den Client seinen Eimer selbst wählen; und ein roher Pfad als Schlüsselbestandteil trennt `//sign-in` von `/sign-in`. Eine harte Kontosperre ist kein Schutz, sondern eine Dienstverweigerung gegen einen bekannten Nutzer.
+**(a) Die Fehlerklasse.** Ein Ratenbegrenzer besteht aus Schlüssel, Zähler, Fenster und Reaktion, und jeder Teil kann kaputt sein. Die Schlüsselfehler dominieren: die volle IPv6-Adresse statt des Präfixes gibt einem Angreifer mit einem `/64` 2^64 Eimer; die textuelle Repräsentation derselben Adresse ergibt mehrere Eimer; ein ungeprüfter `X-Forwarded-For` lässt den Client seinen Eimer selbst wählen; und ein roher Pfad als Schlüsselbestandteil trennt `//sign-in` von `/sign-in`. Eine harte Kontosperre ist kein Schutz, sondern eine Dienstverweigerung gegen einen bekannten Nutzer.
 
 **(b) Der Präzedenzfall.** GHSA-p6v2-xcpg-h6xw / CVE-2026-45364 (7.3 High, CWE-307, Fix 1.4.17): der Schlüssel war die textuelle IP ohne Normalisierung, sodass ein Client mit einem `/64`-Präfix 2^64 Eimer erzeugen konnte. GHSA-x732-6j76-qmhm (8.6 High, Fix 1.4.5): der `rou3`-Router kollabiert leere Pfadsegmente, sodass `//sign-in/email` dieselbe Route trifft, aber an Pfad-Ratenlimits vorbeiläuft.
 
@@ -4062,7 +4065,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 **(a) Die Fehlerklasse.** Ein Cache speichert das *Ergebnis* einer Prüfung. Wird der Eintrag geschrieben, bevor alle Bedingungen erfüllt sind, entscheidet der Cache-Treffer statt der Prüfung. Es gibt zwei Fenster: zu früh schreiben (die Sitzung wird nach dem Kennwortschritt, aber vor dem zweiten Faktor abgelegt) und zu spät invalidieren (eine Kontodeaktivierung wirkt erst nach Ablauf der Cache-Lebensdauer). Die HTTP-Variante ist Cache Deception: eine authentifizierte Antwort wird unter einem cachebar aussehenden Pfad ausgeliefert.
 
-**(b) Der Präzedenzfall.** GHSA-xg6x-h9c9-2m83 (**CVSS 9.1 Critical**, CWE-288, Fix 1.4.9) — der schwerste veröffentlichte Fehler im Kern-Anmeldepfad, zwei Advisories in Randpaketen liegen mit 9,9 und 9,6 höher: „Sessions generated during initial sign-in are prematurely cached as valid before 2FA verification." Der Cookie-Cache (`sessionData`, Standardlaufzeit 300 s, `packages/better-auth/src/cookies/index.ts:125-127`) blieb als Funktion bestehen; der Fix schloss nur das Schreibfenster. GHSA-hq75-xg7r-rx6c (`better-call`, Moderate) ist die HTTP-Cache-Variante über einen Routing-Fehler.
+**(b) Der Präzedenzfall.** GHSA-xg6x-h9c9-2m83 (**CVSS 9.1 Critical**, CWE-288, Fix 1.4.9) — der schwerste veröffentlichte Fehler im Kern-Anmeldepfad, zwei Advisories in Randpaketen liegen mit 9.9 und 9.6 höher: „Sessions generated during initial sign-in are prematurely cached as valid before 2FA verification." Der Cookie-Cache (`sessionData`, Standardlaufzeit 300 s, `packages/better-auth/src/cookies/index.ts:125-127`) blieb als Funktion bestehen; der Fix schloss nur das Schreibfenster. GHSA-hq75-xg7r-rx6c (`better-call`, Moderate) ist die HTTP-Cache-Variante über einen Routing-Fehler.
 
 **(c) Die Anforderungen.**
 
@@ -4078,7 +4081,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 **(a) Die Fehlerklasse.** Ein vom Client gelieferter URL-String wird nach Abschluss eines Flusses in einen `Location`-Kopfeintrag übernommen. Die Prüfung scheitert an Parser-Differentialen: `//evil.com` ist protokollrelativ, `/\evil.com` wird von Browsern als Slash gelesen, `https://trusted.de.evil.com` besteht einen Suffixtest, `https://trusted.de@evil.com` versteckt den echten Host hinter Userinfo, und `javascript:` ist gar keine Navigation, sondern Skriptausführung im eigenen Origin. Der Schaden ist selten der Redirect selbst, sondern der `Referer`, der den Token mitnimmt.
 
-**(b) Der Präzedenzfall.** Fünf Advisories, die produktivste Fehlerquelle des Projekts: GHSA-8jhw-6pjj-8723 / CVE-2024-56734 (7.9 High, `callbackURL` ohne Domainvalidierung), GHSA-hjpm-7mrm-26w8 / CVE-2025-27143 (6.9 Moderate, `https://evil.com` blockiert, `//evil.com` nicht), GHSA-vp58-j275-797x (7.1 High, „craft a malicious link containing sensitive tokens (like password-reset tokens) to enable one-click account takeover"), GHSA-36rg-gfq2-3h56 / CVE-2025-53535 (2.1 Low, `startsWith`), GHSA-86j7-9j95-vpqj (7.7 High, CWE-79/601, `javascript:` als `redirect_uri`).
+**(b) Der Präzedenzfall.** Fünf Advisories, die zweitproduktivste Fehlerquelle des Projekts: GHSA-8jhw-6pjj-8723 / CVE-2024-56734 (7.9 High, `callbackURL` ohne Domainvalidierung), GHSA-hjpm-7mrm-26w8 / CVE-2025-27143 (6.9 Moderate, `https://evil.com` blockiert, `//evil.com` nicht), GHSA-vp58-j275-797x (7.1 High, „craft a malicious link containing sensitive tokens (like password-reset tokens) to enable one-click account takeover"), GHSA-36rg-gfq2-3h56 / CVE-2025-53535 (2.1 Low, `startsWith`), GHSA-86j7-9j95-vpqj (7.7 High, CWE-79/601, `javascript:` als `redirect_uri`).
 
 **(c) Die Anforderungen.**
 
@@ -4182,7 +4185,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 ### 5.19 Abdeckungstabelle: die 33 Better-Auth-Advisories
 
-Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderungen, die diese Klasse ausschließen — oder den Grund, warum die Klasse in Velve Auth nicht existieren kann. „Nicht anwendbar" bedeutet: die betroffene Funktion ist nach Abschnitt 3.14 ausdrücklich nicht Teil des Produkts. Wo die Funktion fehlt, aber die *Klasse* dennoch durch eine Anforderung strukturell verhindert wäre, ist diese Anforderung in Klammern genannt — sie schützt die Plugins, die diese Funktion nachrüsten könnten.
+Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderungen, die diese Klasse ausschließen — oder den Grund, warum die Klasse in Velve Auth nicht existieren kann. „Nicht anwendbar" bedeutet: die betroffene Funktion ist nach Abschnitt 3.14 ausdrücklich nicht Teil des Produkts. Wo die Funktion fehlt, aber die *Klasse* dennoch durch eine Anforderung strukturell verhindert wäre, ist diese Anforderung in der Spalte „Velve-Auth-Anforderung" ausdrücklich als die verhindernde genannt — sie schützt die Plugins, die diese Funktion nachrüsten könnten.
 
 | # | GHSA | CVE / CVSS | Klasse | Velve-Auth-Anforderung |
 |---|---|---|---|---|
@@ -4220,9 +4223,8 @@ Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderung
 | 32 | GHSA-8c5h-wx78-2cfg | —, 8.1 | SSO-Domain-Eigentum: TOCTOU und fehlende Verifikation | Nicht anwendbar, weil Velve Auth keine Domain-Verifikation hat (Abschnitt 3.14). TOCTOU-Klasse verhindert durch S-RACE-2 |
 | 33 | GHSA-hq75-xg7r-rx6c | —, 4.9 | `better-call`-Routing → Cache Deception | Nicht anwendbar, weil Velve Auth keinen Fremdrouter nutzt: die Route wird einmal deklariert und daraus wird der Handler erzeugt (Abschnitt 3.12). Klasse verhindert durch S-RATE-5, S-CACHE-1 und `Cache-Control: no-store` auf jeder Antwort (L-6) |
 
-**Auswertung.** Von 33 Advisories sind **15 unmittelbar auf Velve Auth übertragbar** (#1–#5,
-#7, #9–#13, #16, #21, #24, #31 — davon #9 und #21 nur teilweise) und **18 nicht anwendbar,
-weil die betroffene Funktion nach Abschnitt 3.14 nicht existiert**. Von den 18 nicht anwendbaren wären 15 zusätzlich durch eine strukturelle Anforderung ausgeschlossen, wenn ein Plugin die Funktion nachrüstete; die drei übrigen (#19, #20, #26) betreffen Rollen und Token-Ausgabe, für die es im Kern keine Entsprechung gibt. Die drei Anforderungen mit der größten Hebelwirkung sind S-OWNER-1 (Actor-Pflicht, verhindert die Klasse mit 10 Advisories), S-RACE-2 zusammen mit S-REPLAY-2 (atomarer Konsum als einziger Weg, verhindert Replay, Race und Zweckverwechslung) und S-LINK-1 (die E-Mail ist kein Schlüssel, verhindert die Klasse mit den höchsten CVSS-Werten).
+**Auswertung.** Von 33 Advisories sind **15 unmittelbar auf Velve Auth übertragbar** (#1–#5, #7, #9–#13, #16, #21, #24, #31 — davon #9 und #21 nur teilweise)
+und **18 nicht anwendbar, weil die betroffene Funktion nach Abschnitt 3.14 nicht existiert**. Von den 18 nicht anwendbaren wären 15 zusätzlich durch eine strukturelle Anforderung ausgeschlossen, wenn ein Plugin die Funktion nachrüstete; die drei übrigen (#19, #20, #26) betreffen Rollen und Token-Ausgabe, für die es im Kern keine Entsprechung gibt. Die drei Anforderungen mit der größten Hebelwirkung sind S-OWNER-1 (Actor-Pflicht, verhindert die Klasse mit 10 Advisories), S-RACE-2 zusammen mit S-REPLAY-2 (atomarer Konsum als einziger Weg, verhindert Replay, Race und Zweckverwechslung) und S-LINK-1 (die E-Mail ist kein Schlüssel, verhindert die Klasse, die jedes Mal eine Kontoübernahme war).
 
 ---
 
@@ -4346,9 +4348,9 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
-| T-RATE-1 | S-RATE-1 | Unit, tabellengetrieben | Vektortabelle Eingabe → erwarteter Schlüssel: `2001:db8::1`, `2001:0db8:0000:…:0001`, `2001:DB8::1`, `2001:db8:0:0:ffff::9999` → alle `2001:db8::/64`; `::ffff:203.0.113.5` und `203.0.113.5` → gleich; `::1`; `0.0.0.0`; `::`; Leerstring; `not-an-ip`; `1.2.3.4, 5.6.7.8`. | **20/20 Vektoren korrekt** | CI bei jedem Commit |
+| T-RATE-1 | S-RATE-1 | Unit, tabellengetrieben | Vektortabelle Eingabe → erwarteter Schlüssel: `2001:db8::1`, `2001:0db8:0000:…:0001`, `2001:DB8::1`, `2001:db8:0:0:ffff::9999` → alle `2001:db8::/64`; `::ffff:203.0.113.5` und `203.0.113.5` → gleich; `::1`; `0.0.0.0`; `::`; Leerstring; `not-an-ip`; `1.2.3.4, 5.6.7.8`. | **12/12 Vektoren korrekt** | CI bei jedem Commit |
 | T-RATE-2 | S-RATE-2 | Integration | 1000 Anfragen von 1000 Adressen aus einem `/64`; Gegenprobe 1000 Anfragen aus 1000 verschiedenen `/64`. | Genau **`limit` Erfolge** im ersten Fall; **1000 Erfolge** im zweiten | CI bei jedem Commit |
-| T-RATE-3 | S-RATE-3 | Integration | (i) `trustedProxies` leer, 100 Anfragen mit zufälligem `X-Forwarded-For` von derselben Socket-Adresse. (ii) `trustedProxies = ["10.0.0.0/8"]`, Socket `10.0.0.5`, `XFF: 1.2.3.4, 10.0.0.9` → Schlüssel `1.2.3.4`. (iii) Socket `203.0.113.1` (nicht vertrauenswürdig), `XFF: 9.9.9.9` → Schlüssel `203.0.113.1`. | **6/6 Konstellationen**; in (i) genau `limit` Erfolge | CI bei jedem Commit |
+| T-RATE-3 | S-RATE-3 | Integration | (i) `trustedProxies` leer, 100 Anfragen mit zufälligem `X-Forwarded-For` von derselben Socket-Adresse. (ii) `trustedProxies = ["10.0.0.0/8"]`, Socket `10.0.0.5`, `XFF: 1.2.3.4, 10.0.0.9` → Schlüssel `1.2.3.4`. (iii) Socket `203.0.113.1` (nicht vertrauenswürdig), `XFF: 9.9.9.9` → Schlüssel `203.0.113.1`. | **3/3 Konstellationen**; in (i) genau `limit` Erfolge | CI bei jedem Commit |
 | T-RATE-4 | S-RATE-4 | Integration | Anfragen ohne ermittelbare Peer-Adresse (Unix-Socket-Transport oder gesetzter Testschalter). | Nach `limit` Anfragen kommt die Ablehnung; **0 übersprungene Prüfungen** im Zähler-Protokoll | CI bei jedem Commit |
 | T-RATE-5 | S-RATE-5 | Integration | Sieben Pfadvarianten derselben Route gemischt senden: `/sign-in/password`, `//sign-in/password`, `/sign-in/password/`, `/./sign-in/password`, `/sign-in//password`, `/sign-in/passw%6Frd`, `/SIGN-IN/PASSWORD`. | **Alle 7 teilen einen Eimer**: nach insgesamt `limit` Anfragen kommt die Ablehnung, unabhängig von der Mischung | CI bei jedem Commit |
 | T-RATE-6 | S-RATE-6 | Nebenläufigkeit | 200 Anfragen per `Promise.all` gegen echtes Postgres bei Limit 20; 50 Wiederholungen. | **Exakt 20 Erfolge und 180 Ablehnungen in 50/50 Läufen, Toleranz 0** | CI nächtlich |
@@ -4434,7 +4436,7 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
 | T-REDIR-1 | S-REDIR-1 | Statisch | Typprüfung der Routendeklaration: jedes Feld, das ein Weiterleitungsziel trägt, hat den Typ `RedirectPath`, nie `string` oder `URL`. | **0 Felder vom Typ `string`** in dieser Rolle | CI bei jedem Commit |
-| T-REDIR-2 | S-REDIR-2 | Unit, Korpus | Vektordatei mit mindestens 120 bösartigen Eingaben: protokollrelativ, Backslash, Userinfo, Suffix, Teilstring, Port, IDN/Punycode, doppelt kodiert, `\r\n`-Injektion, Nullbyte, `javascript:` in 8 Schreibweisen. | **120/120 abgelehnt, 0 falsch-negativ**; der Korpus wächst bei jedem Fund um den Vektor | CI bei jedem Commit |
+| T-REDIR-2 | S-REDIR-2 | Unit, Korpus | Vektordatei mit mindestens 120 bösartigen Eingaben: protokollrelativ, Backslash, Userinfo, Suffix, Teilstring, Port, IDN/Punycode, doppelt kodiert, `\r\n`-Injektion, Nullbyte, `javascript:` in 8 Schreibweisen. | **n/n abgelehnt, 0 falsch-negativ**, mit n ≥ 120; der Korpus wächst bei jedem Fund um den Vektor | CI bei jedem Commit |
 | T-REDIR-3 | S-REDIR-3 | Integration, global | Antwort-Abfangfunktion über die gesamte Integrationssuite: jeden `Location`-Wert erfassen und prüfen, dass er mit genau einem `/` beginnt und weder `:` vor dem ersten `/`-Segment noch `//` noch `/\` enthält; zusätzlich zählen, welche Routen überhaupt `Location` setzen. | **0 `Location`-Werte** mit Schema oder Host; `Location` kommt **nur** in der Antwort des OAuth-Callbacks vor | CI bei jedem Commit |
 | T-REDIR-4 | S-REDIR-4 | Integration, global | Dieselbe Abfangfunktion durchsucht `Location` und alle Query-Strings nach den in diesem Testlauf erzeugten Token-Klartexten. | **0 Treffer** über die gesamte Suite | CI bei jedem Commit |
 | T-REDIR-5 | S-REDIR-5 | Statisch | AST-Scan über `core/http/`: kein `startsWith`, `includes`, `endsWith`, `RegExp` und kein Platzhalterzeichen in einem Origin-Vergleich. | **0 Treffer** | CI bei jedem Commit |
@@ -4824,7 +4826,7 @@ Format: **E-nn — Entscheidung.** Kontext · Verworfen · Grund · Preis.
 **E-29 — `(provider, subject)` ist der einzige Verknüpfungsschlüssel. Die E-Mail ist nie einer.**
 *Kontext:* Anbieterverknüpfung (Abschnitt 3.10) und Import (Abschnitt 4.0.6).
 *Verworfen:* Verknüpfung über E-Mail-Gleichheit, auch bei verifizierter Anbieteradresse.
-*Grund:* Das ist die häufigste schwere Fehlerklasse überhaupt: CVE-2026-53516 (CVSS 8,3), GHSA-qq9h-g4jm-xgf3 (8,3), GHSA-fmh4-wcc4-5jm3 (7,7) — dreimal dieselbe Ursache in einer Codebasis. Automatisch verknüpft wird nur, wenn der Anbieter die Adresse als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter als vertrauenswürdig konfiguriert ist. Drei Bedingungen, alle drei notwendig. Dieselbe Regel gilt nach innen: Wird eine Adresse erstmals bestätigt und stammt das vorhandene Kennwort aus einer anderen Sitzung als der, die jetzt bestätigt, wird die Kennwortanmeldung gelöscht und jede Sitzung widerrufen (L-12) — sonst bleibt der Vorabzugang eines Angreifers gültig, genau der Fehler aus GHSA-qq9h-g4jm-xgf3.
+*Grund:* Das ist die häufigste schwere Fehlerklasse überhaupt: CVE-2026-53516 (CVSS 8.3), GHSA-qq9h-g4jm-xgf3 (8.3), GHSA-fmh4-wcc4-5jm3 (7.7) — dreimal dieselbe Ursache in einer Codebasis. Automatisch verknüpft wird nur, wenn der Anbieter die Adresse als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter als vertrauenswürdig konfiguriert ist. Drei Bedingungen, alle drei notwendig. Dieselbe Regel gilt nach innen: Wird eine Adresse erstmals bestätigt und stammt das vorhandene Kennwort aus einer anderen Sitzung als der, die jetzt bestätigt, wird die Kennwortanmeldung gelöscht und jede Sitzung widerrufen (L-12) — sonst bleibt der Vorabzugang eines Angreifers gültig, genau der Fehler aus GHSA-qq9h-g4jm-xgf3.
 *Preis:* Mehr ausdrückliche Verknüpfungen im Nutzerfluss.
 
 **E-30 — Vierzehn Anbieter statt sechsunddreißig.**
