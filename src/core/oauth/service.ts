@@ -17,7 +17,11 @@ import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
 import { type ProviderAccount, providerAccountOf } from "./claims.js";
-import { createOAuthFlowRepository } from "./flow-repository.js";
+import {
+	type ConsumedOAuthFlowRow,
+	createOAuthFlowRepository,
+	type OAuthLinkStart,
+} from "./flow-repository.js";
 import {
 	createFlowPointer,
 	createNonce,
@@ -50,13 +54,13 @@ export type OAuthCallbackOutcome = OAuthCallbackResult & {
 export interface OAuthFlowStart {
 	readonly providerId: string;
 	readonly redirectPath?: string;
-	readonly linkToUserId: string | null;
+	readonly linkTo: OAuthLinkStart | null;
 }
 
 /**
  * The callback reads no session cookie: a `form_post` provider posts cross-site and a browser sends
- * no `SameSite=Lax` cookie there, and neither does a `strict` installation on the redirect. What
- * the link replaces is decided by the flow row instead (E-582).
+ * no `SameSite=Lax` cookie there, and neither does a `strict` installation on the redirect. Which
+ * session the link replaces is decided by the flow row instead (E-588).
  */
 export interface OAuthCallbackArrival {
 	readonly providerId: string;
@@ -84,6 +88,23 @@ export interface OAuthService {
 interface ResolvedAccount {
 	readonly userId: string;
 	readonly identity: Identity;
+}
+
+/** The account a link flow named and the session it began in, which the two columns carry together. */
+interface LinkedSession {
+	readonly account: ConsumedOAuthFlow;
+	readonly previousSessionId: string;
+}
+
+/** A link flow writes both columns at the start, so a row carrying one alone is not one this library wrote. */
+function linkedSessionOf(flow: ConsumedOAuthFlowRow): LinkedSession | null {
+	if (flow.linkTo === null) {
+		return null;
+	}
+	if (flow.linkFromSessionId === null) {
+		throw new ConcealedError("state_not_found");
+	}
+	return { account: flow.linkTo, previousSessionId: flow.linkFromSessionId };
 }
 
 const OAUTH_FACTORS = ["oauth"] as const;
@@ -348,17 +369,21 @@ export function createOAuthService(input: {
 	}
 
 	/**
-	 * S-LINK-7: a new identity changes the trust level, so every session the account had ends and a
-	 * new one begins. The account comes from the flow row, which is why the callback can do this
-	 * without a session cookie it may not be sent (E-582).
+	 * S-LINK-7 and S-FIX-1: a new identity changes the trust level, so the session the link began in
+	 * ends and a new one begins in the same transaction. S-FIX-6 is the two credential changes and
+	 * not this one, so no other session of the account is touched (E-588).
 	 */
 	async function reissueAfterLinking(
-		linkTo: ConsumedOAuthFlow,
+		linked: LinkedSession,
 		observed: ObservedRequest,
 	): Promise<IssuedSession> {
-		await services.sessions.revokeEverySessionOfUser({ actor: actorOfConsumedOAuthFlow(linkTo) });
-		const { issued } = await issueSessionAround(linkTo.userId, () =>
-			services.sessions.issue({ userId: linkTo.userId, factors: OAUTH_FACTORS, observed }),
+		const { issued } = await issueSessionAround(linked.account.userId, () =>
+			services.sessions.reissueSessionOfUser({
+				actor: actorOfConsumedOAuthFlow(linked.account),
+				previousSessionId: linked.previousSessionId,
+				factors: OAUTH_FACTORS,
+				observed,
+			}),
 		);
 		return issued;
 	}
@@ -373,7 +398,7 @@ export function createOAuthService(input: {
 	}
 
 	return {
-		async beginFlow({ providerId, redirectPath, linkToUserId }) {
+		async beginFlow({ providerId, redirectPath, linkTo }) {
 			const provider = configuredProvider(providers, providerId);
 			const pointer = createFlowPointer();
 			const state = stateOfPointer(pointer);
@@ -388,7 +413,7 @@ export function createOAuthService(input: {
 				keyVersion: sealed.keyVersion,
 				nonce,
 				redirectPath: redirectPath === undefined ? null : acceptedRedirectPath(redirectPath),
-				linkToUserId,
+				linkTo,
 			});
 
 			return {
@@ -419,7 +444,8 @@ export function createOAuthService(input: {
 				throw new ConcealedError("state_not_found");
 			}
 
-			if (flow.linkTo === null) {
+			const linked = linkedSessionOf(flow);
+			if (linked === null) {
 				await services.pluginRuntime.hooks.beforeSignIn({
 					method: "oauth",
 					userId: null,
@@ -441,13 +467,13 @@ export function createOAuthService(input: {
 				provider,
 				account,
 				await factsOf(provider, account, tokens),
-				flow.linkTo?.userId ?? null,
+				linked?.account.userId ?? null,
 			);
 			const redirectToPath = acceptedRedirectPath(flow.redirectPath ?? DEFAULT_REDIRECT_PATH);
 
 			// Whether this flow links is the flow row's own statement, and not the callback's to make.
-			if (flow.linkTo !== null) {
-				const issued = await reissueAfterLinking(flow.linkTo, arrival.observed);
+			if (linked !== null) {
+				const issued = await reissueAfterLinking(linked, arrival.observed);
 				return {
 					status: "identity_linked",
 					identity: resolved.identity,

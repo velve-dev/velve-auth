@@ -7,6 +7,7 @@ import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute, type RequestContext, type ServerSurface } from "../http/route.js";
 import { object, optional, string } from "../http/validators.js";
+import type { OAuthLinkStart } from "./flow-repository.js";
 import { resolveProviderTable } from "./providers.js";
 import {
 	createOAuthService,
@@ -31,8 +32,15 @@ function actorOf(services: RouteServices, session: Session | null): Actor {
 	return actorOfResolvedSession(resolved);
 }
 
-function userIdOf(services: RouteServices, session: Session | null): string {
-	return actorOf(services, session);
+/**
+ * 3.15 B.7 fixes the account here, server-side; S-FIX-1 needs the session that will be replaced, and
+ * the callback cannot read it from a cookie it is not sent (E-588).
+ */
+function linkStartOf(services: RouteServices, session: Session | null): OAuthLinkStart {
+	if (session === null) {
+		throw new ConcealedError("cookie_absent");
+	}
+	return { userId: actorOf(services, session), sessionId: session.id };
 }
 
 /** 3.15 C: the pointer reaches the browser as a cookie and the caller as a `CookieInstruction`. */
@@ -106,7 +114,7 @@ export function oauthRoutes(services: RouteServices) {
 				await oauth.beginFlow({
 					providerId: input.provider,
 					...(input.redirectPath === undefined ? {} : { redirectPath: input.redirectPath }),
-					linkToUserId: null,
+					linkTo: null,
 				}),
 			),
 	});
@@ -183,14 +191,13 @@ export function oauthRoutes(services: RouteServices) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** 3.15 B.7: the account to link to is fixed here, server-side, and cannot come from the callback. */
 		handler: async (input, context): Promise<OAuthRedirect> =>
 			answerWithStatePointer(
 				context,
 				await oauth.beginFlow({
 					providerId: input.provider,
 					...(input.redirectPath === undefined ? {} : { redirectPath: input.redirectPath }),
-					linkToUserId: userIdOf(services, context.session),
+					linkTo: linkStartOf(services, context.session),
 				}),
 			),
 	});

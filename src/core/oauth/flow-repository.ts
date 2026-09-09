@@ -13,10 +13,16 @@ interface OAuthFlowInsert {
 	readonly keyVersion: number;
 	readonly nonce: string | null;
 	readonly redirectPath: string | null;
-	readonly linkToUserId: string | null;
+	readonly linkTo: OAuthLinkStart | null;
 }
 
-interface ConsumedOAuthFlowRow {
+/** 3.15 B.7 fixes the account server-side at the start; S-FIX-1 needs the row that will be replaced. */
+export interface OAuthLinkStart {
+	readonly userId: string;
+	readonly sessionId: string;
+}
+
+export interface ConsumedOAuthFlowRow {
 	readonly provider: string;
 	readonly pkceVerifierEnc: Uint8Array<ArrayBuffer>;
 	readonly keyVersion: number;
@@ -24,6 +30,8 @@ interface ConsumedOAuthFlowRow {
 	readonly redirectPath: string | null;
 	/** E-234's second provenance: the account a link flow names, proved by this row's removal. */
 	readonly linkTo: ConsumedOAuthFlow | null;
+	/** The session `identity.link.start` ran in, which is the row S-FIX-1 replaces (E-588). */
+	readonly linkFromSessionId: string | null;
 }
 
 interface OAuthFlowRepository {
@@ -39,6 +47,7 @@ interface FlowRow {
 	readonly nonce: string | null;
 	readonly redirect_path: string | null;
 	readonly link_to_user_id: string | null;
+	readonly link_from_session_id: string | null;
 }
 
 /** E-93: the brand is asserted where the row was removed, and in no other place. */
@@ -54,14 +63,16 @@ export function createOAuthFlowRepository(options: {
 	const flows = qualifiedTableName(schema, "oauth_flow");
 
 	const insertStatement = `INSERT INTO ${flows}
-(state_sha256, provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_to_user_id, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(secs => $8::double precision))`;
+(state_sha256, provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_to_user_id,
+ link_from_session_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(secs => $9::double precision))`;
 
 	const consumeStatement = `DELETE FROM ${flows}
 /* no owner predicate: S-CSRF-5, the row is reached by its state hash and the pointer cookie is
    what proves the caller may spend it */
 WHERE state_sha256 = $1 AND expires_at > now()
-RETURNING provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_to_user_id`;
+RETURNING provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_to_user_id,
+	link_from_session_id`;
 
 	return {
 		async insertFlow(input) {
@@ -72,7 +83,8 @@ RETURNING provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_t
 				input.keyVersion,
 				input.nonce,
 				input.redirectPath,
-				input.linkToUserId,
+				input.linkTo?.userId ?? null,
+				input.linkTo?.sessionId ?? null,
 				OAUTH_FLOW_LIFETIME_IN_SECONDS,
 			]);
 		},
@@ -89,6 +101,7 @@ RETURNING provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_t
 				nonce: row.nonce,
 				redirectPath: row.redirect_path,
 				linkTo: linkTargetOf(row.link_to_user_id),
+				linkFromSessionId: row.link_from_session_id,
 			};
 		},
 	};
