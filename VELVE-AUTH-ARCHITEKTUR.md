@@ -18,7 +18,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 *Zweitens: die E-Mail ist Pflicht und wird notfalls erfunden.* `user.email` ist `NOT NULL UNIQUE`; die Dokumentation räumt es ein (`concepts/oauth.mdx:409`), Issue #9124 ist offen. Der Ausweg ist kein Ratschlag, sondern Produktionscode: `createPlaceholderEmail` (`core/src/utils/email.ts:24`) erzeugt Adressen der Form `<id>@<ns>.placeholder.invalid` und wird an neun Stellen in acht Modulen aufgerufen — Roblox, TikTok, WeChat, Reddit, Twitter, SIWE, Anonymous, Entra ID. An diese Adressen kann kein Plugin je etwas senden.
 
-*Drittens: die Sicherheitshistorie hat ein Muster.* Von 33 Advisories entfallen **zehn** auf dieselbe Ursache — eine Autorisierungsprüfung auf einem nutzerkontrollierten Schlüssel ohne Eigentümerbindung, mechanisch: die fehlende Zeile `AND user_id = :actor`. Fünf entfallen auf unvollständige URL- und Origin-Prüfung, drei auf unverifizierte E-Mail als Identitätsbeweis (jedes Mal eine Kontoübernahme, zweimal mit CVSS 8,3). Die höchsten Einstufungen erreichen 9,9 (SCIM-Namensraumkollision) und 9,6 (SSRF im SSO-Plugin); die schwerste im Kern-Anmeldepfad ist 9,1 und entstand aus einer Funktionskombination: Der Cookie-Cache legte die Sitzung ab, bevor der zweite Faktor geprüft war. Viele der schwersten Einstufungen hingen an einem **Vorgabewert**, nicht an einem Fehler.
+*Drittens: die Sicherheitshistorie hat ein Muster.* Von 33 Advisories entfallen **zehn** auf dieselbe Ursache — eine Autorisierungsprüfung auf einem nutzerkontrollierten Schlüssel ohne Eigentümerbindung, mechanisch: die fehlende Zeile `AND user_id = :actor`. Fünf entfallen auf unvollständige URL- und Origin-Prüfung, drei auf unverifizierte E-Mail als Identitätsbeweis (jedes Mal eine Kontoübernahme, zweimal mit CVSS 8.3). Die höchsten Einstufungen erreichen 9.9 (SCIM-Namensraumkollision) und 9.6 (SSRF im SSO-Plugin); die schwerste im Kern-Anmeldepfad ist 9.1 und entstand aus einer Funktionskombination: Der Cookie-Cache legte die Sitzung ab, bevor der zweite Faktor geprüft war. Viele der schwersten Einstufungen hingen an einem **Vorgabewert**, nicht an einem Fehler.
 
 **Die Entscheidungen, die daraus folgen.**
 
@@ -1558,7 +1558,7 @@ nur, wenn *alle* Bedingungen gelten:
 3. Der Anbieter steht in `trustedProviders`.
 
 Sonst: neues Konto oder ausdrückliche Verknüpfung in einer bestehenden Sitzung.
-Better Auth las bis CVE-2026-53516 (CVSS 8,3) die zweite Bedingung nie — das
+Better Auth las bis CVE-2026-53516 (CVSS 8.3) die zweite Bedingung nie — das
 Auto-Link-Gate prüfte nur den `emailVerified`-Claim des Anbieters. Auch nach dem
 Fix sind die Bedingungen dort nicht alle verpflichtend: Ein vertrauenswürdiger
 Anbieter ersetzt die erste, und die zweite ist über
@@ -4065,7 +4065,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 **(a) Die Fehlerklasse.** Ein Cache speichert das *Ergebnis* einer Prüfung. Wird der Eintrag geschrieben, bevor alle Bedingungen erfüllt sind, entscheidet der Cache-Treffer statt der Prüfung. Es gibt zwei Fenster: zu früh schreiben (die Sitzung wird nach dem Kennwortschritt, aber vor dem zweiten Faktor abgelegt) und zu spät invalidieren (eine Kontodeaktivierung wirkt erst nach Ablauf der Cache-Lebensdauer). Die HTTP-Variante ist Cache Deception: eine authentifizierte Antwort wird unter einem cachebar aussehenden Pfad ausgeliefert.
 
-**(b) Der Präzedenzfall.** GHSA-xg6x-h9c9-2m83 (**CVSS 9.1 Critical**, CWE-288, Fix 1.4.9) — der schwerste veröffentlichte Fehler im Kern-Anmeldepfad, zwei Advisories in Randpaketen liegen mit 9,9 und 9,6 höher: „Sessions generated during initial sign-in are prematurely cached as valid before 2FA verification." Der Cookie-Cache (`sessionData`, Standardlaufzeit 300 s, `packages/better-auth/src/cookies/index.ts:125-127`) blieb als Funktion bestehen; der Fix schloss nur das Schreibfenster. GHSA-hq75-xg7r-rx6c (`better-call`, Moderate) ist die HTTP-Cache-Variante über einen Routing-Fehler.
+**(b) Der Präzedenzfall.** GHSA-xg6x-h9c9-2m83 (**CVSS 9.1 Critical**, CWE-288, Fix 1.4.9) — der schwerste veröffentlichte Fehler im Kern-Anmeldepfad, zwei Advisories in Randpaketen liegen mit 9.9 und 9.6 höher: „Sessions generated during initial sign-in are prematurely cached as valid before 2FA verification." Der Cookie-Cache (`sessionData`, Standardlaufzeit 300 s, `packages/better-auth/src/cookies/index.ts:125-127`) blieb als Funktion bestehen; der Fix schloss nur das Schreibfenster. GHSA-hq75-xg7r-rx6c (`better-call`, Moderate) ist die HTTP-Cache-Variante über einen Routing-Fehler.
 
 **(c) Die Anforderungen.**
 
@@ -4827,7 +4827,7 @@ Format: **E-nn — Entscheidung.** Kontext · Verworfen · Grund · Preis.
 **E-29 — `(provider, subject)` ist der einzige Verknüpfungsschlüssel. Die E-Mail ist nie einer.**
 *Kontext:* Anbieterverknüpfung (Abschnitt 3.10) und Import (Abschnitt 4.0.6).
 *Verworfen:* Verknüpfung über E-Mail-Gleichheit, auch bei verifizierter Anbieteradresse.
-*Grund:* Das ist die häufigste schwere Fehlerklasse überhaupt: CVE-2026-53516 (CVSS 8,3), GHSA-qq9h-g4jm-xgf3 (8,3), GHSA-fmh4-wcc4-5jm3 (7,7) — dreimal dieselbe Ursache in einer Codebasis. Automatisch verknüpft wird nur, wenn der Anbieter die Adresse als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter als vertrauenswürdig konfiguriert ist. Drei Bedingungen, alle drei notwendig. Dieselbe Regel gilt nach innen: Wird eine Adresse erstmals bestätigt und stammt das vorhandene Kennwort aus einer anderen Sitzung als der, die jetzt bestätigt, wird die Kennwortanmeldung gelöscht und jede Sitzung widerrufen (L-12) — sonst bleibt der Vorabzugang eines Angreifers gültig, genau der Fehler aus GHSA-qq9h-g4jm-xgf3.
+*Grund:* Das ist die häufigste schwere Fehlerklasse überhaupt: CVE-2026-53516 (CVSS 8.3), GHSA-qq9h-g4jm-xgf3 (8.3), GHSA-fmh4-wcc4-5jm3 (7.7) — dreimal dieselbe Ursache in einer Codebasis. Automatisch verknüpft wird nur, wenn der Anbieter die Adresse als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter als vertrauenswürdig konfiguriert ist. Drei Bedingungen, alle drei notwendig. Dieselbe Regel gilt nach innen: Wird eine Adresse erstmals bestätigt und stammt das vorhandene Kennwort aus einer anderen Sitzung als der, die jetzt bestätigt, wird die Kennwortanmeldung gelöscht und jede Sitzung widerrufen (L-12) — sonst bleibt der Vorabzugang eines Angreifers gültig, genau der Fehler aus GHSA-qq9h-g4jm-xgf3.
 *Preis:* Mehr ausdrückliche Verknüpfungen im Nutzerfluss.
 
 **E-30 — Vierzehn Anbieter statt sechsunddreißig.**
