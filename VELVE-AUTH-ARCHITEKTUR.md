@@ -4223,7 +4223,7 @@ Jede Zeile nennt den Advisory, seine Fehlerklasse und die Velve-Auth-Anforderung
 
 **Auswertung.** Von 33 Advisories sind **15 unmittelbar auf Velve Auth übertragbar** (#1–#5,
 #7, #9–#13, #16, #21, #24, #31 — davon #9 und #21 nur teilweise) und **18 nicht anwendbar,
-weil die betroffene Funktion nach Abschnitt 3.14 nicht existiert**. Von den 18 nicht anwendbaren wären 15 zusätzlich durch eine strukturelle Anforderung ausgeschlossen, wenn ein Plugin die Funktion nachrüstete; die drei übrigen (#19, #20, #26) betreffen Rollen und Token-Ausgabe, für die es im Kern keine Entsprechung gibt. Die drei Anforderungen mit der größten Hebelwirkung sind S-OWNER-1 (Actor-Pflicht, verhindert die Klasse mit 10 Advisories), S-RACE-2 zusammen mit S-REPLAY-2 (atomarer Konsum als einziger Weg, verhindert Replay, Race und Zweckverwechslung) und S-LINK-1 (die E-Mail ist kein Schlüssel, verhindert die Klasse mit den höchsten CVSS-Werten).
+weil die betroffene Funktion nach Abschnitt 3.14 nicht existiert**. Von den 18 nicht anwendbaren wären 15 zusätzlich durch eine strukturelle Anforderung ausgeschlossen, wenn ein Plugin die Funktion nachrüstete; die drei übrigen (#19, #20, #26) betreffen Rollen und Token-Ausgabe, für die es im Kern keine Entsprechung gibt. Die drei Anforderungen mit der größten Hebelwirkung sind S-OWNER-1 (Actor-Pflicht, verhindert die Klasse mit 10 Advisories), S-RACE-2 zusammen mit S-REPLAY-2 (atomarer Konsum als einziger Weg, verhindert Replay, Race und Zweckverwechslung) und S-LINK-1 (die E-Mail ist kein Schlüssel, verhindert die Klasse, die jedes Mal eine Kontoübernahme war).
 
 ---
 

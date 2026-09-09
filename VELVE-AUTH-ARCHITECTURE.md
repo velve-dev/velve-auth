@@ -4225,7 +4225,7 @@ Every row names the advisory, its error class and the Velve Auth requirements th
 
 **Evaluation.** Of 33 advisories, **15 are directly transferable to Velve Auth** (#1–#5,
 #7, #9–#13, #16, #21, #24, #31 — of these #9 and #21 only partly) and **18 are not
-applicable, because the affected function does not exist per section 3.14**. Of the 18 not applicable ones, 15 would additionally be excluded by a structural requirement if a plugin retrofitted the function; the three remaining ones (#19, #20, #26) concern roles and token issuance, for which there is no counterpart in the core. The three requirements with the greatest leverage are S-OWNER-1 (the actor obligation, prevents the class with 10 advisories), S-RACE-2 together with S-REPLAY-2 (atomic consumption as the only path, prevents replay, race and purpose confusion) and S-LINK-1 (the email is not a key, prevents the class with the highest CVSS values).
+applicable, because the affected function does not exist per section 3.14**. Of the 18 not applicable ones, 15 would additionally be excluded by a structural requirement if a plugin retrofitted the function; the three remaining ones (#19, #20, #26) concern roles and token issuance, for which there is no counterpart in the core. The three requirements with the greatest leverage are S-OWNER-1 (the actor obligation, prevents the class with 10 advisories), S-RACE-2 together with S-REPLAY-2 (atomic consumption as the only path, prevents replay, race and purpose confusion) and S-LINK-1 (the email is not a key, prevents the class that was an account takeover every time).
 
 ---
 
