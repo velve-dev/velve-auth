@@ -2488,6 +2488,7 @@ cookie; `caller: "session"` produces exactly this one difference between the sig
 | POST | `/sign-in/passkey/finish` | `{ challengeToken, response }` | `SignInResult` | 200, 400, 401 | IP | yes |
 | POST | `/sign-in/oauth/start` | `{ provider, redirectPath? }` | `OAuthRedirect` | 200, 400 | IP | yes |
 | GET | `/sign-in/oauth/callback/:provider` | Query `{ code, state, iss? }` | 302 | 302, 400, 409, 502 | IP | **no** |
+| POST | `/sign-in/oauth/callback/:provider` | Form body `{ code, state, iss? }` | 302 | 302, 400, 409, 502 | IP | **no** |
 | POST | `/sign-in/magic-link/request` | `{ email }` | — | 204, 400 | IP+account | yes |
 | POST | `/sign-in/magic-link/redeem` | `{ token }` | `SignInResult` | 200, 400 | IP | yes |
 | POST | `/sign-out` | — | — | 204 | IP | yes |
@@ -2533,7 +2534,7 @@ three 429s shown are `too_many_factor_attempts`), `403 origin_not_allowed` on ev
 route with an origin check, `403 account_disabled` on every route with caller `session`
 (L-4) and `500 internal_error`.
 
-46 routes in mode `username_email`, 44 in `email` (without `/username/*`), 38 in `username`
+47 routes in mode `username_email`, 45 in `email` (without `/username/*`), 39 in `username`
 (additionally without magic link, password reset by email and `/email/*`); the numbers hold with
 `webauthn` configured, without it the nine `webauthn` and `passkey` routes are missing. The
 table is filtered by mode and configuration when the instance is created; a route that does not
@@ -2541,8 +2542,11 @@ exist in the chosen mode does not answer with 403 but does not exist and yields 
 `auth.maintenance.*` have no routes (B.3). Every response carries `Cache-Control: no-store`
 and `Vary: Cookie`, set by the handler (L-6).
 
-The OAuth callback is the only route without an origin check: it is a redirect back from the
-provider by GET and by construction has no `Origin` header; its protection is the
+The OAuth callback is the only route without an origin check, and it stands in the table twice:
+it is a redirect back from the provider and by construction, in both forms, has no `Origin` header
+the library would be allowed to compare — not as a GET redirect back, and not as the `form_post`
+Apple requires as soon as the email scope is asked for (section 1, C50 and C70). Both rows
+therefore carry `originCheck: "exempt"`, and there are exactly two; its protection is the
 server-side `state` in `velve.oauth_flow`, whose pointer lies in the cookie. The four routes with
 `caller: "pending"` are the ones from 3.6; only they read `__Host-velve_pending`, every other route
 ignores it entirely, and the count can be read off the declaration type.
@@ -4013,7 +4017,7 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 **(c) The requirements.**
 
-- **S-CSRF-1:** Every route except `GET /sign-in/oauth/callback/:provider` carries `originCheck: "checked"` and runs through the origin check before the handler runs; this holds also for the direct server call through the server method generated from the route declaration. *(Section 3.15 D.3: "The OAuth callback is the only route without an origin check"; section 3.11: "The origin check and the rate limiting always come first — for direct server calls too.")*
+- **S-CSRF-1:** Every route except `GET /sign-in/oauth/callback/:provider` and `POST /sign-in/oauth/callback/:provider` carries `originCheck: "checked"` and runs through the origin check before the handler runs; this holds also for the direct server call through the server method generated from the route declaration. Exempt are exactly these two, and both for the same reason: a redirect back from the provider carries no `Origin` header the library would be allowed to compare. *(Section 3.15 D.3: "The OAuth callback is the only route without an origin check, and it stands in the table twice"; section 3.11: "The origin check and the rate limiting always come first — for direct server calls too.")*
 - **S-CSRF-2:** The origin check compares `new URL(header).origin` by string equality against an entry from `origins`; the library contains no prefix, substring or pattern matching on origins. *(Section 3.12, `origins: ["https://app.example.com"]`)*
 - **S-CSRF-3:** An origin that differs from the permitted one only in the scheme, the port, a prefix or a suffix is rejected with `origin_not_allowed`; the rejection is byte-identical for all failure variants. *(Section 3.12, `origins`; section 3.15 F, `origin_not_allowed`)*
 - **S-CSRF-4:** No state-changing operation is reachable through `GET`; the only exception is the OAuth callback, which is instead protected by `state`, PKCE and `iss`, and the remaining `GET` routes (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`) are reading. *(Section 3.10, first paragraph; section 3.15 D.3, route table)*
@@ -4395,7 +4399,7 @@ To each of the 123 requirements from section 5 belongs a test case. The test ID 
 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
-| T-CSRF-1 | S-CSRF-1 | Integration, generated + Static | Call every route from the route table with a foreign `Origin` — once through the HTTP handler, once through the direct server method. Static: exactly one route carries `originCheck: "exempt"`. | **All routes except the OAuth callback rejected** with `origin_not_allowed` on both paths; 0 row changes; **exactly 1** route with `exempt`, and that is `signIn.oauth.callback` | CI on every commit |
+| T-CSRF-1 | S-CSRF-1 | Integration, generated + Static | Call every route from the route table with a foreign `Origin` — once through the HTTP handler, once through the direct server method. Static: exactly two routes carry `originCheck: "exempt"`. | **All routes except the two OAuth callbacks rejected** with `origin_not_allowed` on both paths; 0 row changes; **exactly 2** routes with `exempt`, and those are `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` | CI on every commit |
 | T-CSRF-2 | S-CSRF-2 | Static + Unit | AST scan: in `core/http/origin.ts` no `startsWith`, `includes`, `endsWith`, `RegExp`. Unit: allowed origin, same origin with a different port, with a different scheme. | **0 hits**; **3/3 unit cases** correct | CI on every commit |
 | T-CSRF-3 | S-CSRF-3 | Integration, exhaustive | All state-changing routes × 8 origin variants: allowed, missing, `null`, `http://` instead of `https://`, `sub.erlaubt.de`, `erlaubt.de.evil.com`, `erlaubt.de:8443`, `evil.de`. | Only the *allowed* variant is successful; **all rejections byte-for-byte identical** | CI on every commit |
 | T-CSRF-4 | S-CSRF-4 | Static + Integration | Filter the route table: every `GET` route is the OAuth callback or one of the seven reading routes from S-CSRF-4. Integration: call every reading `GET` route and compare the row counts of all tables before and afterwards (`last_used_at`/`idle_expires_at` of the caller's own session excepted). | **0 unclassified GET routes**; **0 row changes** by reading routes | CI on every commit |

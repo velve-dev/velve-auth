@@ -2487,6 +2487,7 @@ einsetzt; `caller: "session"` erzeugt genau diese eine Differenz zwischen den Si
 | POST | `/sign-in/passkey/finish` | `{ challengeToken, response }` | `SignInResult` | 200, 400, 401 | IP | ja |
 | POST | `/sign-in/oauth/start` | `{ provider, redirectPath? }` | `OAuthRedirect` | 200, 400 | IP | ja |
 | GET | `/sign-in/oauth/callback/:provider` | Query `{ code, state, iss? }` | 302 | 302, 400, 409, 502 | IP | **nein** |
+| POST | `/sign-in/oauth/callback/:provider` | Formularkörper `{ code, state, iss? }` | 302 | 302, 400, 409, 502 | IP | **nein** |
 | POST | `/sign-in/magic-link/request` | `{ email }` | — | 204, 400 | IP+Konto | ja |
 | POST | `/sign-in/magic-link/redeem` | `{ token }` | `SignInResult` | 200, 400 | IP | ja |
 | POST | `/sign-out` | — | — | 204 | IP | ja |
@@ -2532,7 +2533,7 @@ drei ausgewiesenen 429 sind `too_many_factor_attempts`), `403 origin_not_allowed
 Route mit Origin-Prüfung, `403 account_disabled` bei jeder Route mit Aufrufer `session`
 (L-4) und `500 internal_error`.
 
-46 Routen im Modus `username_email`, 44 in `email` (ohne `/username/*`), 38 in `username`
+47 Routen im Modus `username_email`, 45 in `email` (ohne `/username/*`), 39 in `username`
 (zusätzlich ohne Magic Link, Passwort-Reset per E-Mail und `/email/*`); die Zahlen gelten mit
 konfiguriertem `webauthn`, ohne es fehlen die neun `webauthn`- und `passkey`-Routen. Die
 Tabelle wird beim Erzeugen der Instanz nach Modus und Konfiguration gefiltert; eine Route, die es im gewählten Modus nicht
@@ -2540,9 +2541,13 @@ gibt, antwortet nicht mit 403, sondern existiert nicht und ergibt 404. `auth.use
 `auth.maintenance.*` haben keine Routen (B.3). Jede Antwort trägt `Cache-Control: no-store`
 und `Vary: Cookie`, gesetzt vom Handler (L-6).
 
-Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung: Er ist eine Rückleitung des
-Anbieters per GET und hat systembedingt keinen `Origin`-Kopf; seine Absicherung ist der
-serverseitige `state` in `velve.oauth_flow`, dessen Zeiger im Cookie liegt. Die vier Routen mit
+Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung, und er steht zweimal in der
+Tabelle: Er ist eine Rückleitung des Anbieters und hat in beiden Formen systembedingt keinen
+`Origin`-Kopf, den die Bibliothek vergleichen dürfte — als GET-Rückleitung nicht, und als
+`form_post` nicht, das Apple verlangt, sobald der E-Mail-Bereich angefordert wird (Abschnitt 1,
+C50 und C70). Beide Zeilen tragen daher `originCheck: "exempt"`, und es sind genau zwei; seine
+Absicherung ist der serverseitige `state` in `velve.oauth_flow`, dessen Zeiger im Cookie liegt.
+Die vier Routen mit
 `caller: "pending"` sind die aus 3.6; nur sie lesen `__Host-velve_pending`, jede andere Route
 ignoriert es vollständig, und die Anzahl ist am Deklarationstyp ablesbar.
 
@@ -4012,7 +4017,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 **(c) Die Anforderungen.**
 
-- **S-CSRF-1:** Jede Route außer `GET /sign-in/oauth/callback/:provider` trägt `originCheck: "checked"` und durchläuft die Origin-Prüfung, bevor der Handler läuft; das gilt auch für den direkten Serveraufruf über die aus der Routendeklaration erzeugte Servermethode. *(Abschnitt 3.15 D.3: „Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung"; Abschnitt 3.11: „Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen.")*
+- **S-CSRF-1:** Jede Route außer `GET /sign-in/oauth/callback/:provider` und `POST /sign-in/oauth/callback/:provider` trägt `originCheck: "checked"` und durchläuft die Origin-Prüfung, bevor der Handler läuft; das gilt auch für den direkten Serveraufruf über die aus der Routendeklaration erzeugte Servermethode. Ausgenommen sind genau diese zwei, und beide aus demselben Grund: eine Rückleitung des Anbieters trägt keinen `Origin`-Kopf, den die Bibliothek vergleichen dürfte. *(Abschnitt 3.15 D.3: „Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung, und er steht zweimal in der Tabelle"; Abschnitt 3.11: „Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen.")*
 - **S-CSRF-2:** Die Origin-Prüfung vergleicht `new URL(header).origin` per Zeichenkettengleichheit gegen einen Eintrag aus `origins`; die Bibliothek enthält keinen Präfix-, Teilstring- oder Musterabgleich auf Origins. *(Abschnitt 3.12, `origins: ["https://app.example.com"]`)*
 - **S-CSRF-3:** Ein Origin, der sich vom erlaubten nur im Schema, im Port, in einem Präfix oder in einem Suffix unterscheidet, wird mit `origin_not_allowed` abgelehnt; die Ablehnung ist für alle Fehlvarianten byteweise identisch. *(Abschnitt 3.12, `origins`; Abschnitt 3.15 F, `origin_not_allowed`)*
 - **S-CSRF-4:** Keine zustandsändernde Operation ist über `GET` erreichbar; die einzige Ausnahme ist der OAuth-Callback, der stattdessen durch `state`, PKCE und `iss` geschützt ist, und die übrigen `GET`-Routen (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`) sind lesend. *(Abschnitt 3.10, erster Absatz; Abschnitt 3.15 D.3, Routentabelle)*
@@ -4394,7 +4399,7 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
-| T-CSRF-1 | S-CSRF-1 | Integration, generiert + Statisch | Jede Route aus der Routentabelle mit fremdem `Origin` aufrufen — einmal über den HTTP-Handler, einmal über die direkte Servermethode. Statisch: genau eine Route trägt `originCheck: "exempt"`. | **Alle Routen außer dem OAuth-Callback abgelehnt** mit `origin_not_allowed` auf beiden Wegen; 0 Zeilenänderungen; **genau 1** Route mit `exempt`, und das ist `signIn.oauth.callback` | CI bei jedem Commit |
+| T-CSRF-1 | S-CSRF-1 | Integration, generiert + Statisch | Jede Route aus der Routentabelle mit fremdem `Origin` aufrufen — einmal über den HTTP-Handler, einmal über die direkte Servermethode. Statisch: genau zwei Routen tragen `originCheck: "exempt"`. | **Alle Routen außer den beiden OAuth-Callbacks abgelehnt** mit `origin_not_allowed` auf beiden Wegen; 0 Zeilenänderungen; **genau 2** Routen mit `exempt`, und das sind `signIn.oauth.callback` und `signIn.oauth.callbackFormPost` | CI bei jedem Commit |
 | T-CSRF-2 | S-CSRF-2 | Statisch + Unit | AST-Scan: in `core/http/origin.ts` kein `startsWith`, `includes`, `endsWith`, `RegExp`. Unit: erlaubter Origin, gleicher Origin mit anderem Port, mit anderem Schema. | **0 Treffer**; **3/3 Unit-Fälle** korrekt | CI bei jedem Commit |
 | T-CSRF-3 | S-CSRF-3 | Integration, exhaustiv | Alle zustandsändernden Routen × 8 Origin-Varianten: erlaubt, fehlend, `null`, `http://` statt `https://`, `sub.erlaubt.de`, `erlaubt.de.evil.com`, `erlaubt.de:8443`, `evil.de`. | Nur die Variante *erlaubt* ist erfolgreich; **alle Ablehnungen byteweise identisch** | CI bei jedem Commit |
 | T-CSRF-4 | S-CSRF-4 | Statisch + Integration | Routentabelle filtern: jede `GET`-Route ist der OAuth-Callback oder eine der sieben lesenden Routen aus S-CSRF-4. Integration: jede lesende `GET`-Route aufrufen und die Zeilenzahl aller Tabellen vorher und nachher vergleichen (`last_used_at`/`idle_expires_at` der eigenen Sitzung ausgenommen). | **0 unklassifizierte GET-Routen**; **0 Zeilenänderungen** durch lesende Routen | CI bei jedem Commit |
