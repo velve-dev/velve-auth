@@ -196,7 +196,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 
 ### C. Soziale Anmeldung / OAuth (96)
 
-#### C.1 Eingebaute Anbieter (36) und Generic-OAuth-Helfer (11) — zusammengefasst
+#### C.1 Eingebaute Anbieter (36) und Generic OAuth (11) — zusammengefasst
 
 | Funktion | Better Auth | Velve Auth | Begründung |
 |---|---|---|---|

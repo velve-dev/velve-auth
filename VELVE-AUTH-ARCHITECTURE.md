@@ -198,7 +198,7 @@ Source references are relative to `/home/claude/better-auth/` and come from the 
 
 ### C. Social sign-in / OAuth (96)
 
-#### C.1 Built-in providers (36) and generic OAuth helpers (11) — grouped
+#### C.1 Built-in providers (36) and generic OAuth (11) — grouped
 
 | Feature | Better Auth | Velve Auth | Reasoning |
 |---|---|---|---|
