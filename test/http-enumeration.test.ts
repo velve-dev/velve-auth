@@ -190,12 +190,18 @@ describe("enumeration — S-ENUM-1, S-ENUM-2, S-ENUM-6, L-4", () => {
 		}
 	});
 
+	/**
+	 * `.reason` alone names any property so called, and 3.15 G gives `PluginActor` one that has
+	 * nothing to do with a concealed failure. What the requirement is about is reading the reason
+	 * *off a `ConcealedError`*, so the file has to name that class to be reading one.
+	 */
 	it("decides the visible code from an internal reason in exactly one file", () => {
 		const files = sourceFilesUnder(new URL("../src/", import.meta.url));
 		const deciders = files.filter(
 			({ name, source }) =>
 				name !== "error-map.ts" &&
-				(source.includes("instanceof ConcealedError") || source.includes(".reason")),
+				(source.includes("instanceof ConcealedError") ||
+					(source.includes("ConcealedError") && source.includes(".reason"))),
 		);
 
 		expect(deciders.map(({ name }) => name)).toEqual([]);

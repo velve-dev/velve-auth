@@ -10,7 +10,7 @@ import { usernameAvailability } from "../identity/resolution.js";
 import type { KeyProvider } from "../keys/index.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
-import type { VelvePlugin } from "../plugin/config.js";
+import type { PluginRuntime } from "../plugin/registry.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
 import type { OneTimeTokens } from "../token/one-time-token.js";
 import type { EmailConfig, RateLimitConfig } from "./config.js";
@@ -45,7 +45,8 @@ export interface RouteServices {
 	readonly oneTimeTokens: OneTimeTokens;
 	readonly oauth?: OAuthConfig;
 	readonly email?: EmailConfig;
-	readonly plugins?: readonly VelvePlugin[];
+	/** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */
+	readonly pluginRuntime: PluginRuntime;
 	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
 	readonly fetch?: typeof globalThis.fetch;
 }

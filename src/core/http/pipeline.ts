@@ -137,6 +137,7 @@ async function createRequestContext(
 		ipAddress: call.ipAddress,
 		userAgent: call.userAgent,
 		cookies,
+		plugin: environment.pluginContextOf(route),
 		enforceAccountRateLimit: accountBucket.consume,
 	};
 }

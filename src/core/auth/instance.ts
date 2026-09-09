@@ -3,6 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
+import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -20,6 +21,8 @@ import { createRateLimiter } from "../limit/index.js";
 import { oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
+import type { FrozenContextServices } from "../plugin/context.js";
+import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
@@ -46,6 +49,31 @@ const MILLISECONDS_IN_A_SECOND = 1000;
 const NO_SINK: HttpEnvironment["log"] = () => undefined;
 
 const ERROR_CODES = VELVE_ERROR_CODES;
+
+/**
+ * 3.15 B names the namespaces of the instance surface. A plugin id equal to one of them would put
+ * its routes under a key the surface already owns, so the registry refuses it at start (3.11).
+ */
+const RESERVED_SURFACE_NAMESPACES: readonly string[] = [
+	"signUp",
+	"signIn",
+	"signOut",
+	"session",
+	"user",
+	"password",
+	"factor",
+	"identity",
+	"pending",
+	"email",
+	"username",
+	"routes",
+	"identityMode",
+	"errorCodes",
+	"maintenance",
+	"migrate",
+	"close",
+	"http",
+];
 
 export interface SessionNamespace {
 	resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
@@ -171,6 +199,22 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
 
+	const frozenContextServices: FrozenContextServices = {
+		clock,
+		identityMode: identity.mode,
+		schema,
+		users,
+		sessions: createSessionRepository({ driver, schema }),
+		driver,
+		log,
+	};
+	// S-CSRF-6: the registry is built here and holds no route of its own; every hook it runs is
+	// reached from a handler, and a handler runs after the origin check and the rate limiter.
+	const pluginRuntime = createPluginRuntime({
+		plugins: config.plugins ?? [],
+		services: frozenContextServices,
+	});
+
 	const services: RouteServices = {
 		sessions,
 		pending,
@@ -187,7 +231,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
 		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
 		...(config.email === undefined ? {} : { email: config.email }),
-		...(config.plugins === undefined ? {} : { plugins: config.plugins }),
+		pluginRuntime,
 	};
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);
@@ -195,21 +239,24 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
+	const coreRoutes: readonly AnyRoute[] = [
+		signOut,
+		read,
+		list,
+		revoke,
+		revokeAllOther,
+		revokeAll,
+		refresh,
+		...(usernameTable ?? []),
+		...pendingTable,
+		...oauthRoutes(services),
+		...emailFlowRoutes(services),
+	];
+	const contributedRoutes = pluginRoutes(services);
+	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, RESERVED_SURFACE_NAMESPACES);
+
 	const environment: HttpEnvironment = {
-		routes: [
-			signOut,
-			read,
-			list,
-			revoke,
-			revokeAllOther,
-			revokeAll,
-			refresh,
-			...(usernameTable ?? []),
-			...pendingTable,
-			...oauthRoutes(services),
-			...emailFlowRoutes(services),
-			...pluginRoutes(services),
-		],
+		routes: [...coreRoutes, ...contributedRoutes],
 		origins: config.origins,
 		trustedProxies: config.trustedProxies ?? [],
 		cookieSameSite: sessionSettings.sameSite,
@@ -219,6 +266,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			sessionSettings.freshnessWindowMs / MILLISECONDS_IN_A_SECOND,
 		),
 		callers: callerResolver(sessions, pending, resolutions),
+		pluginContextOf: (route) => pluginRuntime.contextOf(route),
 		rateLimiter: createRateLimiter({
 			driver,
 			keys: config.keys,

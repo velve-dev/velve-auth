@@ -1,3 +1,4 @@
+import type { FrozenContext } from "../plugin/config.js";
 import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import type { CookieWriter } from "./cookies.js";
 import type { AnyErrorCode } from "./error-map.js";
@@ -32,6 +33,8 @@ export interface RequestContext {
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly cookies: CookieWriter;
+	/** 3.15 D.1: part G's context, frozen; for a core route it carries no tables of its own. */
+	readonly plugin: FrozenContext;
 	enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
 }
 

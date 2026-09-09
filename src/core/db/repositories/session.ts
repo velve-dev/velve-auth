@@ -71,6 +71,10 @@ export interface SessionRepository {
 		readonly actor: Actor;
 		readonly currentSessionId: string;
 	}): Promise<Session[]>;
+	/** 3.15 G: the reading half of `FrozenRepositories`, which names an account and holds no proof of owning it. */
+	listSessionsOfUser(input: { readonly userId: string }): Promise<Session[]>;
+	/** 3.15 G: `revokeSession` is given a session id and no owner, so the id is the whole predicate. */
+	deleteSessionById(input: { readonly sessionId: string }): Promise<RemovedSession | null>;
 	deleteSessionOwnedBy(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -206,6 +210,11 @@ function deleteByTokenHashStatement(table: string): string {
 	WHERE token_sha256 = $1 RETURNING id, user_id`;
 }
 
+function deleteByIdStatement(table: string): string {
+	return `DELETE FROM ${table} /* no owner predicate: S-OWNER-7, 3.15 G hands a plugin a session id and no owner to bind it to */
+	WHERE id = $1 RETURNING id, user_id`;
+}
+
 function deleteOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE id = $1 AND user_id = $2 RETURNING id`;
 }
@@ -244,6 +253,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const resolveSql = resolveStatement(table, users);
 	const extendSql = extendIdleDeadlineStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
+	const deleteByIdSql = deleteByIdStatement(table);
 	const deleteOwnedSql = deleteOwnedStatement(table);
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
 	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
@@ -281,6 +291,18 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				userDisabledAt: toOptionalDate(row.disabled_at),
 				observedAt: toDate(row.observed_at),
 			};
+		},
+
+		async listSessionsOfUser({ userId }) {
+			const rows = await options.driver.query<SessionRowShape>(listOwnedSql, [userId]);
+			return rows.map((row) => toSession(row, NOT_LISTED));
+		},
+
+		async deleteSessionById({ sessionId }) {
+			const [row] = await options.driver.query<{ id: string; user_id: string }>(deleteByIdSql, [
+				sessionId,
+			]);
+			return row === undefined ? null : { id: row.id, userId: row.user_id };
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {

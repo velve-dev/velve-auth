@@ -13,18 +13,18 @@ export { };
 
 ## index.d.mts
 
-import { AuthenticationFactor, PendingAuthentication, Session } from "./core/http/caller.mjs";
-import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
-import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
-import { Clock } from "./core/http/environment.mjs";
-import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
-import { UsernameRules } from "./core/identity/configuration.mjs";
-import { KeyProvider } from "./core/keys/provider.mjs";
-import { GenericProviderConfig, KnownProvider, OAuthConfig, ProviderCredentials } from "./core/oauth/config.mjs";
 import { EntityId, IdentityId, ProviderId, SessionId, UserId, WebAuthnCredentialId, toEntityId } from "./core/db/entity-id.mjs";
 import { Actor, ConsumedOAuthFlow, RedeemedOneTimeToken, ResolvedSession, actorOfConsumedOAuthFlow, actorOfRedeemedOneTimeToken, actorOfResolvedSession } from "./core/db/actor.mjs";
 import { ImportSource, User } from "./core/auth/user.mjs";
+import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
+import { AuthenticationFactor, PendingAuthentication, Session } from "./core/http/caller.mjs";
+import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
+import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
 import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
+import { Clock } from "./core/http/environment.mjs";
+import { UsernameRules } from "./core/identity/configuration.mjs";
+import { KeyProvider } from "./core/keys/provider.mjs";
+import { GenericProviderConfig, KnownProvider, OAuthConfig, ProviderCredentials } from "./core/oauth/config.mjs";
 import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";

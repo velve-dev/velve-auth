@@ -4281,7 +4281,7 @@ directly, for a caller that is not a browser.
 
 ## Plugins
 
-Reserved for `plugin` (wave 5). Architecture 3.11 and 3.15 G: the registry, the
+Architecture 3.11 and 3.15 G: the registry, the
 topological sort over `dependsOn`, the frozen context, the seven enumerated hook
 points and the veto a hook holds, and what a plugin may contribute — routes under
 `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
@@ -4297,16 +4297,145 @@ may add can only be read after the chapter that says what it is added to and wha
 happens when the addition is refused. Its migrations are the same versioned
 runner, which stands further above still.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `plugin`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does. Its configuration seam is
-`src/core/plugin/config.ts`, which is open and is `plugin`'s file — the field on
-`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
-edited for it.
+The registry, the frozen context and the seven hook points are built. What is
+not built is listed at the end of this chapter and remains `plugin`'s (wave 5):
+that feature appends here and owns the rest.
 
-### Nothing is documented here yet
+### `VelvePlugin`
 
-`plugin` replaces this heading with its own sub-tree.
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `string` | The namespace. Every route name begins `<id>.`, every path `/x/<id>/`, every table `<id>_`, every error code `<id>.` — all four as types, so a plugin that wants a core route cannot write one that compiles. |
+| `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
+| `migrations` | `readonly PluginMigration<Id>[]?` | Declared and **not yet run**; see below. |
+| `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. |
+| `hooks` | `PluginHooks?` | Any of the seven points below. |
+| `errorCodes` | `readonly \`${Id}.${string}\`[]?` | Declared and not yet registered; `registerPluginErrorCodes` needs a status and a message, which this list does not carry. |
+| `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | Declared and not yet read; a plugin route carries its own `rateLimit` in its declaration. |
+
+### Start errors
+
+Four configurations refuse the start with a `VelveStartupError`. None of them is
+a warning, because each leaves a question with no answer:
+
+| Code | When |
+|---|---|
+| `plugin_id_duplicated` | Two plugins claim the same `id`, so neither owns its namespace. |
+| `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
+| `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route, with another plugin's, or its first name segment is one of the namespaces the instance surface occupies. |
+
+The last one is the one 3.11 states in terms: a name collision with a core route
+is a start error and not a warning. The type constraint already refuses it at
+compile time; this is the half that holds for a plugin written in JavaScript.
+
+### The seven hook points
+
+```ts
+beforeSignIn(event: SignInEvent, context: FrozenContext): Promise<void>
+afterSignIn(event: SignInCompletedEvent, context: FrozenContext): Promise<void>
+beforeSessionCreate(event: SessionCreateEvent, context: FrozenContext): Promise<void>
+afterSessionCreate(event: SessionCreatedEvent, context: FrozenContext): Promise<void>
+beforeUserCreate(event: UserCreateEvent, context: FrozenContext): Promise<void>
+afterUserCreate(event: UserCreatedEvent, context: FrozenContext): Promise<void>
+beforeSessionRevoke(event: SessionRevokeEvent, context: FrozenContext): Promise<void>
+```
+
+Every return type is `Promise<void>`, and that is the whole of what "a listener
+with a veto" means: a hook **refuses** by throwing and **observes** by returning,
+and it cannot replace the answer because it cannot return one. The points are
+enumerated, not open.
+
+At each point every plugin runs in dependency order, one after another, each
+awaited before the next. A throw stops the rest and travels out through the same
+error map every other failure does — so a plugin's own namespaced code answers
+with what `registerPluginErrorCodes` recorded for it, and an unregistered code
+answers `500 internal_error` without the plugin's text.
+
+**Hooks run behind the security middleware, on both paths (S-CSRF-6).** They are
+reached only from a route handler, and a handler runs after the origin check and
+after the address bucket — on the HTTP path and on the direct server call alike,
+because both go through `runRoute`. There is no middleware registration point in
+`VelvePlugin` to register anything ahead of them with, and the origin check is
+not reachable from the context.
+
+### `FrozenContext`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `clock` | `Clock` | The instance's clock, so a plugin reads the same time the core does. |
+| `identityMode` | `IdentityMode` | |
+| `schema` | `string` | The configured PostgreSQL schema — what a plugin qualifies its own table names with. |
+| `repositories` | `FrozenRepositories` | The three calls below. |
+| `ownTables` | `{ query<Row>(sql, params): Promise<Row[]> }` | Bounded to the plugin's own tables. |
+| `log` | `(level, message, fields?) => void` | The instance's log sink. |
+
+`Object.freeze` refuses a change at run time and `readonly` refuses it at compile
+time. Both, because the first is what a caller from JavaScript meets and the
+second is what a caller from TypeScript meets. The context, its `repositories`
+and its `ownTables` are each frozen.
+
+Nothing on it leads to the password verifier, to session resolution or to the
+origin check: they are not part of the type, and there is no path to them
+through anything that is.
+
+### `FrozenRepositories`
+
+```ts
+findUserById({ userId, actor }): Promise<User | null>
+listSessionsForUser({ userId, actor }): Promise<Session[]>
+revokeSession({ sessionId, reason, actor }): Promise<void>
+```
+
+**There is no writing method on `velve.user`, `password_credential`,
+`totp_credential` or `recovery_code`, and that absence is the requirement.** A
+plugin that could write a password or a factor would be a co-owner of the core
+rather than a listener with a veto (3.11).
+
+`actor` is a `PluginActor` — `{ pluginId, reason }`, both mandatory, both
+non-empty, and both written to the log on every call. A call whose actor is
+missing either field throws before it reaches the database.
+
+`reason` on `revokeSession` is a `RevokeReason`: `"sign_out"`,
+`"revoked_by_user"`, `"password_changed"`, `"password_reset"` or
+`"identity_linked"`.
+
+### `ownTables.query`
+
+Every table a statement names must be the plugin's own: `<pluginId>_…`, either
+bare or qualified with the configured schema. Anything else is refused before the
+driver sees the statement.
+
+It is a guardrail and not a sandbox, and the distinction is worth stating: a
+plugin runs inside the application's own process and can reach the driver by
+other means entirely. What this refuses is the accident — a join onto
+`velve.user` that seemed harmless — not an attacker. The check reads the
+identifier standing after `FROM`, `JOIN`, `INTO` and `UPDATE`, outside comments
+and quoted text; a name it cannot classify is refused rather than allowed.
+
+A core route's context carries the field, because 3.15 D.1 gives every request
+context one, and its `query` rejects: a core route owns no tables of its own.
+
+### `RequestContext.plugin`
+
+Every route handler is given the frozen context of the plugin that contributed
+the route; a core route is given the core one. Which context a route gets is
+recorded against the route object when the registry builds it, not derived from
+the route's name.
+
+### Not built here
+
+These belong to `plugin` (wave 5) and are the rest of this chapter:
+
+- **Migrations do not run.** 3.11 puts a plugin's migrations in the same
+  versioned runner, and the runner keys its ledger on `version` alone — so a
+  plugin numbering its first migration `1` collides with the core's first. The
+  namespacing that resolves it is a decision, not a wiring step, and it is not
+  taken here.
+- **`errorCodes` are not registered**, because the declaration carries no status
+  and no message and `registerPluginErrorCodes` needs both.
+- **`rateLimitRules` are not read**, because a plugin route already declares its
+  own `rateLimit` and which of the two wins is a decision.
 
 ## The client
 

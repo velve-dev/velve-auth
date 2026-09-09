@@ -1,7 +1,8 @@
+import type { FrozenContext } from "../plugin/config.js";
 import type { CallerResolver } from "./caller.js";
 import { type CookiePolicy, type CookieSameSite, DEFAULT_COOKIE_NAMES } from "./cookies.js";
 import type { RateLimiter } from "./rate-limit.js";
-import type { AnyRoute } from "./route.js";
+import type { AnyRoute, RouteMetadata } from "./route.js";
 
 export interface Clock {
 	now(): Date;
@@ -18,6 +19,8 @@ export interface HttpEnvironment {
 	readonly sessionCookieMaximumAgeInSeconds: number;
 	readonly freshnessWindowInSeconds: number;
 	readonly callers: CallerResolver;
+	/** Which frozen context a route's handler is given; a route the assembly did not register gets the core one. */
+	readonly pluginContextOf: (route: RouteMetadata) => FrozenContext;
 	readonly rateLimiter: RateLimiter;
 	readonly clock: Clock;
 	readonly log: (
