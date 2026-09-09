@@ -423,6 +423,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-795 … E-819 | gate and infrastructure, fifth range |
 | E-820 … E-844 | outside the waves · `skill` — the English specification and the agent skill |
 | E-845 … E-869 | outside the waves · `specfix` — the specification's own defects |
+| E-870 … E-879 | outside the waves · `notice` — the attribution line and the licence appendix |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not

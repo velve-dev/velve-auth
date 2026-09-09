@@ -3451,3 +3451,40 @@ Second: `T-RATE-3` belongs with the repairs in `E-846` and is not in it. Lowerin
 Third: the pull request claimed that `test/architecture-translation.test.ts` passing is the evidence that every correction landed in both files. The conclusion is true and the inference is not. The gate planted six one-sided reverts of these corrections and four of them passed the test: `headingShapes()` keeps a heading's level and its section number and discards the parenthesised count, so `(54)` put back to `(44)` in one file is invisible to it, and so are `23 · 14`, `12/12` and a deleted horizontal rule. Of the twenty corrections that had to land in both files, exactly one — the row added to 4.1 b) — would have failed the test one-sided, because it is the only one that changes a table's height. What actually verified the pair was the gate's hunk-by-hunk comparison: 23 German hunks against 19 English, the four German-only ones being the CVSS separators the English never needed. The pull request now says that instead.
 
 **Price.** The check keeps a blind spot that this entry describes and does not close: nothing compares the counts in parentheses in the two files' headings, nothing compares a threshold cell, and nothing compares prose. Nineteen of the twenty corrections that touch both files therefore rest on a reader having applied them twice, which is what happened and is not what a check is for. Widening `headingShapes()` to carry the count would close part of it and belongs to whoever owns that test rather than to a branch correcting the document it reads. And this entry is itself the fourth link in a chain about one document's mistakes, which `E-824` said would be the point to ask whether the chain should stop.
+
+### Velve is a product, not a company
+`E-870` · notice · attribution, frozen
+
+**Context.** `NOTICE` read "This product is developed by Velve, a Levo Studio company." Velve is not a company. It is a product of Levo Studio, and Velve Auth is built under it — so the line described a corporate structure that does not exist. `NOTICE` is the file Apache 2.0 section 4(d) requires downstream users to reproduce, so it is the sentence that travels furthest of anything in this repository.
+
+**Rejected.** The literal replacement, "This product is developed by Velve, a product by Levo Studio", which repeats *product* twice in eleven words for two different referents — Velve Auth and Velve. Also rejected: moving the relationship into `README.md` and leaving `NOTICE` to the copyright line alone, which would put it in the file nobody is obliged to carry.
+
+**Reason.** The naming was decided when this repository relicensed: the copyright holder is Velve, because Velve Auth is built under Velve rather than directly under Levo Studio. What was wrong was only the word *company*, and correcting it needed the subject named rather than referred to — "Velve Auth is developed by Velve, a product by Levo Studio" says the same thing once each.
+
+**Price.** `NOTICE` is now the only place the relationship is written, and nothing checks it. A second product under Velve would have to copy the sentence rather than reference it, and a change to how Levo Studio names its products would have to be found by reading rather than by a failing test.
+
+### Fill the licence appendix rather than ship its instructions
+`E-871` · notice · licence, frozen
+
+**Context.** `LICENSE` carried Apache 2.0's canonical text with its appendix untouched, so line 190 read `Copyright [yyyy] [name of copyright owner]`. That was not a decision recorded anywhere; the relicensing verified the text byte-identical against apache.org and left the appendix as it arrived.
+
+**Rejected.** Leaving it. The argument for leaving it is real — an untouched `LICENSE` can be checked against the canonical text with one hash, and the copyright is already stated in `NOTICE`, which is the file section 4(d) obliges downstream users to reproduce.
+
+**Reason.** The appendix is not licence text. It is the instruction *"attach the following boilerplate notice, with the fields enclosed by brackets replaced with your own identifying information"* — so a bracketed field left in place is not canonical, it is an instruction nobody carried out. A reader opening `LICENSE` to find who holds the copyright finds a placeholder, and a project that ships one has not finished applying the licence it chose. Year 2026, holder Velve, matching `NOTICE` and the decision that the holder is Velve rather than Levo Studio.
+
+**Price.** `LICENSE` is no longer byte-identical to apache.org's text, so the cheap check — one hash against the canonical file — is gone, and what replaces it is reading one line. The two remaining bracket characters at line 182 are part of the instruction's own sentence and not a field; a scan for `[` will find them and be wrong.
+
+### The appendix does not ask what E-871 says it asks
+`E-872` · notice · licence, correction
+
+**Context.** `E-871` argued that filling `Copyright [yyyy] [name of copyright owner]` carries out an instruction the appendix gives, so a placeholder left in place is an instruction nobody followed. The gate read the appendix's next sentence — *"The text should be enclosed in the appropriate comment syntax for the file format"* — and the instruction is to attach the boilerplate **to the files of your work**, not to complete the copy inside `LICENSE`. The Apache Software Foundation ships its own releases with the placeholders intact.
+
+**Rejected.** Reverting the change. Also rejected: correcting `E-871` in place, which §6 forbids for a reason before merge.
+
+**Reason.** The decision survives its argument, which is worth separating. Filling the two fields touches no operative clause — the gate diffed the file against apache.org and found exactly one differing line, at 190, eleven lines below the `APPENDIX` heading — and a reader opening `LICENSE` for the copyright holder now finds one instead of a blank. That is the whole benefit and it is real. What is not true is that the appendix demanded it.
+
+And the honest consequence: under the appendix's actual reading, the instruction is **still** uncarried-out. `grep -rl "Licensed under the Apache License" src/` returns nothing and the tree carries no SPDX identifier, so the boilerplate is attached to no source file. Whether it should be is a separate question this entry does not decide.
+
+Two smaller corrections to `E-871`, both the gate's. Its Reason quotes the instruction and drops `"[]"` without an ellipsis — the dropped token being the very thing the entry is about. And `E-870` says `NOTICE` is the sentence that travels furthest of anything here; section 4(a) obliges a copy of the **License** with every redistribution, while 4(d) obliges `NOTICE` only with derivative works, so the licence text travels at least as far. The claim is true of text this project wrote and was stated wider than that.
+
+**Price.** Three entries now describe one two-line change, and the argument a reader meets first is the one that is wrong about the appendix. That is the cost of the rule that a reason is never rewritten, paid here for a correction nobody would have caught without reading the sentence after the one quoted.
