@@ -210,6 +210,64 @@ plainly is more useful than a plugin that half-implements them.
   after it.
 - [`VELVE-AUTH-ARCHITEKTUR.md`](./VELVE-AUTH-ARCHITEKTUR.md) — the binding
   specification the implementation is measured against. In German.
+- [`VELVE-AUTH-ARCHITECTURE.md`](./VELVE-AUTH-ARCHITECTURE.md) — an English
+  translation of it. Faithful, and not binding: where the two differ, the German
+  is right and the translation has a bug.
+
+## Using it with an AI coding agent
+
+There is a skill that turns a coding agent into someone who actually knows this
+library — one that reads the specification before answering, cites the clause its
+answer rests on, refuses what the library deliberately does not do instead of
+approximating it, and asks you rather than guessing.
+
+It carries no copy of the documentation. Every answer comes from the files in this
+repository, fetched live, because a stale copy of an authentication library's
+interface is worse than none: it is confidently wrong.
+
+### Claude Code
+
+Two commands, and it is available in every project:
+
+```bash
+mkdir -p ~/.claude/skills/velve-auth
+curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SKILL.md \
+  -o ~/.claude/skills/velve-auth/SKILL.md
+```
+
+That is the whole installation. Claude Code picks the skill up on the next start
+and uses it whenever the conversation is about Velve Auth; you can also invoke it
+by name with `/velve-auth`.
+
+To commit it to one project instead, so everyone working on that repository gets
+it, put it in the project rather than your home directory:
+
+```bash
+mkdir -p .claude/skills/velve-auth
+curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SKILL.md \
+  -o .claude/skills/velve-auth/SKILL.md
+```
+
+### Codex, and other agents that take one instruction file
+
+[`CODEX-SKILL.md`](./CODEX-SKILL.md) is the same expertise as a single
+self-contained file. Save it as `AGENTS.md` in the project root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CODEX-SKILL.md \
+  -o AGENTS.md
+```
+
+Or paste it at the start of a conversation. It works either way, and it tells the
+agent what to do if it cannot reach the network — ask you for the files, rather
+than answer from memory.
+
+### What it will not do for you
+
+It will tell you no. If you ask it for roles, permissions, organisations, teams,
+an audit log or a billing module, it will say that Velve Auth does not do that,
+give you the reason, tell you where that belongs instead, and stop — rather than
+building you half of one inside your authentication layer.
 
 ## Licence
 
