@@ -1379,9 +1379,9 @@ Drei Konfigurationen, gewählt bei der Initialisierung über `identity.mode`
 
 | Konfiguration | Anmeldename | Eindeutig | Zurücksetzen/Bestätigen über | Aufzählungsschutz |
 |---|---|---|---|---|
-| `email` | E-Mail | `email` | E-Mail | vollständig |
+| `email` | E-Mail | `email` | E-Mail | vollständig bis auf das erste Restleck aus 3.13 |
 | `username` | Benutzername | `username_key` | **nicht verfügbar** ohne Wiederherstellungscodes | für den Benutzernamen nicht möglich |
-| `username_email` | Benutzername **oder** E-Mail | beide | E-Mail | für die E-Mail ja, für den Benutzernamen nein |
+| `username_email` | Benutzername **oder** E-Mail | beide | E-Mail | für den Benutzernamen nein; für die E-Mail bis auf beide Restlecks aus 3.13 |
 
 Konsequenz, die dokumentiert wird: **In `username` gibt es kein Zurücksetzen per
 E-Mail.** Wer diese Konfiguration wählt, muss Wiederherstellungscodes bei der
@@ -1394,6 +1394,14 @@ Zweite Konsequenz: **Benutzernamen sind per Definition aufzählbar.**
 Wer eine Verfügbarkeitsprüfung anbietet, verrät die Existenz. Velve Auth bietet
 sie an, begrenzt sie hart und sagt es in der Dokumentation, statt so zu tun, als
 sei sie geschützt.
+
+Dritte Konsequenz, nur in `username_email`: **die Aufzählbarkeit des
+Benutzernamens reicht ein Bit über die Adresse durch.** Der Schutz der Adresse
+ist in dieser Konfiguration deshalb nicht vollständig, und die Spalte oben sagt
+es. Welcher Weg das ist, steht in 3.13 unter dem zweiten Restleck. In `email`
+gibt es diesen Weg nicht, weil es dort keinen Benutzernamen gibt — das ist der
+Unterschied, der bei der Wahl zwischen den beiden Konfigurationen zählt. Das
+erste Restleck aus 3.13 haben beide.
 
 Normalisierung an genau einer Stelle:
 - E-Mail: trimmen, NFKC, `lower()`. Datenbank prüft per CHECK nach.
@@ -1646,12 +1654,37 @@ Zwei Fehlerarten:
 - **Absichtlich unsichtbar:** Alles, was Existenz verraten würde. Anmeldung,
   Registrierung, Kennwort-Reset und E-Mail-Wechsel liefern für existierende und
   nicht existierende Konten **byteweise identische** Antworten — gleicher Status,
-  gleiche Kopfzeilen, gleicher Körper. Der Unterschied wandert ausschließlich in
-  die versendete E-Mail.
+  gleiche Kopfzeilen, gleicher Körper, bis auf die Felder, die der Aufrufer selbst
+  gesendet hat und die die Antwort zurückgibt (S-ENUM-3). Der Unterschied wandert
+  in die versendete E-Mail; **ausschließlich dorthin wandert er nicht**, und die
+  beiden Absätze über die Restlecks sagen, wohin sonst.
 
 Registrierung mit bereits vergebener E-Mail: gleiche Antwort wie bei Erfolg, und
 an die vorhandene Adresse geht eine Nachricht „jemand hat versucht, sich mit
 deiner Adresse zu registrieren" mit einem Anmelde- statt Bestätigungslink.
+
+**Erstes Restleck, in jeder Konfiguration: die Deckung überlebt die nächste
+Anfrage nicht.** Die Antwort auf eine vergebene Adresse ist eine echte
+Registrierung auf eine Deckadresse, die zurückgerollt wird; sie führt deshalb
+einen Sitzungs-Token, der keine Zeile benennt. Das nächste `GET /session`
+desselben Aufrufers liefert `null`, wo es nach einer echten Registrierung eine
+Sitzung liefert. Zwei Anfragen genügen also, und an diesem Endpunkt ist das nicht
+zu schließen: Ein Token, der auflöste, wäre eine Sitzung auf einem fremden Konto.
+
+**Zweites Restleck, nur in `username_email`: der Benutzername reicht ein Bit über
+die Adresse durch.** Weil die Deckung zurückgerollt wird, beansprucht eine
+Registrierung auf eine vergebene Adresse den mitgesendeten Benutzernamen nicht
+dauerhaft; eine Registrierung auf eine freie Adresse legt ihn an. Zwei Anfragen
+lesen daraus ein Bit: erst `{E-Mail: die geprüfte, Benutzername: N}`, dann
+`{E-Mail: eine frische, Benutzername: N}`. Die zweite antwortet 200, wenn die
+erste Adresse vergeben war, und `username_taken`, wenn sie frei war. Das ist
+deterministisch, braucht keinen Wettlauf und keine privilegierte Position, und
+ein einziger nebenläufiger Stapel liest dasselbe Bit an der Zahl der Ablehnungen
+ab. Keine Normalisierung einer Antwort erreicht eine Zeile, also deckt die
+Ausnahme oben dieses Leck nicht mit ab. Es zu schließen verlangt eine Deckung,
+die bestehen bleibt — ein echtes Konto für jede Adresse, die ein Angreifer rät —,
+und das ist schlechter als das Orakel. Die Konfiguration hat diese Eigenschaft,
+und sie wird hier genannt statt weggeredet.
 
 Serverseitig wird der wahre Grund immer protokolliert. Der Unterschied zwischen
 innen und außen ist ausdrücklich und liegt an genau einer Stelle im Code.
@@ -3118,7 +3151,7 @@ Stattdessen wird der Nutzer in `velve.password_reset_required` markiert — eine
 
 Der Anmeldeweg, ohne neuen Aufzählungskanal: (1) Eingabelänge prüfen (Abschnitt 3.3, Schritt 1). (2) Nutzer auflösen; kein `password_credential` gefunden → **derselbe Codepfad wie bei einem unbekannten Nutzer**, also Prüfung gegen den Dummy-PHC mit den konfigurierten Standardparametern (Abschnitt 3.3, Schritt 2): gleiche Rechenzeit, gleicher Speicher, gleicher Semaphor. (3) Antwort ist die einheitliche Fehlantwort aus Abschnitt 3.13 — gleicher Status, gleiche Kopfzeilen, gleicher Körper; **kein Feld, kein Fehlercode und kein Zeitunterschied verrät die Markierung**. (4) *Nach* dem Senden der Antwort, in derselben begrenzten Hintergrundaufgabe, die auch den Rehash trägt (Abschnitt 3.3, Schritt 6): Existiert eine Zeile in `password_reset_required` und hat der Nutzer eine bestätigte E-Mail, wird ein `one_time_token` mit `purpose = 'password_reset'` erzeugt (1 h, Abschnitt 3.7) und die Reset-Mail versendet, mit einem Text, der die Migration erklärt. (5) Höchstens eine solche Mail pro Nutzer und Stunde, über denselben Token-Bucket wie der reguläre Reset (Abschnitt 3.9). (6) Setzt der Nutzer das Kennwort, löscht dieselbe Transaktion die Markierung und schreibt `password_credential`.
 
-Das ist exakt das Muster aus Abschnitt 3.13: *„Der Unterschied wandert ausschließlich in die versendete E-Mail."* Der Angreifer sieht nichts; der Kontoinhaber bekommt den Weg zurück, ohne je einen Fehler zu sehen, den er nicht versteht. In der Konfiguration `username` (Abschnitt 3.4) gibt es keinen E-Mail-Pfad — dort ist der Wiederherstellungscode der einzige Weg, und fehlt auch der, ist das Konto verloren. Genau diese Fälle zählt der Trockenlauf als `unrecoverable`.
+Das ist exakt das Muster aus Abschnitt 3.13: *„Der Unterschied wandert in die versendete E-Mail."* Der Angreifer sieht nichts; der Kontoinhaber bekommt den Weg zurück, ohne je einen Fehler zu sehen, den er nicht versteht. In der Konfiguration `username` (Abschnitt 3.4) gibt es keinen E-Mail-Pfad — dort ist der Wiederherstellungscode der einzige Weg, und fehlt auch der, ist das Konto verloren. Genau diese Fälle zählt der Trockenlauf als `unrecoverable`.
 
 #### 4.0.6 Kollisionsauflösung
 
@@ -3913,11 +3946,11 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 - **S-ENUM-1:** `POST /sign-in/password` liefert für eine existierende und eine nicht existierende Kennung bei falschem Kennwort identische HTTP-Status, identische Kopfzeilenmenge (nach Entfernen von `Date`) und byteweise identische Antwortkörper. *(Abschnitt 3.13: „byteweise identische Antworten — gleicher Status, gleiche Kopfzeilen, gleicher Körper")*
 - **S-ENUM-2:** `POST /sign-in/password` liefert für die Kontozustände *nicht vorhanden*, *vorhanden und unbestätigt*, *vorhanden und bestätigt*, *vorhanden und deaktiviert*, *vorhanden ohne `password_credential`* bei falschem Kennwort dieselbe Antwort; ein deaktiviertes Konto liefert diese Antwort auch bei korrektem Kennwort, und der Code `account_disabled` erscheint bei keiner Anmeldung, sondern nur bei der Auflösung einer bestehenden Sitzung. *(Abschnitt 3.16, L-4; Abschnitt 3.13; Abschnitt 3.3 Schritt 4: „einheitliche Antwort, kein Hinweis auf die Ursache")*
-- **S-ENUM-3:** `POST /sign-up` liefert für eine bereits vergebene und eine freie E-Mail identische HTTP-Status, identische Kopfzeilen und byteweise identische Antwortkörper. *(Abschnitt 3.13, Absatz „Registrierung mit bereits vergebener E-Mail")*
+- **S-ENUM-3:** `POST /sign-up` liefert für eine bereits vergebene und eine freie E-Mail identische HTTP-Status, identische Kopfzeilen und byteweise identische Antwortkörper — byteweise identisch bis auf die Felder, die der Aufrufer selbst gesendet hat und die die Antwort zurückgibt. In der Konfiguration `username_email` ist das der `username`: Er ist eindeutig, die beiden Proben können deshalb nicht denselben senden, und was die Antwort dem Aufrufer zurückgibt, sagt ihm nichts, was er nicht schon wusste. Diese Anforderung gilt für die eine Antwort und nicht für die dauerhaften Nebenwirkungen der Anfrage; für die gelten die beiden Restleck-Absätze in 3.13. *(Abschnitt 3.13, Absatz „Registrierung mit bereits vergebener E-Mail")*
 - **S-ENUM-4:** Bei `POST /sign-up` mit bereits vergebener E-Mail versendet der Kern genau eine Nachricht an die vorhandene Adresse, die einen Anmeldelink statt eines Bestätigungslinks enthält; die Anzahl versendeter Nachrichten ist in beiden Fällen gleich. *(Abschnitt 3.13: „an die vorhandene Adresse geht eine Nachricht … mit einem Anmelde- statt Bestätigungslink")*
 - **S-ENUM-5:** `POST /password/request-reset` und `POST /email/request-change` liefern für existierende und nicht existierende Zieladressen byteweise identische Antworten; eine Kollision beim E-Mail-Wechsel wird erst beim Einlösen des Tokens erkannt und dort mit derselben Antwort wie ein ungültiger Token (`invalid_token`) verworfen. *(Abschnitt 3.13, Aufzählung der vier uniformen Flüsse; Abschnitt 3.15 F.1, innere Ursache `email_taken_on_change`)*
 - **S-ENUM-6:** Der wahre Fehlergrund wird bei jedem abgewiesenen Anmeldeversuch serverseitig protokolliert, und der Unterschied zwischen protokolliertem und ausgeliefertem Grund entsteht an genau einer Stelle im Quelltext. *(Abschnitt 3.13, letzter Absatz)*
-- **S-ENUM-7:** In der Konfiguration `identity: "email"` existiert kein Endpunkt, der die Existenz einer E-Mail-Adresse als boolesche Antwort zurückgibt. *(Abschnitt 3.4, Spalte „Aufzählungsschutz": „vollständig")*
+- **S-ENUM-7:** In der Konfiguration `identity: "email"` existiert kein Endpunkt, der die Existenz einer E-Mail-Adresse als boolesche Antwort zurückgibt. *(Abschnitt 3.4, Spalte „Aufzählungsschutz": „vollständig bis auf das erste Restleck aus 3.13" — der Endpunkt, den diese Anforderung ausschließt, ist keines der beiden Restlecks)*
 - **S-ENUM-8:** In den Konfigurationen `username` und `username_email` gibt `GET /username/available` ausschließlich `available` und den Ablehnungsgrund zurück, unterliegt einem eigenen Eimer je IP-Präfix von 10 Anfragen je Minute und bietet keine Präfix- oder Ähnlichkeitssuche; die Dokumentation weist die Aufzählbarkeit von Benutzernamen ausdrücklich aus. *(Abschnitt 3.4: „Velve Auth bietet sie an, begrenzt sie hart und sagt es in der Dokumentation"; Abschnitt 3.15 B.5)*
 
 ---
@@ -4317,7 +4350,7 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 |---|---|---|---|---|---|
 | T-ENUM-1 | S-ENUM-1 | Integration | Zwei `POST /sign-in/password`-Anfragen mit gleich langen Kennungen, eine existierend, eine nicht. Antworten normalisieren (`Date` entfernen). | `status_a === status_b`, sortierte Kopfzeilennamen gleich, `Buffer.compare(body_a, body_b) === 0` — **0 abweichende Bytes** | CI bei jedem Commit |
 | T-ENUM-2 | S-ENUM-2 | Integration, tabellengetrieben | Fünf Kontozustände herstellen, jeweils `POST /sign-in/password` mit falschem Kennwort; als sechsten Fall das deaktivierte Konto mit korrektem Kennwort. | **6/6 Antworten byteweise identisch**; `account_disabled` kommt in **0** der Antworten vor | CI bei jedem Commit |
-| T-ENUM-3 | S-ENUM-3 | Integration | `POST /sign-up` mit vergebener und mit freier E-Mail gleicher Länge. | **0 abweichende Bytes** in Status, Kopfzeilenmenge und Körper | CI bei jedem Commit |
+| T-ENUM-3 | S-ENUM-3 | Integration | `POST /sign-up` mit vergebener und mit freier E-Mail gleicher Länge; in `username_email` zusätzlich mit zwei verschiedenen Benutzernamen gleicher Länge, weil zwei Registrierungen nicht denselben senden können. | **0 abweichende Bytes** in Status und Kopfzeilenmenge; im Körper **0 abweichende Bytes**, nachdem die vom Aufrufer gesendeten Felder normalisiert sind | CI bei jedem Commit |
 | T-ENUM-4 | S-ENUM-4 | Integration | Mailversand-Attrappe zählt Nachrichten und protokolliert die Vorlagenkennung. | Beide Fälle **genau 1 Nachricht**; Vorlagenkennungen **verschieden**; Empfängeradresse im Kollisionsfall die vorhandene | CI bei jedem Commit |
 | T-ENUM-5 | S-ENUM-5 | Integration | `POST /password/request-reset` und `POST /email/request-change` je zweimal (existierend / nicht existierend). Beim E-Mail-Wechsel zusätzlich den Token auf eine kollidierende Adresse einlösen. | **0 abweichende Bytes** je Endpunkt; das Einlösen bei Kollision ändert **0 Zeilen** und liefert byteweise die Antwort auf einen erfundenen Token (`invalid_token`) | CI bei jedem Commit |
 | T-ENUM-6 | S-ENUM-6 | Integration + Statisch | Protokoll-Senke prüfen: für jeden der 6 Fälle aus T-ENUM-2 muss der wahre Grund im Protokoll stehen. AST-Scan: die Abbildung von innerem Grund auf äußeren Code existiert an genau einer Stelle (`core/http/error-map.ts`). | **6/6 Gründe protokolliert**; **genau 1 Abbildungsstelle** | CI bei jedem Commit |

@@ -1381,9 +1381,9 @@ Three configurations, chosen at initialisation via `identity.mode`
 
 | Configuration | Sign-in name | Unique | Reset/confirm via | Enumeration protection |
 |---|---|---|---|---|
-| `email` | e-mail | `email` | e-mail | complete |
+| `email` | e-mail | `email` | e-mail | complete except for the first residual leak from 3.13 |
 | `username` | username | `username_key` | **not available** without recovery codes | not possible for the username |
-| `username_email` | username **or** e-mail | both | e-mail | for the e-mail yes, for the username no |
+| `username_email` | username **or** e-mail | both | e-mail | for the username no; for the e-mail except for both residual leaks from 3.13 |
 
 Consequence that gets documented: **in `username` there is no reset by
 e-mail.** Whoever chooses this configuration must issue recovery codes at
@@ -1396,6 +1396,14 @@ Second consequence: **usernames are by definition enumerable.**
 Whoever offers an availability check gives away existence. Velve Auth offers
 it, limits it hard and says so in the documentation, instead of pretending
 it were protected.
+
+Third consequence, only in `username_email`: **the enumerability of the username
+passes one bit about the address through.** The protection of the address in this
+configuration is therefore not complete, and the column above says so. Which path
+that is stands in 3.13 under the second residual leak. In `email` this path does
+not exist, because there is no username there — that is the difference which
+counts when choosing between the two configurations. The first residual leak from
+3.13 is in both.
 
 Normalisation in exactly one place:
 - E-mail: trim, NFKC, `lower()`. The database checks afterwards via CHECK.
@@ -1647,12 +1655,36 @@ Two kinds of error:
 - **Deliberately invisible:** everything that would reveal existence. Sign-in,
   sign-up, password reset and email change return, for accounts that exist and
   accounts that do not, **byte-for-byte identical** responses — same status,
-  same headers, same body. The difference moves exclusively into the email that
-  is sent.
+  same headers, same body, except for the fields the caller sent itself and the
+  response returns (S-ENUM-3). The difference moves into the email that is sent;
+  **exclusively there it does not move**, and the two paragraphs about the
+  residual leaks say where else.
 
 Sign-up with an email address already taken: the same response as on success, and
 a message "somebody tried to sign up with your address" goes to the existing
 address, with a sign-in link instead of a confirmation link.
+
+**First residual leak, in every configuration: the cover does not survive the
+next request.** The response to a taken address is a real registration on a cover
+address which is rolled back; it therefore carries a session token that names no
+row. The same caller's next `GET /session` returns `null` where after a real
+registration it returns a session. Two requests are therefore enough, and at this
+endpoint that cannot be closed: a token that resolved would be a session on
+somebody else's account.
+
+**Second residual leak, only in `username_email`: the username passes one bit
+about the address through.** Because the cover is rolled back, a registration on
+a taken address does not durably claim the username it was sent; a registration
+on a free address creates it. Two requests read one bit off that: first
+`{e-mail: the one under test, username: N}`, then `{e-mail: a fresh one,
+username: N}`. The second answers 200 when the first address was taken, and
+`username_taken` when it was free. That is deterministic, needs no race and no
+privileged position, and a single concurrent batch reads the same bit off the
+number of refusals. No normalisation of a response reaches a row, so the
+exception above does not cover this leak. Closing it requires a cover that
+persists — a real account for every address an attacker guesses — and that is
+worse than the oracle. The configuration has this property, and it is named here
+instead of being talked away.
 
 On the server side the true reason is always logged. The difference between
 inside and outside is explicit and lies at exactly one place in the code.
@@ -3118,7 +3150,7 @@ Instead the user is marked in `velve.password_reset_required` — one row per us
 
 The sign-in path, without a new enumeration channel: (1) check the input length (section 3.3, step 1). (2) Resolve the user; no `password_credential` found → **the same code path as with an unknown user**, that is, a check against the dummy PHC with the configured default parameters (section 3.3, step 2): same computation time, same memory, same semaphore. (3) The answer is the uniform error response from section 3.13 — same status, same headers, same body; **no field, no error code and no timing difference reveals the marking**. (4) *After* sending the response, in the same bounded background task that also carries the rehash (section 3.3, step 6): if a row exists in `password_reset_required` and the user has a confirmed email, a `one_time_token` with `purpose = 'password_reset'` is produced (1 h, section 3.7) and the reset mail sent, with a text that explains the migration. (5) At most one such mail per user and hour, through the same token bucket as the regular reset (section 3.9). (6) If the user sets the password, the same transaction deletes the marking and writes `password_credential`.
 
-That is exactly the pattern from section 3.13: *"The difference moves exclusively into the email that is sent."* The attacker sees nothing; the account holder gets the way back without ever seeing an error he does not understand. In the `username` configuration (section 3.4) there is no email path — there the recovery code is the only way, and if that is missing too, the account is lost. Exactly these cases are what the dry run counts as `unrecoverable`.
+That is exactly the pattern from section 3.13: *"The difference moves into the email that is sent."* The attacker sees nothing; the account holder gets the way back without ever seeing an error he does not understand. In the `username` configuration (section 3.4) there is no email path — there the recovery code is the only way, and if that is missing too, the account is lost. Exactly these cases are what the dry run counts as `unrecoverable`.
 
 #### 4.0.6 Collision resolution
 
@@ -3913,11 +3945,11 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 - **S-ENUM-1:** `POST /sign-in/password` delivers for an existing and a non-existing identifier with a wrong password identical HTTP status, an identical set of headers (after removing `Date`) and byte-identical response bodies. *(Section 3.13: "byte-identical responses — same status, same headers, same body")*
 - **S-ENUM-2:** `POST /sign-in/password` delivers for the account states *not present*, *present and unconfirmed*, *present and confirmed*, *present and disabled*, *present without a `password_credential`* with a wrong password the same response; a disabled account delivers this response with a correct password as well, and the code `account_disabled` appears at no sign-in but only at the resolution of an existing session. *(Section 3.16, L-4; section 3.13; section 3.3 step 4: "a uniform response, no hint at the cause")*
-- **S-ENUM-3:** `POST /sign-up` delivers for an already taken and a free email identical HTTP status, identical headers and byte-identical response bodies. *(Section 3.13, paragraph "Registration with an already taken email")*
+- **S-ENUM-3:** `POST /sign-up` delivers for an already taken and a free email identical HTTP status, identical headers and byte-identical response bodies — byte-identical except for the fields the caller sent itself and the response returns. In the configuration `username_email` that is the `username`: it is unique, the two probes therefore cannot send the same one, and what the response returns to the caller tells him nothing he did not already know. This requirement holds for the one response and not for the durable side effects of the request; for those the two residual-leak paragraphs in 3.13 hold. *(Section 3.13, paragraph "Registration with an already taken email")*
 - **S-ENUM-4:** On `POST /sign-up` with an already taken email the core sends exactly one message to the existing address, containing a sign-in link instead of a confirmation link; the number of messages sent is the same in both cases. *(Section 3.13: "a message goes to the existing address … with a sign-in instead of a confirmation link")*
 - **S-ENUM-5:** `POST /password/request-reset` and `POST /email/request-change` deliver byte-identical responses for existing and non-existing target addresses; a collision on the email change is recognised only when the token is redeemed and is discarded there with the same response as an invalid token (`invalid_token`). *(Section 3.13, enumeration of the four uniform flows; section 3.15 F.1, inner cause `email_taken_on_change`)*
 - **S-ENUM-6:** The true error reason is logged server-side on every rejected sign-in attempt, and the difference between the logged and the delivered reason arises at exactly one place in the source. *(Section 3.13, last paragraph)*
-- **S-ENUM-7:** In the configuration `identity: "email"` there is no endpoint that returns the existence of an email address as a boolean answer. *(Section 3.4, column "Enumeration protection": "complete")*
+- **S-ENUM-7:** In the configuration `identity: "email"` there is no endpoint that returns the existence of an email address as a boolean answer. *(Section 3.4, column "Enumeration protection": "complete except for the first residual leak from 3.13" — the endpoint this requirement rules out is neither of the two residual leaks)*
 - **S-ENUM-8:** In the configurations `username` and `username_email`, `GET /username/available` returns exclusively `available` and the rejection reason, is subject to its own bucket per IP prefix of 10 requests per minute and offers no prefix or similarity search; the documentation states the enumerability of usernames explicitly. *(Section 3.4: "Velve Auth offers it, limits it hard and says so in the documentation"; section 3.15 B.5)*
 
 ---
@@ -4317,7 +4349,7 @@ To each of the 123 requirements from section 5 belongs a test case. The test ID 
 |---|---|---|---|---|---|
 | T-ENUM-1 | S-ENUM-1 | Integration | Two `POST /sign-in/password` requests with identifiers of the same length, one existing, one not. Normalise the responses (remove `Date`). | `status_a === status_b`, sorted header names equal, `Buffer.compare(body_a, body_b) === 0` — **0 differing bytes** | CI on every commit |
 | T-ENUM-2 | S-ENUM-2 | Integration, table-driven | Produce five account states, `POST /sign-in/password` with a wrong password for each; as the sixth case the disabled account with the correct password. | **6/6 responses byte-for-byte identical**; `account_disabled` occurs in **0** of the responses | CI on every commit |
-| T-ENUM-3 | S-ENUM-3 | Integration | `POST /sign-up` with a taken and with a free email of the same length. | **0 differing bytes** in status, header set and body | CI on every commit |
+| T-ENUM-3 | S-ENUM-3 | Integration | `POST /sign-up` with a taken and with a free email of the same length; in `username_email` additionally with two different usernames of the same length, because two registrations cannot send the same one. | **0 differing bytes** in status and header set; in the body **0 differing bytes** once the fields the caller sent are normalised | CI on every commit |
 | T-ENUM-4 | S-ENUM-4 | Integration | The mail-sending double counts messages and logs the template identifier. | Both cases **exactly 1 message**; template identifiers **different**; recipient address in the collision case the existing one | CI on every commit |
 | T-ENUM-5 | S-ENUM-5 | Integration | `POST /password/request-reset` and `POST /email/request-change` twice each (existing / non-existent). For the email change, additionally redeem the token onto a colliding address. | **0 differing bytes** per endpoint; redeeming on a collision changes **0 rows** and returns byte-for-byte the response to an invented token (`invalid_token`) | CI on every commit |
 | T-ENUM-6 | S-ENUM-6 | Integration + Static | Check the log sink: for each of the 6 cases from T-ENUM-2 the true reason must be in the log. AST scan: the mapping from inner reason to outer code exists in exactly one place (`core/http/error-map.ts`). | **6/6 reasons logged**; **exactly 1 mapping site** | CI on every commit |
