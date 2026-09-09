@@ -101,7 +101,9 @@ interface LinkedSession {
  * A34: a revocation that leaves an attacker's session standing is no revocation, and a flow row is a
  * ten-minute artefact that would otherwise outlive the session that authorised it. The flow's
  * authority is the session it was started from, so a flow whose session was revoked, signed out,
- * replaced by a credential change or expired has none left to spend (E-961).
+ * replaced by a credential change or expired has none left to spend (E-961). The last of those holds
+ * only because the delete carries a deadline predicate: an expired row lives until the sweep removes
+ * it, and matching it would make the answer depend on when garbage collection ran (E-971).
  */
 function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {

@@ -96,8 +96,9 @@ export interface SessionRepository {
 	}): Promise<Session>;
 	/**
 	 * The replacement a caller reaches with a session id rather than a token. The delete must match
-	 * exactly one row: a caller whose authority *is* the previous row has none left once that row
-	 * is gone, so zero rows raises `PreviousSessionMissingError` and the insert rolls back with it.
+	 * exactly one **live** row: a caller whose authority *is* the previous row has none left once
+	 * that row is gone or past either deadline, so zero rows raises `PreviousSessionMissingError`
+	 * and the insert rolls back with it (E-971).
 	 */
 	replaceSessionOwnedBy(input: {
 		readonly actor: Actor;
@@ -231,6 +232,18 @@ function deleteOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE id = $1 AND user_id = $2 RETURNING id`;
 }
 
+/**
+ * The statement above has no deadline predicate, because revoking a session the sweep has not yet
+ * removed must still remove it (E-765, E-766). A replacement asks a different question — whether the
+ * row still authorises anything — and an expired row does not, so this one is its own (E-971).
+ */
+function deleteLiveOwnedStatement(table: string): string {
+	return `DELETE FROM ${table}
+	WHERE id = $1 AND user_id = $2
+		AND idle_expires_at > now() AND absolute_expires_at > now()
+	RETURNING id`;
+}
+
 function deleteEveryOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE user_id = $1 RETURNING id`;
 }
@@ -271,6 +284,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
 	const deleteByIdSql = deleteByIdStatement(table);
 	const deleteOwnedSql = deleteOwnedStatement(table);
+	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table);
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
 	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
 	const listOwnedSql = listOwnedStatement(table);
@@ -380,7 +394,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				throw new SessionOwnerMismatchError();
 			}
 			return options.driver.transaction(async (tx) => {
-				const removed = await tx.query(deleteOwnedSql, [previousSessionId, actor]);
+				const removed = await tx.query(deleteLiveOwnedSql, [previousSessionId, actor]);
 				// E-961: the count is read here and not returned, because only here can the insert still be undone.
 				if (removed.length === 0) {
 					throw new PreviousSessionMissingError();
