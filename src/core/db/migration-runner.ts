@@ -96,6 +96,16 @@ FROM pg_stat_xact_user_tables`;
 const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
 /**
+ * What the connected role may do regardless of anything measured here. `track_counts` takes a
+ * superuser to change, and a superuser migration turns the row half off and on again around its own
+ * statements without either reading of the guard seeing it; creating a role takes a superuser or
+ * `CREATEROLE`, and a role needs no counters at all (E-920).
+ */
+const PRIVILEGES_OF_THE_CONNECTED_ROLE = `
+SELECT rolsuper AS is_superuser, rolcreaterole AS creates_roles
+FROM pg_roles WHERE rolname = current_user`;
+
+/**
  * Every object that belongs to the schema, of every catalogue there is, walked from the schema
  * itself along the dependency edges rather than looked up in a list of names. Core migrations run
  * before any plugin migration, so what this answers before a plugin's transaction is the core — by
@@ -160,7 +170,8 @@ type MigrationRefusalCode =
 	| "migration_read_a_foreign_table"
 	| "migration_left_code_behind"
 	| "migration_created_more_than_a_table"
-	| "migration_write_check_unavailable";
+	| "migration_write_check_unavailable"
+	| "migration_role_unbounded";
 
 export class MigrationRefusedError extends Error {
 	readonly code: MigrationRefusalCode;
@@ -169,6 +180,32 @@ export class MigrationRefusedError extends Error {
 		super(message);
 		this.name = "MigrationRefusedError";
 		this.code = code;
+	}
+}
+
+/**
+ * The library cannot check that a restricted migration role was provisioned — a role that does not
+ * exist is indistinguishable from one that was never needed — but it can refuse a role too powerful
+ * for anything measured here to bind. A missing provision is then a refusal and not a silent pass,
+ * which is the property the role form was declined for lacking in E-909. Only plugin migrations are
+ * refused; the core's own run on whatever connection the application supplies (E-920).
+ */
+async function assertTheRoleCannotOutrunTheMeasurement(driver: Driver): Promise<void> {
+	const [role] = await driver.query<{ is_superuser: boolean; creates_roles: boolean }>(
+		PRIVILEGES_OF_THE_CONNECTED_ROLE,
+		[],
+	);
+	if (role === undefined) {
+		throw new MigrationRefusedError(
+			"migration_role_unbounded",
+			"the privileges of the connected role could not be read, so what a plugin migration may do is unknown",
+		);
+	}
+	if (role.is_superuser || role.creates_roles) {
+		throw new MigrationRefusedError(
+			"migration_role_unbounded",
+			`a plugin migration does not run on a connection whose role ${role.is_superuser ? "is a superuser" : "may create roles"}: such a role can switch the measurements off, so run migrations as a role that holds neither`,
+		);
 	}
 }
 
@@ -763,6 +800,10 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 		if (await applyMigration(options.driver, schema, migration)) {
 			appliedVersions.push(migration.version);
 		}
+	}
+
+	if (owned.length > 0) {
+		await assertTheRoleCannotOutrunTheMeasurement(options.driver);
 	}
 
 	// The core schema is what a plugin's tables reference, so every core migration is applied first.

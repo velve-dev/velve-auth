@@ -7,6 +7,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
 
 let shared: TestConnection | undefined;
 const schemas: string[] = [];
@@ -20,6 +21,7 @@ async function freshSchema(): Promise<string> {
 	const driver = await connection();
 	const schema = uniqueSchemaName("pluginsnapshot");
 	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
+	await grantTheMigrationRole(driver, schema);
 	schemas.push(schema);
 	return schema;
 }
@@ -46,16 +48,18 @@ async function refusalOf(
 		id,
 		migrations: [{ version: 1, name: "reach", createsTables: [], sql }],
 	} as unknown as VelvePlugin;
-	try {
-		return await createVelveAuth(
-			configFor({ database: driver as Driver, schema, plugins: [plugin] }),
-		)
-			.migrate()
-			.then(() => ({}))
-			.catch((error: { code?: string }) => error);
-	} catch (error) {
-		return error as { code?: string };
-	}
+	return asMigrationRole(driver, async () => {
+		try {
+			return await createVelveAuth(
+				configFor({ database: driver as Driver, schema, plugins: [plugin] }),
+			)
+				.migrate()
+				.then(() => ({}))
+				.catch((error: { code?: string }) => error);
+		} catch (error) {
+			return error as { code?: string };
+		}
+	});
 }
 
 async function relationExists(schema: string, name: string): Promise<boolean> {
@@ -190,37 +194,39 @@ describe("what a plugin may still do to what it created itself (3.11)", () => {
 		const schema = await freshSchema();
 		const driver = await connection();
 
-		const refusal = await createVelveAuth(
-			configFor({
-				database: driver as Driver,
-				schema,
-				plugins: [
-					{
-						id: "audit",
-						migrations: [
-							{
-								version: 1,
-								name: "create",
-								createsTables: ["audit_entry"],
-								sql: `CREATE TABLE velve.audit_entry (
+		const refusal = await asMigrationRole(driver, () =>
+			createVelveAuth(
+				configFor({
+					database: driver as Driver,
+					schema,
+					plugins: [
+						{
+							id: "audit",
+							migrations: [
+								{
+									version: 1,
+									name: "create",
+									createsTables: ["audit_entry"],
+									sql: `CREATE TABLE velve.audit_entry (
 									id uuid PRIMARY KEY,
 									user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE);
 								CREATE INDEX audit_entry_user ON velve.audit_entry (user_id);`,
-							},
-							{
-								version: 2,
-								name: "drop_the_index",
-								createsTables: [],
-								sql: "DROP INDEX velve.audit_entry_user;",
-							},
-						],
-					} as unknown as VelvePlugin,
-				],
-			}),
-		)
-			.migrate()
-			.then(() => ({}) as { code?: string })
-			.catch((error: { code?: string }) => error);
+								},
+								{
+									version: 2,
+									name: "drop_the_index",
+									createsTables: [],
+									sql: "DROP INDEX velve.audit_entry_user;",
+								},
+							],
+						} as unknown as VelvePlugin,
+					],
+				}),
+			)
+				.migrate()
+				.then(() => ({}) as { code?: string })
+				.catch((error: { code?: string }) => error),
+		);
 
 		expect(refusal.code).toBeUndefined();
 		expect(await relationExists(schema, "audit_entry")).toBe(true);

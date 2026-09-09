@@ -117,7 +117,10 @@ export type PluginCallerRequirement = "anonymous" | "session" | "server_only";
  * error type admits the plugin's own namespaced codes beside the core ones, which `error-map.ts`
  * resolves rather than the core union absorbing them (E-720). `originCheck` is narrowed to the one
  * value S-CSRF-1 allows a route that is not the OAuth callback: exempting a route of its own is how
- * a plugin bypasses the origin check without replacing anything (S-CSRF-6, E-639).
+ * a plugin bypasses the origin check without replacing anything (S-CSRF-6, E-639). `requestBody` is
+ * omitted so the type says what the runtime already does — the reading copies ten named fields and
+ * carries no eleventh — rather than letting a plugin write a field that compiles and is dropped
+ * (E-924).
  */
 export type PluginRoute<Id extends string> = Omit<
 	RouteDeclaration<
@@ -127,7 +130,7 @@ export type PluginRoute<Id extends string> = Omit<
 		unknown,
 		VelveErrorCode | `${Id}.${string}`
 	>,
-	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie"
+	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie" | "requestBody"
 > & { readonly caller: PluginCallerRequirement; readonly originCheck: "checked" };
 
 /**

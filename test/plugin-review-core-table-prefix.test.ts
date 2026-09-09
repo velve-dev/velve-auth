@@ -8,6 +8,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
 
 interface Reach {
 	readonly id: string;
@@ -60,6 +61,7 @@ async function freshSchema(): Promise<string> {
 	const driver = await connection();
 	const schema = uniqueSchemaName("pluginprefix");
 	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
+	await grantTheMigrationRole(driver, schema);
 	schemas.push(schema);
 	return schema;
 }
@@ -91,16 +93,18 @@ afterAll(async () => {
 
 async function refusalOf(schema: string, plugin: VelvePlugin): Promise<{ readonly code?: string }> {
 	const driver = await connection();
-	try {
-		return await createVelveAuth(
-			configFor({ database: driver as Driver, schema, plugins: [plugin] }),
-		)
-			.migrate()
-			.then(() => ({}))
-			.catch((error: { code?: string }) => error);
-	} catch (error) {
-		return error as { code?: string };
-	}
+	return asMigrationRole(driver, async () => {
+		try {
+			return await createVelveAuth(
+				configFor({ database: driver as Driver, schema, plugins: [plugin] }),
+			)
+				.migrate()
+				.then(() => ({}))
+				.catch((error: { code?: string }) => error);
+		} catch (error) {
+			return error as { code?: string };
+		}
+	});
 }
 
 function reachingMigration(reach: Reach): VelvePlugin {

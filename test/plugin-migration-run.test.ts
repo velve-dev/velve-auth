@@ -5,7 +5,11 @@ import { createVelveAuth, type VelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
-import { asJavaScriptPlugin } from "./plugin-fixtures.js";
+import {
+	asJavaScriptPlugin,
+	enterTheMigrationRole,
+	leaveTheMigrationRole,
+} from "./plugin-fixtures.js";
 
 interface Migrated {
 	readonly connection: TestConnection;
@@ -17,6 +21,7 @@ const opened: Migrated[] = [];
 
 async function migratedSchema(): Promise<Migrated> {
 	const { connection, schema } = await openMigratedSchema("pluginmigration");
+	await enterTheMigrationRole(connection, schema);
 	const migrated: Migrated = {
 		connection,
 		schema,
@@ -29,6 +34,7 @@ async function migratedSchema(): Promise<Migrated> {
 
 afterEach(async () => {
 	for (const migrated of opened.splice(0)) {
+		await leaveTheMigrationRole(migrated.connection);
 		await migrated.connection.query("DROP TABLE IF EXISTS public.audit_stray", []);
 		await dropSchema(migrated.connection, migrated.schema);
 		await migrated.connection.close();

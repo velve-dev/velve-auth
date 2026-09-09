@@ -4525,7 +4525,23 @@ without any of them being edited.
 
 #### What a plugin migration may do
 
-Three measurements, taken **inside the migration's own transaction**, and none of
+**A plugin migration does not run on a superuser connection**, nor on one whose
+role may create roles. Every measurement below is a privilege away from being
+switched off — `SET LOCAL track_counts = off` suppresses the row counters
+without either reading of the guard seeing it, and a role created inside a
+migration needs no counters at all — so the connection is part of the boundary.
+The library cannot check that a restricted role was provisioned, because a role
+that was never created looks exactly like one that was not needed; it can refuse
+a role too powerful for anything it measures to bind, and a missing provision is
+then a refusal rather than a silent pass. It is refused with
+`migration_role_unbounded`. **Core migrations are unaffected** and run on
+whatever connection the application supplies; only a plugin's do.
+
+Run migrations as a role that owns the schema and is neither a superuser nor a
+holder of `CREATEROLE`. Most managed-Postgres master users hold `CREATEROLE`, so
+on those a separate migration role is required rather than optional.
+
+Four measurements, taken **inside the migration's own transaction**, and none of
 them reads the migration's SQL:
 
 1. **What it created or altered.** Every table whose catalogue row this
@@ -4537,12 +4553,28 @@ them reads the migration's SQL:
    before-and-after, and safe to take because the schema is the instance's own.
 3. **What rows it wrote**, as the difference between two readings of this
    transaction's write counters, per table, in any schema.
+4. **What was in the schema before it ran, and still is.** The schema's whole
+   object set, of every catalogue there is, walked from the schema itself along
+   the dependency graph rather than looked up in any list of names. Core
+   migrations run before any plugin migration, so what this reads before a
+   plugin's transaction is the core by construction — nothing to fall behind
+   when a table, an index, a constraint or a trigger is added to it.
 
 The rule those three carry:
 
 - a migration may create exactly the tables `createsTables` names, no more and no
   fewer, all of them in the configured schema and all carrying the `<id>_`
   prefix;
+- **nothing that was in the schema before it ran may be gone or renamed
+  afterwards**, unless it belongs to a table the plugin declared. That covers
+  what no list of table names reaches: a core index — `velve.user_email_key` is
+  the bare unique index one account per address rests on — a core constraint, and
+  a core trigger or function, of which S-FIX-2's runtime half is one. What a
+  plugin may still alter and drop is what belongs to the tables it declared in
+  `createsTables`, so the exemption comes from the declaration and is not widened
+  by choosing an id: a plugin called `user_email` does not reach
+  `velve.user_email_key`, and a plugin called `one` does not reach
+  `velve.one_time_token`;
 - **it may create only tables and what a table brings with it** — an index, a
   sequence, a partitioned parent. A view, a materialized view, a foreign table, a
   function, a trigger or a rule is refused whatever it is called and wherever it
@@ -4584,14 +4616,15 @@ for it.
 | `migration_table_undeclared` | The set of tables that appeared in the schema is not the set `createsTables` names. |
 | `migration_table_unprefixed` | It reached a relation of the configured schema that does not carry the plugin's prefix. |
 | `migration_table_outside_the_schema` | It reached a relation in another schema, `public` included. |
-| `migration_foreign_table_changed` | It altered, emptied or removed something it does not own — an index of a core table included. |
+| `migration_foreign_table_changed` | It altered, emptied, removed or renamed something it does not own — a core index, a core constraint, a core trigger or a core function included. |
 | `migration_created_more_than_a_table` | It made a relation that is not a table or one of a table's own objects — a view, a materialized view, a foreign table — or it created an object belonging to none of its own tables, such as a type, a collation or an extension. |
 | `migration_left_code_behind` | It left a function, a trigger or a rule behind, its own tables included. |
 | `migration_wrote_a_foreign_table` | It wrote a row into a table it does not own. |
 | `migration_read_a_foreign_table` | It read rows of a table it does not own. |
 | `migration_write_check_unavailable` | `track_counts` is off, so what it wrote and read cannot be read. The migration is refused rather than run unmeasured. |
+| `migration_role_unbounded` | The connected role is a superuser or may create roles, so nothing measured here binds it. Only plugin migrations are refused. |
 
-Those eleven are the whole of `MigrationRefusalCode`. **S-TOKEN-6's
+Those twelve are the whole of `MigrationRefusalCode`. **S-TOKEN-6's
 `migration_missing_cascade` is not one of them** — a `user_id` column without a
 foreign key to `velve.user` that cascades is refused with a `MissingCascadeError`
 carrying that code, not with a `MigrationRefusedError`. Both roll the same
@@ -4609,18 +4642,25 @@ the measurements. Named by example, what they do **not** see:
 - a change that writes no dependency and no catalogue row of a relation: a
   `COMMENT`, which writes only `pg_description`. A grant is seen, because it
   rewrites the relation's own catalogue row.
+- **an object that records no dependency on the schema at all.** Not every
+  creation writes a `pg_depend` row, and which ones do is PostgreSQL's choice
+  rather than this library's: a global object records itself in `pg_shdepend`, a
+  schema records only its owner, and a dependency on a pinned system object is
+  deliberately not recorded. `CREATE SCHEMA`, `CREATE ROLE`, `CREATE CAST` and
+  `ALTER ROLE … SET` are each accepted for that reason. The restricted migration
+  role above refuses `CREATE ROLE` and `CREATE CAST` outright, and it does **not**
+  refuse the other two: a role may always alter its own settings, and `migrate()`
+  itself needs `CREATE` on the database, so the privilege that lets a migration
+  leave an empty schema behind is one the library requires.
+- **a lock.** `LOCK TABLE velve.user IN ACCESS EXCLUSIVE MODE` changes no
+  catalogue row, writes no row and reads none, so nothing here sees it. It ends
+  with the transaction.
 - a change to a system catalogue, which needs privileges a library cannot assume
   it lacks.
-- **anything at all, if the migration turns the counters off and on again.**
-  `SET LOCAL track_counts = off` inside the migration, with a matching `on`
-  before it ends, leaves both readings of the guard reporting `on` and every row
-  counter at zero — so the row half sees neither the write nor the read. The
-  setting takes a superuser to change, so this needs the connection `migrate()`
-  runs on to be a superuser's; under an ordinary migration role the statement
-  errors and the migration is refused with it. Running migrations as a superuser
-  is common enough that this is worth saying rather than assuming away.
 - what a statement did that wrote and read nothing and left nothing: a `SELECT`
   with no table in it, an advisory lock, a `pg_sleep`.
+- **anything at all, if the migration turns the counters off and on again** —
+  which needs a superuser, and is why a plugin migration does not run on one.
 
 A plugin migration is arbitrary SQL from a package the application installed, on
 the same footing as any other dependency it installs. This is a guardrail against

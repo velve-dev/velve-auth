@@ -7,6 +7,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
 
 interface Opened {
 	readonly connection: TestConnection;
@@ -27,15 +28,18 @@ async function openSchema(): Promise<Opened> {
 	const driver = await connection();
 	const schema = uniqueSchemaName("pluginreads");
 	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
+	await grantTheMigrationRole(driver, schema);
 	schemas.push(schema);
 	return {
 		connection: driver,
 		schema,
 		migrate: (plugin) =>
-			createVelveAuth(configFor({ database: driver as Driver, schema, plugins: [plugin] }))
-				.migrate()
-				.then(() => ({}))
-				.catch((error: { code?: string }) => error),
+			asMigrationRole(driver, () =>
+				createVelveAuth(configFor({ database: driver as Driver, schema, plugins: [plugin] }))
+					.migrate()
+					.then(() => ({}))
+					.catch((error: { code?: string }) => error),
+			),
 	};
 }
 

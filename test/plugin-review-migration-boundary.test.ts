@@ -6,7 +6,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
-import { asJavaScriptPlugin } from "./plugin-fixtures.js";
+import { asJavaScriptPlugin, asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
 
 interface Opened {
 	readonly connection: TestConnection;
@@ -19,14 +19,17 @@ const strayTables: string[] = [];
 
 async function openSchema(): Promise<Opened> {
 	const { connection, schema } = await openMigratedSchema("pluginboundary");
+	await grantTheMigrationRole(connection, schema);
 	const instance: Opened = {
 		connection,
 		schema,
 		migrate: (plugins) =>
-			createVelveAuth(configFor({ database: connection as Driver, schema, plugins }))
-				.migrate()
-				.then(() => ({}))
-				.catch((error: { code?: string }) => error),
+			asMigrationRole(connection, () =>
+				createVelveAuth(configFor({ database: connection as Driver, schema, plugins }))
+					.migrate()
+					.then(() => ({}))
+					.catch((error: { code?: string }) => error),
+			),
 	};
 	opened.push(instance);
 	return instance;
