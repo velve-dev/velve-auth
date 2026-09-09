@@ -145,6 +145,15 @@ jobs:
             fi
           }
 
+          # awk and cmp report "could not look" through their exit status and "found
+          # something" through their output, so they need the refusal without the
+          # three-way reading `report` does for grep.
+          refuse_unless_zero() {
+            if [ "$2" -ne 0 ]; then
+              refuse "the $1 scan could not run, so it proves nothing"
+            fi
+          }
+
           lines_in() {
             wc -l < "$1" | tr -d '[:space:]'
           }
@@ -194,10 +203,13 @@ jobs:
           read_surface "symlink" "$SCAN_DIR/index" git ls-files -s
           require_content "symlink" "$SCAN_DIR/index"
           echo "Checking $(lines_in "$SCAN_DIR/index") tracked paths for symlinks"
-          LINKS=$(awk '$1 == "120000" { $1=""; $2=""; $3=""; print }' "$SCAN_DIR/index")
-          if [ -n "$LINKS" ]; then
+          SYMLINK_STATUS=0
+          awk '$1 == "120000" { $1=""; $2=""; $3=""; print }' "$SCAN_DIR/index" \
+            > "$SCAN_DIR/symlink-hits" || SYMLINK_STATUS=$?
+          refuse_unless_zero "symlink" "$SYMLINK_STATUS"
+          if [ -s "$SCAN_DIR/symlink-hits" ]; then
             echo "::error::a tracked path is a symlink, so its content is not what review shows"
-            echo "$LINKS"
+            cat "$SCAN_DIR/symlink-hits"
             fail=1
           fi
 
