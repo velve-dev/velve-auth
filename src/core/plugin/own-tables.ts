@@ -164,8 +164,8 @@ function refuse(pluginId: string, schema: string, what: string): never {
 
 /**
  * An upsert's conflict clause names no table of its own — the row it writes is the one the insert
- * already named — and `FOR UPDATE` locks rows rather than naming a table, which §7 requires a
- * plugin to be able to write.
+ * already named — and a row-locking clause locks rows rather than naming a table, which §7 requires
+ * a plugin to be able to write (E-768).
  */
 function opensATableList(tokens: readonly string[], position: number): boolean {
 	const word = tokens[position]?.toLowerCase() ?? "";
