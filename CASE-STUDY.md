@@ -4122,3 +4122,17 @@ Two smaller things in the same entry are weaker than they sound. The rule was pu
 
 **Price.** `check:skill-version` is covered by nothing but its plants, and so are the refusal paths of both checks — an unresolvable base, no common ancestor, a skill file absent at `HEAD`. That is deferred, and the owner is whoever next needs the throwaway-repository harness, which is `check:log-append` at least as much as this. Two of the repository's five older checks are in the same position, so the unevenness here is the standard as it already stood; that is an explanation and not a defence.
 
+### The shape E-890 named was searched for, and there was one more
+`E-897` · skillver · skill content, corrected
+
+**Context.** `E-890` said the exclusion list it removed was missed because it did not look like a list — a subordinate clause set off by dashes, inside a sentence about the user's own application — and named that as the shape to search for next. The search found one. *"Their own mailer behind the mail callback"* is three items in a dash-clause inside a sentence about where a feature belongs, and later in the same file the mail seam is described as not something to quote from memory. Warn in one place, cross in another: the structure of the removed passage exactly.
+
+What makes it worth an entry rather than a line in a commit message is that it is **accurate today** — architecture 110 gives *a single `email.send(message)` callback* and 849 confirms there is no built-in dispatch. A §1 violation that is currently true is invisible to every check this repository has and to a reader spot-checking the facts for correctness. Only the shape gives it away, and only if someone is looking for the shape.
+
+A second correction went in the same commit. The sentence written to repair `E-893`'s inference said *"the one exception"* where the tool's documentation states two — it also excludes bare mode from directory watching. The exposure is nil, because bare mode is headless and nobody there is being asked to approve a write. Claiming a completeness the source contradicts, in the sentence written to stop asserting what the source does not say, is not nil.
+
+**Rejected.** Naming the callback and qualifying it — *"the mail callback, if the configuration still offers only one"* — which keeps the fact and adds a hedge on top of it. §7 of the skill says a hedge is almost always a sentence written instead of a fetch, and it would be one here.
+
+**Reason.** *"Behind whatever the configuration offers for it"* says everything the sentence needed to say about where the user's mailer belongs and says nothing at all about what the library provides, which is §1's rule in one clause. And *"the exception that matters here"* stays true whatever else the tool excepts, which the counting word did not.
+
+**Price.** Both were found by reading for a shape, and the shape is the only detector either of them has. Nothing counts dash-clauses, nothing knows which sentences are claims about the library, and the entry that named the shape is the entire mechanism — which makes it a note, by the standard `E-888` was held to, and the honest thing is to say so rather than to call the search a control.

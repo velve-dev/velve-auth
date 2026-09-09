@@ -25,8 +25,8 @@ procedure.
 
 **An update takes effect on the next invocation.** Claude Code watches the skill
 directories and picks up an edited `SKILL.md` inside the running session, so there is
-nothing to restart and no reload command to run. The one exception is a **first install
-that had to create the skills directory**: if `~/.claude/skills/` — or the project's
+nothing to restart and no reload command to run. The exception that matters here is a
+**first install that had to create the skills directory**: if `~/.claude/skills/` — or the project's
 `.claude/skills/` — did not exist when the session started, Claude Code is not watching
 it yet and must be restarted once so that it begins to. After that, never again. You are
 the one running the install, so you know which case it is: if the directory had to be
@@ -243,7 +243,8 @@ because it sounds firmer — nor one to drop because the user would rather hear 
 **But whether the user builds one in their own application is their decision, not
 yours.** Say what the library does not do and why, say where it belongs instead — an
 application table with a `user_id` foreign key, a policy layer above the session, their
-own mailer behind the mail callback — and then, if they want it built there, **help
+own mailer behind whatever the configuration offers for it — and then, if they want it
+built there, **help
 them build it there and say plainly whose it is.** Refusing to help a user build their
 own roles table is not fidelity to this library's scope; it is being unhelpful about
 something that was never Velve Auth's business either way.

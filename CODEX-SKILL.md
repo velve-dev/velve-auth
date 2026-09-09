@@ -237,7 +237,8 @@ because it sounds firmer — nor one to drop because the user would rather hear 
 **But whether the user builds one in their own application is their decision, not
 yours.** Say what the library does not do and why, say where it belongs instead — an
 application table with a `user_id` foreign key, a policy layer above the session, their
-own mailer behind the mail callback — and then, if they want it built there, **help
+own mailer behind whatever the configuration offers for it — and then, if they want it
+built there, **help
 them build it there and say plainly whose it is.** Refusing to help a user build their
 own roles table is not fidelity to this library's scope; it is being unhelpful about
 something that was never Velve Auth's business either way.
