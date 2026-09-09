@@ -21,20 +21,31 @@ const PASSWORD = "correct horse battery staple";
 
 /** Enough requests that a lock held for the length of one is held across the rest of the batch. */
 const CONTENDING_CONNECTIONS = 30;
-const ROUNDS = 15;
+/** Fifteen rounds left the closed side reaching 1.48 against a limit the open side crossed at 1.52. */
+const ROUNDS = 30;
 
 /** Long enough that an uncontended request finishes inside it by two orders of magnitude. */
 const WHILE_THE_ROW_IS_HELD_MS = 750;
 
 /**
- * The separation two identical branches may show before the measurement is calling them different.
- * The control below runs two unknown addresses against each other on the same harness, so a run
- * where the harness itself is this noisy fails on the control rather than on the case. Cut against
- * eight runs on 2026-09-09 against a local PostgreSQL 14: with the row lock in place the case
- * separated 1.56, 1.73, 1.75 and 1.75 while the control stayed at 1.08 to 1.15; with the subject
- * lock the case separated 1.08 to 1.17 and the control 1.05 to 1.18 (E-931).
+ * How far apart the two branches may be, and how far apart the control may be before the run has
+ * measured nothing. Ten runs on 2026-09-09 against a local PostgreSQL 14: with the row lock in
+ * place the case separated 1.48, 1.66, 1.82, 1.85 and 1.88; with the subject lock, 1.06, 1.06,
+ * 1.09, 1.18 and 1.20. Controls ranged 1.00 to 1.25 on both. What is left on the closed side is
+ * work rather than waiting — the known branch supersedes a row where the cover branch supersedes
+ * nothing (E-941), and its insert takes the foreign key's share lock where the cover's does not
+ * (E-932). The statistic is the low percentile of the per-round medians and not their median,
+ * for the reason E-946 records.
  */
 const SEPARATION_LIMIT = 1.35;
+
+/**
+ * The control is two unknown addresses against each other, so what it shows is the machine and not
+ * the branches. A run whose control is outside the limit cannot tell the two apart either way and
+ * is repeated rather than passed: a measurement that concluded nothing must not read as a
+ * measurement that found nothing (CLAUDE.md §5). A run where none of the attempts settles fails.
+ */
+const ATTEMPTS = 5;
 
 let connections: TestConnection[] = [];
 let handlers: ((request: Request) => Promise<Response>)[] = [];
@@ -252,36 +263,60 @@ async function batchFor(address: string): Promise<number[]> {
  * contention and reads the answer off the batch — no privileged position, and the separation grows
  * with the batch size (E-931).
  */
-describe("a batch of requests contends the same whether or not the address names an account", () => {
-	it("separates the two addresses no further than two unknown addresses separate", async () => {
-		const rounds: { known: number; unknown: number; control: number }[] = [];
-		for (let round = 0; round < ROUNDS; round += 1) {
-			rounds.push({
-				known: median(await batchFor(KNOWN)),
-				unknown: median(await batchFor(UNKNOWN)),
-				control: median(await batchFor(ALSO_UNKNOWN)),
-			});
-		}
+interface Measurement {
+	readonly caseSeparation: number;
+	readonly controlSeparation: number;
+	readonly report: string;
+}
 
-		// Per round rather than over the pooled samples, so a round the machine was busy for moves
-		// all three medians together instead of moving whichever group it landed in.
-		const measured = rounds
-			.map(
-				(round) =>
-					`${round.known.toFixed(1)}/${round.unknown.toFixed(1)}/${round.control.toFixed(1)}`,
-			)
-			.join(" ");
-		const caseSeparation = median(rounds.map((round) => separation(round.known, round.unknown)));
-		const controlSeparation = median(
-			rounds.map((round) => separation(round.unknown, round.control)),
-		);
-
-		const report =
+async function measureTheTwoBranches(): Promise<Measurement> {
+	const knownRounds: number[] = [];
+	const unknownRounds: number[] = [];
+	const controlRounds: number[] = [];
+	const perRound: string[] = [];
+	for (let round = 0; round < ROUNDS; round += 1) {
+		const known = median(await batchFor(KNOWN));
+		const unknown = median(await batchFor(UNKNOWN));
+		const control = median(await batchFor(ALSO_UNKNOWN));
+		knownRounds.push(known);
+		unknownRounds.push(unknown);
+		controlRounds.push(control);
+		perRound.push(`${known.toFixed(1)}/${unknown.toFixed(1)}/${control.toFixed(1)}`);
+	}
+	// A stall can only make a round slower, so the quickest rounds of each group are the ones no
+	// stall reached and the low percentile of each group is what the group costs when nothing else
+	// is happening. Comparing the medians instead lets a stall that hit one group and not another
+	// decide the answer, which on a busy machine it does.
+	const quiet = (rounds: readonly number[]): number =>
+		[...rounds].sort((left, right) => left - right)[Math.floor(rounds.length * 0.1)] as number;
+	const caseSeparation = separation(quiet(knownRounds), quiet(unknownRounds));
+	const controlSeparation = separation(quiet(unknownRounds), quiet(controlRounds));
+	return {
+		caseSeparation,
+		controlSeparation,
+		report:
 			`case ${caseSeparation.toFixed(2)}, control ${controlSeparation.toFixed(2)}, ` +
-			`known/unknown/control ms per round ${measured}`;
+			`known/unknown/control ms per round ${perRound.join(" ")}`,
+	};
+}
 
-		expect(controlSeparation, `control: ${report}`).toBeLessThan(SEPARATION_LIMIT);
-		expect(caseSeparation, `known against unknown: ${report}`).toBeLessThan(SEPARATION_LIMIT);
+describe("a batch of requests contends the same whether or not the address names an account", () => {
+	it("separates the two addresses no further than the limit a tight control admits", async () => {
+		const attempts: Measurement[] = [];
+		while (attempts.length < ATTEMPTS) {
+			const measured = await measureTheTwoBranches();
+			attempts.push(measured);
+			if (measured.controlSeparation < SEPARATION_LIMIT) {
+				expect(measured.caseSeparation, `known against unknown: ${measured.report}`).toBeLessThan(
+					SEPARATION_LIMIT,
+				);
+				return;
+			}
+		}
+		expect(
+			attempts.map((attempt) => attempt.controlSeparation),
+			`no attempt was quiet enough to measure: ${attempts.map((attempt) => attempt.report).join(" | ")}`,
+		).toStrictEqual([]);
 	}, 300_000);
 });
 
