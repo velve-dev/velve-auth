@@ -46,6 +46,12 @@ export interface SessionServiceOptions {
 
 export interface SessionService {
 	readonly settings: SessionSettings;
+	/**
+	 * The same service over another driver. A caller that must write a session inside a transaction
+	 * it already owns needs one carrying the configured deadlines and metadata mode, and no seam
+	 * hands those on beside the service itself (E-969).
+	 */
+	boundTo(driver: Driver): SessionService;
 	issue(input: {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -173,6 +179,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 	return {
 		settings,
+
+		boundTo: (driver) => createSessionService({ ...options, driver }),
 
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();

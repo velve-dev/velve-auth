@@ -305,11 +305,10 @@ export function createOAuthService(input: {
 		return created;
 	}
 
-	async function resolveAccount(
+	async function accountForSignIn(
 		provider: ResolvedProvider,
 		account: ProviderAccount,
 		facts: IdentityFacts,
-		linkToUserId: string | null,
 	): Promise<ResolvedAccount> {
 		return driver.transaction(async (transaction) => {
 			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
@@ -319,14 +318,7 @@ export function createOAuthService(input: {
 			});
 
 			if (existing !== null) {
-				if (linkToUserId !== null && existing.userId !== linkToUserId) {
-					throw new VelveError("identity_already_linked");
-				}
 				return { userId: existing.userId, identity: await owned.refreshIdentity(facts) };
-			}
-
-			if (linkToUserId !== null) {
-				return { userId: linkToUserId, identity: await insertOrRefuse(owned, linkToUserId, facts) };
 			}
 
 			const joinable = await accountAnAutomaticLinkMayJoin({
@@ -337,6 +329,26 @@ export function createOAuthService(input: {
 			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
 			return { userId: owner.id, identity: await insertOrRefuse(owned, owner.id, facts) };
 		});
+	}
+
+	/** 3.15 B.7: the account is the flow row's, so the linking rule here is a comparison, not a search. */
+	async function linkedIdentityOf(
+		owned: OAuthIdentityRepository,
+		account: ProviderAccount,
+		facts: IdentityFacts,
+		userId: string,
+	): Promise<Identity> {
+		const existing = await owned.findIdentityBySubject({
+			provider: facts.provider,
+			subject: account.subject,
+		});
+		if (existing === null) {
+			return insertOrRefuse(owned, userId, facts);
+		}
+		if (existing.userId !== userId) {
+			throw new VelveError("identity_already_linked");
+		}
+		return owned.refreshIdentity(facts);
 	}
 
 	async function issueSessionAround(
@@ -386,22 +398,39 @@ export function createOAuthService(input: {
 	 * S-LINK-7 and S-FIX-1: a new identity changes the trust level, so the session the link began in
 	 * ends and a new one begins in the same transaction. S-FIX-6 is the two credential changes and
 	 * not this one, so no other session of the account is touched (E-588).
+	 *
+	 * The identity is written in that same transaction, because a linked identity is a sign-in method
+	 * under L-13: a link refused its session must not leave a credential behind (E-969). Both outbound
+	 * calls are finished before it opens, so nothing here waits on a third party.
 	 */
-	async function reissueAfterLinking(
-		linked: LinkedSession,
-		observed: ObservedRequest,
-	): Promise<IssuedSession> {
-		const { issued } = await issueSessionAround(linked.account.userId, () =>
-			services.sessions
+	async function linkIdentityAndReissue(input: {
+		readonly linked: LinkedSession;
+		readonly account: ProviderAccount;
+		readonly facts: IdentityFacts;
+		readonly observed: ObservedRequest;
+	}): Promise<{ readonly identity: Identity; readonly issued: IssuedSession }> {
+		const userId = input.linked.account.userId;
+		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
+		const written = await driver.transaction(async (transaction) => {
+			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
+			const identity = await linkedIdentityOf(owned, input.account, input.facts, userId);
+			const issued = await services.sessions
+				.boundTo(transaction)
 				.reissueSessionOfUser({
-					actor: actorOfConsumedOAuthFlow(linked.account),
-					previousSessionId: linked.previousSessionId,
+					actor: actorOfConsumedOAuthFlow(input.linked.account),
+					previousSessionId: input.linked.previousSessionId,
 					factors: OAUTH_FACTORS,
-					observed,
+					observed: input.observed,
 				})
-				.catch(refuseAFlowWhoseSessionIsGone),
-		);
-		return issued;
+				.catch(refuseAFlowWhoseSessionIsGone);
+			return { identity, issued };
+		});
+		await services.pluginRuntime.hooks.afterSessionCreate({
+			userId,
+			factors: written.issued.session.factors,
+			sessionId: written.issued.session.id,
+		});
+		return written;
 	}
 
 	async function verifierOf(flow: {
@@ -479,26 +508,27 @@ export function createOAuthService(input: {
 			const read = await claimsOfProvider(provider, tokens, flow.nonce);
 			assertClaimsAnswerForTheIssuer({ provider, iss: arrival.iss, ...read });
 			const account = providerAccountOf(read.claims, provider);
-			const resolved = await resolveAccount(
-				provider,
-				account,
-				await factsOf(provider, account, tokens),
-				linked?.account.userId ?? null,
-			);
+			const facts = await factsOf(provider, account, tokens);
 			const redirectToPath = acceptedRedirectPath(flow.redirectPath ?? DEFAULT_REDIRECT_PATH);
 
 			// Whether this flow links is the flow row's own statement, and not the callback's to make.
 			if (linked !== null) {
-				const issued = await reissueAfterLinking(linked, arrival.observed);
+				const { identity, issued } = await linkIdentityAndReissue({
+					linked,
+					account,
+					facts,
+					observed: arrival.observed,
+				});
 				return {
 					status: "identity_linked",
-					identity: resolved.identity,
+					identity,
 					sessionToken: issued.token,
 					session: issued.session,
 					redirectToPath,
 				};
 			}
 
+			const resolved = await accountForSignIn(provider, account, facts);
 			const result = await signInOrAskForTheSecondFactor(resolved.userId, arrival.observed);
 			if (result.status === "signed_in") {
 				await services.pluginRuntime.hooks.afterSignIn({
