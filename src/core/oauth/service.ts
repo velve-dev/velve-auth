@@ -8,6 +8,7 @@ import type { RouteServices } from "../auth/routes.js";
 import { createUserRepository, type User } from "../auth/user.js";
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
+import { PreviousSessionMissingError } from "../db/repositories/session.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
@@ -94,6 +95,19 @@ interface ResolvedAccount {
 interface LinkedSession {
 	readonly account: ConsumedOAuthFlow;
 	readonly previousSessionId: string;
+}
+
+/**
+ * A34: a revocation that leaves an attacker's session standing is no revocation, and a flow row is a
+ * ten-minute artefact that would otherwise outlive the session that authorised it. The flow's
+ * authority is the session it was started from, so a flow whose session was revoked, signed out,
+ * replaced by a credential change or expired has none left to spend (E-961).
+ */
+function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
+	if (cause instanceof PreviousSessionMissingError) {
+		throw new ConcealedError("link_session_gone");
+	}
+	throw cause;
 }
 
 /** A link flow writes both columns at the start, so a row carrying one alone is not one this library wrote. */
@@ -378,12 +392,14 @@ export function createOAuthService(input: {
 		observed: ObservedRequest,
 	): Promise<IssuedSession> {
 		const { issued } = await issueSessionAround(linked.account.userId, () =>
-			services.sessions.reissueSessionOfUser({
-				actor: actorOfConsumedOAuthFlow(linked.account),
-				previousSessionId: linked.previousSessionId,
-				factors: OAUTH_FACTORS,
-				observed,
-			}),
+			services.sessions
+				.reissueSessionOfUser({
+					actor: actorOfConsumedOAuthFlow(linked.account),
+					previousSessionId: linked.previousSessionId,
+					factors: OAUTH_FACTORS,
+					observed,
+				})
+				.catch(refuseAFlowWhoseSessionIsGone),
 		);
 		return issued;
 	}

@@ -64,7 +64,9 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	/**
 	 * S-FIX-1 where the proof of ownership is a consumed row and not a session cookie: the caller
-	 * names the one session to replace, and every other session of the account is left alone.
+	 * names the one session to replace, and every other session of the account is left alone. A
+	 * named row that is no longer there raises `PreviousSessionMissingError` unmapped, because what
+	 * the outside is told about it depends on which artefact named the row (E-961).
 	 */
 	reissueSessionOfUser(input: {
 		readonly actor: Actor;

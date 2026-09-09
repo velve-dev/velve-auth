@@ -208,6 +208,7 @@ export type ConcealedReason =
 	| "issuer_mismatch"
 	| "id_token_signature_invalid"
 	| "user_disabled_on_oauth_flow"
+	| "link_session_gone"
 	| "challenge_not_found"
 	| "challenge_expired"
 	| "challenge_purpose_mismatch"
@@ -251,6 +252,7 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	issuer_mismatch: "oauth_flow_invalid",
 	id_token_signature_invalid: "oauth_flow_invalid",
 	user_disabled_on_oauth_flow: "oauth_flow_invalid",
+	link_session_gone: "oauth_flow_invalid",
 	challenge_not_found: "webauthn_challenge_invalid",
 	challenge_expired: "webauthn_challenge_invalid",
 	challenge_purpose_mismatch: "webauthn_challenge_invalid",

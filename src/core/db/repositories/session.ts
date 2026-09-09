@@ -95,8 +95,9 @@ export interface SessionRepository {
 		readonly insert: SessionInsert;
 	}): Promise<Session>;
 	/**
-	 * The replacement a caller reaches with a session id rather than a token — and the row it names
-	 * may already be gone, so its absence leaves the new session standing rather than refusing.
+	 * The replacement a caller reaches with a session id rather than a token. The delete must match
+	 * exactly one row: a caller whose authority *is* the previous row has none left once that row
+	 * is gone, so zero rows raises `PreviousSessionMissingError` and the insert rolls back with it.
 	 */
 	replaceSessionOwnedBy(input: {
 		readonly actor: Actor;
@@ -379,7 +380,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				throw new SessionOwnerMismatchError();
 			}
 			return options.driver.transaction(async (tx) => {
-				await tx.query(deleteOwnedSql, [previousSessionId, actor]);
+				const removed = await tx.query(deleteOwnedSql, [previousSessionId, actor]);
+				// E-961: the count is read here and not returned, because only here can the insert still be undone.
+				if (removed.length === 0) {
+					throw new PreviousSessionMissingError();
+				}
 				return insertSession(tx, insert);
 			});
 		},
