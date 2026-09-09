@@ -1,0 +1,532 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
+import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
+import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
+import { dropSchema } from "./db-fixtures.js";
+import {
+	CALLBACK_BASE_URL,
+	codeCarrying,
+	createStubProvider,
+	oauthConfigFor,
+	type ProviderClaims,
+	type StubProvider,
+} from "./oauth-provider.js";
+
+interface Mounted {
+	readonly auth: MountedAuth;
+	readonly provider: StubProvider;
+}
+
+const mountedInstances: MountedAuth[] = [];
+
+async function mountWith(input: {
+	readonly claims: ProviderClaims;
+	readonly openIdConnect?: boolean;
+	readonly trusted?: boolean;
+	readonly storeTokens?: boolean;
+	readonly responseMode?: "query" | "form_post";
+}): Promise<Mounted> {
+	const provider = await createStubProvider({
+		claims: input.claims,
+		...(input.openIdConnect === undefined ? {} : { openIdConnect: input.openIdConnect }),
+	});
+	const auth = await mountAuth("oauthflow", {
+		oauth: oauthConfigFor({
+			openIdConnect: input.openIdConnect === true,
+			...(input.trusted === undefined ? {} : { trusted: input.trusted }),
+			...(input.storeTokens === undefined ? {} : { storeTokens: input.storeTokens }),
+			...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
+		}),
+		fetch: provider.fetch,
+	});
+	mountedInstances.push(auth);
+	return { auth, provider };
+}
+
+afterEach(async () => {
+	for (const mounted of mountedInstances.splice(0)) {
+		await dropSchema(mounted.connection, mounted.schema);
+		await mounted.connection.close();
+	}
+});
+
+interface StartedFlow {
+	readonly pointer: string;
+	readonly state: string;
+	readonly nonce: string | null;
+	readonly authorizationUrl: URL;
+}
+
+async function start(mounted: Mounted, cookie?: string): Promise<StartedFlow> {
+	const response = await mounted.auth.handler(
+		requestTo("/sign-in/oauth/start", {
+			body: { provider: "stubby" },
+			...(cookie === undefined ? {} : { cookie }),
+		}),
+	);
+	expect(response.status, await response.clone().text()).toBe(200);
+	const body = (await response.json()) as {
+		authorizationUrl: string;
+		stateCookie: { value: string };
+	};
+	const authorizationUrl = new URL(body.authorizationUrl);
+	return {
+		pointer: body.stateCookie.value,
+		state: authorizationUrl.searchParams.get("state") ?? "",
+		nonce: authorizationUrl.searchParams.get("nonce"),
+		authorizationUrl,
+	};
+}
+
+async function startLink(mounted: Mounted, sessionCookie: string): Promise<StartedFlow> {
+	const response = await mounted.auth.handler(
+		requestTo("/identity/link/start", { body: { provider: "stubby" }, cookie: sessionCookie }),
+	);
+	expect(response.status, await response.clone().text()).toBe(200);
+	const body = (await response.json()) as {
+		authorizationUrl: string;
+		stateCookie: { value: string };
+	};
+	const authorizationUrl = new URL(body.authorizationUrl);
+	return {
+		pointer: body.stateCookie.value,
+		state: authorizationUrl.searchParams.get("state") ?? "",
+		nonce: authorizationUrl.searchParams.get("nonce"),
+		authorizationUrl,
+	};
+}
+
+function callbackRequest(
+	flow: StartedFlow,
+	options: { readonly pointer?: string | null; readonly cookie?: string } = {},
+): Request {
+	const code = codeCarrying(flow.nonce);
+	const pointer = options.pointer === undefined ? flow.pointer : options.pointer;
+	const cookies = [
+		pointer === null ? null : `__Host-velve_oauth_state=${pointer}`,
+		options.cookie ?? null,
+	].filter((value): value is string => value !== null);
+	return requestTo(
+		`/sign-in/oauth/callback/stubby?code=${code}&state=${encodeURIComponent(flow.state)}`,
+		{ method: "GET", ...(cookies.length === 0 ? {} : { cookie: cookies.join("; ") }) },
+	);
+}
+
+function sessionCookieOf(response: Response): string | null {
+	const written = response.headers.getSetCookie();
+	const line = written.find((cookie) => cookie.startsWith("__Host-velve_session="));
+	return line === undefined ? null : (line.split(";")[0] ?? null);
+}
+
+async function countRows(mounted: Mounted, table: string): Promise<number> {
+	const [row] = await mounted.auth.connection.query<{ count: number }>(
+		`SELECT count(*)::int AS count FROM ${mounted.auth.schema}.${table}`,
+		[],
+	);
+	return row?.count ?? 0;
+}
+
+const VERIFIED_CLAIMS: ProviderClaims = {
+	sub: "provider-subject-1",
+	email: "Signed.In@Example.com",
+	email_verified: true,
+};
+
+describe("the authorization request (3.10)", () => {
+	it("carries PKCE S256, the state and the configured redirect target", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const flow = await start(mounted);
+		const parameters = flow.authorizationUrl.searchParams;
+
+		expect(flow.authorizationUrl.origin).toBe("https://provider.example");
+		expect(parameters.get("code_challenge_method")).toBe("S256");
+		expect(parameters.get("code_challenge")).toHaveLength(43);
+		expect(parameters.get("redirect_uri")).toBe(`${CALLBACK_BASE_URL}/stubby`);
+		expect(parameters.get("response_type")).toBe("code");
+		expect(flow.state).toHaveLength(43);
+	});
+
+	it("keeps the state out of the cookie and the pointer out of the query", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const flow = await start(mounted);
+
+		expect(flow.pointer).not.toBe(flow.state);
+		expect(flow.authorizationUrl.toString()).not.toContain(flow.pointer);
+	});
+
+	it("stores the verifier encrypted and never in the cookie", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const flow = await start(mounted);
+		const [row] = await mounted.auth.connection.query<{
+			pkce_verifier_enc: Uint8Array;
+			key_version: number;
+		}>(`SELECT pkce_verifier_enc, key_version FROM ${mounted.auth.schema}.oauth_flow`, []);
+
+		expect(row?.key_version).toBe(1);
+		expect(new TextDecoder().decode(Uint8Array.from(row?.pkce_verifier_enc ?? []))).not.toContain(
+			flow.pointer,
+		);
+	});
+});
+
+describe("the callback signs in (3.10, 3.15 D.3)", () => {
+	it("answers 302 to the stored path, sets a session and writes one identity", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const response = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(response.status).toBe(302);
+		expect(response.headers.get("Location")).toBe("/");
+		expect(sessionCookieOf(response)).not.toBeNull();
+		expect(await countRows(mounted, "identity")).toBe(1);
+		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await countRows(mounted, "oauth_flow")).toBe(0);
+	});
+
+	it("finds the same account the second time and creates no second one", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(await countRows(mounted, "identity")).toBe(1);
+		expect(await countRows(mounted, "user")).toBe(1);
+	});
+
+	it("stores the address the provider reported, normalised, and nothing invented", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
+		const answer = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [row] = await mounted.auth.connection.query<{
+			email: string;
+			email_verified_at: Date | null;
+		}>(`SELECT email, email_verified_at FROM ${mounted.auth.schema}.user`, []);
+
+		expect(answer.status).toBe(302);
+		expect(row?.email).toBe("signed.in@example.com");
+		expect(row?.email_verified_at).not.toBeNull();
+	});
+
+	it("leaves the address unverified when the provider is not trusted", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [row] = await mounted.auth.connection.query<{ email_verified_at: Date | null }>(
+			`SELECT email_verified_at FROM ${mounted.auth.schema}.user`,
+			[],
+		);
+
+		expect(row?.email_verified_at).toBeNull();
+	});
+});
+
+describe("S-CSRF-5: the pointer cookie is half of the check", () => {
+	it("refuses a callback without the cookie and one from another cookie context", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const withoutCookie = await mounted.auth.handler(
+			callbackRequest(await start(mounted), { pointer: null }),
+		);
+		const foreign = await start(mounted);
+		const other = await start(mounted);
+		const crossed = await mounted.auth.handler(
+			callbackRequest(foreign, { pointer: other.pointer }),
+		);
+
+		expect([withoutCookie.status, crossed.status]).toStrictEqual([400, 400]);
+		expect(await countRows(mounted, "session")).toBe(0);
+		expect(await countRows(mounted, "identity")).toBe(0);
+	});
+
+	it("spends a state exactly once", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const flow = await start(mounted);
+		const first = await mounted.auth.handler(callbackRequest(flow));
+		const second = await mounted.auth.handler(callbackRequest(flow));
+
+		expect([first.status, second.status]).toStrictEqual([302, 400]);
+		expect(await countRows(mounted, "session")).toBe(1);
+	});
+});
+
+describe("S-LINK-2: all three conditions, and never two of them", () => {
+	it("allows the link only where every condition holds", () => {
+		const cases = [false, true].flatMap((first) =>
+			[false, true].flatMap((second) =>
+				[false, true].map((third) => ({
+					providerReportsTheAddressVerified: first,
+					localAccountHasEmailVerifiedAt: second,
+					providerIsTrusted: third,
+				})),
+			),
+		);
+
+		expect(cases).toHaveLength(8);
+		expect(cases.filter(automaticLinkIsAllowed)).toStrictEqual([
+			{
+				providerReportsTheAddressVerified: true,
+				localAccountHasEmailVerifiedAt: true,
+				providerIsTrusted: true,
+			},
+		]);
+	});
+
+	it("does not join an unverified local account even from a trusted provider", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
+		await mounted.auth.connection.query(
+			`INSERT INTO ${mounted.auth.schema}.user (email) VALUES ($1)`,
+			["signed.in@example.com"],
+		);
+		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(refused.status).toBe(400);
+		expect(await countRows(mounted, "identity")).toBe(0);
+		expect(await countRows(mounted, "user")).toBe(1);
+	});
+
+	it("joins a verified local account from a trusted provider", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
+		await mounted.auth.connection.query(
+			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
+			["signed.in@example.com"],
+		);
+		const response = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(response.status).toBe(302);
+		expect(await countRows(mounted, "user")).toBe(1);
+		expect(await countRows(mounted, "identity")).toBe(1);
+	});
+
+	it("refuses to join a verified local account from a provider that is not trusted", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.connection.query(
+			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
+			["signed.in@example.com"],
+		);
+		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(refused.status).toBe(400);
+		expect(await countRows(mounted, "identity")).toBe(0);
+	});
+});
+
+describe("S-LINK-1 and S-LINK-6: the pair is the key and the flag is per identity", () => {
+	it("keeps two providers reporting one address apart", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const secondProvider = await createStubProvider({
+			claims: { ...VERIFIED_CLAIMS, sub: "a-different-subject" },
+		});
+		const [identity] = await mounted.auth.connection.query<{
+			provider: string;
+			subject: string;
+			provider_email_verified: boolean;
+		}>(
+			`SELECT provider, subject, provider_email_verified FROM ${mounted.auth.schema}.identity`,
+			[],
+		);
+
+		expect(secondProvider.calls).toStrictEqual([]);
+		expect(identity?.subject).toBe("provider-subject-1");
+		expect(identity?.provider_email_verified).toBe(true);
+	});
+
+	it("never writes the address into the subject", async () => {
+		const mounted = await mountWith({
+			claims: { sub: "not-an-address", email: "someone@example.com", email_verified: true },
+		});
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [row] = await mounted.auth.connection.query<{ subject: string }>(
+			`SELECT subject FROM ${mounted.auth.schema}.identity`,
+			[],
+		);
+
+		expect(row?.subject).toBe("not-an-address");
+	});
+});
+
+describe("S-LINK-5: no address is invented", () => {
+	it("refuses the account rather than making an address up", async () => {
+		const mounted = await mountWith({ claims: { sub: "no-address-at-all" } });
+		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(refused.status).toBe(502);
+		expect(await countRows(mounted, "user")).toBe(0);
+		expect(await countRows(mounted, "identity")).toBe(0);
+	});
+});
+
+describe("S-REST-6 and S-REST-4: provider tokens", () => {
+	it("stores none of the three by default", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [row] = await mounted.auth.connection.query<{
+			access_token_enc: Uint8Array | null;
+			refresh_token_enc: Uint8Array | null;
+			id_token_enc: Uint8Array | null;
+			token_key_version: number | null;
+		}>(
+			`SELECT access_token_enc, refresh_token_enc, id_token_enc, token_key_version
+			 FROM ${mounted.auth.schema}.identity`,
+			[],
+		);
+
+		expect(row?.access_token_enc).toBeNull();
+		expect(row?.refresh_token_enc).toBeNull();
+		expect(row?.id_token_enc).toBeNull();
+		expect(row?.token_key_version).toBeNull();
+	});
+
+	it("encrypts them where the application asked for them", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, storeTokens: true });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [row] = await mounted.auth.connection.query<{
+			access_token_enc: Uint8Array | null;
+			token_key_version: number | null;
+		}>(`SELECT access_token_enc, token_key_version FROM ${mounted.auth.schema}.identity`, []);
+		const stored = new TextDecoder().decode(Uint8Array.from(row?.access_token_enc ?? []));
+
+		expect(row?.token_key_version).toBe(1);
+		expect(stored).not.toContain("provider-access-token");
+	});
+});
+
+describe("S-KEY-7: the ID token is verified against the JWKS", () => {
+	it("names asymmetric algorithms only", () => {
+		expect(ID_TOKEN_SIGNATURE_ALGORITHMS).not.toContain("none");
+		expect(ID_TOKEN_SIGNATURE_ALGORITHMS.filter((name) => name.startsWith("HS"))).toStrictEqual([]);
+		expect(ID_TOKEN_SIGNATURE_ALGORITHMS).toContain("RS256");
+	});
+
+	it("accepts the signed token and refuses `none`, HS256 and a foreign key", async () => {
+		const mounted = await mountWith({
+			claims: VERIFIED_CLAIMS,
+			openIdConnect: true,
+			trusted: true,
+		});
+		const accepted = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		const refusals: number[] = [];
+		for (const forged of [
+			{ algorithm: "none" },
+			{ algorithm: "HS256" },
+			{ foreignKey: true },
+		] as const) {
+			const flow = await start(mounted);
+			mounted.provider.replaceIdToken(
+				await mounted.provider.signIdToken({
+					claims: VERIFIED_CLAIMS,
+					nonce: flow.nonce ?? "",
+					...forged,
+				}),
+			);
+			refusals.push((await mounted.auth.handler(callbackRequest(flow))).status);
+			mounted.provider.replaceIdToken(null);
+		}
+
+		expect(accepted.status).toBe(302);
+		expect(refusals).toStrictEqual([400, 400, 400]);
+	});
+
+	it("refuses an ID token whose nonce is not the one this flow minted", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, openIdConnect: true });
+		const flow = await start(mounted);
+		mounted.provider.replaceIdToken(
+			await mounted.provider.signIdToken({ claims: VERIFIED_CLAIMS, nonce: "a-nonce-of-my-own" }),
+		);
+		const refused = await mounted.auth.handler(callbackRequest(flow));
+
+		expect(flow.nonce).not.toBeNull();
+		expect(refused.status).toBe(400);
+		expect(await countRows(mounted, "session")).toBe(0);
+	});
+});
+
+describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
+	it("links the identity and re-issues the session", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const firstSession = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "a-second-subject", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, firstSession);
+		const linked = await mounted.auth.handler(callbackRequest(linkFlow, { cookie: firstSession }));
+
+		expect(linked.status).toBe(302);
+		expect(sessionCookieOf(linked)).not.toBe(firstSession);
+		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await countRows(mounted, "identity")).toBe(2);
+		expect(await countRows(mounted, "user")).toBe(1);
+	});
+
+	it("refuses to move an identity that belongs to another account", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		mounted.provider.reportClaims({ sub: "the-other-account", email: "other@example.com" });
+		const secondSignIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const secondSession = sessionCookieOf(secondSignIn) ?? "";
+
+		mounted.provider.reportClaims(VERIFIED_CLAIMS);
+		const linkFlow = await startLink(mounted, secondSession);
+		const refused = await mounted.auth.handler(
+			callbackRequest(linkFlow, { cookie: secondSession }),
+		);
+
+		expect(refused.status).toBe(409);
+		expect(await countRows(mounted, "identity")).toBe(2);
+		expect(await countRows(mounted, "user")).toBe(2);
+	});
+});
+
+describe("identity.list and identity.unlink (C89, L-13)", () => {
+	it("lists the identity without a token and refuses to remove the last way in", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const cookie = sessionCookieOf(signedIn) ?? "";
+
+		const listed = await mounted.auth.handler(
+			requestTo("/identity/list", { method: "GET", cookie, origin: TEST_ORIGIN }),
+		);
+		const identities = (await listed.json()) as { id: string; subject: string }[];
+		const refused = await mounted.auth.handler(
+			requestTo("/identity/unlink", { body: { identityId: identities[0]?.id }, cookie }),
+		);
+
+		expect(listed.status).toBe(200);
+		expect(identities).toHaveLength(1);
+		expect(JSON.stringify(identities)).not.toContain("provider-access-token");
+		expect(refused.status).toBe(409);
+		expect(await countRows(mounted, "identity")).toBe(1);
+	});
+});
+
+describe("the form_post callback (section 1 C50, C70)", () => {
+	it("takes the posted form and marks its pointer cross-site", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, responseMode: "form_post" });
+		const response = await mounted.auth.handler(
+			requestTo("/sign-in/oauth/start", { body: { provider: "stubby" } }),
+		);
+		const written = response.headers.getSetCookie();
+		const body = (await response.json()) as {
+			authorizationUrl: string;
+			stateCookie: { value: string; attributes: string };
+		};
+		const flow = new URL(body.authorizationUrl);
+
+		const posted = new Request("https://api.example.com/sign-in/oauth/callback/stubby", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded",
+				Cookie: `__Host-velve_oauth_state=${body.stateCookie.value}`,
+			},
+			body: new URLSearchParams({
+				code: codeCarrying(null),
+				state: flow.searchParams.get("state") ?? "",
+				user: '{"name":{"firstName":"Ada"}}',
+			}),
+		});
+		const answered = await mounted.auth.handler(posted);
+
+		expect(flow.searchParams.get("response_mode")).toBe("form_post");
+		expect(written.some((cookie) => cookie.includes("SameSite=None"))).toBe(true);
+		expect(body.stateCookie.attributes).toBe("HttpOnly; Secure; SameSite=None; Path=/");
+		expect(answered.status).toBe(302);
+		expect(await countRows(mounted, "identity")).toBe(1);
+	});
+});
