@@ -4107,15 +4107,30 @@ in on their phone.
 Both facts come out of the flow row because the callback reads no session cookie:
 that cookie is `SameSite=Lax` and a browser does not send it on a `form_post`
 callback — nor, in a `sessionSameSite: "strict"` installation, on the redirect
-one. Where the session the link began in has gone in the meantime — signed out on
-that device, or expired — there is nothing to delete, the new session is issued
-alone, and the link is not refused over it.
+one.
+
+**A flow whose session is gone when the callback arrives is refused**
+(`oauth_flow_invalid`), and the flow row is spent either way, so it cannot be
+retried. The flow's authority is the session it was started from: once that
+session has been revoked, signed out, replaced by a password change or reset, or
+simply expired, there is no authority left to spend. Without the refusal the two
+columns are a bearer artefact good for the flow's ten-minute lifetime that mints
+a session against an account whose sessions were all deleted — which is the
+opposite of what a revocation is for.
+
+Two consequences of that rule are worth stating outright. **Two link flows
+started from the same session cannot both complete:** the first replaces that
+session, so the second names a row that no longer exists and is refused, and the
+user re-links from the session they are now holding. And **signing out on the
+device that started a link cancels the link**, rather than the callback quietly
+signing that device back in.
 
 The session service call behind this is
 `reissueSessionOfUser({ actor, previousSessionId, factors, observed })`. It is
 the third re-issue shape beside `reissue`, which finds the previous row by its
 token, and `reissueAfterCredentialChange`, which replaces every row the account
-has; this one names the row by id and touches no other.
+has; this one names the row by id, touches no other, and refuses when the named
+row is not there.
 
 `identity.unlink` requires a session and freshness, and refuses with
 `last_sign_in_method` when the identity is the account's last way in — counted
@@ -4163,12 +4178,14 @@ never reads them.
 8. Issues a session — or, where the account has a second factor enrolled, a
    pending authentication instead — and answers 302 to the stored path. A link
    flow replaces the session named on the flow row rather than adding a second
-   one, and leaves the account's other sessions untouched.
+   one, leaves the account's other sessions untouched, and is refused when the
+   named session is no longer there.
 
 Every failure between steps 2 and 6 answers `oauth_flow_invalid` (400) to the
 caller and carries its own reason in the log line: `state_not_found`,
 `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`,
-`id_token_signature_invalid`. A provider that answers wrongly is
+`id_token_signature_invalid`. A link refused at step 8 answers the same code and
+logs `link_session_gone`. A provider that answers wrongly is
 `oauth_provider_error` (502).
 
 ### The linking rule
@@ -4209,8 +4226,9 @@ identity of the same user.
 Linking an identity to an account **re-issues the session the link began in**: a
 new row, a new token, and the previous row removed in the same transaction. A new
 identity changes the trust level, and every change of the trust level re-issues
-(`S-LINK-7`, `S-FIX-1`). The account's other sessions are not touched; see *The
-routes and the methods* for why that is the whole of what `S-LINK-7` asks.
+(`S-LINK-7`, `S-FIX-1`). The account's other sessions are not touched, and a link
+whose own session has gone is refused rather than issuing one; see *The routes
+and the methods* for both.
 
 ### Sign-in through a provider in the username modes
 

@@ -152,7 +152,9 @@ session, `auth.identity.link.start` links a second provider to the account you
 are signed in as — the account and the session are both fixed server-side, so no
 callback can point either somewhere else — and `auth.identity.unlink` refuses to
 remove your last way in. Linking re-issues the session it was started from, a new
-token in place of the old row, and leaves your other devices signed in.
+token in place of the old row, and leaves your other devices signed in; a link
+whose own session was revoked or signed out while it was outstanding is refused
+rather than handing back a fresh one.
 
 **The linking rule is the part that does not bend.** `(provider, subject)` is
 the only key; the e-mail address is an attribute and never a link. An identity

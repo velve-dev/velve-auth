@@ -4606,6 +4606,70 @@ One consequence of restating in place that the rule does not mention, and that s
 `E-960` · oauth · numbering, disclosed
 
 **Context.** The wave owner assigned this feature a second range of twenty numbers at the start of this round, while seven were still unspent in the first.
-**Rejected.** Numbering this round's entries from the second range's start and leaving the seven behind. §6 says a gap costs nothing and a wrong citation costs a great deal, so a gap would have been permitted — but seven numbers were sitting there and the round needed seven.
-**Reason.** The seven were used first, in order, and the second range is added to §6's table as a new row and left untouched. That leaves it as headroom for a fourth round rather than as a gap, which is what a range assigned before it is needed is for.
+**Rejected.** Numbering this round's entries from the second range's start and leaving the seven behind. §6 says a gap costs nothing and a wrong citation costs a great deal, so a gap would have been permitted — but seven numbers were sitting there and the round needed eight.
+**Reason.** The seven were used first, in order, and the second range is added to §6's table as a new row and left untouched. That leaves it as headroom for a fourth round rather than as a gap, which is what a range assigned before it is needed is for. The round produced eight entries, so the eighth is this one and it is the second range's first.
 **Price.** §6's own measurement section reads range rows as evidence of how wide a range has to be, and a row with nothing in it will read as slack until something lands in it. It is not slack; it is the gate round nobody has had yet.
+
+### The wave owner's case 1 was wrong, and it was wrong in every round
+`E-961` · oauth · S-FIX-1, ruling overturned by measurement
+
+**Context.** Case 1 of the ruling that shaped E-588 said: where the session a link flow began in is already gone at callback time, there is nothing to delete, the new session stands alone, and the link is not refused over it. That is what shipped. The gate measured what it buys. `sign in → identity.link.start → POST /session/revoke-all` answers 200 with zero session rows, and the callback then answers 302 with one, and the minted cookie resolves. The same with `POST /sign-out`. Public HTTP interface only, no SQL, nothing beyond having held a fresh session. `link_to_user_id` and `link_from_session_id` are together a bearer artefact valid for the flow's ten-minute lifetime that converts into a session against an account whose sessions were all deleted, and it transfers to `S-FIX-6` by construction because `replaceEverySessionOfUser` runs the same `DELETE FROM session WHERE user_id = $1`. Architecture A34 says it in one line: *„Ein Reset, der die Sitzung des Angreifers stehen lässt, ist kein Reset."*
+**Rejected.** Keeping case 1 and narrowing it — refusing only after `revoke-all` and not after a sign-out, or only where the revocation was recent. There is no reading under which the flow's authority survives the deletion of the thing it derived from, and a rule with an exception in it is a rule an attacker reads for the exception.
+**Reason.** The delete must match exactly one row. Zero rows is a refusal — `oauth_flow_invalid` to the caller, `link_session_gone` in the log — and the flow row is spent by then, so the refusal cannot be retried. A flow with no session at all is untouched: `flow.linkTo === null` is an ordinary first sign-in and never had a row to name. The three probes are now tests, and planted against the no-op they all four redden while the six older cases stay green.
+**Price.** The honest part is the history. This is not new: round one fell through to a plain `issue()` on exactly the cookie-less paths, round two revoked every session and then issued, and all three rounds minted the same session against a revoked account. It was present in every round, disclosed in none, and it survived two gates and a wave owner's ruling that wrote the behaviour down as intended. The cost of the fix is a user-visible one: a link started and then interrupted by a sign-out on that device fails and has to be started again, and there is no message that explains why beyond `oauth_flow_invalid`.
+
+### Two link flows from one session, and the row the browser is holding
+`E-962` · oauth · S-FIX-1, second hole from the same column
+
+**Context.** E-588 made the callback replace the row the flow names. Start two flows from one session S and complete both: F1 deletes S and issues S1, which the browser then holds; F2 still names S, S is gone, and under case 1 it issued S2. Both live. `S-FIX-1` requires the linking event to delete *die vorherige Zeile*, and for the second link that row is S1 — the token the caller is actually holding, carrying the pre-second-link trust level. It needs no attacker: link Google, go back, link GitHub, complete both. It scales, *n* flows from one session yielding *n* live sessions. Unlike E-961 this one was **introduced** this round; round two's revoke-all would have ended at one session.
+**Rejected.** Re-pointing F2 at whatever session the account currently has. There is no "the" session — an account may have many — and picking one would invent an authority the flow never carried. Also rejected: refusing a second `link.start` while a flow from the same session is outstanding, which turns an abandoned consent screen into a ten-minute lockout on linking.
+**Reason.** E-961's refusal resolves it without a second mechanism: F2 names a row that is gone, so F2 is refused, and the user re-links from the session they are holding. `T-LINK-7` measures the single-link case and was met by the old behaviour too, which is exactly why the new test is written to `S-FIX-1`'s sentence and not to what the code did.
+**Price.** A user who opens two link flows loses the second one and gets `oauth_flow_invalid` with no explanation of the ordering that caused it. Nothing in the interface tells a client that flows from one session are mutually exclusive; this entry and the documentation are the only places it is written.
+
+### Refusing inside the transaction, not on a returned count
+`E-963` · oauth · mechanism, deviation from the ruling
+
+**Context.** The ruling said `replaceSessionOwnedBy` should return the row count and the caller should refuse on zero.
+**Rejected.** Exactly that. The delete and the insert are one transaction; a count returned to the caller is returned *after* it commits, so a caller refusing on zero would refuse while the new session row already existed and resolved. That is the hole E-961 closes, rebuilt one layer up.
+**Reason.** The count is read where the insert can still be undone. `replaceSessionOwnedBy` raises `PreviousSessionMissingError` inside the transaction and the insert rolls back with it — the same class `replaceSession` already raises for the same condition, so the module gains a behaviour it already had rather than a new one. `reissueSessionOfUser` passes it through unmapped, because what the outside is told depends on which artefact named the row: a session cookie makes it `session_not_found`, a flow row makes it `link_session_gone`.
+**Price.** The interface now has one method that maps this failure and one that does not, which is a distinction a reader has to be told about rather than one they can see. E-243's warning about two same-shaped re-issues with different effects now covers three.
+
+### What the refusal still does not undo
+`E-964` · oauth · 3.11 and S-LINK-1, reported
+
+**Context.** The refusal fires at the session replace, which is the last write of the callback. By then the flow row has been consumed, the code has been spent at the token endpoint, and — the part that matters — the identity row has been inserted. So a link flow started before a `revoke-all` still **links the provider identity** even though it is refused a session.
+**Rejected.** Checking the session's existence early, before the token exchange. It closes the deterministic cases and not the race, and it needs a second method on a session module three features are editing. Also rejected, for now: putting the identity insert and the session replace in one transaction, which would close it completely — `resolveAccount` is already a transaction, and a transaction-scoped session service has precedent in `factor/pending/complete.ts`. It is not done here because it moves the `beforeSessionCreate` veto to before the account is resolved and restructures the shared non-linking path, and that is a design change rather than the repair that was ruled.
+**Reason.** So it is reported at its real size rather than fixed quietly. A linked identity is a **sign-in method** under L-13's count, so this is not the same residue as E-591's: an attacker holding a session who starts a link to their own provider account, and whose session is then revoked, keeps a way in. That is a smaller version of the class S-LINK-1 exists to prevent and it deserves a ruling rather than my judgement.
+**Price.** Until it is ruled, `revoke-all` is not the complete answer to a compromised session that A34 says it is, and this entry is the only place that is written down. The single-transaction fix is the one I would take, and it is not mine to take this round.
+
+### A refusal that says what was refused
+`E-965` · oauth · error-map, file outside the set
+
+**Context.** The refusal needed a concealed reason. `state_not_found` was available and already maps to `oauth_flow_invalid`.
+**Rejected.** Reusing it. The visible code is the same either way, so the only thing at stake is the log line an operator reads while investigating exactly this — and telling them the state was not found, when the state was found and spent and the *session* was gone, sends them to the wrong half of the flow.
+**Reason.** `link_session_gone` is added to `ConcealedReason` and to `VISIBLE_CODE_BY_CONCEALED_REASON`, mapping to `oauth_flow_invalid` like the six OAuth reasons beside it. §3 says what the outside learns is decided in exactly one place and this is that place, so the addition belongs there rather than in a local translation.
+**Price.** `src/core/http/error-map.ts` is not this feature's file. It is edited and reported, which is the third such crossing this round after `session/service.ts` and the session repository, and the fourth counting the migration.
+
+### The primitive nobody tested directly
+`E-966` · oauth · test coverage, corrected
+
+**Context.** `replaceSessionOwnedBy` and `reissueSessionOfUser` were reachable only through the OAuth callback. The primitive lives in a module wave 5's other two features are also editing, so a change there would have reddened an OAuth test and pointed at the wrong feature.
+**Rejected.** Adding the cases to `test/session-repository.test.ts` or `test/session-lifecycle.test.ts`, which are wave 2's files and which this feature has no claim on.
+**Reason.** A new file, `test/session-replace-owned-row.test.ts`, six cases: the replacement leaves the account's other rows alone, a row already gone is refused with nothing inserted, another account's row is refused and left standing, an insert for a user the actor is not is refused, the service hands back a token the old one cannot be mistaken for, and the service passes the refusal through unmapped. Planted against the no-op, three of the six redden.
+**Price.** A new test file belongs to no feature's partition, which is the same ownership gap it was created to avoid — it is simply a smaller one. And the third case relies on the owner predicate to make another account's row indistinguishable from a row that never existed, so it would pass for the wrong reason if the predicate were ever dropped.
+
+### Five public types the snapshot cannot see
+`E-967` · oauth · public surface, announced
+
+**Context.** The API snapshot compares exported names. The gate diffed the emitted `.d.mts` tree instead and found five shape changes this branch makes that no name-level comparison reports.
+**Rejected.** Treating a green snapshot as the announcement. §5's gate step says the public surface must not change unannounced, and the snapshot is the instrument, not the requirement.
+**Reason.** Named here so the record exists. `CookieAttributes` widens to three members, which is a security-relevant widening of the cookie vocabulary the type itself does not explain. `OAuthConfig` gains a **required** `callbackBaseUrl` and `RouteMetadata` a **required** `requestBody` — the second breaks a plugin author who constructs one. `ProviderCredentials` gains eight optional members and `GenericProviderConfig` two. `reissueSessionOfUser` and `replaceSessionOwnedBy` are deliberately not public and are not in this list.
+**Price.** Only two of the five sit in a chapter this feature owns; `CookieAttributes` belongs to `## HTTP` and `RouteMetadata` to the plugin surface, and both are therefore announced here and documented nowhere. A plugin author meeting the required `requestBody` will meet it as a compiler error rather than as a note.
+
+### Restating E-960's count, and the correction it needed
+`E-968` · oauth · the log, disclosed
+
+**Context.** E-960's Reason said *"the round needed seven"* where the round produced eight entries. §6 permits restating a **measurement** in an unmerged entry and forbids rewriting a reason; a count of entries is a measurement, and E-536 and E-538 are the precedent for saying so out loud rather than doing it quietly.
+**Rejected.** Leaving it and aiming a correction at it from here, which would publish a number known to be wrong and make it permanent.
+**Reason.** `seven` became `eight` in E-960's Rejected paragraph, and its Reason gained the sentence naming which entry the eighth is. Nothing else in that entry changed, and its argument — use the first range's remainder before the second range's start — is untouched.
+**Price.** This is the second round in which this branch has restated a number in place, after E-587's five. The line between a measurement and a reason is a person's judgement and no diff shows it, so the count of these disclosures is the only signal that they are being made at all.
