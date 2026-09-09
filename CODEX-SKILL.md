@@ -206,7 +206,7 @@ conceding what protects their users is dangerous.
 that leaves out: the architecture's chapter of deliberate absences — 3.14, the one
 titled for what the library does not do — and `README.md` under *What it deliberately
 does not do*. **Read both before you refuse anything.** They are not the same list,
-the README's is the longer one, and neither is reproduced here.
+and neither of them is reproduced here.
 
 A list of exclusions is the worst thing this file could carry a copy of. A copy of a
 list of *features* goes stale by omitting something; a copy of a list of exclusions
