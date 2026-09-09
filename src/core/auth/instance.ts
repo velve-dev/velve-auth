@@ -3,13 +3,14 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
+import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
 	type PendingAuthenticationService,
 	type PendingToken,
 } from "../factor/pending/index.js";
-import { emailFlowRoutes } from "../flows/routes.js";
+import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
 import { ConcealedError, VELVE_ERROR_CODES, type VelveErrorCode } from "../http/error-map.js";
@@ -17,10 +18,14 @@ import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
-import { oauthRoutes } from "../oauth/routes.js";
+import { type OAuthSurface, oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
-import { pluginRoutes } from "../plugin/routes.js";
+import type { VelvePlugin } from "../plugin/config.js";
+import type { FrozenContextServices } from "../plugin/context.js";
+import { pluginMigrations } from "../plugin/migrations.js";
+import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
+import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
@@ -37,7 +42,12 @@ import {
 	usernameRoutes,
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
-import { assertConfigurationIsStartable, assertKeysAnswerForEveryPurpose } from "./startup.js";
+import {
+	assertConfigurationIsStartable,
+	assertKeysAnswerForEveryPurpose,
+	VelveStartupError,
+} from "./startup.js";
+import { nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
 
 const DEFAULT_SCHEMA = "velve";
@@ -87,12 +97,22 @@ export interface AuthInternals {
 	readonly http: HttpEnvironment;
 }
 
-export type VelveAuth<M extends IdentityMode> = AuthInternals & {
-	signOut(input: ServerCallFields): Promise<void>;
-	readonly session: SessionNamespace;
-	readonly pending: PendingNamespace;
-	readonly user: UserNamespace;
-} & (ModeHasUsername<M> extends true
+/**
+ * 3.15 B.1 puts `signIn.oauth.*` and `signIn.magicLink.*` in one `signIn` namespace, and two
+ * features own them. Neither writes this file: each declares what it contributes in its own seam
+ * module, and this line intersects the three. A seam that is still empty contributes `unknown`,
+ * which intersects away, and each carries `M` so a mode-conditional namespace needs no change
+ * here either (E-776).
+ */
+type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PluginSurface<M>;
+
+export type VelveAuth<M extends IdentityMode> = AuthInternals &
+	SeamSurface<M> & {
+		signOut(input: ServerCallFields): Promise<void>;
+		readonly session: SessionNamespace;
+		readonly pending: PendingNamespace;
+		readonly user: UserNamespace;
+	} & (ModeHasUsername<M> extends true
 		? { readonly username: UsernameNamespace }
 		: Record<never, never>);
 
@@ -120,6 +140,51 @@ function callerResolver(
 			return resolved;
 		},
 	};
+}
+
+/**
+ * The eighteen namespaces 3.15 B gives the instance — eleven of `AuthSurface`, six of
+ * `AuthInternals` and `http`. It is a statement of the specification and not of the build: a
+ * namespace whose routes wave 5 has not written yet is still the core's, and reading the built
+ * surface instead released five of them (E-779).
+ */
+export const SURFACE_NAMESPACES: readonly string[] = [
+	"signUp",
+	"signIn",
+	"signOut",
+	"session",
+	"user",
+	"password",
+	"factor",
+	"identity",
+	"pending",
+	"email",
+	"username",
+	"routes",
+	"identityMode",
+	"errorCodes",
+	"maintenance",
+	"migrate",
+	"close",
+	"http",
+];
+
+/**
+ * 3.11: a name collision with a core route is a start error. The surface is keyed by the first
+ * segment of a route's `name`, so that is what is tested, and the plugin's `id` beside it (E-780).
+ */
+function assertNoPluginTakesACoreNamespace(
+	plugins: readonly VelvePlugin[],
+	contributed: readonly AnyRoute[],
+): void {
+	const reserved = new Set(SURFACE_NAMESPACES);
+	const claimed = [
+		...plugins.map((plugin) => plugin.id),
+		...contributed.map((route) => route.name.split(".")[0] ?? ""),
+	];
+	if (claimed.some((namespace) => reserved.has(namespace))) {
+		throw new VelveStartupError("plugin_route_conflict");
+	}
 }
 
 function reportedWeakenings<M extends IdentityMode>(
@@ -171,6 +236,22 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
 
+	const frozenContextServices: FrozenContextServices = {
+		clock,
+		identityMode: identity.mode,
+		schema,
+		users,
+		sessions: createSessionRepository({ driver, schema }),
+		driver,
+		log,
+	};
+	// S-CSRF-6: the registry is built here and holds no route of its own; every hook it runs is
+	// reached from a handler, and a handler runs after the origin check and the rate limiter.
+	const pluginRuntime = createPluginRuntime({
+		plugins: config.plugins ?? [],
+		services: frozenContextServices,
+	});
+
 	const services: RouteServices = {
 		sessions,
 		pending,
@@ -187,7 +268,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
 		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
 		...(config.email === undefined ? {} : { email: config.email }),
-		...(config.plugins === undefined ? {} : { plugins: config.plugins }),
+		pluginRuntime,
 	};
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);
@@ -195,21 +276,25 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
+	const seamRoutes: readonly AnyRoute[] = [...oauthRoutes(services), ...emailFlowRoutes(services)];
+	const coreRoutes: readonly AnyRoute[] = [
+		signOut,
+		read,
+		list,
+		revoke,
+		revokeAllOther,
+		revokeAll,
+		refresh,
+		...(usernameTable ?? []),
+		...pendingTable,
+		...seamRoutes,
+	];
+	const contributedRoutes = pluginRoutes(services);
+	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes);
+	assertNoPluginTakesACoreNamespace(pluginRuntime.plugins, contributedRoutes);
+
 	const environment: HttpEnvironment = {
-		routes: [
-			signOut,
-			read,
-			list,
-			revoke,
-			revokeAllOther,
-			revokeAll,
-			refresh,
-			...(usernameTable ?? []),
-			...pendingTable,
-			...oauthRoutes(services),
-			...emailFlowRoutes(services),
-			...pluginRoutes(services),
-		],
+		routes: [...coreRoutes, ...contributedRoutes],
 		origins: config.origins,
 		trustedProxies: config.trustedProxies ?? [],
 		cookieSameSite: sessionSettings.sameSite,
@@ -219,6 +304,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			sessionSettings.freshnessWindowMs / MILLISECONDS_IN_A_SECOND,
 		),
 		callers: callerResolver(sessions, pending, resolutions),
+		pluginContextOf: (route) => pluginRuntime.contextOf(route),
 		rateLimiter: createRateLimiter({
 			driver,
 			keys: config.keys,
@@ -234,7 +320,14 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const readSession = createServerMethod(read, environment);
 
-	const surface = {
+	const coreSurface = {
+		/**
+		 * The namespaces the seam modules contribute, folded out of their dotted names. The
+		 * hand-written ones below are written after them and win, so a name this file states is
+		 * never shadowed by a derived one.
+		 */
+		...nestServerMethods(seamRoutes, environment),
+
 		routes: environment.routes,
 		identityMode: identity.mode,
 		errorCodes: ERROR_CODES,
@@ -246,7 +339,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			const applied = await runMigrations({
 				driver,
 				schema,
-				migrations: coreMigrations(identity.mode),
+				// E-776: the plugin seam contributes here, so no feature edits this file to be run.
+				migrations: [...coreMigrations(identity.mode), ...pluginMigrations(services)],
 			});
 			await assertKeysAnswerForEveryPurpose(config.keys);
 			// E-179: the operator's report, once, loud, and not on the sign-in path.
@@ -294,5 +388,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				}),
 	};
 
+	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
 	return surface as VelveAuth<M>;
 }

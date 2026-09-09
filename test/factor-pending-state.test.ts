@@ -76,7 +76,6 @@ async function begin(): Promise<PendingToken> {
 	const issued = await pending.begin({
 		userId,
 		factorsCompleted: ["password"],
-		availableFactors: ["totp"],
 	});
 	return issued.token;
 }
@@ -86,7 +85,6 @@ describe("the state between password and second factor (3.6, S-FIX-4)", () => {
 		const issued = await pending.begin({
 			userId,
 			factorsCompleted: ["password"],
-			availableFactors: ["totp"],
 		});
 
 		expect(await countRows()).toBe(1);
@@ -120,7 +118,6 @@ describe("the state between password and second factor (3.6, S-FIX-4)", () => {
 		const issued = await pending.begin({
 			userId,
 			factorsCompleted: ["password"],
-			availableFactors: [],
 		});
 
 		const [row] = await connection.query<{ lifetime: string }>(

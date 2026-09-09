@@ -48,9 +48,8 @@ export function pendingAuthenticationsOn(
 export function beginPendingState(
 	pending: PendingAuthenticationService,
 	userId: string,
-	availableFactors: readonly ("totp" | "webauthn" | "recovery")[] = ["totp", "recovery"],
 ): Promise<IssuedPendingAuthentication> {
-	return pending.begin({ userId, factorsCompleted: ["password"], availableFactors });
+	return pending.begin({ userId, factorsCompleted: ["password"] });
 }
 
 export async function attemptsRecorded(

@@ -113,7 +113,6 @@ export async function beginSecondFactor(
 	const { token } = await pendingAuthentications.begin({
 		userId: actor,
 		factorsCompleted: ["password"],
-		availableFactors: ["webauthn"],
 	});
 	const resolved = await pendingAuthentications.resolve(token);
 	if (resolved === null) {

@@ -106,9 +106,11 @@ refuses to start on one that cannot be made safe — a root key shorter than 32
 bytes, an empty origin list, a username-only mode without recovery codes, Argon2
 parameters below the floor — and returns the route table, the server methods and
 the maintenance sweep. Sessions, sign-out and the state between password and
-second factor work end to end today. The TOTP, recovery-code and WebAuthn
-services are built and their routes are not assembled into the table yet; sign-up,
-sign-in and the password flows are not built.
+second factor work end to end today. [`DOCUMENTATION.md`](./DOCUMENTATION.md) states,
+chapter by chapter, what each of the other areas has built; **this paragraph
+names none of them**, because a sentence about everybody's progress is a
+sentence everybody has to edit, and this one was wrong within a wave of being
+written.
 
 ```ts
 import { createVelveAuth, rootKeyProvider } from "@velve/auth";
@@ -146,8 +148,41 @@ them do not.
 
 ### Plugins
 
-Not built yet. `VelvePlugin` is declared and `error-map.ts` already resolves a
-plugin's own error codes; the registry that runs the hooks does not exist.
+Half built. A plugin declared in `plugins` is registered at start: its routes
+join the route table under `/x/<plugin-id>/…` and become methods on the
+instance, and its `dependsOn` is sorted topologically. A hook can refuse by
+throwing and observe by returning; it cannot replace the answer, because every
+one of them returns `Promise<void>`.
+
+**A hook point only fires if an operation reaches it, and most of the operations
+are not built yet.** `beforeSessionRevoke` runs today, on sign-out and on all
+three revocation routes, before the rows go, so a hook that throws leaves the
+session standing. Which of the seven have a producer is a table in
+[`DOCUMENTATION.md`](./DOCUMENTATION.md) and is stated there and not here: a
+plugin can register a point nothing reaches, and it will not run.
+
+The context a hook is given is frozen and carries no writing method on the user,
+the password, the TOTP secret or the recovery codes. A plugin's own SQL is
+checked before it reaches the driver: a statement naming any core table, in any
+position the checker reads as code, is refused, and so is one it cannot read at
+all. It is a guardrail against the accident, not a sandbox — a plugin runs in
+your process and can reach your driver by other means, and a core table named
+inside a string literal the database later executes is not seen. The reference
+says exactly what it refuses, what it lets through and where that hole is.
+
+Origin checking and rate limiting run before any plugin code, on the HTTP path
+and on the direct server call alike, and a plugin route cannot make itself a
+reader of the cookie that carries a half-finished sign-in. Six ways of
+configuring plugins wrongly refuse the start rather than warning: a duplicate id,
+a dependency on a plugin that is not configured, a cycle, a route that collides
+with a core one, a route reaching for one of those cookies, and a field the
+interface does not enumerate — which is how a plugin trying to put a middleware
+in front of the origin check is answered.
+
+What is not built is the rest: plugin migrations do not run, and declared error
+codes and rate-limit rules are not read. Each of those three writes a line to
+your log at start naming the plugin and the field, so a declaration that does
+nothing says so.
 
 ## Mounting it
 

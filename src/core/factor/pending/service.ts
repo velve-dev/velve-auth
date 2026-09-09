@@ -8,7 +8,6 @@ import { ConcealedError } from "../../http/error-map.js";
 import {
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationRepository,
-	type SecondFactor,
 } from "./repository.js";
 import { createPendingToken, hashPendingToken, type PendingToken } from "./token.js";
 
@@ -61,7 +60,6 @@ export interface PendingAuthenticationService {
 	begin(input: {
 		readonly userId: string;
 		readonly factorsCompleted: readonly AuthenticationFactor[];
-		readonly availableFactors: readonly SecondFactor[];
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
@@ -82,7 +80,8 @@ export function createPendingAuthenticationService(
 	});
 
 	return {
-		async begin({ userId, factorsCompleted, availableFactors }) {
+		/** 3.15 C.1, E-735: which factors are on offer is the account's state, so the write reads it rather than the caller supplying it. */
+		async begin({ userId, factorsCompleted }) {
 			const token = createPendingToken();
 			const stored = await repository.insertPendingAuthentication({
 				userId,
@@ -94,7 +93,7 @@ export function createPendingAuthenticationService(
 				token,
 				pending: {
 					factorsCompleted: stored.factorsCompleted,
-					availableFactors,
+					availableFactors: stored.availableFactors,
 					attemptsRemaining: attemptsRemainingAfter(stored.attempts),
 					expiresAt: stored.expiresAt,
 				},

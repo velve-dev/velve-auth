@@ -122,10 +122,24 @@ function sampleValueFor(type: string): unknown {
 	}
 }
 
-export async function createUser(driver: Driver, schema: string): Promise<string> {
+/**
+ * Given nothing, a user with a random address, which is what every caller before the identity
+ * modes needed. Given a username, a user the `username` and `username_email` CHECK constraints
+ * accept — so a fixture for another mode is a third argument here and not a second function
+ * (E-783).
+ */
+export async function createUser(
+	driver: Driver,
+	schema: string,
+	identity: { readonly email?: string | null; readonly username?: string } = {},
+): Promise<string> {
+	const email =
+		identity.username === undefined && identity.email === undefined
+			? `${randomBytes(8).toString("hex")}@example.com`
+			: (identity.email ?? null);
 	const [row] = await driver.query<{ id: string }>(
-		`INSERT INTO ${schema}.user (email) VALUES ($1) RETURNING id`,
-		[`${randomBytes(8).toString("hex")}@example.com`],
+		`INSERT INTO ${schema}.user (email, username, username_key) VALUES ($1, $2, $3) RETURNING id`,
+		[email, identity.username ?? null, identity.username?.toLowerCase() ?? null],
 	);
 	if (row === undefined) {
 		throw new Error("the user was not created");

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { EmailMessage, VelveAuthConfig } from "../src/core/auth/config.js";
 import type { Driver } from "../src/core/db/driver.js";
+import type { IdentityMode } from "../src/core/db/migrations/identity-mode.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
@@ -89,8 +90,13 @@ function createEmailOutbox(): EmailOutbox {
 	};
 }
 
-export interface MountedAuth {
-	readonly auth: VelveAuth<"email">;
+/**
+ * Generic over the identity mode with `"email"` as the default, so a fixture for another mode adds
+ * a function beside `mountAuth` rather than editing this interface — which is the one edit here
+ * that would not have been a disjoint hunk (E-776).
+ */
+export interface MountedAuth<M extends IdentityMode = "email"> {
+	readonly auth: VelveAuth<M>;
 	readonly handler: (request: Request) => Promise<Response>;
 	readonly connection: TestConnection;
 	readonly schema: string;
@@ -98,6 +104,10 @@ export interface MountedAuth {
 	readonly email: EmailOutbox;
 }
 
+/**
+ * The overrides come last, so a test that needs providers, plugins or its own send callback
+ * mounted names them and everything else stays at the default this function fixes.
+ */
 export function configFor(
 	overrides: Partial<VelveAuthConfig<"email">> & { database: Driver },
 ): VelveAuthConfig<"email"> {
@@ -110,12 +120,47 @@ export function configFor(
 	} as VelveAuthConfig<"email">;
 }
 
-export async function mountAuth(prefix = "auth"): Promise<MountedAuth> {
+/**
+ * The same mount in any identity mode. The identity configuration is given rather than inferred,
+ * so `M` has one inference site and E-349's trap is not reopened; `configFor`'s defaults are
+ * spelled out here rather than made generic for the same reason (E-783).
+ */
+export async function mountAuthInMode<M extends IdentityMode>(
+	prefix: string,
+	identity: VelveAuthConfig<M>["identity"],
+	overrides: Partial<Omit<VelveAuthConfig<M>, "database" | "schema" | "identity">> = {},
+): Promise<MountedAuth<M>> {
+	const { connection, schema } = await openMigratedSchema(prefix);
+	const log = createLogSink();
+	const email = createEmailOutbox();
+	const auth = createVelveAuth<M>({
+		identity,
+		database: connection,
+		schema,
+		keys: testKeyProvider(),
+		origins: [TEST_ORIGIN],
+		email: { send: email.send },
+		log: log.write,
+		...overrides,
+	} as VelveAuthConfig<M>);
+	return { auth, handler: toWebHandler(auth), connection, schema, log, email };
+}
+
+export async function mountAuth(
+	prefix = "auth",
+	overrides: Omit<Partial<VelveAuthConfig<"email">>, "database" | "schema"> = {},
+): Promise<MountedAuth> {
 	const { connection, schema } = await openMigratedSchema(prefix);
 	const log = createLogSink();
 	const email = createEmailOutbox();
 	const auth = createVelveAuth(
-		configFor({ database: connection, schema, log: log.write, email: { send: email.send } }),
+		configFor({
+			database: connection,
+			schema,
+			log: log.write,
+			email: { send: email.send },
+			...overrides,
+		}),
 	);
 	return { auth, handler: toWebHandler(auth), connection, schema, log, email };
 }

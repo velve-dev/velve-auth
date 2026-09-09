@@ -62,7 +62,6 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 	const issued = await pending.begin({
 		userId,
 		factorsCompleted: ["password"],
-		availableFactors: [],
 	});
 	plaintexts.push({ name: "pending token", value: issued.token });
 

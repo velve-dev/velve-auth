@@ -10,7 +10,8 @@ import { usernameAvailability } from "../identity/resolution.js";
 import type { KeyProvider } from "../keys/index.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
-import type { VelvePlugin } from "../plugin/config.js";
+import type { RevokeReason } from "../plugin/config.js";
+import type { PluginRuntime } from "../plugin/registry.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
 import type { OneTimeTokens } from "../token/one-time-token.js";
 import type { EmailConfig, RateLimitConfig } from "./config.js";
@@ -45,7 +46,8 @@ export interface RouteServices {
 	readonly oneTimeTokens: OneTimeTokens;
 	readonly oauth?: OAuthConfig;
 	readonly email?: EmailConfig;
-	readonly plugins?: readonly VelvePlugin[];
+	/** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */
+	readonly pluginRuntime: PluginRuntime;
 	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
 	readonly fetch?: typeof globalThis.fetch;
 }
@@ -77,6 +79,30 @@ function requireSession(services: RouteServices, session: Session | null): Sessi
 	return resolutionOfContext(services, session);
 }
 
+/**
+ * 3.11: the hook may refuse by throwing, so every event is announced before the rows go and the
+ * refusal leaves them standing. Listing first costs a statement, which is why it is skipped
+ * entirely where no plugin listens (E-758).
+ */
+async function announceRevocationOf(
+	services: RouteServices,
+	resolved: SessionResolution,
+	chosen: (sessionId: string) => boolean,
+	reason: RevokeReason,
+): Promise<void> {
+	if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
+		return;
+	}
+	const owned = await services.sessions.listEveryIdOwnedBy({ resolved });
+	for (const sessionId of owned.filter(chosen)) {
+		await services.pluginRuntime.hooks.beforeSessionRevoke({
+			sessionId,
+			userId: resolved.userId,
+			reason,
+		});
+	}
+}
+
 async function viewOf(
 	services: RouteServices,
 	resolved: SessionResolution,
@@ -99,6 +125,13 @@ export function sessionRoutes(services: RouteServices) {
 		// 3.15 B.1: exactly one session row goes, and an unknown token is not an error.
 		handler: async (_input, context): Promise<void> => {
 			if (context.sessionToken !== null) {
+				if (context.session !== null) {
+					await services.pluginRuntime.hooks.beforeSessionRevoke({
+						sessionId: context.session.id,
+						userId: context.session.userId,
+						reason: "sign_out",
+					});
+				}
 				await services.sessions.signOut({ token: context.sessionToken });
 			}
 			context.cookies.clearSession();
@@ -164,10 +197,14 @@ export function sessionRoutes(services: RouteServices) {
 		rateLimit: addressOnly(services),
 		// S-OWNER-4, S-OWNER-8: a session of another user and one that never existed answer alike.
 		handler: async (input, context): Promise<void> => {
-			await services.sessions.revoke({
-				resolved: requireSession(services, context.session),
-				targetSessionId: input.targetSessionId,
-			});
+			const resolved = requireSession(services, context.session);
+			await announceRevocationOf(
+				services,
+				resolved,
+				(sessionId) => sessionId === input.targetSessionId,
+				"revoked_by_user",
+			);
+			await services.sessions.revoke({ resolved, targetSessionId: input.targetSessionId });
 		},
 	});
 
@@ -187,8 +224,16 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		handler: async (_input, context): Promise<{ revokedCount: number }> =>
-			services.sessions.revokeEveryOther({ resolved: requireSession(services, context.session) }),
+		handler: async (_input, context): Promise<{ revokedCount: number }> => {
+			const resolved = requireSession(services, context.session);
+			await announceRevocationOf(
+				services,
+				resolved,
+				(sessionId) => sessionId !== resolved.session.id,
+				"revoked_by_user",
+			);
+			return services.sessions.revokeEveryOther({ resolved });
+		},
 	});
 
 	const revokeAll = defineRoute({
@@ -207,8 +252,11 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		handler: async (_input, context): Promise<{ revokedCount: number }> =>
-			services.sessions.revokeEvery({ resolved: requireSession(services, context.session) }),
+		handler: async (_input, context): Promise<{ revokedCount: number }> => {
+			const resolved = requireSession(services, context.session);
+			await announceRevocationOf(services, resolved, () => true, "revoked_by_user");
+			return services.sessions.revokeEvery({ resolved });
+		},
 	});
 
 	const refresh = defineRoute({

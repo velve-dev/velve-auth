@@ -3,6 +3,7 @@ import type { ConcealedError } from "../src/core/http/error-map.js";
 import type { RateLimitRequest } from "../src/core/http/rate-limit.js";
 import { type AnyRoute, defineRoute } from "../src/core/http/route.js";
 import { object, optional, string } from "../src/core/http/validators.js";
+import type { FrozenContext } from "../src/core/plugin/config.js";
 
 export const ALLOWED_ORIGIN = "https://app.example.com";
 
@@ -169,12 +170,32 @@ interface HarnessOptions {
 	readonly rateLimitAllows?: boolean;
 }
 
+/**
+ * 3.15 D.1 puts a frozen context on every request, and these harnesses answer no repository call —
+ * so every member of this one refuses rather than pretending to have a database behind it.
+ */
+export const TEST_PLUGIN_CONTEXT: FrozenContext = Object.freeze({
+	clock: { now: () => NOW },
+	identityMode: "email",
+	schema: "velve",
+	repositories: Object.freeze({
+		findUserById: () => Promise.reject(new Error("the harness has no user repository")),
+		listSessionsForUser: () => Promise.reject(new Error("the harness has no session repository")),
+		revokeSession: () => Promise.reject(new Error("the harness has no session repository")),
+	}),
+	ownTables: Object.freeze({
+		query: () => Promise.reject(new Error("the harness has no tables")),
+	}),
+	log: () => undefined,
+});
+
 export function createHarness(options: HarnessOptions = {}): Harness {
 	const rateLimitRequests: RateLimitRequest[] = [];
 	const logs: LogEntry[] = [];
 	const sessionAgeInSeconds = options.sessionAgeInSeconds ?? 0;
 
 	const environment: HttpEnvironment = {
+		pluginContextOf: () => TEST_PLUGIN_CONTEXT,
 		routes: options.routes ?? TEST_ROUTES,
 		origins: options.origins ?? [ALLOWED_ORIGIN],
 		trustedProxies: options.trustedProxies ?? [],

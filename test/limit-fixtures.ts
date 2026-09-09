@@ -8,6 +8,7 @@ import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 import { createRateLimiter, type RateLimiterConfig } from "../src/core/limit/index.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { TEST_PLUGIN_CONTEXT } from "./http-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
 const ALLOWED_ORIGIN = "https://app.example.com";
@@ -96,6 +97,7 @@ function testHttpEnvironment(
 	clock: Clock,
 ): HttpEnvironment {
 	return {
+		pluginContextOf: () => TEST_PLUGIN_CONTEXT,
 		routes,
 		origins: [ALLOWED_ORIGIN],
 		trustedProxies: [],

@@ -9,12 +9,14 @@ import {
 	type RequestContext,
 	type RouteMetadata,
 	type RunnableRoute,
+	readsOAuthStateCookie,
 	readsPendingCookie,
 } from "./route.js";
 
 interface CallerTokens {
 	readonly sessionToken: string | null;
 	readonly pendingToken: string | null;
+	readonly oauthStateToken: string | null;
 }
 
 export interface RouteCall {
@@ -117,6 +119,7 @@ async function createRequestContext(
 	const tokens = call.readCallerTokens();
 	// S-CACHE-4: a route that does not declare the cookie readable is answered as if it were absent.
 	const pendingToken = readsPendingCookie(route) ? tokens.pendingToken : null;
+	const oauthStateToken = readsOAuthStateCookie(route) ? tokens.oauthStateToken : null;
 	const session =
 		route.caller === "session" ? await resolveSession(tokens.sessionToken, environment) : null;
 	if (session !== null && route.freshness === "required") {
@@ -130,9 +133,11 @@ async function createRequestContext(
 		pending,
 		sessionToken: tokens.sessionToken,
 		pendingToken,
+		oauthStateToken,
 		ipAddress: call.ipAddress,
 		userAgent: call.userAgent,
 		cookies,
+		plugin: environment.pluginContextOf(route),
 		enforceAccountRateLimit: accountBucket.consume,
 	};
 }

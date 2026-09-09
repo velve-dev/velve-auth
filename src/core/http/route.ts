@@ -1,3 +1,4 @@
+import type { FrozenContext } from "../plugin/config.js";
 import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import type { CookieWriter } from "./cookies.js";
 import type { AnyErrorCode } from "./error-map.js";
@@ -16,14 +17,24 @@ export type OriginRequirement = "checked" | "exempt";
  */
 export type PendingCookieAccess = "hidden" | "readable";
 
+/**
+ * The same question for `__Host-velve_oauth_state`, and a separate answer: no `CallerRequirement`
+ * implies it, because the pointer authorises nothing on its own — 5.9 (c) S-CSRF-5 makes it one
+ * half of a check whose other half is the row in `velve.oauth_flow` (E-736).
+ */
+export type OAuthStateCookieAccess = "hidden" | "readable";
+
 export interface RequestContext {
 	readonly session: Session | null;
 	readonly pending: ResolvedPendingAuthentication | null;
 	readonly sessionToken: string | null;
 	readonly pendingToken: string | null;
+	readonly oauthStateToken: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly cookies: CookieWriter;
+	/** 3.15 D.1: part G's context, frozen; for a core route it carries no tables of its own. */
+	readonly plugin: FrozenContext;
 	enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
 }
 
@@ -45,6 +56,8 @@ export interface RouteDeclaration<
 	readonly rateLimit: RateLimitRule;
 	/** Absent means hidden; `caller: "pending"` implies readable and may not say otherwise. */
 	readonly pendingCookie?: PendingCookieAccess;
+	/** Absent means hidden; no caller requirement implies it, so the route that reads the pointer says so. */
+	readonly oauthStateCookie?: OAuthStateCookieAccess;
 	readonly handler: (input: Input, context: RequestContext) => Promise<Output>;
 }
 
@@ -58,6 +71,7 @@ export interface RouteMetadata {
 	readonly originCheck: OriginRequirement;
 	readonly rateLimit: RateLimitRule;
 	readonly pendingCookie: PendingCookieAccess;
+	readonly oauthStateCookie: OAuthStateCookieAccess;
 }
 
 type RouteInvocation<Output> = (
@@ -126,11 +140,12 @@ const SERVER_CALL_FIELDS = new Set<string>([
 	"origin",
 	"sessionToken",
 	"pendingToken",
+	"oauthStateToken",
 	"ipAddress",
 	"userAgent",
 ]);
 
-/** The direct server call carries these five fields beside the input, so an input field of the same name would be stripped there and kept over HTTP. */
+/** The direct server call carries these six fields beside the input, so an input field of the same name would be stripped there and kept over HTTP. */
 function assertInputLeavesTheCallEnvelopeAlone(name: string, fields: readonly string[]): void {
 	for (const field of fields) {
 		if (SERVER_CALL_FIELDS.has(field)) {
@@ -177,6 +192,11 @@ export function readsPendingCookie(route: RouteMetadata): boolean {
 	return route.pendingCookie === "readable";
 }
 
+/** S-CSRF-5: the one predicate that says whether a route may see `__Host-velve_oauth_state`. */
+export function readsOAuthStateCookie(route: RouteMetadata): boolean {
+	return route.oauthStateCookie === "readable";
+}
+
 export function defineRoute<
 	Name extends string,
 	Path extends string,
@@ -208,6 +228,7 @@ export function defineRoute<
 			declaration.caller,
 			declaration.pendingCookie,
 		),
+		oauthStateCookie: declaration.oauthStateCookie ?? "hidden",
 	};
 
 	// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
@@ -227,6 +248,7 @@ export interface ServerCallFields {
 	readonly origin: string | null;
 	readonly sessionToken?: string;
 	readonly pendingToken?: string;
+	readonly oauthStateToken?: string;
 	readonly ipAddress?: string | null;
 	readonly userAgent?: string | null;
 }

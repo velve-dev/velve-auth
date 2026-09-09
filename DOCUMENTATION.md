@@ -947,6 +947,7 @@ that declaration; the client is derived from the same types.
 | `errors` | `readonly AnyErrorCode[]` | The codes this route may produce. A contract, not a comment. `AnyErrorCode` is `VelveErrorCode` widened by the namespaced form a plugin registers; a core route declares core codes only. |
 | `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | Who may call, not what may be read. `session` resolves the session cookie or fails with `session_required`; `pending` resolves `__Host-velve_pending` into the account it names, and only the four routes of 3.6 declare it (S-CACHE-4); `server_only` has no HTTP route and answers 404. |
 | `pendingCookie` | `"hidden" \| "readable"` (optional) | Whether the route sees the value of `__Host-velve_pending`, which is a different question from whether it is authorised by it. Absent means `hidden`. `caller: "pending"` implies `readable`, and a declaration that says `hidden` there is refused at definition. A `readable` route with another caller — `GET /pending`, `POST /pending/cancel` — receives `context.pendingToken` and no authority. |
+| `oauthStateCookie` | `"hidden" \| "readable"` (optional) | The same question for `__Host-velve_oauth_state`. Absent means `hidden`. No `caller` value implies it: the pointer authorises nothing by itself, it is one half of the check S-CSRF-5 describes and the row in `velve.oauth_flow` is the other. A `readable` route receives `context.oauthStateToken`; every other route is answered as if the cookie were absent. |
 | `freshness` | `"not_required" \| "required"` | `required` needs `caller: "session"` and fails with `freshness_required` outside the freshness window. |
 | `originCheck` | `"checked" \| "exempt"` | `exempt` exists for the OAuth callback, which has no `Origin` header by protocol. |
 | `rateLimit` | `{ perIpAddress: BucketRule \| "none"; perAccount: BucketRule \| "none" }` | The buckets this route consumes. |
@@ -959,7 +960,7 @@ handler.
 Five declaration mistakes are start errors rather than request-time surprises: a
 path that is not absolute or carries an empty or trailing segment; `freshness:
 "required"` without `caller: "session"`; `caller: "pending"` with
-`pendingCookie: "hidden"`; an input field named like one of the five
+`pendingCookie: "hidden"`; an input field named like one of the six
 `ServerCallFields`; and, when the handler is built, a route table with a
 duplicate name or with two routes answering the same folded path.
 
@@ -969,6 +970,11 @@ duplicate name or with two routes answering the same folded path.
 route with `caller: "pending"`. It is not exported from the package; it lives in
 `core/http/route.ts` and the pipeline is its only caller, so what a route may see
 is decided in one place.
+
+`readsOAuthStateCookie(route)` is its counterpart for the state pointer, with
+the same signature, the same home and the same single caller. The two fields are
+independent: a route that declares one readable does not thereby see the other,
+so widening access to the pointer cannot widen access to the pending state.
 
 S-CACHE-4 counts **readers**, and `caller` alone no longer bounds them. What
 bounds them is a named set in `test/auth-route-table.test.ts`, measured through
@@ -1050,6 +1056,7 @@ shape is checked and the contents are not.
 | `pending` | `ResolvedPendingAuthentication \| null` | Set for `caller: "pending"`. It carries `userId`, the `pending` record itself and the `observedAt` the database answered with — a route authorised by the intermediate state has to act on the account it belongs to, which the record alone does not name. |
 | `sessionToken` | `string \| null` | The raw cookie value, for routes that answer with `null` instead of failing when no session exists. |
 | `pendingToken` | `string \| null` | The raw pending cookie value, and only for a route that declares `pendingCookie: "readable"`. Every other route is answered as if the cookie were absent. |
+| `oauthStateToken` | `string \| null` | The raw state-pointer cookie value, and only for a route that declares `oauthStateCookie: "readable"`. Every other route is answered as if the cookie were absent. The callback compares it against `velve.oauth_flow`; on its own it proves nothing (S-CSRF-5). |
 | `ipAddress` | `string \| null` | The address the rate limiter counts: `options.connectionAddress` resolved against `X-Forwarded-For` and `trustedProxies`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
 | `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending`, `setOAuthState`, `clearOAuthState` — a role, never a name, so no unenumerated cookie can be written. |
@@ -1104,17 +1111,18 @@ const result = await signIn({
 It runs the same pipeline in the same order as a request — origin check,
 address bucket, input parse, caller resolution, handler — because 3.11 puts both
 checks in front of the direct call too. Beside the route's own input it takes
-five fields, and only these five:
+six fields, and only these six:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`; there is no way to omit the field and skip the check. |
 | `sessionToken` | `string?` | What `__Host-velve_session` would have carried; used where the route declares `caller: "session"`. |
 | `pendingToken` | `string?` | What `__Host-velve_pending` would have carried; used where the route declares `caller: "pending"`. |
+| `oauthStateToken` | `string?` | What `__Host-velve_oauth_state` would have carried; used where the route declares `oauthStateCookie: "readable"`. |
 | `ipAddress` | `string \| null?` | Passed to the rate limiter as the scope of the address bucket, unchanged. Absent becomes `null`, and the seam is then obliged to count that request rather than skip it (S-RATE-4); normalising an address to its `/64` prefix is the limiter's work (S-RATE-1), not this layer's. |
 | `userAgent` | `string \| null?` | Put on `RequestContext` and nothing else. Whatever stores it is obliged to truncate it by default (L-10); this layer neither stores nor shortens it. |
 
-These five names are reserved: a route declaring an input field of the same name
+These six names are reserved: a route declaring an input field of the same name
 is a start error, because the envelope would swallow it here and the HTTP path
 would keep it.
 
@@ -3155,9 +3163,17 @@ a session the caller could not use is not a device that is still signed in.
 | `revokeEveryOther({ resolved })` | required | removes all but the calling session |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
+| `listEveryIdOwnedBy({ resolved })` | required | the ids of every row the four revocations above can remove |
 
 `revoke` answers a session of another user and a session that never existed
 identically, and changes nothing in both cases (S-OWNER-4, S-OWNER-8).
+
+`listEveryIdOwnedBy` exists for the plugin hook and for nothing else, and it is
+the **only** listing here with no deadline in its predicate. `list` filters on
+`idle_expires_at` and `absolute_expires_at`, because a caller asking for its
+sessions is asking for the ones it can still use; a revocation has no such
+predicate and removes expired-but-unswept rows as well. Announcing from `list`
+would therefore have told a plugin about fewer rows than went (E-765).
 
 `revokeEverySessionOfUser` is what the password **reset** path uses: there is no
 surviving session to resolve, so the caller brings the `Actor` its redeemed
@@ -4027,7 +4043,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register; declared in `core/plugin/config.ts` and read by no route yet |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -4059,6 +4075,13 @@ because nothing else would tell you.
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `plugin_id_duplicated` | two plugins claim the same `id` |
+| `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
+| `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the eighteen namespaces 3.15 B gives the instance |
+| `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
+| `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
+| `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 
 Two more refusals come from the modules and keep their own error types: a root
 key shorter than 32 bytes raises `KeyError` while `rootKeyProvider` is being
@@ -4147,11 +4170,81 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | `auth.user` | `findById`, `findByEmail`, `disable`, `enable`, `delete` |
 | `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
 
-Every method reached through a route takes the five call fields beside its own
+Every method reached through a route takes the six call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
-`ipAddress` and `userAgent`. `origin` is required and not optional because a
-security field that may be omitted is omitted; the origin check runs on the
-direct server call exactly as it runs on the HTTP path (S-CSRF-1).
+`oauthStateToken`, `ipAddress` and `userAgent`. `origin` is required and not
+optional because a security field that may be omitted is omitted; the origin
+check runs on the direct server call exactly as it runs on the HTTP path
+(S-CSRF-1).
+
+#### Namespaces nobody writes by hand
+
+The five above are written into `instance.ts`. Everything else on the instance is
+**folded out of the route table**: a route's dotted `name` is its object path
+(3.15 D.2), so a row named `signIn.oauth.start` becomes
+`auth.signIn.oauth.start` and a row named `signIn.magicLink.redeem` becomes
+`auth.signIn.magicLink.redeem` — in the same `signIn` namespace, contributed by
+two different files, with neither feature editing the other's and neither
+editing this one.
+
+That holds for the type as well as for the object. Each seam module returns its
+table as a tuple, and `VelveAuth<M>` intersects `ServerSurface<…>` over those
+tuples; a seam that is still empty contributes `unknown`, which intersects away.
+A plugin's routes are folded into the object the same way — `auth.<pluginId>.…`
+— but not into the type, because which plugins exist is configuration and is not
+known when the type is written.
+
+Two names folding onto the same object path is `route_namespace_conflict`, and
+the five hand-written namespaces are written last, so a name this file states is
+never shadowed by a derived one.
+
+### The result types
+
+3.15 B.1 and C fix the vocabulary the sign-in and sign-up paths answer with.
+They are exported and are what the features above return.
+
+```ts
+type SignUpResult = { user: User; sessionToken: SessionToken; session: Session }
+
+type SignInResult =
+  | { status: "signed_in"; sessionToken: SessionToken; session: Session; user: User
+      signCountRegressed?: boolean }
+  | { status: "second_factor_required"; pendingToken: PendingToken
+      pending: PendingAuthentication }
+
+interface OAuthRedirect { authorizationUrl: string; stateCookie: CookieInstruction }
+
+type OAuthCallbackResult =
+  | SignInResult
+  | { status: "identity_linked"; identity: Identity; sessionToken: SessionToken
+      session: Session }
+```
+
+In the `second_factor_required` branch there is **no** `session` and **no**
+`sessionToken` — not as `null`, not as an optional field, but as an absent
+property. Reading `result.sessionToken` without first checking `result.status`
+does not compile, and that is the point: a `session` field that is sometimes set
+is read unchecked by some code path eventually.
+
+`signCountRegressed` is optional because the question is not asked on a password
+sign-in: `undefined` means "not applicable", never "no" (L-9).
+
+`Identity` is the record of 3.15 C — `id`, `provider`, `subject`, `createdAt`,
+`providerEmail`, `providerEmailVerified`, `profile`, `scopes`, `tokenExpiresAt`.
+`profile` is `unknown` because the library does not read these claims and cannot
+promise a shape the provider changes tomorrow. The linking branch re-issues the
+session, because a new identity changes the trust level.
+
+`OAuthRedirect.stateCookie` is the one place a server method mentions a cookie:
+the caller is not always the HTTP handler, and the pointer still has to reach the
+browser. Its attributes are always `SameSite=Lax`, whatever `session.cookie` is
+configured to, because a `Strict` cookie is not sent on the provider's top-level
+cross-site GET.
+
+`CookieInstruction` — `{ name, value, maximumAgeInSeconds, attributes }` — and
+`CookieAttributes`, the two-member union its `attributes` field is typed as, are
+exported with the results, because an application handed a `stateCookie` has to
+be able to name what it is holding.
 
 `auth.user.*` has no routes and never will. The library has no permission model
 and cannot decide who may call `disable`; taking that over HTTP unchecked would
@@ -4181,7 +4274,7 @@ createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationSe
 
 | Method | Meaning |
 |---|---|
-| `begin({ userId, factorsCompleted, availableFactors })` | writes the row and draws the token |
+| `begin({ userId, factorsCompleted })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied |
 | `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
 | `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
@@ -4210,6 +4303,11 @@ has actually enrolled in one statement, so no second round trip decides what the
 caller may try. An unconfirmed TOTP enrolment counts as no factor: an abandoned
 setup is a leftover row, not a locked-out user.
 
+`begin` reads the same three enrolments in the statement that writes the row, so
+the value it reports and the value `resolve` reports later come from the same
+query text and cannot disagree. Both are `readonly ("totp" | "webauthn" |
+"recovery")[]`, the type 3.15 C.1 gives `PendingAuthentication.availableFactors`.
+
 A disabled account answers as an unknown state rather than with the code L-4
 reserves for a disabled account. That code belongs to the resolution of a
 session that already exists; this is a sign-in still in progress.
@@ -4237,28 +4335,34 @@ here and fails that scan. The switch belongs in `core/token/random.ts` as a
 module-level settable source; until it is built there, a test that needs a
 reproducible seed brings its own generator.
 
-### What is not assembled yet
+### The seams a feature fills
 
 The instance is real and the routes it declares work end to end, but it is not
-the full table of 3.15 D.3. Absent, because the modules behind them belong to
-other features and this one may not write their files:
+the full table of 3.15 D.3. **What a feature has and has not assembled is stated
+in that feature's own chapter, and nowhere else** — a chapter still carrying its
+reserved-stub paragraph has nothing assembled. There is deliberately no list
+here: a list of everyone's gaps is a paragraph everyone has to edit, and it was
+stale within one wave of being written (E-776).
 
-- `signUp`, `signIn` and the password flows — the password module exists, the
-  flows over it do not.
-- `factor.totp`, `factor.webauthn`, `factor.recovery` and `signIn.passkey`.
-- everything OAuth, and the plugin interface.
+What does live here is the shape of the seams, because the assembly owns them.
+There are four of them and a feature reaches each by editing only its own file.
 
-The seams these fill are in place. The assembly composes its table from four
-modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
-`core/plugin/routes.ts` — and the last three return nothing today, so a feature
-adds a row by editing its own file.
+| Seam | Module | Contributes |
+|---|---|---|
+| routes | `core/oauth/routes.ts`, `core/flows/routes.ts`, `core/plugin/routes.ts` | rows of the route table, and through the dotted `name`, the server methods |
+| surface type | `OAuthSurface<M>`, `EmailFlowSurface<M>`, `PluginSurface<M>` in those same modules | what `VelveAuth<M>` gains; `M` is a parameter so a namespace that exists in one identity mode and not another needs no change to the assembly |
+| migrations | `core/plugin/migrations.ts` | migrations `migrate()` runs after the core's |
+| exports | `core/flows/index.ts`, `core/oauth/index.ts`, `core/plugin/index.ts` | public names, re-exported whole by `src/index.ts` with one type-only line each |
 
-The configuration seam is open the same way. `config.oauth` is an `OAuthConfig`
-from `core/oauth/config.ts` and `config.plugins` a list of `VelvePlugin` from
-`core/plugin/config.ts`; both types are declared and exported, both fields are
-optional, and neither is read by the assembly yet — `pluginRoutes` is where
-`plugins` will be consumed. The types are documented by the chapters that own
-them, which are empty until wave 4.
+The configuration seam is open the same way: `config.oauth` is an `OAuthConfig`
+from `core/oauth/config.ts` and `config.plugins` a `VelvePlugin[]` from
+`core/plugin/config.ts`, both declared in the feature's own file.
+
+The **export** seam is three modules — `core/flows/index.ts`,
+`core/oauth/index.ts` and `core/plugin/index.ts`. `src/index.ts` re-exports each
+of them whole with one `export type *` line, so a feature adds a public name by
+editing its own module and three writers never meet in the barrel. The lines are
+type-only, so nothing of them survives into `dist/index.mjs`.
 
 `GET /pending` and `POST /pending/cancel` are no longer among the missing.
 `pendingCookie: "readable"` is what they needed and did not have; both are
@@ -4268,7 +4372,7 @@ directly, for a caller that is not a browser.
 
 ## Plugins
 
-Reserved for `plugin` (wave 5). Architecture 3.11 and 3.15 G: the registry, the
+Architecture 3.11 and 3.15 G: the registry, the
 topological sort over `dependsOn`, the frozen context, the seven enumerated hook
 points and the veto a hook holds, and what a plugin may contribute — routes under
 `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
@@ -4284,16 +4388,289 @@ may add can only be read after the chapter that says what it is added to and wha
 happens when the addition is refused. Its migrations are the same versioned
 runner, which stands further above still.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `plugin`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does. Its configuration seam is
-`src/core/plugin/config.ts`, which is open and is `plugin`'s file — the field on
-`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
-edited for it.
+The registry, the frozen context and the seven hook points are built. What is
+not built is listed at the end of this chapter and remains `plugin`'s (wave 5):
+that feature appends here and owns the rest.
 
-### Nothing is documented here yet
+### `VelvePlugin`
 
-`plugin` replaces this heading with its own sub-tree.
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `string` | The namespace. Every route name begins `<id>.`, every path `/x/<id>/`, every table `<id>_`, every error code `<id>.` — all four as types, so a plugin that wants a core route cannot write one that compiles. |
+| `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
+| `migrations` | `readonly PluginMigration<Id>[]?` | Declared and **not yet run**; see below. |
+| `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it: see below. |
+| `hooks` | `PluginHooks?` | Any of the seven points below. |
+| `errorCodes` | `readonly \`${Id}.${string}\`[]?` | Declared and not yet registered; `registerPluginErrorCodes` needs a status and a message, which this list does not carry. |
+| `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | Declared and not yet read; a plugin route carries its own `rateLimit` in its declaration. |
+
+### Start errors
+
+Six configurations refuse the start with a `VelveStartupError`. None of them is
+a warning, because each leaves a question with no answer:
+
+| Code | When |
+|---|---|
+| `plugin_id_duplicated` | Two plugins claim the same `id`, so neither owns its namespace. |
+| `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
+| `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` is a namespace the instance surface already carries — read from the surface the assembly just built, not from a list of them. |
+| `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
+| `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
+| `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
+
+`plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
+core route is a start error and not a warning. The type constraint already
+refuses it at compile time; this is the half that holds for a plugin written in
+JavaScript.
+
+#### The three fields a plugin route does not have
+
+`PluginRoute<Id>` is `RouteDeclaration` without `pendingCookie` and
+`oauthStateCookie`, and with `caller` narrowed to `"anonymous" | "session" |
+"server_only"`. 3.6 names the four routes that accept `__Host-velve_pending` and
+says every other route ignores it completely, and S-CSRF-5 says the same of the
+state pointer — a plugin route is one of the others. The type removes the fields;
+`plugin_route_reads_a_core_cookie` is the start error that holds for a plugin
+written in JavaScript, where the type is not read.
+
+Without it the rule held in the core table and not in the table that ships: a
+plugin route could declare itself a reader of the pending cookie and be handed
+the token, and `test/auth-route-table.test.ts` would not have seen it, because it
+mounts without plugins.
+
+`plugin_field_unknown` is the other half of that, and it is what answers
+`S-CSRF-6`. A plugin written in JavaScript can carry any field it likes, so a
+`middleware` array or an `assertOriginAllowed` beside the seven declared fields
+would otherwise be dropped without a word and its author left believing it runs.
+3.11 says the extension points are **enumerated**; a field outside the
+enumeration is refused rather than ignored. It sees own enumerable properties, so
+a field carried on a prototype or behind a symbol is not seen.
+
+A field the interface **does** declare and this version does not read is a
+different case and is not refused: it is a promise the library owes, and refusing
+it would make a documented field unusable. `migrations`, `errorCodes` and
+`rateLimitRules` each write one `warn` line at start naming the plugin and the
+field. That line goes to the configured `log` sink, which by default drops
+everything — so an installation that passes no sink sees nothing.
+
+### The seven hook points
+
+```ts
+beforeSignIn(event: SignInEvent, context: FrozenContext): Promise<void>
+afterSignIn(event: SignInCompletedEvent, context: FrozenContext): Promise<void>
+beforeSessionCreate(event: SessionCreateEvent, context: FrozenContext): Promise<void>
+afterSessionCreate(event: SessionCreatedEvent, context: FrozenContext): Promise<void>
+beforeUserCreate(event: UserCreateEvent, context: FrozenContext): Promise<void>
+afterUserCreate(event: UserCreatedEvent, context: FrozenContext): Promise<void>
+beforeSessionRevoke(event: SessionRevokeEvent, context: FrozenContext): Promise<void>
+```
+
+Every return type is `Promise<void>`, and that is the whole of what "a listener
+with a veto" means: a hook **refuses** by throwing and **observes** by returning,
+and it cannot replace the answer because it cannot return one. The points are
+enumerated, not open.
+
+At each point every plugin runs in dependency order, one after another, each
+awaited before the next. A throw stops the rest and travels out through the same
+error map every other failure does — so a plugin's own namespaced code answers
+with what `registerPluginErrorCodes` recorded for it, and an unregistered code
+answers `500 internal_error` without the plugin's text.
+
+#### Which points have a producer
+
+The dispatcher runs all seven and the paragraph above describes all seven, but a
+point only fires if an operation reaches it, and most of the operations are not
+built. **This table is the one place that says which do**, and a plugin
+registering a point that does not is told nothing at start.
+
+| Point | Has a producer |
+|---|---|
+| `beforeSignIn` | no |
+| `afterSignIn` | no |
+| `beforeSessionCreate` | no |
+| `afterSessionCreate` | no |
+| `beforeUserCreate` | no |
+| `afterUserCreate` | no |
+| `beforeSessionRevoke` | **yes** |
+
+Which operations reach a point is stated in the chapter of the feature that
+built them; `beforeSessionRevoke`'s four are named below. **The cell is a yes or
+a no and never a list**, so a feature that gives a point its first producer flips
+one cell, and a second feature reaching the same point finds it already flipped
+and edits nothing. A list would have made that a collision (E-776).
+
+`beforeSessionRevoke` fires **once per session about to go**, and always before
+the rows go, so a hook that throws leaves them standing and the caller gets
+`500 internal_error` with nothing of the hook's message in it. The three
+revocation routes list the sessions the account owns and announce the ones the
+operation is about to remove — so a `session.revoke` naming a session that is not
+the caller's announces nothing, which is the same answer S-OWNER-4 gives the
+caller. `signOut` needs no listing: it announces the session it already resolved.
+
+The announcement and the deletion are **not one transaction**. A plugin is told
+about a revocation that a later failure could still prevent, and on
+`/session/revoke-others` it is told about every one of them before any goes.
+
+The listing is skipped entirely where no plugin listens at that point, so the
+default configuration issues exactly the statements it issued before.
+
+**Hooks run behind the security middleware, on both paths (S-CSRF-6).** They are
+reached only from a route handler, and a handler runs after the origin check and
+after the address bucket — on the HTTP path and on the direct server call alike,
+because both go through `runRoute`. There is no middleware registration point in
+`VelvePlugin` to register anything ahead of them with, and the origin check is
+not reachable from the context.
+
+### `FrozenContext`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `clock` | `Clock` | The instance's clock, so a plugin reads the same time the core does. |
+| `identityMode` | `IdentityMode` | |
+| `schema` | `string` | The configured PostgreSQL schema — what a plugin qualifies its own table names with. |
+| `repositories` | `FrozenRepositories` | The three calls below. |
+| `ownTables` | `{ query<Row>(sql, params): Promise<Row[]> }` | Bounded to the plugin's own tables. |
+| `log` | `(level, message, fields?) => void` | The instance's log sink. |
+
+`Object.freeze` refuses a change at run time and `readonly` refuses it at compile
+time. Both, because the first is what a caller from JavaScript meets and the
+second is what a caller from TypeScript meets. The context, its `repositories`
+and its `ownTables` are each frozen.
+
+Nothing on it leads to the password verifier, to session resolution or to the
+origin check: they are not part of the type, and there is no path to them
+through anything that is.
+
+### `FrozenRepositories`
+
+```ts
+findUserById({ userId, actor }): Promise<User | null>
+listSessionsForUser({ userId, actor }): Promise<Session[]>
+revokeSession({ sessionId, reason, actor }): Promise<void>
+```
+
+**There is no writing method on `velve.user`, `password_credential`,
+`totp_credential` or `recovery_code`, and that absence is the requirement.** A
+plugin that could write a password or a factor would be a co-owner of the core
+rather than a listener with a veto (3.11).
+
+`actor` is a `PluginActor` — `{ pluginId, reason }`, both mandatory, both
+non-empty, and both written to the log on every call. A call whose actor is
+missing either field throws before it reaches the database.
+
+`reason` on `revokeSession` is a `RevokeReason`: `"sign_out"`,
+`"revoked_by_user"`, `"password_changed"`, `"password_reset"` or
+`"identity_linked"`. It is written to the log beside the actor and **nothing
+else**: `revokeSession` dispatches no `beforeSessionRevoke`, so a revocation a
+plugin performs is invisible to every other plugin, while the same revocation
+over HTTP is announced. That asymmetry is deliberate — a hook that revoked would
+re-enter its own hook — and it is a real gap rather than a tidy one (E-766).
+
+### `ownTables.query`
+
+It is a guardrail and not a sandbox, and the distinction is worth stating: a
+plugin runs inside the application's own process and can reach the driver by
+other means entirely. What this refuses is the accident — a join onto
+`velve.user` that seemed harmless, or a `"velve"."user"` written that way because
+`user` is a reserved word — not an attacker.
+
+**Three rules, and the first is the one the boundary rests on.** Two rounds of
+review found the same defect in a different syntactic position: a table
+reference in a position the scan did not model. The boundary is therefore no
+longer carried by recognising positions — but it is not free of the parse
+either, and the residual is named under Rule 1.
+
+**Rule 1 — a core table is refused by its name, wherever the name stands.** The
+sixteen core table names are read out of the SQL that creates them, so no second
+list of them exists; a statement containing any of them, bare or qualified, in
+any position the reader treats as code, is refused. It is the one rule that does
+not depend on recognising a *position*, which is why the boundary rests on it.
+
+It does depend on **one** step of the parse: text inside a string literal is
+erased before the names are looked for, because a literal is data. So a core
+table named inside a literal that PostgreSQL later executes —
+`SELECT query_to_xml('select * from velve.user', …)` — is not seen. That is a
+real hole and it is open: closing it means refusing every statement whose
+literals contain SQL-shaped text, which refuses ordinary data.
+
+**Rule 2 — a table position must hold one of the plugin's own tables.** This is
+3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
+rule: it opens after `FROM`, `JOIN`, `INTO`, `USING` and `UPDATE`, and stays open
+across commas until a keyword ends the list. It is **not claimed complete.** SQL
+has more table positions than this enumeration has, and the previous two
+enumerations were also believed complete. What changed is that a position it
+misses no longer reaches a core table, because Rule 1 does not care about
+position.
+
+**Rule 3 — a statement that cannot be read is refused, not passed.** Finding no
+table in a statement is finding nothing, and nothing is not permission:
+
+| Refused | Because |
+|---|---|
+| quoting that never closes | the text could not be read to the end |
+| a `;` anywhere | a second statement the walk would not reach |
+| a `$` that is not a parameter placeholder | dollar-quoted text the walk cannot delimit |
+| a leading keyword outside `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH` | the walk cannot find the tables of any other kind — this is what refuses `TRUNCATE`, `DROP`, `ALTER` and `COPY` |
+| a table position holding anything but a name or `(` | the target could not be identified |
+
+A string literal becomes an empty literal, a comment becomes a space, and a
+quoted identifier becomes the bare name it stands for. Whitespace and comments
+**around a dot** are then removed, so `velve . user`, a wrapped `velve.\nuser`
+and `velve/*x*/.user` are one name rather than three tokens. That normalisation
+is not what makes the boundary hold — Rule 1 refuses `user` on its own — but
+without it the two qualified rules see a different statement than PostgreSQL
+does.
+
+**Known false refusals.** The strictness is paid for in statements that are
+harmless and are refused anyway:
+
+- `EXTRACT(month FROM x)`, `SUBSTRING(x FROM 1)` and `TRIM(BOTH ' ' FROM x)` put
+  a column where a table is expected. Use `date_part` instead of `EXTRACT`.
+- **Anything but a name or an opening bracket in a table position**: a `LATERAL`
+  item, a set-returning function (`unnest(d.tags) AS t`, `generate_series(1,10)`)
+  and a table function all sit where a table sits and are none.
+- A CTE whose name does not carry the plugin's prefix. Prefix them.
+- Every DDL statement, including one that alters the plugin's own table.
+- A batch of two statements, and dollar-quoted text.
+- From Rule 1, a plugin column named after a core table — `identity` and
+  `session` being the two a plugin might plausibly reach for.
+
+Each fails with the plugin id and the schema in the message. None of them
+reaches a core table, so every one is a refusal the boundary did not need; they
+are the price of a walk that refuses what it cannot classify.
+
+`SELECT … FOR UPDATE` and `FOR UPDATE OF t` are **not** refused: §7 requires a
+row lock to be written, so refusing one would have made the rule the technical
+constraints ask for unwritable.
+
+A core route's context carries the field, because 3.15 D.1 gives every request
+context one, and its `query` rejects: a core route owns no tables of its own.
+
+### `RequestContext.plugin`
+
+Every route handler is given the frozen context of the plugin that contributed
+the route; a core route is given the core one. Which context a route gets is
+recorded against the route object when the registry builds it, not derived from
+the route's name.
+
+### Not built here
+
+These belong to `plugin` (wave 5) and are the rest of this chapter:
+
+- **Migrations do not run.** 3.11 puts a plugin's migrations in the same
+  versioned runner, and the runner keys its ledger on `version` alone — so a
+  plugin numbering its first migration `1` collides with the core's first. The
+  namespacing that resolves it is a decision, not a wiring step, and it is not
+  taken here.
+- **`errorCodes` are not registered**, because the declaration carries no status
+  and no message and `registerPluginErrorCodes` needs both.
+- **`rateLimitRules` are not read**, because a plugin route already declares its
+  own `rateLimit` and which of the two wins is a decision.
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count.
+
+Each of the three fields announces itself at start; the six hook points do not,
+because a plugin that registers one is not wrong to have registered it.
 
 ## The client
 
