@@ -13,7 +13,8 @@ interface KeyPair {
 export interface ProviderClaims {
 	readonly sub: string;
 	readonly email?: string;
-	readonly email_verified?: boolean;
+	/** `unknown`, because a case that spells the flag `"true"` or `1` is one this suite has to send. */
+	readonly email_verified?: unknown;
 	readonly [claim: string]: unknown;
 }
 
@@ -39,6 +40,10 @@ export interface StubProvider {
 	replaceIdToken(idToken: string | null): void;
 	/** A second account at the same provider, which is what a link collision needs. */
 	reportClaims(claims: ProviderClaims): void;
+	/** Section 1 C61: the token endpoint answers 3xx, which the library must refuse rather than follow. */
+	answerTokenEndpointWithARedirect(): void;
+	/** What the library asked for on each call, so that `redirect: "manual"` is observable. */
+	readonly redirectModes: readonly (string | undefined)[];
 }
 
 function json(body: unknown): Response {
@@ -56,8 +61,10 @@ export async function createStubProvider(options: StubProviderOptions): Promise<
 		publicJwk: { ...(await exportJWK(signing.publicKey)), kid: "stub", alg: "RS256" },
 	};
 	const calls: string[] = [];
+	const redirectModes: (string | undefined)[] = [];
 	let overriddenIdToken: string | null | undefined;
 	let reported: ProviderClaims = options.claims;
+	let tokenEndpointRedirects = false;
 
 	/** `alg: none` cannot be produced by a signer, so the one that must be refused is written by hand. */
 	function unsignedToken(payload: Record<string, unknown>): string {
@@ -108,6 +115,12 @@ export async function createStubProvider(options: StubProviderOptions): Promise<
 	}
 
 	async function tokenEndpoint(init: RequestInit | undefined): Promise<Response> {
+		if (tokenEndpointRedirects) {
+			return new Response(null, {
+				status: 302,
+				headers: { Location: "https://relocated.example/token" },
+			});
+		}
 		const body = new URLSearchParams(String(init?.body ?? ""));
 		const idToken = await idTokenFor(body.get("code") ?? "");
 		return json({
@@ -123,6 +136,7 @@ export async function createStubProvider(options: StubProviderOptions): Promise<
 	const fetchImplementation: typeof globalThis.fetch = async (input, init) => {
 		const url = typeof input === "string" ? input : String(input);
 		calls.push(url);
+		redirectModes.push(init?.redirect);
 
 		if (url.startsWith(`${PROVIDER_ORIGIN}/token`)) {
 			return tokenEndpoint(init);
@@ -147,6 +161,12 @@ export async function createStubProvider(options: StubProviderOptions): Promise<
 		},
 		reportClaims: (claims) => {
 			reported = claims;
+		},
+		answerTokenEndpointWithARedirect: () => {
+			tokenEndpointRedirects = true;
+		},
+		get redirectModes() {
+			return redirectModes;
 		},
 	};
 }

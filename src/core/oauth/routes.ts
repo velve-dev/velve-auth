@@ -81,7 +81,6 @@ export function oauthRoutes(services: RouteServices) {
 			state: input.state,
 			iss: input.iss ?? null,
 			pointer: context.oauthStateToken,
-			sessionToken: context.sessionToken,
 			observed: { ipAddress: context.ipAddress, userAgent: context.userAgent },
 		});
 	}

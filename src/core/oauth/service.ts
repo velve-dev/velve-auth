@@ -6,7 +6,7 @@ import type {
 } from "../auth/results.js";
 import type { RouteServices } from "../auth/routes.js";
 import { createUserRepository, type User } from "../auth/user.js";
-import type { Actor } from "../db/actor.js";
+import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
@@ -53,13 +53,17 @@ export interface OAuthFlowStart {
 	readonly linkToUserId: string | null;
 }
 
+/**
+ * The callback reads no session cookie: a `form_post` provider posts cross-site and a browser sends
+ * no `SameSite=Lax` cookie there, and neither does a `strict` installation on the redirect. What
+ * the link replaces is decided by the flow row instead (E-582).
+ */
 export interface OAuthCallbackArrival {
 	readonly providerId: string;
 	readonly code: string;
 	readonly state: string;
 	readonly iss: string | null;
 	readonly pointer: string | null;
-	readonly sessionToken: string | null;
 	readonly observed: ObservedRequest;
 }
 
@@ -80,7 +84,6 @@ export interface OAuthService {
 interface ResolvedAccount {
 	readonly userId: string;
 	readonly identity: Identity;
-	readonly linked: boolean;
 }
 
 const OAUTH_FACTORS = ["oauth"] as const;
@@ -249,19 +252,11 @@ export function createOAuthService(input: {
 				if (linkToUserId !== null && existing.userId !== linkToUserId) {
 					throw new VelveError("identity_already_linked");
 				}
-				return {
-					userId: existing.userId,
-					identity: await owned.refreshIdentity(facts),
-					linked: linkToUserId !== null,
-				};
+				return { userId: existing.userId, identity: await owned.refreshIdentity(facts) };
 			}
 
 			if (linkToUserId !== null) {
-				return {
-					userId: linkToUserId,
-					identity: await insertOrRefuse(owned, linkToUserId, facts),
-					linked: true,
-				};
+				return { userId: linkToUserId, identity: await insertOrRefuse(owned, linkToUserId, facts) };
 			}
 
 			const joinable = await accountAnAutomaticLinkMayJoin({
@@ -270,11 +265,7 @@ export function createOAuthService(input: {
 				provider,
 			});
 			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
-			return {
-				userId: owner.id,
-				identity: await insertOrRefuse(owned, owner.id, facts),
-				linked: false,
-			};
+			return { userId: owner.id, identity: await insertOrRefuse(owned, owner.id, facts) };
 		});
 	}
 
@@ -321,21 +312,18 @@ export function createOAuthService(input: {
 		return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 	}
 
-	/** S-LINK-7: a new identity changes the trust level, so the session is replaced rather than kept. */
+	/**
+	 * S-LINK-7: a new identity changes the trust level, so every session the account had ends and a
+	 * new one begins. The account comes from the flow row, which is why the callback can do this
+	 * without a session cookie it may not be sent (E-582).
+	 */
 	async function reissueAfterLinking(
-		userId: string,
-		previousToken: string | null,
+		linkTo: ConsumedOAuthFlow,
 		observed: ObservedRequest,
 	): Promise<IssuedSession> {
-		const { issued } = await issueSessionAround(userId, () =>
-			previousToken === null
-				? services.sessions.issue({ userId, factors: OAUTH_FACTORS, observed })
-				: services.sessions.reissue({
-						previousToken,
-						userId,
-						factors: OAUTH_FACTORS,
-						observed,
-					}),
+		await services.sessions.revokeEverySessionOfUser({ actor: actorOfConsumedOAuthFlow(linkTo) });
+		const { issued } = await issueSessionAround(linkTo.userId, () =>
+			services.sessions.issue({ userId: linkTo.userId, factors: OAUTH_FACTORS, observed }),
 		);
 		return issued;
 	}
@@ -396,7 +384,7 @@ export function createOAuthService(input: {
 				throw new ConcealedError("state_not_found");
 			}
 
-			if (flow.linkToUserId === null) {
+			if (flow.linkTo === null) {
 				await services.pluginRuntime.hooks.beforeSignIn({
 					method: "oauth",
 					userId: null,
@@ -419,16 +407,13 @@ export function createOAuthService(input: {
 				provider,
 				account,
 				await factsOf(provider, account, tokens),
-				flow.linkToUserId,
+				flow.linkTo?.userId ?? null,
 			);
 			const redirectToPath = acceptedRedirectPath(flow.redirectPath ?? DEFAULT_REDIRECT_PATH);
 
-			if (resolved.linked) {
-				const issued = await reissueAfterLinking(
-					resolved.userId,
-					arrival.sessionToken,
-					arrival.observed,
-				);
+			// Whether this flow links is the flow row's own statement, and not the callback's to make.
+			if (flow.linkTo !== null) {
+				const issued = await reissueAfterLinking(flow.linkTo, arrival.observed);
 				return {
 					status: "identity_linked",
 					identity: resolved.identity,

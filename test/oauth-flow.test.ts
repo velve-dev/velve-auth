@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
 import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
@@ -354,6 +356,77 @@ describe("S-LINK-5: no address is invented", () => {
 	});
 });
 
+describe("S-LINK-2, condition one: the verified flag is a boolean", () => {
+	/**
+	 * `"true"` and `1` were accepted once, from memory of provider payloads rather than from any
+	 * clause; OpenID Connect Core §5.1 makes the claim a boolean. It is the first of the three
+	 * conditions, so the wide reading was the condition read widely (E-579).
+	 */
+	it("stores the flag as false when the provider spells it as a string", async () => {
+		const mounted = await mountWith({
+			claims: { sub: "string-flag", email: "string.flag@example.com", email_verified: "true" },
+			trusted: true,
+		});
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [identity] = await mounted.auth.connection.query<{ provider_email_verified: boolean }>(
+			`SELECT provider_email_verified FROM ${mounted.auth.schema}.identity`,
+			[],
+		);
+		const [user] = await mounted.auth.connection.query<{ email_verified_at: Date | null }>(
+			`SELECT email_verified_at FROM ${mounted.auth.schema}.user`,
+			[],
+		);
+
+		expect(identity?.provider_email_verified).toBe(false);
+		expect(user?.email_verified_at).toBeNull();
+	});
+
+	it("joins no verified account when the provider spells the flag as a number", async () => {
+		const mounted = await mountWith({
+			claims: { sub: "number-flag", email: "number.flag@example.com", email_verified: 1 },
+			trusted: true,
+		});
+		await mounted.auth.connection.query(
+			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
+			["number.flag@example.com"],
+		);
+		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(refused.status).toBe(400);
+		expect(await countRows(mounted, "identity")).toBe(0);
+		expect(await countRows(mounted, "user")).toBe(1);
+	});
+});
+
+describe("section 1 C61: a redirecting token endpoint is refused, not followed", () => {
+	it("answers 502 and writes nothing when the token endpoint answers 3xx", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		mounted.provider.answerTokenEndpointWithARedirect();
+		const answered = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(answered.status).toBe(502);
+		expect(await countRows(mounted, "identity")).toBe(0);
+		expect(await countRows(mounted, "session")).toBe(0);
+	});
+
+	it("asks its own fetch not to follow one, and refuses a 3xx in its own text", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const outbound = readFileSync(
+			fileURLToPath(new URL("../src/core/oauth/outbound.ts", import.meta.url)),
+			"utf8",
+		);
+
+		expect(mounted.provider.redirectModes.length).toBeGreaterThan(0);
+		expect(mounted.provider.redirectModes.filter((mode) => mode !== "manual")).toStrictEqual([]);
+		// The behavioural half above cannot see the guard go, because `!response.ok` refuses a 3xx
+		// as well; and reading the source for the name alone passed with the call deleted and the
+		// function left standing, which a plant found. It is the call site that is read (E-584).
+		expect(outbound).toContain("return assertNotARedirect(");
+		expect(outbound).toContain('redirect: "manual"');
+	});
+});
+
 describe("S-REST-6 and S-REST-4: provider tokens", () => {
 	it("stores none of the three by default", async () => {
 		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
@@ -457,6 +530,55 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(await countRows(mounted, "user")).toBe(1);
 	});
 
+	/**
+	 * S-LINK-7 over the flow the second exempt route exists for. A `form_post` provider posts the
+	 * callback cross-site, so the `SameSite=Lax` session cookie is not sent — the same sentence
+	 * `cookies.ts` uses to give the state pointer `SameSite=None`. The account whose session is
+	 * replaced therefore comes from the flow row, not from the callback's cookie (E-582).
+	 */
+	it("replaces the session when the linking callback carries no session cookie", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, responseMode: "form_post" });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const firstSession = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "linked-by-form-post", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, firstSession);
+		const linked = await mounted.auth.handler(
+			new Request("https://api.example.com/sign-in/oauth/callback/stubby", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					Cookie: `__Host-velve_oauth_state=${linkFlow.pointer}`,
+				},
+				body: new URLSearchParams({ code: codeCarrying(null), state: linkFlow.state }),
+			}),
+		);
+		const replaced = sessionCookieOf(linked) ?? "";
+		const oldSession = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: firstSession }),
+		);
+
+		expect(linked.status).toBe(302);
+		expect(replaced).not.toBe(firstSession);
+		expect(await countRows(mounted, "session")).toBe(1);
+		expect(await oldSession.json()).toBeNull();
+	});
+
+	/** The same hole in a `sessionSameSite: "strict"` installation, where even the GET carries no cookie. */
+	it("replaces the session when the redirect callback carries no session cookie", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const firstSession = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "linked-without-cookie", email: "third@example.com" });
+		const linkFlow = await startLink(mounted, firstSession);
+		const linked = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(linked.status).toBe(302);
+		expect(sessionCookieOf(linked)).not.toBe(firstSession);
+		expect(await countRows(mounted, "session")).toBe(1);
+	});
+
 	it("refuses to move an identity that belongs to another account", async () => {
 		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
 		await mounted.auth.handler(callbackRequest(await start(mounted)));
@@ -478,8 +600,9 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 });
 
 describe("identity.list and identity.unlink (C89, L-13)", () => {
+	/** Mounted with `storeTokens`, so there is a stored token for the listing to fail to withhold (E-583). */
 	it("lists the identity without a token and refuses to remove the last way in", async () => {
-		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, storeTokens: true });
 		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
 		const cookie = sessionCookieOf(signedIn) ?? "";
 
@@ -493,7 +616,15 @@ describe("identity.list and identity.unlink (C89, L-13)", () => {
 
 		expect(listed.status).toBe(200);
 		expect(identities).toHaveLength(1);
+		const [stored] = await mounted.auth.connection.query<{ present: number }>(
+			`SELECT count(*)::int AS present FROM ${mounted.auth.schema}.identity
+			 WHERE access_token_enc IS NOT NULL`,
+			[],
+		);
+
+		expect(stored?.present).toBe(1);
 		expect(JSON.stringify(identities)).not.toContain("provider-access-token");
+		expect(JSON.stringify(identities)).not.toContain("provider-refresh-token");
 		expect(refused.status).toBe(409);
 		expect(await countRows(mounted, "identity")).toBe(1);
 	});

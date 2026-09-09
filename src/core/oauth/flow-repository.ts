@@ -1,4 +1,6 @@
+import type { ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
+import { toEntityId } from "../db/entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 
 /** 3.10: the flow row is what secures the callback, and ten minutes is longer than any consent screen. */
@@ -20,7 +22,8 @@ interface ConsumedOAuthFlowRow {
 	readonly keyVersion: number;
 	readonly nonce: string | null;
 	readonly redirectPath: string | null;
-	readonly linkToUserId: string | null;
+	/** E-234's second provenance: the account a link flow names, proved by this row's removal. */
+	readonly linkTo: ConsumedOAuthFlow | null;
 }
 
 interface OAuthFlowRepository {
@@ -36,6 +39,11 @@ interface FlowRow {
 	readonly nonce: string | null;
 	readonly redirect_path: string | null;
 	readonly link_to_user_id: string | null;
+}
+
+/** E-93: the brand is asserted where the row was removed, and in no other place. */
+function linkTargetOf(userId: string | null): ConsumedOAuthFlow | null {
+	return userId === null ? null : ({ userId: toEntityId<"user">(userId) } as ConsumedOAuthFlow);
 }
 
 export function createOAuthFlowRepository(options: {
@@ -80,7 +88,7 @@ RETURNING provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_t
 				keyVersion: row.key_version,
 				nonce: row.nonce,
 				redirectPath: row.redirect_path,
-				linkToUserId: row.link_to_user_id,
+				linkTo: linkTargetOf(row.link_to_user_id),
 			};
 		},
 	};
