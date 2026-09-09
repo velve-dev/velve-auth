@@ -113,69 +113,162 @@ jobs:
           CLAIMS="(written|generated|authored|created|produced|refactored)[[:space:]]+(by|with|using)[[:space:]]+(an?[[:space:]]+)?(AI|LLM|$ASSISTANTS)|AI-(generated|authored|written)|@author[[:space:]]+.*($ASSISTANTS)"
 
           fail=0
+          SCAN_DIR=$(mktemp -d)
 
-          if [ -n "$(git rev-parse --verify -q origin/main || true)" ]; then
-            RANGE="origin/main..HEAD"
-          else
-            RANGE="HEAD"
+          # A scan that could not run must not be read as a scan that found nothing, so
+          # it ends the job here instead of adding to `fail` and letting the summary
+          # below report a clean tree.
+          refuse() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          # Each scan reads its surface into a file before searching it, so that the
+          # producer's own exit status is visible and the size of what was read can be
+          # printed rather than assumed.
+          read_surface() {
+            SCAN_NAME=$1
+            SURFACE=$2
+            shift 2
+            if ! "$@" > "$SURFACE"; then
+              refuse "the $SCAN_NAME scan could not read what it searches"
+            fi
+          }
+
+          # A surface that came back empty is the second way a scan reports success
+          # without having looked at anything. Two surfaces below are legitimately
+          # empty and say so where they are read; every other one is empty only
+          # because the repository could not be read.
+          require_content() {
+            if [ ! -s "$2" ]; then
+              refuse "the $1 scan had nothing to search"
+            fi
+          }
+
+          lines_in() {
+            wc -l < "$1" | tr -d '[:space:]'
+          }
+
+          # `grep` exits 1 where it looked and matched nothing and 2 where it could not
+          # look, and a producer that failed gives neither. `if <pipeline>; then` read
+          # all three as one false condition, which is how a planted marker passed this
+          # job with `git` removed from the PATH. The step runs under the default
+          # `bash -e {0}`, so each status is taken with `|| VAR=$?` and not from a bare
+          # command, which would end the job on the ordinary no-match exit.
+          report() {
+            SCAN_NAME=$1
+            FINDING=$2
+            GREP_STATUS=$3
+            HITS=$4
+            case "$GREP_STATUS" in
+              0)
+                echo "::error::$FINDING"
+                cat "$HITS"
+                fail=1
+                ;;
+              1) ;;
+              *) refuse "the $SCAN_NAME scan could not run, so it proves nothing" ;;
+            esac
+          }
+
+          RANGE="HEAD"
+          if git rev-parse --verify -q origin/main >/dev/null; then
+            if ! AHEAD=$(git rev-list --count origin/main..HEAD); then
+              refuse "the commit range origin/main..HEAD could not be counted"
+            fi
+            # A range selecting no commit cannot be told from a range that could not be
+            # read, so the branch range is taken only where the branch has commits of
+            # its own, and the whole history is the surface otherwise.
+            if [ "$AHEAD" -gt 0 ]; then
+              RANGE="origin/main..HEAD"
+            fi
+          fi
+          if ! COMMIT_COUNT=$(git rev-list --count "$RANGE"); then
+            refuse "the commits in $RANGE could not be counted"
+          fi
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            refuse "the range $RANGE selects no commit, so the history scans read nothing"
           fi
 
-          # A single NUL byte makes git classify a source file as binary, which hides
-          # it from `git grep -I` and renders its diff as "Bin" in review.
-          # Capture the output rather than testing the pipeline: with no .gitattributes,
-          # xargs -r runs nothing and exits 0, which an `if` reads as a hit.
           # A symlink makes the content at a path differ from what a reviewer reads there.
-          echo "Checking that no source path is a symlink"
-          LINKS=$(git ls-files -s | awk '$1 == "120000" { $1=""; $2=""; $3=""; print }' || true)
+          read_surface "symlink" "$SCAN_DIR/index" git ls-files -s
+          require_content "symlink" "$SCAN_DIR/index"
+          echo "Checking $(lines_in "$SCAN_DIR/index") tracked paths for symlinks"
+          LINKS=$(awk '$1 == "120000" { $1=""; $2=""; $3=""; print }' "$SCAN_DIR/index")
           if [ -n "$LINKS" ]; then
             echo "::error::a tracked path is a symlink, so its content is not what review shows"
             echo "$LINKS"
             fail=1
           fi
 
-          echo "Checking that no .gitattributes hides a file from review"
-          HIDDEN=$(git ls-files --cached --others --exclude-standard -- '*.gitattributes' \
-            | xargs -r grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)' || true)
-          if [ -n "$HIDDEN" ]; then
-            echo "::error::a .gitattributes marks a path binary or -diff, which hides it from review"
-            echo "$HIDDEN"
-            fail=1
+          # A repository with no .gitattributes at all is the wanted state, so this is
+          # the first surface whose emptiness is an answer rather than a failure to look.
+          # It is tested for content before xargs reads it, because xargs over an empty
+          # list still runs grep, which then exits as though it had looked at something.
+          read_surface ".gitattributes" "$SCAN_DIR/attributes" \
+            git ls-files --cached --others --exclude-standard -- '*.gitattributes'
+          echo "Checking $(lines_in "$SCAN_DIR/attributes") .gitattributes files"
+          if [ -s "$SCAN_DIR/attributes" ]; then
+            HIDDEN=$(xargs grep -nE '(^|[[:space:]])(binary|-diff)([[:space:]]|$)' \
+              < "$SCAN_DIR/attributes" || true)
+            if [ -n "$HIDDEN" ]; then
+              echo "::error::a .gitattributes marks a path binary or -diff, which hides it from review"
+              echo "$HIDDEN"
+              fail=1
+            fi
           fi
 
-          echo "Checking that no text file contains a NUL byte"
-          BINARY=$(git ls-files -- . ':!assets/**' | while read -r f; do
+          # A single NUL byte makes git classify a source file as binary, which hides
+          # it from `git grep -I` and renders its diff as "Bin" in review.
+          read_surface "NUL byte" "$SCAN_DIR/text-files" git ls-files -- . ':!assets/**'
+          require_content "NUL byte" "$SCAN_DIR/text-files"
+          echo "Checking $(lines_in "$SCAN_DIR/text-files") files for a NUL byte"
+          BINARY=$(while read -r f; do
             [ -f "$f" ] || continue
             if ! tr -d '\000' < "$f" | cmp -s - "$f"; then echo "$f"; fi
-          done)
+          done < "$SCAN_DIR/text-files")
           if [ -n "$BINARY" ]; then
             echo "::error::text files contain a NUL byte and escape review and scanning"
             echo "$BINARY"
             fail=1
           fi
 
-          echo "Scanning commit messages in $RANGE"
-          if git log --format=%B "$RANGE" | grep -Eani "$MARKERS|$CLAIMS"; then
-            echo "::error::AI attribution found in commit messages"
-            fail=1
-          fi
+          read_surface "commit message" "$SCAN_DIR/messages" git log --format=%B "$RANGE"
+          require_content "commit message" "$SCAN_DIR/messages"
+          echo "Scanning $COMMIT_COUNT commit messages in $RANGE"
+          MESSAGE_STATUS=0
+          grep -Eani "$MARKERS|$CLAIMS" "$SCAN_DIR/messages" > "$SCAN_DIR/message-hits" \
+            || MESSAGE_STATUS=$?
+          report "commit message" "AI attribution found in commit messages" \
+            "$MESSAGE_STATUS" "$SCAN_DIR/message-hits"
 
-          echo "Scanning tree"
-          if git grep -Eani "$MARKERS" -- . "${EXEMPT[@]}"; then
-            echo "::error::AI attribution marker found in tree"
-            fail=1
-          fi
-          if git grep -Eani "$CLAIMS" -- . "${EXEMPT[@]}"; then
-            echo "::error::AI authorship claim found in tree"
-            fail=1
-          fi
+          read_surface "tree" "$SCAN_DIR/tracked" git ls-files -- . "${EXEMPT[@]}"
+          require_content "tree" "$SCAN_DIR/tracked"
+          echo "Scanning $(lines_in "$SCAN_DIR/tracked") tracked files"
+          MARKER_STATUS=0
+          git grep -Eani "$MARKERS" -- . "${EXEMPT[@]}" > "$SCAN_DIR/marker-hits" \
+            || MARKER_STATUS=$?
+          report "tree" "AI attribution marker found in tree" \
+            "$MARKER_STATUS" "$SCAN_DIR/marker-hits"
+          CLAIM_STATUS=0
+          git grep -Eani "$CLAIMS" -- . "${EXEMPT[@]}" > "$SCAN_DIR/claim-hits" \
+            || CLAIM_STATUS=$?
+          report "tree" "AI authorship claim found in tree" \
+            "$CLAIM_STATUS" "$SCAN_DIR/claim-hits"
 
           # The tree scan cannot see text that a later commit removed; the diff
           # scan cannot see text that predates the branch. Both are needed.
-          echo "Scanning diff in $RANGE"
-          if git log -p --text --format=%B "$RANGE" -- . "${EXEMPT[@]}" | grep -Eani "$MARKERS|$CLAIMS"; then
-            echo "::error::AI attribution found in the branch diff"
-            fail=1
-          fi
+          # A branch whose every change is in an exempt path leaves this surface empty,
+          # so it is the second one whose emptiness is an answer; what proves this scan
+          # looked is the commit count of the range, which is checked above.
+          read_surface "branch diff" "$SCAN_DIR/diff" \
+            git log -p --text --format=%B "$RANGE" -- . "${EXEMPT[@]}"
+          echo "Scanning $(wc -c < "$SCAN_DIR/diff" | tr -d '[:space:]') bytes of diff in $RANGE"
+          DIFF_STATUS=0
+          grep -Eani "$MARKERS|$CLAIMS" "$SCAN_DIR/diff" > "$SCAN_DIR/diff-hits" \
+            || DIFF_STATUS=$?
+          report "branch diff" "AI attribution found in the branch diff" \
+            "$DIFF_STATUS" "$SCAN_DIR/diff-hits"
 
           if [ "$fail" -ne 0 ]; then
             exit 1
