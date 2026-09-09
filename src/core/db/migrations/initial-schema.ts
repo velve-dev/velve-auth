@@ -34,9 +34,9 @@ CREATE UNIQUE INDEX user_username_key_key ON velve.user (username_key) WHERE use
 
 /* phc holds AES-256-GCM ciphertext over the canonical PHC string, purpose
    password-enc; scheme stays cleartext so the estate can be surveyed without a key (L-2). */
-/* set_by_session_id answers L-12's question — was this password set in the session that is
+/* set_by_session_id answers L-12's question — was this password stored by the session that is
    confirming the address — and carries no foreign key on purpose: a cascade would delete the
-   credential when the session is revoked and SET NULL would erase the answer at the moment
+   credential when the session is revoked, and a nulling one would erase the answer at the moment
    S-LINK-4 asks for it. NULL means unknown and counts as a different session (E-595). */
 CREATE TABLE velve.password_credential (
   user_id            uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,

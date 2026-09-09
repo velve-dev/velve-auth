@@ -262,7 +262,14 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 		// The assembly names the code without raising it, once, in the route contract D.3 fixes for
 		// every route with caller `session`. It named it a second time until `instance.ts` stopped
 		// keeping its own copy of the twenty-five codes and read the error map's own list (E-734).
-		expect(naming).toEqual(["auth/routes.ts", "http/error-map.ts", "session/service.ts"]);
+		// `flows/routes.ts` is the same contract for the two `/email/*` rows with caller `session`
+		// (E-607); nothing there raises it either, which is what the first expectation holds.
+		expect(naming).toEqual([
+			"auth/routes.ts",
+			"flows/routes.ts",
+			"http/error-map.ts",
+			"session/service.ts",
+		]);
 	});
 
 	it("is reachable from no method that issues a session", async () => {

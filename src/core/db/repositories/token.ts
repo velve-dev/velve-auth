@@ -36,7 +36,7 @@ export type StoredOneTimeToken = RedeemedOneTimeToken & {
 };
 
 export interface OneTimeTokenRepository {
-	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: string }>;
+	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
 	/** S-TOKEN-4: a row that names no account is answered exactly as no row is. */
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
 }
@@ -77,7 +77,18 @@ function anAccountThatCannotExist(): string {
 	return crypto.randomUUID();
 }
 
-const EXPIRY_AS_ISO_8601 = `to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+/**
+ * E-253 returned this as an ISO-8601 string so that no return type depended on the driver. A.7
+ * declares `EmailMessage.expiresAt` a `Date` and the core may not call `new Date(`, so the only
+ * source of one is the driver — the same bet every other repository here already makes, and the
+ * same guard polices it (E-598).
+ */
+function toDate(value: unknown): Date {
+	if (value instanceof Date) {
+		return value;
+	}
+	throw new TypeError("the driver must decode timestamptz into a Date");
+}
 
 // E-93: the one place in this repository where the redemption becomes evidence of an owner.
 function redeemedBy(userId: string, payload: OneTimeTokenPayload | null): StoredOneTimeToken {
@@ -113,7 +124,7 @@ WHERE id = $1 FOR UPDATE /* locks: ${schema}.user */`;
 )
 INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
 VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision))
-RETURNING ${EXPIRY_AS_ISO_8601} AS expires_at`;
+RETURNING expires_at`;
 
 	// Section 3.7 word for word apart from the marker E-142 requires: the only way a token is read.
 	const consumeStatement = `DELETE FROM ${table}
@@ -137,7 +148,7 @@ RETURNING user_id, payload`;
 				if (owner.length === 0 && userId !== null) {
 					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}
-				const [row] = await tx.query<{ expires_at: string }>(replaceStatement, [
+				const [row] = await tx.query<{ expires_at: unknown }>(replaceStatement, [
 					lookupId,
 					purpose,
 					tokenSha256,
@@ -148,7 +159,7 @@ RETURNING user_id, payload`;
 				if (row === undefined) {
 					throw new OneTimeTokenError("one_time_token_not_written", purpose);
 				}
-				return { expiresAt: row.expires_at };
+				return { expiresAt: toDate(row.expires_at) };
 			});
 		},
 

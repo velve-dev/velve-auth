@@ -38,9 +38,11 @@ import { SessionToken } from "./core/session/token.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
+import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
+import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
+import { EmailFlowSurface } from "./core/flows/routes.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
 import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
-import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
 import { SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
 import { VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
@@ -59,12 +61,15 @@ export {
 	type AuthenticationFactor,
 	type BaseConfig,
 	type CallerRequirement,
+	ChangedUser,
 	type Clock,
 	type ConsumedOAuthFlow,
 	type CookieAttributes,
 	type CookieInstruction,
 	type EmailConfig,
+	EmailFlowSurface,
 	type EmailMessage,
+	EmailNamespace,
 	type EntityId,
 	FrozenContext,
 	FrozenRepositories,
@@ -77,6 +82,8 @@ export {
 	type ImportSource,
 	type KeyProvider,
 	KnownProvider,
+	MagicLinkNamespace,
+	MailedPasswordNamespace,
 	type ModeHasEmail,
 	type ModeHasUsername,
 	type OAuthCallbackResult,
@@ -101,6 +108,7 @@ export {
 	type RateLimitConfig,
 	type RecoveryCodesConfig,
 	type RecoveryCodesRequirement,
+	RecoveryPasswordNamespace,
 	type RedeemedOneTimeToken,
 	type ResolvedSession,
 	type ResolvedSessionView,
@@ -114,10 +122,12 @@ export {
 	type SessionNamespace,
 	SessionRevokeEvent,
 	type SessionToken,
+	SetPasswordResult,
 	SignInCompletedEvent,
 	SignInEvent,
 	type SignInLookup,
 	type SignInResult,
+	SignUpNamespace,
 	type SignUpResult,
 	type SweepReport,
 	TRUST_LEVEL_EVENTS,

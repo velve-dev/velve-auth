@@ -12,7 +12,7 @@ export interface OneTimeTokenRequest {
 
 export interface IssuedOneTimeToken {
 	readonly token: SecretToken;
-	readonly expiresAt: string;
+	readonly expiresAt: Date;
 }
 
 /**

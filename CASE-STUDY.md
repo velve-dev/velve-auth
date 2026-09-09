@@ -4162,3 +4162,162 @@ Its Reason is also a little wider than it needs to be. *"Any entry stating one i
 **Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
 
 One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
+### The column L-12 needs and the schema does not have
+`E-595` · email-flows · schema deviation, frozen
+
+**Context.** S-LINK-4 asks whether the password on an account was set **in a different session** from the one confirming the address. `velve.password_credential` in architecture 3.2 has `user_id`, `phc`, `key_version`, `scheme` and two timestamps, and 3.17's differences add none. Nothing in the schema can answer the question the requirement is written in terms of.
+**Rejected.** Deriving it. `session.created_at` against `password_credential.created_at` was considered and is not the same question — it answers "was there a session open when the password was written", which the attacker path satisfies as easily as the honest one, because the attacker has a session of their own. Comparing `updated_at` to a session's `created_at` is the same mistake with a second timestamp.
+**Reason.** `set_by_session_id uuid`, **without a foreign key**. A cascade would delete the credential when the session it names is revoked, which is a deletion nobody asked for; `ON DELETE SET NULL` would erase the answer at the exact moment S-LINK-4 asks for it, because the confirming flow revokes sessions. NULL means *unknown* and is read as *a different session*, so an unrecorded provenance costs the credential rather than defeating the rule. Migration 1 creates every table in its final form and nothing is published, so the column is part of the initial schema and there is no second migration.
+**Price.** The schema now has a column the binding specification does not describe, in a table 3.2 spells out in full, and `test/db-schema-conformance.test.ts` — whose list is introduced as "the schema in architecture 3.2 with the differences from 3.17 applied" — carries one entry that is neither. The comment there says so; nothing else does, and the specification is unchanged. A reader comparing the two finds a discrepancy and has only that comment to tell them it was deliberate.
+
+### The provenance column is written by this feature and not by the password repository
+`E-596` · email-flows · file ownership, revisit when `/password/set` is written
+
+**Context.** Every path that stores a password should record which session stored it. `PasswordCredentialRepository.write` is the one write path, and making `setBySessionId` a required field of it would force every future caller to answer the question.
+**Rejected.** Doing exactly that. It costs a signature change in `core/password/credential.ts`, a parameter through `setPassword` in `core/password/verify.ts`, and nine call sites in the password feature's own tests.
+**Reason.** Two reasons, and the weaker one came first: the churn. The one that actually decides it is that `setPassword` takes a `userId` and knows nothing about sessions, and pushing a session identifier through it would put the session concept into the one module that is deliberately without it. The column belongs to S-LINK-4, so this feature owns the two statements that read and write it, in `core/flows/credential.ts`.
+**Price.** A future writer of `/password/set` or `/password/change` can store a password and forget the provenance, and nothing will stop them: the column stays NULL, NULL reads as a different session, and the first confirmation of the address deletes the credential the user just set. It fails closed, and it fails closed on a legitimate user. The mechanism against it is `test/flows-password-credential-writers.test.ts`, which pins the set of files in `src/` that name the table, so a new writer has to add itself to that list and reads the rule while doing it. That is a prompt, not an enforcement — the test cannot tell a writer that records the provenance from one that does not.
+
+### An address that names no account mints an artefact too
+`E-597` · email-flows · uniformity, frozen
+
+**Context.** S-TIM-6 requires `POST /password/request-reset` and `POST /sign-in/magic-link/request` to run the same sequence of database calls whether or not the address names an account, and T-TIM-6 makes that a threshold. The known branch opened a transaction, took a row lock and wrote a row; the unknown branch did neither. That is four round trips of difference on the one pair of endpoints whose whole purpose is to be indistinguishable.
+**Rejected.** Leaving it and recording the gap. Also rejected: writing the cover row from this feature's own SQL, which `test/token-static-scan.test.ts` forbids by pinning `one_time_token` to three files — and correctly, because S-TOKEN-1 is the rule that every statement against that table carries its purpose.
+**Reason.** `velve.one_time_token.user_id` is nullable and S-TOKEN-4 already says a row naming no account is answered exactly as no row is. Wave 1 built the accommodation and no caller for it. `OneTimeTokenRequest.userId` now takes `null`, which runs the same lock, the same supersession and the same insert against an account identifier drawn from `crypto.randomUUID()`, and lands a row with `user_id` NULL. The identifier is drawn afresh rather than fixed at the nil uuid, because a fixed one names a row an import could create, and the supersession would then delete that account's tokens.
+**Price.** A request for an unknown address now writes a row. It expires on the purpose's own deadline and `maintenance.sweep` removes it, and the rate limiters bound how fast it can be done, but an attacker with a list of addresses now costs the database a row per attempt where before it cost nothing. The uniformity is also only as good as the two branches' other work: an index miss on `velve.user` is still cheaper than a hit, which is the 0.1–2 ms 5.1 (a) names and no design here removes.
+
+### The expiry becomes a `Date`, against E-253
+`E-598` · email-flows · correction of E-253
+
+**Context.** A.7 declares `EmailMessage.expiresAt` a `Date`. E-253 decided `IssuedOneTimeToken.expiresAt` is an ISO-8601 string, produced by `to_char`, so that no return type depends on which driver the application installed — and its last sentence observes that the core may not call `new Date(` anyway, which would have prevented the conversion. Both are true, and together they mean the message A.7 describes cannot be built.
+**Rejected.** Returning both, as a string and a `Date` under two names; and relaxing the `new Date(` ban for one file, which is a repository-wide rule in `test/keys-static-scan.test.ts` that this feature has no business weakening.
+**Reason.** The driver is the only source of a `Date` the core is allowed to use, and every other repository in the tree already takes one from it — `velve.session`, `velve.user` and `velve.pending_authentication` all return driver-decoded timestamps, and `auth/user.ts` polices the contract with a `TypeError` that says what the driver must do. E-253's premise, that this is a bet on the driver, is right; the bet is made everywhere else and is written down in the driver documentation.
+**Price.** A decision taken in wave 1 with a stated reason is overturned by a requirement in a different section of the same document, and the overturning is done by the feature that needed it rather than by the feature that owns the file. The guard is a fourth `throw` in a repository whose test asserted there were exactly three coded refusals; that test now admits it by name, which makes the assertion weaker than it was.
+
+### Sign-up is one transaction, and the session is not in it
+`E-599` · email-flows · seam limit, revisit when the seam carries the session metadata
+
+**Context.** 3.15 B.1 puts the account and its `password_credential` in one transaction. The credential also has to carry `set_by_session_id`, and the session does not exist until it is issued, so the obvious order — create, issue, record — is three writes with two windows in it.
+**Rejected.** Inserting the session row from this feature, over the transaction's driver. The session repository is reachable and takes a driver, but the metadata mode of L-10 is not on `RouteServices`, so a session inserted here would truncate an IP address the instance was configured to store in full. Putting `sessionMetadata` on `RouteServices` means editing `core/auth/instance.ts`, which is the one file wave 4 built the seam to keep three writers out of.
+**Reason.** The account, its credential and the confirmation message are one transaction; the session is issued after it commits and the provenance is recorded with a second statement. A failure between the commit and the issue leaves an account with a password and no session — the user signs in. A failure between the issue and the provenance write leaves the provenance NULL, which the first confirmation reads as a different session and which costs the password. Both fail towards something recoverable, and the second fails towards the safer of the two.
+**Price.** Sign-up is not atomic end to end, and the specification says it is. The window is one statement wide and the loss in it is a password the user set seconds earlier, recoverable by a reset — but it is a real window, and the reason it exists is a field missing from a seam rather than anything about registration.
+
+### `send` runs inside the transaction that wrote the token
+`E-600` · email-flows · A.7, frozen
+
+**Context.** A.7's last paragraph: if `send` throws, the triggering operation fails and the one-time token is rolled back, because a reset token whose message never arrived is of use to nobody but an attacker.
+**Rejected.** Issuing the token, sending, and deleting the token on failure. It is a compensating write rather than a rollback, and it leaves a live token behind whenever the process dies between the two.
+**Reason.** The literal reading is a transaction, and both drivers in the tree make a nested `transaction` join the outer one, so the token repository's own transaction becomes part of this one without either knowing about the other. Sign-up goes further and puts the account creation in the same transaction, so a `send` that throws rolls back the registration too and no account is left behind that nobody was told about.
+**Price.** The application's callback now runs while a row lock on `velve.user` is held — CLAUDE.md §7 names this exact hazard, that an outbound call inside a transaction makes the lock's duration that call's timeout. Every other write of that account's rows waits for it. An `email.send` that delivers over SMTP rather than enqueueing will therefore block the account it is about, for as long as its own timeout, and nothing in the library can detect that it does. The documentation says so; that is the whole of the mitigation, and it is a note rather than a mechanism.
+
+### The message a taken address gets carries no link, and S-ENUM-4 says it should
+`E-601` · email-flows · specification conflict, reported
+
+**Context.** S-ENUM-4: a sign-up on a taken address sends exactly one message to the existing address, "which contains a sign-in link instead of a confirmation link". A.7 declares the message kind for that row, `sign_up_attempt_on_existing_account`, with `to` and `userId` and — in its own words — **deliberately no token**, because it leads to a sign-in rather than to a confirmation nobody asked for.
+**Rejected.** Sending a `magic_link` message instead. It satisfies S-ENUM-4 exactly: one message, a different template from the free-address path, addressed to the existing account, carrying a working sign-in link. It was rejected because it mints a one-time artefact for an account the requester has proved nothing about, and because A.7 names a kind for this row and says in so many words why it is empty.
+**Reason.** A.7 is the later and more specific statement and it is the type this feature consumes. The kind is sent as declared. T-LINK-4's neighbour T-ENUM-4 measures three things — one message on each path, different template identifiers, the existing address as the recipient — and all three hold.
+**Price.** S-ENUM-4's sentence does not hold: the library cannot deliver a sign-in link on that path, so the application has to render "you already have an account" and the user has to start a magic-link request themselves. This is a conflict between a requirement and an interface declaration in the same document, and it is reported rather than repaired — repairing it means either changing `EmailMessage`, which this feature does not own, or ignoring a paragraph that explains itself.
+
+### The answer to a taken address is fabricated, and the cover has a hole in it
+`E-602` · email-flows · enumeration, open
+
+**Context.** 3.13 says a registration on a taken address gives "the same answer as on success", and S-ENUM-3 makes that byte-identical in status, headers and body. `POST /sign-up` answers with a `SignUpResult` — a user, a session and a session token — and sets `__Host-velve_session`. On a taken address none of that can exist: the address is unique, and issuing a real session would be the account takeover the whole feature is about.
+**Rejected.** Answering 204 with no body, which would make the two paths trivially identical and contradicts 3.15 D.3's row and B.1's "sign-in and sign-up always return a session". Also rejected: omitting the cookie on the collision path, which is the first oracle 5.3 (a) lists.
+**Reason.** The collision path builds a `SignUpResult` of the same shape from values that are random on both paths — a `crypto.randomUUID()` for the account and for the session, a real session token from the same generator — sets the cookie, and writes nothing. The KDF runs on both paths before either is chosen, so the most expensive step on the path cannot be told apart by its absence.
+**Price.** **The cover does not survive a second request.** The token names no row, so the caller's next `GET /session` answers `null` where a real registration answers with a session, and an attacker who compares the two learns exactly what S-ENUM-3 forbids. That is not closable at this endpoint — anything that made the token resolve would be a session on somebody's account — and it is why 3.13 puts the real difference in the message rather than in the response. The application is also handed a user id that does not exist, which it will treat as durable unless the documentation stops it.
+
+### The cover reads the database's clock, not the process's
+`E-603` · email-flows · enumeration, frozen
+
+**Context.** A real session's timestamps are written by PostgreSQL's `now()`. The first cover built them from `services.clock.now()` plus the configured timeouts.
+**Rejected.** Nothing was rejected here; it was a defect found while removing `new Date(` calls the core is not allowed to make.
+**Reason.** Two clocks that disagree make the cover distinguishable by the size of the disagreement, and on a container whose clock has drifted from the database's that is a stable, measurable difference rather than a random one. One statement asks the database for `now()` and the two deadlines, and the driver decodes them exactly as it does for a real row.
+**Price.** One extra statement on the collision path, which the free path does not run — so a change made for uniformity of *values* makes the *count* of statements one worse. The count was already unequal by more than that, and the KDF dominates both; that is a judgement, not a measurement.
+
+### `SetPasswordResult` is declared by the feature that first returns one
+`E-604` · email-flows · placement, revisit when `/password/set` is written
+
+**Context.** 3.15 B.4 gives `password.set`, `password.change`, `password.redeemReset` and `password.redeemResetWithRecoveryCode` the same return type. Wave 4 put `SignInResult`, `SignUpResult`, `OAuthRedirect` and `OAuthCallbackResult` in `core/auth/results.ts` and not this one, and the two methods that return it today are both this feature's.
+**Rejected.** Adding it to `core/auth/results.ts`, which is not this feature's file and which the two other writers of this wave are reading.
+**Reason.** It is declared in `core/flows/results.ts` and exported through this feature's own barrel, which is the arrangement wave 4 set up so that three writers never meet in `src/index.ts`.
+**Price.** When `/password/set` and `/password/change` are written they will import their own return type from `core/flows/`, which reads backwards, and moving it then is a change to two features' files at once.
+
+### The magic link goes through the intermediate state, by opening it and closing it again
+`E-605` · email-flows · second factor, frozen
+
+**Context.** `signIn.magicLink.redeem` returns a `SignInResult`, whose `second_factor_required` branch exists, and 3.6 does not exempt a link from the second factor. Which factors an account offers is computed where the pending row is written (E-735) and nowhere else.
+**Rejected.** Asking the three factor tables directly from this feature. That is a second definition of `availableFactors`, in a feature that owns none of those tables, and the two would drift.
+**Reason.** The redemption begins the pending state, reads `availableFactors` off the row it just wrote, and — when the account offers none — consumes the row and issues a session instead. One definition, one place, and the account state decides rather than the caller.
+**Price.** Every magic-link sign-in on an account without a second factor writes a `pending_authentication` row and deletes it again: two statements that exist only because the answer is not available without writing. If the process dies between them the row lives out its five minutes; its token was never sent anywhere, so it authorises nothing, but it is there.
+
+### `email/request-change` does not look for a collision
+`E-606` · email-flows · enumeration, frozen
+
+**Context.** 3.15 B.5 says `requestChange` returns `void` even when the new address belongs to another account, and names the internal cause `email_taken_on_change`. S-ENUM-5 says a collision on an address change "is detected only when the token is redeemed".
+**Rejected.** Checking at request time and skipping the mint and the send. The response is `204` either way, so it costs nothing visible — but it makes the collision branch measurably shorter, which is the timing channel S-TIM-6 exists to close, and it is the same shape of leak as the one the reset request avoids.
+**Reason.** The requirement wins over the prose. The request mints and mails exactly as it would for a free address; `confirmAddress` finds the collision as a row count of zero when the token is redeemed and answers `invalid_token` through `email_taken_on_change`.
+**Price.** A confirmation link is delivered to the owner of an address that somebody else typed. It cannot work — redeeming it changes no rows — but it arrives, and the person who receives it did not ask for it. That is a nuisance the library creates deliberately, and the two statements in 3.15 B.5 and 5.3 do not read the same way, so a reader who follows B.5 will expect the check this code does not make.
+
+### The `/email/*` routes with a session name the disabled-account code
+`E-607` · email-flows · route contract, frozen
+
+**Context.** `test/session-review-resolution.test.ts` holds that `account_disabled` is raised in exactly one file and named in three. D.3 says the code is possible on every route whose caller is `session`, and the route declarations are a contract a test checks against the actual throw catalogue.
+**Rejected.** Leaving it out of the two declarations, which would make the contract wrong in the direction that matters — a caller could not handle a code the pipeline can produce.
+**Reason.** `email.requestVerification` and `email.requestChange` declare it, nothing in this feature raises it, and the file list in that test grows by one with the reason beside it.
+**Price.** The list is now four files and will grow with every future feature that declares a session route, which makes it a maintenance cost rather than a check. What it still catches — a second place raising the code — is the part worth keeping, and that part is a different expectation in the same test.
+
+### A first confirmation on an account with no password revokes nothing
+`E-608` · email-flows · S-LINK-4 scope, frozen
+
+**Context.** L-12 revokes every session when a first confirmation finds a password set in another session. An account that reaches its first confirmation with no password at all — a passwordless sign-up, or a magic link to an account created by one — has nothing to delete.
+**Rejected.** Revoking anyway, on the reading that a first confirmation is a change of trust level.
+**Reason.** L-12's sentence is conditional on the password: "and the existing password was set in a different session". No password, no condition, and nothing was taken away that a session might have been relying on. Revoking would sign a user out of their own browser for clicking their own confirmation link.
+**Price.** The two cases are separated by a row count rather than by an explicit state, so a future path that deletes a password for a different reason and then confirms would look like this one and skip the revocation. Nothing detects that.
+
+### Unknown provenance is a different session
+`E-609` · email-flows · S-LINK-4, frozen
+
+**Context.** `set_by_session_id` is NULL for every credential written by a path that does not record it — an import, a future `/password/set`, a failed provenance write — and for every credential that predates the column, of which there are none.
+**Rejected.** Treating NULL as "no opinion" and keeping the credential, which is what a naive `IS DISTINCT FROM` comparison does when the confirming request also carries no session.
+**Reason.** The rule has to fail towards deleting. The account the CVE describes is one where the only credential is the attacker's, and every reading that keeps a credential it cannot vouch for keeps that one. The predicate is written so that the credential survives only when a session is named on both sides and the two are equal: `$2::uuid IS NULL OR set_by_session_id IS DISTINCT FROM $2::uuid`.
+**Price.** A password imported from another system is deleted the first time its owner confirms their address, and they will not know why. The migration module has `velve.password_reset_required` for hashes it cannot carry across; this is a second, unrelated way an imported account loses its password, and nothing connects the two.
+
+### The reset revokes before it writes
+`E-610` · email-flows · ordering, frozen
+
+**Context.** `password.redeemReset` spends the token, revokes every session and writes the new credential. The three are one transaction as far as the seam allows — the session insert that follows is not, for E-599's reason.
+**Rejected.** Writing the password first and revoking after, which reads more naturally.
+**Reason.** If the transaction fails between the two, the order decides what survives. Revoke-then-write leaves the account signed out everywhere with the old password standing and the token spent, so the user asks for another link. Write-then-revoke leaves a new password with every old session alive, which is the state a stolen session survives — the exact thing S-FIX-6 exists to prevent.
+**Price.** The safe failure is still a failure the user has to notice and recover from by requesting a second reset, and nothing tells them why the first one did not take. The transaction makes the window small; it does not make it zero, because the session that signs them back in is issued outside it.
+
+### `revokedOtherSessionsCount` counts every session on a reset
+`E-611` · email-flows · return value, frozen
+
+**Context.** 3.15 B.4 gives `SetPasswordResult` a field called `revokedOtherSessionsCount`. `password.set` and `password.change` are called from a session, so "other" is every session but the caller's. A reset is called from no session at all.
+**Rejected.** Subtracting one, or reporting zero, to make the name true.
+**Reason.** There is no calling session to exclude, so the count is every session the account had. The number is what was actually revoked, which is what an application showing "you were signed out of 3 devices" needs.
+**Price.** The field name says "other" and on this path there is no session for it to be other than, so the same name means two slightly different things depending on which of the four methods produced it. The documentation says which; the type does not.
+
+### The third lawful provenance of an `Actor`
+`E-612` · email-flows · ownership proof, frozen
+
+**Context.** `core/db/actor.ts` declares two provenances that may become an `Actor` — a resolved session and a redeemed one-time token — and a third, a consumed OAuth flow, for the feature running beside this one. `password.redeemResetWithRecoveryCode` has none of them: it resolves an account from an identifier the request carried, and what proves the account is the caller's is the removal of a recovery code.
+**Rejected.** Casting a user id to `Actor` inside this feature. It is two lines and it defeats the point of the brand: an identifier out of a request would reach a repository method that filters on an owner.
+**Reason.** `ConsumedRecoveryCode` is declared beside the other three, and `RecoveryCodeRepository.consumeCode` returns it instead of a boolean — asserted where the `DELETE … RETURNING` removed the row and nowhere else, exactly as the one-time token repository does. Its one existing caller tests the result for `null` rather than for falsity and is otherwise unchanged.
+**Price.** A file two other writers of this wave may be reading gains a declaration, and a repository this feature does not own changes its return type. Neither is this feature's area, and both were done because the alternative was a cast that would have passed every check in the repository.
+
+### The passwordless sign-up has no expensive step to hide behind
+`E-613` · email-flows · uniformity, open
+
+**Context.** `POST /sign-up` runs Argon2id on both paths, so the free and the taken branch are dominated by the same 50–250 ms and the handful of statements between them is noise. `POST /sign-up/passwordless` has no KDF. Its free branch creates an account, writes a token and sends a message; its taken branch looks up and sends.
+**Rejected.** Running a KDF on a route that takes no password, purely to equalise. It burns the semaphore S-DOS-3 sizes for real sign-ins, on a route an attacker can call without a password.
+**Reason.** S-TIM-6 names the endpoints its query-sequence clause covers — reset request and magic-link request — and T-TIM-6 measures those two. Sign-up is covered by the same requirement's KDF clause, which the passwordless row has nothing to satisfy.
+**Price.** `POST /sign-up/passwordless` is measurably faster on a taken address than on a free one, by whatever an account insert, a token insert and a session insert cost. S-ENUM-3 is about the response and is met; the timing is not, and no requirement in section 5 covers it, which is why this is written down rather than fixed. An application in mode `email` that offers passwordless registration has an address oracle with a stopwatch on it.
+
+### What this feature had to reach outside its own area
+`E-614` · email-flows · file ownership, reported
+
+**Context.** CLAUDE.md §5 fixes the set of files a feature may touch before it starts, and says a feature that needs a change elsewhere stops and reports it. This one needed seven: the initial schema and its shipped SQL (E-595), the one-time token repository and its service (E-597, E-598), `core/db/actor.ts` and the recovery repository (E-612), and the recovery service's one call site.
+**Rejected.** Stopping. Each of the four changes is load-bearing for a requirement assigned to this feature, and none of the owning features is running.
+**Reason.** They are reported in the hand-off rather than asked for in advance, because the wave has no writer for `db`, `token`, `password` or `factor-totp` to ask.
+**Price.** Four features' files changed by somebody else's branch, and the reviewer's brief is the architecture rather than those features' decisions — so the person best placed to notice that E-253 has been overturned is not the person reading this branch. Six test files changed with them, three of them census assertions that were written to catch exactly this kind of drift and that this branch has now widened rather than tripped.

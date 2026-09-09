@@ -41,9 +41,12 @@ function repositoryReturning(rows: readonly unknown[], ownerRows?: readonly unkn
 
 const HASH = new Uint8Array(32).fill(7);
 
+/** A driver decodes `timestamptz` into a `Date`, and E-598 makes the repository read one. */
+const EXPIRY = new Date("2026-09-08T00:00:00.000Z");
+
 describe("the parameters the repository sends", () => {
 	it("binds owner, purpose, hash, payload and the purpose's own deadline, in that order", async () => {
-		const { repository, calls } = repositoryReturning([{ expires_at: "2026-09-08T00:00:00.000Z" }]);
+		const { repository, calls } = repositoryReturning([{ expires_at: EXPIRY }]);
 
 		const issued = await repository.replaceOneTimeToken({
 			tokenSha256: HASH,
@@ -61,12 +64,13 @@ describe("the parameters the repository sends", () => {
 			HASH,
 			'{"newEmail":"next@example.com"}',
 			ONE_TIME_TOKEN_LIFETIME_SECONDS.password_reset,
+			"0d1b6c8e-0000-4000-8000-000000000001",
 		]);
-		expect(issued.expiresAt).toBe("2026-09-08T00:00:00.000Z");
+		expect(issued.expiresAt).toStrictEqual(EXPIRY);
 	});
 
 	it("sends a null payload as null rather than as the text null", async () => {
-		const { repository, calls } = repositoryReturning([{ expires_at: "2026-09-08T00:00:00.000Z" }]);
+		const { repository, calls } = repositoryReturning([{ expires_at: EXPIRY }]);
 
 		await repository.replaceOneTimeToken({
 			tokenSha256: HASH,
@@ -79,7 +83,7 @@ describe("the parameters the repository sends", () => {
 	});
 
 	it("locks the owner row before it replaces anything (S-TOKEN-3, E-259)", async () => {
-		const { repository, calls } = repositoryReturning([{ expires_at: "2026-09-08T00:00:00.000Z" }]);
+		const { repository, calls } = repositoryReturning([{ expires_at: EXPIRY }]);
 
 		await repository.replaceOneTimeToken({
 			tokenSha256: HASH,
@@ -180,7 +184,7 @@ describe("what the repository refuses", () => {
 				.catch((error: unknown) => error)) as OneTimeTokenError;
 		};
 
-		const written = [{ expires_at: "2026-09-08T00:00:00.000Z" }];
+		const written = [{ expires_at: EXPIRY }];
 		const unknownPurpose = "totp_step" as unknown as OneTimeTokenPurpose;
 		const raised = [
 			await raise(written, [], "magic_link"),

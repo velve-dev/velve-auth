@@ -169,8 +169,8 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
-		expect(markers).toHaveLength(11);
-		expect(carrying).toHaveLength(6);
+		expect(markers).toHaveLength(13);
+		expect(carrying).toHaveLength(7);
 		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
 });
@@ -231,13 +231,21 @@ describe("a one-time artefact is a row, not a signed string (S-REPLAY-1)", () =>
 });
 
 describe("what the repository raises carries a code and no secret", () => {
-	it("raises nothing that is not a coded refusal", () => {
+	/**
+	 * The fourth raise is the driver-contract guard E-598 added, and it is not a refusal of anything
+	 * a caller sent: it fires when the driver hands back a `timestamptz` it did not decode, which
+	 * `auth/user.ts` and `db/repositories/session.ts` have always answered the same way. It carries no
+	 * value from the row, which is what this rule is about.
+	 */
+	it("raises nothing that is not a coded refusal or the driver-contract guard", () => {
 		const raises = repositorySource.match(/throw new [A-Za-z]+\([\s\S]*?\);/g) ?? [];
-		expect(raises).toHaveLength(3);
+		expect(raises).toHaveLength(4);
 		expect(
 			raises.filter(
 				(raise) =>
-					!/^throw new OneTimeTokenError\("one_time_token_[a-z_]+", (purpose|null)\);$/.test(raise),
+					!/^throw new OneTimeTokenError\("one_time_token_[a-z_]+", (purpose|null)\);$/.test(
+						raise,
+					) && raise !== 'throw new TypeError("the driver must decode timestamptz into a Date");',
 			),
 		).toStrictEqual([]);
 	});

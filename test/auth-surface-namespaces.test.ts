@@ -57,17 +57,18 @@ describe("the namespaces a plugin may not take (3.11, 3.15 B)", () => {
 		expect(carried.filter((name) => !SURFACE_NAMESPACES.includes(name))).toStrictEqual([]);
 	});
 
-	/** The wave-4 build assembles a fraction of 3.15 B, and the list covers what it has not built. */
+	/**
+	 * The build assembles a fraction of 3.15 B, and the list covers what it has not built. Four of
+	 * the seven left when this was written are gone: `email-flows` builds `signUp`, `email` and both
+	 * halves of `password` it owns, and contributes `signIn.magicLink` to the namespace `oauth`
+	 * shares. `username` is absent from this mount because it is mounted in mode `email`.
+	 */
 	it("reserves more than the build carries, which is the point of it being a list", () => {
 		const carried = new Set(Object.keys(mounted.auth as unknown as Record<string, unknown>));
 
 		expect(SURFACE_NAMESPACES.filter((name) => !carried.has(name)).sort()).toStrictEqual([
-			"email",
 			"factor",
 			"identity",
-			"password",
-			"signIn",
-			"signUp",
 			"username",
 		]);
 	});
