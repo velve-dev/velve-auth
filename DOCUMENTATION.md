@@ -4035,7 +4035,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register; declared in `core/plugin/config.ts` and read by no route yet |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks run at the seven points, and four ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -4067,6 +4067,11 @@ because nothing else would tell you.
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `plugin_id_duplicated` | two plugins claim the same `id` |
+| `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
+| `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
+| `plugin_route_conflict` | a plugin route collides with a core route, with another plugin's, or with a namespace the surface occupies |
+| `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 
 Two more refusals come from the modules and keep their own error types: a root
 key shorter than 32 bytes raises `KeyError` while `rootKeyProvider` is being
@@ -4155,11 +4160,76 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | `auth.user` | `findById`, `findByEmail`, `disable`, `enable`, `delete` |
 | `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
 
-Every method reached through a route takes the five call fields beside its own
+Every method reached through a route takes the six call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
-`ipAddress` and `userAgent`. `origin` is required and not optional because a
-security field that may be omitted is omitted; the origin check runs on the
-direct server call exactly as it runs on the HTTP path (S-CSRF-1).
+`oauthStateToken`, `ipAddress` and `userAgent`. `origin` is required and not
+optional because a security field that may be omitted is omitted; the origin
+check runs on the direct server call exactly as it runs on the HTTP path
+(S-CSRF-1).
+
+#### Namespaces nobody writes by hand
+
+The five above are written into `instance.ts`. Everything else on the instance is
+**folded out of the route table**: a route's dotted `name` is its object path
+(3.15 D.2), so a row named `signIn.oauth.start` becomes
+`auth.signIn.oauth.start` and a row named `signIn.magicLink.redeem` becomes
+`auth.signIn.magicLink.redeem` — in the same `signIn` namespace, contributed by
+two different files, with neither feature editing the other's and neither
+editing this one.
+
+That holds for the type as well as for the object. Each seam module returns its
+table as a tuple, and `VelveAuth<M>` intersects `ServerSurface<…>` over those
+tuples; a seam that is still empty contributes `unknown`, which intersects away.
+A plugin's routes are folded into the object the same way — `auth.<pluginId>.…`
+— but not into the type, because which plugins exist is configuration and is not
+known when the type is written.
+
+Two names folding onto the same object path is `route_namespace_conflict`, and
+the five hand-written namespaces are written last, so a name this file states is
+never shadowed by a derived one.
+
+### The result types
+
+3.15 B.1 and C fix the vocabulary the sign-in and sign-up paths answer with.
+They are exported and are what the features above return.
+
+```ts
+type SignUpResult = { user: User; sessionToken: SessionToken; session: Session }
+
+type SignInResult =
+  | { status: "signed_in"; sessionToken: SessionToken; session: Session; user: User
+      signCountRegressed?: boolean }
+  | { status: "second_factor_required"; pendingToken: PendingToken
+      pending: PendingAuthentication }
+
+interface OAuthRedirect { authorizationUrl: string; stateCookie: CookieInstruction }
+
+type OAuthCallbackResult =
+  | SignInResult
+  | { status: "identity_linked"; identity: Identity; sessionToken: SessionToken
+      session: Session }
+```
+
+In the `second_factor_required` branch there is **no** `session` and **no**
+`sessionToken` — not as `null`, not as an optional field, but as an absent
+property. Reading `result.sessionToken` without first checking `result.status`
+does not compile, and that is the point: a `session` field that is sometimes set
+is read unchecked by some code path eventually.
+
+`signCountRegressed` is optional because the question is not asked on a password
+sign-in: `undefined` means "not applicable", never "no" (L-9).
+
+`Identity` is the record of 3.15 C — `id`, `provider`, `subject`, `createdAt`,
+`providerEmail`, `providerEmailVerified`, `profile`, `scopes`, `tokenExpiresAt`.
+`profile` is `unknown` because the library does not read these claims and cannot
+promise a shape the provider changes tomorrow. The linking branch re-issues the
+session, because a new identity changes the trust level.
+
+`OAuthRedirect.stateCookie` is the one place a server method mentions a cookie:
+the caller is not always the HTTP handler, and the pointer still has to reach the
+browser. Its attributes are always `SameSite=Lax`, whatever `session.cookie` is
+configured to, because a `Strict` cookie is not sent on the provider's top-level
+cross-site GET.
 
 `auth.user.*` has no routes and never will. The library has no permission model
 and cannot decide who may call `disable`; taking that over HTTP unchecked would
@@ -4263,15 +4333,19 @@ other features and this one may not write their files:
 
 The seams these fill are in place. The assembly composes its table from four
 modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
-`core/plugin/routes.ts` — and the last three return nothing today, so a feature
-adds a row by editing its own file.
+`core/plugin/routes.ts` — and the first two of those three return nothing today,
+so a feature adds a row by editing its own file. `core/plugin/routes.ts` returns
+what the registry built out of `config.plugins`.
 
 The configuration seam is open the same way. `config.oauth` is an `OAuthConfig`
-from `core/oauth/config.ts` and `config.plugins` a list of `VelvePlugin` from
-`core/plugin/config.ts`; both types are declared and exported, both fields are
-optional, and neither is read by the assembly yet — `pluginRoutes` is where
-`plugins` will be consumed. The types are documented by the chapters that own
-them, which are empty until wave 4.
+from `core/oauth/config.ts`, declared, exported and read by no route yet;
+`config.plugins` is read at start.
+
+The **export** seam is three modules — `core/flows/index.ts`,
+`core/oauth/index.ts` and `core/plugin/index.ts`. `src/index.ts` re-exports each
+of them whole with one `export type *` line, so a feature adds a public name by
+editing its own module and three writers never meet in the barrel. The lines are
+type-only, so nothing of them survives into `dist/index.mjs`.
 
 `GET /pending` and `POST /pending/cancel` are no longer among the missing.
 `pendingCookie: "readable"` is what they needed and did not have; both are

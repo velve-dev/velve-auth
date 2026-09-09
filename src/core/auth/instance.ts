@@ -14,7 +14,7 @@ import { emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
 import { ConcealedError, VELVE_ERROR_CODES, type VelveErrorCode } from "../http/error-map.js";
-import type { AnyRoute, ServerCallFields } from "../http/route.js";
+import type { AnyRoute, ServerCallFields, ServerSurface } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
@@ -41,6 +41,7 @@ import {
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
 import { assertConfigurationIsStartable, assertKeysAnswerForEveryPurpose } from "./startup.js";
+import { nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
 
 const DEFAULT_SCHEMA = "velve";
@@ -115,12 +116,22 @@ export interface AuthInternals {
 	readonly http: HttpEnvironment;
 }
 
-export type VelveAuth<M extends IdentityMode> = AuthInternals & {
-	signOut(input: ServerCallFields): Promise<void>;
-	readonly session: SessionNamespace;
-	readonly pending: PendingNamespace;
-	readonly user: UserNamespace;
-} & (ModeHasUsername<M> extends true
+/**
+ * 3.15 B.1 puts `signIn.oauth.*` and `signIn.magicLink.*` in one `signIn` namespace, and two
+ * features own them. Neither writes this file: each returns its own table from its own seam module
+ * and `ServerSurface` folds the dotted names into the namespaces they name. A seam that is still
+ * empty contributes `unknown`, which intersects away.
+ */
+export type SeamSurface = ServerSurface<ReturnType<typeof oauthRoutes>> &
+	ServerSurface<ReturnType<typeof emailFlowRoutes>>;
+
+export type VelveAuth<M extends IdentityMode> = AuthInternals &
+	SeamSurface & {
+		signOut(input: ServerCallFields): Promise<void>;
+		readonly session: SessionNamespace;
+		readonly pending: PendingNamespace;
+		readonly user: UserNamespace;
+	} & (ModeHasUsername<M> extends true
 		? { readonly username: UsernameNamespace }
 		: Record<never, never>);
 
@@ -239,6 +250,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
+	const seamRoutes: readonly AnyRoute[] = [...oauthRoutes(services), ...emailFlowRoutes(services)];
 	const coreRoutes: readonly AnyRoute[] = [
 		signOut,
 		read,
@@ -249,8 +261,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		refresh,
 		...(usernameTable ?? []),
 		...pendingTable,
-		...oauthRoutes(services),
-		...emailFlowRoutes(services),
+		...seamRoutes,
 	];
 	const contributedRoutes = pluginRoutes(services);
 	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, RESERVED_SURFACE_NAMESPACES);
@@ -283,6 +294,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const readSession = createServerMethod(read, environment);
 
 	const surface = {
+		/**
+		 * The namespaces the seam modules and the plugins contribute, folded out of their dotted
+		 * names. The hand-written namespaces below are written after them and win, so a name this
+		 * file states is never shadowed by a derived one.
+		 */
+		...nestServerMethods([...seamRoutes, ...contributedRoutes], environment),
+
 		routes: environment.routes,
 		identityMode: identity.mode,
 		errorCodes: ERROR_CODES,
