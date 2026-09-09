@@ -149,8 +149,10 @@ calls is one you wrote down.
 instruction that belongs to it; the callback answers 302 to a path you chose,
 and that redirect is the only `Location` this library emits. In an existing
 session, `auth.identity.link.start` links a second provider to the account you
-are signed in as — the account is fixed server-side, so no callback can point it
-somewhere else — and `auth.identity.unlink` refuses to remove your last way in.
+are signed in as — the account and the session are both fixed server-side, so no
+callback can point either somewhere else — and `auth.identity.unlink` refuses to
+remove your last way in. Linking re-issues the session it was started from, a new
+token in place of the old row, and leaves your other devices signed in.
 
 **The linking rule is the part that does not bend.** `(provider, subject)` is
 the only key; the e-mail address is an attribute and never a link. An identity

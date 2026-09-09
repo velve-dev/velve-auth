@@ -4089,17 +4089,33 @@ than its API cannot be returned to by path alone. A flow that names none
 redirects to `/`.
 
 `identity.link.start` requires a session and a **fresh** one (`freshnessWindow`,
-15 minutes by default), and records the account server-side in the flow row. The
-callback for a link therefore cannot be pointed at another account, and there is
-no `link.finish`: one callback answers both.
+15 minutes by default), and records the account **and the session it runs in**
+server-side in the flow row — `link_to_user_id` and `link_from_session_id`. The
+callback for a link therefore cannot be pointed at another account or another
+session, and there is no `link.finish`: one callback answers both.
 
-**Linking ends every session of the account and issues one new one.** A new
-identity changes the trust level, so `S-LINK-7` requires a re-issue; the account
-comes from the flow row rather than from the callback's session cookie, because
+**Linking replaces the session it began in, and only that one.** A new identity
+changes the trust level, so `S-LINK-7` requires a re-issue: the row named on the
+flow row is deleted and a new row with a new token is inserted, both in one
+transaction (`S-FIX-1`). Every other session of the account keeps working.
+Revoking the rest is what a password change and a password reset do, and
+`S-FIX-6` names those two events and not this one —
+`TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS.identity_linked` is `false` and says so
+to an application that asks. A user who links a provider on a laptop stays signed
+in on their phone.
+
+Both facts come out of the flow row because the callback reads no session cookie:
 that cookie is `SameSite=Lax` and a browser does not send it on a `form_post`
 callback — nor, in a `sessionSameSite: "strict"` installation, on the redirect
-one. The consequence is wider than replacing the session that started the link:
-a user who links a provider on one device is signed out on the others.
+one. Where the session the link began in has gone in the meantime — signed out on
+that device, or expired — there is nothing to delete, the new session is issued
+alone, and the link is not refused over it.
+
+The session service call behind this is
+`reissueSessionOfUser({ actor, previousSessionId, factors, observed })`. It is
+the third re-issue shape beside `reissue`, which finds the previous row by its
+token, and `reissueAfterCredentialChange`, which replaces every row the account
+has; this one names the row by id and touches no other.
 
 `identity.unlink` requires a session and freshness, and refuses with
 `last_sign_in_method` when the identity is the account's last way in — counted
@@ -4145,7 +4161,9 @@ never reads them.
    no ID token fails rather than continuing unchecked.
 7. Resolves the identity by `(provider, subject)` and applies the linking rule.
 8. Issues a session — or, where the account has a second factor enrolled, a
-   pending authentication instead — and answers 302 to the stored path.
+   pending authentication instead — and answers 302 to the stored path. A link
+   flow replaces the session named on the flow row rather than adding a second
+   one, and leaves the account's other sessions untouched.
 
 Every failure between steps 2 and 6 answers `oauth_flow_invalid` (400) to the
 caller and carries its own reason in the log line: `state_not_found`,
@@ -4188,9 +4206,11 @@ generated anywhere in this library.
 on every sign-in, so one identity's verification state never travels to another
 identity of the same user.
 
-Linking an identity to an account **re-issues the session**: a new row, a new
-token, and the previous session removed. A new identity changes the trust level,
-and every change of the trust level re-issues (`S-LINK-7`).
+Linking an identity to an account **re-issues the session the link began in**: a
+new row, a new token, and the previous row removed in the same transaction. A new
+identity changes the trust level, and every change of the trust level re-issues
+(`S-LINK-7`, `S-FIX-1`). The account's other sessions are not touched; see *The
+routes and the methods* for why that is the whole of what `S-LINK-7` asks.
 
 ### Sign-in through a provider in the username modes
 
@@ -4219,7 +4239,8 @@ it. Two things follow.
   that attribute; a redirecting provider's pointer stays `Lax`.
 
 The callback reads **no** session cookie in either delivery, so a link works the
-same on both; see *The routes and the methods* for what a link re-issues.
+same on both; the session it replaces is named on the flow row, and *The routes
+and the methods* has the rest.
 
 Nothing else changes: the code never enters a query string, no second redirect
 is added, and the state row and PKCE are what secure the callback either way.
