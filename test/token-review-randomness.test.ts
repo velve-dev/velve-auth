@@ -92,9 +92,8 @@ const SAMPLE = 100_000;
 const TOKEN_CHARACTERS = 43;
 const TOKEN_BYTES = 32;
 
-/** T-RAND-Verteilung is a nightly row in section 6, and the runtime is why: N = 100 000 tokens
- * are drawn and every bit of them is walked three times. The per-commit obligation is T-RAND-4,
- * which lives in test/token-secret-token.test.ts at its own threshold of 1000. Set
+/** Section 6 puts T-RAND-Verteilung on the nightly tier and T-RAND-4 on every commit; the
+ * per-commit half lives in test/token-secret-token.test.ts at its own threshold of 1000. Set
  * VELVE_NIGHTLY=1 to run this. */
 const NIGHTLY = process.env.VELVE_NIGHTLY === "1";
 
@@ -191,9 +190,11 @@ function twoSidedNormalDeviate(alpha: number): number {
 	return Math.sqrt(chiSquareCriticalValue(alpha, 1));
 }
 
-/** The rate at which this file goes red with a sound generator. Section 6 fixes p = 0.001 for
- * T-RAND-Verteilung, and this reads that as a budget for the file rather than for each case:
- * spending it per case cost 4.1 per cent of nightly runs and one investigation (E-993, E-995). */
+/** A deliberate deviation from architecture section 6, which fixes `Chi-Quadrat je Position
+ * p > 0,001` — per position, not per file — and so states a per-case rate that the file repeats
+ * 45 times. Read literally it turns 4.4 per cent of nightly runs red with a sound generator, and
+ * that cost one investigation and one retracted explanation (E-993, E-995). The 0.001 is kept and
+ * spent on the file instead. Section 6 has not been amended; this is reported, not settled. */
 const FILE_FALSE_FAILURE_RATE = 0.001;
 
 const CHARACTER_POSITION_CASES = TOKEN_CHARACTERS - 1;
