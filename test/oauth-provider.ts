@@ -194,6 +194,8 @@ export function oauthConfigFor(input: {
 	readonly trusted?: boolean;
 	readonly storeTokens?: boolean;
 	readonly responseMode?: "query" | "form_post";
+	/** The shape `microsoft` ships in: a JWKS to verify against and no issuer to compare (E-585). */
+	readonly omitIssuer?: boolean;
 }): OAuthConfig {
 	return {
 		providers: {
@@ -207,7 +209,10 @@ export function oauthConfigFor(input: {
 				emailClaim: "email",
 				emailVerifiedClaim: "email_verified",
 				...(input.openIdConnect
-					? { issuer: PROVIDER_ORIGIN, jwksUri: `${PROVIDER_ORIGIN}/jwks` }
+					? {
+							jwksUri: `${PROVIDER_ORIGIN}/jwks`,
+							...(input.omitIssuer === true ? {} : { issuer: PROVIDER_ORIGIN }),
+						}
 					: {}),
 				...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
 			},

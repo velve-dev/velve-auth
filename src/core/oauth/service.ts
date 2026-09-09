@@ -107,9 +107,29 @@ function providerOfCallback(providers: ProviderTable, id: string): ResolvedProvi
 	return provider;
 }
 
-/** RFC 9207: an `iss` that no configured issuer answers for is refused rather than passed over. */
+/** RFC 9207, the case a configured issuer settles before anything is exchanged. */
 function assertIssuerMatches(provider: ResolvedProvider, iss: string | null): void {
-	if (iss !== null && iss !== provider.issuer) {
+	if (iss !== null && provider.issuer !== null && iss !== provider.issuer) {
+		throw new ConcealedError("issuer_mismatch");
+	}
+}
+
+/**
+ * A provider whose issuer is the tenant's — `microsoft` is the one this library ships — has no
+ * configured value to compare, so the ID token answers for the parameter instead: the callback's
+ * `iss` must be the `iss` the signed token carries. Where no signed token was read, nothing can
+ * answer and the flow is refused rather than passed over (E-585).
+ */
+function assertClaimsAnswerForTheIssuer(input: {
+	readonly provider: ResolvedProvider;
+	readonly iss: string | null;
+	readonly claims: Record<string, unknown>;
+	readonly fromIdToken: boolean;
+}): void {
+	if (input.iss === null || input.provider.issuer !== null) {
+		return;
+	}
+	if (!input.fromIdToken || input.claims.iss !== input.iss) {
 		throw new ConcealedError("issuer_mismatch");
 	}
 }
@@ -185,15 +205,30 @@ export function createOAuthService(input: {
 		provider: ResolvedProvider,
 		tokens: ProviderTokens,
 		nonce: string | null,
-	): Promise<Record<string, unknown>> {
+	): Promise<{ readonly claims: Record<string, unknown>; readonly fromIdToken: boolean }> {
 		if (provider.jwksUri !== null && tokens.idToken !== null) {
-			return claimsOfIdToken({ fetch: outbound, provider, idToken: tokens.idToken, nonce });
+			return {
+				claims: await claimsOfIdToken({
+					fetch: outbound,
+					provider,
+					idToken: tokens.idToken,
+					nonce,
+				}),
+				fromIdToken: true,
+			};
 		}
 		// A minted nonce that no ID token answered cannot be compared, and an uncompared nonce fails closed.
 		if (nonce !== null) {
 			throw new ConcealedError("nonce_mismatch");
 		}
-		return claimsFromUserInfo({ fetch: outbound, provider, accessToken: tokens.accessToken });
+		return {
+			claims: await claimsFromUserInfo({
+				fetch: outbound,
+				provider,
+				accessToken: tokens.accessToken,
+			}),
+			fromIdToken: false,
+		};
 	}
 
 	async function createAccountFor(
@@ -399,10 +434,9 @@ export function createOAuthService(input: {
 				code: arrival.code,
 				codeVerifier: await verifierOf(flow),
 			});
-			const account = providerAccountOf(
-				await claimsOfProvider(provider, tokens, flow.nonce),
-				provider,
-			);
+			const read = await claimsOfProvider(provider, tokens, flow.nonce);
+			assertClaimsAnswerForTheIssuer({ provider, iss: arrival.iss, ...read });
+			const account = providerAccountOf(read.claims, provider);
 			const resolved = await resolveAccount(
 				provider,
 				account,
