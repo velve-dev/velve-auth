@@ -4118,6 +4118,16 @@ columns are a bearer artefact good for the flow's ten-minute lifetime that mints
 a session against an account whose sessions were all deleted — which is the
 opposite of what a revocation is for.
 
+**A refused link writes no identity either.** The identity row and the session
+replacement are one transaction, so they commit together or not at all. That
+matters because a linked identity is a *sign-in method* — `identity.unlink`
+counts it, and it outlives any session — so a link that survived a revocation
+by leaving a credential behind would be the same failure with a durable artefact
+instead of a session. Both calls to the provider are finished before the
+transaction opens, so it never waits on a third party, and a `beforeSessionCreate`
+veto is asked before it opens at all: a plugin that refuses leaves neither the
+identity nor the session written.
+
 Two consequences of that rule are worth stating outright. **Two link flows
 started from the same session cannot both complete:** the first replaces that
 session, so the second names a row that no longer exists and is refused, and the
@@ -4175,11 +4185,13 @@ never reads them.
    otherwise from the userinfo endpoint. A flow that minted a nonce and received
    no ID token fails rather than continuing unchecked.
 7. Resolves the identity by `(provider, subject)` and applies the linking rule.
+   For a link flow this is deferred to step 8, so that the identity row and the
+   session replacement commit together.
 8. Issues a session — or, where the account has a second factor enrolled, a
    pending authentication instead — and answers 302 to the stored path. A link
-   flow replaces the session named on the flow row rather than adding a second
-   one, leaves the account's other sessions untouched, and is refused when the
-   named session is no longer there.
+   flow writes the identity and replaces the session named on the flow row in a
+   single transaction, leaves the account's other sessions untouched, and is
+   refused — writing neither — when the named session is no longer there.
 
 Every failure between steps 2 and 6 answers `oauth_flow_invalid` (400) to the
 caller and carries its own reason in the log line: `state_not_found`,
