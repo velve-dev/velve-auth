@@ -108,10 +108,8 @@ function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
 export function registerPluginErrorCodes(
 	definitions: Readonly<Record<PluginErrorCode, PluginErrorDefinition>>,
 ): void {
-	for (const [code, definition] of Object.entries(definitions) as [
-		PluginErrorCode,
-		PluginErrorDefinition,
-	][]) {
+	const entries = Object.entries(definitions) as [PluginErrorCode, PluginErrorDefinition][];
+	for (const [code, definition] of entries) {
 		if (!isPluginErrorCode(code)) {
 			throw new TypeError(`${code} is a core error code and cannot be redefined`);
 		}
@@ -128,10 +126,13 @@ export function registerPluginErrorCodes(
 		) {
 			throw new TypeError(`${code} is already registered with a different answer`);
 		}
+	}
+	for (const [code, definition] of entries) {
 		PLUGIN_ERRORS.set(code, definition);
 	}
 }
 
+/** Not exported from the package: the registry is process-wide, so a public reset is a way for one caller to erase another's codes. */
 export function forgetPluginErrorCodes(): void {
 	PLUGIN_ERRORS.clear();
 }
@@ -151,6 +152,11 @@ export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 	}
 	return PLUGIN_ERRORS.get(code) ?? UNREGISTERED;
 }
+
+/** The one enumeration of the union, so `instance.ts` keeps no second copy of the 25 codes. */
+export const VELVE_ERROR_CODES: readonly VelveErrorCode[] = Object.keys(
+	MESSAGE_BY_ERROR_CODE,
+) as VelveErrorCode[];
 
 export class VelveError extends Error {
 	readonly code: AnyErrorCode;

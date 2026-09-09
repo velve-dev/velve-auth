@@ -67,6 +67,11 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 			"an entry in trustedProviders, which is the third of S-LINK-2's three conditions, or storeTokens: true",
 	},
 	{
+		option: "fetch",
+		safeDefault: "globalThis.fetch",
+		weakenedBy: "any other implementation, because it sees every outbound provider request",
+	},
+	{
 		option: "plugins",
 		safeDefault: "[]",
 		weakenedBy: "any entry, because a hook can refuse a sign-in the core would have allowed",

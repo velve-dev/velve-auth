@@ -129,6 +129,8 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly rateLimit?: Partial<RateLimitConfig>;
 	readonly email?: EmailConfig;
 	readonly oauth?: OAuthConfig;
+	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
+	readonly fetch?: typeof globalThis.fetch;
 	readonly plugins?: readonly VelvePlugin[];
 	readonly webauthn?: WebAuthnConfig;
 	readonly totp?: Partial<TotpConfig>;

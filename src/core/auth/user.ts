@@ -1,3 +1,4 @@
+import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 
@@ -33,9 +34,9 @@ export interface NewUser {
 }
 
 /**
- * The three writing methods below are declared here rather than by the feature that first needs
- * one, because `oauth` needs creation for S-LINK-2's new account and `email-flows` needs both
- * address writes, and this is one interface and one returned literal (E-719).
+ * S-OWNER-7: the two address writes are reached from a route, so each takes the `Actor` a proof of
+ * ownership produced rather than a user id a request could carry. `createUser` takes none because
+ * there is no owner yet to prove (E-730).
  */
 export interface UserRepository {
 	findUserById(userId: string): Promise<User | null>;
@@ -43,11 +44,11 @@ export interface UserRepository {
 	findUserByUsernameKey(usernameKey: string): Promise<User | null>;
 	createUser(input: NewUser): Promise<User>;
 	setEmailVerifiedAt(input: {
-		readonly userId: string;
+		readonly actor: Actor;
 		readonly verifiedAt: Date | null;
 	}): Promise<void>;
 	updateEmail(input: {
-		readonly userId: string;
+		readonly actor: Actor;
 		readonly email: string;
 		readonly emailVerifiedAt: Date | null;
 	}): Promise<void>;
@@ -148,21 +149,21 @@ export function createUserRepository(options: {
 			return toUser(row);
 		},
 
-		async setEmailVerifiedAt({ userId, verifiedAt }) {
+		async setEmailVerifiedAt({ actor, verifiedAt }) {
 			await options.driver.query(
 				`UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
 				SET email_verified_at = $2, updated_at = now()
 				WHERE id = $1`,
-				[userId, verifiedAt],
+				[actor, verifiedAt],
 			);
 		},
 
-		async updateEmail({ userId, email, emailVerifiedAt }) {
+		async updateEmail({ actor, email, emailVerifiedAt }) {
 			await options.driver.query(
 				`UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
 				SET email = $2, email_verified_at = $3, updated_at = now()
 				WHERE id = $1`,
-				[userId, email, emailVerifiedAt],
+				[actor, email, emailVerifiedAt],
 			);
 		},
 

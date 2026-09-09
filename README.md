@@ -134,9 +134,9 @@ option of both functions.
 
 ### Third-party sign-in
 
-Not built yet. The configuration is declared — `oauth` takes the fourteen
-providers of architecture 3.10 plus `genericOAuth`, `trustedProviders` and
-`storeTokens` — and no route reads it.
+Not built yet. The configuration is declared — `oauth.providers` takes the
+fourteen providers of architecture 3.10 by name and any other id with its own
+endpoints, beside `trustedProviders` and `storeTokens` — and no route reads it.
 
 ### Email flows
 

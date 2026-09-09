@@ -944,7 +944,7 @@ that declaration; the client is derived from the same types.
 | `method` | `"GET" \| "POST"` | `GET` is for reading routes only. |
 | `path` | `string` | Absolute, no empty segments, no trailing slash. A `:name` segment captures a path parameter into the input. |
 | `input` | `ObjectValidator<Input>` | Built from `object()`, `string()` and `optional()`. A `POST` body with an undeclared key is rejected; on a `GET` route the undeclared query parameters are ignored, because providers append their own to the OAuth callback. |
-| `errors` | `readonly VelveErrorCode[]` | The codes this route may produce. A contract, not a comment. |
+| `errors` | `readonly AnyErrorCode[]` | The codes this route may produce. A contract, not a comment. `AnyErrorCode` is `VelveErrorCode` widened by the namespaced form a plugin registers; a core route declares core codes only. |
 | `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | Who may call, not what may be read. `session` resolves the session cookie or fails with `session_required`; `pending` resolves `__Host-velve_pending` into the account it names, and only the four routes of 3.6 declare it (S-CACHE-4); `server_only` has no HTTP route and answers 404. |
 | `pendingCookie` | `"hidden" \| "readable"` (optional) | Whether the route sees the value of `__Host-velve_pending`, which is a different question from whether it is authorised by it. Absent means `hidden`. `caller: "pending"` implies `readable`, and a declaration that says `hidden` there is refused at definition. A `readable` route with another caller — `GET /pending`, `POST /pending/cancel` — receives `context.pendingToken` and no authority. |
 | `freshness` | `"not_required" \| "required"` | `required` needs `caller: "session"` and fails with `freshness_required` outside the freshness window. |
@@ -1234,9 +1234,11 @@ the second.
 
 ### Error codes
 
-Every failure carries one of 25 stable codes. The status, the message and the
-mapping from internal reason to visible code live in
-`src/core/http/error-map.ts`, and no other module decides what a caller sees.
+Every failure of the core carries one of 25 stable codes. The status, the
+message and the mapping from internal reason to visible code live in
+`src/core/http/error-map.ts`, and no other module decides what a caller sees. A
+plugin adds codes of its own without widening that union; they are described
+under [A plugin's own codes](#a-plugins-own-codes) below.
 
 | Code | Status | Code | Status |
 |---|---|---|---|
@@ -1253,6 +1255,9 @@ mapping from internal reason to visible code live in
 | `invalid_pending_authentication` | 401 | `username_taken` | 409 |
 | `too_many_factor_attempts` | 429 | `username_invalid` | 400 |
 | `internal_error` | 500 | | |
+
+This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
+which are not part of that union and are resolved separately.
 
 `account_disabled` never appears while signing in — a disabled account is
 indistinguishable from a wrong password there (L-4). It appears only when an
@@ -1281,6 +1286,51 @@ An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `reason: "unhandled_exception"` and the exception's own message in a separate
 `cause` field, so the 500 is diagnosable from the log alone. A `log` that throws
 is swallowed: a failing log sink must not cost the caller its answer.
+
+### A plugin's own codes
+
+Architecture 3.11 lets a plugin contribute error codes, and 3.15 G types them
+`` `${Id}.${string}` ``. They do not enter `VelveErrorCode`: that union stays a
+closed literal so that a `switch` over it stays exhaustive and the two tables
+above stay total maps the compiler checks. One resolver answers both kinds.
+
+```ts
+type PluginErrorCode = `${string}.${string}`
+type AnyErrorCode = VelveErrorCode | PluginErrorCode
+
+interface PluginErrorDefinition { readonly httpStatus: number; readonly message: string }
+
+declare function registerPluginErrorCodes(
+  definitions: Readonly<Record<PluginErrorCode, PluginErrorDefinition>>
+): void
+declare function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition
+```
+
+| Name | Meaning |
+|---|---|
+| `PluginErrorCode` | Any code carrying a namespace: one dot, non-empty on both sides. A plugin's own codes all begin with its `id`, which `PluginRoute<Id>` enforces at the type level. |
+| `AnyErrorCode` | What a route may declare in `errors` and what `VelveError` accepts. |
+| `PluginErrorDefinition` | The two things the outside learns about a code: the HTTP status and the message. Nothing else is registrable, because nothing else reaches a caller. |
+| `registerPluginErrorCodes(definitions)` | Records what each code answers with. Applied all-or-nothing: a definition that is refused leaves none of the batch registered. |
+| `resolveErrorCode(code)` | The single resolver. A core code reads the two tables above; a namespaced one reads the registry. |
+
+`registerPluginErrorCodes` refuses three things, each by throwing before it
+writes anything: a code that is already a core code, a status outside 4xx and
+5xx, and a second definition of a code already registered with a different
+answer.
+
+An unregistered namespaced code is **not** an error at the call site — it
+resolves to `internal_error`'s status and message, with the code itself still
+carried in the body. A plugin that raises a code it never registered therefore
+leaks no text of its own, and the caller sees a 500 rather than an invented
+answer.
+
+The registry is process-wide, not per instance. Two instances in one process
+share it, which is why a conflicting re-registration is refused rather than
+overwriting: the refusal turns a collision into a start-time error instead of
+letting whichever instance started last decide what the other's callers read.
+Two instances that genuinely need different text for the same code cannot both
+have it today.
 
 ## Rate limiting
 

@@ -53,8 +53,10 @@ describe("the gate's command lists", () => {
 
 	// A name written in a list is not a command that exists. E-495 fixed these lists by reading
 	// them and left one omission standing, so the reading is done here instead.
-	it("names in §5 exactly the commands the gate script runs", () => {
-		expect(sorted(gateList)).toEqual(sorted(gateSteps));
+	// §9 says pnpm gate runs everything "in the order the main gate runs it", so the order is part
+	// of the claim and a sorted comparison would pass for any permutation of it.
+	it("names in §5 exactly the commands the gate script runs, in that order", () => {
+		expect(gateList).toEqual(gateSteps);
 	});
 
 	it("names in §9 every command the gate runs, and nothing beyond the four it declares", () => {

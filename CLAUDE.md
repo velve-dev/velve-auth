@@ -208,13 +208,13 @@ repair anything itself.
 - `pnpm build` without errors **and without warnings**
 - `pnpm typecheck` under `strict`, no `any` in the public surface type
 - `pnpm lint` without findings, formatting applied
-- `pnpm knip` — no dead code, no unused export
+- `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
 - `pnpm check:lock-order` — `velve.user` is locked before any other table
-- `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
+- `pnpm knip` — no dead code, no unused export
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
 - `pnpm attw` — the types resolve under every module mode the package claims

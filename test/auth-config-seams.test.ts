@@ -9,7 +9,7 @@ import {
 	toErrorBody,
 	VelveError,
 } from "../src/core/http/error-map.js";
-import type { OAuthConfig } from "../src/core/oauth/config.js";
+import { KNOWN_PROVIDERS, type KnownProvider, type OAuthConfig } from "../src/core/oauth/config.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
@@ -33,6 +33,8 @@ afterAll(async () => {
 function start(overrides: Partial<VelveAuthConfig<"email">>): () => unknown {
 	return () => createVelveAuth(configFor({ database: connection as Driver, schema, ...overrides }));
 }
+
+const CREDENTIALS = { clientId: "id", clientSecret: "secret" };
 
 const GENERIC_ENDPOINTS = {
 	authorizationEndpoint: "https://issuer.example/authorize",
@@ -68,6 +70,44 @@ const AUDIT_PLUGIN: VelvePlugin<"audit"> = {
 	id: "audit",
 	errorCodes: ["audit.rejected"],
 };
+
+/**
+ * The array and the union are two statements of the same fourteen names, and the array is what
+ * decides at start whether an id needs its own endpoints. A name in the union and not in the array
+ * typechecks as configuration and then cannot start, which no other assertion here would see: the
+ * `Record` makes the compiler require every member, and the comparison makes the array match it.
+ */
+const EVERY_KNOWN_PROVIDER: Readonly<Record<KnownProvider, true>> = {
+	google: true,
+	github: true,
+	apple: true,
+	microsoft: true,
+	gitlab: true,
+	discord: true,
+	facebook: true,
+	linkedin: true,
+	twitch: true,
+	spotify: true,
+	slack: true,
+	notion: true,
+	zoom: true,
+	dropbox: true,
+};
+
+describe("the fourteen providers of 3.10 are one list, written twice", () => {
+	it("holds the same names in the array as in the union", () => {
+		expect([...KNOWN_PROVIDERS].sort()).toStrictEqual(Object.keys(EVERY_KNOWN_PROVIDER).sort());
+	});
+
+	it("starts for every one of them configured with credentials alone", () => {
+		for (const provider of KNOWN_PROVIDERS) {
+			expect(
+				start({ oauth: { providers: { [provider]: CREDENTIALS }, trustedProviders: [] } }),
+				provider,
+			).not.toThrow();
+		}
+	});
+});
 
 describe("the oauth configuration seam (3.15 A.8)", () => {
 	it("takes a named provider with credentials and nothing else", () => {

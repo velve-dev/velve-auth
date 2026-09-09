@@ -29,11 +29,7 @@ export interface ResolvedSessionView {
  */
 export type ResolutionMemo = WeakMap<Session, SessionResolution>;
 
-/**
- * The four seam modules take this and nothing else, so a field a wave-4 feature needs is a field
- * three writers would otherwise add to this one interface. The five below are declared here for
- * that reason and are read by no core route yet (E-719).
- */
+/** The three seam modules take this and nothing else, so the seven fields below are declared here rather than by whichever feature reaches for one first, and no core route reads any of them yet (E-719). */
 export interface RouteServices {
 	readonly sessions: SessionService;
 	readonly pending: PendingAuthenticationService;

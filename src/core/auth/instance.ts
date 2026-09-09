@@ -12,7 +12,7 @@ import {
 import { emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
-import { ConcealedError, type VelveErrorCode } from "../http/error-map.js";
+import { ConcealedError, VELVE_ERROR_CODES, type VelveErrorCode } from "../http/error-map.js";
 import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
@@ -45,33 +45,7 @@ const MILLISECONDS_IN_A_SECOND = 1000;
 
 const NO_SINK: HttpEnvironment["log"] = () => undefined;
 
-const ERROR_CODES: readonly VelveErrorCode[] = [
-	"invalid_input",
-	"origin_not_allowed",
-	"rate_limited",
-	"invalid_credentials",
-	"account_disabled",
-	"session_required",
-	"freshness_required",
-	"invalid_token",
-	"invalid_factor_code",
-	"invalid_recovery_code",
-	"invalid_pending_authentication",
-	"too_many_factor_attempts",
-	"password_unacceptable",
-	"username_taken",
-	"username_invalid",
-	"factor_not_enrolled",
-	"factor_already_enrolled",
-	"last_sign_in_method",
-	"identity_already_linked",
-	"provider_not_configured",
-	"oauth_flow_invalid",
-	"oauth_provider_error",
-	"webauthn_challenge_invalid",
-	"webauthn_credential_rejected",
-	"internal_error",
-];
+const ERROR_CODES = VELVE_ERROR_CODES;
 
 export interface SessionNamespace {
 	resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
@@ -211,6 +185,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		clock,
 		oneTimeTokens,
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
+		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
 		...(config.email === undefined ? {} : { email: config.email }),
 		...(config.plugins === undefined ? {} : { plugins: config.plugins }),
 	};

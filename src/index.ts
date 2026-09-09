@@ -73,7 +73,6 @@ export type {
 export type { Clock } from "./core/http/environment.js";
 export {
 	type AnyErrorCode,
-	forgetPluginErrorCodes,
 	type PluginErrorCode,
 	type PluginErrorDefinition,
 	registerPluginErrorCodes,

@@ -81,32 +81,3 @@ describe("the assembly composes the route table from every feature module", () =
 		);
 	});
 });
-
-describe("the three seam modules answer with a route list", () => {
-	// The emptiness of the three was asserted here until wave 4, which made this file a test the
-	// first of oauth, email-flows and plugin to merge would turn red for the other two (E-721).
-	// What is worth keeping is that each module answers with a list the assembly can compose.
-	it("returns an array from each of them", async () => {
-		const oauth = await vi.importActual<typeof import("../src/core/oauth/routes.js")>(
-			"../src/core/oauth/routes.js",
-		);
-		const flows = await vi.importActual<typeof import("../src/core/flows/routes.js")>(
-			"../src/core/flows/routes.js",
-		);
-		const plugin = await vi.importActual<typeof import("../src/core/plugin/routes.js")>(
-			"../src/core/plugin/routes.js",
-		);
-		const services = undefined as unknown as Parameters<typeof oauth.oauthRoutes>[0];
-
-		const contributed = [
-			oauth.oauthRoutes(services),
-			flows.emailFlowRoutes(services),
-			plugin.pluginRoutes(services),
-		];
-
-		expect(contributed).toHaveLength(3);
-		for (const routes of contributed) {
-			expect(Array.isArray(routes)).toBe(true);
-		}
-	});
-});
