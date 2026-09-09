@@ -4037,12 +4037,12 @@ Nine faults were planted before the check was trusted, each with its outcome pre
 
 **Rejected.** Raising it to 2, which is what the rule says on a literal reading of "every change".
 
-**Reason.** Version 1 has never been anywhere: the merge base carries no version line at all, and the check measures against the merge base rather than against the previous commit. Raising per commit would publish numbers no reader ever saw and none could compare against — this branch alone would have shipped as version 4. So the unit is the change that merges, and §6 now says so in a sentence of its own rather than leaving the rule to be read literally and worked around in practice.
+**Reason.** Version 1 has never been anywhere: the merge base carries no version line at all, and the check measures against the merge base rather than against the previous commit. Raising per commit would publish numbers no reader ever saw and none could compare against — this branch alone would have shipped as version 7. So the unit is the change that merges, and §6 now says so in a sentence of its own rather than leaving the rule to be read literally and worked around in practice.
 
 **Price.** §6's rule was written this afternoon and is amended in the same branch that wrote it, so it never existed in the form the earlier commits were made under. Nothing detects the case the sentence now permits being stretched: a branch that runs for a week and changes the skill's method three times still raises the version once, and whether that is one change is a judgement no check makes.
 
 ### The sweep read for lists and missed one wearing a comma
-`E-890` · skillver · skill content, corrected
+`E-890` · skillver · skill content, correction
 
 **Context.** The gate found four facts still standing after the sweep. The one that matters: the migration advice said *everything the source held that Velve Auth deliberately does not hold — profile fields, roles, organisations — lands in the application's own tables or is dropped on purpose.* Two of those three are right and one is false today. Architecture 3211 maps Supabase's `identity_data` to `velve.identity.profile` unchanged as `jsonb`, 3338 does the same for the whole of Clerk's `external_accounts[i]`, and the column is annotated *raw claims; the application reads them, the library does not.* Only user-record metadata — `raw_user_meta_data`, and the `full_name` and `avatar_url` inside it — has no target. So the passage told a reader to drop data the importer would have carried across, in the one place in the file where being wrong costs data rather than an argument. Earlier in the same file, §3a warns that *profile data* is the exclusion with a line drawn inside it and says to find the line before refusing a request to read a provider's claims; this passage then crossed that line itself. It also contradicts two sentences that say no list of exclusions is reproduced here.
 
@@ -4053,7 +4053,7 @@ Nine faults were planted before the check was trusted, each with its outcome pre
 **Price.** All four were found by a reader, and nothing measures the rule they break. §1 states that the skill carries no fact about the library and no check reads §1; `check:skill-version` measures whether the version moved and `check:codex-skill` whether the two files agree, and a false sentence satisfies both. The next fact will enter the way this one survived — as a clause in a sentence about something else — and the only defence named here is knowing that shape.
 
 ### §3b has an offline answer now, and E-880's Price was written as though it did not
-`E-891` · skillver · skill content, corrected
+`E-891` · skillver · skill content, correction
 
 **Context.** The Price of `E-880` records that the skill can no longer refuse anything without network access, where before it could refuse thirteen things from memory, and calls that the intended trade. That is true of §3a, whose refusals genuinely depend on reading a document. It was written as though it were true of §3b as well, and §3b is the half the file says is not the user's to overrule. Offline, §1's rule to stop and ask for the sources collides with §3b's rule to name the requirement, and the outcome is *please clone the repository* in answer to *disable the origin check, it's only local development.*
 
@@ -4075,7 +4075,7 @@ Nine faults were planted before the check was trusted, each with its outcome pre
 **Price.** The shared text is now one degree vaguer at the step where a reader most wants a concrete instruction, and the agent has to have read the header to complete step 5 — a reader who skips it says nothing about when the update takes effect at all. That is the same indirection `E-884` already priced, paid a second time in the same section.
 
 ### A fact about the tool, asserted from inference, in the file about not doing that
-`E-893` · skillver · skill content, corrected
+`E-893` · skillver · skill content, correction
 
 **Context.** The skill's header said *Claude Code must be restarted before a new version takes effect, because skills are loaded at start; until it restarts, the old file is the one running.* `README.md` said the same, and `E-884` wrote it into the log as the thing that makes the two skill files differ. The documentation says otherwise: Claude Code watches the skill directories and picks up an edited `SKILL.md` inside the running session, identically for the personal and the project directory, and there is no reload command for skills because none is needed. There is one exception and it lands on the install case rather than the update case — a **top-level skills directory that did not exist when the session started** is not being watched, so the very first install, the one whose own instructions run `mkdir -p ~/.claude/skills/velve-auth`, does need one restart. So the sentence was wrong for the case it was written for and accidentally right for a case it did not describe.
 
@@ -4087,7 +4087,7 @@ Nobody read it. It was inferred from *skills load at start*, which is a plausibl
 
 **Price.** The corrected passage has a branch in it where the wrong one had none, and the agent has to know which side it is on. That is answerable — it is the one running the install, so it knows whether the directory had to be created — and the header now says to answer it, which is a third thing §0 step 5 delegates to a paragraph the reader may skip. The Context of `E-884` states the old claim as fact, and is not edited; this entry is its correction. And the rule this produces is the weaker kind: it forbids inference, and nothing detects an inference written confidently — which is exactly how the sentence it is named after got in.
 
-### Six, not four, and the larger number makes the case better
+### The commit count under the version rule was too low, which understated its own case
 `E-894` · skillver · versioning, correction
 
 **Context.** `E-889` argues that the version stays at 1 because raising it per commit would publish numbers no reader ever saw, and offers as its evidence that this branch alone would have shipped as version 4. Seven commits touch a skill file. `git log origin/main..HEAD -- CLAUDE-SKILL.md CODEX-SKILL.md` lists seven; the number was written when four of them existed and was not revisited when the rest landed.
@@ -4123,7 +4123,7 @@ Two smaller things in the same entry are weaker than they sound. The rule was pu
 **Price.** `check:skill-version` is covered by nothing but its plants, and so are the refusal paths of both checks — an unresolvable base, no common ancestor, a skill file absent at `HEAD`. That is deferred, and the owner is whoever next needs the throwaway-repository harness, which is `check:log-append` at least as much as this. Two of the repository's five older checks are in the same position, so the unevenness here is the standard as it already stood; that is an explanation and not a defence.
 
 ### The shape E-890 named was searched for, and there was one more
-`E-897` · skillver · skill content, corrected
+`E-897` · skillver · skill content, correction
 
 **Context.** `E-890` said the exclusion list it removed was missed because it did not look like a list — a subordinate clause set off by dashes, inside a sentence about the user's own application — and named that as the shape to search for next. The search found one. *"Their own mailer behind the mail callback"* is three items in a dash-clause inside a sentence about where a feature belongs, and later in the same file the mail seam is described as not something to quote from memory. Warn in one place, cross in another: the structure of the removed passage exactly.
 
@@ -4147,3 +4147,18 @@ A second correction went in the same commit. The sentence written to repair `E-8
 **Reason.** The recurrence is what needs an entry, because it is not a number. **A count of a branch's own commits cannot be finished until the branch is**, so any entry stating one is stale from the moment it is written unless it happens to be the last commit — and no writer knows which commit is the last one while making it. That is a property of the measurement rather than of anyone's care, and it is the third count on this branch that was written as though the thing it counted had stopped moving.
 
 **Price.** Nothing checks it, and the obvious check cannot exist: a test comparing a number in `CASE-STUDY.md` against `git log` would be red on every branch that mentions its own commit count, right up to the moment it merges, which is a check nobody could keep green. The honest mitigation is smaller and is not applied here — a count of the branch's own commits belongs in the pull request, which is rewritten as the branch moves, rather than in the log, which is not. `E-889` and `E-894` both put one in the log; this entry leaves them there and says why they will not stay true.
+
+### E-898 understated its own mitigation and claimed a little more than it needed
+`E-899` · skillver · versioning, correction
+
+**Context.** The Price of `E-898` says the honest mitigation — that a count of a branch's own commits belongs in the pull request, which is rewritten as the branch moves, rather than in the log, which is not — "is not applied here". It is applied. The pull request body states the count and has stated the current one at every tip since it was written, so the mitigation exists in exactly the place the entry prescribes, and what remains in the log is two historical numbers rather than the live one.
+
+Its Reason is also a little wider than it needs to be. *"Any entry stating one is stale from the moment it is written"* covers counts that are perfectly finishable: *"the first four commits removed the facts"* is a count over commits that have already happened and cannot change. What cannot be finished before a branch ends is a count over the branch's **whole** history.
+
+**Rejected.** Restating either in place. `E-894` drew the line this branch has been working to — a bare number is restated where it stands, a correction carrying an argument gets its own entry — and both of these are claims about what was done and how far a rule reaches, which is the second kind. Also rejected: leaving the understatement on the ground that underclaiming is the safe direction to be wrong in. It is the safe direction and it still gives the wrong answer, because a mitigation applied with a residue explained is a different thing from a risk named and left, and `E-888` is the entry that made that distinction load-bearing in this range.
+
+**Reason.** Both corrections move in the direction that strengthens `E-898`, which is the property `E-894` identified as making a correction free of rationalisation risk: they cost the writer nothing to admit and they leave the entry with more than it had. The narrower claim is also the more useful one — it tells a future writer which counts are safe to put in the log, where the wider one told them that none are.
+
+**Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
+
+One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
