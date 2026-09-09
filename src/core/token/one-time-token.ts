@@ -1,23 +1,27 @@
+import type { RedeemedOneTimeToken } from "../db/actor.js";
 import type { OneTimeTokenRepository } from "../db/repositories/token.js";
-import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
+import type { OneTimeTokenPayload, OneTimeTokenPurpose, OneTimeTokenSubject } from "./purpose.js";
 import { createSecretToken, hashSecretToken, type SecretToken } from "./secret-token.js";
 
-export interface OneTimeTokenRequest {
+/** `userId: null` asks for the cover artefact an address that names no account is answered with (E-597). */
+export type OneTimeTokenRequest = {
 	readonly purpose: OneTimeTokenPurpose;
-	readonly userId: string;
 	readonly payload?: OneTimeTokenPayload;
-}
+} & OneTimeTokenSubject;
 
 export interface IssuedOneTimeToken {
 	readonly token: SecretToken;
-	readonly expiresAt: string;
+	readonly expiresAt: Date;
 }
 
-export interface OneTimeTokenRedemption {
+/**
+ * E-234: the removal is what proved the owner, so the redemption carries that provenance rather
+ * than a bare string, and `actorOfRedeemedOneTimeToken` is reachable from it without a cast.
+ */
+export type OneTimeTokenRedemption = RedeemedOneTimeToken & {
 	readonly purpose: OneTimeTokenPurpose;
-	readonly userId: string;
 	readonly payload: OneTimeTokenPayload | null;
-}
+};
 
 export interface OneTimeTokens {
 	issue(request: OneTimeTokenRequest): Promise<IssuedOneTimeToken>;
@@ -29,13 +33,12 @@ export interface OneTimeTokens {
 
 export function createOneTimeTokens(repository: OneTimeTokenRepository): OneTimeTokens {
 	return {
-		async issue({ purpose, userId, payload }) {
+		async issue(request) {
 			const token = createSecretToken();
 			const { expiresAt } = await repository.replaceOneTimeToken({
+				...request,
 				tokenSha256: hashSecretToken(token),
-				purpose,
-				userId,
-				payload: payload ?? null,
+				payload: request.payload ?? null,
 			});
 			return { token, expiresAt };
 		},
@@ -48,7 +51,7 @@ export function createOneTimeTokens(repository: OneTimeTokenRepository): OneTime
 			if (stored === null) {
 				return null;
 			}
-			return { purpose, userId: stored.userId, payload: stored.payload };
+			return { ...stored, purpose };
 		},
 	};
 }

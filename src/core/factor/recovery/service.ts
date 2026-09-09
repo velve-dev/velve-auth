@@ -68,7 +68,10 @@ export function createRecoveryCodeService(
 				if (candidates.length === 0) {
 					throw new ConcealedError("recovery_codes_never_generated");
 				}
-				if (!(await codes.consumeCode({ userId: resolution.userId, candidateHmacs: candidates }))) {
+				if (
+					(await codes.consumeCode({ userId: resolution.userId, candidateHmacs: candidates })) ===
+					null
+				) {
 					throw new ConcealedError("recovery_code_not_found");
 				}
 				return resolution;

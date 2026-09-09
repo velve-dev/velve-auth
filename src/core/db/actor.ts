@@ -4,6 +4,7 @@ declare const actorBrand: unique symbol;
 declare const resolvedSessionBrand: unique symbol;
 declare const redeemedOneTimeTokenBrand: unique symbol;
 declare const consumedOAuthFlowBrand: unique symbol;
+declare const consumedRecoveryCodeBrand: unique symbol;
 
 export type Actor = string & { readonly [actorBrand]: "an owner some proof named" };
 
@@ -42,4 +43,17 @@ export function actorOfRedeemedOneTimeToken(redeemed: RedeemedOneTimeToken): Act
 
 export function actorOfConsumedOAuthFlow(flow: ConsumedOAuthFlow): Actor {
 	return flow.userId as string as Actor;
+}
+
+/**
+ * E-234, third provenance: a row of `velve.recovery_code` that a redemption removed. 3.15 B.4's
+ * `password.redeemResetWithRecoveryCode` has no session and no one-time token, and the removal of
+ * the code is what proved the account is the caller's (E-612).
+ */
+export type ConsumedRecoveryCode = { readonly userId: UserId } & {
+	readonly [consumedRecoveryCodeBrand]: "produced by recovery code consumption";
+};
+
+export function actorOfConsumedRecoveryCode(consumed: ConsumedRecoveryCode): Actor {
+	return consumed.userId as string as Actor;
 }

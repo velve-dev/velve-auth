@@ -166,9 +166,35 @@ account it cannot name.
 
 ### Email flows
 
-Not built yet. The confirmation link, the address change, the password reset and
-the magic link are one-time artefacts over a store that exists; the flows over
-them do not.
+Built. Eleven routes: sign-up with and without a password, the magic link and
+its redemption, the confirmation link, the address change and both redemptions,
+the mailed password reset and its redemption, and the reset that spends a
+recovery code instead of an address.
+
+The library sends nothing itself. It calls `email.send` with one of six message
+kinds and the token, and the application builds the URL and delivers it — so no
+`redirectTo` from a request has to be validated against an allowlist, because
+none exists. A `send` that throws takes the artefact with it, and on sign-up the
+account too; it runs after the transaction has committed, so a slow callback
+never holds a lock on the account it is about.
+
+Two answers are deliberately uninformative. A registration on an address that
+already has an account answers byte for byte as a free one does, because it runs
+the same registration and rolls it back; the difference is that a message goes to
+the existing address instead. A registration that loses a race to the same
+address is that answer too, so simultaneous submissions of one form come back
+alike. Telling a taken address from a free one takes a second request —
+resolving the session the answer hands back — and no further. In
+`username_email` there is a second identifier and the cover does not durably
+claim it: a registration on a taken address leaves the name it sent free, where
+one on a free address takes it, so a second registration of that name tells the
+two apart. A reset or magic
+link for an address that names no account runs the same statements as one that
+does, calls `send` the same single time, and waits the same, because the two
+serialise on the address and neither takes a lock on the account's row. And when
+an address is confirmed for the first time, a password that was set in a
+different session is deleted and every session revoked — the account-takeover
+path of GHSA-qq9h-g4jm-xgf3, closed by construction rather than by a flag.
 
 ### Plugins
 

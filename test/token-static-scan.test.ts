@@ -77,7 +77,7 @@ function predicatesIn(sql: string): readonly string[] {
 
 const statements = statementsIn(repositorySource);
 const tokenStatements = statements.filter((statement) => /\$\{table\}/.test(statement));
-const ownerStatements = statements.filter((statement) => /\bFOR UPDATE\b/.test(statement));
+const ownerStatements = statements.filter((statement) => /\$\{schema\}\.user\b/.test(statement));
 
 describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 	it("has more than nothing to scan", () => {
@@ -165,14 +165,16 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of fourteen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of sixteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
-		// Three more since wave 5: the flow row is reached by its state hash and the identity row by
-		// the pair that identifies it, neither of which an owner predicate could narrow (E-565).
-		expect(markers).toHaveLength(14);
-		expect(carrying).toHaveLength(8);
+		// Five more since wave 5, from two features: the flow row is reached by its state hash and
+		// the identity row by the pair that identifies it (E-565), and a first confirmation is
+		// reached by the account it is about, which is the owned row itself (E-607). No owner
+		// predicate could narrow any of them.
+		expect(markers).toHaveLength(16);
+		expect(carrying).toHaveLength(9);
 		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
 });
@@ -193,11 +195,12 @@ describe("nothing reads the row before removing it (S-RACE-2)", () => {
 
 	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259); it decides
 	// nothing about the row it precedes, which is what S-RACE-2 forbids.
-	it("reads only the owner row, and only to lock it", () => {
+	it("reads only the owner row, and takes no row lock while doing it", () => {
 		expect(ownerStatements.map(asWritten)).toStrictEqual([
-			"SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE",
+			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
 		]);
-		expect(ownerStatements[0]).toMatch(/\/\* locks: \$\{schema\}\.user \*\//);
+		expect(repositorySource).not.toMatch(/\bFOR (NO KEY )?UPDATE\b/);
 	});
 
 	it("consumes in a single statement with no statement before it", () => {
@@ -233,13 +236,21 @@ describe("a one-time artefact is a row, not a signed string (S-REPLAY-1)", () =>
 });
 
 describe("what the repository raises carries a code and no secret", () => {
-	it("raises nothing that is not a coded refusal", () => {
+	/**
+	 * The fourth raise is the driver-contract guard E-598 added, and it is not a refusal of anything
+	 * a caller sent: it fires when the driver hands back a `timestamptz` it did not decode, which
+	 * `auth/user.ts` and `db/repositories/session.ts` have always answered the same way. It carries no
+	 * value from the row, which is what this rule is about.
+	 */
+	it("raises nothing that is not a coded refusal or the driver-contract guard", () => {
 		const raises = repositorySource.match(/throw new [A-Za-z]+\([\s\S]*?\);/g) ?? [];
-		expect(raises).toHaveLength(3);
+		expect(raises).toHaveLength(5);
 		expect(
 			raises.filter(
 				(raise) =>
-					!/^throw new OneTimeTokenError\("one_time_token_[a-z_]+", (purpose|null)\);$/.test(raise),
+					!/^throw new OneTimeTokenError\("one_time_token_[a-z_]+", (purpose|null)\);$/.test(
+						raise,
+					) && raise !== 'throw new TypeError("the driver must decode timestamptz into a Date");',
 			),
 		).toStrictEqual([]);
 	});

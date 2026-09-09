@@ -42,7 +42,17 @@ export async function openPhc(keys: KeyProvider, row: PasswordCredentialRow): Pr
 
 export interface PasswordCredentialRepository {
 	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
-	write(input: { userId: string; phc: string; scheme: PasswordScheme }): Promise<void>;
+	/**
+	 * `setBySessionId` is required and never defaulted: L-12 reads an unrecorded provenance as a
+	 * different session, so a caller that omitted it would lose its user's password at the account's
+	 * next first confirmation. Answering `null` is allowed; not answering is not (E-626).
+	 */
+	write(input: {
+		userId: string;
+		phc: string;
+		scheme: PasswordScheme;
+		setBySessionId: string | null;
+	}): Promise<void>;
 	replaceIfUnchanged(input: {
 		userId: string;
 		previous: Uint8Array<ArrayBuffer>;
@@ -95,21 +105,22 @@ export function createPasswordCredentialRepository(
 					};
 		},
 
-		async write({ userId, phc, scheme }) {
+		async write({ userId, phc, scheme, setBySessionId }) {
 			assertSchemeMatchesCredential(phc, scheme);
 			const sealed = await sealPhc(options.keys, phc);
 
 			// S-OWNER-2: the conflict target is the owner column, and the predicate says so in the
 			// statement rather than leaving it to be inferred from the primary key (E-185).
 			const written = await options.driver.query(
-				`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme)
-				 VALUES ($1, $2, $3, $4)
+				`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
+				 VALUES ($1, $2, $3, $4, $5)
 				 ON CONFLICT (user_id) DO UPDATE
 				 SET phc = EXCLUDED.phc, key_version = EXCLUDED.key_version,
-				     scheme = EXCLUDED.scheme, updated_at = now()
+				     scheme = EXCLUDED.scheme, set_by_session_id = EXCLUDED.set_by_session_id,
+				     updated_at = now()
 				 WHERE credential.user_id = $1
 				 RETURNING user_id`,
-				[userId, sealed.ciphertext, sealed.keyVersion, scheme],
+				[userId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
 			);
 
 			// A conflict predicate that is false does not raise, it updates nothing; without this

@@ -3904,48 +3904,427 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
 
 ## Email flows
 
-Reserved for `email-flows` (wave 5). Architecture 3.7 and 3.15 B.1, B.4 and
-B.5: the artefacts that arrive by mail and are redeemed — the confirmation
-link, the address change, the password reset and the magic link — each with the
-deadline 3.7 fixes for it, and `S-LINK-4`, the rule that a first confirmation
-deletes a password set in a different session and revokes every session that
-predates it (L-12).
+Everything that carries a one-time artefact through an e-mail: the confirmation
+link, the address change, the password reset and the magic link, plus the two
+registration routes and the reset that spends a recovery code instead of an
+address.
 
-It stands here because everything it uses stands above it. Its artefacts are the
-one-time tokens of that chapter and its deadlines are read from there, the
-credential `S-LINK-4` deletes is the Passwords chapter's, and the sessions it
-revokes are the Sessions chapter's. What holds it below the two factor chapters
-is the result type: `signIn.magicLink.redeem` returns a `SignInResult`, whose
-`second_factor_required` branch carries `availableFactors` over `"totp"`,
-`"webauthn"` and `"recovery"` (3.15 C.1), so a magic link can end in the pending
-state offering a factor those chapters define rather than in a session. The reset
-family is not all mailed either — `password.redeemResetWithRecoveryCode` consumes
-a recovery code, which is documented two chapters above.
+The library builds no URLs and sends no mail. It calls `email.send` with a
+message that carries the token, and the application decides what the link looks
+like. That is why there is no `redirectTo` parameter anywhere in this chapter:
+a redirect target taken from a request would have to be checked against an
+allowlist, and the one that does not exist cannot be checked wrongly.
 
-`S-LINK-4`'s deletion is **unconditional**, and the last-way-in count of L-13 is
-not a guard on it. That count refuses exactly two operations, `webauthn.remove`
-and `identity.unlink`, and a confirmed address is excluded from it although a
-magic link works with one (3.15 B.7). L-12's attack is a pre-account whose only
-credential is the attacker's password, so a flow that declined to delete it for
-leaving no way in would fail closed on precisely the account the rule exists for.
+### The routes
 
-`T-LINK-4` pins that as a number rather than leaving it to reading: on the
-attacker path it requires `password_credential` at **0 rows**, every session
-created before the confirmation revoked, and the original password refused with
-`invalid_credentials` — and it runs on every commit. An implementation that adds
-the last-way-in check leaves 1 row and turns the case red. The counter-case in
-the same row is the one to keep beside it: the same registration with the
-confirmation redeemed **in the same session** keeps `password_credential` at 1
-row and leaves the session valid. What separates the two is the provenance of the
-password, not a count of credentials.
+Eleven rows of the route table. Three exist in every identity mode; the eight
+that need an address are absent in mode `username`, where a route that does not
+exist answers 404 rather than 403.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `email-flows`'
-partition of this file: that feature appends here and nowhere else, and removing
-this paragraph is the first thing it does.
+| Method | Path | Server method | Answer |
+|---|---|---|---|
+| POST | `/sign-up` | `auth.signUp.withPassword` | `SignUpResult` |
+| POST | `/sign-up/passwordless` | `auth.signUp.withoutPassword` | `SignUpResult` |
+| POST | `/password/redeem-reset-with-recovery-code` | `auth.password.redeemResetWithRecoveryCode` | `SetPasswordResult` |
+| POST | `/sign-in/magic-link/request` | `auth.signIn.magicLink.request` | 204 |
+| POST | `/sign-in/magic-link/redeem` | `auth.signIn.magicLink.redeem` | `SignInResult` |
+| POST | `/email/request-verification` | `auth.email.requestVerification` | 204 |
+| POST | `/email/redeem-verification` | `auth.email.redeemVerification` | `{ user }` |
+| POST | `/email/request-change` | `auth.email.requestChange` | 204 |
+| POST | `/email/redeem-change` | `auth.email.redeemChange` | `{ user }` |
+| POST | `/password/request-reset` | `auth.password.requestReset` | 204 |
+| POST | `/password/redeem-reset` | `auth.password.redeemReset` | `SetPasswordResult` |
 
-### Nothing is documented here yet
+The last eight are the ones that need an address.
 
-`email-flows` replaces this heading with its own sub-tree.
+### `auth.signUp.withPassword(input)` and `auth.signUp.withoutPassword(input)`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `email` | `string` | in modes `email` and `username_email` |
+| `username` | `string` | in modes `username` and `username_email` |
+| `password` | `string` | `withPassword` only |
+
+Both create the account and a session. `withPassword` writes the credential in
+the same transaction as the account and records `factors: ["password"]`;
+`withoutPassword` writes no credential and records no factors, for applications
+that begin with a passkey or a magic link.
+
+Errors: `invalid_input` when an address is malformed, `username_invalid` when a
+name fails the allowlist or the length rules, `username_taken` when the name is
+taken, `password_unacceptable` when the password fails the length policy or the
+`password.validate` hook.
+
+**A taken address is not an error.** `username_taken` exists because usernames
+are enumerable by construction (architecture 3.4) and the library says so. An
+address is not: a registration on one that already has an account answers with
+the same status, the same headers and a byte-identical body, and sends
+`sign_up_attempt_on_existing_account` to the existing address instead of
+`email_verification` to a new one.
+
+It answers identically because it **is** a registration. The collision path runs
+the same statements in the same order — the account, the session, the credential,
+the confirmation artefact — against an address built from the caller's own
+domain and a local part drawn at random, inside a transaction that is then rolled
+back. Nothing is fabricated, so no field can drift out of step with what a
+success answers.
+
+The consequence for the application: **the identifiers in that answer name
+nothing.** The `user.id` and the session token in a collision answer were rolled
+back with the rest, and resolving the session immediately afterwards yields
+`null`. An application that keys its own rows on `user.id` must resolve the
+session first, or read the account back through `auth.user.findByEmail` from a
+context that is allowed to. This is the cost of the cover; architecture 3.13
+accepts it, because the alternative is telling an unauthenticated caller which
+addresses have accounts.
+
+**An address that is taken while the registration runs is a taken address.**
+Occupancy is read before the transaction that inserts, so simultaneous
+registrations for one free address all read "free" and all but one of them meet
+the unique index. The one that wins commits; the others answer with the cover,
+byte for byte as they would have if the address had been taken before they
+started. Four callers submitting the same form at once therefore get four
+identical 200s and leave one account behind. A **username** taken in the same
+race still answers `username_taken`, because architecture 3.4 makes names
+enumerable and says so; which of the two indexes the race hit is asked for, not
+read out of the driver's error. The cover registration races on the same two
+indexes and is answered the same way — it keeps the name the caller sent and
+only the address is drawn afresh, so in `username_email` its insert can meet the
+name index too.
+
+**In `username_email` the cover does not durably claim the name.** It rolls
+back, so a registration on a taken address leaves the name it was sent free,
+where a registration on a free address takes it. Two sequential requests read
+that off: register `{email: <under test>, username: N}`, then register
+`{email: <fresh>, username: N}`. The second answers 200 when the first address
+was taken and `username_taken` when it was free. One concurrent batch reads the
+same bit: four registrations for one taken address sharing one name are all
+answered 200, where four for a free address answer one 200 and three
+`username_taken`. Closing it needs a cover that persists, which is a real account
+for every address an attacker guesses, so this is the residual the cover leaves
+in that mode — the same shape as the cover's session naming no row, one
+identifier further out.
+
+**For whoever amends the specification.** Three requirement clauses and one test
+threshold assert this property for `username_email`: `S-ENUM-3`, architecture
+3.13's *„der Unterschied wandert ausschließlich in die versendete E-Mail"*, 3.4's
+table row *„für die E-Mail ja"*, and `T-ENUM-3`'s *„0 abweichende Bytes"*. Two
+repairs are on the table and they do not cover the same ground. Permitting a
+normalisation for the echoed `username` closes `T-ENUM-3` and the body half of
+`S-ENUM-3`, because those are about the response bytes, and it is needed:
+`username` is unique, so the two probes cannot send the same one and the answer
+echoes what the caller sent. It closes **neither** 3.13 nor 3.4, because those
+are broken by the durable occupancy of the name after the request rather than by
+any byte in the response, and no normalisation of a response reaches a row. A
+repair that stops at the first therefore leaves the second standing, and the
+second is the one the leak is actually in.
+
+### `auth.signIn.magicLink.request(input)`
+
+| Parameter | Type |
+|---|---|
+| `email` | `string` |
+
+Returns `void`, and 204 over HTTP, whether or not the address names an account —
+a boolean would be the enumeration answer the whole flow exists to avoid. Both
+branches run the same statements and call `email.send` exactly once: a known
+address gets `magic_link` with a ten-minute token, an unknown one gets
+`request_for_unknown_address` with `requested: "magic_link"`, and the
+application decides whether that becomes a message or nothing.
+
+A request for an unknown address still writes a row in `velve.one_time_token`.
+It names no account, `expires_at` is the same ten minutes, and it can never be
+redeemed — a row with a NULL owner is answered exactly as no row is. It exists
+so that the two branches cost the same, and `auth.maintenance.sweep()` removes
+it like any other expired artefact.
+
+Unlike a request for a known address, it **supersedes nothing**. Each ownerless
+mint draws a fresh account identifier, so the delete that removes the account's
+earlier artefact of that purpose matches no row, and a repeated request for one
+unknown address leaves one row per attempt until the sweep. The rate limiters
+bound how fast that can be done; the one-live-token rule of section 3.7 does not,
+because it is written in terms of an account and there is none.
+
+Both branches also **wait the same**. Requests about one subject are serialised,
+so that a re-issue cannot be overtaken by a concurrent one, and the subject is
+the account where one is known and the submitted address where none is. Neither
+branch takes a lock on any row of `velve.user`: with a row lock, a request for a
+known address would queue behind a lock somebody else held on that account and a
+request for an unknown one would not, which architecture 5.3 (a) counts as an
+oracle whether or not the two run the same statements.
+
+### `auth.signIn.magicLink.redeem(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+
+Spends the token and answers with a `SignInResult`. Redeeming a magic link is a
+**confirmation of the address** and runs the rule below.
+
+The result is not always a session. If the account has TOTP, a WebAuthn
+credential or recovery codes, the answer is `second_factor_required` with the
+pending token and the factors on offer, exactly as a password sign-in would be:
+a link is a first factor, not a bypass. Otherwise it is `signed_in` with a new
+session whose `factors` is empty, because no factor of the five 3.5 enumerates
+was used.
+
+An expired token, a spent one, an invented one, a token minted for another
+purpose and a token belonging to a disabled account are one answer:
+`invalid_token`, byte for byte.
+
+### The first confirmation of an address (`S-LINK-4`, L-12)
+
+This is the rule the chapter exists for, and it runs on both routes that confirm
+an address — `signIn.magicLink.redeem` and `email.redeemVerification` — and on
+`email.redeemChange` when the account had never confirmed an address before.
+
+**When an address is confirmed for the first time, and the account's password
+credential was not written by the session that is confirming, the credential is
+deleted and every session of the account is revoked.**
+
+The attack it closes: an attacker registers the victim's address with a password
+they choose. They cannot confirm it. The victim later signs in by magic link,
+which proves control of the mailbox and confirms the address — and without this
+rule the attacker's password is still valid on a now-confirmed account. That is
+GHSA-qq9h-g4jm-xgf3, and CVE-2026-53516 is the same cause through OAuth.
+
+What decides it is `velve.password_credential.set_by_session_id`, a column this
+library adds beyond the schema chapter above. It holds the id of the session
+that stored the password, carries no foreign key, and is NULL when nothing
+recorded it.
+
+| Confirming request | `set_by_session_id` | Outcome |
+|---|---|---|
+| carries session S | S | credential and sessions kept |
+| carries session S | any other session | credential deleted, all sessions revoked |
+| carries session S | NULL | credential deleted, all sessions revoked |
+| carries no session | anything | credential deleted, all sessions revoked |
+| any | no credential at all | nothing deleted, nothing revoked |
+
+**NULL is read as a different session.** The rule has to fail towards deleting,
+because the account it exists for is one whose only credential is the
+attacker's — anything that keeps a credential it cannot vouch for keeps that
+one. Two consequences follow. A password imported from another system has no
+provenance and is deleted at its owner's first confirmation; those users need a
+reset, and `velve.password_reset_required` does not cover this case. And a
+session that cannot be resolved — expired, or belonging to a disabled account —
+counts as no session at all.
+
+The deletion is **not** guarded by the last-sign-in-method count of L-13. That
+count refuses `factor.webauthn.remove` and `identity.unlink` and nothing else; a
+guard here would decline to delete precisely on the account shape the attack
+produces, which is one credential and nothing else.
+
+The last row of the table is the one to hold on to when reading the code: an
+account that reaches its first confirmation with no password loses no session,
+because nothing was taken away from it.
+
+### `auth.email.requestVerification(input)`
+
+Takes no address. The one it confirms is the one on the account, read from the
+caller's session — an address as a parameter would be an open enumeration
+interface with a session in front of it. Requires a session; freshness is not
+required. Sends `email_verification` with a 24-hour token.
+
+### `auth.email.redeemVerification(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+
+Confirms the address on the account the token names — **only** the token names
+it; no input field and no cookie chooses the account. Answers `{ user }` with
+the account as it now stands. Runs the first-confirmation rule above, so a
+caller redeeming it in the session that signed up keeps its password and its
+session, and a caller redeeming it anywhere else does not.
+
+### `auth.email.requestChange(input)`
+
+| Parameter | Type |
+|---|---|
+| `newEmail` | `string` |
+
+Requires a session and freshness. Mints an `email_change` token carrying the
+normalised new address and sends `email_change` to **the new address**, with
+`previousEmail` naming the one the account has now.
+
+**No collision check happens here.** If `newEmail` belongs to another account
+the request still mints and still sends, and the answer is 204 either way. The
+collision is found an hour later when the token is redeemed, which is the only
+place it can be found without answering the question the caller asked. The
+consequence is that a confirmation link can arrive at an address whose owner did
+not ask for one; it cannot do anything, because redeeming it changes no rows.
+
+### `auth.email.redeemChange(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+
+Moves the address and sets `email_verified_at` to now — redeeming the link is
+the proof that the new address is reachable. If the address has been taken since
+the token was minted, **nothing changes and the answer is `invalid_token`**,
+byte for byte the answer an invented token gets.
+
+### `auth.password.requestReset(input)`
+
+| Parameter | Type |
+|---|---|
+| `email` | `string` |
+
+The reset counterpart of the magic-link request, and uniform in the same way:
+one code path, the same statements on both branches, `email.send` called exactly
+once — `password_reset` with a one-hour token for a known address,
+`request_for_unknown_address` with `requested: "password_reset"` for an unknown
+one. Returns `void` and 204.
+
+### `auth.password.redeemReset(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+| `newPassword` | `string` |
+
+Spends the token, revokes **every** session of the account, writes the new
+credential and issues a new session. There is no option that keeps the other
+sessions alive. The password is validated and hashed before the token is spent,
+so a password the policy refuses does not burn the link.
+
+`SetPasswordResult`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionToken` | `SessionToken` | new; the caller is signed in |
+| `session` | `Session` | the row it names |
+| `revokedOtherSessionsCount` | `number` | every session the account had |
+
+The count is every session, not every session but the caller's: a reset is not
+made from a session, so there is none to exclude.
+
+### `auth.password.redeemResetWithRecoveryCode(input)`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `email` / `username` / `emailOrUsername` | `string` | one field, decided by the identity mode |
+| `recoveryCode` | `string` | |
+| `newPassword` | `string` | |
+
+The way back into an account that has no address, which architecture 3.4
+requires in mode `username`. The code is consumed by `DELETE … RETURNING`, so
+fifty simultaneous attempts yield one winner, and no new codes are generated in
+its place — that is `factor.recovery.generate`.
+
+Everything that can fail answers `invalid_recovery_code`: a wrong code, an
+identifier that names no account, an account that never generated codes, an
+account whose codes were all spent, and a disabled account. As with the mailed
+reset, every session is revoked and a new one is issued.
+
+### Deadlines
+
+Fixed per purpose, from architecture 3.7, and **not configurable**.
+
+| Purpose | Lifetime | Minted by |
+|---|---|---|
+| `email_verify` | 24 hours | sign-up, `email.requestVerification` |
+| `password_reset` | 1 hour | `password.requestReset` |
+| `email_change` | 1 hour | `email.requestChange` |
+| `magic_link` | 10 minutes | `signIn.magicLink.request` |
+
+Requesting an artefact deletes the account's previous artefact of the same
+purpose in the same transaction, so a user who clicks "send it again" invalidates
+the first link.
+
+### `email.send` runs after the transaction, not inside it
+
+A `send` that throws fails the operation and takes the artefact with it — a reset
+token whose message never arrived is of use to nobody but an attacker. On
+sign-up the account goes with it too, so no account is left behind that nobody
+was told about.
+
+It is undone rather than rolled back. The transaction that wrote the artefact
+commits first, so everything it held is released **before** the application's
+callback is entered: a slow `send` cannot make another write of that account's
+rows wait for it. A `send` that throws is answered by spending the token through
+the one statement that spends tokens, and by deleting the account on the sign-up
+path.
+
+The difference from a rollback is one window: a process that dies between the
+commit and the compensation leaves a live artefact whose message never arrived.
+It expires on its own deadline like any other.
+
+### The six message kinds
+
+Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
+
+| Kind | Sent by | Carries a token |
+|---|---|---|
+| `email_verification` | sign-up on a free address, `email.requestVerification` | yes |
+| `password_reset` | `password.requestReset`, known address | yes |
+| `email_change` | `email.requestChange` | yes |
+| `magic_link` | `signIn.magicLink.request`, known address | yes |
+| `sign_up_attempt_on_existing_account` | sign-up on a taken address | **no** |
+| `request_for_unknown_address` | reset or magic link, unknown address | **no** |
+
+The fifth carries no token on purpose, and that satisfies `S-ENUM-4` rather
+than deviating from it: the library builds no URL on any path, so the
+confirmation link is the application's work too, and the sign-in link the
+requirement asks for is a link to the application's own sign-in page, which needs
+no artefact. Render "you already have an account — sign in" and link to it.
+
+### `velve.password_credential.set_by_session_id`
+
+| Column | Type | Notes |
+|---|---|---|
+| `set_by_session_id` | `uuid` | the session that stored the password; NULL means unknown |
+
+Beyond the schema in architecture 3.2 and 3.17, and created by migration 1 with
+the rest of the table. There is **no foreign key**: a cascade would delete the
+credential when the session it names is revoked, and a nulling one would erase
+the answer at the moment the first-confirmation rule asks for it — which is a
+moment at which that rule revokes sessions.
+
+Written by the sign-up routes and by both reset redemptions, each naming the
+session it has just issued — in the same statement that writes the credential,
+because `PasswordCredentialRepository.write` requires the field. A caller may
+answer `null`, and `null` is a different session, but it cannot decline to
+answer: a credential that could not say who stored it is one this rule cannot
+judge.
+
+### The types this feature exports
+
+Every method, parameter, route and error these declare is documented above under
+its `auth.*` name; the table says which name, so a reader who arrives at one of
+them from the package's exports lands in the right section.
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `SignUpNamespace<M>` | `{ withPassword; withoutPassword }` | `auth.signUp`, in every identity mode |
+| `MagicLinkNamespace` | `{ request; redeem }` | `auth.signIn.magicLink`, in modes `email` and `username_email` |
+| `EmailNamespace` | `{ requestVerification; redeemVerification; requestChange; redeemChange }` | `auth.email`, in modes `email` and `username_email` |
+| `MailedPasswordNamespace` | `{ requestReset; redeemReset }` | the half of `auth.password` that needs an address |
+| `RecoveryPasswordNamespace<M>` | `{ redeemResetWithRecoveryCode }` | the half of `auth.password` that does not, and therefore present in every mode |
+| `SetPasswordResult` | `{ sessionToken; session; revokedOtherSessionsCount }` | what both reset redemptions answer with |
+| `ChangedUser` | `{ user: User }` | what `email.redeemVerification` and `email.redeemChange` answer with |
+| `EmailFlowSurface<M>` | the five namespaces above, assembled | what this feature contributes to `VelveAuth<M>`; the `/email/*` and magic-link halves are conditional on `M` |
+
+`M` is the identity mode. The three namespaces that need an address are absent
+from `EmailFlowSurface<"username">` rather than present and refusing, which is
+the same rule the route table follows: a route the mode does not have does not
+exist.
+
+### What this feature deliberately does not do
+
+- **It builds no URLs.** No base URL, no path template, no `redirectTo`.
+- **It sends nothing.** `email.send` is the whole of the outbound surface.
+- **It does not link a provider identity.** A magic link confirms an address; it
+  writes no row in `velve.identity`, and the address is never a linking key.
+- **It offers no "resend" flow of its own.** Requesting again replaces the
+  artefact, which is the same thing without a second name.
+- **It has no `requireEmailVerification`.** An unconfirmed account signs in like
+  any other and `User.emailVerifiedAt` carries the state; a sign-in block would
+  be an enumeration channel and a dead end, because requesting a confirmation
+  needs a session.
 
 ## OAuth and identity linking
 
