@@ -3838,7 +3838,7 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
 
 ## Email flows
 
-Reserved for `email-flows` (wave 4). Architecture 3.7 and 3.15 B.1, B.4 and
+Reserved for `email-flows` (wave 5). Architecture 3.7 and 3.15 B.1, B.4 and
 B.5: the artefacts that arrive by mail and are redeemed — the confirmation
 link, the address change, the password reset and the magic link — each with the
 deadline 3.7 fixes for it, and `S-LINK-4`, the rule that a first confirmation
@@ -3883,7 +3883,7 @@ this paragraph is the first thing it does.
 
 ## OAuth and identity linking
 
-Reserved for `oauth` (wave 4). Architecture 3.10 and 3.15 B.1 and B.7: the
+Reserved for `oauth` (wave 5). Architecture 3.10 and 3.15 B.1 and B.7: the
 authorisation-code flow with PKCE S256 mandatory, `state` held server-side in
 `velve.oauth_flow` with the cookie carrying only the pointer, `nonce` under
 OIDC, the `iss` check of RFC 9207, the ID-token signature against JWKS, and the
@@ -4218,7 +4218,7 @@ directly, for a caller that is not a browser.
 
 ## Plugins
 
-Reserved for `plugin` (wave 4). Architecture 3.11 and 3.15 G: the registry, the
+Reserved for `plugin` (wave 5). Architecture 3.11 and 3.15 G: the registry, the
 topological sort over `dependsOn`, the frozen context, the seven enumerated hook
 points and the veto a hook holds, and what a plugin may contribute — routes under
 `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
@@ -4247,8 +4247,8 @@ edited for it.
 
 ## The client
 
-Reserved for `client` (wave 5, not wave 4 — the client is derived from a route
-table three wave-4 features are still adding rows to). Architecture 3.15 E: `createVelveClient`, the
+Reserved for `client` (wave 6, last — the client is derived from a route table
+the waves before it are still adding rows to). Architecture 3.15 E: `createVelveClient`, the
 `ClientSurface` derived from the same route declaration the server surface is,
 the result object that makes `ok` checkable instead of throwable, `unwrap` for a
 caller who wants the server's symmetry back, and `VelveTransportError` for the

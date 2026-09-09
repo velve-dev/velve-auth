@@ -177,7 +177,7 @@ cannot fall behind the headings without the pre-wave pass having skipped one.
 It fell to three of eleven entries before this rule existed, because chapters
 were added by whoever wrote them and the index was owned by nobody.
 
-Both exceptions rest on the partition existing **beforehand**. Until wave 3 there
+All three exceptions rest on the partition existing **beforehand**. Until wave 3 there
 was no chapter partition, and the contradiction between this rule and item 3 of
 the definition of done was resolved by editing `DOCUMENTATION.md` anyway; all
 four wave-2 features did. That merged cleanly by luck, not by construction —
@@ -387,11 +387,12 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-450 … E-494 | wave 3 · `factor-webauthn` |
 | E-495 … E-514 | gate and infrastructure, second range |
 | E-515 … E-539 | gate and infrastructure, third range |
-| E-540 … E-594 | wave 4 · `oauth` |
-| E-595 … E-634 | wave 4 · `email-flows` |
-| E-635 … E-669 | wave 4 · `plugin` |
-| E-670 … E-699 | wave 5 · `client` |
+| E-540 … E-594 | wave 5 · `oauth` |
+| E-595 … E-634 | wave 5 · `email-flows` |
+| E-635 … E-669 | wave 5 · `plugin` |
+| E-670 … E-699 | wave 6 · `client` |
 | E-700 … E-734 | gate and infrastructure, fourth range |
+| E-735 … E-794 | wave 4 · `spine` |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -464,7 +465,24 @@ wave-3 preparation and the relicensing, the seam cut ran beside it and had to
 take a disjoint range, and its nine unused numbers are the gap §6 says a range
 leaves behind, not headroom anyone can reach for.
 
-Wave 4 is cut against that. It runs three writers, not four — `client` is below the cap because of what it is, not to fill a quota.
+Wave 4 is cut against that, and it is **one feature**.
+
+- **The spine gets sixty, and is wave 4 on its own.** Between the services wave 3
+  built and the flows the next wave wants there is an assembly layer that does not
+  exist: `RequestContext` has no `plugin` field (3.15 D.1) and no OAuth state
+  token, the seven hook points of 3.11 have no dispatcher and no ordering behind
+  the security middleware (`S-CSRF-6`), `signIn.oauth.*` and `signIn.magicLink.*`
+  belong to the one `signIn` namespace 3.15 B.1 declares, `SignInResult`,
+  `SignUpResult`, `OAuthRedirect` and `OAuthCallbackResult` appear nowhere in the
+  tree, nothing computes `availableFactors` (3.6), `mountAuth` takes no overrides,
+  and `src/index.ts` and the API snapshot belong to nobody. Each of those has
+  specification behind it and all three of the following features depend on all of
+  them. A thing with its own requirements that three features depend on is a
+  feature, not a seam — sixty because it is the same kind of work `auth-core` was
+  and `auth-core` used forty of sixty.
+- **`oauth`, `email-flows` and `plugin` are wave 5**, three writers, genuinely
+  independent once the spine exists. Their ranges are unchanged.
+- **`client` is wave 6**, for the reason below.
 
 - **`oauth` gets fifty-five.** `S-LINK-1` to `S-LINK-7` are its, and that number
   is checkable: 5.11 lists exactly seven. Requirements from four other classes
@@ -488,7 +506,7 @@ Wave 4 is cut against that. It runs three writers, not four — `client` is belo
   context and the enumerated hook points are each a boundary that 3.11 states as
   a prohibition, and a prohibition is the kind of thing that generates a decision
   when it is enforced rather than when it is written.
-- **`client` gets thirty and is not in wave 4.** It is narrow for the same reason
+- **`client` gets thirty and is last.** It is narrow for the same reason
   `rate` was of wave 3 — the route table already exists and the client is derived
   from it (3.15 E) — and that derivation is what moves it. 3.15 E requires
   `@velve/auth/client` to carry the table as a value with no server core behind
@@ -498,6 +516,10 @@ Wave 4 is cut against that. It runs three writers, not four — `client` is belo
   second table that the first of them to merge makes stale. Neither is a
   partition, so `client` is written after the route surface settles. Its range is
   reserved and untouched; nothing is renumbered.
+
+A wave of one needs no partition, so the spine writes wherever the specification
+puts it — `## The instance` and `## HTTP` included — and the three files §5
+partitions are partitioned for wave 5, not for it.
 - **Gate and infrastructure gets a fourth block of thirty-five, not
   twenty-five.** The measurement above is what argues it. The largest single gate
   cut so far took twenty-four numbers, and a twenty-five-wide block against a
