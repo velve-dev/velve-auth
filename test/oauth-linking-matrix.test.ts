@@ -89,7 +89,7 @@ async function signInThrough(mount: Mounted, providerId: string): Promise<Respon
 	);
 }
 
-async function rowsOf<T>(mount: Mounted, sql: string, values: readonly unknown[]): Promise<T[]> {
+async function rowsOf<T>(mount: Mounted, sql: string, values: unknown[]): Promise<T[]> {
 	return mount.auth.connection.query<T>(sql.replaceAll("$schema", mount.auth.schema), values);
 }
 

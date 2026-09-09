@@ -4393,3 +4393,59 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Planting something cheaper — a wrong status code, a missing field — which would prove only that the suite runs.
 **Reason.** Prediction one: dropping `localAccountHasEmailVerifiedAt` from the three-condition predicate reddens **two** cases, the eight-way matrix and the end-to-end case where a trusted provider meets an unverified local account. Prediction two: making `pointerBelongsToState` answer true for any non-empty pair reddens **one**, the case that presents a foreign pointer, because the missing-cookie half is a separate branch. Run: **2 and 1, exactly those.** Both files were restored and the suite is green again.
 **Price.** Two predictions borne out say nothing about the cases nobody thought to plant — the third condition, `trustedProviders`, was not planted, and neither was the address-collision refusal.
+
+### The eight-case unit and the twelve-case matrix are not the same test
+`E-569` · oauth · review, measurement
+
+**Context.** T-LINK-2 asks for three local states by two provider states by two trust states against the flow, with the expectation table as a fixture. What the branch carried was an eight-case unit over `automaticLinkIsAllowed` — two by two by two booleans — and three flow cases chosen by hand. The predicate is not the rule: `accountAnAutomaticLinkMayJoin` returns before it in three branches, and `createAccountFor` decides what happens when no link is allowed.
+**Rejected.** Accepting the eight-case unit as the matrix, and deriving the expectation column from the implementation rather than writing it out.
+**Reason.** Two of the three local states — absent and unverified — never reach the predicate at all, so the unit cannot tell them apart, and the unverified one is what CVE-2026-53516 turns on. The expectation table is written out in full so that a rule which moves has to move the fixture.
+**Price.** Twelve flow cases cost two mounted instances and about 0.3 s. The matrix says nothing about spellings of `email_verified` other than the boolean it sends, and nothing about the `username` modes, where E-567 records that the flow cannot create an account at all.
+
+### Nine double-encoded targets are accepted, and the requirement says they may be
+`E-570` · oauth · specification, reported
+
+**Context.** T-REDIR-2 asks for at least a hundred and twenty malicious redirect targets across eleven families, one of them `doppelt kodiert`, and for `0 falsch-negativ`. S-REDIR-2 fixes the check at **exactly one** percent decoding, applied again afterwards. `/%252F%252Fevil.example` decodes once to `/%2F%2Fevil.example`, which begins with one slash, names no host and carries no scheme.
+**Rejected.** Decoding to a fixed point, which would satisfy T-REDIR-2 and contradict S-REDIR-2. Also rejected: leaving the family out of the corpus so that the total still reads a hundred and twenty.
+**Reason.** The requirement is what binds and the code follows it. Nine of the ten vectors in that family are accepted; for all nine `new URL(value, "https://api.example.com").origin` is the library's own origin, and a browser resolving a `Location` does not read `%2F` as a delimiter, so nothing leaves the site today. What exists is a value a consumer decoding a second time would read differently.
+**Price.** The corpus cannot assert `0 falsch-negativ` over all eleven families, so it asserts it over ten and pins the nine by name; a tenth accepted vector fails, and so does one of the nine flipping. The threshold T-REDIR-2 states is not met, and this entry is where that is written down.
+
+### T-LINK-1's outcome cannot happen while an address is unique
+`E-571` · oauth · specification, reported
+
+**Context.** T-LINK-1 says two providers reporting one address with different subjects must produce "2 getrennte Identitätszeilen, nicht eine Verknüpfung". The initial schema puts `CREATE UNIQUE INDEX user_email_key ON velve.user (email) WHERE email IS NOT NULL` on the account table.
+**Rejected.** Reading "2 getrennte Identitätszeilen" as two rows on one account, which is what a link produces and which the same sentence forbids.
+**Reason.** Two accounts carrying one address cannot exist, so the second provider either joins the first account — the link the threshold forbids — or is refused. Measured on the tree: with untrusted providers, one identity row and a refusal; with trusted providers reporting verified, two rows on one account. Neither is the stated outcome.
+**Price.** S-LINK-1 is met and T-LINK-1's case is not reachable. Deciding which of the two is wrong is a change to the specification; until then the case is written as what it actually measures, and a reader who takes the threshold at face value will think it was skipped.
+
+### The case named for S-LINK-1 configured one provider and asserted about two
+`E-572` · oauth · review, finding
+
+**Context.** `oauth-flow.test.ts` carries a case named "keeps two providers reporting one address apart". It mounts an instance whose only configured provider is `stubby`, builds a second `createStubProvider(...)` object, never puts it into any configuration, and asserts that `secondProvider.calls` is empty.
+**Rejected.** Nothing, and that is the finding: there is no reading of the tree under which that assertion can fail.
+**Reason.** A stub unreachable from any configuration is never called, so the assertion holds for the reason §5 says a check must not hold — it found nothing and reported success. The other two assertions in the case are about the first identity and are real, but the scenario the name promises never runs.
+**Price.** The case is left as it stands, because rewriting a neighbour's file is what §5 forbids. The scenario is run instead in `oauth-linking-matrix.test.ts` with two configured providers, and E-571 records what it measures.
+
+### The pointer is checked before the row is spent, and nothing read that
+`E-573` · oauth · review, property pinned
+
+**Context.** `completeFlow` compares the pointer cookie against the state and only then runs the `DELETE … RETURNING`. Reversed, a caller who has the state and no cookie still burns the row.
+**Rejected.** Treating the order as an implementation detail. The `state` travels in a URL and in a `Referer`; the pointer does not.
+**Reason.** The existing S-CSRF-5 case asserts a status and two row counts, and both hold with the order reversed — measured: the two statements were swapped and all twenty-five cases of that file stayed green. What the order costs a caller who has only the state is the ability to invalidate a flow the victim has not finished, and that had no detector until one was written.
+**Price.** One more case, and a coupling: it reads the `oauth_flow` row count, so it fails if the flow lifetime or a cleanup pass ever changes.
+
+### Four plants, and one predicted finding that did not hold
+`E-574` · oauth · the gate, measurement
+
+**Context.** E-568 records two plants and names the conditions nobody planted. These are four more, each with its outcome predicted before it was run, plus two on the form-bodied callback.
+**Rejected.** Planting only against the new cases, which would not have shown which of them the existing suite already covered.
+**Reason.** One, dropping `trustedForAutomaticLinking` from `accountAnAutomaticLinkMayJoin` — the condition E-568 names as unplanted: predicted **two** failures, the matrix row `verified / true / false` and the existing case that names it. Measured two, exactly those. Two, dropping the second reading from `acceptedRedirectPath`: predicted **thirteen** false negatives across four families in one case. Measured thirteen, exactly those. Three, moving `consumeFlow` above the pointer check: predicted **one** in the new file and **none** in the existing one. Measured one and none. Four, turning `DELETE … RETURNING` into a `SELECT`: predicted the flow count in the new file and the existing `spends a state exactly once`. Measured both — and the count of concurrent successes did **not** move, so under simultaneity that half of the property rests on `user_email_key` and `identity_provider_subject` rather than on the delete. The two on the form-bodied callback — body fields winning over path parameters, and `SameSite=None` on every state cookie — each reddened exactly the one case predicted and left the existing suite green.
+**Price.** One prediction was wrong in the other direction. `subjectClaim` looked unchecked at start because `resolveProviderTable` does not read it; `assertEveryUnknownProviderCarriesItsEndpoints` does, the finding was withdrawn, and a case pinning the start error replaced it. The reviewer was the one who had assumed rather than measured.
+
+### A threshold the specification fixes was raised on the branch that needed it raised
+`E-575` · oauth · file ownership, reported
+
+**Context.** T-CSRF-1's threshold is "**genau 1** Route mit `exempt`, und das ist `signIn.oauth.callback`"; S-CSRF-1 says every route except `GET /sign-in/oauth/callback/:provider` carries `originCheck: "checked"`; 3.15 D.3 says the callback is the only route without an origin check. Section 1 C50 and C70 adopt `form_post`, which needs a POST callback. The branch added the route and changed `ROUTES_THAT_MAY_BE_EXEMPT` in `test/auth-route-table.test.ts` from one name to two.
+**Rejected.** Nothing was rejected on the branch: E-541 argues the route and does not treat the threshold as belonging to anyone else.
+**Reason.** Those clauses and section 1 cannot all hold, and §5 says a feature that needs a change outside its area stops and reports it. A census list carrying a requirement's threshold is such a change — it is the only place that number lives, so moving it removes the disagreement instead of surfacing it. The route may well be right; the reviewer has no better answer for Apple. The number is still not this feature's to move.
+**Price.** The route ships and the threshold stays at two. What the review adds is a boundary rather than a repair: `originCheck: "exempt"` appears in one file of the tree and twice in it, exactly one route reads a form, and `SameSite=None` reaches one cookie. A third exempt route still fails nowhere except in a census a branch may edit.
