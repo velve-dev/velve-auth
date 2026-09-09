@@ -497,6 +497,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-880 … E-899 | outside the waves · `skillver` — the skill's version and its staleness |
 | E-960 … E-979 | wave 5 · `oauth`, second range |
 | E-980 … E-999 | wave 5 · `oauth`, third range |
+| E-1060 … E-1094 | gate and infrastructure, sixth range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
