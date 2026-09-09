@@ -3978,6 +3978,17 @@ context that is allowed to. This is the cost of the cover; architecture 3.13
 accepts it, because the alternative is telling an unauthenticated caller which
 addresses have accounts.
 
+**An address that is taken while the registration runs is a taken address.**
+Occupancy is read before the transaction that inserts, so simultaneous
+registrations for one free address all read "free" and all but one of them meet
+the unique index. The one that wins commits; the others answer with the cover,
+byte for byte as they would have if the address had been taken before they
+started. Four callers submitting the same form at once therefore get four
+identical 200s and leave one account behind. A **username** taken in the same
+race still answers `username_taken`, because architecture 3.4 makes names
+enumerable and says so; which of the two indexes the race hit is asked for, not
+read out of the driver's error.
+
 ### `auth.signIn.magicLink.request(input)`
 
 | Parameter | Type |
@@ -3996,6 +4007,21 @@ It names no account, `expires_at` is the same ten minutes, and it can never be
 redeemed — a row with a NULL owner is answered exactly as no row is. It exists
 so that the two branches cost the same, and `auth.maintenance.sweep()` removes
 it like any other expired artefact.
+
+Unlike a request for a known address, it **supersedes nothing**. Each ownerless
+mint draws a fresh account identifier, so the delete that removes the account's
+earlier artefact of that purpose matches no row, and a repeated request for one
+unknown address leaves one row per attempt until the sweep. The rate limiters
+bound how fast that can be done; the one-live-token rule of section 3.7 does not,
+because it is written in terms of an account and there is none.
+
+Both branches also **wait the same**. Requests about one subject are serialised,
+so that a re-issue cannot be overtaken by a concurrent one, and the subject is
+the account where one is known and the submitted address where none is. Neither
+branch takes a lock on any row of `velve.user`: with a row lock, a request for a
+known address would queue behind a lock somebody else held on that account and a
+request for an unknown one would not, which architecture 5.3 (a) counts as an
+oracle whether or not the two run the same statements.
 
 ### `auth.signIn.magicLink.redeem(input)`
 
@@ -4187,11 +4213,11 @@ sign-up the account goes with it too, so no account is left behind that nobody
 was told about.
 
 It is undone rather than rolled back. The transaction that wrote the artefact
-commits first, so the row lock it took on `velve.user` is released **before** the
-application's callback is entered: a slow `send` no longer makes every other
-write of that account's rows wait for it. A `send` that throws is answered by
-spending the token through the one statement that spends tokens, and by deleting
-the account on the sign-up path.
+commits first, so everything it held is released **before** the application's
+callback is entered: a slow `send` cannot make another write of that account's
+rows wait for it. A `send` that throws is answered by spending the token through
+the one statement that spends tokens, and by deleting the account on the sign-up
+path.
 
 The difference from a rollback is one window: a process that dies between the
 commit and the compensation leaves a live artefact whose message never arrived.
@@ -4234,6 +4260,28 @@ because `PasswordCredentialRepository.write` requires the field. A caller may
 answer `null`, and `null` is a different session, but it cannot decline to
 answer: a credential that could not say who stored it is one this rule cannot
 judge.
+
+### The types this feature exports
+
+Every method, parameter, route and error these declare is documented above under
+its `auth.*` name; the table says which name, so a reader who arrives at one of
+them from the package's exports lands in the right section.
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `SignUpNamespace<M>` | `{ withPassword; withoutPassword }` | `auth.signUp`, in every identity mode |
+| `MagicLinkNamespace` | `{ request; redeem }` | `auth.signIn.magicLink`, in modes `email` and `username_email` |
+| `EmailNamespace` | `{ requestVerification; redeemVerification; requestChange; redeemChange }` | `auth.email`, in modes `email` and `username_email` |
+| `MailedPasswordNamespace` | `{ requestReset; redeemReset }` | the half of `auth.password` that needs an address |
+| `RecoveryPasswordNamespace<M>` | `{ redeemResetWithRecoveryCode }` | the half of `auth.password` that does not, and therefore present in every mode |
+| `SetPasswordResult` | `{ sessionToken; session; revokedOtherSessionsCount }` | what both reset redemptions answer with |
+| `ChangedUser` | `{ user: User }` | what `email.redeemVerification` and `email.redeemChange` answer with |
+| `EmailFlowSurface<M>` | the five namespaces above, assembled | what this feature contributes to `VelveAuth<M>`; the `/email/*` and magic-link halves are conditional on `M` |
+
+`M` is the identity mode. The three namespaces that need an address are absent
+from `EmailFlowSurface<"username">` rather than present and refusing, which is
+the same rule the route table follows: a route the mode does not have does not
+exist.
 
 ### What this feature deliberately does not do
 

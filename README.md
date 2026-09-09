@@ -157,13 +157,16 @@ never holds a lock on the account it is about.
 Two answers are deliberately uninformative. A registration on an address that
 already has an account answers byte for byte as a free one does, because it runs
 the same registration and rolls it back; the difference is that a message goes to
-the existing address instead. Telling the two apart takes a second request —
+the existing address instead. A registration that loses a race to the same
+address is that answer too, so simultaneous submissions of one form come back
+identical. Telling a taken address from a free one takes a second request —
 resolving the session the answer hands back — and no further. A reset or magic
 link for an address that names no account runs the same statements as one that
-does and calls `send` the same single time. And when an address is confirmed for
-the first time, a password that was set in a different session is deleted and
-every session revoked — the account-takeover path of GHSA-qq9h-g4jm-xgf3, closed
-by construction rather than by a flag.
+does, calls `send` the same single time, and waits the same, because the two
+serialise on the address and neither takes a lock on the account's row. And when
+an address is confirmed for the first time, a password that was set in a
+different session is deleted and every session revoked — the account-takeover
+path of GHSA-qq9h-g4jm-xgf3, closed by construction rather than by a flag.
 
 ### Plugins
 
