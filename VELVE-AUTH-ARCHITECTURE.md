@@ -3952,7 +3952,7 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 ### 5.7 RATE — Rate limiting
 
-**(a) The error class.** A rate limiter consists of a key, a counter, a window and a reaction, and every part can be broken. The key faults dominate: the full IPv6 address instead of the prefix gives an attacker with a `/64` sixty-two-digit numbers of buckets; the textual representation of the same address yields several buckets; an unchecked `X-Forwarded-For` lets the client choose its bucket itself; and a raw path as a key component separates `//sign-in` from `/sign-in`. A hard account lock is not a protection but a denial of service against a known user.
+**(a) The error class.** A rate limiter consists of a key, a counter, a window and a reaction, and every part can be broken. The key faults dominate: the full IPv6 address instead of the prefix gives an attacker with a `/64` 2^64 buckets; the textual representation of the same address yields several buckets; an unchecked `X-Forwarded-For` lets the client choose its bucket itself; and a raw path as a key component separates `//sign-in` from `/sign-in`. A hard account lock is not a protection but a denial of service against a known user.
 
 **(b) The precedent.** GHSA-p6v2-xcpg-h6xw / CVE-2026-45364 (7.3 High, CWE-307, fix 1.4.17): the key was the textual IP without normalisation, so that a client with a `/64` prefix could create 2^64 buckets. GHSA-x732-6j76-qmhm (8.6 High, fix 1.4.5): the `rou3` router collapses empty path segments, so that `//sign-in/email` hits the same route but runs past path rate limits.
 

@@ -3950,7 +3950,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 ### 5.7 RATE — Ratenbegrenzung
 
-**(a) Die Fehlerklasse.** Ein Ratenbegrenzer besteht aus Schlüssel, Zähler, Fenster und Reaktion, und jeder Teil kann kaputt sein. Die Schlüsselfehler dominieren: die volle IPv6-Adresse statt des Präfixes gibt einem Angreifer mit einem `/64` zweiundsechzigstellige Zahlen an Eimern; die textuelle Repräsentation derselben Adresse ergibt mehrere Eimer; ein ungeprüfter `X-Forwarded-For` lässt den Client seinen Eimer selbst wählen; und ein roher Pfad als Schlüsselbestandteil trennt `//sign-in` von `/sign-in`. Eine harte Kontosperre ist kein Schutz, sondern eine Dienstverweigerung gegen einen bekannten Nutzer.
+**(a) Die Fehlerklasse.** Ein Ratenbegrenzer besteht aus Schlüssel, Zähler, Fenster und Reaktion, und jeder Teil kann kaputt sein. Die Schlüsselfehler dominieren: die volle IPv6-Adresse statt des Präfixes gibt einem Angreifer mit einem `/64` 2^64 Eimer; die textuelle Repräsentation derselben Adresse ergibt mehrere Eimer; ein ungeprüfter `X-Forwarded-For` lässt den Client seinen Eimer selbst wählen; und ein roher Pfad als Schlüsselbestandteil trennt `//sign-in` von `/sign-in`. Eine harte Kontosperre ist kein Schutz, sondern eine Dienstverweigerung gegen einen bekannten Nutzer.
 
 **(b) Der Präzedenzfall.** GHSA-p6v2-xcpg-h6xw / CVE-2026-45364 (7.3 High, CWE-307, Fix 1.4.17): der Schlüssel war die textuelle IP ohne Normalisierung, sodass ein Client mit einem `/64`-Präfix 2^64 Eimer erzeugen konnte. GHSA-x732-6j76-qmhm (8.6 High, Fix 1.4.5): der `rou3`-Router kollabiert leere Pfadsegmente, sodass `//sign-in/email` dieselbe Route trifft, aber an Pfad-Ratenlimits vorbeiläuft.
 
