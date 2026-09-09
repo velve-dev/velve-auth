@@ -114,6 +114,29 @@ describe("replaceSessionOwnedBy (S-FIX-1)", () => {
 		expect(await sessions.listSessionsOfUser({ userId: ownerId })).toEqual([]);
 	});
 
+	// L-4: the resolution joins `user` so a disabled account cannot pass as signed in; so does this.
+	it("refuses a live row whose account is disabled", async () => {
+		await sessions.deleteEverySessionOwnedBy({ actor: owner });
+		const previous = await sessions.insertSession(sessionInsertFor(ownerId));
+		await migrated.connection.query(
+			`UPDATE ${migrated.schema}.user SET disabled_at = now() WHERE id = $1`,
+			[ownerId],
+		);
+
+		await expect(
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: previous.id,
+				insert: sessionInsertFor(ownerId),
+			}),
+		).rejects.toBeInstanceOf(PreviousSessionMissingError);
+		expect(await countRows(ownerId)).toBe(1);
+		await migrated.connection.query(
+			`UPDATE ${migrated.schema}.user SET disabled_at = NULL WHERE id = $1`,
+			[ownerId],
+		);
+	});
+
 	// The revoke path must still remove such a row, which is why the two deletes are separate statements.
 	it("still lets a revocation remove the row a replacement refused", async () => {
 		await sessions.deleteEverySessionOwnedBy({ actor: owner });

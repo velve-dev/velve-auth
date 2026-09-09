@@ -963,6 +963,87 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		expect(order.slice(0, 2)).toEqual(["beforeSessionCreate", "transaction"]);
 	});
 
+	/**
+	 * The state the row and the authority disagree in: the row is untouched and live, and the account
+	 * behind it is disabled. Every route that resolves the cookie answers 403; the callback resolves
+	 * nothing, so it was the one path that accepted it — and it wrote the attacker's identity, which
+	 * L-13 counts as a way in that survives the account being re-enabled (E-976).
+	 */
+	it("refuses a link flow whose account was disabled while it was outstanding", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+
+		mounted.provider.reportClaims({ sub: "disabled-mid-flow", email: "second@example.com" });
+		const linkFlow = await startLink(mounted, session);
+		await mounted.auth.connection.query(
+			`UPDATE ${mounted.auth.schema}.user SET disabled_at = now()`,
+			[],
+		);
+		const resolved = await mounted.auth.handler(
+			requestTo("/session", { method: "GET", cookie: session }),
+		);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+
+		expect(resolved.status).toBe(403);
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
+		// The reason separates the two defences: the SQL join alone would log `link_session_gone`.
+		expect(mounted.auth.log.lines.map((line) => line.fields.reason)).toContain(
+			"user_disabled_on_oauth_flow",
+		);
+		expect(sessionCookieOf(refused)).toBeNull();
+		expect(await countRows(mounted, "identity")).toBe(1);
+		expect(await countRows(mounted, "session")).toBe(1);
+	});
+
+	/** The same missing question on the sign-in path, which answered 302 and inserted a row that then resolved 403. */
+	it("refuses an OAuth sign-in against an account that is already disabled", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		await mounted.auth.handler(callbackRequest(await start(mounted)));
+		await mounted.auth.connection.query(
+			`UPDATE ${mounted.auth.schema}.user SET disabled_at = now()`,
+			[],
+		);
+		await mounted.auth.connection.query(`DELETE FROM ${mounted.auth.schema}.session`, []);
+
+		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
+
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({ error: { code: "oauth_flow_invalid" } });
+		expect(await countRows(mounted, "session")).toBe(0);
+	});
+
+	/**
+	 * S-FIX-1 is „jede Verknüpfung einer **neuen** Identität" and S-LINK-7 „einer **weiteren**";
+	 * neither covers re-completing a link for an identity the account already holds. Re-issuing there
+	 * moved `created_at`, and `freshnessWindow` measures against it — 3.5 says freshness is restored
+	 * *„nur durch eine neue Anmeldung"*, so it was a repeatable reset of the gate on 3.15 B.9's
+	 * seventeen methods (E-979).
+	 */
+	it("refuses to re-link an identity the account already holds, and re-issues nothing", async () => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
+		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const session = sessionCookieOf(signedIn) ?? "";
+		const [before] = await mounted.auth.connection.query<{ created_at: Date; id: string }>(
+			`SELECT id, created_at FROM ${mounted.auth.schema}.session`,
+			[],
+		);
+
+		const linkFlow = await startLink(mounted, session);
+		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
+		const [after] = await mounted.auth.connection.query<{ created_at: Date; id: string }>(
+			`SELECT id, created_at FROM ${mounted.auth.schema}.session`,
+			[],
+		);
+
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toMatchObject({ error: { code: "identity_already_linked" } });
+		expect(await countRows(mounted, "identity")).toBe(1);
+		expect(after?.id).toBe(before?.id);
+		expect(after?.created_at).toStrictEqual(before?.created_at);
+	});
+
 	it("refuses to move an identity that belongs to another account", async () => {
 		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
 		await mounted.auth.handler(callbackRequest(await start(mounted)));
