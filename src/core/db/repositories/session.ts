@@ -94,6 +94,15 @@ export interface SessionRepository {
 		readonly actor: Actor;
 		readonly insert: SessionInsert;
 	}): Promise<Session>;
+	/**
+	 * The replacement a caller reaches with a session id rather than a token — and the row it names
+	 * may already be gone, so its absence leaves the new session standing rather than refusing.
+	 */
+	replaceSessionOwnedBy(input: {
+		readonly actor: Actor;
+		readonly previousSessionId: string;
+		readonly insert: SessionInsert;
+	}): Promise<Session>;
 }
 
 interface SessionRowShape {
@@ -360,6 +369,17 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				if (removed.userId !== insert.userId) {
 					throw new SessionOwnerMismatchError();
 				}
+				return insertSession(tx, insert);
+			});
+		},
+
+		// S-FIX-1: the named row and the new row are one transaction, exactly as the token form above.
+		async replaceSessionOwnedBy({ actor, previousSessionId, insert }) {
+			if (insert.userId !== actor) {
+				throw new SessionOwnerMismatchError();
+			}
+			return options.driver.transaction(async (tx) => {
+				await tx.query(deleteOwnedSql, [previousSessionId, actor]);
 				return insertSession(tx, insert);
 			});
 		},

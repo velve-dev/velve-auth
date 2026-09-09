@@ -62,6 +62,16 @@ export interface SessionService {
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
+	/**
+	 * S-FIX-1 where the proof of ownership is a consumed row and not a session cookie: the caller
+	 * names the one session to replace, and every other session of the account is left alone.
+	 */
+	reissueSessionOfUser(input: {
+		readonly actor: Actor;
+		readonly previousSessionId: string;
+		readonly factors: readonly AuthenticationFactor[];
+		readonly observed: ObservedRequest;
+	}): Promise<IssuedSession>;
 	resolve(token: string): Promise<SessionResolution | null>;
 	refresh(token: string): Promise<SessionResolution | null>;
 	signOut(input: { readonly token: string }): Promise<void>;
@@ -188,6 +198,16 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
 				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash),
+			});
+			return { token: issued.token, session };
+		},
+
+		async reissueSessionOfUser({ actor, previousSessionId, factors, observed }) {
+			const issued = createSessionToken();
+			const session = await sessions.replaceSessionOwnedBy({
+				actor,
+				previousSessionId,
+				insert: insertFor(actor, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},
