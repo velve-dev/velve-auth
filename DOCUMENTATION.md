@@ -4412,7 +4412,7 @@ a warning, because each leaves a question with no answer:
 | `plugin_id_duplicated` | Two plugins claim the same `id`, so neither owns its namespace. |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route, with another plugin's, or its first name segment is one of the namespaces the instance surface occupies. |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` is a namespace the instance surface already carries — read from the surface the assembly just built, not from a list of them. |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie`. |
 

@@ -183,14 +183,11 @@ function foldedPath(route: RouteMetadata): string {
 export function assertNoCoreRouteIsOverwritten(
 	contributed: readonly AnyRoute[],
 	core: readonly AnyRoute[],
-	reservedNamespaces: readonly string[],
 ): void {
 	const names = new Set(core.map((route) => route.name));
 	const paths = new Set(core.map(foldedPath));
-	const reserved = new Set(reservedNamespaces);
 	for (const route of contributed) {
-		const namespace = route.name.split(".")[0] ?? "";
-		if (names.has(route.name) || paths.has(foldedPath(route)) || reserved.has(namespace)) {
+		if (names.has(route.name) || paths.has(foldedPath(route))) {
 			throw new VelveStartupError("plugin_route_conflict");
 		}
 		names.add(route.name);

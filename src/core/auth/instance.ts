@@ -42,7 +42,11 @@ import {
 	usernameRoutes,
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
-import { assertConfigurationIsStartable, assertKeysAnswerForEveryPurpose } from "./startup.js";
+import {
+	assertConfigurationIsStartable,
+	assertKeysAnswerForEveryPurpose,
+	VelveStartupError,
+} from "./startup.js";
 import { nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
 
@@ -52,33 +56,6 @@ const MILLISECONDS_IN_A_SECOND = 1000;
 const NO_SINK: HttpEnvironment["log"] = () => undefined;
 
 const ERROR_CODES = VELVE_ERROR_CODES;
-
-/**
- * 3.15 B names the namespaces of the instance surface. A plugin id equal to one of them would put
- * its routes under a key the surface already owns, so the registry refuses it at start (3.11).
- * `assertEveryNamespaceIsDeclared` holds this list against the surface actually built, so it
- * cannot fall behind it (E-740, closed by E-777).
- */
-const RESERVED_SURFACE_NAMESPACES: readonly string[] = [
-	"signUp",
-	"signIn",
-	"signOut",
-	"session",
-	"user",
-	"password",
-	"factor",
-	"identity",
-	"pending",
-	"email",
-	"username",
-	"routes",
-	"identityMode",
-	"errorCodes",
-	"maintenance",
-	"migrate",
-	"close",
-	"http",
-];
 
 export interface SessionNamespace {
 	resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
@@ -166,20 +143,19 @@ function callerResolver(
 }
 
 /**
- * The reserved list is a second statement of 3.15 B's namespaces, and this is what holds it to the
- * first: a namespace the surface gains without the list gaining it would let a plugin of that id
- * shadow it, and the collision check would not see it.
+ * 3.11: a plugin may not overwrite what the core owns, and what the core owns is the surface it
+ * just built — read from it rather than from a second list of 3.15 B's namespaces, which is what
+ * a list falling behind the surface would have cost (E-740, closed by E-777).
  */
-function assertEveryNamespaceIsDeclared(
-	surface: Readonly<Record<string, unknown>>,
+function assertNoPluginShadowsANamespace(
+	owned: readonly string[],
 	plugins: readonly VelvePlugin[],
 ): void {
-	const declared = new Set([...RESERVED_SURFACE_NAMESPACES, ...plugins.map((plugin) => plugin.id)]);
-	const undeclared = Object.keys(surface).filter((name) => !declared.has(name));
-	if (undeclared.length > 0) {
-		throw new TypeError(
-			`the instance surface carries ${undeclared.join(", ")}, which RESERVED_SURFACE_NAMESPACES does not name`,
-		);
+	const namespaces = new Set(owned);
+	for (const plugin of plugins) {
+		if (namespaces.has(plugin.id)) {
+			throw new VelveStartupError("plugin_route_conflict");
+		}
 	}
 }
 
@@ -286,7 +262,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...seamRoutes,
 	];
 	const contributedRoutes = pluginRoutes(services);
-	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, RESERVED_SURFACE_NAMESPACES);
+	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes);
 
 	const environment: HttpEnvironment = {
 		routes: [...coreRoutes, ...contributedRoutes],
@@ -315,13 +291,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const readSession = createServerMethod(read, environment);
 
-	const surface = {
+	const coreSurface = {
 		/**
-		 * The namespaces the seam modules and the plugins contribute, folded out of their dotted
-		 * names. The hand-written namespaces below are written after them and win, so a name this
-		 * file states is never shadowed by a derived one.
+		 * The namespaces the seam modules contribute, folded out of their dotted names. The
+		 * hand-written ones below are written after them and win, so a name this file states is
+		 * never shadowed by a derived one.
 		 */
-		...nestServerMethods([...seamRoutes, ...contributedRoutes], environment),
+		...nestServerMethods(seamRoutes, environment),
 
 		routes: environment.routes,
 		identityMode: identity.mode,
@@ -383,6 +359,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				}),
 	};
 
-	assertEveryNamespaceIsDeclared(surface, pluginRuntime.plugins);
+	assertNoPluginShadowsANamespace(Object.keys(coreSurface), pluginRuntime.plugins);
+	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
 	return surface as VelveAuth<M>;
 }
