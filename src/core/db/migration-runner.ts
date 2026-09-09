@@ -96,14 +96,19 @@ FROM pg_stat_xact_user_tables`;
 const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
 /**
- * What the connected role may do regardless of anything measured here. `track_counts` takes a
- * superuser to change, and a superuser migration turns the row half off and on again around its own
- * statements without either reading of the guard seeing it; creating a role takes a superuser or
- * `CREATEROLE`, and a role needs no counters at all (E-920).
+ * What the connection may do regardless of anything measured here. `track_counts` takes a superuser
+ * to change, and a superuser migration turns the row half off and on again around its own statements
+ * without either reading of the guard seeing it; creating a role takes a superuser or `CREATEROLE`,
+ * and a role needs no counters at all (E-920). Every role the connection can reach is read, not the
+ * one it is currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it back,
+ * so a guard that read that alone was one statement from being undone (E-929).
  */
 const PRIVILEGES_OF_THE_CONNECTED_ROLE = `
-SELECT rolsuper AS is_superuser, rolcreaterole AS creates_roles
-FROM pg_roles WHERE rolname = current_user`;
+SELECT coalesce(bool_or(role_.rolsuper), false) AS is_superuser,
+       coalesce(bool_or(role_.rolcreaterole), false) AS creates_roles
+FROM pg_roles role_
+WHERE pg_has_role(session_user, role_.oid, 'MEMBER')
+   OR pg_has_role(current_user, role_.oid, 'MEMBER')`;
 
 /**
  * Every object that belongs to the schema, of every catalogue there is, walked from the schema
@@ -137,6 +142,7 @@ WITH RECURSIVE belonging(classid, objid) AS (
   FROM pg_class child
   JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
   WHERE namespace_.nspname = $1 AND child.relname = ANY(string_to_array($2, ','))
+    AND child.relkind IN ('r', 'p')
   UNION
   SELECT depend.classid, depend.objid
   FROM pg_depend depend
@@ -190,7 +196,10 @@ export class MigrationRefusedError extends Error {
  * which is the property the role form was declined for lacking in E-909. Only plugin migrations are
  * refused; the core's own run on whatever connection the application supplies (E-920).
  */
-async function assertTheRoleCannotOutrunTheMeasurement(driver: Driver): Promise<void> {
+async function assertTheRoleCannotOutrunTheMeasurement(
+	driver: Driver,
+	schema: string,
+): Promise<void> {
 	const [role] = await driver.query<{ is_superuser: boolean; creates_roles: boolean }>(
 		PRIVILEGES_OF_THE_CONNECTED_ROLE,
 		[],
@@ -204,7 +213,7 @@ async function assertTheRoleCannotOutrunTheMeasurement(driver: Driver): Promise<
 	if (role.is_superuser || role.creates_roles) {
 		throw new MigrationRefusedError(
 			"migration_role_unbounded",
-			`a plugin migration does not run on a connection whose role ${role.is_superuser ? "is a superuser" : "may create roles"}: such a role can switch the measurements off, so run migrations as a role that holds neither`,
+			`a plugin migration does not run on a connection that can reach a role which ${role.is_superuser ? "is a superuser" : "may create roles"}: such a role switches off the measurements this boundary rests on. The core schema is applied and no plugin migration has run, so nothing is half-done. Connect as a role that owns the schema and holds neither privilege — owning it is part of the requirement, not an optimisation, because a role that merely has privileges on the schema is refused by PostgreSQL on its first plugin table instead: CREATE ROLE velve_migrator LOGIN PASSWORD '<password>'; GRANT CREATE ON DATABASE <database> TO velve_migrator; ALTER SCHEMA ${schema} OWNER TO velve_migrator; REASSIGN OWNED BY <the role that ran the core migrations> TO velve_migrator;`,
 		);
 	}
 }
@@ -573,6 +582,30 @@ function assertEveryObjectItCreatedBelongsToItsOwnTables(
 }
 
 /**
+ * A name in `createsTables` may not already be a relation of somebody else's. The subtraction that
+ * decides this is over **relations** and is read from the schema itself rather than from a list of
+ * table names — `velve.user_email_key` is a core index, so a list of core tables never reached it,
+ * and declaring it was enough to have the snapshot exempt it (E-928).
+ */
+function assertNoDeclaredNameIsAlreadySomebodyElses(
+	migration: OwnedMigration,
+	schema: string,
+	before: Relations,
+	own: ReadonlySet<string>,
+): void {
+	for (const table of migration.createsTables) {
+		const existing = before.get(`${schema}.${table}`);
+		if (existing !== undefined && !own.has(objectKey("pg_class", existing.objectId))) {
+			refuseOwned(
+				"migration_table_undeclared",
+				migration,
+				`it declares ${table}, and ${existing.described} is already there and is not its own`,
+			);
+		}
+	}
+}
+
+/**
  * Everything that was in the schema before the plugin's transaction and is not the plugin's own has
  * to be there afterwards, under the same name. It replaces a walk over relations that could not see
  * a dropped trigger or a dropped function at all — S-FIX-2 puts half its enforcement in one of each
@@ -715,10 +748,13 @@ async function applyOwnedMigration(
 	driver: Driver,
 	schema: string,
 	migration: OwnedMigration,
-	declaredTables: readonly string[],
+	declaredBefore: readonly string[],
 ): Promise<void> {
+	const declaredThrough = [...declaredBefore, ...migration.createsTables];
 	const ledger = qualifiedTableName(schema, PLUGIN_LEDGER_TABLE);
 	assertNoSchemaNameInsideDollarQuoting(migration.sql, schema);
+	// Read again for every migration: one plugin's `RESET ROLE` must not unbind the next plugin's.
+	await assertTheRoleCannotOutrunTheMeasurement(driver, schema);
 	await driver.transaction(async (tx) => {
 		await lockSchema(tx, schema);
 
@@ -734,12 +770,15 @@ async function applyOwnedMigration(
 		const writtenBefore = await readWriteCounters(tx, migration);
 		const before = await readRelations(tx, schema);
 		const objectsBefore = await readSchemaObjects(tx, schema);
-		const ownBefore = await readObjectsOfTheDeclaredTables(tx, schema, declaredTables);
+		// Only what earlier migrations of this plugin declared: a declaration exempts nothing before
+		// the migration that makes it has run, so a later version cannot reach back over this one.
+		const ownBefore = await readObjectsOfTheDeclaredTables(tx, schema, declaredBefore);
+		assertNoDeclaredNameIsAlreadySomebodyElses(migration, schema, before, ownBefore);
 		await applyStatements(tx, schema, migration);
 		// The ownership of what it touched is read first, so a relation it should not have made is
 		// refused for what it is rather than for the scan that making it recorded.
 		const after = await readRelations(tx, schema);
-		const own = await readObjectsOfTheDeclaredTables(tx, schema, declaredTables);
+		const own = await readObjectsOfTheDeclaredTables(tx, schema, declaredThrough);
 		assertEveryRelationItTouchedIsItsOwn(migration, schema, before, await readRelationsTouched(tx));
 		assertItLeftEveryOtherObjectAsItFoundIt(
 			migration,
@@ -758,7 +797,7 @@ async function applyOwnedMigration(
 			migration,
 			writtenBefore,
 			await readWriteCounters(tx, migration),
-			new Set(declaredTables.map((table) => `${schema}.${table}`)),
+			new Set(declaredThrough.map((table) => `${schema}.${table}`)),
 		);
 		await tx.query(
 			`INSERT INTO ${ledger} (plugin_id, version, name, checksum) VALUES ($1, $2, $3, $4)`,
@@ -770,14 +809,6 @@ async function applyOwnedMigration(
 export async function runMigrations(options: MigrationRunnerOptions): Promise<MigrationReport> {
 	const schema = assertSchemaName(options.schema ?? DEFAULT_SCHEMA);
 	const owned = byOwnerInDependencyOrder(options.migrations.filter(isOwnedMigration));
-	// Every table the plugin declares, across all of its migrations, because migration five may alter
-	// what migration one created and the snapshot has to know that table is its own (E-918).
-	const declaredByOwner = new Map<string, string[]>();
-	for (const migration of owned) {
-		const declared = declaredByOwner.get(migration.owner) ?? [];
-		declared.push(...migration.createsTables);
-		declaredByOwner.set(migration.owner, declared);
-	}
 	const plan = inVersionOrder(
 		options.migrations.filter((migration) => !isOwnedMigration(migration)),
 		schema,
@@ -802,18 +833,14 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 		}
 	}
 
-	if (owned.length > 0) {
-		await assertTheRoleCannotOutrunTheMeasurement(options.driver);
-	}
-
 	// The core schema is what a plugin's tables reference, so every core migration is applied first.
+	// What each plugin has declared so far grows as its migrations run, in version order, so a
+	// migration is exempted by what earlier ones of its own declared and never by a later one (E-928).
+	const declaredSoFar = new Map<string, string[]>();
 	for (const migration of owned) {
-		await applyOwnedMigration(
-			options.driver,
-			schema,
-			migration,
-			declaredByOwner.get(migration.owner) ?? [],
-		);
+		const declared = declaredSoFar.get(migration.owner) ?? [];
+		await applyOwnedMigration(options.driver, schema, migration, declared);
+		declaredSoFar.set(migration.owner, [...declared, ...migration.createsTables]);
 	}
 
 	const versions = (await readLedger(options.driver, schema)).map((row) => row.version);

@@ -7,10 +7,24 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
+import {
+	asTheMigrationRole,
+	createTheMigrationRole,
+	dropTheMigrationRole,
+	type MigrationRole,
+} from "./plugin-fixtures.js";
 
 let shared: TestConnection | undefined;
 const schemas: string[] = [];
+const roles: MigrationRole[] = [];
+let current: MigrationRole | undefined;
+
+function theRole(): MigrationRole {
+	if (current === undefined) {
+		throw new Error("no migration role was created for this schema");
+	}
+	return current;
+}
 
 async function connection(): Promise<TestConnection> {
 	shared ??= await openTestConnection();
@@ -21,7 +35,8 @@ async function freshSchema(): Promise<string> {
 	const driver = await connection();
 	const schema = uniqueSchemaName("pluginrole");
 	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
-	await grantTheMigrationRole(driver, schema);
+	current = await createTheMigrationRole(driver, schema);
+	roles.push(current);
 	schemas.push(schema);
 	return schema;
 }
@@ -35,11 +50,11 @@ afterAll(async () => {
 	for (const schema of schemas.splice(0)) {
 		await dropSchema(driver, schema);
 	}
+	for (const used of roles.splice(0)) {
+		await dropTheMigrationRole(driver, used);
+	}
 	await driver.query("DROP SCHEMA IF EXISTS p_outside CASCADE", []).catch(() => undefined);
 	await driver.query("DROP ROLE IF EXISTS p_backdoor", []).catch(() => undefined);
-	await driver
-		.query("ALTER ROLE velve_plugin_migrator RESET search_path", [])
-		.catch(() => undefined);
 	await driver.close();
 	shared = undefined;
 });
@@ -57,11 +72,9 @@ async function outcomeOf(
 	underTheRole: boolean,
 ): Promise<{ readonly code?: string; readonly message?: string }> {
 	const driver = await connection();
-	const attempt = async () => {
+	const attempt = async (on: Driver) => {
 		try {
-			return await createVelveAuth(
-				configFor({ database: driver as Driver, schema, plugins: [plugin] }),
-			)
+			return await createVelveAuth(configFor({ database: on, schema, plugins: [plugin] }))
 				.migrate()
 				.then(() => ({}))
 				.catch((error: { code?: string; message?: string }) => error);
@@ -69,7 +82,9 @@ async function outcomeOf(
 			return error as { code?: string; message?: string };
 		}
 	};
-	return underTheRole ? asMigrationRole(driver, attempt) : attempt();
+	return underTheRole
+		? asTheMigrationRole(theRole(), (roleDriver) => attempt(roleDriver as Driver))
+		: attempt(driver as Driver);
 }
 
 /**
@@ -142,16 +157,16 @@ describe("what the restricted role closes and what it does not (3.11)", () => {
 		expect(outcome.message ?? "").toContain(complaint);
 	});
 
-	it.each([
-		["CREATE SCHEMA p_outside"],
-		["ALTER ROLE velve_plugin_migrator SET search_path = velve"],
-	])("still accepts %s, which the role restriction does not reach", async (sql) => {
-		const schema = await freshSchema();
+	it.each([["CREATE SCHEMA p_outside"], ["ALTER ROLE CURRENT_USER SET search_path = velve"]])(
+		"still accepts %s, which the role restriction does not reach",
+		async (sql) => {
+			const schema = await freshSchema();
 
-		const outcome = await outcomeOf(schema, migrationOf(sql), true);
+			const outcome = await outcomeOf(schema, migrationOf(sql), true);
 
-		expect(outcome.code).toBeUndefined();
-	});
+			expect(outcome.code).toBeUndefined();
+		},
+	);
 });
 
 /**
@@ -177,7 +192,9 @@ describe("a migration that resets the role it was checked under (3.11)", () => {
 			true,
 		);
 
-		expect(outcome.code).toBeDefined();
+		// Under a connection that is the role, the refusal comes from PostgreSQL rather than from the
+		// runner: `RESET ROLE` reaches `session_user`, which is the role itself and not a superuser.
+		expect(outcome.code ?? outcome.message).toBeDefined();
 		const rows = await driver.query<{ email: string }>(
 			`SELECT email FROM ${schema}.user WHERE id = $1`,
 			[victim],
@@ -185,11 +202,16 @@ describe("a migration that resets the role it was checked under (3.11)", () => {
 		expect(rows[0]?.email).toBe("victim@example.com");
 	});
 
-	it("checks the connection again for the second plugin, not once for the run", async () => {
+	/**
+	 * The runner re-reads the connection for every migration rather than once for the run. That is
+	 * not independently observable from outside — nothing a migration can do changes which roles the
+	 * connection reaches once `session_user` is read — so what this asserts is the outcome, and the
+	 * re-check is defence for a configuration these tests cannot construct (E-929).
+	 */
+	it("leaves the second plugin bound after the first has reset its role", async () => {
 		const schema = await freshSchema();
-		const driver = await connection();
 
-		const outcome = await asMigrationRole(driver, () =>
+		const outcome = await asTheMigrationRole(theRole(), (driver) =>
 			createVelveAuth(
 				configFor({
 					database: driver as Driver,
@@ -216,10 +238,15 @@ describe("a migration that resets the role it was checked under (3.11)", () => {
 				}),
 			)
 				.migrate()
-				.then(() => ({}) as { code?: string })
-				.catch((error: { code?: string }) => error),
+				.then(() => ({}) as { code?: string; message?: string })
+				.catch((error: { code?: string; message?: string }) => error),
 		);
 
-		expect(outcome.code).toBeDefined();
+		expect(outcome.code ?? outcome.message).toBeDefined();
+		const applied = await (await connection()).query<{ plugin_id: string }>(
+			`SELECT plugin_id FROM ${schema}.plugin_schema_migration`,
+			[],
+		);
+		expect(applied.map((row) => row.plugin_id)).toStrictEqual(["first"]);
 	});
 });

@@ -1,7 +1,13 @@
+import { randomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
 import type { RequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
+import {
+	FALLBACK_DATABASE_URL,
+	openTestConnection,
+	type TestConnection,
+} from "./db-postgres-connection.js";
 
 /**
  * A plugin written in JavaScript reaches the registry as a plain object, which is the half of 3.11
@@ -66,70 +72,80 @@ export function unreachableDriver(): Driver {
 	return { query: refuse, transaction: refuse };
 }
 
-const MIGRATION_ROLE = "velve_plugin_migrator";
+export interface MigrationRole {
+	readonly name: string;
+	readonly url: string;
+}
 
 /**
- * The runner refuses a plugin migration on a superuser connection, and the test connection is one.
- * The role is made the **owner** of the schema and of everything in it, which is the deployment
- * shape the refusal assumes: a role that can drop a core index and does not, because the runner
- * refuses it. Granting privileges instead would have PostgreSQL refuse the statement first, and the
- * test would then prove the grant rather than the measurement (E-920).
+ * A role that owns the schema and is neither a superuser nor a creator of roles, reached by
+ * **connecting as it**. Reaching it by `SET ROLE` from the superuser connection was the one
+ * configuration in which the guard cannot be observed at all: `session_user` stays the superuser,
+ * one `RESET ROLE` undoes the switch, and a measurement taken there cannot tell a working guard
+ * from a bypassed one (E-929).
+ *
+ * It owns the schema rather than holding privileges on it, and is granted `CREATE` on the database
+ * and on `public`, so that what refuses a migration reaching a core table or another schema is the
+ * **runner** and not PostgreSQL — a grant that withheld the privilege would refuse first and the
+ * test would prove the grant (E-920). Its password is generated per schema and never written down.
  */
-export async function grantTheMigrationRole(driver: Driver, schema: string): Promise<void> {
-	const [existing] = await driver.query<{ present: number }>(
-		"SELECT 1 AS present FROM pg_roles WHERE rolname = $1",
-		[MIGRATION_ROLE],
-	);
-	if (existing === undefined) {
-		await driver.query(`CREATE ROLE ${MIGRATION_ROLE} NOLOGIN`, []).catch(() => undefined);
-	}
-	const [database] = await driver.query<{ name: string }>("SELECT current_database() AS name", []);
-	await driver.query(`GRANT ${MIGRATION_ROLE} TO CURRENT_USER`, []).catch(() => undefined);
-	await driver.query(`GRANT CREATE ON DATABASE "${database?.name}" TO ${MIGRATION_ROLE}`, []);
-	// Same reason as the ownership handover: the runner has to be what refuses a table created in
-	// another schema, and a role that cannot create one there would refuse it first.
-	await driver.query(`GRANT CREATE ON SCHEMA public TO ${MIGRATION_ROLE}`, []);
-	await driver.query(
+export async function createTheMigrationRole(
+	owner: TestConnection,
+	schema: string,
+): Promise<MigrationRole> {
+	const name = `${schema}_migrator`;
+	const password = randomBytes(24).toString("hex");
+	const [database] = await owner.query<{ name: string }>("SELECT current_database() AS name", []);
+	await owner.query(`CREATE ROLE ${name} LOGIN PASSWORD '${password}'`, []);
+	await owner.query(`GRANT CONNECT, CREATE ON DATABASE "${database?.name}" TO ${name}`, []);
+	await owner.query(`GRANT CREATE ON SCHEMA public TO ${name}`, []);
+	await owner.query(
 		`DO $handover$
 		DECLARE owned record;
 		BEGIN
-			EXECUTE format('ALTER SCHEMA %I OWNER TO %I', '${schema}', '${MIGRATION_ROLE}');
+			EXECUTE format('ALTER SCHEMA %I OWNER TO %I', '${schema}', '${name}');
 			FOR owned IN
 				SELECT child.oid AS id FROM pg_class child
 				JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
 				WHERE namespace_.nspname = '${schema}' AND child.relkind IN ('r', 'p')
 			LOOP
-				EXECUTE format('ALTER TABLE %s OWNER TO %I', owned.id::regclass, '${MIGRATION_ROLE}');
+				EXECUTE format('ALTER TABLE %s OWNER TO %I', owned.id::regclass, '${name}');
 			END LOOP;
 			FOR owned IN
 				SELECT routine.oid AS id FROM pg_proc routine
 				JOIN pg_namespace namespace_ ON namespace_.oid = routine.pronamespace
 				WHERE namespace_.nspname = '${schema}'
 			LOOP
-				EXECUTE format('ALTER FUNCTION %s OWNER TO %I', owned.id::regprocedure, '${MIGRATION_ROLE}');
+				EXECUTE format('ALTER FUNCTION %s OWNER TO %I', owned.id::regprocedure, '${name}');
 			END LOOP;
 		END
 		$handover$`,
 		[],
 	);
+	const url = new URL(process.env.VELVE_TEST_DATABASE_URL ?? FALLBACK_DATABASE_URL);
+	url.username = name;
+	url.password = password;
+	return { name, url: url.toString() };
 }
 
-/** Holds the role for a whole schema's lifetime, for a file whose assertions the role may make too. */
-export async function enterTheMigrationRole(driver: Driver, schema: string): Promise<void> {
-	await grantTheMigrationRole(driver, schema);
-	await driver.query(`SET ROLE ${MIGRATION_ROLE}`, []);
-}
-
-export async function leaveTheMigrationRole(driver: Driver): Promise<void> {
-	await driver.query("RESET ROLE", []);
-}
-
-/** Runs one migration attempt under that role, so the connection is the shape a deployment has. */
-export async function asMigrationRole<T>(driver: Driver, run: () => Promise<T>): Promise<T> {
-	await driver.query(`SET ROLE ${MIGRATION_ROLE}`, []);
+/** One connection, open only while the migration runs, because the suite shares a connection budget. */
+export async function asTheMigrationRole<T>(
+	role: MigrationRole,
+	run: (driver: TestConnection) => Promise<T>,
+): Promise<T> {
+	const driver = await openTestConnection(role.url);
 	try {
-		return await run();
+		return await run(driver);
 	} finally {
-		await driver.query("RESET ROLE", []);
+		await driver.close();
 	}
+}
+
+/** Run after the schema is dropped: the role owns what is left of it. */
+export async function dropTheMigrationRole(
+	owner: TestConnection,
+	role: MigrationRole,
+): Promise<void> {
+	await owner.query(`DROP OWNED BY ${role.name} CASCADE`, []).catch(() => undefined);
+	await owner.query(`DROP ROLE IF EXISTS ${role.name}`, []).catch(() => undefined);
 }

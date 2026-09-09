@@ -7,10 +7,24 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
+import {
+	asTheMigrationRole,
+	createTheMigrationRole,
+	dropTheMigrationRole,
+	type MigrationRole,
+} from "./plugin-fixtures.js";
 
 let shared: TestConnection | undefined;
 const schemas: string[] = [];
+const roles: MigrationRole[] = [];
+let current: MigrationRole | undefined;
+
+function theRole(): MigrationRole {
+	if (current === undefined) {
+		throw new Error("no migration role was created for this schema");
+	}
+	return current;
+}
 
 async function connection(): Promise<TestConnection> {
 	shared ??= await openTestConnection();
@@ -21,7 +35,8 @@ async function freshSchema(): Promise<string> {
 	const driver = await connection();
 	const schema = uniqueSchemaName("pluginsnapshot");
 	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
-	await grantTheMigrationRole(driver, schema);
+	current = await createTheMigrationRole(driver, schema);
+	roles.push(current);
 	schemas.push(schema);
 	return schema;
 }
@@ -34,6 +49,9 @@ afterAll(async () => {
 	for (const schema of schemas.splice(0)) {
 		await dropSchema(driver, schema);
 	}
+	for (const used of roles.splice(0)) {
+		await dropTheMigrationRole(driver, used);
+	}
 	await driver.close();
 	shared = undefined;
 });
@@ -43,12 +61,11 @@ async function refusalOf(
 	id: string,
 	sql: string,
 ): Promise<{ readonly code?: string }> {
-	const driver = await connection();
 	const plugin = {
 		id,
 		migrations: [{ version: 1, name: "reach", createsTables: [], sql }],
 	} as unknown as VelvePlugin;
-	return asMigrationRole(driver, async () => {
+	return asTheMigrationRole(theRole(), async (driver) => {
 		try {
 			return await createVelveAuth(
 				configFor({ database: driver as Driver, schema, plugins: [plugin] }),
@@ -192,9 +209,8 @@ describe("core code a migration removes rather than leaves behind (S-FIX-2)", ()
 describe("what a plugin may still do to what it created itself (3.11)", () => {
 	it("lets a second migration drop an index the first one made on its own table", async () => {
 		const schema = await freshSchema();
-		const driver = await connection();
 
-		const refusal = await asMigrationRole(driver, () =>
+		const refusal = await asTheMigrationRole(theRole(), (driver) =>
 			createVelveAuth(
 				configFor({
 					database: driver as Driver,
@@ -249,8 +265,7 @@ describe("what a declaration may exempt, and when (3.11)", () => {
 		first: { name: string; createsTables: readonly string[]; sql: string },
 		second: { name: string; createsTables: readonly string[]; sql: string },
 	): Promise<{ readonly code?: string }> {
-		const driver = await connection();
-		return asMigrationRole(driver, () =>
+		return asTheMigrationRole(theRole(), (driver) =>
 			createVelveAuth(
 				configFor({
 					database: driver as Driver,
@@ -294,9 +309,8 @@ describe("what a declaration may exempt, and when (3.11)", () => {
 
 	it("refuses declaring a name that is already a core relation of another kind", async () => {
 		const schema = await freshSchema();
-		const driver = await connection();
 
-		const refusal = await asMigrationRole(driver, () =>
+		const refusal = await asTheMigrationRole(theRole(), (driver) =>
 			createVelveAuth(
 				configFor({
 					database: driver as Driver,

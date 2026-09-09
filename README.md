@@ -203,9 +203,14 @@ afterwards** unless it belongs to a table the plugin declared — which is how a
 core index, a core constraint and a core trigger are covered without any list of
 names to fall behind, since everything present before a plugin migration runs is
 the core by construction. And **a plugin migration does not run on a superuser
-connection**, nor on one whose role may create roles: every measurement above is
-a privilege away from being switched off, so the connection is part of the
-boundary. Core migrations are unaffected. The refusal rolls the whole migration
+connection**, nor on one whose role may create roles, nor on one that can
+`SET ROLE` to either: every measurement above is a privilege away from being
+switched off, so the connection is part of the boundary. Run migrations as a
+role that **owns** the schema and holds neither privilege — the reference gives
+the four statements that produce one, and says why owning it rather than being
+granted it is what makes the advice work. Core migrations are unaffected, and
+the refusal happens after the core schema has applied and before any plugin
+migration has run, so nothing is left half-done. The refusal rolls the whole migration
 back. What the measurements still do not see — a table dropped in the same
 transaction, a comment, an empty schema left behind, a lock — is written down in
 the reference rather than glossed here. There is no rollback of an applied

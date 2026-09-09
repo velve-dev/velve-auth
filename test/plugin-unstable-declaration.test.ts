@@ -69,7 +69,11 @@ describe("a declaration that answers one way to the check and another to the tab
 
 		expect(answer.status).toBe(403);
 		expect(reached).toStrictEqual([]);
-		expect(instance.auth.routes.map((route) => route.originCheck)).not.toContain("exempt");
+		// The plugin's own route, not the whole table: S-CSRF-1 gives the OAuth callback an exemption,
+		// so asserting that no route anywhere is exempt states something the specification denies, and
+		// the exemption this case hunts is the getter's (E-925).
+		const contributed = instance.auth.routes.filter((route) => route.name.startsWith("demo."));
+		expect(contributed.map((route) => route.originCheck)).toStrictEqual(["checked"]);
 	});
 
 	/** 3.6 enumerates four routes that read `__Host-velve_pending`, and a plugin route is not one. */

@@ -7,7 +7,12 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
+import {
+	asTheMigrationRole,
+	createTheMigrationRole,
+	dropTheMigrationRole,
+	type MigrationRole,
+} from "./plugin-fixtures.js";
 
 interface Opened {
 	readonly connection: TestConnection;
@@ -17,6 +22,15 @@ interface Opened {
 
 const schemas: string[] = [];
 let shared: TestConnection | undefined;
+const roles: MigrationRole[] = [];
+let current: MigrationRole | undefined;
+
+function theRole(): MigrationRole {
+	if (current === undefined) {
+		throw new Error("no migration role was created for this schema");
+	}
+	return current;
+}
 
 /** One connection for the file: PostgreSQL's connection budget is what bounds the whole suite. */
 async function connection(): Promise<TestConnection> {
@@ -28,14 +42,15 @@ async function openSchema(): Promise<Opened> {
 	const driver = await connection();
 	const schema = uniqueSchemaName("pluginreads");
 	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
-	await grantTheMigrationRole(driver, schema);
+	current = await createTheMigrationRole(driver, schema);
+	roles.push(current);
 	schemas.push(schema);
 	return {
 		connection: driver,
 		schema,
 		migrate: (plugin) =>
-			asMigrationRole(driver, () =>
-				createVelveAuth(configFor({ database: driver as Driver, schema, plugins: [plugin] }))
+			asTheMigrationRole(theRole(), (roleDriver) =>
+				createVelveAuth(configFor({ database: roleDriver as Driver, schema, plugins: [plugin] }))
 					.migrate()
 					.then(() => ({}))
 					.catch((error: { code?: string }) => error),
@@ -50,6 +65,9 @@ afterAll(async () => {
 	}
 	for (const schema of schemas.splice(0)) {
 		await dropSchema(driver, schema);
+	}
+	for (const used of roles.splice(0)) {
+		await dropTheMigrationRole(driver, used);
 	}
 	await driver.close();
 	shared = undefined;

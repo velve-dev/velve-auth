@@ -4537,9 +4537,36 @@ then a refusal rather than a silent pass. It is refused with
 `migration_role_unbounded`. **Core migrations are unaffected** and run on
 whatever connection the application supplies; only a plugin's do.
 
-Run migrations as a role that owns the schema and is neither a superuser nor a
-holder of `CREATEROLE`. Most managed-Postgres master users hold `CREATEROLE`, so
-on those a separate migration role is required rather than optional.
+The check reads every role the connection can **reach**, not the one it is
+currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it
+back, so a connection that may `SET ROLE` to a superuser is refused whichever
+role it is wearing. It runs again for every migration, so one plugin's escape
+cannot unbind the next plugin's check.
+
+**Owning the schema is part of the requirement, not an optimisation.** A role
+that merely holds privileges on the schema gets past this check and is refused
+by PostgreSQL on its first plugin table instead, which is a second and
+unrelated-looking error. Connect as a role produced like this:
+
+```sql
+CREATE ROLE velve_migrator LOGIN PASSWORD '…';
+GRANT CONNECT, CREATE ON DATABASE your_database TO velve_migrator;
+ALTER SCHEMA velve OWNER TO velve_migrator;
+REASSIGN OWNED BY the_role_that_ran_the_core_migrations TO velve_migrator;
+```
+
+`REASSIGN OWNED BY` moves **everything** that role owns in the database, which is
+what you want when the role is dedicated to this schema and is not when it owns
+other things; in that case transfer the schema's tables and functions one at a
+time instead.
+
+The refusal happens **after the core migrations have applied** and before any
+plugin migration has run, so a first `migrate()` that fails this way leaves a
+complete core schema and no plugin schema. Nothing is half-done; fix the
+connection and run it again.
+
+Most managed-Postgres master users hold `CREATEROLE`, so on those a separate
+migration role is required rather than optional.
 
 Four measurements, taken **inside the migration's own transaction**, and none of
 them reads the migration's SQL:
@@ -4651,7 +4678,8 @@ the measurements. Named by example, what they do **not** see:
   role above refuses `CREATE ROLE` and `CREATE CAST` outright, and it does **not**
   refuse the other two: a role may always alter its own settings, and `migrate()`
   itself needs `CREATE` on the database, so the privilege that lets a migration
-  leave an empty schema behind is one the library requires.
+  leave an empty schema behind is one the library requires. What each of the four
+  costs is a stray object, not a reach into the core schema.
 - **a lock.** `LOCK TABLE velve.user IN ACCESS EXCLUSIVE MODE` changes no
   catalogue row, writes no row and reads none, so nothing here sees it. It ends
   with the transaction.

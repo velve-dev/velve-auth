@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
+import type { MigrationReport } from "../src/core/db/migration.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import { createVelveAuth, type VelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
@@ -7,26 +8,37 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import {
 	asJavaScriptPlugin,
-	enterTheMigrationRole,
-	leaveTheMigrationRole,
+	asTheMigrationRole,
+	createTheMigrationRole,
+	dropTheMigrationRole,
+	type MigrationRole,
 } from "./plugin-fixtures.js";
 
 interface Migrated {
 	readonly connection: TestConnection;
 	readonly schema: string;
+	/** Builds the instance on the owner's connection, for the start errors that run no statement. */
 	readonly start: (plugins: readonly VelvePlugin[]) => VelveAuth<"email">;
+	/** Runs the migrations on a connection authenticated as the restricted role (E-929). */
+	readonly migrate: (plugins: readonly VelvePlugin[]) => Promise<MigrationReport>;
+	readonly role: MigrationRole;
 }
 
 const opened: Migrated[] = [];
 
 async function migratedSchema(): Promise<Migrated> {
 	const { connection, schema } = await openMigratedSchema("pluginmigration");
-	await enterTheMigrationRole(connection, schema);
+	const role = await createTheMigrationRole(connection, schema);
 	const migrated: Migrated = {
 		connection,
 		schema,
+		role,
 		start: (plugins) =>
 			createVelveAuth(configFor({ database: connection as Driver, schema, plugins })),
+		migrate: (plugins) =>
+			asTheMigrationRole(role, (driver) =>
+				createVelveAuth(configFor({ database: driver as Driver, schema, plugins })).migrate(),
+			),
 	};
 	opened.push(migrated);
 	return migrated;
@@ -34,9 +46,9 @@ async function migratedSchema(): Promise<Migrated> {
 
 afterEach(async () => {
 	for (const migrated of opened.splice(0)) {
-		await leaveTheMigrationRole(migrated.connection);
 		await migrated.connection.query("DROP TABLE IF EXISTS public.audit_stray", []);
 		await dropSchema(migrated.connection, migrated.schema);
+		await dropTheMigrationRole(migrated.connection, migrated.role);
 		await migrated.connection.close();
 	}
 });
@@ -82,8 +94,7 @@ async function refusalOf(
 	plugin: VelvePlugin,
 ): Promise<{ readonly code?: string }> {
 	return migrated
-		.start([plugin])
-		.migrate()
+		.migrate([plugin])
 		.then(() => ({}))
 		.catch((error: { code?: string }) => error);
 }
@@ -92,7 +103,7 @@ describe("a plugin's migrations run in the same runner (3.11)", () => {
 	it("applies a plugin migration numbered 1 beside the core's own migration 1", async () => {
 		const migrated = await migratedSchema();
 
-		const report = await migrated.start([auditPlugin()]).migrate();
+		const report = await migrated.migrate([auditPlugin()]);
 
 		expect(report.currentVersion).toBe(2);
 		expect(await tablesIn(migrated)).toContain("audit_entry");
@@ -113,16 +124,16 @@ describe("a plugin's migrations run in the same runner (3.11)", () => {
 		};
 		const migrated = await migratedSchema();
 
-		await migrated.start([auditPlugin(), badge]).migrate();
+		await migrated.migrate([auditPlugin(), badge]);
 
 		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1", "badge@1"]);
 	});
 
 	it("applies nothing a second time", async () => {
 		const migrated = await migratedSchema();
-		await migrated.start([auditPlugin()]).migrate();
+		await migrated.migrate([auditPlugin()]);
 
-		const again = await migrated.start([auditPlugin()]).migrate();
+		const again = await migrated.migrate([auditPlugin()]);
 
 		expect(again.appliedVersions).toStrictEqual([]);
 		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1"]);
@@ -130,7 +141,7 @@ describe("a plugin's migrations run in the same runner (3.11)", () => {
 
 	it("refuses a migration whose text changed after it was applied", async () => {
 		const migrated = await migratedSchema();
-		await migrated.start([auditPlugin()]).migrate();
+		await migrated.migrate([auditPlugin()]);
 		const edited: VelvePlugin<"audit"> = {
 			id: "audit",
 			migrations: [
@@ -143,7 +154,7 @@ describe("a plugin's migrations run in the same runner (3.11)", () => {
 			],
 		};
 
-		await expect(migrated.start([edited]).migrate()).rejects.toMatchObject({
+		await expect(migrated.migrate([edited])).rejects.toMatchObject({
 			code: "migration_checksum_changed",
 		});
 	});
@@ -151,7 +162,7 @@ describe("a plugin's migrations run in the same runner (3.11)", () => {
 	it("creates no ledger of its own where no plugin brings a migration", async () => {
 		const migrated = await migratedSchema();
 
-		await migrated.start([]).migrate();
+		await migrated.migrate([]);
 
 		expect(await tablesIn(migrated)).not.toContain("plugin_schema_migration");
 	});
@@ -256,7 +267,7 @@ describe("what a plugin migration is refused for", () => {
 			],
 		};
 
-		await migrated.start([evolving]).migrate();
+		await migrated.migrate([evolving]);
 
 		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1", "audit@2"]);
 	});
@@ -405,24 +416,22 @@ describe("what a plugin migration is refused for", () => {
 		const migrated = await migratedSchema();
 		await createUser(migrated.connection, migrated.schema);
 
-		await migrated
-			.start([
-				{
-					id: "audit",
-					migrations: [
-						{
-							version: 1,
-							name: "seed",
-							createsTables: ["audit_seed"],
-							sql: `CREATE TABLE velve.audit_seed (
+		await migrated.migrate([
+			{
+				id: "audit",
+				migrations: [
+					{
+						version: 1,
+						name: "seed",
+						createsTables: ["audit_seed"],
+						sql: `CREATE TABLE velve.audit_seed (
 								id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 								user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE
 							);`,
-						},
-					],
-				} satisfies VelvePlugin<"audit">,
-			])
-			.migrate();
+					},
+				],
+			} satisfies VelvePlugin<"audit">,
+		]);
 
 		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1"]);
 	});

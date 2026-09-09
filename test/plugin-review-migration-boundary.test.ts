@@ -6,7 +6,13 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
-import { asJavaScriptPlugin, asMigrationRole, grantTheMigrationRole } from "./plugin-fixtures.js";
+import {
+	asJavaScriptPlugin,
+	asTheMigrationRole,
+	createTheMigrationRole,
+	dropTheMigrationRole,
+	type MigrationRole,
+} from "./plugin-fixtures.js";
 
 interface Opened {
 	readonly connection: TestConnection;
@@ -15,17 +21,19 @@ interface Opened {
 }
 
 const opened: Opened[] = [];
+const roles: MigrationRole[] = [];
 const strayTables: string[] = [];
 
 async function openSchema(): Promise<Opened> {
 	const { connection, schema } = await openMigratedSchema("pluginboundary");
-	await grantTheMigrationRole(connection, schema);
+	const role = await createTheMigrationRole(connection, schema);
+	roles.push(role);
 	const instance: Opened = {
 		connection,
 		schema,
 		migrate: (plugins) =>
-			asMigrationRole(connection, () =>
-				createVelveAuth(configFor({ database: connection as Driver, schema, plugins }))
+			asTheMigrationRole(role, (roleDriver) =>
+				createVelveAuth(configFor({ database: roleDriver as Driver, schema, plugins }))
 					.migrate()
 					.then(() => ({}))
 					.catch((error: { code?: string }) => error),
@@ -41,6 +49,9 @@ afterEach(async () => {
 			await instance.connection.query(`DROP TABLE IF EXISTS public.${table}`, []);
 		}
 		await dropSchema(instance.connection, instance.schema);
+		for (const used of roles.splice(0)) {
+			await dropTheMigrationRole(instance.connection, used);
+		}
 		await instance.connection.close();
 	}
 });
