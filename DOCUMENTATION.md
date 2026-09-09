@@ -4078,7 +4078,11 @@ a cookie.
 
 `redirectPath` is a **path**, never a URL. It is rejected — with
 `invalid_input` — if it begins `//` or `/\`, carries a scheme, a userinfo part
-or a host, or does any of those after exactly one percent decoding. It is stored
+or a host. The check is applied to the value, to its one percent decoding and to
+the decoding of that: three readings over two decodings, which is what
+`S-REDIR-2` asks for. A target that needs a *third* decoding to become a URL is
+still accepted, and `test/oauth-redirect-corpus.test.ts` names the two vectors
+of its corpus that are; both resolve to a path on your own origin. It is stored
 with the flow and becomes the 302's `Location` at the callback. It resolves
 against the host the callback is mounted on, so an application on another host
 than its API cannot be returned to by path alone. A flow that names none
@@ -4088,6 +4092,14 @@ redirects to `/`.
 15 minutes by default), and records the account server-side in the flow row. The
 callback for a link therefore cannot be pointed at another account, and there is
 no `link.finish`: one callback answers both.
+
+**Linking ends every session of the account and issues one new one.** A new
+identity changes the trust level, so `S-LINK-7` requires a re-issue; the account
+comes from the flow row rather than from the callback's session cookie, because
+that cookie is `SameSite=Lax` and a browser does not send it on a `form_post`
+callback — nor, in a `sessionSameSite: "strict"` installation, on the redirect
+one. The consequence is wider than replacing the session that started the link:
+a user who links a provider on one device is signed out on the others.
 
 `identity.unlink` requires a session and freshness, and refuses with
 `last_sign_in_method` when the identity is the account's last way in — counted
@@ -4120,9 +4132,11 @@ never reads them.
 3. Consumes the flow row by `DELETE … RETURNING` on the hash of the `state`. A
    state can be spent exactly once; an expired row and a state that never
    existed are the same answer.
-4. Checks `iss` where the provider sent one: it must equal the configured
-   issuer. An `iss` that arrives for a provider configured without an issuer is
-   refused rather than passed over.
+4. Checks `iss` where the provider sent one. Against the configured issuer where
+   there is one; against the `iss` claim of the verified ID token where the
+   provider has none — which is `microsoft`, whose issuer names the tenant. An
+   `iss` that arrives where neither can answer it is refused rather than passed
+   over.
 5. Decrypts the PKCE verifier and exchanges the code at the token endpoint. The
    request carries a ten-second deadline, and a 3xx answer is refused rather
    than followed.
@@ -4204,8 +4218,14 @@ it. Two things follow.
   be missing where the callback reads it. Only flows whose provider posts get
   that attribute; a redirecting provider's pointer stays `Lax`.
 
+The callback reads **no** session cookie in either delivery, so a link works the
+same on both; see *The routes and the methods* for what a link re-issues.
+
 Nothing else changes: the code never enters a query string, no second redirect
 is added, and the state row and PKCE are what secure the callback either way.
+Section 1 C50 solves the same problem the other way, by converting the POST into
+a GET redirect; this library does not, and `CASE-STUDY.md` E-586 sets out why and
+what that costs.
 
 ### Storing provider tokens
 
