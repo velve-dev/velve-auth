@@ -204,9 +204,10 @@ type AddressOccupancy =
 	| { readonly kind: "taken"; readonly owner: string | null };
 
 /**
- * The one message either branch sends, after the transaction has committed and the account's row
- * lock has gone (E-630). A `send` that throws undoes what stands: the artefact on the free branch
- * and the account with it. The cover branch has nothing committed to undo.
+ * The one message either branch sends, after the transaction has committed and everything it held
+ * has gone (E-630, E-931). A `send` that throws undoes what stands: the artefact on the free branch
+ * and the account with it. The cover branch has nothing committed to undo, and a race whose winner
+ * has since been deleted has nobody to write to.
  */
 async function announce(
 	flow: SignUpFlow,
@@ -290,7 +291,7 @@ async function whatTookTheIdentifiers(
  * address, and gets what one gets; `/sign-up` declares no code for the failure and 3.15 D.1 makes
  * that declaration a contract (E-930).
  */
-async function registerAgainst(
+async function registerOrCover(
 	flow: SignUpFlow,
 	context: RequestContext,
 	columns: IdentityColumns,
@@ -351,7 +352,7 @@ export async function signUp(
 		}
 	}
 
-	const attempted = await registerAgainst(
+	const attempted = await registerOrCover(
 		flow,
 		context,
 		columns,
