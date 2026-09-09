@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { SkillTransformError, codexSkillFrom } from "./codex-skill.mjs";
+import { codexSkillFrom, SkillTransformError } from "./codex-skill.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const SKILL = "CLAUDE-SKILL.md";
