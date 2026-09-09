@@ -213,7 +213,12 @@ describe("the attribution step refuses when a scan cannot run", () => {
 	});
 
 	it("fails when grep cannot run", () => {
-		expect(runStep(plantedRepository(() => {}), "grep")).toBe(1);
+		expect(
+			runStep(
+				plantedRepository(() => {}),
+				"grep",
+			),
+		).toBe(1);
 	});
 
 	it("fails when awk cannot run", () => {
@@ -224,6 +229,11 @@ describe("the attribution step refuses when a scan cannot run", () => {
 	});
 
 	it("fails when cmp cannot run", () => {
-		expect(runStep(plantedRepository(() => {}), "cmp")).toBe(1);
+		expect(
+			runStep(
+				plantedRepository(() => {}),
+				"cmp",
+			),
+		).toBe(1);
 	});
 });
