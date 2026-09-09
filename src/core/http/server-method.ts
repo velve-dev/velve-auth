@@ -14,7 +14,15 @@ export function createServerMethod<
 	environment: HttpEnvironment,
 ): (input: Input & ServerCallFields) => Promise<Output> {
 	return async (input) => {
-		const { origin, sessionToken, pendingToken, ipAddress, userAgent, ...routeInput } = input;
+		const {
+			origin,
+			sessionToken,
+			pendingToken,
+			oauthStateToken,
+			ipAddress,
+			userAgent,
+			...routeInput
+		} = input;
 		try {
 			const outcome = await runRoute(
 				route,
@@ -25,6 +33,7 @@ export function createServerMethod<
 					readCallerTokens: () => ({
 						sessionToken: sessionToken ?? null,
 						pendingToken: pendingToken ?? null,
+						oauthStateToken: oauthStateToken ?? null,
 					}),
 					readInput: async () => routeInput,
 				},

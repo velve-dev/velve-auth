@@ -85,7 +85,7 @@ describe("the state between password and second factor (3.6, S-FIX-4)", () => {
 		const issued = await pending.begin({
 			userId,
 			factorsCompleted: ["password"],
-			});
+		});
 
 		expect(await countRows()).toBe(1);
 		expect(issued.token).toHaveLength(43);

@@ -160,12 +160,7 @@ function toStored(row: InsertedPendingRowShape): StoredPendingAuthentication {
 }
 
 /** The enrolments are read in the statement that writes the row, so the caller cannot name a factor the account does not have (3.6, 3.15 C.1). */
-function insertStatement(
-	table: string,
-	totp: string,
-	webauthn: string,
-	recovery: string,
-): string {
+function insertStatement(table: string, totp: string, webauthn: string, recovery: string): string {
 	return `WITH inserted AS (
 		INSERT INTO ${table} (token_sha256, user_id, factors_completed, expires_at)
 		VALUES ($1, $2, $3::text[], now() + $4::interval)
@@ -177,12 +172,7 @@ function insertStatement(
 	FROM inserted i`;
 }
 
-function enrolmentColumns(
-	totp: string,
-	webauthn: string,
-	recovery: string,
-	owner: string,
-): string {
+function enrolmentColumns(totp: string, webauthn: string, recovery: string, owner: string): string {
 	return `EXISTS (SELECT 1 FROM ${totp} t WHERE t.user_id = ${owner} AND t.confirmed_at IS NOT NULL) AS has_totp,
 		EXISTS (SELECT 1 FROM ${webauthn} w WHERE w.user_id = ${owner}) AS has_webauthn,
 		EXISTS (SELECT 1 FROM ${recovery} r WHERE r.user_id = ${owner}) AS has_recovery`;

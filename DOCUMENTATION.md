@@ -947,6 +947,7 @@ that declaration; the client is derived from the same types.
 | `errors` | `readonly AnyErrorCode[]` | The codes this route may produce. A contract, not a comment. `AnyErrorCode` is `VelveErrorCode` widened by the namespaced form a plugin registers; a core route declares core codes only. |
 | `caller` | `"anonymous" \| "session" \| "pending" \| "server_only"` | Who may call, not what may be read. `session` resolves the session cookie or fails with `session_required`; `pending` resolves `__Host-velve_pending` into the account it names, and only the four routes of 3.6 declare it (S-CACHE-4); `server_only` has no HTTP route and answers 404. |
 | `pendingCookie` | `"hidden" \| "readable"` (optional) | Whether the route sees the value of `__Host-velve_pending`, which is a different question from whether it is authorised by it. Absent means `hidden`. `caller: "pending"` implies `readable`, and a declaration that says `hidden` there is refused at definition. A `readable` route with another caller — `GET /pending`, `POST /pending/cancel` — receives `context.pendingToken` and no authority. |
+| `oauthStateCookie` | `"hidden" \| "readable"` (optional) | The same question for `__Host-velve_oauth_state`. Absent means `hidden`. No `caller` value implies it: the pointer authorises nothing by itself, it is one half of the check S-CSRF-5 describes and the row in `velve.oauth_flow` is the other. A `readable` route receives `context.oauthStateToken`; every other route is answered as if the cookie were absent. |
 | `freshness` | `"not_required" \| "required"` | `required` needs `caller: "session"` and fails with `freshness_required` outside the freshness window. |
 | `originCheck` | `"checked" \| "exempt"` | `exempt` exists for the OAuth callback, which has no `Origin` header by protocol. |
 | `rateLimit` | `{ perIpAddress: BucketRule \| "none"; perAccount: BucketRule \| "none" }` | The buckets this route consumes. |
@@ -959,7 +960,7 @@ handler.
 Five declaration mistakes are start errors rather than request-time surprises: a
 path that is not absolute or carries an empty or trailing segment; `freshness:
 "required"` without `caller: "session"`; `caller: "pending"` with
-`pendingCookie: "hidden"`; an input field named like one of the five
+`pendingCookie: "hidden"`; an input field named like one of the six
 `ServerCallFields`; and, when the handler is built, a route table with a
 duplicate name or with two routes answering the same folded path.
 
@@ -969,6 +970,11 @@ duplicate name or with two routes answering the same folded path.
 route with `caller: "pending"`. It is not exported from the package; it lives in
 `core/http/route.ts` and the pipeline is its only caller, so what a route may see
 is decided in one place.
+
+`readsOAuthStateCookie(route)` is its counterpart for the state pointer, with
+the same signature, the same home and the same single caller. The two fields are
+independent: a route that declares one readable does not thereby see the other,
+so widening access to the pointer cannot widen access to the pending state.
 
 S-CACHE-4 counts **readers**, and `caller` alone no longer bounds them. What
 bounds them is a named set in `test/auth-route-table.test.ts`, measured through
@@ -1050,6 +1056,7 @@ shape is checked and the contents are not.
 | `pending` | `ResolvedPendingAuthentication \| null` | Set for `caller: "pending"`. It carries `userId`, the `pending` record itself and the `observedAt` the database answered with — a route authorised by the intermediate state has to act on the account it belongs to, which the record alone does not name. |
 | `sessionToken` | `string \| null` | The raw cookie value, for routes that answer with `null` instead of failing when no session exists. |
 | `pendingToken` | `string \| null` | The raw pending cookie value, and only for a route that declares `pendingCookie: "readable"`. Every other route is answered as if the cookie were absent. |
+| `oauthStateToken` | `string \| null` | The raw state-pointer cookie value, and only for a route that declares `oauthStateCookie: "readable"`. Every other route is answered as if the cookie were absent. The callback compares it against `velve.oauth_flow`; on its own it proves nothing (S-CSRF-5). |
 | `ipAddress` | `string \| null` | The address the rate limiter counts: `options.connectionAddress` resolved against `X-Forwarded-For` and `trustedProxies`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
 | `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending`, `setOAuthState`, `clearOAuthState` — a role, never a name, so no unenumerated cookie can be written. |
@@ -1104,17 +1111,18 @@ const result = await signIn({
 It runs the same pipeline in the same order as a request — origin check,
 address bucket, input parse, caller resolution, handler — because 3.11 puts both
 checks in front of the direct call too. Beside the route's own input it takes
-five fields, and only these five:
+six fields, and only these six:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`; there is no way to omit the field and skip the check. |
 | `sessionToken` | `string?` | What `__Host-velve_session` would have carried; used where the route declares `caller: "session"`. |
 | `pendingToken` | `string?` | What `__Host-velve_pending` would have carried; used where the route declares `caller: "pending"`. |
+| `oauthStateToken` | `string?` | What `__Host-velve_oauth_state` would have carried; used where the route declares `oauthStateCookie: "readable"`. |
 | `ipAddress` | `string \| null?` | Passed to the rate limiter as the scope of the address bucket, unchanged. Absent becomes `null`, and the seam is then obliged to count that request rather than skip it (S-RATE-4); normalising an address to its `/64` prefix is the limiter's work (S-RATE-1), not this layer's. |
 | `userAgent` | `string \| null?` | Put on `RequestContext` and nothing else. Whatever stores it is obliged to truncate it by default (L-10); this layer neither stores nor shortens it. |
 
-These five names are reserved: a route declaring an input field of the same name
+These six names are reserved: a route declaring an input field of the same name
 is a start error, because the envelope would swallow it here and the HTTP path
 would keep it.
 
