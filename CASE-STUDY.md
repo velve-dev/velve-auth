@@ -5981,3 +5981,25 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** `link_session_gone` joins the row.
 
 **Price.** A **second divergence in the same table is reported and not repaired**, and it is wider than this one: four rows write `user_disabled` where the tree carries four context-suffixed names — `user_disabled_on_sign_in` for `invalid_credentials`, `user_disabled_on_token_redemption` for `invalid_token`, `user_disabled_on_oauth_flow` for `oauth_flow_invalid`, `user_disabled_on_webauthn_assertion` for `webauthn_credential_rejected`. The mapping is one-to-one and mechanically checkable, and it is **wave 1's** (`e270f86`), not wave 5's. This branch repairs the class it was given and does not reach a wave back on its own authority; the four pairs are written out here so that whoever takes it does not have to find them again. It joins E-1101's list.
+
+### A translation test proves the two files agree, not that either is true
+`E-1107` · specfix · what the checks cannot see
+
+**Context.** `test/architecture-translation.test.ts` compares headings, the identifier census, table heights and fenced-block counts, and it was green after every commit on this branch — including the ones carrying F1 through F5 and M1 through M3 of the review. It was green because the translation is faithful: **every one of those defects sat in both files, identically, and the check is built to pass exactly that.**
+
+**Rejected.** Treating it as a weakness of the check and proposing a stronger one. There is no version of a two-document comparison that can tell a true claim from a false one, and a check that tried would be a second specification.
+
+**Reason.** It is written down instead, because the failure it enables is a reader — or a writer — reading a green suite as evidence the document is right. The gate's other instruments have the same shape: `db-schema-conformance` proved the column list matched a live database, which is why amendments 1 and 3 were safe, and nothing in the suite could have said a word about whether `S-ENUM-3`'s stated reason was true. What caught F1 was a human opening `flows-review-signup-race.test.ts`.
+
+**Price.** The distinction has to be re-made by every reader, since the check reports success in the same words either way. The narrower statement — the two files say the same thing — is the one worth quoting, and it is not the one a green tick looks like.
+
+### The brief was a prohibition and the gap was read in this branch's favour
+`E-1108` · specfix · file ownership, disclosed
+
+**Context.** §5 fixes the set of files a feature may touch **before it starts**. This branch was given a prohibition instead — do not touch `src/` — and prohibitions and allowlists differ exactly on the files neither names. `test/db-schema-conformance.test.ts` was one of those, and its comment said the two session columns were carried by neither 3.2 nor 3.17, which the same commit made false.
+
+**Rejected.** Stopping and reporting it, which is what §5 prescribes for a file outside the set. Rejected on the ground that the comment was made false by this branch's own change and that a comment-only edit alters no behaviour — which is a reading of the gap in this branch's favour and is disclosed here as one rather than presented as compliance.
+
+**Reason.** The edit is right and the authority for it is thin. It stays, and the thinness is on the record, because the alternative was to merge a repair that knowingly left a false sentence in a file the branch had made false.
+
+**Price.** A prohibition read as an allowlist by whoever is inside it will keep producing edits that are individually defensible, and the next one may not be comment-only. The repair is upstream of this branch: a brief that lists the files, the way §5 says.
