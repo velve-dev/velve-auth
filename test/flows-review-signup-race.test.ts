@@ -128,9 +128,10 @@ describe.each(["/sign-up", "/sign-up/passwordless"])(
 		}, 60_000);
 
 		/**
-		 * The same race in the mode that has a second unique index. `coverColumns` replaces the
-		 * address and keeps the name, so the cover row carries the caller's username — and every
-		 * other case in this file runs in `email`, the one mode where that cannot matter (E-948).
+		 * The same race in the mode that reaches both unique indexes. Every mode has both — the two
+		 * partial indexes are created unconditionally — but only `username_email` fills both
+		 * columns, and `coverColumns` replaces the address and keeps the name, so the cover row
+		 * carries the caller's username where it can collide (E-948, E-957).
 		 */
 		it("answers alike in mode username_email, where the cover row carries a name too", async () => {
 			const address = `contended${path.length}.both@example.com`;
@@ -214,6 +215,35 @@ describe.each(["/sign-up", "/sign-up/passwordless"])(
 			);
 
 			expect([afterTaken, afterFree]).toStrictEqual([200, 409]);
-		}, 120_000);
+
+			// The sharper form: one batch rather than two requests. Every racer for a taken address
+			// takes the cover, every cover rolls back, so no name is ever claimed and none of them
+			// collides; for a free address one wins the name and the rest are refused it. Counting
+			// the refusals is the same bit (E-959).
+			const refusalsOn = async (first: (round: number) => string): Promise<number[]> => {
+				const seen: number[] = [];
+				for (let round = 0; round < ROUNDS; round += 1) {
+					const name = `batch${path.length}${first(round).length}r${round}`;
+					const answers = await simultaneously(
+						byBoth,
+						path,
+						Array.from({ length: RACING_CONNECTIONS }, () =>
+							withPassword(path, { email: first(round), username: name }),
+						),
+					);
+					seen.push(...answers.map((answer) => answer.status));
+				}
+				return seen;
+			};
+			const onTaken = await refusalsOn(() => registered);
+			const onFree = await refusalsOn((round) => `batchabsent${path.length}r${round}@example.com`);
+			const refused = (seen: readonly number[]): number =>
+				seen.filter((status) => status === 409).length;
+
+			expect(
+				[refused(onTaken), refused(onFree)],
+				`taken ${onTaken.length} answers, free ${onFree.length}`,
+			).toStrictEqual([0, ROUNDS * (RACING_CONNECTIONS - 1)]);
+		}, 180_000);
 	},
 );
