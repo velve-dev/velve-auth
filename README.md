@@ -190,12 +190,20 @@ or altered is read out of the catalogue rows its own transaction wrote, and what
 it wrote and read out of the transaction's own counters. It may add exactly the
 tables it declares, each carrying its prefix, and inside its own tables it may do
 as it likes; it may create only tables and the objects a table brings with it, so
-a view, a function or a trigger is refused whatever it is called; and it may not
+a view, a function or a trigger is refused whatever it is called, and so is
+anything else it creates that belongs to none of its own tables; and it may not
 create, alter, empty or remove anything it does not own, in any schema, nor write
-a row into one, nor read one it does not reference. The refusal rolls the
-whole migration back. What the measurements do not see — objects that are not
-tables, and a table dropped in a schema of its own — is written down in the
-reference rather than glossed here. There is no rollback of an applied
+a row into one, nor read one — **its own tables and no others, with no exception
+for the ones it points at.** Declaring a foreign key to `velve.user` costs no
+read and is the ordinary plugin table; filling such a table with rows naming real
+accounts is refused, because the constraint check that costs is indistinguishable
+from a copy of the table, and those rows are written after `migrate()` returns.
+A core table is nobody's own however a plugin's name begins, so a plugin called
+`one` does not reach `velve.one_time_token`. The refusal rolls the whole
+migration back. What the measurements do not see — a table dropped in the same
+transaction, a comment, and a migration run as a superuser that turns the row
+counters off and on again — is written down in the reference rather than glossed
+here. There is no rollback of an applied
 migration, and removing a plugin leaves its tables where they are.
 
 ## Mounting it

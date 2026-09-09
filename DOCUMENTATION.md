@@ -4515,7 +4515,13 @@ reason: it belongs to a configuration those files do not describe.
 
 `velve.plugin_schema_migration` is a core table for every plugin, so
 `ownTables.query` refuses it — including for a plugin called `plugin`, whose own
-prefix its name begins with.
+prefix its name begins with. **A core table name is not a plugin's own, whatever
+its prefix**, and all three places that decide it — `ownTables.query`, the
+migration runner, and the check that reads `createsTables` before a statement
+runs — read one predicate built from the core migrations. A plugin called `one`
+does not own `velve.one_time_token`, one called `recovery` does not own
+`velve.recovery_code`, and a core table added later is covered by all three
+without any of them being edited.
 
 #### What a plugin migration may do
 
@@ -4544,12 +4550,28 @@ The rule those three carry:
   reads what it likes: `CREATE VIEW velve.<id>_peek AS SELECT * FROM
   velve.password_credential` is two legal-looking steps that end in a complete
   read of a core table through `ownTables.query`;
+- **everything else it creates must belong to one of its own tables.** That is
+  the rule stated positively, and it is what bounds the kinds this reference does
+  not name. A table's row type, its array type, its indexes, its constraints, its
+  column defaults and the internal triggers a foreign key installs all belong to
+  it; a type, a domain, a collation, an operator or an extension belongs to the
+  schema and not to a table, and is refused. A kind PostgreSQL adds after this
+  was written is refused by the same rule, because nothing has to be added to a
+  list for it to be caught;
 - **inside its own tables it may do as it likes** — a later migration may alter,
   fill or drop a table an earlier one of the same plugin created;
 - **outside them nothing at all**: nothing created, altered, emptied or removed
-  in any schema, no row written, and **no row read** — except in the tables its
-  own tables reference by foreign key, because a foreign key is checked by
-  reading the table it points at.
+  in any schema, no row written, and **no row read**.
+
+**A migration reads its own tables and no others, with no exception for the ones
+it references.** Declaring a foreign key costs no read — `CREATE TABLE
+velve.audit_entry (user_id uuid REFERENCES velve.user(id) ON DELETE CASCADE)`
+reads no row of `velve.user`, and that is the ordinary plugin table. What is
+refused is a migration that **fills** such a table with rows naming real
+accounts, because each row costs one index probe of `velve.user` and no counter
+here separates that probe from a copy of the table. Write those rows from the
+application after `migrate()` has returned, where the plugin's own tables are
+its to write. The refusal says so.
 
 A migration that breaks any of it is refused with a `MigrationRefusedError` and
 its transaction rolls back, so the schema is as it was and the ledger has no row
@@ -4563,12 +4585,19 @@ for it.
 | `migration_table_unprefixed` | It reached a relation of the configured schema that does not carry the plugin's prefix. |
 | `migration_table_outside_the_schema` | It reached a relation in another schema, `public` included. |
 | `migration_foreign_table_changed` | It altered, emptied or removed something it does not own — an index of a core table included. |
-| `migration_created_more_than_a_table` | It made a relation that is not a table or one of a table's own objects: a view, a materialized view, a foreign table. |
+| `migration_created_more_than_a_table` | It made a relation that is not a table or one of a table's own objects — a view, a materialized view, a foreign table — or it created an object belonging to none of its own tables, such as a type, a collation or an extension. |
 | `migration_left_code_behind` | It left a function, a trigger or a rule behind, its own tables included. |
 | `migration_wrote_a_foreign_table` | It wrote a row into a table it does not own. |
-| `migration_read_a_foreign_table` | It read rows of a table it does not own and does not reference. |
+| `migration_read_a_foreign_table` | It read rows of a table it does not own. |
 | `migration_write_check_unavailable` | `track_counts` is off, so what it wrote and read cannot be read. The migration is refused rather than run unmeasured. |
-| `migration_missing_cascade` | S-TOKEN-6: a `user_id` without a foreign key to `velve.user` that cascades. |
+
+Those eleven are the whole of `MigrationRefusalCode`. **S-TOKEN-6's
+`migration_missing_cascade` is not one of them** — a `user_id` column without a
+foreign key to `velve.user` that cascades is refused with a `MissingCascadeError`
+carrying that code, not with a `MigrationRefusedError`. Both roll the same
+transaction back and both leave the ledger without a row; a caller that narrows
+on `MigrationRefusedError` and tests for `migration_missing_cascade` inside it
+writes a branch that cannot be reached.
 
 Measuring rather than parsing is the point, and the boundary is only as wide as
 the measurements. Named by example, what they do **not** see:
@@ -4577,11 +4606,19 @@ the measurements. Named by example, what they do **not** see:
   catalogue row to attribute and no difference to compare, so a scratch table
   built and thrown away is invisible — though what it could have been filled from
   is not, because the read of any foreign table is measured.
-- an object that is neither a relation nor a function, a trigger or a rule: a
-  type, a collation, an extension, a comment, a grant that changes no catalogue
-  row of a relation.
+- a change that writes no dependency and no catalogue row of a relation: a
+  `COMMENT`, which writes only `pg_description`. A grant is seen, because it
+  rewrites the relation's own catalogue row.
 - a change to a system catalogue, which needs privileges a library cannot assume
   it lacks.
+- **anything at all, if the migration turns the counters off and on again.**
+  `SET LOCAL track_counts = off` inside the migration, with a matching `on`
+  before it ends, leaves both readings of the guard reporting `on` and every row
+  counter at zero — so the row half sees neither the write nor the read. The
+  setting takes a superuser to change, so this needs the connection `migrate()`
+  runs on to be a superuser's; under an ordinary migration role the statement
+  errors and the migration is refused with it. Running migrations as a superuser
+  is common enough that this is worth saying rather than assuming away.
 - what a statement did that wrote and read nothing and left nothing: a `SELECT`
   with no table in it, an advisory lock, a `pg_sleep`.
 

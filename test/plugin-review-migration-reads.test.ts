@@ -190,5 +190,16 @@ describe("what a plugin migration may create beside a relation (3.11)", () => {
 		);
 
 		expect(refusal.code).toBe("migration_left_code_behind");
+		expect((refusal as { message?: string }).message).toContain("extension");
+	});
+
+	it("says a core table is nobody's own however the plugin's name begins", async () => {
+		const instance = await openSchema();
+
+		const refusal = await instance.migrate(
+			migration("one", "ALTER TABLE velve.one_time_token ADD COLUMN taken_over integer;", []),
+		);
+
+		expect((refusal as { message?: string }).message).toContain("core table");
 	});
 });

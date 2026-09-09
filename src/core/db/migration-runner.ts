@@ -14,7 +14,7 @@ import {
 	PLUGIN_LEDGER_TABLE,
 	type RunnableMigration,
 } from "./migration.js";
-import { namesTableOfPlugin } from "./migrations/index.js";
+import { coreTableNameSet, namesTableOfPlugin } from "./migrations/index.js";
 import {
 	applySchemaName,
 	assertNoSchemaNameInsideDollarQuoting,
@@ -360,10 +360,13 @@ function refuseTheForeignRelation(
 			`it reached ${relation}, and a plugin's tables live in ${schema}`,
 		);
 	}
+	const core = coreTableNameSet().has(localNameOf(relation));
 	refuseOwned(
 		before.has(relation) ? "migration_foreign_table_changed" : "migration_table_unprefixed",
 		migration,
-		`it reached ${relation}, which is not one of the tables named ${migration.owner}_`,
+		core
+			? `it reached ${relation}, which is a core table and is nobody's own however its name begins`
+			: `it reached ${relation}, and a plugin reaches the tables named ${migration.owner}_ and no others`,
 	);
 }
 
@@ -503,7 +506,7 @@ function assertNoCodeWasLeftBehind(migration: OwnedMigration, left: readonly Cod
 		refuseOwned(
 			"migration_left_code_behind",
 			migration,
-			`it left ${object.kind} behind, ${object.schema_name}.${object.name}`,
+			`it left ${object.kind} behind, ${object.schema_name}.${object.name}: a plugin migration leaves no function, trigger or rule anywhere, so an extension that installs one cannot be created here either`,
 		);
 	}
 }
