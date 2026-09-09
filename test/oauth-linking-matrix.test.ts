@@ -425,11 +425,7 @@ function sessionCookieOf(response: Response): string {
 	return line === undefined ? "" : (line.split(";")[0] ?? "");
 }
 
-async function linkThrough(
-	mount: Mounted,
-	providerId: string,
-	cookie: string,
-): Promise<Response> {
+async function linkThrough(mount: Mounted, providerId: string, cookie: string): Promise<Response> {
 	const started = await mount.auth.handler(
 		requestTo("/identity/link/start", { body: { provider: providerId }, cookie }),
 	);
