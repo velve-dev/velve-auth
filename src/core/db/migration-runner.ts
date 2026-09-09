@@ -29,7 +29,8 @@ const ADVISORY_LOCK_NAMESPACE = 0x76656c76;
  * relations too, and reading only tables left `DROP INDEX velve.user_email_key` invisible (E-903).
  */
 const RELATIONS_OF_THE_SCHEMA = `
-SELECT child.relname AS table_name, child.relkind::text AS kind
+SELECT child.oid AS object_id, child.relname AS table_name, child.relkind::text AS kind,
+       pg_describe_object('pg_class'::regclass, child.oid, 0) AS described
 FROM pg_class child
 JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
 WHERE namespace_.nspname = $1 AND child.relkind <> 't'`;
@@ -41,7 +42,8 @@ WHERE namespace_.nspname = $1 AND child.relkind <> 't'`;
  */
 const TABLES_THIS_TRANSACTION_TOUCHED = `
 SELECT namespace_.nspname AS schema_name, child.relname AS table_name,
-       child.relkind::text AS kind
+       child.relkind::text AS kind, child.oid AS object_id,
+       pg_describe_object('pg_class'::regclass, child.oid, 0) AS described
 FROM pg_class child
 JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
 WHERE child.relkind <> 't'
@@ -93,6 +95,21 @@ FROM pg_stat_xact_user_tables`;
 /** The counters above are kept only while `track_counts` is on, and a check that cannot run is not a pass. */
 const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
+/**
+ * Every object this transaction created, of every catalogue there is, beside the object each one was
+ * recorded as depending on. A migration that creates something PostgreSQL files nowhere this runner
+ * has heard of still writes its dependency on the schema, and `pg_describe_object` names it in the
+ * refusal — which is what makes the boundary a positive one rather than a list of catalogues to
+ * lengthen after each release (E-909).
+ */
+const OBJECTS_THIS_TRANSACTION_CREATED = `
+SELECT depend.classid::regclass::text AS catalogue, depend.objid AS object_id,
+       depend.refclassid::regclass::text AS referenced_catalogue,
+       depend.refobjid AS referenced_id,
+       pg_describe_object(depend.classid, depend.objid, depend.objsubid) AS described
+FROM pg_depend depend
+WHERE depend.xmin = pg_current_xact_id()::xid`;
+
 type MigrationRefusalCode =
 	| "migration_duplicate_version"
 	| "migration_checksum_changed"
@@ -133,6 +150,23 @@ interface RelationRow {
 	readonly schema_name: string;
 	readonly table_name: string;
 	readonly kind: string;
+	readonly object_id: number;
+	readonly described: string;
+}
+
+interface DependencyRow {
+	readonly catalogue: string;
+	readonly object_id: number;
+	readonly referenced_catalogue: string;
+	readonly referenced_id: number;
+	readonly described: string;
+}
+
+/** What a relation is, as the catalogue answers it: its kind, its identity and its readable name. */
+interface RelationFact {
+	readonly kind: string;
+	readonly objectId: number;
+	readonly described: string;
 }
 
 interface CodeRow {
@@ -272,16 +306,20 @@ async function readWriteCounters(tx: Driver, migration: OwnedMigration): Promise
 	return written;
 }
 
-type Relations = ReadonlyMap<string, string>;
+type Relations = ReadonlyMap<string, RelationFact>;
+
+function factOf(row: RelationRow): RelationFact {
+	return { kind: row.kind, objectId: Number(row.object_id), described: row.described };
+}
 
 async function readRelations(tx: Driver, schema: string): Promise<Relations> {
 	const rows = await tx.query<RelationRow>(RELATIONS_OF_THE_SCHEMA, [schema]);
-	return new Map(rows.map((row) => [`${schema}.${row.table_name}`, row.kind]));
+	return new Map(rows.map((row) => [`${schema}.${row.table_name}`, factOf(row)]));
 }
 
 async function readRelationsTouched(tx: Driver): Promise<Relations> {
 	const rows = await tx.query<RelationRow>(TABLES_THIS_TRANSACTION_TOUCHED, []);
-	return new Map(rows.map((row) => [`${row.schema_name}.${row.table_name}`, row.kind]));
+	return new Map(rows.map((row) => [`${row.schema_name}.${row.table_name}`, factOf(row)]));
 }
 
 function refuseOwned(code: MigrationRefusalCode, migration: OwnedMigration, what: string): never {
@@ -343,15 +381,81 @@ function assertEveryRelationItTouchedIsItsOwn(
 	before: Relations,
 	touched: Relations,
 ): void {
-	for (const [relation, kind] of touched) {
+	for (const [relation, fact] of touched) {
 		if (!isOwnedTable(relation, migration, schema)) {
 			refuseTheForeignRelation(migration, schema, relation, before);
 		}
-		if (!KINDS_A_TABLE_BRINGS_WITH_IT.has(kind)) {
+		if (!KINDS_A_TABLE_BRINGS_WITH_IT.has(fact.kind)) {
 			refuseOwned(
 				"migration_created_more_than_a_table",
 				migration,
-				`it made ${relation} a relation of kind "${kind}", and 3.11 gives a plugin tables`,
+				`it made ${fact.described}, and 3.11 gives a plugin tables, the indexes and sequences they bring with them, and nothing else`,
+			);
+		}
+	}
+}
+
+function objectKey(catalogue: string, id: number): string {
+	return `${catalogue}:${id}`;
+}
+
+function ownedRelationKeys(
+	relations: Relations,
+	migration: OwnedMigration,
+	schema: string,
+): ReadonlySet<string> {
+	const keys = new Set<string>();
+	for (const [relation, fact] of relations) {
+		if (isOwnedTable(relation, migration, schema)) {
+			keys.add(objectKey("pg_class", fact.objectId));
+		}
+	}
+	return keys;
+}
+
+/**
+ * The objects that belong to the plugin's own tables, grown from those tables along the dependency
+ * edges this transaction wrote. A table's row type, its array type, its indexes, its constraints,
+ * its column defaults, its toast table and the internal triggers a foreign key installs all lead
+ * back to it; a type, an extension or a function of its own leads to the schema and stops there.
+ */
+function objectsBelongingToTheOwnTables(
+	created: readonly DependencyRow[],
+	ownedRelations: ReadonlySet<string>,
+): ReadonlySet<string> {
+	const belonging = new Set(ownedRelations);
+	for (let grew = true; grew; ) {
+		grew = false;
+		for (const row of created) {
+			const key = objectKey(row.catalogue, Number(row.object_id));
+			const target = objectKey(row.referenced_catalogue, Number(row.referenced_id));
+			if (!belonging.has(key) && belonging.has(target)) {
+				belonging.add(key);
+				grew = true;
+			}
+		}
+	}
+	return belonging;
+}
+
+/**
+ * The half of the boundary that is stated positively: whatever a migration created has to belong to
+ * one of the plugin's own tables. The three catalogues read above are a list of the things a
+ * migration may not leave behind, and PostgreSQL adds object kinds faster than such a list is
+ * extended — an enumerated type and a composite type were both accepted by it (E-909).
+ */
+function assertEveryObjectItCreatedBelongsToItsOwnTables(
+	migration: OwnedMigration,
+	created: readonly DependencyRow[],
+	ownedRelations: ReadonlySet<string>,
+): void {
+	const belonging = objectsBelongingToTheOwnTables(created, ownedRelations);
+	for (const row of created) {
+		if (!belonging.has(objectKey(row.catalogue, Number(row.object_id)))) {
+			refuseOwned(
+				"migration_created_more_than_a_table",
+				migration,
+				`it created ${row.described}, which belongs to none of its own tables, and 3.11 gives a plugin tables`,
 			);
 		}
 	}
@@ -377,7 +481,7 @@ function assertTheTablesThatAppearedAreTheDeclaredOnes(
 ): void {
 	const declared = [...new Set(migration.createsTables)].sort();
 	const appeared = [...after]
-		.filter(([relation, kind]) => !before.has(relation) && TABLE_KINDS.has(kind))
+		.filter(([relation, fact]) => !before.has(relation) && TABLE_KINDS.has(fact.kind))
 		.map(([relation]) => localNameOf(relation))
 		.sort();
 	if (appeared.join(",") !== declared.join(",")) {
@@ -507,6 +611,11 @@ async function applyOwnedMigration(
 		assertItRemovedNothingOfAnybodyElses(migration, schema, before, after);
 		assertTheTablesThatAppearedAreTheDeclaredOnes(migration, before, after);
 		assertNoCodeWasLeftBehind(migration, await tx.query<CodeRow>(CODE_THIS_TRANSACTION_LEFT, []));
+		assertEveryObjectItCreatedBelongsToItsOwnTables(
+			migration,
+			await tx.query<DependencyRow>(OBJECTS_THIS_TRANSACTION_CREATED, []),
+			ownedRelationKeys(after, migration, schema),
+		);
 		assertNoForeignTableWasReachedByARow(
 			migration,
 			schema,

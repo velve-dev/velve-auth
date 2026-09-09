@@ -147,6 +147,37 @@ describe("what a plugin migration may create beside a relation (3.11)", () => {
 		expect((refusal as { message?: string }).message).not.toContain('kind "c"');
 	});
 
+	it("refuses a collation, which no rule in this runner is written about", async () => {
+		const instance = await openSchema();
+
+		const refusal = await instance.migrate(
+			migration("audit", "CREATE COLLATION velve.audit_order (locale = 'C');", []),
+		);
+
+		expect(refusal.code).toBe("migration_created_more_than_a_table");
+		expect((refusal as { message?: string }).message).toContain("audit_order");
+	});
+
+	it("applies a table whose columns bring a sequence and a check constraint with them", async () => {
+		const instance = await openSchema();
+
+		const refusal = await instance.migrate(
+			migration(
+				"audit",
+				`CREATE TABLE velve.audit_counted (
+					id bigserial PRIMARY KEY,
+					user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE,
+					weight integer NOT NULL DEFAULT 1 CHECK (weight > 0),
+					note text);
+				CREATE UNIQUE INDEX audit_counted_user ON velve.audit_counted (user_id);`,
+				["audit_counted"],
+			),
+		);
+
+		expect(refusal.code).toBeUndefined();
+		expect(await relationExists(instance, "audit_counted")).toBe(true);
+	});
+
 	it("refuses a function even where the plugin leaves it in its own schema", async () => {
 		const instance = await openSchema();
 

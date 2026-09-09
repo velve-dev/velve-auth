@@ -134,7 +134,11 @@ describe("a plugin id that prefixes a core table name does not own that table (3
 			],
 		} as unknown as VelvePlugin);
 
-		expect(refusal.code).toBe("migration_wrote_a_foreign_table");
+		// The insert writes the token and its foreign key reads the account, and the counters are
+		// walked in the order the statistics view answers in, so either refusal is the right one.
+		expect(["migration_wrote_a_foreign_table", "migration_read_a_foreign_table"]).toContain(
+			refusal.code,
+		);
 		expect(await driver.query(`SELECT 1 FROM ${schema}.one_time_token`, [])).toStrictEqual([]);
 	});
 
