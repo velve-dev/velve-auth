@@ -48,13 +48,16 @@ function emailOf(claims: Record<string, unknown>, provider: ResolvedProvider): s
 	return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** Providers spell the flag as a boolean, as the string `"true"` and as the number 1; all three mean verified. */
+/**
+ * The boolean and nothing else: `"true"` and `1` were accepted from memory of what providers send,
+ * with no clause of the specification behind them, and this is the first of S-LINK-2's three
+ * conditions — a claim shape read too widely is the condition read too widely (E-579).
+ */
 function emailVerifiedOf(claims: Record<string, unknown>, provider: ResolvedProvider): boolean {
 	if (provider.emailVerifiedClaim === null) {
 		return false;
 	}
-	const value = readClaimPath(claims, provider.emailVerifiedClaim);
-	return value === true || value === "true" || value === 1;
+	return readClaimPath(claims, provider.emailVerifiedClaim) === true;
 }
 
 export function providerAccountOf(

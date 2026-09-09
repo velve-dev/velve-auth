@@ -306,12 +306,15 @@ describe("S-LINK-2: all three conditions, and never two of them", () => {
 });
 
 describe("S-LINK-1 and S-LINK-6: the pair is the key and the flag is per identity", () => {
-	it("keeps two providers reporting one address apart", async () => {
+	/**
+	 * What this case measured before E-577: it built a second stub, never configured it, and
+	 * asserted it had not been called — an assertion no tree can fail. Two configured providers
+	 * on one address are exercised in `oauth-linking-matrix.test.ts`; what is left here is the
+	 * row this sign-in actually wrote.
+	 */
+	it("writes the subject and the provider's verification state onto the identity", async () => {
 		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
 		await mounted.auth.handler(callbackRequest(await start(mounted)));
-		const secondProvider = await createStubProvider({
-			claims: { ...VERIFIED_CLAIMS, sub: "a-different-subject" },
-		});
 		const [identity] = await mounted.auth.connection.query<{
 			provider: string;
 			subject: string;
@@ -321,7 +324,7 @@ describe("S-LINK-1 and S-LINK-6: the pair is the key and the flag is per identit
 			[],
 		);
 
-		expect(secondProvider.calls).toStrictEqual([]);
+		expect(identity?.provider).toBe("stubby");
 		expect(identity?.subject).toBe("provider-subject-1");
 		expect(identity?.provider_email_verified).toBe(true);
 	});

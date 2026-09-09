@@ -4042,7 +4042,16 @@ Three of them behave in ways worth knowing before you configure them.
   configure Entra as an id of your own with your tenant's `issuer`.
 - **`github`** reports no verification state for an address, so
   `providerEmailVerified` is `false` for every GitHub identity and GitHub can
-  never produce an automatic link, whatever `trustedProviders` says.
+  never produce an automatic link, whatever `trustedProviders` says. Four other
+  built-in providers carry no verified-email claim either — `facebook`,
+  `microsoft`, `notion` and `spotify` — and the same follows for them.
+
+The verification claim is read as the JSON boolean `true` and as nothing else. A
+provider that reports the flag as the string `"true"` or the number `1` — Zoom's
+`verified` is numeric — counts as **not** verified, and its identities cannot
+produce an automatic link. That is the safe direction of the only mistake this
+reader can make, and it is the reason `zoom` behaves like the five above in
+practice.
 
 ### The routes and the methods
 
