@@ -29,7 +29,6 @@ async function openPendingState(): Promise<PendingToken> {
 	const issued = await pending.begin({
 		userId,
 		factorsCompleted: ["password"],
-		availableFactors: ["totp"],
 	});
 	return issued.token;
 }

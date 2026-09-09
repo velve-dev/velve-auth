@@ -22,13 +22,14 @@ export interface PendingAuthenticationInsert {
 export interface StoredPendingAuthentication {
 	readonly userId: string;
 	readonly factorsCompleted: readonly AuthenticationFactor[];
+	/** Read from the account's own rows, so no caller decides which factors it may be offered. */
+	readonly availableFactors: readonly SecondFactor[];
 	readonly attempts: number;
 	readonly createdAt: Date;
 	readonly expiresAt: Date;
 }
 
 export interface PendingAuthenticationWithOwner extends StoredPendingAuthentication {
-	readonly availableFactors: readonly SecondFactor[];
 	readonly userDisabledAt: Date | null;
 	/** The database's clock at the moment it answered, so no caller compares its own clock with the row. */
 	readonly observedAt: Date;
@@ -78,16 +79,18 @@ interface PendingRowShape {
 	readonly expires_at: unknown;
 }
 
-interface OwnedPendingRowShape extends PendingRowShape {
+interface EnrolmentColumns {
 	readonly has_totp: boolean;
 	readonly has_webauthn: boolean;
 	readonly has_recovery: boolean;
+}
+
+interface InsertedPendingRowShape extends PendingRowShape, EnrolmentColumns {}
+
+interface OwnedPendingRowShape extends InsertedPendingRowShape {
 	readonly disabled_at: unknown;
 	readonly observed_at: unknown;
 }
-
-const SELECTED_COLUMNS = `user_id, array_to_string(factors_completed, ',') AS factors_completed,
-	attempts, created_at, expires_at`;
 
 function toDate(value: unknown): Date {
 	if (value instanceof Date) {
@@ -131,7 +134,7 @@ function toInterval(seconds: number): string {
 	return `${Math.round(seconds)} seconds`;
 }
 
-function availableFactorsOf(row: OwnedPendingRowShape): readonly SecondFactor[] {
+function availableFactorsOf(row: EnrolmentColumns): readonly SecondFactor[] {
 	const available: SecondFactor[] = [];
 	if (row.has_totp) {
 		available.push("totp");
@@ -145,20 +148,44 @@ function availableFactorsOf(row: OwnedPendingRowShape): readonly SecondFactor[] 
 	return available;
 }
 
-function toStored(row: PendingRowShape): StoredPendingAuthentication {
+function toStored(row: InsertedPendingRowShape): StoredPendingAuthentication {
 	return {
 		userId: row.user_id,
 		factorsCompleted: toFactors(row.factors_completed),
+		availableFactors: availableFactorsOf(row),
 		attempts: row.attempts,
 		createdAt: toDate(row.created_at),
 		expiresAt: toDate(row.expires_at),
 	};
 }
 
-function insertStatement(table: string): string {
-	return `INSERT INTO ${table} (token_sha256, user_id, factors_completed, expires_at)
-	VALUES ($1, $2, $3::text[], now() + $4::interval)
-	RETURNING ${SELECTED_COLUMNS}`;
+/** The enrolments are read in the statement that writes the row, so the caller cannot name a factor the account does not have (3.6, 3.15 C.1). */
+function insertStatement(
+	table: string,
+	totp: string,
+	webauthn: string,
+	recovery: string,
+): string {
+	return `WITH inserted AS (
+		INSERT INTO ${table} (token_sha256, user_id, factors_completed, expires_at)
+		VALUES ($1, $2, $3::text[], now() + $4::interval)
+		RETURNING user_id, factors_completed, attempts, created_at, expires_at
+	)
+	SELECT i.user_id, array_to_string(i.factors_completed, ',') AS factors_completed,
+		i.attempts, i.created_at, i.expires_at,
+		${enrolmentColumns(totp, webauthn, recovery, "i.user_id")}
+	FROM inserted i`;
+}
+
+function enrolmentColumns(
+	totp: string,
+	webauthn: string,
+	recovery: string,
+	owner: string,
+): string {
+	return `EXISTS (SELECT 1 FROM ${totp} t WHERE t.user_id = ${owner} AND t.confirmed_at IS NOT NULL) AS has_totp,
+		EXISTS (SELECT 1 FROM ${webauthn} w WHERE w.user_id = ${owner}) AS has_webauthn,
+		EXISTS (SELECT 1 FROM ${recovery} r WHERE r.user_id = ${owner}) AS has_recovery`;
 }
 
 /**
@@ -175,9 +202,7 @@ function resolveStatement(
 ): string {
 	return `SELECT p.user_id, array_to_string(p.factors_completed, ',') AS factors_completed,
 		p.attempts, p.created_at, p.expires_at, u.disabled_at, now() AS observed_at,
-		EXISTS (SELECT 1 FROM ${totp} t WHERE t.user_id = p.user_id AND t.confirmed_at IS NOT NULL) AS has_totp,
-		EXISTS (SELECT 1 FROM ${webauthn} w WHERE w.user_id = p.user_id) AS has_webauthn,
-		EXISTS (SELECT 1 FROM ${recovery} r WHERE r.user_id = p.user_id) AS has_recovery
+		${enrolmentColumns(totp, webauthn, recovery, "p.user_id")}
 	FROM ${table} p
 	JOIN ${users} u ON u.id = p.user_id
 	WHERE p.token_sha256 = $1 AND p.expires_at > now()`;
@@ -200,13 +225,16 @@ export function createPendingAuthenticationRepository(
 	options: PendingAuthenticationRepositoryOptions,
 ): PendingAuthenticationRepository {
 	const table = qualifiedTableName(options.schema, "pending_authentication");
-	const insertSql = insertStatement(table);
+	const totp = qualifiedTableName(options.schema, "totp_credential");
+	const webauthn = qualifiedTableName(options.schema, "webauthn_credential");
+	const recovery = qualifiedTableName(options.schema, "recovery_code");
+	const insertSql = insertStatement(table, totp, webauthn, recovery);
 	const resolveSql = resolveStatement(
 		table,
 		qualifiedTableName(options.schema, "user"),
-		qualifiedTableName(options.schema, "totp_credential"),
-		qualifiedTableName(options.schema, "webauthn_credential"),
-		qualifiedTableName(options.schema, "recovery_code"),
+		totp,
+		webauthn,
+		recovery,
 	);
 	const countAttemptSql = countAttemptStatement(table);
 	const deleteSql = deleteStatement(table);
@@ -225,7 +253,7 @@ export function createPendingAuthenticationRepository(
 
 	return {
 		async insertPendingAuthentication({ userId, tokenHash, factorsCompleted, lifetimeInSeconds }) {
-			const [row] = await options.driver.query<PendingRowShape>(insertSql, [
+			const [row] = await options.driver.query<InsertedPendingRowShape>(insertSql, [
 				tokenHash,
 				userId,
 				toFactorArray(factorsCompleted),
@@ -244,7 +272,6 @@ export function createPendingAuthenticationRepository(
 			}
 			return {
 				...toStored(row),
-				availableFactors: availableFactorsOf(row),
 				userDisabledAt: toOptionalDate(row.disabled_at),
 				observedAt: toDate(row.observed_at),
 			};

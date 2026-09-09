@@ -76,7 +76,7 @@ async function raceOneCode(): Promise<RoundOutcome> {
 
 	const issued = await Promise.all(
 		racers.map((_unused, index) =>
-			beginPendingState(pendings[index] as PendingAuthenticationService, userId, ["recovery"]),
+			beginPendingState(pendings[index] as PendingAuthenticationService, userId),
 		),
 	);
 	const results = await Promise.allSettled(

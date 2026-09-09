@@ -4181,7 +4181,7 @@ createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationSe
 
 | Method | Meaning |
 |---|---|
-| `begin({ userId, factorsCompleted, availableFactors })` | writes the row and draws the token |
+| `begin({ userId, factorsCompleted })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied |
 | `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
 | `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
@@ -4209,6 +4209,11 @@ as exhausted rather than as a fresh budget.
 has actually enrolled in one statement, so no second round trip decides what the
 caller may try. An unconfirmed TOTP enrolment counts as no factor: an abandoned
 setup is a leftover row, not a locked-out user.
+
+`begin` reads the same three enrolments in the statement that writes the row, so
+the value it reports and the value `resolve` reports later come from the same
+query text and cannot disagree. Both are `readonly ("totp" | "webauthn" |
+"recovery")[]`, the type 3.15 C.1 gives `PendingAuthentication.availableFactors`.
 
 A disabled account answers as an unknown state rather than with the code L-4
 reserves for a disabled account. That code belongs to the resolution of a
