@@ -5970,3 +5970,14 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** One line in the interface, marked absolute and with the provider id appended, citing `S-REDIR-6`.
 
 **Price.** One further divergence in the same interface is **reported and not repaired**: the tree's custom-provider index signature is `ProviderCredentials | GenericProviderConfig` where the document has `GenericProviderConfig` alone. Widening it in the document would declare a configuration legal, which is a design question and not a transcription, and this branch has no ruling on it. It joins E-1101's list.
+
+### Seven inner causes, and the tree has eight
+`E-1106` · specfix · specification, corrected
+
+**Context.** 3.15 F.1 maps each outer error code to the inner causes that collapse into it. The `oauth_flow_invalid` row lists seven; `src/core/http/error-map.ts:248-255` maps eight, the eighth being `link_session_gone`, which `oauth` added in `27e291e` when the session a link started in can no longer be found.
+
+**Rejected.** Nothing on this one — the row is a list, the list was short by one, and the eighth is in the same file the other seven are read from.
+
+**Reason.** `link_session_gone` joins the row.
+
+**Price.** A **second divergence in the same table is reported and not repaired**, and it is wider than this one: four rows write `user_disabled` where the tree carries four context-suffixed names — `user_disabled_on_sign_in` for `invalid_credentials`, `user_disabled_on_token_redemption` for `invalid_token`, `user_disabled_on_oauth_flow` for `oauth_flow_invalid`, `user_disabled_on_webauthn_assertion` for `webauthn_credential_rejected`. The mapping is one-to-one and mechanically checkable, and it is **wave 1's** (`e270f86`), not wave 5's. This branch repairs the class it was given and does not reach a wave back on its own authority; the four pairs are written out here so that whoever takes it does not have to find them again. It joins E-1101's list.
