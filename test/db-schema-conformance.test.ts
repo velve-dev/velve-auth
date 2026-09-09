@@ -3,7 +3,8 @@ import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
 import { dropSchema, type MigratedSchema, openMigratedSchema, readColumns } from "./db-fixtures.js";
 
 // Every entry is one column of the schema in architecture 3.2 with the differences
-// from 3.17 (L-2, L-3, import_mapping, password_reset_required) already applied.
+// from 3.17 (L-2, L-3, import_mapping, password_reset_required) already applied,
+// plus oauth_flow.link_from_session_id, which 3.2 does not carry and S-FIX-1 needs (E-589).
 const SPECIFIED_COLUMNS: readonly string[] = [
 	"identity.access_token_enc bytea",
 	"identity.created_at timestamp with time zone NOT NULL DEFAULT",
@@ -28,6 +29,7 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"oauth_flow.created_at timestamp with time zone NOT NULL DEFAULT",
 	"oauth_flow.expires_at timestamp with time zone NOT NULL",
 	"oauth_flow.key_version integer NOT NULL",
+	"oauth_flow.link_from_session_id uuid",
 	"oauth_flow.link_to_user_id uuid",
 	"oauth_flow.nonce text",
 	"oauth_flow.pkce_verifier_enc bytea NOT NULL",
