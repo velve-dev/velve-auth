@@ -10,20 +10,21 @@ import {
 	type PendingAuthenticationService,
 	type PendingToken,
 } from "../factor/pending/index.js";
-import { emailFlowRoutes } from "../flows/routes.js";
+import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
 import { ConcealedError, VELVE_ERROR_CODES, type VelveErrorCode } from "../http/error-map.js";
-import type { AnyRoute, ServerCallFields, ServerSurface } from "../http/route.js";
+import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
-import { oauthRoutes } from "../oauth/routes.js";
+import { type OAuthSurface, oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import type { FrozenContextServices } from "../plugin/context.js";
+import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
-import { pluginRoutes } from "../plugin/routes.js";
+import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
 import { sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
@@ -118,15 +119,15 @@ export interface AuthInternals {
 
 /**
  * 3.15 B.1 puts `signIn.oauth.*` and `signIn.magicLink.*` in one `signIn` namespace, and two
- * features own them. Neither writes this file: each returns its own table from its own seam module
- * and `ServerSurface` folds the dotted names into the namespaces they name. A seam that is still
- * empty contributes `unknown`, which intersects away.
+ * features own them. Neither writes this file: each declares what it contributes in its own seam
+ * module, and this line intersects the three. A seam that is still empty contributes `unknown`,
+ * which intersects away, and each carries `M` so a mode-conditional namespace needs no change
+ * here either (E-776).
  */
-type SeamSurface = ServerSurface<ReturnType<typeof oauthRoutes>> &
-	ServerSurface<ReturnType<typeof emailFlowRoutes>>;
+type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PluginSurface<M>;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &
-	SeamSurface & {
+	SeamSurface<M> & {
 		signOut(input: ServerCallFields): Promise<void>;
 		readonly session: SessionNamespace;
 		readonly pending: PendingNamespace;
@@ -312,7 +313,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			const applied = await runMigrations({
 				driver,
 				schema,
-				migrations: coreMigrations(identity.mode),
+				// E-776: the plugin seam contributes here, so no feature edits this file to be run.
+				migrations: [...coreMigrations(identity.mode), ...pluginMigrations(services)],
 			});
 			await assertKeysAnswerForEveryPurpose(config.keys);
 			// E-179: the operator's report, once, loud, and not on the sign-in path.

@@ -152,13 +152,12 @@ instance, and its `dependsOn` is sorted topologically. A hook can refuse by
 throwing and observe by returning; it cannot replace the answer, because every
 one of them returns `Promise<void>`.
 
-**Of the seven hook points, one fires today.** `beforeSessionRevoke` runs on
-sign-out and on all three revocation routes, before the rows go, so a hook that
-throws leaves the session standing. The other six — `beforeSignIn`,
-`afterSignIn`, `beforeSessionCreate`, `afterSessionCreate`, `beforeUserCreate`
-and `afterUserCreate` — are declared, dispatched and reached by nothing, because
-the sign-in and sign-up flows that would reach them are not built. A plugin can
-register them and they will not run.
+**A hook point only fires if an operation reaches it, and most of the operations
+are not built yet.** `beforeSessionRevoke` runs today, on sign-out and on all
+three revocation routes, before the rows go, so a hook that throws leaves the
+session standing. Which of the seven have a producer is a table in
+[`DOCUMENTATION.md`](./DOCUMENTATION.md) and is stated there and not here: a
+plugin can register a point nothing reaches, and it will not run.
 
 The context a hook is given is frozen and carries no writing method on the user,
 the password, the TOTP secret or the recovery codes. A plugin's own SQL is

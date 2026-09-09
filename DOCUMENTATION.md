@@ -4043,7 +4043,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — of which [one has a producer in this version](#which-points-fire-today) — and six ways of configuring them wrongly refuse the start |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — of which [one has a producer in this version](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -4333,26 +4333,28 @@ here and fails that scan. The switch belongs in `core/token/random.ts` as a
 module-level settable source; until it is built there, a test that needs a
 reproducible seed brings its own generator.
 
-### What is not assembled yet
+### The seams a feature fills
 
 The instance is real and the routes it declares work end to end, but it is not
-the full table of 3.15 D.3. Absent, because the modules behind them belong to
-other features and this one may not write their files:
+the full table of 3.15 D.3. **What a feature has and has not assembled is stated
+in that feature's own chapter, and nowhere else** — a chapter still carrying its
+reserved-stub paragraph has nothing assembled. There is deliberately no list
+here: a list of everyone's gaps is a paragraph everyone has to edit, and it was
+stale within one wave of being written (E-776).
 
-- `signUp`, `signIn` and the password flows — the password module exists, the
-  flows over it do not.
-- `factor.totp`, `factor.webauthn`, `factor.recovery` and `signIn.passkey`.
-- everything OAuth, and the plugin interface.
+What does live here is the shape of the seams, because the assembly owns them.
+There are four of them and a feature reaches each by editing only its own file.
 
-The seams these fill are in place. The assembly composes its table from four
-modules — its own, `core/oauth/routes.ts`, `core/flows/routes.ts` and
-`core/plugin/routes.ts` — and the first two of those three return nothing today,
-so a feature adds a row by editing its own file. `core/plugin/routes.ts` returns
-what the registry built out of `config.plugins`.
+| Seam | Module | Contributes |
+|---|---|---|
+| routes | `core/oauth/routes.ts`, `core/flows/routes.ts`, `core/plugin/routes.ts` | rows of the route table, and through the dotted `name`, the server methods |
+| surface type | `OAuthSurface<M>`, `EmailFlowSurface<M>`, `PluginSurface<M>` in those same modules | what `VelveAuth<M>` gains; `M` is a parameter so a namespace that exists in one identity mode and not another needs no change to the assembly |
+| migrations | `core/plugin/migrations.ts` | migrations `migrate()` runs after the core's |
+| exports | `core/flows/index.ts`, `core/oauth/index.ts`, `core/plugin/index.ts` | public names, re-exported whole by `src/index.ts` with one type-only line each |
 
-The configuration seam is open the same way. `config.oauth` is an `OAuthConfig`
-from `core/oauth/config.ts`, declared, exported and read by no route yet;
-`config.plugins` is read at start.
+The configuration seam is open the same way: `config.oauth` is an `OAuthConfig`
+from `core/oauth/config.ts` and `config.plugins` a `VelvePlugin[]` from
+`core/plugin/config.ts`, both declared in the feature's own file.
 
 The **export** seam is three modules — `core/flows/index.ts`,
 `core/oauth/index.ts` and `core/plugin/index.ts`. `src/index.ts` re-exports each
@@ -4472,21 +4474,28 @@ error map every other failure does — so a plugin's own namespaced code answers
 with what `registerPluginErrorCodes` recorded for it, and an unregistered code
 answers `500 internal_error` without the plugin's text.
 
-#### Which points fire today
+#### Which points have a producer
 
-**One of the seven has a producer in this version.** The dispatcher runs all
-seven and the paragraph above describes all seven, but six of them are reached by
-nothing, because the operations that would reach them are not built.
+The dispatcher runs all seven and the paragraph above describes all seven, but a
+point only fires if an operation reaches it, and most of the operations are not
+built. **This table is the one place that says which do**, and a plugin
+registering a point that does not is told nothing at start.
 
-| Point | Reached from |
+| Point | Has a producer |
 |---|---|
-| `beforeSessionRevoke` | `POST /sign-out`, `POST /session/revoke`, `POST /session/revoke-others`, `POST /session/revoke-all` |
-| `beforeSignIn`, `afterSignIn` | nothing yet — the sign-in flows are not built |
-| `beforeSessionCreate`, `afterSessionCreate` | nothing yet |
-| `beforeUserCreate`, `afterUserCreate` | nothing yet — sign-up is not built |
+| `beforeSignIn` | no |
+| `afterSignIn` | no |
+| `beforeSessionCreate` | no |
+| `afterSessionCreate` | no |
+| `beforeUserCreate` | no |
+| `afterUserCreate` | no |
+| `beforeSessionRevoke` | **yes** |
 
-A plugin may register the other six; they will not run, and nothing says so at
-start. This table is the only thing that does.
+Which operations reach a point is stated in the chapter of the feature that
+built them; `beforeSessionRevoke`'s four are named below. **The cell is a yes or
+a no and never a list**, so a feature that gives a point its first producer flips
+one cell, and a second feature reaching the same point finds it already flipped
+and edits nothing. A list would have made that a collision (E-776).
 
 `beforeSessionRevoke` fires **once per session about to go**, and always before
 the rows go, so a hook that throws leaves them standing and the caller gets

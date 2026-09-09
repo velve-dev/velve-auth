@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { EmailMessage, VelveAuthConfig } from "../src/core/auth/config.js";
 import type { Driver } from "../src/core/db/driver.js";
+import type { IdentityMode } from "../src/core/db/migrations/identity-mode.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
@@ -89,8 +90,13 @@ function createEmailOutbox(): EmailOutbox {
 	};
 }
 
-export interface MountedAuth {
-	readonly auth: VelveAuth<"email">;
+/**
+ * Generic over the identity mode with `"email"` as the default, so a fixture for another mode adds
+ * a function beside `mountAuth` rather than editing this interface — which is the one edit here
+ * that would not have been a disjoint hunk (E-776).
+ */
+export interface MountedAuth<M extends IdentityMode = "email"> {
+	readonly auth: VelveAuth<M>;
 	readonly handler: (request: Request) => Promise<Response>;
 	readonly connection: TestConnection;
 	readonly schema: string;

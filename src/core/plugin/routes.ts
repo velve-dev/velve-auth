@@ -1,4 +1,5 @@
 import type { RouteServices } from "../auth/routes.js";
+import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import type { AnyRoute } from "../http/route.js";
 
 /**
@@ -9,3 +10,12 @@ import type { AnyRoute } from "../http/route.js";
 export function pluginRoutes(services: RouteServices): readonly AnyRoute[] {
 	return services.pluginRuntime.routes;
 }
+
+/**
+ * A plugin's routes are configuration and are not known when the type is written, so this feature
+ * contributes nothing to `VelveAuth<M>` — `auth.<pluginId>.<method>` exists on the object and not
+ * in the type. The alias is declared for symmetry with the other two seams (E-776).
+ */
+export type PluginSurface<M extends IdentityMode> = M extends IdentityMode
+	? Record<never, never>
+	: never;
