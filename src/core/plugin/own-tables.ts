@@ -286,6 +286,10 @@ export function createOwnTables(options: {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
 	const coreTables = new Set(coreTableNames());
+	// E-775: an empty list would make the rule the boundary rests on permit everything, silently.
+	if (coreTables.size === 0) {
+		throw new TypeError("no core table name could be read out of the migrations that create them");
+	}
 	// E-747: the refusal is a rejection and never a synchronous throw, so one `catch` covers both.
 	return Object.freeze({
 		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {

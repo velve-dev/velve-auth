@@ -73,7 +73,7 @@ export interface SessionRepository {
 	}): Promise<Session[]>;
 	/** 3.15 G: the reading half of `FrozenRepositories`, which names an account and holds no proof of owning it. */
 	listSessionsOfUser(input: { readonly userId: string }): Promise<Session[]>;
-	/** The rows a revocation will remove, deadlines included, so what a hook is told matches what goes (E-764). */
+	/** The rows a revocation will remove, deadlines included, so what a hook is told matches what goes (E-765). */
 	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
 	/** 3.15 G: `revokeSession` is given a session id and no owner, so the id is the whole predicate. */
 	deleteSessionById(input: { readonly sessionId: string }): Promise<RemovedSession | null>;

@@ -82,7 +82,7 @@ function requireSession(services: RouteServices, session: Session | null): Sessi
 /**
  * 3.11: the hook may refuse by throwing, so every event is announced before the rows go and the
  * refusal leaves them standing. Listing first costs a statement, which is why it is skipped
- * entirely where no plugin listens (E-757).
+ * entirely where no plugin listens (E-758).
  */
 async function announceRevocationOf(
 	services: RouteServices,

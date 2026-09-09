@@ -75,7 +75,7 @@ export interface SessionService {
 	}): Promise<{ revokedCount: number }>;
 	revokeEvery(input: { readonly resolved: SessionResolution }): Promise<{ revokedCount: number }>;
 	revokeEverySessionOfUser(input: { readonly actor: Actor }): Promise<{ revokedCount: number }>;
-	/** The ids a revocation is about to remove, so a hook is told about exactly those rows (E-764). */
+	/** The ids a revocation is about to remove, so a hook is told about exactly those rows (E-765). */
 	listEveryIdOwnedBy(input: { readonly resolved: SessionResolution }): Promise<string[]>;
 }
 

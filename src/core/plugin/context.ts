@@ -84,7 +84,7 @@ function createFrozenRepositories(services: FrozenContextServices): FrozenReposi
 			reason: RevokeReason;
 			actor: PluginActor;
 		}): Promise<void> => {
-			// E-765: the `reason` is the only record this revocation leaves; no hook is dispatched for it.
+			// E-766: the `reason` is the only record this revocation leaves; no hook is dispatched for it.
 			recorded(services.log, "revokeSession", assertActorIsNamed(input.actor), input.reason);
 			await services.sessions.deleteSessionById({ sessionId: input.sessionId });
 		},

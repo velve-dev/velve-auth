@@ -108,7 +108,7 @@ export interface PluginMigration<Id extends string> {
  * 3.6 names the four routes that accept `__Host-velve_pending` and says every other route ignores
  * it completely; S-CSRF-5 says the same of the state pointer. A plugin route is one of the others,
  * so neither the caller requirement that resolves the pending state nor either cookie field is
- * reachable from a plugin's declaration (E-763).
+ * reachable from a plugin's declaration (E-764).
  */
 export type PluginCallerRequirement = "anonymous" | "session" | "server_only";
 

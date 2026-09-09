@@ -3173,7 +3173,7 @@ the **only** listing here with no deadline in its predicate. `list` filters on
 `idle_expires_at` and `absolute_expires_at`, because a caller asking for its
 sessions is asking for the ones it can still use; a revocation has no such
 predicate and removes expired-but-unswept rows as well. Announcing from `list`
-would therefore have told a plugin about fewer rows than went (E-764).
+would therefore have told a plugin about fewer rows than went (E-765).
 
 `revokeEverySessionOfUser` is what the password **reset** path uses: there is no
 surviving session to resolve, so the caller brings the `Actor` its redeemed
@@ -4553,7 +4553,7 @@ missing either field throws before it reaches the database.
 else**: `revokeSession` dispatches no `beforeSessionRevoke`, so a revocation a
 plugin performs is invisible to every other plugin, while the same revocation
 over HTTP is announced. That asymmetry is deliberate — a hook that revoked would
-re-enter its own hook — and it is a real gap rather than a tidy one (E-765).
+re-enter its own hook — and it is a real gap rather than a tidy one (E-766).
 
 ### `ownTables.query`
 

@@ -75,7 +75,7 @@ const HOOK_POINTS: readonly (keyof PluginHooks)[] = [
 	"beforeSessionRevoke",
 ];
 
-/** Declared by 3.15 G and read by nothing yet, so the start says so rather than leaving the author to assume (E-748, E-758). */
+/** Declared by 3.15 G and read by nothing yet, so the start says so rather than leaving the author to assume (E-748, E-759). */
 const DECLARED_AND_UNREAD_FIELDS: readonly string[] = [
 	"migrations",
 	"errorCodes",
@@ -205,7 +205,7 @@ const COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE: readonly string[] = [
 
 /**
  * The type refuses these three; this is the half that holds for a plugin written in JavaScript,
- * which is where 3.15 G puts the runtime check (E-763).
+ * which is where 3.15 G puts the runtime check (E-764).
  */
 function assertNoRouteReadsACoreCookie(plugin: VelvePlugin): void {
 	for (const declaration of plugin.routes ?? []) {
