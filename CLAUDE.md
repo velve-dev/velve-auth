@@ -312,6 +312,20 @@ the file then goes stale on a schedule the library sets, and every reader has to
 install an update to stop being told something false. That is the property this rule
 exists to protect, and it is lost in a single helpful edit.
 
+**A fact about the agent's own runtime is a different case, and it is permitted.** The
+skill has to explain its own installation — the path it is written to, the URL it is
+fetched from, when a new copy takes effect — and each of those is a fact about the tool
+rather than about the library. What separates the two is not the subject but whether a
+pointer can replace the fact. The library's documents are fetched at the moment the
+skill answers, so a fact about the library is always available live and a copy of it is
+never necessary. The tool's documentation is not one of the sources the skill reads, so
+a runtime fact cannot be replaced by a pointer to something the agent is already
+holding; the choice is between stating it and not explaining installation at all. So
+state it — the minimum installation needs, and no more — and **state it from the tool's
+documentation, never from inference.** A plausible mechanism is not a source: E-893
+records "skills are loaded at start, so restart" being written into three files by
+inference, and being false.
+
 **Every change to a skill file raises its version. Always.** A typo, a reworded
 sentence, a fixed link — each of them. The version line at the top of the file is
 what the skill compares against the published copy to tell a reader whether what

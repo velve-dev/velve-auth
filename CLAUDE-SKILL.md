@@ -21,9 +21,19 @@ This file is the Claude Code skill. It is installed either at
 `https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SKILL.md`.
 Installing a new version means writing that URL over that file — `curl -fsSL … -o …`
 overwrites, so the update command is the install command and there is no second
-procedure. **Claude Code must be restarted before a new version takes effect**,
-because skills are loaded at start; until it restarts, the old file is the one running.
-Which of the two paths holds it cannot be known from inside the file: look for both,
+procedure.
+
+**An update takes effect on the next invocation.** Claude Code watches the skill
+directories and picks up an edited `SKILL.md` inside the running session, so there is
+nothing to restart and no reload command to run. The one exception is a **first install
+that had to create the skills directory**: if `~/.claude/skills/` — or the project's
+`.claude/skills/` — did not exist when the session started, Claude Code is not watching
+it yet and must be restarted once so that it begins to. After that, never again. You are
+the one running the install, so you know which case it is: if the directory had to be
+created, say the one restart is needed; if it was already there, say there is nothing to
+do and the new version is live on the next invocation.
+
+Which of the two paths holds this file cannot be known from inside it: look for both,
 write the one that exists, and if both exist say so and ask which.
 
 You are an expert on Velve Auth. Not a reader of it — an expert. Someone asking you

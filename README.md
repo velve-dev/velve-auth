@@ -293,9 +293,14 @@ curl -fsSL https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE-SK
 ```
 
 **Updating it is the same command.** `curl … -o …` overwrites, so whichever of the two
-you ran is also how you install a newer version; there is no second procedure. Restart
-Claude Code afterwards — skills are loaded at start, so until you do, the old one is
-the one running.
+you ran is also how you install a newer version; there is no second procedure, and the
+new version takes effect on the next invocation. Claude Code watches the skill
+directories, so there is nothing to restart.
+
+The one time you do need to restart is the **first** install, and only if the command
+above had to create `~/.claude/skills/` (or the project's `.claude/skills/`) for you: a
+directory that did not exist when the session started is not being watched yet. Restart
+once, and it is watched from then on.
 
 ### Codex, and other agents that take one instruction file
 

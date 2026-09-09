@@ -22,7 +22,8 @@ These instructions are installed as `AGENTS.md` in a project, and their current 
 is `https://raw.githubusercontent.com/velve-dev/velve-auth/main/CODEX-SKILL.md`.
 Installing a new version means writing that URL over that file — `curl -fsSL … -o …`
 overwrites, so the update command is the install command and there is no second
-procedure. There is no restart to wait for: the file is read when it is given to you.
+procedure. An update takes effect the next time the file is read, and it is read when it
+is given to you — there is no directory to be watched and nothing to restart.
 
 ---
 
