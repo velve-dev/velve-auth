@@ -4,7 +4,12 @@ export type HostPrefixedCookieName = `__Host-${string}`;
 
 export type CookieSameSite = "lax" | "strict";
 
-/** S-COOKIE-2: the only three attribute sets the library can express — no Domain, no way to drop HttpOnly or Secure. */
+/**
+ * The only attribute sets the library can express: no Domain, and no way to drop HttpOnly or
+ * Secure, which is what S-COOKIE-2 asks of the session cookie. The third set is not S-COOKIE-2's
+ * doing — section 1 H18 marks `SameSite=None` **Weglassen** — and it reaches exactly one cookie for
+ * the reason set out below (E-582).
+ */
 export type CookieAttributes =
 	| "HttpOnly; Secure; SameSite=Lax; Path=/"
 	| "HttpOnly; Secure; SameSite=Strict; Path=/"
@@ -85,7 +90,9 @@ const WRITABLE_ATTRIBUTES = new Set<string>([
  *
  * A provider answering with `form_post` returns through a cross-site **POST**, which not even
  * `Lax` is sent on, so that flow's pointer is the one cookie of the library that carries
- * `SameSite=None` — and it carries nothing but a pointer at a row (section 1 C50, E-541).
+ * `SameSite=None`. Section 1 H18 rules that attribute out — *"mit `__Host-` und der Origin-Prüfung
+ * nicht vorgesehen"* — and this is a deviation from it, argued and bounded in E-582: it reaches no
+ * cookie that authenticates anything, and the route it reaches has no origin check to lose.
  */
 const OAUTH_STATE_ATTRIBUTES: Readonly<Record<OAuthResponseDelivery, CookieAttributes>> = {
 	query: LAX_ATTRIBUTES,

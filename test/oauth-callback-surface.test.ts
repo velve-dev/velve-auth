@@ -229,20 +229,44 @@ describe("the form-bodied callback and an unauthenticated cross-site POST", () =
 		expect(identity?.provider).toBe("stubby");
 	});
 
+	/**
+	 * `{ __proto__: "polluted" }` in an object literal is the prototype setter and creates no own
+	 * property, so the vector never reached the request and the case could not fail; the body is
+	 * built from entries instead. The repeated name is presented with a valid pointer and a valid
+	 * state, so that the refusal is what makes it a 400 rather than the missing cookie beside it
+	 * (E-583).
+	 */
 	it("drops what the declaration does not name and refuses a repeated name", async () => {
 		const mount = await mountWith("form_post");
+		const forExtras = await startFlow(mount);
+		const forRepeat = await startFlow(mount);
 		const withExtras = await mount.auth.handler(
-			postedForm(await startFlow(mount), {
-				code: codeCarrying(null),
-				user: '{"name":{"firstName":"Ada"}}',
-				__proto__: "polluted",
+			new Request("https://api.example.com/sign-in/oauth/callback/stubby", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					Cookie: `__Host-velve_oauth_state=${forExtras.pointer}`,
+				},
+				body: new URLSearchParams([
+					["state", forExtras.state],
+					["code", codeCarrying(null)],
+					["user", '{"name":{"firstName":"Ada"}}'],
+					["__proto__", "polluted"],
+				]),
 			}),
 		);
 		const repeated = await mount.auth.handler(
 			new Request("https://api.example.com/sign-in/oauth/callback/stubby", {
 				method: "POST",
-				headers: { "Content-Type": "application/x-www-form-urlencoded" },
-				body: "code=a&code=b&state=c",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					Cookie: `__Host-velve_oauth_state=${forRepeat.pointer}`,
+				},
+				body: new URLSearchParams([
+					["state", forRepeat.state],
+					["code", codeCarrying(null)],
+					["code", "a-second-code"],
+				]),
 			}),
 		);
 
