@@ -4118,6 +4118,15 @@ columns are a bearer artefact good for the flow's ten-minute lifetime that mints
 a session against an account whose sessions were all deleted — which is the
 opposite of what a revocation is for.
 
+**A disabled account counts as gone too.** The delete joins `velve.user` and
+requires `disabled_at IS NULL`, and the callback asks the same question before
+it writes anything, answering `oauth_flow_invalid` with `user_disabled_on_oauth_flow`
+in the log. Without it the one path that resolves no session was the one path
+that accepted a cookie every other route refused with 403 — and it would have
+written the identity, which `identity.unlink` counts as a way in and which
+outlives the account being re-enabled. An OAuth **sign-in** against a disabled
+account is refused the same way.
+
 **Expired counts as gone, whether or not the sweep has run.** An expired session
 is still a row until `maintenance.sweep()` removes it, so the delete behind the
 replacement carries both deadlines in its predicate. Without them the same
@@ -4142,6 +4151,15 @@ the new row should carry, and `factors` is *„keine Berechtigung"* — nothing 
 this library reads it to decide what a caller may do — so this is a change in
 what `session.list` reports about how the caller signed in, not a change in what
 they can reach. An application that shows "signed in with" will show the link.
+
+**Linking an identity the account already holds is refused**
+(`identity_already_linked`, 409) rather than refreshing it. `S-FIX-1` is *„jede
+Verknüpfung einer **neuen** Identität"* and `S-LINK-7` *„einer **weiteren**"*;
+re-completing a link changes no trust level, so re-issuing there would move
+`created_at` — and `freshnessWindow` measures against `created_at`, which would
+make it a repeatable way to restore the freshness that gates the seventeen
+methods of 3.15 B.9. To refresh what a provider reports about an identity, sign
+in through that provider; the sign-in path rewrites the claims on every pass.
 
 Two consequences of that rule are worth stating outright. **Two link flows
 started from the same session cannot both complete:** the first replaces that
@@ -4289,6 +4307,14 @@ it. Two things follow.
 The callback reads **no** session cookie in either delivery, so a link works the
 same on both; the session it replaces is named on the flow row, and *The routes
 and the methods* has the rest.
+
+`requestBody` is the route-declaration field behind this. Absent it means JSON,
+which is what every route an application calls itself sends; `"form"` is declared
+by the `form_post` callback alone and makes the handler read a
+`application/x-www-form-urlencoded` body, restricted to the fields the route
+declares. It is required on `RouteMetadata` — what `defineRoute` produces — and
+optional on the declaration a route writes, so anything constructing an
+`HttpEnvironment` by hand must now supply it.
 
 Nothing else changes: the code never enters a query string, no second redirect
 is added, and the state row and PKCE are what secure the callback either way.
