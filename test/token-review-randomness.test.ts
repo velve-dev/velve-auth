@@ -197,12 +197,24 @@ function twoSidedNormalDeviate(alpha: number): number {
  * spent on the file instead. Section 6 has not been amended; this is reported, not settled. */
 const FILE_FALSE_FAILURE_RATE = 0.001;
 
+const ownSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
+const DERIVED_LIMIT_ASSERTION = /toBeLessThan\(([A-Z_]+)\)/g;
+
+function limitsAssertedInThisFile(): string[] {
+	return [...ownSource.matchAll(DERIVED_LIMIT_ASSERTION)].map((match) => match[1] as string);
+}
+
+function casesMeasuredAgainst(limit: string): number {
+	return limitsAssertedInThisFile().filter((name) => name === limit).length;
+}
+
 const CHARACTER_POSITION_CASES = TOKEN_CHARACTERS - 1;
-const FINAL_CHARACTER_CASES = 1;
-const BIT_SEQUENCE_CASES = 2;
-/** Every case below whose failure probability under a sound generator is not negligible. The
- * remaining assertions — an unseen character, an unseen byte, a byte mean outside a 32-sigma
- * band, a repeated 256-bit token — are further than 30 sigma out and contribute nothing. */
+const FINAL_CHARACTER_CASES = casesMeasuredAgainst("FINAL_CHARACTER_LIMIT");
+const BIT_SEQUENCE_CASES = casesMeasuredAgainst("BIT_SEQUENCE_LIMIT");
+/** Every case below whose failure probability under a sound generator is not negligible, counted
+ * from this file rather than stated beside it — the three cases E-995 missed are exactly the three
+ * that were literals. The remaining assertions — an unseen character, an unseen byte, a byte mean
+ * outside a 32-sigma band, a repeated 256-bit token — are past 30 sigma and contribute nothing. */
 const INDEPENDENT_CASES = CHARACTER_POSITION_CASES + FINAL_CHARACTER_CASES + BIT_SEQUENCE_CASES;
 
 /** Šidák: the per-case rate whose INDEPENDENT_CASES-fold repetition is FILE_FALSE_FAILURE_RATE. */
@@ -255,6 +267,19 @@ describe("the thresholds this file derives for itself", () => {
 
 	it("spends the file's whole false-failure budget and no more", () => {
 		expect(1 - (1 - PER_CASE_ALPHA) ** INDEPENDENT_CASES).toBeCloseTo(FILE_FALSE_FAILURE_RATE, 12);
+	});
+
+	// A scan that matched nothing would leave INDEPENDENT_CASES at 42 and every threshold too low,
+	// with nothing failing — so the corpus, the count and the set of names are all asserted.
+	it("counts its cases from its own source rather than from a literal beside it", () => {
+		expect(ownSource.length).toBeGreaterThan(10_000);
+		expect(limitsAssertedInThisFile().length).toBeGreaterThan(2);
+		expect(new Set(limitsAssertedInThisFile())).toStrictEqual(
+			new Set(["CHARACTER_POSITION_LIMIT", "FINAL_CHARACTER_LIMIT", "BIT_SEQUENCE_LIMIT"]),
+		);
+		expect(FINAL_CHARACTER_CASES).toBeGreaterThan(0);
+		expect(BIT_SEQUENCE_CASES).toBeGreaterThan(0);
+		expect(INDEPENDENT_CASES).toBeGreaterThan(TOKEN_CHARACTERS);
 	});
 
 	// Uncorrected, each case spent the file's budget on its own and the file spent it 45 times
