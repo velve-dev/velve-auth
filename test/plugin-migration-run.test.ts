@@ -29,6 +29,7 @@ async function migratedSchema(): Promise<Migrated> {
 
 afterEach(async () => {
 	for (const migrated of opened.splice(0)) {
+		await migrated.connection.query("DROP TABLE IF EXISTS public.audit_stray", []);
 		await dropSchema(migrated.connection, migrated.schema);
 		await migrated.connection.close();
 	}
@@ -172,7 +173,11 @@ describe("what a plugin migration is refused for", () => {
 		expect(await pluginLedgerOf(migrated)).toStrictEqual([]);
 	});
 
-	/** 3.15 G.1's own example writes `CREATE TABLE sign_in_log_entry`, which lands outside the schema. */
+	/**
+	 * 3.15 G.1's own example writes `CREATE TABLE sign_in_log_entry`, which lands wherever the
+	 * connection's search_path points and not in the schema. The refusal rolls the statement back;
+	 * the cleanup below is for the case where somebody has removed the refusal to see it fail.
+	 */
 	it("refuses a declared table the statement created somewhere else", async () => {
 		const migrated = await migratedSchema();
 
@@ -182,8 +187,8 @@ describe("what a plugin migration is refused for", () => {
 				{
 					version: 1,
 					name: "unqualified",
-					createsTables: ["audit_entry"],
-					sql: "CREATE TABLE audit_entry (id uuid PRIMARY KEY);",
+					createsTables: ["audit_stray"],
+					sql: "CREATE TABLE audit_stray (id uuid PRIMARY KEY);",
 				},
 			],
 		} satisfies VelvePlugin<"audit">);
