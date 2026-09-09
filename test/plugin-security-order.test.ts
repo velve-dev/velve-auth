@@ -39,7 +39,7 @@ let mounted: MountedAuth;
 
 /**
  * 3.15 D.2 folds a route's dotted name into an object path but only the core's tuples reach the
- * type, so a plugin's server method is read out of the surface at run time (E-743's third price).
+ * type, so a plugin's server method is read out of the surface at run time (E-743's first price).
  */
 function serverMethodOf(name: string): (input: Record<string, unknown>) => Promise<unknown> {
 	const found = name

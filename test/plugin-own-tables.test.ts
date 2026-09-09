@@ -93,9 +93,14 @@ describe("what ownTables lets through to the driver (3.11, 3.15 G)", () => {
 		expect(await reachedTheDriver(foreign)).toStrictEqual([]);
 	});
 
-	/** The four shapes the review was asked to probe: a statement kind, a lateral, a function and a CTE. */
+	/**
+	 * The four shapes the review was asked to probe: a statement kind, a lateral, a function and a
+	 * CTE. Two of these reach no core table and are refused anyway — a lateral and a
+	 * set-returning function sit where a table sits and are none — so the array is what the
+	 * boundary refuses and not what is foreign (E-782).
+	 */
 	it("stops a MERGE, a lateral, a set-returning function and a CTE that shadows a core name", async () => {
-		const foreign = [
+		const refused = [
 			"MERGE INTO demo_entry USING demo_other ON true WHEN MATCHED THEN DO NOTHING",
 			"MERGE INTO velve.user USING demo_entry ON true WHEN MATCHED THEN DO NOTHING",
 			"SELECT * FROM demo_entry d, LATERAL (SELECT id FROM velve.session) s",
@@ -106,7 +111,7 @@ describe("what ownTables lets through to the driver (3.11, 3.15 G)", () => {
 			"WITH demo_x AS (SELECT * FROM velve.user) SELECT * FROM demo_x",
 		];
 
-		expect(await reachedTheDriver(foreign)).toStrictEqual([]);
+		expect(await reachedTheDriver(refused)).toStrictEqual([]);
 	});
 
 	/** A core table reached through the quoting the position walk used to lose entirely (E-751). */

@@ -4043,7 +4043,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — of which [one has a producer in this version](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
 | `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
@@ -4414,7 +4414,8 @@ a warning, because each leaves a question with no answer:
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
 | `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` is a namespace the instance surface already carries — read from the surface the assembly just built, not from a list of them. |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
-| `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie`. |
+| `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
+| `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
 
 `plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
 core route is a start error and not a warning. The type constraint already
@@ -4572,16 +4573,24 @@ other means entirely. What this refuses is the accident — a join onto
 `velve.user` that seemed harmless, or a `"velve"."user"` written that way because
 `user` is a reserved word — not an attacker.
 
-**Three rules, and only the first is complete.** Two rounds of review found the
-same defect in a different syntactic position: a table reference in a position
-the scan did not model. The boundary is therefore no longer carried by
-recognising positions.
+**Three rules, and the first is the one the boundary rests on.** Two rounds of
+review found the same defect in a different syntactic position: a table
+reference in a position the scan did not model. The boundary is therefore no
+longer carried by recognising positions — but it is not free of the parse
+either, and the residual is named under Rule 1.
 
 **Rule 1 — a core table is refused by its name, wherever the name stands.** The
 sixteen core table names are read out of the SQL that creates them, so no second
 list of them exists; a statement containing any of them, bare or qualified, in
-any position, is refused. This rule does not depend on the parse, which is why it
-is the one the boundary rests on.
+any position the reader treats as code, is refused. It is the one rule that does
+not depend on recognising a *position*, which is why the boundary rests on it.
+
+It does depend on **one** step of the parse: text inside a string literal is
+erased before the names are looked for, because a literal is data. So a core
+table named inside a literal that PostgreSQL later executes —
+`SELECT query_to_xml('select * from velve.user', …)` — is not seen. That is a
+real hole and it is open: closing it means refusing every statement whose
+literals contain SQL-shaped text, which refuses ordinary data.
 
 **Rule 2 — a table position must hold one of the plugin's own tables.** This is
 3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
@@ -4612,14 +4621,22 @@ without it the two qualified rules see a different statement than PostgreSQL
 does.
 
 **Known false refusals.** The strictness is paid for in statements that are
-harmless and are refused anyway: `EXTRACT(month FROM x)`, `SUBSTRING(x FROM 1)`
-and `TRIM(BOTH ' ' FROM x)` put a column where a table is expected; a CTE whose
-name does not carry the plugin's prefix; every DDL statement, including one that
-alters the plugin's own table; a batch of two statements; dollar-quoted text; and
-— from Rule 1 — a plugin column named after a core table, `identity` and
-`session` being the two a plugin might plausibly reach for. Each fails with the
-plugin id and the schema in the message. Use `date_part` in place of `EXTRACT`,
-and prefix your CTE names and any column that collides.
+harmless and are refused anyway:
+
+- `EXTRACT(month FROM x)`, `SUBSTRING(x FROM 1)` and `TRIM(BOTH ' ' FROM x)` put
+  a column where a table is expected. Use `date_part` instead of `EXTRACT`.
+- **Anything but a name or an opening bracket in a table position**: a `LATERAL`
+  item, a set-returning function (`unnest(d.tags) AS t`, `generate_series(1,10)`)
+  and a table function all sit where a table sits and are none.
+- A CTE whose name does not carry the plugin's prefix. Prefix them.
+- Every DDL statement, including one that alters the plugin's own table.
+- A batch of two statements, and dollar-quoted text.
+- From Rule 1, a plugin column named after a core table — `identity` and
+  `session` being the two a plugin might plausibly reach for.
+
+Each fails with the plugin id and the schema in the message. None of them
+reaches a core table, so every one is a refusal the boundary did not need; they
+are the price of a walk that refuses what it cannot classify.
 
 `SELECT … FOR UPDATE` and `FOR UPDATE OF t` are **not** refused: §7 requires a
 row lock to be written, so refusing one would have made the rule the technical
@@ -4648,7 +4665,7 @@ These belong to `plugin` (wave 5) and are the rest of this chapter:
   and no message and `registerPluginErrorCodes` needs both.
 - **`rateLimitRules` are not read**, because a plugin route already declares its
   own `rateLimit` and which of the two wins is a decision.
-- **Six of the seven hook points have no producer**, as the table above sets out.
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count.
 
 Each of the three fields announces itself at start; the six hook points do not,
 because a plugin that registers one is not wrong to have registered it.

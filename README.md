@@ -106,9 +106,11 @@ refuses to start on one that cannot be made safe — a root key shorter than 32
 bytes, an empty origin list, a username-only mode without recovery codes, Argon2
 parameters below the floor — and returns the route table, the server methods and
 the maintenance sweep. Sessions, sign-out and the state between password and
-second factor work end to end today. The TOTP, recovery-code and WebAuthn
-services are built and their routes are not assembled into the table yet; sign-up,
-sign-in and the password flows are not built.
+second factor work end to end today. [`DOCUMENTATION.md`](./DOCUMENTATION.md) states,
+chapter by chapter, what each of the other areas has built; **this paragraph
+names none of them**, because a sentence about everybody's progress is a
+sentence everybody has to edit, and this one was wrong within a wave of being
+written.
 
 ```ts
 import { createVelveAuth, rootKeyProvider } from "@velve/auth";
@@ -162,10 +164,11 @@ plugin can register a point nothing reaches, and it will not run.
 The context a hook is given is frozen and carries no writing method on the user,
 the password, the TOTP secret or the recovery codes. A plugin's own SQL is
 checked before it reaches the driver: a statement naming any core table, in any
-position, is refused, and so is one the checker cannot read. It is a guardrail
-against the accident, not a sandbox — a plugin runs in your process and can reach
-your driver by other means — and the reference says exactly what it refuses and
-what it lets through.
+position the checker reads as code, is refused, and so is one it cannot read at
+all. It is a guardrail against the accident, not a sandbox — a plugin runs in
+your process and can reach your driver by other means, and a core table named
+inside a string literal the database later executes is not seen. The reference
+says exactly what it refuses, what it lets through and where that hole is.
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
 and on the direct server call alike, and a plugin route cannot make itself a

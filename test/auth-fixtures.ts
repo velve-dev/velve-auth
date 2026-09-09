@@ -120,6 +120,32 @@ export function configFor(
 	} as VelveAuthConfig<"email">;
 }
 
+/**
+ * The same mount in any identity mode. The identity configuration is given rather than inferred,
+ * so `M` has one inference site and E-349's trap is not reopened; `configFor`'s defaults are
+ * spelled out here rather than made generic for the same reason (E-783).
+ */
+export async function mountAuthInMode<M extends IdentityMode>(
+	prefix: string,
+	identity: VelveAuthConfig<M>["identity"],
+	overrides: Partial<Omit<VelveAuthConfig<M>, "database" | "schema" | "identity">> = {},
+): Promise<MountedAuth<M>> {
+	const { connection, schema } = await openMigratedSchema(prefix);
+	const log = createLogSink();
+	const email = createEmailOutbox();
+	const auth = createVelveAuth<M>({
+		identity,
+		database: connection,
+		schema,
+		keys: testKeyProvider(),
+		origins: [TEST_ORIGIN],
+		email: { send: email.send },
+		log: log.write,
+		...overrides,
+	} as VelveAuthConfig<M>);
+	return { auth, handler: toWebHandler(auth), connection, schema, log, email };
+}
+
 export async function mountAuth(
 	prefix = "auth",
 	overrides: Omit<Partial<VelveAuthConfig<"email">>, "database" | "schema"> = {},

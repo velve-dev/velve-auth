@@ -143,19 +143,47 @@ function callerResolver(
 }
 
 /**
- * 3.11: a plugin may not overwrite what the core owns, and what the core owns is the surface it
- * just built — read from it rather than from a second list of 3.15 B's namespaces, which is what
- * a list falling behind the surface would have cost (E-740, closed by E-777).
+ * The eighteen namespaces 3.15 B gives the instance — eleven of `AuthSurface`, six of
+ * `AuthInternals` and `http`. It is a statement of the specification and not of the build: a
+ * namespace whose routes wave 5 has not written yet is still the core's, and reading the built
+ * surface instead released five of them (E-779).
  */
-function assertNoPluginShadowsANamespace(
-	owned: readonly string[],
+export const SURFACE_NAMESPACES: readonly string[] = [
+	"signUp",
+	"signIn",
+	"signOut",
+	"session",
+	"user",
+	"password",
+	"factor",
+	"identity",
+	"pending",
+	"email",
+	"username",
+	"routes",
+	"identityMode",
+	"errorCodes",
+	"maintenance",
+	"migrate",
+	"close",
+	"http",
+];
+
+/**
+ * 3.11: a name collision with a core route is a start error. The surface is keyed by the first
+ * segment of a route's `name`, so that is what is tested, and the plugin's `id` beside it (E-780).
+ */
+function assertNoPluginTakesACoreNamespace(
 	plugins: readonly VelvePlugin[],
+	contributed: readonly AnyRoute[],
 ): void {
-	const namespaces = new Set(owned);
-	for (const plugin of plugins) {
-		if (namespaces.has(plugin.id)) {
-			throw new VelveStartupError("plugin_route_conflict");
-		}
+	const reserved = new Set(SURFACE_NAMESPACES);
+	const claimed = [
+		...plugins.map((plugin) => plugin.id),
+		...contributed.map((route) => route.name.split(".")[0] ?? ""),
+	];
+	if (claimed.some((namespace) => reserved.has(namespace))) {
+		throw new VelveStartupError("plugin_route_conflict");
 	}
 }
 
@@ -263,6 +291,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	];
 	const contributedRoutes = pluginRoutes(services);
 	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes);
+	assertNoPluginTakesACoreNamespace(pluginRuntime.plugins, contributedRoutes);
 
 	const environment: HttpEnvironment = {
 		routes: [...coreRoutes, ...contributedRoutes],
@@ -359,7 +388,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				}),
 	};
 
-	assertNoPluginShadowsANamespace(Object.keys(coreSurface), pluginRuntime.plugins);
 	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
 	return surface as VelveAuth<M>;
 }

@@ -207,9 +207,9 @@ const COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE: readonly string[] = [
 function assertNoRouteReadsACoreCookie(plugin: VelvePlugin): void {
 	for (const declaration of plugin.routes ?? []) {
 		const declared = declaration as Readonly<Record<string, unknown>>;
-		const reaches = COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE.some((field) =>
-			Object.hasOwn(declared, field),
-		);
+		// `in` and not `Object.hasOwn`, because `defineRoute` reads the field by property access and
+		// a prototype-carried `pendingCookie` would otherwise reach the handler with the cookie (E-781).
+		const reaches = COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE.some((field) => field in declared);
 		if (reaches || declared.caller === "pending") {
 			throw new VelveStartupError("plugin_route_reads_a_core_cookie");
 		}
