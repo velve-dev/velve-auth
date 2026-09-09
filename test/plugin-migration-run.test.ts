@@ -312,6 +312,116 @@ describe("what a plugin migration is refused for", () => {
 		expect(refusal.code).toBe("migration_foreign_table_changed");
 	});
 
+	it("refuses a view of its own that reads a core table", async () => {
+		const migrated = await migratedSchema();
+
+		const refusal = await refusalOf(migrated, {
+			id: "audit",
+			migrations: [
+				{
+					version: 1,
+					name: "peek",
+					createsTables: [],
+					sql: "CREATE VIEW velve.audit_peek AS SELECT * FROM velve.password_credential;",
+				},
+			],
+		} satisfies VelvePlugin<"audit">);
+
+		expect(refusal.code).toBe("migration_created_more_than_a_table");
+	});
+
+	it("refuses a trigger on a core table", async () => {
+		const migrated = await migratedSchema();
+
+		const refusal = await refusalOf(
+			migrated,
+			asJavaScriptPlugin({
+				id: "audit",
+				migrations: [
+					{
+						version: 1,
+						name: "watch_the_user",
+						createsTables: [],
+						sql: `CREATE FUNCTION velve.audit_watch() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END';
+							CREATE TRIGGER audit_watch_user BEFORE INSERT ON velve.user
+							FOR EACH ROW EXECUTE FUNCTION velve.audit_watch();`,
+					},
+				],
+			}),
+		);
+
+		expect(refusal.code).toBe("migration_left_code_behind");
+	});
+
+	it("refuses dropping an index a core table rests on", async () => {
+		const migrated = await migratedSchema();
+
+		const refusal = await refusalOf(
+			migrated,
+			asJavaScriptPlugin({
+				id: "audit",
+				migrations: [
+					{
+						version: 1,
+						name: "drop_the_uniqueness",
+						createsTables: [],
+						sql: "DROP INDEX velve.user_email_key;",
+					},
+				],
+			}),
+		);
+
+		expect(refusal.code).toBe("migration_foreign_table_changed");
+	});
+
+	it("refuses copying a core table into one of its own", async () => {
+		const migrated = await migratedSchema();
+		await createUser(migrated.connection, migrated.schema);
+
+		const refusal = await refusalOf(migrated, {
+			id: "audit",
+			migrations: [
+				{
+					version: 1,
+					name: "copy_the_credentials",
+					createsTables: ["audit_copy"],
+					sql: `CREATE TABLE velve.audit_copy (id uuid PRIMARY KEY, phc bytea);
+						INSERT INTO velve.audit_copy (id, phc)
+						SELECT gen_random_uuid(), phc FROM velve.password_credential;`,
+				},
+			],
+		} satisfies VelvePlugin<"audit">);
+
+		expect(refusal.code).toBe("migration_read_a_foreign_table");
+	});
+
+	it("lets a table of its own reference the user and be filled", async () => {
+		const migrated = await migratedSchema();
+		const userId = await createUser(migrated.connection, migrated.schema);
+
+		await migrated
+			.start([
+				{
+					id: "audit",
+					migrations: [
+						{
+							version: 1,
+							name: "seed",
+							createsTables: ["audit_seed"],
+							sql: `CREATE TABLE velve.audit_seed (
+								id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+								user_id uuid NOT NULL REFERENCES velve.user(id) ON DELETE CASCADE
+							);
+							INSERT INTO velve.audit_seed (user_id) VALUES ('${userId}');`,
+						},
+					],
+				} satisfies VelvePlugin<"audit">,
+			])
+			.migrate();
+
+		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1"]);
+	});
+
 	/** S-TOKEN-6, along the path a plugin actually takes. */
 	it("refuses a plugin table that references the user without ON DELETE CASCADE", async () => {
 		const migrated = await migratedSchema();

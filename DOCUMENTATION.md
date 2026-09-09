@@ -4466,8 +4466,16 @@ mounts without plugins.
 `middleware` array or an `assertOriginAllowed` beside the seven declared fields
 would otherwise be dropped without a word and its author left believing it runs.
 3.11 says the extension points are **enumerated**; a field outside the
-enumeration is refused rather than ignored. It sees own enumerable properties, so
-a field carried on a prototype or behind a symbol is not seen.
+enumeration is refused rather than ignored.
+
+**Every name the object answers to is read**, not only its own enumerable ones:
+its own properties enumerable or not, its symbols, and everything it inherits
+short of `Object.prototype`. A plugin written as a **class** carries its methods
+on a prototype, which is the most ordinary way to write one — and it was accepted
+while `Object.keys` was what looked. `constructor` is the one name skipped,
+because every prototype carries it and nothing here reads it. The same reading is
+applied to `hooks`, so a hooks object written as a class is held to the seven
+points as well.
 
 A field the interface **does** declare and this version does not read was a
 different case and was announced rather than refused: `migrations`, `errorCodes`
@@ -4529,10 +4537,19 @@ The rule those three carry:
 - a migration may create exactly the tables `createsTables` names, no more and no
   fewer, all of them in the configured schema and all carrying the `<id>_`
   prefix;
+- **it may create only tables and what a table brings with it** — an index, a
+  sequence, a partitioned parent. A view, a materialized view, a foreign table, a
+  function, a trigger or a rule is refused whatever it is called and wherever it
+  sits, because each of them carries a query or a body, and a query of its own
+  reads what it likes: `CREATE VIEW velve.<id>_peek AS SELECT * FROM
+  velve.password_credential` is two legal-looking steps that end in a complete
+  read of a core table through `ownTables.query`;
 - **inside its own tables it may do as it likes** — a later migration may alter,
   fill or drop a table an earlier one of the same plugin created;
-- **outside them nothing at all**: no table created, altered, emptied or removed
-  in any schema, and no row written in any table.
+- **outside them nothing at all**: nothing created, altered, emptied or removed
+  in any schema, no row written, and **no row read** — except in the tables its
+  own tables reference by foreign key, because a foreign key is checked by
+  reading the table it points at.
 
 A migration that breaks any of it is refused with a `MigrationRefusedError` and
 its transaction rolls back, so the schema is as it was and the ledger has no row
@@ -4543,21 +4560,35 @@ for it.
 | `migration_duplicate_version` | Two of one plugin's migrations claim the same `version`. |
 | `migration_checksum_changed` | A migration's SQL changed after it was applied. |
 | `migration_table_undeclared` | The set of tables that appeared in the schema is not the set `createsTables` names. |
-| `migration_table_unprefixed` | It reached a table of the configured schema that does not carry the plugin's prefix. |
-| `migration_table_outside_the_schema` | It reached a table in another schema, `public` included. |
-| `migration_foreign_table_changed` | It altered, emptied or removed a table it does not own. |
+| `migration_table_unprefixed` | It reached a relation of the configured schema that does not carry the plugin's prefix. |
+| `migration_table_outside_the_schema` | It reached a relation in another schema, `public` included. |
+| `migration_foreign_table_changed` | It altered, emptied or removed something it does not own — an index of a core table included. |
+| `migration_created_more_than_a_table` | It made a relation that is not a table or one of a table's own objects: a view, a materialized view, a foreign table. |
+| `migration_left_code_behind` | It left a function, a trigger or a rule behind, its own tables included. |
 | `migration_wrote_a_foreign_table` | It wrote a row into a table it does not own. |
-| `migration_write_check_unavailable` | `track_counts` is off, so what it wrote cannot be read. The migration is refused rather than run unmeasured. |
+| `migration_read_a_foreign_table` | It read rows of a table it does not own and does not reference. |
+| `migration_write_check_unavailable` | `track_counts` is off, so what it wrote and read cannot be read. The migration is refused rather than run unmeasured. |
 | `migration_missing_cascade` | S-TOKEN-6: a `user_id` without a foreign key to `velve.user` that cascades. |
 
 Measuring rather than parsing is the point, and the boundary is only as wide as
-the three measurements. What they do **not** see: an object that is not a table —
-a function, a type, a sequence, an extension, a grant; a table dropped in another
-schema, which leaves no catalogue row to attribute; and a change to a system
-catalogue, which needs privileges a library cannot assume it lacks. A plugin
-migration is arbitrary SQL from a package the application installed, on the same
-footing as any other dependency it installs, and this is a guardrail against the
-accident rather than a sandbox — the same distinction `ownTables.query` makes.
+the measurements. Named by example, what they do **not** see:
+
+- a table **created and dropped inside the same transaction**. It leaves no
+  catalogue row to attribute and no difference to compare, so a scratch table
+  built and thrown away is invisible — though what it could have been filled from
+  is not, because the read of any foreign table is measured.
+- an object that is neither a relation nor a function, a trigger or a rule: a
+  type, a collation, an extension, a comment, a grant that changes no catalogue
+  row of a relation.
+- a change to a system catalogue, which needs privileges a library cannot assume
+  it lacks.
+- what a statement did that wrote and read nothing and left nothing: a `SELECT`
+  with no table in it, an advisory lock, a `pg_sleep`.
+
+A plugin migration is arbitrary SQL from a package the application installed, on
+the same footing as any other dependency it installs. This is a guardrail against
+the accident rather than a sandbox — the same distinction `ownTables.query`
+makes.
 
 **Qualify every name with `velve.`**, as the core's own migrations do:
 `CREATE TABLE velve.audit_entry (…)`. An unqualified `CREATE TABLE audit_entry`
@@ -4623,6 +4654,35 @@ keeps a plugin's rule off a core route's bucket: `"session.revoke"` in the map
 of a plugin that does not contribute `session.revoke` refuses the start rather
 than limiting nothing, and there is no key it could write that reaches a route
 it does not own.
+
+### One reading of the declaration
+
+A plugin's declaration is a JavaScript object a plugin wrote, so any field of it
+may be an accessor. Until this was closed, every check read the declaration and
+`defineRoute` read it **again** — and nothing obliged the two reads to answer the
+same way:
+
+```js
+let reads = 0;
+{ ...route, get originCheck() { return reads++ === 0 ? "checked" : "exempt"; } }
+```
+
+That mounted a route the origin check skipped, which is `S-CSRF-6`. The same
+trick on `caller` made a fifth reader of `__Host-velve_pending` where 3.6
+enumerates four.
+
+**Every field is now read once**, at the start, into a plain object nothing else
+can reach: the id, the dependencies, each migration's four fields, each route's
+ten, the seven hook points, the error codes and the rate-limit map. Every check
+below reads that object, and so do the route table, the migration runner and the
+hook dispatcher. There is one read and one value.
+
+Two consequences worth naming. The reading takes each field by **property
+access** rather than copying own properties, so a field a plugin carries on a
+prototype still reaches the route the way it did before — which is what the
+`in` in the core-cookie refusal is there for. And the array and record fields are
+copied, so a plugin that mutates its own declaration after `createVelveAuth`
+returns changes nothing that runs.
 
 ### The seven hook points
 
@@ -4757,7 +4817,10 @@ not the caller's.
 Two prices. A hook that keeps a context it was given at another point — an
 `afterSignIn` context, say — and revokes through *that* one inside a
 `beforeSessionRevoke` is announcing again, and can build the loop by hand; the
-guard is structural and structure is what a plugin can route around. And the
+guard is structural and structure is what a plugin can route around. **That loop
+is unbounded**: nothing counts the announcements and nothing stops them, so the
+request hangs holding its connection — a plugin built that way is a denial of
+service against the application that installed it, not a noisy error. And the
 announcement and the deletion are not one transaction here either, so a plugin is
 told about a revocation that a later failure could still prevent.
 

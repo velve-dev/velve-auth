@@ -185,12 +185,14 @@ middleware in front of the origin check is answered.
 
 A plugin's migrations run in the same versioned runner the core's do, recorded
 under the plugin's own id so its version numbers are its own. What such a
-migration did is measured while it runs, not read out of its SQL: the tables it
-created or altered are read out of the catalogue rows its own transaction wrote,
-and the rows it wrote out of the transaction's write counters. It may add exactly
-the tables it declares, each carrying its prefix, and inside its own tables it
-may do as it likes; it may not create, alter, empty or remove a table it does not
-own, in any schema, and it may not write a row into one. The refusal rolls the
+migration did is measured while it runs, not read out of its SQL: what it created
+or altered is read out of the catalogue rows its own transaction wrote, and what
+it wrote and read out of the transaction's own counters. It may add exactly the
+tables it declares, each carrying its prefix, and inside its own tables it may do
+as it likes; it may create only tables and the objects a table brings with it, so
+a view, a function or a trigger is refused whatever it is called; and it may not
+create, alter, empty or remove anything it does not own, in any schema, nor write
+a row into one, nor read one it does not reference. The refusal rolls the
 whole migration back. What the measurements do not see — objects that are not
 tables, and a table dropped in a schema of its own — is written down in the
 reference rather than glossed here. There is no rollback of an applied

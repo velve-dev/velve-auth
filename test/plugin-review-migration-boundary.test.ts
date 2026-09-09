@@ -106,8 +106,8 @@ describe("what a plugin migration may create outside the configured schema (3.11
 });
 
 /**
- * 3.11, „Was ein Plugin nicht darf": Kerntabellen direkt beschreiben. Only repository methods, and
- * each demands an actor. A migration is plugin-supplied SQL and is on the same list.
+ * 3.11, in its list of what a plugin may not do: write core tables directly. Only repository
+ * methods, and each demands an actor. A migration is plugin-supplied SQL and is on the same list.
  */
 describe("what a plugin migration may write in a core table (3.11)", () => {
 	it("refuses a migration that updates a row of velve.user", async () => {

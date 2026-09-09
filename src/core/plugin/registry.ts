@@ -1,7 +1,7 @@
 import { VelveStartupError } from "../auth/startup.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
-import type { RateLimitRule } from "../http/rate-limit.js";
+import type { BucketRule, RateLimitRule } from "../http/rate-limit.js";
 import {
 	type AnyRoute,
 	defineRoute,
@@ -12,6 +12,7 @@ import type {
 	FrozenContext,
 	PluginHooks,
 	PluginMigration,
+	PluginRoute,
 	SessionCreatedEvent,
 	SessionCreateEvent,
 	SessionRevokeEvent,
@@ -63,6 +64,8 @@ export interface PluginRuntime {
 
 interface RegisteredPlugin {
 	readonly plugin: VelvePlugin;
+	/** The seven points as they were read at the start, so no accessor answers twice (E-900). */
+	readonly hooks: PluginHooks;
 	readonly context: FrozenContext;
 	/** What a `beforeSessionRevoke` hook is handed: the same context without the re-announcement. */
 	readonly contextInsideARevocation: FrozenContext;
@@ -90,20 +93,42 @@ const HOOK_POINTS: readonly (keyof PluginHooks)[] = [
 ];
 
 /**
+ * Every property name the object answers to: its own, enumerable or not, and every one it inherits
+ * short of `Object.prototype`. `Object.keys` sees neither, and a plugin authored as a class carries
+ * its methods on a prototype — which is the most ordinary way to write one and was accepted (E-901).
+ */
+function everyReachableName(value: object): readonly (string | symbol)[] {
+	const names = new Set<string | symbol>();
+	for (
+		let current: object | null = value;
+		current !== null && current !== Object.prototype;
+		current = Object.getPrototypeOf(current) as object | null
+	) {
+		for (const key of Reflect.ownKeys(current)) {
+			names.add(key);
+		}
+	}
+	// Every prototype carries it, and nothing here reads it.
+	names.delete("constructor");
+	return [...names];
+}
+
+/**
  * S-CSRF-6 and T-CSRF-6: a plugin from JavaScript can carry any field, and dropping the ones the
  * interface does not enumerate leaves its author believing a middleware of theirs runs ahead of the
  * origin check. The extension points are enumerated (3.11), so an unenumerated one is a start error.
  */
 function assertNoFieldOutsideTheInterface(plugins: readonly VelvePlugin[]): void {
-	const declared = new Set(DECLARED_PLUGIN_FIELDS);
-	const points = new Set<string>(HOOK_POINTS);
+	const declared = new Set<string | symbol>(DECLARED_PLUGIN_FIELDS);
+	const points = new Set<string | symbol>(HOOK_POINTS);
 	for (const plugin of plugins) {
-		for (const field of Object.keys(plugin)) {
+		for (const field of everyReachableName(plugin)) {
 			if (!declared.has(field)) {
 				throw new VelveStartupError("plugin_field_unknown");
 			}
 		}
-		for (const point of Object.keys(plugin.hooks ?? {})) {
+		const hooks: object = plugin.hooks ?? {};
+		for (const point of everyReachableName(hooks)) {
 			if (!points.has(point)) {
 				throw new VelveStartupError("plugin_field_unknown");
 			}
@@ -205,20 +230,114 @@ const COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE: readonly string[] = [
 	"oauthStateCookie",
 ];
 
+type ContributedDeclaration = RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>;
+
 /**
  * The type refuses these three; this is the half that holds for a plugin written in JavaScript,
- * which is where 3.15 G puts the runtime check (E-764).
+ * which is where 3.15 G puts the runtime check (E-764). The caller requirement is passed in rather
+ * than read here, because reading it twice is the fault this whole pass exists to remove (E-900).
  */
-function assertNoRouteReadsACoreCookie(plugin: VelvePlugin): void {
-	for (const declaration of plugin.routes ?? []) {
-		const declared = declaration as Readonly<Record<string, unknown>>;
-		// `in` and not `Object.hasOwn`, because `defineRoute` reads the field by property access and
-		// a prototype-carried `pendingCookie` would otherwise reach the handler with the cookie (E-781).
-		const reaches = COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE.some((field) => field in declared);
-		if (reaches || declared.caller === "pending") {
-			throw new VelveStartupError("plugin_route_reads_a_core_cookie");
+function assertNoRouteReadsACoreCookie(declaration: ContributedDeclaration, caller: unknown): void {
+	const declared = declaration as unknown as Readonly<Record<string, unknown>>;
+	// `in` beside the value, because a plugin from JavaScript may carry the field on a prototype and
+	// the reading below is what a prototype would otherwise reach the handler through (E-781, E-666).
+	const reaches = COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE.some(
+		(field) => field in declared || declared[field] !== undefined,
+	);
+	if (reaches || caller === "pending") {
+		throw new VelveStartupError("plugin_route_reads_a_core_cookie");
+	}
+}
+
+function bucketRuleOf(rule: BucketRule | "none"): BucketRule | "none" {
+	return rule === "none"
+		? "none"
+		: { capacity: rule?.capacity, refillPerSecond: rule?.refillPerSecond };
+}
+
+function rateLimitRuleOf(rule: RateLimitRule): RateLimitRule {
+	return {
+		perIpAddress: bucketRuleOf(rule?.perIpAddress),
+		perAccount: bucketRuleOf(rule?.perAccount),
+	};
+}
+
+/**
+ * Every field of a plugin's route declaration, read **once**, into a plain object nothing else can
+ * change. The declaration is a JavaScript object a plugin wrote, so a property of it may be an
+ * accessor: the checks below read it and `defineRoute` read it again, and nothing obliged the two
+ * reads to answer the same way — a getter returning `"checked"` and then `"exempt"` mounted a route
+ * the origin check skipped (E-900). Reading by property access rather than copying own properties
+ * is what keeps a field a plugin carries on a prototype reaching `defineRoute` (E-666, E-781).
+ */
+function asOneReading(
+	declaration: ContributedDeclaration,
+	rule: RateLimitRule | undefined,
+): ContributedDeclaration {
+	const caller = declaration.caller;
+	const input = declaration.input;
+	// The reading carries no cookie field, so this is the last place the declaration's own is visible.
+	assertNoRouteReadsACoreCookie(declaration, caller);
+	return {
+		name: declaration.name,
+		method: declaration.method,
+		path: declaration.path,
+		input: { fields: [...input.fields], parse: (raw) => input.parse(raw) },
+		errors: [...declaration.errors],
+		caller,
+		freshness: declaration.freshness,
+		originCheck: declaration.originCheck,
+		rateLimit: rateLimitRuleOf(rule ?? declaration.rateLimit),
+		handler: declaration.handler,
+	};
+}
+
+/** The keys of a record a plugin wrote, its prototype included, so the map is read the way it is applied (E-902). */
+function plainRecordOf<Value>(source: Readonly<Record<string, Value>>): Record<string, Value> {
+	const plain: Record<string, Value> = {};
+	for (const key of everyReachableName(source)) {
+		if (typeof key === "string") {
+			plain[key] = source[key] as Value;
 		}
 	}
+	return plain;
+}
+
+/** The seven hook points, read once each, so what the dispatcher runs is what the start looked at. */
+function hooksOf(hooks: PluginHooks | undefined): PluginHooks {
+	const plain: Record<string, unknown> = {};
+	for (const point of HOOK_POINTS) {
+		const listener = hooks?.[point];
+		if (listener !== undefined) {
+			plain[point] = listener;
+		}
+	}
+	return plain as PluginHooks;
+}
+
+/**
+ * The whole plugin as plain data: every field read once, every structure the library reads twice
+ * copied. Everything past this line — the checks, the routes, the migrations, the dispatcher —
+ * reads this and never the object the application handed over (E-900).
+ */
+function asOneReadingOfThePlugin(plugin: VelvePlugin): VelvePlugin {
+	const rules = plainRecordOf<RateLimitRule>(plugin.rateLimitRules ?? {});
+	return {
+		id: plugin.id,
+		dependsOn: [...(plugin.dependsOn ?? [])],
+		migrations: (plugin.migrations ?? []).map((migration) => ({
+			version: migration.version,
+			name: migration.name,
+			sql: migration.sql,
+			createsTables: [...migration.createsTables],
+		})),
+		routes: (plugin.routes ?? []).map((declaration) =>
+			asOneReading(declaration as ContributedDeclaration, rules[declaration.name]),
+		) as readonly PluginRoute<string>[],
+		hooks: hooksOf(plugin.hooks),
+		errorCodes: [...(plugin.errorCodes ?? [])],
+		rateLimitRules: rules,
+	};
 }
 
 /**
@@ -307,37 +426,10 @@ function ownedMigrationsOf(plugins: readonly VelvePlugin[]): readonly OwnedMigra
 	);
 }
 
-type ContributedDeclaration = RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>;
-
-/**
- * The rule is layered over the declaration rather than copied out of it. `defineRoute` reads every
- * field by property access, and a copy would take own enumerable properties only — which would
- * silently drop a field a plugin from JavaScript carries on a prototype, `handler` included, and
- * would make E-781's reason for the `in` above false (E-666).
- */
-function withTheRuleTheMapNames(
-	declaration: ContributedDeclaration,
-	rule: RateLimitRule | undefined,
-): ContributedDeclaration {
-	if (rule === undefined) {
-		return declaration;
-	}
-	const layered: ContributedDeclaration = Object.create(declaration);
-	Object.defineProperty(layered, "rateLimit", { value: rule, enumerable: true });
-	return layered;
-}
-
 function routesOf(plugin: VelvePlugin): readonly AnyRoute[] {
-	assertNoRouteReadsACoreCookie(plugin);
 	assertNoRouteExemptsItselfFromTheOriginCheck(plugin);
-	const rules: Readonly<Record<string, RateLimitRule>> = plugin.rateLimitRules ?? {};
 	return (plugin.routes ?? []).map((declaration) =>
-		defineRoute(
-			withTheRuleTheMapNames(
-				declaration as ContributedDeclaration,
-				Object.hasOwn(rules, declaration.name) ? rules[declaration.name] : undefined,
-			),
-		),
+		defineRoute(declaration as ContributedDeclaration),
 	);
 }
 
@@ -350,7 +442,7 @@ function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatch
 		contextOf: (entry: RegisteredPlugin) => FrozenContext = (entry) => entry.context,
 	): Promise<void> {
 		for (const entry of registered) {
-			const listener = entry.plugin.hooks === undefined ? undefined : hook(entry.plugin.hooks);
+			const listener = hook(entry.hooks);
 			if (listener !== undefined) {
 				await listener(event, contextOf(entry));
 			}
@@ -378,21 +470,24 @@ export function createPluginRuntime(options: {
 	readonly services: FrozenContextServices;
 }): PluginRuntime {
 	assertNoFieldOutsideTheInterface(options.plugins);
-	assertNoIdIsTakenTwice(options.plugins);
-	assertNoTablePrefixContainsAnother(options.plugins);
-	assertEveryDependencyIsRegistered(options.plugins);
-	for (const plugin of options.plugins) {
+	// E-900: from here on the declaration is data, and every check below reads the same value the
+	// route table, the runner and the dispatcher will.
+	const plugins = options.plugins.map(asOneReadingOfThePlugin);
+	assertNoIdIsTakenTwice(plugins);
+	assertNoTablePrefixContainsAnother(plugins);
+	assertEveryDependencyIsRegistered(plugins);
+	for (const plugin of plugins) {
 		assertEveryErrorCodeIsItsOwn(plugin);
 		assertEveryRouteErrorIsDeclared(plugin);
 		assertEveryRateLimitRuleNamesAContributedRoute(plugin);
 		assertEveryDeclaredTableIsItsOwn(plugin);
 	}
-	const ordered = inDependencyOrder(options.plugins);
+	const ordered = inDependencyOrder(plugins);
 
 	const registered: RegisteredPlugin[] = [];
 	const hooks = dispatcher(registered);
 	const listensTo = (point: keyof PluginHooks): boolean =>
-		registered.some((entry) => entry.plugin.hooks?.[point] !== undefined);
+		registered.some((entry) => entry.hooks[point] !== undefined);
 	// The array is filled below and read only when a hook runs, so the announcement can name the
 	// dispatcher that will run the plugins the announcement is being built for.
 	const revocation: RevocationAnnouncement = {
@@ -405,6 +500,7 @@ export function createPluginRuntime(options: {
 	for (const plugin of ordered) {
 		registered.push({
 			plugin,
+			hooks: plugin.hooks ?? {},
 			context: createPluginContext(options.services, plugin.id, revocation),
 			contextInsideARevocation: createPluginContext(options.services, plugin.id, SILENT_REVOCATION),
 		});
