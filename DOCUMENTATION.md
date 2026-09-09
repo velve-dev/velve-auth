@@ -4118,6 +4118,13 @@ columns are a bearer artefact good for the flow's ten-minute lifetime that mints
 a session against an account whose sessions were all deleted — which is the
 opposite of what a revocation is for.
 
+**Expired counts as gone, whether or not the sweep has run.** An expired session
+is still a row until `maintenance.sweep()` removes it, so the delete behind the
+replacement carries both deadlines in its predicate. Without them the same
+callback would be granted or refused depending on when garbage collection last
+ran, and a completed link would hand back a session whose `absolute_expires_at`
+had moved — a deadline §3.5 says is never extended.
+
 **A refused link writes no identity either.** The identity row and the session
 replacement are one transaction, so they commit together or not at all. That
 matters because a linked identity is a *sign-in method* — `identity.unlink`
@@ -4127,6 +4134,14 @@ instead of a session. Both calls to the provider are finished before the
 transaction opens, so it never waits on a third party, and a `beforeSessionCreate`
 veto is asked before it opens at all: a plugin that refuses leaves neither the
 identity nor the session written.
+
+The new session's `factors` are `["oauth"]`, not the factors the replaced session
+carried: a session that signed in with a password and a TOTP code becomes an
+`oauth` session when a provider is linked from it. `S-LINK-7` does not say what
+the new row should carry, and `factors` is *„keine Berechtigung"* — nothing in
+this library reads it to decide what a caller may do — so this is a change in
+what `session.list` reports about how the caller signed in, not a change in what
+they can reach. An application that shows "signed in with" will show the link.
 
 Two consequences of that rule are worth stating outright. **Two link flows
 started from the same session cannot both complete:** the first replaces that
