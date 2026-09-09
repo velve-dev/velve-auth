@@ -2,8 +2,7 @@ import type { EmailConfig } from "../auth/config.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
-import { toSecretToken } from "../token/secret-token.js";
-import { mintAndMail, redeemOrRefuse } from "./artefact.js";
+import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
 	accountOfRedemption,
@@ -42,16 +41,16 @@ export async function requestVerification(
 		throw new VelveError("invalid_input");
 	}
 	await context.enforceAccountRateLimit(address);
-	await mintAndMail(mailerOf(environment, email), {
-		purpose: "email_verify",
+	const { driver, schema } = environment.services;
+	const minted = await driver.transaction((transaction) =>
+		mintArtefact(transaction, schema, { purpose: "email_verify", userId: user.id }),
+	);
+	await sendOrUndo(mailerOf(environment, email), minted, {
+		kind: "email_verification",
+		to: address,
 		userId: user.id,
-		message: (issued) => ({
-			kind: "email_verification",
-			to: address,
-			userId: user.id,
-			token: issued.token,
-			expiresAt: issued.expiresAt,
-		}),
+		token: minted.token,
+		expiresAt: minted.expiresAt,
 	});
 }
 
@@ -65,7 +64,7 @@ export async function redeemVerification(
 
 	const userId = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, schema, {
-			token: toSecretToken(input.token),
+			token: input.token,
 			purpose: "email_verify",
 		});
 		const account = await accountOfRedemption(environment, transaction, redeemed);
@@ -105,18 +104,21 @@ export async function requestChange(
 
 	const user = await readAccountOfSession(environment, userId);
 	const previousEmail = user.email ?? "";
-	await mintAndMail(mailerOf(environment, email), {
-		purpose: "email_change",
-		userId: user.id,
-		payload: { [CHANGED_ADDRESS]: address },
-		message: (issued) => ({
-			kind: "email_change",
-			to: address,
+	const { driver, schema } = environment.services;
+	const minted = await driver.transaction((transaction) =>
+		mintArtefact(transaction, schema, {
+			purpose: "email_change",
 			userId: user.id,
-			token: issued.token,
-			expiresAt: issued.expiresAt,
-			previousEmail,
+			payload: { [CHANGED_ADDRESS]: address },
 		}),
+	);
+	await sendOrUndo(mailerOf(environment, email), minted, {
+		kind: "email_change",
+		to: address,
+		userId: user.id,
+		token: minted.token,
+		expiresAt: minted.expiresAt,
+		previousEmail,
 	});
 }
 
@@ -130,7 +132,7 @@ export async function redeemChange(
 
 	const userId = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, schema, {
-			token: toSecretToken(input.token),
+			token: input.token,
 			purpose: "email_change",
 		});
 		const account = await accountOfRedemption(environment, transaction, redeemed);

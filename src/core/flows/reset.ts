@@ -8,14 +8,8 @@ import { ConcealedError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
-import { toSecretToken } from "../token/secret-token.js";
-import { mintAndMail, redeemOrRefuse } from "./artefact.js";
-import {
-	createPasswordProvenance,
-	type DerivedPassword,
-	derivePassword,
-	writePassword,
-} from "./credential.js";
+import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
+import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
 import type { SetPasswordResult } from "./results.js";
 
@@ -33,72 +27,66 @@ export async function requestReset(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
+	const { driver, schema } = environment.services;
 	// S-TIM-6: the cover artefact of E-597 makes the unknown branch mint a row too, so both branches
 	// run the same statements and call `send` exactly once.
-	await mintAndMail(mailerOf(environment, email), {
-		purpose: "password_reset",
-		userId: owner === null ? null : owner.id,
-		message: (issued) =>
-			owner === null
-				? { kind: "request_for_unknown_address", to: input.email, requested: "password_reset" }
-				: {
-						kind: "password_reset",
-						to: address,
-						userId: owner.id,
-						token: issued.token,
-						expiresAt: issued.expiresAt,
-					},
-	});
+	const minted = await driver.transaction((transaction) =>
+		mintArtefact(transaction, schema, {
+			purpose: "password_reset",
+			userId: owner === null ? null : owner.id,
+		}),
+	);
+	await sendOrUndo(
+		mailerOf(environment, email),
+		minted,
+		owner === null
+			? { kind: "request_for_unknown_address", to: input.email, requested: "password_reset" }
+			: {
+					kind: "password_reset",
+					to: address,
+					userId: owner.id,
+					token: minted.token,
+					expiresAt: minted.expiresAt,
+				},
+	);
 }
 
 /**
- * S-FIX-6 and S-DEFAULT-2: the revocation and the new credential are one transaction, so a failure
- * between them leaves neither. The revocation is written first, so the one order a partial failure
- * can leave behind is the safe one — signed out everywhere with the old password still standing,
- * and the spent token forcing a fresh request (E-610).
+ * S-FIX-6 and S-DEFAULT-2: the revocation, the new session and the new credential are one
+ * transaction, so a failure among them leaves none of the three. The revocation is written first, so
+ * the one order a partial failure can leave behind is the safe one — signed out everywhere with the
+ * old password still standing, and the spent token forcing a fresh request (E-610).
  */
 async function replacePassword(
 	environment: FlowEnvironment,
+	context: RequestContext,
 	input: {
 		readonly transaction: Driver;
 		readonly actor: Actor;
 		readonly userId: string;
 		readonly derived: DerivedPassword;
 	},
-): Promise<number> {
-	const { schema, keys } = environment.services;
+): Promise<SetPasswordResult> {
+	const { schema, keys, sessions } = environment.services;
 	const revokedOtherSessionsCount = await createSessionRepository({
 		driver: input.transaction,
 		schema,
 	}).deleteEverySessionOwnedBy({ actor: input.actor });
-	await writePassword(
-		{ driver: input.transaction, keys, schema },
-		{ userId: input.userId, derived: input.derived },
-	);
-	return revokedOtherSessionsCount;
-}
-
-async function signInOnTheNewPassword(
-	environment: FlowEnvironment,
-	context: RequestContext,
-	input: { readonly userId: string; readonly revokedOtherSessionsCount: number },
-): Promise<SetPasswordResult> {
-	const { driver, schema, sessions } = environment.services;
 	const issued = await sessions.issue({
 		userId: input.userId,
 		factors: ["password"],
 		observed: observedIn(context),
+		transaction: input.transaction,
 	});
-	// L-12: the session this password was set in, so confirming the address from it keeps it.
-	await createPasswordProvenance({ driver, schema }).recordSessionThatSetIt({
-		userId: input.userId,
-		sessionId: issued.session.id,
-	});
-	context.cookies.setSession(issued.token);
+	// L-12: the session this password was stored by, written with it in one statement (E-626).
+	await writePassword(
+		{ driver: input.transaction, keys, schema },
+		{ userId: input.userId, derived: input.derived, setBySessionId: issued.session.id },
+	);
 	return {
 		sessionToken: issued.token,
 		session: issued.session,
-		revokedOtherSessionsCount: input.revokedOtherSessionsCount,
+		revokedOtherSessionsCount,
 	};
 }
 
@@ -116,24 +104,22 @@ export async function redeemReset(
 	);
 	const { driver, schema } = environment.services;
 
-	const outcome = await driver.transaction(async (transaction) => {
+	const result = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, schema, {
-			token: toSecretToken(input.token),
+			token: input.token,
 			purpose: "password_reset",
 		});
 		const account = await accountOfRedemption(environment, transaction, redeemed);
-		return {
+		return replacePassword(environment, context, {
+			transaction,
+			actor: account.actor,
 			userId: account.user.id,
-			revokedOtherSessionsCount: await replacePassword(environment, {
-				transaction,
-				actor: account.actor,
-				userId: account.user.id,
-				derived,
-			}),
-		};
+			derived,
+		});
 	});
 
-	return signInOnTheNewPassword(environment, context, outcome);
+	context.cookies.setSession(result.sessionToken);
+	return result;
 }
 
 /**
@@ -180,7 +166,7 @@ export async function redeemResetWithRecoveryCode(
 					.filter((peppered) => peppered !== null)
 					.map((peppered) => peppered.codeHmac);
 
-	const outcome = await driver.transaction(async (transaction) => {
+	const result = await driver.transaction(async (transaction) => {
 		const consumed = await createRecoveryCodeRepository({
 			driver: transaction,
 			schema,
@@ -192,16 +178,14 @@ export async function redeemResetWithRecoveryCode(
 		if (found.disabled) {
 			throw new ConcealedError("recovery_code_not_found");
 		}
-		return {
+		return replacePassword(environment, context, {
+			transaction,
+			actor: actorOfConsumedRecoveryCode(consumed),
 			userId: found.id,
-			revokedOtherSessionsCount: await replacePassword(environment, {
-				transaction,
-				actor: actorOfConsumedRecoveryCode(consumed),
-				userId: found.id,
-				derived,
-			}),
-		};
+			derived,
+		});
 	});
 
-	return signInOnTheNewPassword(environment, context, outcome);
+	context.cookies.setSession(result.sessionToken);
+	return result;
 }

@@ -33,33 +33,38 @@ interface CredentialWriter {
 	readonly schema: string;
 }
 
+/**
+ * L-12: the session that stores the password is written with it, in the same statement, so there is
+ * no window in which a credential exists without its provenance and no second call to forget
+ * (E-626). The repository requires the field; this passes on what the caller has just issued.
+ */
 export async function writePassword(
 	writer: CredentialWriter,
-	input: { readonly userId: string; readonly derived: DerivedPassword },
+	input: {
+		readonly userId: string;
+		readonly derived: DerivedPassword;
+		readonly setBySessionId: string | null;
+	},
 ): Promise<void> {
 	await createPasswordCredentialRepository({
 		driver: writer.driver,
 		keys: writer.keys,
 		schema: writer.schema,
-	}).write({ userId: input.userId, phc: input.derived.phc, scheme: CREATED_SCHEME });
+	}).write({
+		userId: input.userId,
+		phc: input.derived.phc,
+		scheme: CREATED_SCHEME,
+		setBySessionId: input.setBySessionId,
+	});
 }
 
 /**
- * The two statements that read and write `password_credential.set_by_session_id`, the column L-12
- * needs and 3.2 does not have. Every flow that stores a password names the session it was stored
- * in; a flow that does not leaves the column NULL, and NULL is read as a different session, so the
- * omission costs the credential at the next first confirmation rather than defeating S-LINK-4
- * (E-595, E-596).
+ * The statement S-LINK-4 turns on. `password_credential.set_by_session_id` is the column L-12 needs
+ * and 3.2 does not have; every flow that stores a password names the session it was stored in, and
+ * a credential whose provenance was never recorded is NULL, which is read as a different session
+ * (E-595, E-609).
  */
 interface PasswordProvenance {
-	/**
-	 * Takes an account identifier and no `Actor` for E-730's reason: the caller has just written the
-	 * credential it is describing, so there is no separate ownership left to prove.
-	 */
-	recordSessionThatSetIt(input: {
-		readonly userId: string;
-		readonly sessionId: string;
-	}): Promise<void>;
 	deleteUnlessSetInSession(input: {
 		readonly actor: Actor;
 		readonly sessionId: string | null;
@@ -72,10 +77,6 @@ export function createPasswordProvenance(options: {
 }): PasswordProvenance {
 	const table = qualifiedTableName(options.schema, "password_credential");
 
-	const recordStatement = `UPDATE ${table}
-SET set_by_session_id = $2
-WHERE user_id = $1`;
-
 	/* S-LINK-4: the credential survives only when a session is named on both sides and the two are
 	   the same. A confirming request without a session and a credential whose provenance was never
 	   recorded are both unknown, and unknown is a different session (L-12). */
@@ -85,10 +86,6 @@ WHERE user_id = $1
 RETURNING user_id`;
 
 	return {
-		async recordSessionThatSetIt({ userId, sessionId }) {
-			await options.driver.query(recordStatement, [userId, sessionId]);
-		},
-
 		async deleteUnlessSetInSession({ actor, sessionId }) {
 			const removed = await options.driver.query(deleteStatement, [actor, sessionId]);
 			return removed.length === 1;

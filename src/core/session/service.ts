@@ -50,6 +50,12 @@ export interface SessionService {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
+		/**
+		 * A caller that already has a transaction open issues the session inside it. Without this a
+		 * flow has to insert the row itself to make it part of its own transaction, and it cannot:
+		 * the metadata mode of L-10 lives here and nowhere a route can reach it (E-625).
+		 */
+		readonly transaction?: Driver;
 	}): Promise<IssuedSession>;
 	reissue(input: {
 		readonly previousToken: string;
@@ -97,10 +103,14 @@ function resolutionOf(userId: string, session: Session, observedAt: Date): Sessi
 export function createSessionService(options: SessionServiceOptions): SessionService {
 	const settings = sessionSettingsOf(options.session);
 	const metadataMode = options.sessionMetadata ?? DEFAULT_SESSION_METADATA_MODE;
-	const sessions = createSessionRepository({
-		driver: options.driver,
-		schema: options.schema ?? "velve",
-	});
+	const schema = options.schema ?? "velve";
+	const sessions = createSessionRepository({ driver: options.driver, schema });
+
+	function sessionsWithin(transaction: Driver | undefined): typeof sessions {
+		return transaction === undefined
+			? sessions
+			: createSessionRepository({ driver: transaction, schema });
+	}
 
 	function metadataOf(observed: ObservedRequest): SessionMetadata {
 		return sessionMetadataFor(metadataMode, observed);
@@ -162,9 +172,9 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	return {
 		settings,
 
-		async issue({ userId, factors, observed }) {
+		async issue({ userId, factors, observed, transaction }) {
 			const issued = createSessionToken();
-			const session = await sessions.insertSession(
+			const session = await sessionsWithin(transaction).insertSession(
 				insertFor(userId, factors, observed, issued.tokenHash),
 			);
 			return { token: issued.token, session };

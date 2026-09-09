@@ -2,8 +2,7 @@ import type { EmailConfig } from "../auth/config.js";
 import type { SignInResult } from "../auth/results.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
-import { toSecretToken } from "../token/secret-token.js";
-import { mintAndMail, redeemOrRefuse } from "./artefact.js";
+import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
 	accountOfRedemption,
@@ -32,20 +31,26 @@ export async function requestMagicLink(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	await mintAndMail(mailerOf(environment, email), {
-		purpose: "magic_link",
-		userId: owner === null ? null : owner.id,
-		message: (issued) =>
-			owner === null
-				? { kind: "request_for_unknown_address", to: input.email, requested: "magic_link" }
-				: {
-						kind: "magic_link",
-						to: address,
-						userId: owner.id,
-						token: issued.token,
-						expiresAt: issued.expiresAt,
-					},
-	});
+	const { driver, schema } = environment.services;
+	const minted = await driver.transaction((transaction) =>
+		mintArtefact(transaction, schema, {
+			purpose: "magic_link",
+			userId: owner === null ? null : owner.id,
+		}),
+	);
+	await sendOrUndo(
+		mailerOf(environment, email),
+		minted,
+		owner === null
+			? { kind: "request_for_unknown_address", to: input.email, requested: "magic_link" }
+			: {
+					kind: "magic_link",
+					to: address,
+					userId: owner.id,
+					token: minted.token,
+					expiresAt: minted.expiresAt,
+				},
+	);
 }
 
 /**
@@ -63,7 +68,7 @@ export async function redeemMagicLink(
 
 	const account = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, schema, {
-			token: toSecretToken(input.token),
+			token: input.token,
 			purpose: "magic_link",
 		});
 		const resolved = await accountOfRedemption(environment, transaction, redeemed);

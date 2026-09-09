@@ -2,16 +2,40 @@ import type { EmailConfig, EmailMessage } from "../auth/config.js";
 import type { Driver } from "../db/driver.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import { ConcealedError } from "../http/error-map.js";
-import { createOneTimeTokens, type OneTimeTokenRedemption } from "../token/one-time-token.js";
+import {
+	createOneTimeTokens,
+	type IssuedOneTimeToken,
+	type OneTimeTokenRedemption,
+} from "../token/one-time-token.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "../token/purpose.js";
-import type { SecretToken } from "../token/secret-token.js";
+import { toSecretToken } from "../token/secret-token.js";
 
-interface MailedArtefact {
+export interface MintedArtefact extends IssuedOneTimeToken {
 	readonly purpose: OneTimeTokenPurpose;
-	/** `null` when the address named no account: the artefact is minted all the same (S-TIM-6, E-597). */
-	readonly userId: string | null;
-	readonly payload?: OneTimeTokenPayload;
-	readonly message: (issued: { readonly token: string; readonly expiresAt: Date }) => EmailMessage;
+}
+
+/**
+ * Writes the row inside the caller's transaction. An address that names no account mints one too:
+ * the row names no owner, S-TOKEN-4 answers it exactly as it answers no row, and the two branches
+ * therefore cost the same statements (S-TIM-6, E-597).
+ */
+export async function mintArtefact(
+	transaction: Driver,
+	schema: string,
+	request: {
+		readonly purpose: OneTimeTokenPurpose;
+		readonly userId: string | null;
+		readonly payload?: OneTimeTokenPayload;
+	},
+): Promise<MintedArtefact> {
+	const issued = await createOneTimeTokens(
+		createOneTimeTokenRepository({ driver: transaction, schema }),
+	).issue({
+		purpose: request.purpose,
+		userId: request.userId,
+		...(request.payload === undefined ? {} : { payload: request.payload }),
+	});
+	return { ...issued, purpose: request.purpose };
 }
 
 export interface ArtefactMailer {
@@ -21,23 +45,29 @@ export interface ArtefactMailer {
 }
 
 /**
- * A.7, last paragraph: a `send` that throws fails the operation and rolls the token back, because
- * a reset token whose message never arrived is of use to nobody but an attacker. The callback
- * therefore runs inside the transaction that wrote the row — and inside the row lock on
- * `velve.user` that writing it takes, which is why `send` must enqueue rather than deliver (E-600).
+ * A.7: a `send` that throws fails the operation and takes the artefact with it, because a reset
+ * token whose message never arrived is of use to nobody but an attacker. The callback runs **after**
+ * the transaction has committed and the row lock on `velve.user` has gone, and a throw is answered
+ * by spending the token through the one statement that spends tokens — a compensation rather than a
+ * rollback, which is the trade E-630 records.
  */
-export async function mintAndMail(mailer: ArtefactMailer, artefact: MailedArtefact): Promise<void> {
-	await mailer.driver.transaction(async (transaction) => {
-		const tokens = createOneTimeTokens(
-			createOneTimeTokenRepository({ driver: transaction, schema: mailer.schema }),
-		);
-		const issued = await tokens.issue({
-			purpose: artefact.purpose,
-			userId: artefact.userId,
-			...(artefact.payload === undefined ? {} : { payload: artefact.payload }),
-		});
-		await mailer.email.send(artefact.message({ token: issued.token, expiresAt: issued.expiresAt }));
-	});
+export async function sendOrUndo(
+	mailer: ArtefactMailer,
+	minted: MintedArtefact | null,
+	message: EmailMessage,
+): Promise<void> {
+	try {
+		await mailer.email.send(message);
+	} catch (failure) {
+		if (minted !== null) {
+			await createOneTimeTokens(
+				createOneTimeTokenRepository({ driver: mailer.driver, schema: mailer.schema }),
+			)
+				.redeem({ token: minted.token, purpose: minted.purpose })
+				.catch(() => null);
+		}
+		throw failure;
+	}
 }
 
 /**
@@ -47,11 +77,11 @@ export async function mintAndMail(mailer: ArtefactMailer, artefact: MailedArtefa
 export async function redeemOrRefuse(
 	transaction: Driver,
 	schema: string,
-	attempt: { readonly token: SecretToken; readonly purpose: OneTimeTokenPurpose },
+	attempt: { readonly token: string; readonly purpose: OneTimeTokenPurpose },
 ): Promise<OneTimeTokenRedemption> {
 	const redeemed = await createOneTimeTokens(
 		createOneTimeTokenRepository({ driver: transaction, schema }),
-	).redeem(attempt);
+	).redeem({ token: toSecretToken(attempt.token), purpose: attempt.purpose });
 	if (redeemed === null) {
 		throw new ConcealedError("token_not_found");
 	}
