@@ -4078,7 +4078,9 @@ because nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route, with another plugin's, or with a namespace the surface occupies |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the eighteen namespaces 3.15 B gives the instance |
+| `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
+| `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 
 Two more refusals come from the modules and keep their own error types: a root
