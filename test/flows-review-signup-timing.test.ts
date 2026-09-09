@@ -146,20 +146,35 @@ function median(samples: readonly number[]): number {
  * TTFB over a socket, so the absolute numbers are a floor on the gap and not the gap a caller sees.
  *
  * After E-627 the branches run the same statements and the separation collapses, but **T-TIM-1's own
- * two thresholds are still not met** and this case no longer asserts them. Six runs on the same
- * machine, cover rolled back: |t| 4.6, 5.7, 8.2, 9.8, 10.6, 19.6, Cliff's delta 0.12 to 0.38,
- * medians within 4 to 10 per cent of each other. A control of free against free on the same harness
- * gives |t| 0.74 and 2.42, so the harness is sound and what is left is real: the free branch commits
- * a transaction and the cover branch rolls one back, and a commit costs a WAL flush the rollback
- * does not. Closing it needs a cover account that persists, which E-629 refuses. What is asserted
- * here instead is the separation the medians still show — the original code separated them by 87 per
- * cent, the limit below is 20, and the six runs measured 4 to 10.
+ * two thresholds are still not met**. Six runs on the same machine, cover rolled back: |t| 4.6, 5.7,
+ * 8.2, 9.8, 10.6, 19.6, Cliff's delta 0.12 to 0.38, medians within 4 to 10 per cent of each other. A
+ * control of free against free on the same harness gives |t| 0.74 and 2.42, so the harness is sound
+ * and what is left is real: the free branch commits a transaction and the cover branch rolls one
+ * back, and a commit costs a WAL flush the rollback does not. Closing it needs a cover account that
+ * persists, which E-629 refuses.
+ *
+ * What is asserted is the specification's own number where there is one, and the measured residual
+ * where there is not (E-933).
  */
 describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
-	const SEPARATION_LIMIT = 0.2;
+	/**
+	 * T-TIM-6's threshold — "Differenz der Mediane des ersten Antwortbytes < 5 ms" — rather than a
+	 * fraction invented here. It is the only number the specification fixes for two branches that
+	 * must not be tellable apart by time on an endpoint with no KDF; T-TIM-6 names the two request
+	 * rows and not this one, and 3.13 puts all three under the same rule (E-933).
+	 */
+	const MEDIAN_DIFFERENCE_LIMIT_MS = 5;
+
+	/**
+	 * T-TIM-1's own two thresholds are 4.5 and 0.147 and are not met; E-629 says why. These bound
+	 * what was measured instead, so a separation that grows back towards the 128.87 and 0.947 the
+	 * first paragraph records fails here rather than being reported to nobody (E-933).
+	 */
+	const WELCH_T_CEILING = 25;
+	const CLIFFS_DELTA_CEILING = 0.5;
 
 	it.skipIf(process.env.VELVE_NIGHTLY !== "1")(
-		"leaves the two branches within a fifth of each other, and names what it does not close",
+		"holds T-TIM-6's five milliseconds, and pins the two thresholds it does not meet",
 		async () => {
 			const taken: number[] = [];
 			const free: number[] = [];
@@ -174,14 +189,20 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 				}
 			}
 
-			const separation = Math.abs(median(taken) - median(free)) / median(free);
+			const NANOSECONDS_PER_MILLISECOND = 1_000_000;
+			const medianDifference = Math.abs(median(taken) - median(free)) / NANOSECONDS_PER_MILLISECOND;
+			const welch = Math.abs(welchT(trimmed(taken, 0.1), trimmed(free, 0.1)));
+			const delta = Math.abs(cliffsDelta(taken, free));
+			const measured = `median difference ${medianDifference.toFixed(3)} ms, |t| ${welch.toFixed(1)}, Cliff's delta ${delta.toFixed(3)}`;
+
 			expect(taken).toHaveLength(MEASUREMENTS_PER_GROUP - DISCARDED_WARMUP);
-			expect(separation, "median separation as a fraction of the free median").toBeLessThan(
-				SEPARATION_LIMIT,
+			expect(medianDifference, `T-TIM-6: ${measured}`).toBeLessThan(MEDIAN_DIFFERENCE_LIMIT_MS);
+			expect(welch, `pinned above T-TIM-1, not meeting it: ${measured}`).toBeLessThan(
+				WELCH_T_CEILING,
 			);
-			// Reported, not asserted: both are above their limits and E-629 says why.
-			expect(Math.abs(welchT(trimmed(taken, 0.1), trimmed(free, 0.1)))).toBeGreaterThan(0);
-			expect(Math.abs(cliffsDelta(taken, free))).toBeLessThan(1);
+			expect(delta, `pinned above T-TIM-1, not meeting it: ${measured}`).toBeLessThan(
+				CLIFFS_DELTA_CEILING,
+			);
 		},
 		600_000,
 	);
