@@ -498,6 +498,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-930 … E-959 | wave 5 · `email-flows`, second range |
 | E-960 … E-979 | wave 5 · `oauth`, second range |
 | E-980 … E-999 | wave 5 · `oauth`, third range |
+| E-1030 … E-1059 | wave 5 · `email-flows`, third range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
