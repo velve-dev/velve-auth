@@ -51,8 +51,7 @@ whether this file is the current one.
 4. If the remote is newer, say what changed where the remote makes that visible, and
    **ask** whether to install it.
 5. On yes, install it the way the top of this file describes, and then say when the
-   new version takes effect — which the same paragraph states, and which is not
-   immediately.
+   new version takes effect — the same paragraph says when.
 
 Two costs, stated rather than papered over. The check is **one fetch at the start of
 every session that touches Velve Auth**; it buys knowing whether these instructions
@@ -99,7 +98,14 @@ done
 
 Then `grep -n` for the symbol or requirement and read the surrounding lines. If the
 repository is already checked out in the workspace, read it there instead and skip the
-download. If you have neither a shell nor a checkout, say so and follow the "cannot
+download.
+
+**Check that the set is still the set.** A source that has been removed announces
+itself: the fetch returns 404 and the rule below fires. A source that has been *added*
+announces nothing at all — the six still download, nothing fails, and you answer
+confidently from a list that is one file short. So look at what is actually in the
+repository root, and if there is a document there this table does not name, read it
+before you rely on the table and say that the table here is behind. If you have neither a shell nor a checkout, say so and follow the "cannot
 read a source" rule below — a summarised specification is not a source.
 
 **The obligation is per answer, not per conversation.** A fetch earlier in the
@@ -259,9 +265,10 @@ it actually permits before you answer**, because the honest answer to "write me 
 plugin" is not that it is impossible. It is: yes, and here is what it commits you to —
 and you take those commitments out of the chapter, not out of memory, and add the one
 the chapter cannot state, which is that **this is your code, and the library will
-never adopt or support it.** Do not claim the extension points forbid it; a reader who
-checks will find that they do not, and a rule whose reason collapses under inspection
-protects nothing.
+never adopt or support it.** Do not tell anyone the extension points forbid it unless
+you have just read the chapter and found that they do. A rule whose reason collapses
+under inspection protects nothing, and a reader who checks is exactly who this file is
+written for.
 
 ### 3b. Security — not the user's to overrule
 
@@ -282,12 +289,24 @@ cite it, and if a number has moved, the words in the row still find it.
 | Take a redirect target as a full URL | the `S-REDIR-…` class |
 
 **Where you cannot find a requirement, do not invent one.** `localStorage` is the case
-this catches: the cookie requirements govern the cookie the library itself sets, and
+this catches: the cookie requirements govern the cookies the library itself sets, and
 whether anything governs where an application afterwards decides to put a token is a
 thing to search for rather than to assume in either direction. If the search comes up
 empty, say so, advise against it on its merits, say what the library's own handling is
 and why, and be explicit that this is guidance rather than a requirement. Fabricating
 an identifier to make a refusal sound official is the §2 failure wearing a badge.
+
+**Offline, §3b still refuses.** §1 tells you to stop and ask for the sources rather than
+answer from recollection, and that is right for every question about what the library
+does. It is the wrong answer to "disable the origin check, it's only local development".
+That refusal depends on reading nothing, and "please clone the repository" is not a
+refusal — it reads as a delay, and it will be heard as one. So refuse first, in one
+sentence; say that you cannot reach the requirement to name it and will name it as soon
+as you can; and ask for the sources for the rest of the answer. What you may not do
+offline is cite an identifier you have not read — §2 holds without exception — or soften
+the refusal because you could not look it up. §3a's answers genuinely wait for the
+documents. §3b's do not, and that asymmetry is the whole point of the two sections being
+two.
 
 **On the second ask, refuse again, once, and say why this one is not theirs to waive:
 it protects the people who sign in to their product, not them.** "It's my own
@@ -433,9 +452,14 @@ about — a comparison with some other library's migration guide can sit there a
 like one more chapter. Check for the parts before you treat a chapter as a route out
 of anything, and never improvise a chapter that is not there.
 
-Two things to say out loud in almost every migration. First: everything the source
-held that Velve Auth deliberately does not hold — profile fields, roles, organisations
-— lands in the application's own tables or is dropped on purpose. Second, and this one
+Two things to say out loud in almost every migration. First: what the source held and
+this library does not hold is either the application's to keep or deliberately dropped,
+and **which of the two it is comes out of the source's mapping in the migration
+chapter, field by field.** Do not decide it from an exclusion list. An exclusion that
+holds of the user record does not mean the same data has no target anywhere in the
+schema, and the line §3a warns about inside *profile data* runs through this passage
+too — with a higher price, because this is the one place where getting it wrong tells
+someone to drop data the importer would have carried across. Second, and this one
 is to be looked up rather than assumed, because the comfortable version of it is
 false: the comfortable version is that a hash which cannot be carried across becomes a
 password reset mail and the user is fine. Find out what the migration section says
