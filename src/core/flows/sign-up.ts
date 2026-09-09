@@ -208,13 +208,22 @@ async function announce(
 		return;
 	}
 	const { driver, schema } = flow.environment.services;
-	const artefact = taken === null ? registration.artefact : null;
+	// An address means an artefact: `register` mints one whenever it writes a row carrying an
+	// address, and the cover writes one too — which is what makes the two branches the same length.
+	const minted = registration.artefact;
+	if (minted === null) {
+		return;
+	}
 	const message =
 		taken === null
-			? confirmationOf(registration.result.user, address, registration.artefact as MintedArtefact)
+			? confirmationOf(registration.result.user, address, minted)
 			: noticeOf(taken, address);
 	try {
-		await sendOrUndo({ driver, schema, email: flow.email }, artefact, message);
+		await sendOrUndo(
+			{ driver, schema, email: flow.email },
+			taken === null ? minted : null,
+			message,
+		);
 	} catch (failure) {
 		if (taken === null) {
 			await removeTheAccountNobodyWasToldAbout(flow, registration.userId);
