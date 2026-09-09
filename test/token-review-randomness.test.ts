@@ -386,8 +386,11 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 			}
 		}
 
-		const expected = 2 * total * proportion * (1 - proportion);
-		const deviation = 2 * Math.sqrt(2 * total) * proportion * (1 - proportion);
-		expect(Math.abs(runs - expected) / deviation).toBeLessThan(BIT_SEQUENCE_LIMIT);
+		// SP 800-22 divides by 2√(2n)·π(1−π) because that ratio is the argument it hands to erfc,
+		// and erfc takes a deviate over √2. The threshold here is a deviate, so the divisor is the
+		// standard deviation itself.
+		const expectedRuns = 2 * total * proportion * (1 - proportion);
+		const standardDeviation = 2 * Math.sqrt(total) * proportion * (1 - proportion);
+		expect(Math.abs(runs - expectedRuns) / standardDeviation).toBeLessThan(BIT_SEQUENCE_LIMIT);
 	});
 });
