@@ -209,17 +209,63 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 		},
 	};
 
-	async function issueSession(): Promise<void> {
+	/** An expired-but-unswept row is still a row `revokeAll` deletes, which is the case that was wrong (E-764). */
+	async function insertSession(expired = false): Promise<{ token: string; id: string }> {
 		const issued = createSessionToken();
-		sessionToken = issued.token;
+		const idleDeadline = expired ? "now() - interval '1 hour'" : "now() + interval '7 days'";
 		const [row] = await mounted.connection.query<{ id: string }>(
 			`INSERT INTO ${mounted.schema}.session
 			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])
+			 VALUES ($1, $2, ${idleDeadline}, now() + interval '30 days', '{password}'::text[])
 			 RETURNING id`,
 			[userId, issued.tokenHash],
 		);
-		sessionId = row?.id ?? "";
+		return { token: issued.token, id: row?.id ?? "" };
+	}
+
+	async function issueSession(): Promise<void> {
+		const inserted = await insertSession();
+		sessionToken = inserted.token;
+		sessionId = inserted.id;
+	}
+
+	async function sessionIds(): Promise<readonly string[]> {
+		const rows = await mounted.connection.query<{ id: string }>(
+			`SELECT id FROM ${mounted.schema}.session WHERE user_id = $1 ORDER BY id`,
+			[userId],
+		);
+		return rows.map((row) => row.id);
+	}
+
+	async function removeEverySession(): Promise<void> {
+		await mounted.connection.query(`DELETE FROM ${mounted.schema}.session WHERE user_id = $1`, [
+			userId,
+		]);
+	}
+
+	/**
+	 * E-771: the property, stated once — what the hook was told about is exactly what went. A row the
+	 * announcement misses is a revocation no plugin can see, and an expired row is where the two
+	 * sets came apart, because the listing that reports sessions filters on the deadlines and the
+	 * deletion does not.
+	 */
+	async function announcedAndDeletedBy(
+		path: string,
+		cookieToken: string,
+	): Promise<{ announced: readonly string[]; deleted: readonly string[]; status: number }> {
+		const before = await sessionIds();
+		revocations.length = 0;
+
+		const answer = await mounted.handler(
+			requestTo(path, { body: {}, cookie: `${DEFAULT_COOKIE_NAMES.session}=${cookieToken}` }),
+		);
+
+		const after = await sessionIds();
+		return {
+			announced: [...revocations.map((event) => event.sessionId)].sort(),
+			deleted: before.filter((id) => !after.includes(id)).sort(),
+			status: answer.status,
+		};
 	}
 
 	async function countSessions(): Promise<number> {
@@ -270,6 +316,37 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 
 		expect(answer.status).toBe(204);
 		expect(revocations).toStrictEqual([{ sessionId: current, userId, reason: "revoked_by_user" }]);
+	});
+
+	it("announces every session revokeAll removes, an expired row included", async () => {
+		await removeEverySession();
+		const current = await insertSession();
+		const another = await insertSession();
+		const stale = await insertSession(true);
+
+		const outcome = await announcedAndDeletedBy("/session/revoke-all", current.token);
+
+		expect(outcome.status).toBe(200);
+		expect(outcome.deleted).toStrictEqual([current.id, another.id, stale.id].sort());
+		expect(outcome.announced).toStrictEqual(outcome.deleted);
+		expect(revocations.every((event) => event.reason === "revoked_by_user")).toBe(true);
+		expect(revocations.every((event) => event.userId === userId)).toBe(true);
+		expect(await sessionIds()).toStrictEqual([]);
+	});
+
+	it("announces every session revokeAllOther removes, an expired row included, and not the caller's", async () => {
+		await removeEverySession();
+		const current = await insertSession();
+		const another = await insertSession();
+		const stale = await insertSession(true);
+
+		const outcome = await announcedAndDeletedBy("/session/revoke-others", current.token);
+
+		expect(outcome.status).toBe(200);
+		expect(outcome.deleted).toStrictEqual([another.id, stale.id].sort());
+		expect(outcome.announced).toStrictEqual(outcome.deleted);
+		expect(outcome.announced).not.toContain(current.id);
+		expect(await sessionIds()).toStrictEqual([current.id]);
 	});
 
 	it("fails closed when the hook refuses: the session survives and the caller is told nothing", async () => {
