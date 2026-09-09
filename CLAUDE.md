@@ -434,8 +434,32 @@ form separates the two cases** — an edit to an entry the branch itself introdu
 nets out to an addition against the merge base whichever way the edit went. This
 rule needs a human. E-536 found that boundary; E-538 records an instance where a
 wrong reason was corrected in place anyway, deliberately and disclosed in the
-entry, which is what disclosure is for and is not a precedent for doing it
-quietly.
+entry. What disclosure does and does not buy is settled next.
+
+**Disclosure is not a remedy, and E-538 is not a precedent.** A reason that was
+**wrong when it was written** is corrected by a new entry citing the old one, and
+never by an edit to the old one's text — disclosed or not. The prohibition above
+is stated flatly; E-538's own "anyway" concedes a violation rather than licensing
+one; and reading disclosure as a remedy empties the prohibition of everything it
+forbids, because any edit can be disclosed. That reason is the thing a later
+reader would otherwise find and believe, which is the whole point of the rule.
+
+**The half a writer actually hits is the other one.** An entry that was correct
+when written and was made stale by the branch's **own later change to the thing
+the entry describes** may be brought into step in place, with the change
+disclosed in the entry. An entry saying *"clause X now reads Y"* whose branch
+then changes X to read Z rationalises nothing; leaving it standing publishes an
+entry describing text the tree does not contain. So the line is: **an entry may
+be brought into step with its own artefact; the reason a decision was taken may
+not be rewritten.**
+
+**Neither half has a diff signature, and a reader is the mechanism for both.** An
+edit bringing an entry into step with its amended artefact and an edit rewriting
+a reason are the same shape in `git diff`, and `check:log-append` is blind to
+both, for the reason the paragraph below gives. Disclosure in the entry and a
+reviewer reading it are the whole enforcement, and this file says so rather than
+presenting the rule as decidable — a rule presented as decidable when it is not
+is how E-1032 happened (E-1139).
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
