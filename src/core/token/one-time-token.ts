@@ -1,10 +1,12 @@
+import type { RedeemedOneTimeToken } from "../db/actor.js";
 import type { OneTimeTokenRepository } from "../db/repositories/token.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
 import { createSecretToken, hashSecretToken, type SecretToken } from "./secret-token.js";
 
 export interface OneTimeTokenRequest {
 	readonly purpose: OneTimeTokenPurpose;
-	readonly userId: string;
+	/** `null` asks for the cover artefact an address that names no account is answered with (E-597). */
+	readonly userId: string | null;
 	readonly payload?: OneTimeTokenPayload;
 }
 
@@ -13,11 +15,14 @@ export interface IssuedOneTimeToken {
 	readonly expiresAt: string;
 }
 
-export interface OneTimeTokenRedemption {
+/**
+ * E-234: the removal is what proved the owner, so the redemption carries that provenance rather
+ * than a bare string, and `actorOfRedeemedOneTimeToken` is reachable from it without a cast.
+ */
+export type OneTimeTokenRedemption = RedeemedOneTimeToken & {
 	readonly purpose: OneTimeTokenPurpose;
-	readonly userId: string;
 	readonly payload: OneTimeTokenPayload | null;
-}
+};
 
 export interface OneTimeTokens {
 	issue(request: OneTimeTokenRequest): Promise<IssuedOneTimeToken>;
@@ -48,7 +53,7 @@ export function createOneTimeTokens(repository: OneTimeTokenRepository): OneTime
 			if (stored === null) {
 				return null;
 			}
-			return { purpose, userId: stored.userId, payload: stored.payload };
+			return { ...stored, purpose };
 		},
 	};
 }

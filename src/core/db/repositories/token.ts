@@ -17,7 +17,11 @@ export interface OneTimeTokenRepositoryOptions {
 export interface OneTimeTokenReplacement {
 	readonly tokenSha256: Uint8Array;
 	readonly purpose: OneTimeTokenPurpose;
-	readonly userId: string;
+	/**
+	 * `null` writes the cover row S-TIM-6 needs: an address that names no account must cost the
+	 * same statements as one that does, and S-TOKEN-4 already answers such a row as no row (E-597).
+	 */
+	readonly userId: string | null;
 	readonly payload: OneTimeTokenPayload | null;
 }
 
@@ -64,6 +68,15 @@ export class OneTimeTokenError extends Error {
 	}
 }
 
+/**
+ * The cover row of E-597 is written by the statements a named owner is written by, so it needs an
+ * account identifier for the lock and the supersession that no account can answer to. Drawn afresh
+ * each time rather than fixed, because a fixed one names a row an import could create.
+ */
+function anAccountThatCannotExist(): string {
+	return crypto.randomUUID();
+}
+
 const EXPIRY_AS_ISO_8601 = `to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 // E-93: the one place in this repository where the redemption becomes evidence of an owner.
@@ -99,7 +112,7 @@ WHERE id = $1 FOR UPDATE /* locks: ${schema}.user */`;
 	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
 )
 INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
-VALUES ($3, $2, $1, $4, now() + make_interval(secs => $5::double precision))
+VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision))
 RETURNING ${EXPIRY_AS_ISO_8601} AS expires_at`;
 
 	// Section 3.7 word for word apart from the marker E-142 requires: the only way a token is read.
@@ -116,19 +129,21 @@ RETURNING user_id, payload`;
 			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
 				throw new OneTimeTokenError("one_time_token_purpose_unknown", null);
 			}
+			const lookupId = userId ?? anAccountThatCannotExist();
 			return options.driver.transaction(async (tx) => {
-				const owner = await tx.query(lockOwnerStatement, [userId]);
+				const owner = await tx.query(lockOwnerStatement, [lookupId]);
 				// The account can be deleted between whatever resolved it and this call; the lock
 				// has already read the row, so the foreign key never has to report it (E-263).
-				if (owner.length === 0) {
+				if (owner.length === 0 && userId !== null) {
 					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}
 				const [row] = await tx.query<{ expires_at: string }>(replaceStatement, [
-					userId,
+					lookupId,
 					purpose,
 					tokenSha256,
 					payload === null ? null : JSON.stringify(payload),
 					ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
+					userId,
 				]);
 				if (row === undefined) {
 					throw new OneTimeTokenError("one_time_token_not_written", purpose);
