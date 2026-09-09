@@ -4158,8 +4158,14 @@ Verknüpfung einer **neuen** Identität"* and `S-LINK-7` *„einer **weiteren**"
 re-completing a link changes no trust level, so re-issuing there would move
 `created_at` — and `freshnessWindow` measures against `created_at`, which would
 make it a repeatable way to restore the freshness that gates the seventeen
-methods of 3.15 B.9. To refresh what a provider reports about an identity, sign
-in through that provider; the sign-in path rewrites the claims on every pass.
+methods of 3.15 B.9.
+
+**So re-linking is not the way to refresh a provider's data**, and if you built a
+"reconnect" button on `identity.link.start` it will now answer 409. Sign in
+through the provider instead: the sign-in path rewrites the claims — the address,
+the verification flag, the scopes — on every pass, and where `storeTokens` is on
+it rewrites the stored access, refresh and ID tokens with them. That is the only
+route that refreshes them.
 
 Two consequences of that rule are worth stating outright. **Two link flows
 started from the same session cannot both complete:** the first replaces that
@@ -4226,14 +4232,35 @@ never reads them.
 8. Issues a session — or, where the account has a second factor enrolled, a
    pending authentication instead — and answers 302 to the stored path. A link
    flow writes the identity and replaces the session named on the flow row in a
-   single transaction, leaves the account's other sessions untouched, and is
-   refused — writing neither — when the named session is no longer there.
+   single transaction, and leaves the account's other sessions untouched.
+
+**A link is refused unless the session it was started from still authorises it,
+and "still authorises" is a list.** The flow row is a ten-minute artefact, and in
+that window the session it names can stop being an authority in more than one
+way. All of these refuse the link, writing neither identity nor session:
+
+| the recorded session… | reached by |
+|---|---|
+| was revoked, singly or by `revoke-all` or `revoke-others` | `session.revoke*` |
+| was signed out | `signOut` |
+| was replaced by a password change or reset | `S-FIX-6` |
+| was replaced by an earlier link from the same session | a second flow |
+| passed its idle or its absolute deadline, swept or not | time |
+| belongs to an account that has since been disabled | `disabled_at` |
+
+The list is written out because it has been wrong twice. Each earlier version
+refused on a narrower question — first *does the row exist*, then *does the row
+exist and is it in date* — and each time the state that got through was one where
+the row itself was untouched and something else had ceased to authorise it. A
+reader adding a seventh way for a session to stop counting should assume this
+list does not cover it until they have checked.
 
 Every failure between steps 2 and 6 answers `oauth_flow_invalid` (400) to the
 caller and carries its own reason in the log line: `state_not_found`,
 `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`,
-`id_token_signature_invalid`. A link refused at step 8 answers the same code and
-logs `link_session_gone`. A provider that answers wrongly is
+`id_token_signature_invalid`. A link refused at step 8 answers the same code,
+logging `link_session_gone` for the first five rows above and
+`user_disabled_on_oauth_flow` for the last. A provider that answers wrongly is
 `oauth_provider_error` (502).
 
 ### The linking rule
