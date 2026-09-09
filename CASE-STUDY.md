@@ -3928,3 +3928,93 @@ The hook-producer claim stood in two documents and named which points fire. `oau
 **Rejected.** Building a defence in the repository — a pattern that ignores a numbered duplicate, or a retry around the reach test.
 **Reason.** The diagnosis fits all three: a sync client racing a delete-and-rewrite restores a file it believes was lost, under a new name, and can have a path unresolved at the moment a test imports it. But a barrier test that goes red because a file appeared beside the one it checks is **not** defective. It fails closed, which is the correct direction for a check whose subject is what the package ships, and the obvious defence is one of the three broken-check shapes §5 names by name — *an exclusion that deleted the text it was meant to examine*. A pattern broad enough to match a sync tool's naming is broad enough to hide a genuinely leaked artefact, and the asymmetry runs the right way: a false red costs a re-run, a filter that hides a real artefact is silent and permanent. So nothing is added to the tree, and the finding is written down instead.
 **Price.** This is true of an environment and not of the repository, so nothing in the tree keeps it true and nothing will tell the next person who meets it — they will read a red barrier test as a defect in their own change, which is exactly what it looks like. What bounds the damage is that `dist/` is in `.gitignore` and the eleven source-side duplicates were untracked, so none of the three occurrences could reach a commit; that is a property of the ignore file rather than of anything anyone built for it. And the entry cannot say the race is over, only that it did not reproduce twice in a row.
+
+### The skill's own argument, turned on the skill
+`E-880` · skillver · skill content, frozen
+
+**Context.** `CLAUDE-SKILL.md` opens by saying it carries no copy of the library's documentation, deliberately, because a copy goes stale and a stale copy of an authentication library's interface is confidently wrong. It then carried facts in its prose, and those are copies. Architecture 3.14's thirteen exclusions were quoted verbatim as a blockquote; the package being at `0.0.0` and not on npm appeared twice; section 4 was said to cover five sources and 4.6 was said not to be a sixth; the decided gaps were summarised; and the counts thirteen, fourteen, five and seven were stated outright. The one that bites is the blockquote. A native audit log is planned for a later wave, and the skill listed an audit log among the thirteen under the heading *Not coming. No roadmap language.* — so on the day that feature ships, the skill refuses a feature the library has, in the most absolute wording it owns, to a user who is looking straight at it.
+
+**Rejected.** Dating the lists, or marking them *as of wave 4*. Rejected because a reader who reaches a list reads the list; the qualifier is the part that is skipped, and a dated list still has to be updated, which is the cost the whole design was avoiding. Also rejected: keeping the lists and adding a sentence telling the reader to verify them, which is the same thing with an extra step and leaves the confident wording in place.
+
+**Reason.** The rule that replaces them is *state method, never fact about the library*. What made the lists useful was the recognition — that "a column to tell staff from customers" is a roles question and "which sign-ins happened last week" is an audit question — and recognition does not go stale. The verdict does. So the recognition stays and every "the library does not do X" became "find out from the live document whether it does, and answer from that".
+
+**Price.** The skill is slower at exactly the thing it was fastest at. Where it used to refuse in one sentence citing 3.14, it now fetches two lists first and usually arrives at the same refusal. It can no longer refuse anything at all without network access, where before it could refuse thirteen things from memory — and the "cannot read a source" rule, which already said to stop rather than answer, now covers refusals too. That is the intended trade and it is still a loss.
+
+### Section numbers stay, demoted to hints
+`E-881` · skillver · skill content, frozen
+
+**Context.** `3.14`, `3.15`, `3.16`, `3.11` and the requirement identifiers are facts by the same definition used above: a renumbering makes them false, and nothing in the skill would notice. But §10 of the skill requires an answer to carry the clause it rests on, and an answer that cites nothing is the hedge the same section forbids. Removing the numbers and keeping the citation duty is not possible.
+
+**Rejected.** Deleting them. Also rejected: keeping them bare, as authority, which is what they were.
+
+**Reason.** The two failures are not the same size. A number that has moved costs the reader a search; a verdict that has changed costs them a wrong answer they act on. So the numbers stay and each one now travels with what the section is called or does — "3.14, the one titled for what the library does not do", "3.16, the one that enumerates `L-1` and onwards" — and the file states once that a number is a hint for the search and not an authority. A reader who finds 3.14 moved can still find *What is deliberately absent*.
+
+**Price.** Nothing enforces the pairing. The next editor adding a citation will add a bare one, and it will read exactly like the paired ones. And a renumbered section still reads as authoritative to anyone who does not reach the sentence in §1 that demotes it. What is left in the file was checked against the specification in the tree before it was left: five section numbers, one sub-address (`3.15 D.3`), five individual identifiers (`S-TOKEN-6`, `S-LINK-2`, `T-CSRF-1`, `L-12`, `E-23`), three requirement classes named without a number, and two external advisories. That check is a one-off; it is not a step in the gate.
+
+### One version number, and it lives in the file's own text
+`E-882` · skillver · versioning, frozen
+
+**Context.** The skill has to be able to say which version of itself is running, and it can only know that from something it can read. The owner was explicit that they will not maintain the number in two places.
+
+**Rejected.** The package version in `package.json`, which is the library's and moves for reasons that have nothing to do with the skill — the whole point of the design is that the two move independently. A `VERSION` file, which the skill could not read from inside a conversation. A date alone, which orders fine but says when the file was touched rather than whether its method changed. Repeating the number in `README.md`, which is what the owner refused.
+
+**Reason.** A line directly under the first heading, `**Skill version 1 · 2026-09-09**`, greppable and readable in the same glance. The skill knows its own version because it is in the file it is running from, and the published copy states its version the same way, so the comparison is one fetch and one regex. `README.md` links to the line rather than repeating it.
+
+**Price.** The number is on disk twice, because `CODEX-SKILL.md` states the same line. It is in the source once — the Codex file is generated — but nothing in the gate ran the generator, so the two could drift. `pnpm check:skill-version` now compares the two lines, which catches the drift in the number and not in the prose around it.
+
+### The version tracks the skill, not the library
+`E-883` · skillver · versioning, frozen
+
+**Context.** This was not decided while writing the file. It fell out of removing the facts, was left as a property of how the file happened to be written, and was named as a rule only after the owner said, mid-branch, that it was the reason the job existed: a release moves the documentation, the skill reads it live, the number stays put, and no user has to do anything. A skill update becomes a rare event always worth the interruption instead of a tax on every release.
+
+**Rejected.** Leaving it implicit, which is what had already happened once. A property nobody wrote down survives exactly as long as the next editor's assumptions.
+
+**Reason.** A future editor meets a rule at the moment they are about to break it, and the moment here is reaching for the version number. So the rule sits at the version line rather than in a section about policy. Its corollary is the thing that actually keeps the property true and is stated as a rule of its own in §1: adding a fact about the library's features to the skill is a defect, because one such sentence turns every subsequent release into a skill release.
+
+**Price.** The skill now opens with three rules about itself — the file wins where they disagree, it states method and not fact, its version tracks itself — before it says anything about the library it is an expert on. That is a lot of self-reference at the top of a file whose §10 tells the reader not to fill space. And the corollary is a sentence, not a check: nothing detects a fact being added, only a version not being raised when one is.
+
+### The Codex file's differences are confined to its header
+`E-884` · skillver · file parity, frozen
+
+**Context.** `CODEX-SKILL.md` is produced from `CLAUDE-SKILL.md`, and the two are required to differ only in the header and the `this skill` → `these instructions` rewordings. The session check breaks that: it has to name which URL to fetch and which file to write, and those genuinely differ — one is installed into a skill directory and needs a restart, the other is `AGENTS.md` in a project and does not.
+
+**Rejected.** A third sanctioned class of difference covering the whole of §0, which would make the parity rule "the two differ in the header, the rewordings, and one section", and a rule with three exceptions is not checked by reading a diff any more. Also rejected: writing §0 abstractly enough to cover both without naming either, which produced sentences that named no file and instructed nobody.
+
+**Reason.** Move the file-specific facts up into the header, which is already the region allowed to differ, and have §0 refer to *the top of this file*. §0 is then byte-identical in both, and the diff of the two files is still one header hunk plus the reworded lines — which is what a reviewer can check by eye, and is how it was checked here.
+
+**Price.** §0 is one indirection away from what it instructs: "install it the way the top of this file describes" reads worse than a `curl` line in place, and a reader who skips the header loses the whole procedure. And the Codex header now carries shared prose — the paragraph about the version tracking the skill — so the region that exists to hold what differs also holds something that does not.
+
+### The version check costs a fetch, and contradicts the skill's own §10
+`E-885` · skillver · session behaviour, frozen
+
+**Context.** The check runs before the first answer about Velve Auth in a session and only then. It costs a fetch at the start of every such session, and installing an update writes into the user's own skill directory.
+
+**Rejected.** Checking per answer, which §1 already does for the sources and which for a version would be pure noise. Checking silently and speaking only when out of date, which is cheaper for the reader and leaves them unable to tell a check that found nothing from a check that never ran — the distinction §5 of this repository's rules exists for. Installing without asking, which is the sort of thing that gets a skill uninstalled.
+
+**Reason.** Say the cost in the file rather than let the user discover it; ask, then act, never act and report. Both are written into §0 as text the agent is meant to honour, not as a note to the maintainer.
+
+**Price.** One line of version chatter at the start of every session, in a file whose §10 says: no preamble about what you are about to do. The version line is exactly that preamble. The file now contains that contradiction and does not resolve it — the line is required and §10 still forbids its shape — and the only defence is that it is one line and happens once.
+
+### The description keeps the provider names by opening the list
+`E-886` · skillver · skill content, frozen
+
+**Context.** The skill's frontmatter `description` listed the five migration sources by name. That is the same closed list §1 now forbids in the body, and it is also what makes the skill fire when a user's first sentence says "Clerk" rather than "Velve Auth".
+
+**Rejected.** Deleting the names, which is consistent and loses the trigger — a skill that does not activate refuses nothing and cites nothing. Keeping them closed, which is the defect.
+
+**Reason.** "(Supabase, Clerk, Auth0, Firebase, NextAuth and others)" cannot become false whatever the enumeration does, because *and others* is true of every superset of it. The words that make the skill activate survive and the claim does not close.
+
+**Price.** A reader of the description may still take the five as the covered set, and the description is the one part of the file an agent sees without reading further — so the least verifiable sentence in the file is the most read one. The honest statement of this is that the description is a matching hint rather than an instruction, and nothing in the file says so.
+
+### The version bump is checked, and what the check cannot see
+`E-887` · skillver · gate, frozen
+
+**Context.** `CLAUDE.md` §6 now names the skill as a fourth file kept current, with the rule that every change to it raises its version. §5 of the same file says what a rule enforced by noticing is worth, and the two `DOCUMENTATION.md` bullets there are the standing example.
+
+**Rejected.** Leaving it to the reviewer. Also rejected: writing the rule as "keep the skill current alongside the documentation", which is how it would naturally be phrased and is the trap — the documentation is kept current by describing the features, the skill by continuing to describe none of them, and a reader who takes the flat phrasing at face value helpfully adds the new feature and destroys the property. §6 states the two meanings side by side and says which one applies.
+
+**Reason.** `pnpm check:skill-version` compares each skill file against the merge base and requires a higher version number where the file changed, requires both files to state the same line, and refuses rather than passes when it cannot look — an unresolvable base, no common ancestor, a skill file absent at `HEAD`, or a version line it cannot read. It reads committed history and not the working tree, like `check:log-append` and unlike every other step, and §9's entry says so, because a writer watching the other steps has no signal that this one differs. A raise without a change is permitted: the rule is that a change raises the version, and refusing a lone raise would refuse the repair of a commit that forgot one.
+
+Nine faults were planted before the check was trusted, each with its outcome predicted first: nothing touched, a skill file edited without a raise, edited and raised, raised alone, the version line deleted, a hand-edit of the generated file alone, the two files stating different versions, an unresolvable base, and a base with no common ancestor. Eight matched the prediction. The ninth — the hand-edit of the generated file — came back green, and the plant was at fault rather than the check: it had been committed on top of an earlier commit that raised the version, so the file had changed *and* risen. Rebuilt in isolation it is red.
+
+**Price.** That mis-built plant is also a real hole, and it is worth stating as one rather than as an accident of testing. A hand-edit of `CODEX-SKILL.md` made in the same branch as any legitimate raise passes, because the file then changed and its version rose and the check asks nothing further. No version-based check can catch that; only regenerating the file and comparing can, and this branch did not commit the generator, so `CODEX-SKILL.md` being the mechanical image of `CLAUDE-SKILL.md` is still what §6 says it is — enforced by the reviewer noticing. The check narrows the window to a branch that touches nothing else, which is the common shape of a drive-by edit and not the dangerous one.
