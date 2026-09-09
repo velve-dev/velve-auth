@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
+import { runMigrations } from "../src/core/db/migration-runner.js";
+import { coreMigrations } from "../src/core/db/migrations/index.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
-import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
-import type { TestConnection } from "./db-postgres-connection.js";
+import { createUser, dropSchema, uniqueSchemaName } from "./db-fixtures.js";
+import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
 interface Opened {
 	readonly connection: TestConnection;
@@ -12,28 +14,41 @@ interface Opened {
 	migrate(plugin: VelvePlugin): Promise<{ readonly code?: string }>;
 }
 
-const opened: Opened[] = [];
+const schemas: string[] = [];
+let shared: TestConnection | undefined;
+
+/** One connection for the file: PostgreSQL's connection budget is what bounds the whole suite. */
+async function connection(): Promise<TestConnection> {
+	shared ??= await openTestConnection();
+	return shared;
+}
 
 async function openSchema(): Promise<Opened> {
-	const { connection, schema } = await openMigratedSchema("pluginreads");
-	const instance: Opened = {
-		connection,
+	const driver = await connection();
+	const schema = uniqueSchemaName("pluginreads");
+	await runMigrations({ driver, schema, migrations: coreMigrations("email") });
+	schemas.push(schema);
+	return {
+		connection: driver,
 		schema,
 		migrate: (plugin) =>
-			createVelveAuth(configFor({ database: connection as Driver, schema, plugins: [plugin] }))
+			createVelveAuth(configFor({ database: driver as Driver, schema, plugins: [plugin] }))
 				.migrate()
 				.then(() => ({}))
 				.catch((error: { code?: string }) => error),
 	};
-	opened.push(instance);
-	return instance;
 }
 
-afterEach(async () => {
-	for (const instance of opened.splice(0)) {
-		await dropSchema(instance.connection, instance.schema);
-		await instance.connection.close();
+afterAll(async () => {
+	const driver = shared;
+	if (driver === undefined) {
+		return;
 	}
+	for (const schema of schemas.splice(0)) {
+		await dropSchema(driver, schema);
+	}
+	await driver.close();
+	shared = undefined;
 });
 
 async function relationExists(instance: Opened, name: string): Promise<boolean> {

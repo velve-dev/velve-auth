@@ -50,7 +50,20 @@ async function freshSchema(): Promise<string> {
 	return schema;
 }
 
+/**
+ * One schema for the whole class. Every case below is refused and rolls back, so none of them
+ * leaves a mark for the next to trip over — and a regression that let one through would leave a
+ * column the case that lost it asserts the absence of.
+ */
+let sharedSchema: Promise<string> | undefined;
+
+function schemaForTheClass(): Promise<string> {
+	sharedSchema ??= freshSchema();
+	return sharedSchema;
+}
+
 afterAll(async () => {
+	sharedSchema = undefined;
 	const driver = shared;
 	if (driver === undefined) {
 		return;
@@ -97,7 +110,7 @@ describe("a plugin id that prefixes a core table name does not own that table (3
 	});
 
 	it.each(REACHES)("refuses plugin $id the core table $table", async ({ id, table }) => {
-		const schema = await freshSchema();
+		const schema = await schemaForTheClass();
 
 		const refusal = await refusalOf(schema, reachingMigration(id, table));
 
