@@ -75,7 +75,7 @@ export {
 export type { PendingToken } from "./core/factor/pending/index.js";
 /**
  * The three lines below are the whole of what wave 5's features add to this barrel: each owns one
- * module and adds names there, so three writers never meet in this file.
+ * module and adds names there, so three writers never meet in this file (E-744).
  */
 export type * from "./core/flows/index.js";
 export type {

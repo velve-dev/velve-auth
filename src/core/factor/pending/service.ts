@@ -80,7 +80,7 @@ export function createPendingAuthenticationService(
 	});
 
 	return {
-		/** 3.15 C.1: which factors are on offer is the account's state, so the write reads it rather than the caller supplying it. */
+		/** 3.15 C.1, E-735: which factors are on offer is the account's state, so the write reads it rather than the caller supplying it. */
 		async begin({ userId, factorsCompleted }) {
 			const token = createPendingToken();
 			const stored = await repository.insertPendingAuthentication({

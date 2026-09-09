@@ -20,7 +20,7 @@ export type PendingCookieAccess = "hidden" | "readable";
 /**
  * The same question for `__Host-velve_oauth_state`, and a separate answer: no `CallerRequirement`
  * implies it, because the pointer authorises nothing on its own — 5.9 (c) S-CSRF-5 makes it one
- * half of a check whose other half is the row in `velve.oauth_flow`.
+ * half of a check whose other half is the row in `velve.oauth_flow` (E-736).
  */
 export type OAuthStateCookieAccess = "hidden" | "readable";
 

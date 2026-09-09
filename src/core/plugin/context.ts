@@ -43,7 +43,7 @@ function assertActorIsNamed(actor: PluginActor): PluginActor {
 	return actor;
 }
 
-/** 3.15 G: both fields are mandatory and both are logged, which is what the plugin pays for the call. */
+/** 3.15 G, E-737: both fields are mandatory and both are logged; neither authorises anything. */
 function recorded(log: LogSink, method: string, actor: PluginActor): void {
 	try {
 		log("info", "a plugin reached a core repository", {

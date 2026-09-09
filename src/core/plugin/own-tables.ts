@@ -40,7 +40,7 @@ function namesAnOwnTable(reference: string, pluginId: string, schema: string): b
 /**
  * 3.15 G bounds `ownTables.query` to the plugin's own prefix. It is a guardrail and not a sandbox:
  * a plugin runs in the application's own process and can reach the driver by other means, so what
- * this refuses is the accident, not the attacker.
+ * this refuses is the accident, not the attacker (E-738).
  */
 function assertEveryTableCarriesThePluginPrefix(
 	sql: string,
@@ -67,7 +67,7 @@ export function createOwnTables(options: {
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
-	// The refusal is a rejection and never a synchronous throw, so one `catch` covers both outcomes.
+	// E-747: the refusal is a rejection and never a synchronous throw, so one `catch` covers both.
 	return Object.freeze({
 		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {
 			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema);

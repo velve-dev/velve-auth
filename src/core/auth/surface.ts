@@ -10,7 +10,7 @@ function isNamespace(value: unknown): value is Record<string, unknown> {
 /**
  * 3.15 D.2: the dotted `name` is the object path of the server method, so a feature that adds a
  * row named `signIn.oauth.start` in its own file gets `auth.signIn.oauth.start` without any other
- * file being edited. That is what makes one `signIn` namespace safe for two features to fill.
+ * file being edited — which is what makes one `signIn` namespace safe for two features (E-743).
  */
 export function nestServerMethods(
 	routes: readonly AnyRoute[],

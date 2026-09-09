@@ -51,6 +51,7 @@ function assertNoIdIsTakenTwice(plugins: readonly VelvePlugin[]): void {
 	}
 }
 
+/** E-742: 3.11 makes only a cycle a start error; a dependency on a plugin nobody configured is one here too. */
 function assertEveryDependencyIsRegistered(plugins: readonly VelvePlugin[]): void {
 	const registered = new Set(plugins.map((plugin) => plugin.id));
 	for (const plugin of plugins) {
@@ -161,7 +162,7 @@ export function createPluginRuntime(options: {
 	}));
 	const coreContext = createCoreContext(options.services);
 
-	// The context a route gets is recorded against the route object, not derived from its name.
+	// E-740: the context a route gets is recorded against the route object, not read out of its name.
 	const contextByRoute = new WeakMap<RouteMetadata, FrozenContext>();
 	const routes: AnyRoute[] = [];
 	for (const entry of registered) {

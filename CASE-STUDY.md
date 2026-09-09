@@ -3488,3 +3488,123 @@ And the honest consequence: under the appendix's actual reading, the instruction
 Two smaller corrections to `E-871`, both the gate's. Its Reason quotes the instruction and drops `"[]"` without an ellipsis — the dropped token being the very thing the entry is about. And `E-870` says `NOTICE` is the sentence that travels furthest of anything here; section 4(a) obliges a copy of the **License** with every redistribution, while 4(d) obliges `NOTICE` only with derivative works, so the licence text travels at least as far. The claim is true of text this project wrote and was stated wider than that.
 
 **Price.** Three entries now describe one two-line change, and the argument a reader meets first is the one that is wrong about the appendix. That is the cost of the rule that a reason is never rewritten, paid here for a correction nobody would have caught without reading the sentence after the one quoted.
+
+### The statement that writes the pending row is the one that reads what the account can offer
+`E-735` · spine · the pending state, frozen
+
+**Context.** `PendingAuthenticationService.begin` took `availableFactors` from its caller and stored nothing of it; `resolve` recomputed the same list from `totp_credential`, `webauthn_credential` and `recovery_code`. So the value 3.15 C.1 puts on `PendingAuthentication` was whatever the caller passed at the moment the state began, and the truth at the moment it was read. Nothing in the tree computed the first one, and both wave-5 features reach this state.
+**Rejected.** (a) Adding a second service method the caller calls before `begin`. (b) Leaving the parameter and making it optional, computed when absent.
+**Reason.** (a) is two round trips and leaves the parameter, so a caller can still pass a list the account does not have. (b) is one call with two meanings, which rule 4 of 3.15 rules out. The insert already returns the row; adding the three `EXISTS` subqueries to it in a CTE — the shape `createUser` already uses — makes the value come from the same query text `resolve` reads it with, so the two cannot disagree. The parameter is removed rather than made optional.
+**Price.** Eight call sites in four other features' test files changed, and one fixture lost a parameter that one test was using to ask for `["recovery"]`. None of them asserted on the value, so the change was invisible to every assertion — which is another way of saying that the field nothing computed was also the field nothing checked.
+
+### The third cookie is gated by a declaration, because no caller requirement can imply it
+`E-736` · spine · the request context, frozen
+
+**Context.** `readCookies` has returned `oauthState` since the seam cut and every reader discarded it: `CallerTokens` carried two tokens and `RequestContext` two fields. The OAuth callback needs the third, and S-CSRF-5 makes it one half of a check whose other half is the row in `velve.oauth_flow`.
+**Rejected.** (a) A fourth `CallerRequirement`, `"oauth_state"`, beside `anonymous`, `session`, `pending` and `server_only`. (b) Handing every route the value, since the pointer authorises nothing on its own.
+**Reason.** (a) is wrong because `caller` answers "who may call" and the pointer answers nobody — a route gated on it would be a route the pointer authorises, which is exactly what S-CSRF-5 says it must not be. (b) gives every route a value it has no use for and makes "which routes read this cookie" unanswerable from the declaration, which is the property 3.15 D.3 asks for the pending cookie. So it is a per-route field, `oauthStateCookie`, defaulting to hidden, with its own predicate — the same shape E-335 gave `pendingCookie` and independent of it, so widening access to the pointer cannot widen access to the pending state.
+**Price.** Two independent booleans on a route declaration where one enumeration would read better, and a sixth reserved name in the server-call envelope. And the honesty of the field rests on the writer of the OAuth callback declaring it; nothing forces a route that reads the pointer to say so, because the pipeline simply hands it `null` if it does not.
+
+### A plugin's repository call names an account and holds no proof of owning it
+`E-737` · spine · S-OWNER-7, boundary
+
+**Context.** 3.15 G gives `FrozenRepositories` three methods, each taking a `PluginActor` of `{ pluginId, reason }`. `src/core/db/actor.ts` exists so that a write reaches a row only through an `Actor` minted by a proof of ownership, and E-730 had just tightened the two address writes onto it.
+**Rejected.** Minting an `Actor` from a `PluginActor`, as a fourth provenance beside a resolved session, a redeemed token and a consumed OAuth flow.
+**Reason.** There is no proof to mint it from. A plugin names a `userId` it chose and a `sessionId` it chose; a brand asserted over those says "an owner some proof named" and no proof named it. The class this call belongs to is `auth.user.*` of 3.15 B.3 — the application acting in its own process after its own authorization decision — and those methods take a plain identifier for the same reason. What the `actor` buys is not authorisation but attribution: both fields are mandatory, both are refused when empty, and both are logged on every call.
+**Price.** `revokeSession` deletes a session row by id with no owner predicate at all, which is the eleventh `no owner predicate` marker in the tree and the first one whose justification is "the specification hands the method no owner" rather than "the predicate is the secret itself". A plugin can therefore end any session of any account, which is a real capability and is not bounded by anything except the plugin being in the process already.
+
+### `ownTables.query` is a guardrail and not a sandbox, and says so
+`E-738` · spine · the plugin boundary, frozen
+
+**Context.** 3.15 G bounds `ownTables.query` to tables with the plugin's prefix, and 3.11 forbids a plugin writing core tables directly. Enforcing that means deciding what a table reference is in an arbitrary statement.
+**Rejected.** (a) A real SQL parser. (b) Nothing at all, on the grounds that a plugin runs in the application's process and can import the driver.
+**Reason.** (b) is the honest half of the argument and it is why (a) is not worth its cost: a plugin that wants `velve.user` can have it by other means entirely, so no amount of parsing makes this a boundary against an attacker. What it can do is stop the accident — a join onto the user table that seemed harmless — and for that a scan of the identifier standing after `FROM`, `JOIN`, `INTO` and `UPDATE`, outside comments and quoted text, is enough. A reference it cannot classify is refused rather than allowed, so a statement it does not understand fails loudly.
+**Price.** False refusals it cannot distinguish from real ones: `FROM generate_series(…)`, a CTE whose name does not carry the plugin's prefix, and any table function are all refused. And the check is written as a regular expression over stripped text, which is the technique this repository has already been bitten by three times in other scans.
+
+### A core route's plugin context is present and empty rather than absent
+`E-739` · spine · 3.15 D.1, frozen
+
+**Context.** 3.15 D.1 declares `readonly plugin: FrozenContext` on `RequestContext` and annotates it "for core routes without ownTables". Every core route gets a context whether or not it has tables.
+**Rejected.** Making the field optional for core routes, or `FrozenContext | null`.
+**Reason.** The declaration is not optional, and a nullable field is read unchecked eventually — the same argument 3.15 C.1 makes about a `session` field that is sometimes set. So the core context is a real frozen context with the real repositories and an `ownTables` whose `query` rejects: a core route owns no tables of its own, and asking is a mistake rather than an empty result.
+**Price.** A method that exists and always fails, which is a shape this repository generally avoids. The alternative was a shape the specification does not have.
+
+### The context a route gets is recorded against the route, not read out of its name
+`E-740` · spine · the registry, frozen
+
+**Context.** A plugin route is named `<pluginId>.<rest>` by type, so the plugin owning a route can be recovered from its name. The pipeline needs to hand each handler the right frozen context.
+**Rejected.** Splitting the name at the first dot and looking the plugin up.
+**Reason.** It would work today and it makes the name load-bearing for something other than the object path. A core route named `session.list` would be looked up as plugin `session`, found absent, and fall through to the core context — correct by accident, and wrong the moment a plugin is called `session`. The registry already holds each route as it builds it, so it records the context against the route object in a `WeakMap` and the name decides nothing.
+**Price.** A plugin id equal to a surface namespace is still refused separately, at start, from a list of namespace names written in `instance.ts` — a second statement of 3.15 B's namespaces with nothing holding it to the actual surface. E-734 called that class out on this branch's predecessor and here is another one.
+
+### A plugin contributes route declarations, and the specification's own example does not
+`E-741` · spine · contradiction, reported
+
+**Context.** `PluginRoute<Id>` was declared in the seam cut as a `RouteDeclaration` — the object with the handler, before `defineRoute` has run. The registry therefore calls `defineRoute` on each. Architecture 3.15 G.1's worked example writes `routes: [defineRoute({ … })]`, which produces a `Route`, and a `Route` carries no handler by construction (that is what E-335's cut bought: a caller holding a route cannot reach past the checks).
+**Rejected.** Accepting either shape, by testing for a `handler` and calling `defineRoute` only when one is present.
+**Reason.** Two shapes for one thing is the thing 3.15's rules exist to prevent, and the type is the half a plugin author reads first. The declaration form is kept and G.1's example is reported as a contradiction rather than repaired: it is the specification's, not this branch's, and it is the kind of divergence that a reader of the example finds in ten seconds when it does not compile.
+**Price.** The example in the binding specification does not compile against the implementation of the interface it illustrates, and this entry is the only place that says so. A plugin author who copies it gets a type error whose message is about a missing `handler`, which does not point at the answer.
+
+### A `dependsOn` naming a plugin nobody configured is a start error, and 3.11 does not say so
+`E-742` · spine · start errors, decided
+
+**Context.** 3.11 says `dependsOn` is sorted topologically and that a cycle is a start error. It says nothing about a dependency on a plugin that is not in the list.
+**Rejected.** Ignoring it, which is what a topological sort naturally does — an edge to a node that does not exist constrains nothing.
+**Reason.** The plugin declared that it must run after something, and ignoring the edge runs it anyway, in an order nobody chose, against a dependency that is not there. That is a silent misconfiguration of exactly the kind 3.11 turns into start errors elsewhere. It is a decision beyond the text and it is recorded as one rather than presented as following from it.
+**Price.** A configuration that works today — a plugin listing an optional dependency it can run without — stops starting. Nothing in 3.11 licenses that, and if the intent was optional dependencies this refusal is wrong and will have to be undone.
+
+### One `signIn` namespace, filled by two features, neither editing the other's file
+`E-743` · spine · the surface, frozen
+
+**Context.** 3.15 B.1 puts `signIn.oauth.*` and `signIn.magicLink.*` inside one `signIn` namespace. `instance.ts` builds its surface as a hand-written object literal, so both wave-5 features would have edited the same lines of the same file — the collision this whole wave exists to remove.
+**Rejected.** (a) A `signIn` object assembled from per-feature fragments spread into it by `instance.ts`, which still names both features in this file. (b) Each feature declaring its own namespace interface and `instance.ts` intersecting them, which is the same file with the names moved into the type.
+**Reason.** 3.15 D.2 already says what the answer is and it had not been implemented: the dotted `name` of a route **is** the object path of its server method. Folding the table into a nested object gives `auth.signIn.oauth.start` from a row declared in `core/oauth/routes.ts` and `auth.signIn.magicLink.redeem` from a row declared in `core/flows/routes.ts`, with neither file naming the other and neither naming this one. The type follows by the same route: each seam returns its table as a tuple and `VelveAuth` intersects `ServerSurface` over them, so an empty seam contributes `unknown` and intersects away.
+**Price.** Three of them. The plugin routes are folded into the object but not into the type, because which plugins exist is configuration — so `auth.<pluginId>.<method>` works and does not typecheck. The five hand-written namespaces are spread last and silently win over anything derived with the same key, which is a shadowing rule stated in a comment and enforced by nothing. And `ServerSurface` over an empty tuple is `unknown`, so a seam that returns `readonly AnyRoute[]` instead of a tuple contributes an index signature and poisons the surface without failing anything.
+
+### The barrel is partitioned in three lines; the API snapshot cannot be partitioned at all
+`E-744` · spine · the export seam, decided
+
+**Context.** `src/index.ts` is a single list of `export type { … } from` blocks and wave 5 has three writers. The API snapshot in `test/__snapshots__/api-surface.md` is a generated artefact all three regenerate.
+**Rejected.** Giving each feature a marked region of `src/index.ts` and relying on git to merge disjoint hunks.
+**Reason.** A marked region is a convention; a module is a file. Each feature gets `core/<feature>/index.ts`, `src/index.ts` re-exports it with one `export type *` line, and the lines are written now so no wave-5 writer touches the barrel at all. Type-only, so nothing of them reaches `dist/index.mjs`.
+**Price.** The snapshot is not solved and is not solvable this way: it is one file generated from the built types, three features will move it, and the merge conflict is in generated text where "keep both sides" is not a valid resolution. What saves it is that regenerating is a command rather than a judgement. Said plainly rather than left for wave 5 to discover, which is what this entry is for.
+
+### The API snapshot reads the top of `dist/` only, so an internal type change is invisible to it
+`E-745` · spine · the gate, finding
+
+**Context.** The gate lists "the public surface has not changed unannounced (API snapshot comparison)". `test/api-surface.test.ts` reads `readdirSync(dist)` and keeps the `.d.mts` files at the top level — `index`, `http`, `client`, the three drivers, `import`, `schema`, `testing`. Under `unbundle: true` every module also emits its own `dist/core/**/*.d.mts`, and none of those is read.
+**Rejected.** Widening the scan to the whole tree on this branch.
+**Reason.** This branch added a field to `RequestContext`, a field to `RouteMetadata`, a sixth member to `ServerCallFields` and two members to `SessionRepository`, and the snapshot moved for none of them — it moved only because the import order in `index.d.mts` changed. Those are internal types, so the outcome is arguably right; what is wrong is that nobody can tell from the check which it is, because the check answers "did the eight barrels change" and is described as answering "did the public surface change". Widening it would put a hundred and forty files of internal declarations under a snapshot that then moves on every refactor, which is a different check with a different cost, and choosing it is not this feature's call.
+**Price.** The gap stays. A change to a type re-exported from a barrel is caught; a change to a type reached through one is not, and the eight-file snapshot will keep passing for it.
+
+### A scan for `.reason` reported this feature's mandatory field as a leak
+`E-746` · spine · the gate, finding
+
+**Context.** `test/http-enumeration.test.ts` asserts that only `error-map.ts` decides a visible code from an internal reason, and detects a decider as a file containing `instanceof ConcealedError` **or** `.reason`. 3.15 G's `PluginActor` has a mandatory `reason`, so `context.ts` reads `actor.reason` and the check went red.
+**Rejected.** Renaming the destructured value so the substring does not appear.
+**Reason.** That is evading a check by editing the code it examines, and it leaves the check just as wrong for the next file. What the requirement is about is reading the reason off a `ConcealedError`; a property called `reason` on an unrelated type is not that. The condition now requires the file to name `ConcealedError` as well. Two faults were planted before trusting it — a file with `instanceof ConcealedError`, and a file naming `ConcealedError` beside a `.reason` — and both reddened it.
+**Price.** The residual gap is the one the original had too: a file that catches `unknown` and reads `error["reason"]` without ever naming the class passes both forms. And this is the second census on this branch that moved for a reason unrelated to what it counts, after the marker count E-795 named.
+
+### The refusal inside `ownTables.query` threw where its caller expected a rejection
+`E-747` · spine · finding, fixed
+
+**Context.** `query` validated the statement and then called the driver, so a refused statement threw synchronously out of a function whose type is `Promise<Row[]>`. A caller writing `context.plugin.ownTables.query(sql, []).catch(…)` never reached its `catch`.
+**Rejected.** Nothing; there was no argument for the throwing form.
+**Reason.** It was found by running a scratch route that catches the refusal and asserts on its name — the failure was a 500 with the message in the log, not the value the assertion expected. It was not found by reading the code, and no check in the gate would have found it: the types are satisfied either way. The function is `async`, so both outcomes are rejections.
+**Price.** This is the entry that records that the writer's own verification found the only real defect on the branch, and that the verification was a throwaway file the reviewer will now have to write again from the requirements. That is the working method operating as intended; it is also two people writing the same test.
+
+### Three fields of `VelvePlugin` are declared and read by nothing
+`E-748` · spine · carried forward, open
+
+**Context.** `VelvePlugin` declares `migrations`, `errorCodes` and `rateLimitRules`. The registry reads none of them.
+**Rejected.** Wiring migrations into `runMigrations`, which is a two-line change.
+**Reason.** It is a two-line change with a decision inside it. The migration runner keys its ledger on `version` alone, and 3.15 G.1's example plugin numbers its first migration `1` — the same number the core's first migration has. Whether a plugin's versions are namespaced, offset, or refused for colliding is a schema decision with a migration-safety argument behind it, and taking it here would settle it for `plugin` without that feature's writer in the room. `errorCodes` is a list of code strings and `registerPluginErrorCodes` needs a status and a message, so the declaration cannot feed the registry as it stands. `rateLimitRules` is keyed by route name and a plugin route already declares its own `rateLimit`, so which wins is a decision too.
+**Price.** A plugin can declare a migration and get no table, declare an error code and get `500 internal_error` for it, and declare a rate limit rule that does nothing — three silent no-ops, none of which fails at start. Refusing them at start was the obvious alternative and it was not taken, because a feature that will read them next wave would then have to remove the refusal first.
+
+### `mountAuth` takes overrides and still fixes the identity mode
+`E-749` · spine · the fixtures, decided
+
+**Context.** `mountAuth(prefix)` took no overrides and `configFor` hard-wires `identity: { mode: "email" }` behind an `as` cast. Three wave-5 features need providers, plugins and their own send callback mounted.
+**Rejected.** Making `configFor` generic over the identity mode.
+**Reason.** `VelveAuthConfig<M>` is `BaseConfig<M> & RecoveryCodesRequirement<M>` and the second half distributes over a generic `M`; E-349 records what happens when that inference site is disturbed, and disturbing it inside a test fixture to buy a mode none of the three features needs is a bad trade. The overrides are applied last, so anything a test does not name stays at the default.
+**Price.** A test that wants `"username"` or `"username_email"` still calls `createVelveAuth` itself, and the cast in `configFor` still hides whatever the overrides get wrong.
