@@ -10,6 +10,7 @@ import { usernameAvailability } from "../identity/resolution.js";
 import type { KeyProvider } from "../keys/index.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
+import type { KdfSemaphore } from "../password/semaphore.js";
 import type { RevokeReason } from "../plugin/config.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
@@ -44,6 +45,11 @@ export interface RouteServices {
 	readonly keys: KeyProvider;
 	readonly clock: Clock;
 	readonly oneTimeTokens: OneTimeTokens;
+	/**
+	 * S-DOS-3 bounds concurrent key derivation for the whole process, so the bound is one object
+	 * every route source shares rather than one each of them makes (E-1195).
+	 */
+	readonly kdfSemaphore: KdfSemaphore;
 	readonly oauth?: OAuthConfig;
 	readonly email?: EmailConfig;
 	/** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */

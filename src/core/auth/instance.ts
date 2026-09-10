@@ -25,6 +25,8 @@ import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
 import { type OAuthSurface, oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
+import { type PasswordSurface, passwordRoutes } from "../password/routes.js";
+import { createKdfSemaphore } from "../password/semaphore.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import type { VelvePlugin } from "../plugin/config.js";
 import type { FrozenContextServices } from "../plugin/context.js";
@@ -109,7 +111,10 @@ export interface AuthInternals {
  * which intersects away, and each carries `M` so a mode-conditional namespace needs no change
  * here either (E-776).
  */
-type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PluginSurface<M>;
+type SeamSurface<M extends IdentityMode> = OAuthSurface<M> &
+	EmailFlowSurface<M> &
+	PasswordSurface<M> &
+	PluginSurface<M>;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &
 	SeamSurface<M> & {
@@ -270,6 +275,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		keys: config.keys,
 		clock,
 		oneTimeTokens,
+		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
 		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
 		...(config.email === undefined ? {} : { email: config.email }),
@@ -281,7 +287,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
-	const seamRoutes: readonly AnyRoute[] = [...oauthRoutes(services), ...emailFlowRoutes(services)];
+	const seamRoutes: readonly AnyRoute[] = [
+		...oauthRoutes(services),
+		...emailFlowRoutes(services),
+		...passwordRoutes(services),
+	];
 	const coreRoutes: readonly AnyRoute[] = [
 		signOut,
 		read,

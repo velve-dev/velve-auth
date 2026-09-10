@@ -134,6 +134,33 @@ check, and none that keeps other sessions alive across a password change.
 [`DOCUMENTATION.md`](./DOCUMENTATION.md) has the schema table by table and every
 option of both functions.
 
+### Signing in with a password
+
+Built. `POST /sign-in/password` verifies against the stored credential and
+issues a session, and `password.set` and `password.change` are the two ways a
+signed-in caller writes one.
+
+Every refusal answers the same way. An unknown identifier, a wrong password, an
+account with no password credential and a disabled account given the correct
+password all return `invalid_credentials` with the same status, headers and
+body; the real reason goes to your log and nowhere else. A password too short or
+too long is rejected before the account is looked up, so it costs neither a
+query nor a key derivation.
+
+A correct password is not always a session. If the account has a second factor
+enrolled, the answer is `second_factor_required` and what reaches the browser is
+a five-minute pending cookie rather than a session — no session row is written
+until the factor is verified.
+
+Setting or changing a password revokes every other session of the account and
+re-issues the calling one in the same transaction as the write. That is not a
+switch, and both routes require a session created within the last fifteen
+minutes.
+
+The routes that complete a second factor are **not built yet**, so an account
+with TOTP, a WebAuthn credential or recovery codes can begin the handshake and
+cannot finish it. Do not enrol a second factor against this version.
+
 ### Third-party sign-in
 
 Built. The authorisation-code flow with PKCE S256 — not optional, and with no
