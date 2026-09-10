@@ -1,8 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
-import { dropSchema } from "./db-fixtures.js";
+import { toWebHandler } from "../src/core/http/web-handler.js";
+import { createVelveAuth } from "../src/index.js";
+import { configFor, type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
+import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import type { TestConnection } from "./db-postgres-connection.js";
 import { difference, postTo } from "./flows-fixtures.js";
+
+type Handler = (request: Request) => Promise<Response>;
 
 let mounted: MountedAuth;
 
@@ -470,5 +476,97 @@ describe("the bucket on the route the library actually serves (S-RATE-5)", () =>
 		expect(statuses.slice(0, 3)).toEqual([401, 401, 401]);
 		expect(statuses.slice(3)).toEqual([429, 429]);
 		expect(await codeOf(await attempt())).toBe("rate_limited");
+	});
+});
+
+/**
+ * S-ENUM-6: the caller is told `invalid_credentials` for all four refusals, and the log is told
+ * which one it was. Without this the route could flatten every refusal to one reason and every
+ * visible-response test in this file would still pass (E-1189).
+ */
+describe("the reason the log is told (S-ENUM-6)", () => {
+	async function reasonLoggedFor(email: string, password: string): Promise<unknown> {
+		const before = mounted.log.lines.length;
+		await signInWith(email, password);
+		return mounted.log.lines
+			.slice(before)
+			.map((line) => line.fields.reason)
+			.at(-1);
+	}
+
+	it("names the refusal that actually happened, not the one the caller is shown", async () => {
+		const withCredential = await signUpWithPassword();
+		const without = await signUpWithoutPassword();
+		const disabled = await signUpWithPassword();
+		await mounted.auth.user.disable({ userId: disabled.userId, reason: "a test" });
+
+		expect(await reasonLoggedFor("nobody.at.all@example.com", OTHER_PASSWORD)).toBe(
+			"user_not_found",
+		);
+		expect(await reasonLoggedFor(withCredential.email, OTHER_PASSWORD)).toBe("password_mismatch");
+		expect(await reasonLoggedFor(without.email, OTHER_PASSWORD)).toBe("no_password_credential");
+		expect(await reasonLoggedFor(disabled.email, PASSWORD)).toBe("user_disabled_on_sign_in");
+	});
+});
+
+/**
+ * S-DOS-2 and T-DOS-1: the length check depends only on the input, so a password the policy cannot
+ * take is refused before the account is looked up. Comparing the two answers cannot see this — both
+ * are 401 whichever order the route uses — so the statements are counted instead (E-1190).
+ */
+describe("what an unusable password costs (S-DOS-2)", () => {
+	let counted: {
+		connection: TestConnection;
+		schema: string;
+		handler: Handler;
+		statements: string[];
+	};
+
+	beforeAll(async () => {
+		const { connection, schema } = await openMigratedSchema("passworddos");
+		const statements: string[] = [];
+		const driver: Driver = {
+			query: (sql, params) => {
+				statements.push(sql);
+				return connection.query(sql, params);
+			},
+			transaction: (work) => connection.transaction(work),
+		};
+		const auth = createVelveAuth(configFor({ database: driver, schema }));
+		counted = { connection, schema, handler: toWebHandler(auth), statements };
+	});
+
+	afterAll(async () => {
+		await dropSchema(counted.connection, counted.schema);
+		await counted.connection.close();
+	});
+
+	/**
+	 * S-DOS-5 puts the address bucket before the handler, so one statement against `rate_bucket`
+	 * is expected and required; what may not happen is the account being resolved.
+	 */
+	function accountLookups(statements: readonly string[]): readonly string[] {
+		return statements.filter((sql) => /password_credential|FROM \w+\.user\b/.test(sql));
+	}
+
+	it("never resolves the account", async () => {
+		counted.statements.length = 0;
+
+		const answer = await counted.handler(
+			postTo("/sign-in/password", { email: "someone@example.com", password: "x".repeat(5000) }),
+		);
+
+		expect(answer.status).toBe(401);
+		expect(accountLookups(counted.statements)).toEqual([]);
+	});
+
+	it("resolves it when the password is one the policy takes, so the count above means something", async () => {
+		counted.statements.length = 0;
+
+		await counted.handler(
+			postTo("/sign-in/password", { email: "someone@example.com", password: PASSWORD }),
+		);
+
+		expect(accountLookups(counted.statements).length).toBeGreaterThan(0);
 	});
 });
