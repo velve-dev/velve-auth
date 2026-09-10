@@ -62,7 +62,7 @@ function requirementsWithATestCase(): string[] {
 const NAMED_BY_NO_TEST: ReadonlyMap<string, string> = new Map([
 	[
 		"S-REDIR-1",
-		"T-REDIR-1 counts redirect-carrying fields of the route declarations that are typed `string` and requires zero. Three are: `src/core/oauth/routes.ts` declares `redirectPath: optional(string())` on two rows and `OAuthStartInput.redirectPath` is `string`. The behaviour holds — `acceptedRedirectPath` refuses a URL at run time — so the requirement is met and the case as written is not. Branding the ingress field is a change to the OAuth surface and is reported rather than made (E-1295).",
+		"T-REDIR-1 counts redirect-carrying fields of the route declarations that are typed `string` and requires zero. Three are: `src/core/oauth/routes.ts` declares `redirectPath: optional(string())` on two rows and `OAuthStartInput.redirectPath` is `string`. The behaviour holds — `acceptedRedirectPath` refuses a URL at run time — so the requirement is met and the case as written is not. Branding the ingress field is a change to the OAuth surface and is reported rather than made (E-1296).",
 	],
 ]);
 

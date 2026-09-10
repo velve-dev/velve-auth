@@ -214,7 +214,7 @@ describe("no option withholds a session from an unverified address (S-TIM-7)", (
 	/**
 	 * `tsc --noEmit` is what fails here; `pnpm test` cannot, because a type that widens is still a
 	 * value-level no-op. An earlier form of this assertion declared an empty array of the extracted
-	 * key type and passed with the key present (E-1287).
+	 * key type and passed with the key present (E-1288).
 	 */
 	it("is not a key of the configuration type", () => {
 		expectTypeOf<
