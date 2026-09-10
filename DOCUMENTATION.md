@@ -5451,24 +5451,233 @@ because a plugin that registers one is not wrong to have registered it.
 
 ## The client
 
-Reserved for `client` (wave 6, last — the client is derived from a route table
-the waves before it are still adding rows to). Architecture 3.15 E: `createVelveClient`, the
-`ClientSurface` derived from the same route declaration the server surface is,
-the result object that makes `ok` checkable instead of throwable, `unwrap` for a
-caller who wants the server's symmetry back, and `VelveTransportError` for the
-two failures that can carry no code.
+`@velve/auth/client` is the browser half. It is derived from the same route
+declaration the server methods are, it carries no handler and no database code,
+and it is an ordinary nested object rather than a proxy: what it can call is
+fixed when it is constructed, from a table that is a real array at run time.
 
-It stands last because it is generated from the route table and adds nothing to
-it. The table is assembled by The instance and extended by a plugin; the client
-iterates it once at construction and builds an ordinary nested object out of the
-`name` fields, so every route this chapter describes is declared in a chapter
-above it. There is no `Proxy` and no path assembled from property names, which is
-why nothing here can exist that is not written down there.
+```ts
+import { createVelveClient, unwrap } from "@velve/auth/client";
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `client`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does.
+const client = createVelveClient({ baseURL: "/api/auth" });
 
-### Nothing is documented here yet
+const answer = await client.signIn.magicLink.request({ email });
+if (!answer.ok) {
+  switch (answer.error.code) {
+    case "invalid_input":  return show("That address does not look right.");
+    case "rate_limited":   return show(`Try again in ${answer.error.retryAfterSeconds}s.`);
+    case "origin_not_allowed": return show("This page is not allowed to sign you in.");
+  }
+}
+```
 
-`client` replaces this heading with its own sub-tree.
+The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
+is narrowed to the codes **that route** declares and not to the union of all
+twenty-five.
+
+### `createVelveClient(options)`
+
+```ts
+createVelveClient<Auth extends { routes: readonly AnyRoute[] } = { routes: VelveRouteTable }>(
+  options: VelveClientOptions,
+): ClientSurface<…>
+```
+
+| Option | Type | Meaning |
+|---|---|---|
+| `baseURL` | `string` | Where the handler is mounted. A route's path is appended to it, so `"/api/auth"` and `"https://auth.example.com"` are both valid and a trailing slash is not doubled. |
+| `fetch` | `typeof fetch` | The function that sends the request. Optional; absent means `globalThis.fetch`, read at call time so a test double installed on the global is used. |
+
+There is nothing else. The client holds no state, no cache and no token — the
+session lives in a cookie the browser sends and the library never lets JavaScript
+read.
+
+`createVelveClient` is synchronous and does its whole job once: it walks the
+route table, splits each `name` at the dots, and puts a function at each leaf.
+That function closes over its own row and reads the `method` and the `path` from
+it. There is no `Proxy`, no path assembled from property names, no kebab-case
+transformation and no rule that guesses `POST` from the presence of a body.
+
+**A call the table does not carry does not exist.** `client.factor.totp.verify`
+is a compile error, and in JavaScript a `TypeError` — not a request to a path
+that answers 404.
+
+#### The type parameter
+
+Passing `typeof auth` is what architecture 3.15 E writes:
+
+```ts
+const client = createVelveClient<typeof auth>({ baseURL: "/api/auth" });
+```
+
+It is optional and changes nothing today. `VelveAuth` types its `routes` as
+`readonly AnyRoute[]` rather than as the preserved tuple 3.15 E's diagram
+assumes, and a client derived from a widened table would have a surface on which
+nothing can be called; so a route table type that is not a tuple is read as the
+library's own table, which is what the default already is. Both forms therefore
+give the same surface, and the explicit one will start to mean something when the
+instance carries its table as a tuple.
+
+### What a call returns
+
+```ts
+type VelveResult<Value, Code extends VelveErrorCode> =
+  | { ok: true;  value: Value }
+  | { ok: false; error: VelveFailure<Code> }
+
+interface VelveFailure<Code extends VelveErrorCode> {
+  readonly code: Code
+  readonly message: string
+  readonly retryAfterSeconds?: number
+}
+```
+
+The server throws and the client returns, and the asymmetry is deliberate
+(3.15 E). Server-side a call sits in a request handler with a central error map,
+where a `throw` carries the failure straight to the response. Client-side every
+call site is a screen that has to render the failure itself, and a forgotten
+`catch` is a screen that says nothing. `ok` has to be checked before `value` is
+readable.
+
+`retryAfterSeconds` is present only on `rate_limited`; on every other code the
+key is absent rather than `undefined`.
+
+| Answer | Result |
+|---|---|
+| `200` with a JSON body | `{ ok: true, value: <the body> }` |
+| `200` with the body `null` | `{ ok: true, value: null }` |
+| `204` | `{ ok: true, value: undefined }` |
+| `4xx`/`5xx` with a Velve error envelope | `{ ok: false, error: { code, message } }` |
+| anything else | throws `VelveTransportError` |
+
+### `unwrap(result)`
+
+```ts
+unwrap<Value, Code extends VelveErrorCode>(result: VelveResult<Value, Code>): Value
+```
+
+The way back to the server's shape, for a caller who would rather catch than
+check. It returns `value` on success and throws `VelveError` — the same class the
+server throws, from the same module — on failure, carrying the same `code` and
+the same `retryAfterSeconds`.
+
+```ts
+import { unwrap, VelveError } from "@velve/auth/client";
+
+try {
+  const session = unwrap(await client.session.refresh({}));
+} catch (error) {
+  if (error instanceof VelveError && error.code === "session_required") {
+    return redirectToSignIn();
+  }
+  throw error;
+}
+```
+
+`VelveError` rebuilds its message from its own copy of the error table rather
+than from the wire. For the twenty-five core codes the two are the same table and
+the strings are identical; for a code this build of the package does not know,
+`unwrap` throws with `internal_error`'s message and the response's status is
+lost. The un-unwrapped path always keeps what the server said, in
+`result.error.message`.
+
+### `VelveTransportError`
+
+```ts
+class VelveTransportError extends Error { readonly cause: unknown }
+```
+
+The client throws in exactly two cases, and both are the same class because both
+mean the same thing: *the server did not answer*, as against *the server said no*.
+
+- **The request did not reach the server.** `fetch` rejected — no network, DNS,
+  a refused connection, a CORS preflight the application's proxy did not answer.
+  `cause` is what `fetch` threw.
+- **The answer was not a Velve response.** A body that is not JSON, JSON that is
+  not the error envelope, a refusal with no body at all, a redirect. `cause` is
+  the HTTP status where there was one, and the parse error where there was not.
+
+A failure the server names is never one of these. `origin_not_allowed`,
+`rate_limited` and `internal_error` all arrive as `{ ok: false }`.
+
+### The request the client sends
+
+| | |
+|---|---|
+| Method | The `method` of the row, always. A `GET` row is sent as a `GET` with no body whatever its input is. |
+| Path | `baseURL` + the `path` of the row. A `:segment` is filled from the input field of that name and percent-encoded. A value that would leave the path something other than the row's is refused with a `TypeError` before anything is sent — that is a missing one, an empty one, and `.` or `..`, which survive encoding and are then removed by the URL parser. A value merely *containing* a dot or a slash is encoded and sent as one segment. |
+| Input | For `GET`, the query string. For `POST`, a JSON body with `Content-Type: application/json`. A field spent on a path segment appears in neither. |
+| `credentials` | `"include"`, because the session is a cookie and the handler may be mounted on another origin. |
+| `cache` | `"no-store"`, the other half of the `Cache-Control` every answer already carries. |
+| `redirect` | `"manual"`. The one redirect the library writes belongs to the OAuth callback, which a browser navigates to rather than calls. |
+
+The `Origin` header the origin check compares is written by the browser and
+cannot be written here, which has one consequence worth stating plainly: **this
+client does not work from Node.** Every route but the two OAuth callbacks carries
+`originCheck: "checked"`, and a `fetch` outside a browser sends no `Origin`, so
+every call answers `origin_not_allowed`. Server-side, call the instance's own
+methods instead.
+
+Mounting the handler on a different origin from the page needs CORS with
+credentials, and CORS is deliberately not this library's to answer — see
+[the README](./README.md#what-it-deliberately-does-not-do). Without it the browser
+refuses the request and the client reports a `VelveTransportError`.
+
+### The table
+
+```ts
+import { VELVE_CLIENT_ROUTES } from "@velve/auth/client";
+// [{ name: "signOut", method: "POST", path: "/sign-out" }, …]
+```
+
+`VELVE_CLIENT_ROUTES` is the table as a value: `ClientRoute` rows carrying a
+`name`, a `method` and a `path` and nothing else. It is what the client iterates,
+and it is exported because an application that needs to reach a route without the
+client — a form post, a service worker, a redirect target — should read the path
+from the same place the client does rather than write it out again.
+
+It is the table **the library declares**, not the table an instance serves. Which
+routes an instance serves depends on its identity mode and its configuration:
+`username.isAvailable` exists only where usernames do, and the eight routes that
+need an address — magic link, verification, address change and password reset —
+only where the mode has one and `email.send` is configured. The client knows none
+of that, so it offers all of them; a call to one the server does not serve reaches
+no route, and the 404 arrives as a `VelveTransportError`.
+
+A plugin's routes are **not** in it. A plugin contributes its routes at start from
+its configuration, so they are not known when this table is written, and
+`auth.<pluginId>.<method>` has the same gap on the server side. Reach a plugin
+route with your own `fetch` against `/x/<plugin-id>/…`.
+
+### The types
+
+| Name | What it is |
+|---|---|
+| `VelveClientOptions` | The two options above. |
+| `VelveResult<Value, Code>` | The result object. |
+| `VelveFailure<Code>` | Its `error` half. |
+| `ClientRoute` | One row of the table: `name`, `method`, `path`. |
+| `VelveRouteTable` | The tuple type of every row the library declares, derived from the route factories themselves. |
+| `ClientMethodOf<Route>` | One route's client signature: `(input) => Promise<VelveResult<Output, Code>>`. |
+| `ClientSurface<Routes>` | The nested surface of a whole table, the mirror of `ServerSurface`. |
+| `VelveError`, `VelveErrorCode` | Re-exported from `@velve/auth`, so a browser bundle gets them without importing the core. |
+
+`VelveRouteTable` is the mechanism that keeps this table honest. It is built from
+`ReturnType<typeof sessionRoutes>` and its four siblings through type-only
+imports, so the client's types come from the route declarations themselves and
+are erased entirely at build time; the value table is then held against it with
+`satisfies`. A row added, dropped, renamed or repathed in any route module fails
+to compile here. A row whose **method** changes does not — `defineRoute` does not
+carry the method as a type parameter — and is caught by a test against a live
+instance instead.
+
+### What reaches the browser
+
+`@velve/auth/client` loads five modules and no more: its own entry, the table,
+the result types, the transport, and `core/http/error-map.mjs`. That last one is
+the only piece of `core/` a browser gets, it imports nothing itself, and it is
+there so that `instanceof VelveError` holds on both sides of an application that
+calls the library on the server and in the browser alike. Nothing in the closure
+imports a package, a Node built-in, a driver, a handler or a line of SQL, and
+`test/client-bundle-reach.test.ts` walks the built output to say so rather than
+asserting it.

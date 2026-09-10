@@ -234,6 +234,47 @@ codes and rate-limit rules are not read. Each of those three writes a line to
 your log at start naming the plugin and the field, so a declaration that does
 nothing says so.
 
+### The client
+
+Built. `@velve/auth/client` is the browser half, derived from the same route
+declaration the server methods are. It is an ordinary nested object, not a proxy:
+`createVelveClient` walks the route table once and puts a function at each leaf
+that reads the method and the path from its own row. A call the table does not
+carry is a compile error, and in JavaScript a `TypeError` — never a request to a
+path that answers 404.
+
+```ts
+import { createVelveClient } from "@velve/auth/client";
+
+const client = createVelveClient({ baseURL: "/api/auth" });
+
+const answer = await client.signIn.magicLink.request({ email });
+if (!answer.ok) {
+  switch (answer.error.code) {
+    case "invalid_input": return show("That address does not look right.");
+    case "rate_limited":  return show(`Try again in ${answer.error.retryAfterSeconds}s.`);
+    case "origin_not_allowed": return show("This page is not allowed to sign you in.");
+  }
+}
+```
+
+A call returns a result rather than throwing, and the asymmetry with the server
+is on purpose: on the server a call sits in a request handler with a central
+error map, in the browser every call site is a screen that has to render the
+failure itself, and a forgotten `catch` is a screen that says nothing. The
+compiler makes `ok` checkable before `value` is readable, and `error.code` is
+narrowed to the codes **that** route declares, so the `switch` above is checked
+exhaustively. `unwrap(…)` is there for whoever wants the throw back.
+
+It throws in exactly two cases, both `VelveTransportError`: the server did not
+answer, and the server answered with something that is not a Velve response.
+"The server said no" is never one of them.
+
+What reaches a browser is five modules, and one of them is the library's error
+table so that `instanceof VelveError` holds on both sides. No driver, no handler,
+no SQL, no dependency and no Node built-in — measured by walking the built output
+rather than asserted.
+
 ## Mounting it
 
 The HTTP layer is one function. It takes Web `Request` objects and returns Web

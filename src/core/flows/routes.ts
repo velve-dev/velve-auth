@@ -304,6 +304,16 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 }
 
 /**
+ * Every row this file can contribute, in the order the address-bearing modes assemble them; the
+ * value below narrows to the mode, so a caller that needs the whole set as a type — 3.15 E's client
+ * is the one — reads it here rather than from the widened return (E-671).
+ */
+export type EmailFlowRouteTable = readonly [
+	...ReturnType<typeof routesInEveryMode>,
+	...ReturnType<typeof routesThatNeedAnAddress>,
+];
+
+/**
  * The rows of 3.15 D.3 that carry an e-mailed one-time artefact — sign-up, magic link, password
  * reset, address verification and address change. Composed here so that adding them is a change to
  * this file and never to the assembly; the tuple return type carries `signIn.magicLink.*` onto the

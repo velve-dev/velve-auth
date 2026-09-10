@@ -1,7 +1,47 @@
 ## client.d.mts
 
-export {
+import { VelveError, VelveErrorCode } from "./core/http/error-map.mjs";
+import { AnyRoute } from "./core/http/route.mjs";
+import { ClientRoute, VELVE_CLIENT_ROUTES, VelveRouteTable } from "./client/routes.mjs";
+import { VelveFailure, VelveResult, VelveTransportError, unwrap } from "./client/result.mjs";
+import { ClientMethodOf, ClientSurface } from "./client/surface.mjs";
+import { VelveClientOptions } from "./client/transport.mjs";
 
+//#region src/client/index.d.ts
+
+/**
+ * 3.15 E derives the surface from `Auth["routes"]`, which is a preserved tuple only where the table
+ * is declared `as const`; `VelveAuth` widens it, so a widened one is read as the library's own table
+ * rather than as an unusable surface (E-676).
+ */
+type RouteTableOf<Auth extends {
+  readonly routes: readonly AnyRoute[];
+}> = number extends Auth["routes"]["length"] ? VelveRouteTable : Auth["routes"];
+/**
+ * The table is iterated once, here, and every leaf reads its `method` and its `path` from the row it
+ * was built from — 3.15 E rules out a proxy, a path assembled from property names and a method
+ * guessed from the presence of a body.
+ */
+declare function createVelveClient<Auth extends {
+  readonly routes: readonly AnyRoute[];
+} = {
+  readonly routes: VelveRouteTable;
+}>(options: VelveClientOptions): ClientSurface<RouteTableOf<Auth>>;
+//#endregion
+export {
+	type ClientMethodOf,
+	type ClientRoute,
+	type ClientSurface,
+	VELVE_CLIENT_ROUTES,
+	type VelveClientOptions,
+	VelveError,
+	type VelveErrorCode,
+	type VelveFailure,
+	type VelveResult,
+	type VelveRouteTable,
+	VelveTransportError,
+	createVelveClient,
+	unwrap,
 };
 
 ## http.d.mts
@@ -25,18 +65,18 @@ import { Actor, ConsumedOAuthFlow, RedeemedOneTimeToken, ResolvedSession, actorO
 import { ImportSource, User } from "./core/auth/user.mjs";
 import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
 import { AuthenticationFactor, PendingAuthentication, Session } from "./core/http/caller.mjs";
-import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
 import { CookieAttributes, CookieInstruction } from "./core/http/cookies.mjs";
-import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
-import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
 import { Clock } from "./core/http/environment.mjs";
-import { UsernameRules } from "./core/identity/configuration.mjs";
-import { KeyProvider } from "./core/keys/provider.mjs";
-import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
-import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
+import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
+import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
+import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
 import { SessionToken } from "./core/session/token.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
+import { UsernameRules } from "./core/identity/configuration.mjs";
+import { KeyProvider } from "./core/keys/provider.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
+import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
+import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
 import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";

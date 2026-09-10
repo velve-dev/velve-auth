@@ -272,7 +272,7 @@ export type Nest<Name extends string, Method> = Name extends `${infer Head}.${in
 	? { [Key in Head]: Nest<Rest, Method> }
 	: { [Key in Name]: Method };
 
-type UnionToIntersection<Union> = (
+export type UnionToIntersection<Union> = (
 	Union extends unknown
 		? (argument: Union) => void
 		: never
