@@ -804,6 +804,14 @@ A reserved range that is not used up leaves a gap in the numbering. That is
 fine and expected. Contiguity is worth nothing here; a silent wrong citation
 costs a great deal.
 
+**Outside the table above, a range is named by its opening number and a count,
+never as a span.** `test/decision-log.test.ts` scans every tracked file for
+citations and reads a range's closing number as one; a closing number is usually
+not an entry, so a span written in prose is one citation and one dangler by
+construction. The table is the exception because the scan removes its rows before
+it looks — which is why the two files state the same reservation in two forms and
+only one of them is checkable (E-1251, E-1371).
+
 `test/decision-log.test.ts` is the backstop, not the mechanism. It catches a
 number used twice, an entry missing one of its four parts, a citation anywhere
 in the repository that resolves to no entry at all, and a block that sits in
