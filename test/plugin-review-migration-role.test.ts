@@ -17,6 +17,7 @@ import {
 let shared: TestConnection | undefined;
 const schemas: string[] = [];
 const roles: MigrationRole[] = [];
+const holders: string[] = [];
 let current: MigrationRole | undefined;
 
 function theRole(): MigrationRole {
@@ -58,6 +59,10 @@ afterAll(async () => {
 	await driver
 		.query("DROP FUNCTION IF EXISTS public.p_delegated_write(uuid)", [])
 		.catch(() => undefined);
+	for (const holder of holders.splice(0)) {
+		await driver.query(`DROP OWNED BY ${holder} CASCADE`, []).catch(() => undefined);
+		await driver.query(`DROP ROLE IF EXISTS ${holder}`, []).catch(() => undefined);
+	}
 	await driver.close();
 	shared = undefined;
 });
@@ -184,9 +189,11 @@ async function serverRecordsParameterGrants(driver: TestConnection): Promise<boo
 /**
  * `GRANT SET ON PARAMETER track_counts` reaches the capability `rolsuper` reaches and moves neither
  * role attribute, so the two columns the guard read first answered `false` for a connection that
- * could switch the row half off around its own statements (E-1006). The case beside it holds the
- * same capability by a route no catalogue the guard reads records, and is green on purpose: it is
- * what keeps the reference's claim about residue a measurement rather than an assertion.
+ * could switch the row half off around its own statements (E-1006). A `NOINHERIT` member of a role
+ * holding that grant answers `false` again to the question the guard asked second, and `true` to the
+ * one it asked first, which is the asymmetry E-1011 closed. The last case holds the same capability
+ * by a route no catalogue the guard reads records, and is green on purpose — with the control beside
+ * it that says why it is green.
  */
 describe("a capability that is not a role attribute (3.11)", () => {
 	it("refuses a migration role granted SET on the parameter track_counts", async () => {
@@ -219,40 +226,97 @@ describe("a capability that is not a role attribute (3.11)", () => {
 		expect(rows[0]?.email).toBe("victim@example.com");
 	});
 
-	it("accepts a role that reaches the same capability through a function it may only call", async () => {
+	it("refuses a role that may SET ROLE to a holder of the grant without inheriting it", async () => {
 		const schema = await freshSchema();
 		const owner = await connection();
 		const victim = await createUser(owner, schema, { email: "victim@example.com" });
-		await owner.query(
-			`CREATE OR REPLACE FUNCTION public.p_delegated_write(target uuid) RETURNS void
-			LANGUAGE plpgsql SECURITY DEFINER AS $delegated$
-			BEGIN
-				PERFORM set_config('track_counts', 'off', true);
-				EXECUTE format('UPDATE %I.user SET email = $1 WHERE id = $2', '${schema}')
-					USING 'attacker@example.com', target;
-				PERFORM set_config('track_counts', 'on', true);
-			END
-			$delegated$`,
-			[],
-		);
-		await owner.query(
-			`GRANT EXECUTE ON FUNCTION public.p_delegated_write(uuid) TO ${theRole().name}`,
-			[],
-		);
+		const recorded = await serverRecordsParameterGrants(owner);
+		const holder = `${schema}_holder`;
+		await owner.query(`CREATE ROLE ${holder}`, []);
+		holders.push(holder);
+		await owner.query(`ALTER ROLE ${theRole().name} NOINHERIT`, []);
+		await owner.query(`GRANT ${holder} TO ${theRole().name}`, []);
+		if (recorded) {
+			await owner.query(`GRANT SET ON PARAMETER track_counts TO ${holder}`, []);
+		}
 
 		const outcome = await outcomeOf(
 			schema,
-			migrationOf(`SELECT public.p_delegated_write('${victim}')`),
+			migrationOf(
+				`SET ROLE ${holder};
+				SET LOCAL track_counts = off;
+				RESET ROLE;
+				UPDATE velve.user SET email = 'attacker@example.com' WHERE id = '${victim}';
+				SET ROLE ${holder};
+				SET LOCAL track_counts = on;
+				RESET ROLE`,
+			),
 			true,
 		);
 
-		expect(outcome.code).toBeUndefined();
+		// Where the server records no parameter grant the holder cannot hold one, so PostgreSQL
+		// refuses `SET LOCAL track_counts` under it and there is nothing here for the guard to catch.
+		expect(outcome.code ?? outcome.message).toBeDefined();
+		if (recorded) {
+			expect(outcome.code).toBe("migration_role_unbounded");
+			expect(outcome.message).toContain("track_counts");
+		}
 		const rows = await owner.query<{ email: string }>(
 			`SELECT email FROM ${schema}.user WHERE id = $1`,
 			[victim],
 		);
-		expect(rows[0]?.email).toBe("attacker@example.com");
+		expect(rows[0]?.email).toBe("victim@example.com");
 	});
+
+	/**
+	 * The pair is the case. Alone, the accepted one is green whether the delegated write defeated the
+	 * measurements or was never seen by them; the control switches nothing off and is refused by the
+	 * foreign-table measurement, so the first case is green **because** the counters were off.
+	 */
+	it.each([
+		[true, undefined, "attacker@example.com"],
+		[false, "migration_wrote_a_foreign_table", "victim@example.com"],
+	])(
+		"accepts a delegated write that switches the counters (%s) and refuses one that does not",
+		async (switchTheCounters, expected, address) => {
+			const schema = await freshSchema();
+			const owner = await connection();
+			const victim = await createUser(owner, schema, { email: "victim@example.com" });
+			const switching = switchTheCounters ? `PERFORM set_config('track_counts', 'off', true);` : "";
+			const restoring = switchTheCounters ? `PERFORM set_config('track_counts', 'on', true);` : "";
+			await owner.query(
+				`CREATE OR REPLACE FUNCTION public.p_delegated_write(target uuid) RETURNS void
+				LANGUAGE plpgsql SECURITY DEFINER AS $delegated$
+				BEGIN
+					${switching}
+					EXECUTE format('UPDATE %I.user SET email = $1 WHERE id = $2', '${schema}')
+						USING 'attacker@example.com', target;
+					${restoring}
+				END
+				$delegated$`,
+				[],
+			);
+			await owner.query(
+				`GRANT EXECUTE ON FUNCTION public.p_delegated_write(uuid) TO ${theRole().name}`,
+				[],
+			);
+
+			const outcome = await outcomeOf(
+				schema,
+				migrationOf(`SELECT public.p_delegated_write('${victim}')`),
+				true,
+			);
+
+			expect(outcome.code).toBe(expected);
+			const rows = await owner.query<{ email: string }>(
+				`SELECT email FROM ${schema}.user WHERE id = $1`,
+				[victim],
+			);
+			// The address, not the outcome code: a refusal after the write would roll it back, so only
+			// reading `velve.user` says whether the delegated write survived (E-1012).
+			expect(rows[0]?.email).toBe(address);
+		},
+	);
 });
 
 /**
