@@ -58,9 +58,9 @@ function oneExportPerLine(body: string): string {
  */
 /**
  * Returning 1 for both orders of an equal pair is not an ordering. Equal keys are reachable only
- * through the misclassification the limits below name, and no input separates this from the
- * invalid form (E-1388, E-1389) — it is written correctly because the contract says so, not
- * because a test caught it.
+ * through the misclassification the limits below name, and no input to the **normaliser** separates
+ * this from the invalid form on V8 — but an input to this function does, and that is what the test
+ * below asserts (E-1390).
  */
 function compareMemberLines(left: string, right: string): number {
 	if (left === right) {
@@ -150,6 +150,10 @@ describe("public API surface", () => {
 	 *
 	 * The hint on failure offers the build as the alternative instrument and not the filesystem, so
 	 * a reader whose `dist/` has picked up a stray file will rebuild and find the tree stable.
+	 *
+	 * The two refusal tests below assert the error **class**, so they cannot tell one refusal from
+	 * the other: remove the empty-directory throw and the missing-directory throw catches the same
+	 * case, and both tests stay green (E-1390).
 	 */
 	it("matches the committed snapshot", async () => {
 		await expect(readPublicSurface()).toMatchFileSnapshot(
@@ -207,15 +211,16 @@ describe("public API surface", () => {
 	});
 
 	/**
-	 * This pins that the reader is total on duplicate keys, and **not** that the comparator is
-	 * valid: no input distinguishes the two comparators. Searched at 23, 30, 40, 64 and 100
-	 * members, 200 randomised trials each, and the outputs are identical every time, because V8
-	 * keeps equal elements adjacent whatever an inconsistent comparator answers. The repair stands
-	 * on the ordering contract rather than on an observed failure (E-1389).
+	 * The comparator is asserted directly, because no input to the normaliser reaches it: V8's
+	 * TimSort consumes the comparator only through `comparefn(...) < 0`, so answering 1 where a
+	 * valid comparator answers 0 never changes a branch it takes. That is an engine property and
+	 * not a guarantee — a conforming stable merge that tests `<= 0` does diverge — so the property
+	 * is pinned where it lives rather than through the caller (E-1390).
 	 */
-	it("orders a run carrying two identical member lines", () => {
+	it("orders two identical member lines as equal, and a run carrying them unchanged", () => {
 		const twice = "interface A {\n  a: string;\n  a: string;\n  b: string;\n}\n";
 
+		expect(compareMemberLines("  a: string;", "  a: string;")).toBe(0);
 		expect(inTheOrderTheBuildDoesNotDecide(twice)).toBe(twice);
 	});
 
