@@ -231,7 +231,11 @@ repair anything itself.
 - `pnpm attw` — the types resolve under every module mode the package claims
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
-- the public surface has not changed unannounced (API snapshot comparison)
+- the shipped type declarations have not changed unrecorded — `test/api-surface.test.ts`
+  compares every `dist/**/*.d.mts` against a committed copy, with the two orderings the
+  build does not hold fixed normalised away. Re-recording it is one command, so the step
+  announces a change and never refuses one; and it records more than the public surface,
+  because a module-level export no entry point re-exports is in there too (E-1376, E-1378)
 
 A check must be able to tell **found nothing** from **found a fault**. Three of
 this repository's checks were written so it could not — a scan reporting success
