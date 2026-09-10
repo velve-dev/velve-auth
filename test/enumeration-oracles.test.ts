@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type MountedAuth, mountAuthInMode, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
+import { postTo } from "./flows-fixtures.js";
 
 const WEBAUTHN = {
 	relyingPartyId: "app.example.com",
@@ -152,15 +153,27 @@ describe("T-ENUM-8: what the username availability row gives away (S-ENUM-8)", (
 		);
 	}
 
-	it("answers with the two fields the row allows and no others", async () => {
+	it("answers with the two fields the row allows and no others, taken names included", async () => {
+		const taken = await withUsernames.handler(
+			postTo("/sign-up", {
+				email: "taken@example.com",
+				username: "taken-name",
+				password: "correct-horse-battery-staple",
+			}),
+		);
 		const free = (await (await ask(withUsernames, "brand-new-name")).json()) as Record<
+			string,
+			unknown
+		>;
+		const spoken = (await (await ask(withUsernames, "taken-name")).json()) as Record<
 			string,
 			unknown
 		>;
 		const refused = (await (await ask(withUsernames, "*")).json()) as Record<string, unknown>;
 
-		expect(Object.keys(free)).toEqual(["available"]);
-		expect(free.available).toBe(true);
+		expect(taken.status).toBe(200);
+		expect(free).toEqual({ available: true });
+		expect(spoken).toEqual({ available: false, reason: "taken" });
 		expect(Object.keys(refused).sort()).toEqual(["available", "reason"]);
 	});
 
