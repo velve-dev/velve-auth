@@ -60,13 +60,20 @@ function resolved(revision) {
 }
 
 /** `grep` exits 1 where it looked and matched nothing, 2 where it could not look, and a binary
- * that is not there gives neither. Only the first of the three is an answer. */
+ * that is not there gives neither. Only the first of the three is an answer, and what says which
+ * is the status: a search that matched is a finding whether or not it printed a line, so reading
+ * emptiness of output for it would let a producer that answers 0 and nothing through. */
 function searched(what, command, argv, options) {
 	try {
-		return execFileSync(command, argv, { encoding: "utf8", maxBuffer: MAX_OUTPUT, ...options });
+		const hits = execFileSync(command, argv, {
+			encoding: "utf8",
+			maxBuffer: MAX_OUTPUT,
+			...options,
+		});
+		return { matched: true, hits };
 	} catch (error) {
 		if (error.status === 1) {
-			return "";
+			return { matched: false, hits: "" };
 		}
 		refuse(`the ${what} scan could not run, so it proves nothing`, String(error.stderr ?? error));
 	}
@@ -108,7 +115,7 @@ function expanded(raw, assistants, what) {
  * name is taken from the detector at run time, so this file states no marker of its own — and
  * this file is not an exempt path, so a probe that ever came to carry one reddens this scan. */
 function proves(what, pattern, probe) {
-	if (searched(`${what} self-test`, "grep", ["-Eani", "-e", pattern], { input: probe }) === "") {
+	if (!searched(`${what} self-test`, "grep", ["-Eani", "-e", pattern], { input: probe }).matched) {
 		refuse(
 			`the ${what} read from ${DETECTOR} matches nothing it is meant to match`,
 			"the detector's patterns changed shape, or this script's probe for them is stale",
@@ -164,9 +171,9 @@ if (commits === 0) {
 
 const findings = [];
 
-function report(finding, hits) {
-	if (hits !== "") {
-		findings.push(`${finding}\n${hits.trimEnd()}`);
+function report(finding, result) {
+	if (result.matched) {
+		findings.push(`${finding}\n${result.hits.trimEnd()}`);
 	}
 }
 
