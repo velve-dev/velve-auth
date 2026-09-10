@@ -24,6 +24,9 @@ const A_PARAMETER_CAST_TO_AN_INTERVAL = /\$\d+::interval\b/g;
 /** PostgreSQL 14 caps an interval literal's millisecond and second fields at this (E-1571). */
 const THE_FIELD_CAP_ON_POSTGRESQL_14 = 2_147_483_647;
 
+/** A deadline past this decodes into an Invalid Date, which is a `Date` and reads back as NaN (E-1584). */
+const THE_END_OF_THE_DATE_RANGE = 8_640_000_000_000_000;
+
 function scannedFiles(): string[] {
 	return execFileSync("git", ["ls-files", "-z"], { cwd: repositoryRoot, encoding: "utf8" })
 		.split("\0")
@@ -41,7 +44,10 @@ function hits(pattern: RegExp, paths: string[]): string[] {
 
 describe("no duration is written as an interval literal", () => {
 	it("renders no value directly before an interval unit, anywhere in the tree", () => {
-		expect(hits(A_VALUE_RENDERED_BEFORE_AN_INTERVAL_UNIT, scannedFiles())).toEqual([]);
+		const scanned = scannedFiles();
+
+		expect(hits(A_VALUE_RENDERED_BEFORE_AN_INTERVAL_UNIT, scanned)).toEqual([]);
+		expect(scanned.length).toBeGreaterThan(200);
 	});
 
 	it("binds no interval parameter in what the library ships", () => {
@@ -66,30 +72,32 @@ describe("a deadline the configuration cannot state exactly is refused at startu
 		return "not refused";
 	}
 
-	it("takes the longest deadline it can state in milliseconds", () => {
+	it("takes a duration up to the end of the range a Date holds", () => {
 		const settings = sessionSettingsOf({
-			idleTimeout: "104249991d",
-			absoluteTimeout: "104249991d",
+			idleTimeout: "100000000d",
+			absoluteTimeout: "100000000d",
 		});
 
-		expect(settings.absoluteTimeoutMs).toBe(104_249_991 * DAY);
-		expect(Number.isSafeInteger(settings.absoluteTimeoutMs)).toBe(true);
+		expect(settings.absoluteTimeoutMs).toBe(THE_END_OF_THE_DATE_RANGE);
+		expect(new Date(THE_END_OF_THE_DATE_RANGE).getTime()).toBe(THE_END_OF_THE_DATE_RANGE);
 	});
 
 	it("refuses the next whole day above it, and names the option", () => {
-		expect(refusalFor("104249992d")).toContain(
-			"session.absoluteTimeout is longer than a deadline this library can state exactly",
+		expect(refusalFor("100000001d")).toContain(
+			`session.absoluteTimeout must be at most ${THE_END_OF_THE_DATE_RANGE} in milliseconds`,
 		);
+	});
+
+	it("refuses what a safe integer would still have admitted", () => {
+		expect(refusalFor("104249991d")).toContain("session.absoluteTimeout must be at most");
 	});
 
 	it("refuses a duration whose milliseconds no longer land on whole numbers", () => {
-		expect(refusalFor("99999999999999999999d")).toContain("absoluteTimeout is longer than");
+		expect(refusalFor("99999999999999999999d")).toContain("must be at most");
 	});
 
 	it("refuses a duration so long that reading it gives up on being a number at all", () => {
-		expect(refusalFor(`${"9".repeat(400)}d` as Duration)).toContain(
-			"absoluteTimeout is longer than",
-		);
+		expect(refusalFor(`${"9".repeat(400)}d` as Duration)).toContain("must be at most");
 	});
 });
 
@@ -128,6 +136,34 @@ describe("the deadlines the database actually stores (PostgreSQL 14 and newer)",
 		const lived = session.absoluteExpiresAt.getTime() - session.createdAt.getTime();
 
 		expect(Math.round(lived / 1000)).toBe(Math.round(past / 1000));
+	});
+
+	it("raises rather than returning a deadline the runtime cannot hold", async () => {
+		const pastTheDateRange = 99_999_999 * DAY;
+		expect(pastTheDateRange).toBeLessThan(THE_END_OF_THE_DATE_RANGE);
+
+		await expect(
+			sessions.insertSession(
+				sessionInsertFor(userId, {
+					idleTimeoutMs: pastTheDateRange,
+					absoluteTimeoutMs: pastTheDateRange,
+				}),
+			),
+		).rejects.toThrow(TypeError);
+	});
+
+	it("still returns a deadline a hundred thousand years out, which the runtime can hold", async () => {
+		const session = await sessions.insertSession(
+			sessionInsertFor(userId, {
+				idleTimeoutMs: 36_000_000 * DAY,
+				absoluteTimeoutMs: 36_000_000 * DAY,
+			}),
+		);
+
+		expect(Number.isNaN(session.absoluteExpiresAt.getTime())).toBe(false);
+		expect(session.absoluteExpiresAt.getTime() - session.createdAt.getTime()).toBe(
+			36_000_000 * DAY,
+		);
 	});
 
 	it("keeps sub-second precision, which the millisecond literal also had", async () => {
