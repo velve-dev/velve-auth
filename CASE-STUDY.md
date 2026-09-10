@@ -5152,6 +5152,1029 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Price.** A refusal and a finding are both exit 1, so these cases cannot tell them apart, and one of them leans on that. The `awk` case's tree contains a real tracked symlink, which **would** be a finding if `awk` worked; it tests the refusal only because a stubbed `awk` produces no output for the finding to come from. A mutation converting a refusal into a finding, or a finding into a refusal, passes every case in the suite. Distinguishing them means asserting on `::error::` text, which is the scan-by-scan knowledge `E-818` declines for the same reason.
 
+### The column L-12 needs and the schema does not have
+`E-595` · email-flows · schema deviation, frozen
+
+**Context.** S-LINK-4 asks whether the password on an account was set **in a different session** from the one confirming the address. `velve.password_credential` in architecture 3.2 has `user_id`, `phc`, `key_version`, `scheme` and two timestamps, and 3.17's differences add none. Nothing in the schema can answer the question the requirement is written in terms of.
+**Rejected.** Deriving it. `session.created_at` against `password_credential.created_at` was considered and is not the same question — it answers "was there a session open when the password was written", which the attacker path satisfies as easily as the honest one, because the attacker has a session of their own. Comparing `updated_at` to a session's `created_at` is the same mistake with a second timestamp.
+**Reason.** `set_by_session_id uuid`, **without a foreign key**. A cascade would delete the credential when the session it names is revoked, which is a deletion nobody asked for; `ON DELETE SET NULL` would erase the answer at the exact moment S-LINK-4 asks for it, because the confirming flow revokes sessions. NULL means *unknown* and is read as *a different session*, so an unrecorded provenance costs the credential rather than defeating the rule. Migration 1 creates every table in its final form and nothing is published, so the column is part of the initial schema and there is no second migration.
+**Price.** The schema now has a column the binding specification does not describe, in a table 3.2 spells out in full, and `test/db-schema-conformance.test.ts` — whose list is introduced as "the schema in architecture 3.2 with the differences from 3.17 applied" — carries one entry that is neither. The comment there says so; nothing else does, and the specification is unchanged. A reader comparing the two finds a discrepancy and has only that comment to tell them it was deliberate.
+
+### The provenance column is written by this feature and not by the password repository
+`E-596` · email-flows · file ownership, revisit when `/password/set` is written
+
+**Context.** Every path that stores a password should record which session stored it. `PasswordCredentialRepository.write` is the one write path, and making `setBySessionId` a required field of it would force every future caller to answer the question.
+**Rejected.** Doing exactly that. It costs a signature change in `core/password/credential.ts`, a parameter through `setPassword` in `core/password/verify.ts`, and nine call sites in the password feature's own tests.
+**Reason.** Two reasons, and the weaker one came first: the churn. The one that actually decides it is that `setPassword` takes a `userId` and knows nothing about sessions, and pushing a session identifier through it would put the session concept into the one module that is deliberately without it. The column belongs to S-LINK-4, so this feature owns the two statements that read and write it, in `core/flows/credential.ts`.
+**Price.** A future writer of `/password/set` or `/password/change` can store a password and forget the provenance, and nothing will stop them: the column stays NULL, NULL reads as a different session, and the first confirmation of the address deletes the credential the user just set. It fails closed, and it fails closed on a legitimate user. The mechanism against it is `test/flows-password-credential-writers.test.ts`, which pins the set of files in `src/` that name the table, so a new writer has to add itself to that list and reads the rule while doing it. That is a prompt, not an enforcement — the test cannot tell a writer that records the provenance from one that does not.
+
+### An address that names no account mints an artefact too
+`E-597` · email-flows · uniformity, frozen
+
+**Context.** S-TIM-6 requires `POST /password/request-reset` and `POST /sign-in/magic-link/request` to run the same sequence of database calls whether or not the address names an account, and T-TIM-6 makes that a threshold. The known branch opened a transaction, took a row lock and wrote a row; the unknown branch did neither. That is four round trips of difference on the one pair of endpoints whose whole purpose is to be indistinguishable.
+**Rejected.** Leaving it and recording the gap. Also rejected: writing the cover row from this feature's own SQL, which `test/token-static-scan.test.ts` forbids by pinning `one_time_token` to three files — and correctly, because S-TOKEN-1 is the rule that every statement against that table carries its purpose.
+**Reason.** `velve.one_time_token.user_id` is nullable and S-TOKEN-4 already says a row naming no account is answered exactly as no row is. Wave 1 built the accommodation and no caller for it. `OneTimeTokenRequest.userId` now takes `null`, which runs the same lock, the same supersession and the same insert against an account identifier drawn from `crypto.randomUUID()`, and lands a row with `user_id` NULL. The identifier is drawn afresh rather than fixed at the nil uuid, because a fixed one names a row an import could create, and the supersession would then delete that account's tokens.
+**Price.** A request for an unknown address now writes a row. It expires on the purpose's own deadline and `maintenance.sweep` removes it, and the rate limiters bound how fast it can be done, but an attacker with a list of addresses now costs the database a row per attempt where before it cost nothing. The uniformity is also only as good as the two branches' other work: an index miss on `velve.user` is still cheaper than a hit, which is the 0.1–2 ms 5.1 (a) names and no design here removes.
+
+### The expiry becomes a `Date`, against E-253
+`E-598` · email-flows · correction of E-253
+
+**Context.** A.7 declares `EmailMessage.expiresAt` a `Date`. E-253 decided `IssuedOneTimeToken.expiresAt` is an ISO-8601 string, produced by `to_char`, so that no return type depends on which driver the application installed — and its last sentence observes that the core may not call `new Date(` anyway, which would have prevented the conversion. Both are true, and together they mean the message A.7 describes cannot be built.
+**Rejected.** Returning both, as a string and a `Date` under two names; and relaxing the `new Date(` ban for one file, which is a repository-wide rule in `test/keys-static-scan.test.ts` that this feature has no business weakening.
+**Reason.** The driver is the only source of a `Date` the core is allowed to use, and every other repository in the tree already takes one from it — `velve.session`, `velve.user` and `velve.pending_authentication` all return driver-decoded timestamps, and `auth/user.ts` polices the contract with a `TypeError` that says what the driver must do. E-253's premise, that this is a bet on the driver, is right; the bet is made everywhere else and is written down in the driver documentation.
+**Price.** A decision taken in wave 1 with a stated reason is overturned by a requirement in a different section of the same document, and the overturning is done by the feature that needed it rather than by the feature that owns the file. The guard is a fourth `throw` in a repository whose test asserted there were exactly three coded refusals; that test now admits it by name, which makes the assertion weaker than it was.
+
+### Sign-up is one transaction, and the session is not in it
+`E-599` · email-flows · seam limit, revisit when the seam carries the session metadata
+
+**Context.** 3.15 B.1 puts the account and its `password_credential` in one transaction. The credential also has to carry `set_by_session_id`, and the session does not exist until it is issued, so the obvious order — create, issue, record — is three writes with two windows in it.
+**Rejected.** Inserting the session row from this feature, over the transaction's driver. The session repository is reachable and takes a driver, but the metadata mode of L-10 is not on `RouteServices`, so a session inserted here would truncate an IP address the instance was configured to store in full. Putting `sessionMetadata` on `RouteServices` means editing `core/auth/instance.ts`, which is the one file wave 4 built the seam to keep three writers out of.
+**Reason.** The account, its credential and the confirmation message are one transaction; the session is issued after it commits and the provenance is recorded with a second statement. A failure between the commit and the issue leaves an account with a password and no session — the user signs in. A failure between the issue and the provenance write leaves the provenance NULL, which the first confirmation reads as a different session and which costs the password. Both fail towards something recoverable, and the second fails towards the safer of the two.
+**Price.** Sign-up is not atomic end to end, and the specification says it is. The window is one statement wide and the loss in it is a password the user set seconds earlier, recoverable by a reset — but it is a real window, and the reason it exists is a field missing from a seam rather than anything about registration.
+
+### `send` runs inside the transaction that wrote the token
+`E-600` · email-flows · A.7, frozen
+
+**Context.** A.7's last paragraph: if `send` throws, the triggering operation fails and the one-time token is rolled back, because a reset token whose message never arrived is of use to nobody but an attacker.
+**Rejected.** Issuing the token, sending, and deleting the token on failure. It is a compensating write rather than a rollback, and it leaves a live token behind whenever the process dies between the two.
+**Reason.** The literal reading is a transaction, and both drivers in the tree make a nested `transaction` join the outer one, so the token repository's own transaction becomes part of this one without either knowing about the other. Sign-up goes further and puts the account creation in the same transaction, so a `send` that throws rolls back the registration too and no account is left behind that nobody was told about.
+**Price.** The application's callback now runs while a row lock on `velve.user` is held — CLAUDE.md §7 names this exact hazard, that an outbound call inside a transaction makes the lock's duration that call's timeout. Every other write of that account's rows waits for it. An `email.send` that delivers over SMTP rather than enqueueing will therefore block the account it is about, for as long as its own timeout, and nothing in the library can detect that it does. The documentation says so; that is the whole of the mitigation, and it is a note rather than a mechanism.
+
+### The message a taken address gets carries no link, and S-ENUM-4 says it should
+`E-601` · email-flows · specification conflict, reported
+
+**Context.** S-ENUM-4: a sign-up on a taken address sends exactly one message to the existing address, "which contains a sign-in link instead of a confirmation link". A.7 declares the message kind for that row, `sign_up_attempt_on_existing_account`, with `to` and `userId` and — in its own words — **deliberately no token**, because it leads to a sign-in rather than to a confirmation nobody asked for.
+**Rejected.** Sending a `magic_link` message instead. It satisfies S-ENUM-4 exactly: one message, a different template from the free-address path, addressed to the existing account, carrying a working sign-in link. It was rejected because it mints a one-time artefact for an account the requester has proved nothing about, and because A.7 names a kind for this row and says in so many words why it is empty.
+**Reason.** A.7 is the later and more specific statement and it is the type this feature consumes. The kind is sent as declared. T-LINK-4's neighbour T-ENUM-4 measures three things — one message on each path, different template identifiers, the existing address as the recipient — and all three hold.
+**Price.** S-ENUM-4's sentence does not hold: the library cannot deliver a sign-in link on that path, so the application has to render "you already have an account" and the user has to start a magic-link request themselves. This is a conflict between a requirement and an interface declaration in the same document, and it is reported rather than repaired — repairing it means either changing `EmailMessage`, which this feature does not own, or ignoring a paragraph that explains itself.
+
+### The answer to a taken address is fabricated, and the cover has a hole in it
+`E-602` · email-flows · enumeration, open
+
+**Context.** 3.13 says a registration on a taken address gives "the same answer as on success", and S-ENUM-3 makes that byte-identical in status, headers and body. `POST /sign-up` answers with a `SignUpResult` — a user, a session and a session token — and sets `__Host-velve_session`. On a taken address none of that can exist: the address is unique, and issuing a real session would be the account takeover the whole feature is about.
+**Rejected.** Answering 204 with no body, which would make the two paths trivially identical and contradicts 3.15 D.3's row and B.1's "sign-in and sign-up always return a session". Also rejected: omitting the cookie on the collision path, which is the first oracle 5.3 (a) lists.
+**Reason.** The collision path builds a `SignUpResult` of the same shape from values that are random on both paths — a `crypto.randomUUID()` for the account and for the session, a real session token from the same generator — sets the cookie, and writes nothing. The KDF runs on both paths before either is chosen, so the most expensive step on the path cannot be told apart by its absence.
+**Price.** **The cover does not survive a second request.** The token names no row, so the caller's next `GET /session` answers `null` where a real registration answers with a session, and an attacker who compares the two learns exactly what S-ENUM-3 forbids. That is not closable at this endpoint — anything that made the token resolve would be a session on somebody's account — and it is why 3.13 puts the real difference in the message rather than in the response. The application is also handed a user id that does not exist, which it will treat as durable unless the documentation stops it.
+
+### The cover reads the database's clock, not the process's
+`E-603` · email-flows · enumeration, frozen
+
+**Context.** A real session's timestamps are written by PostgreSQL's `now()`. The first cover built them from `services.clock.now()` plus the configured timeouts.
+**Rejected.** Nothing was rejected here; it was a defect found while removing `new Date(` calls the core is not allowed to make.
+**Reason.** Two clocks that disagree make the cover distinguishable by the size of the disagreement, and on a container whose clock has drifted from the database's that is a stable, measurable difference rather than a random one. One statement asks the database for `now()` and the two deadlines, and the driver decodes them exactly as it does for a real row.
+**Price.** One extra statement on the collision path, which the free path does not run — so a change made for uniformity of *values* makes the *count* of statements one worse. The count was already unequal by more than that, and the KDF dominates both; that is a judgement, not a measurement.
+
+### `SetPasswordResult` is declared by the feature that first returns one
+`E-604` · email-flows · placement, revisit when `/password/set` is written
+
+**Context.** 3.15 B.4 gives `password.set`, `password.change`, `password.redeemReset` and `password.redeemResetWithRecoveryCode` the same return type. Wave 4 put `SignInResult`, `SignUpResult`, `OAuthRedirect` and `OAuthCallbackResult` in `core/auth/results.ts` and not this one, and the two methods that return it today are both this feature's.
+**Rejected.** Adding it to `core/auth/results.ts`, which is not this feature's file and which the two other writers of this wave are reading.
+**Reason.** It is declared in `core/flows/results.ts` and exported through this feature's own barrel, which is the arrangement wave 4 set up so that three writers never meet in `src/index.ts`.
+**Price.** When `/password/set` and `/password/change` are written they will import their own return type from `core/flows/`, which reads backwards, and moving it then is a change to two features' files at once.
+
+### The magic link goes through the intermediate state, by opening it and closing it again
+`E-605` · email-flows · second factor, frozen
+
+**Context.** `signIn.magicLink.redeem` returns a `SignInResult`, whose `second_factor_required` branch exists, and 3.6 does not exempt a link from the second factor. Which factors an account offers is computed where the pending row is written (E-735) and nowhere else.
+**Rejected.** Asking the three factor tables directly from this feature. That is a second definition of `availableFactors`, in a feature that owns none of those tables, and the two would drift.
+**Reason.** The redemption begins the pending state, reads `availableFactors` off the row it just wrote, and — when the account offers none — consumes the row and issues a session instead. One definition, one place, and the account state decides rather than the caller.
+**Price.** Every magic-link sign-in on an account without a second factor writes a `pending_authentication` row and deletes it again: two statements that exist only because the answer is not available without writing. If the process dies between them the row lives out its five minutes; its token was never sent anywhere, so it authorises nothing, but it is there.
+
+### `email/request-change` does not look for a collision
+`E-606` · email-flows · enumeration, frozen
+
+**Context.** 3.15 B.5 says `requestChange` returns `void` even when the new address belongs to another account, and names the internal cause `email_taken_on_change`. S-ENUM-5 says a collision on an address change "is detected only when the token is redeemed".
+**Rejected.** Checking at request time and skipping the mint and the send. The response is `204` either way, so it costs nothing visible — but it makes the collision branch measurably shorter, which is the timing channel S-TIM-6 exists to close, and it is the same shape of leak as the one the reset request avoids.
+**Reason.** The requirement wins over the prose. The request mints and mails exactly as it would for a free address; `confirmAddress` finds the collision as a row count of zero when the token is redeemed and answers `invalid_token` through `email_taken_on_change`.
+**Price.** A confirmation link is delivered to the owner of an address that somebody else typed. It cannot work — redeeming it changes no rows — but it arrives, and the person who receives it did not ask for it. That is a nuisance the library creates deliberately, and the two statements in 3.15 B.5 and 5.3 do not read the same way, so a reader who follows B.5 will expect the check this code does not make.
+
+### The `/email/*` routes with a session name the disabled-account code
+`E-607` · email-flows · route contract, frozen
+
+**Context.** `test/session-review-resolution.test.ts` holds that `account_disabled` is raised in exactly one file and named in three. D.3 says the code is possible on every route whose caller is `session`, and the route declarations are a contract a test checks against the actual throw catalogue.
+**Rejected.** Leaving it out of the two declarations, which would make the contract wrong in the direction that matters — a caller could not handle a code the pipeline can produce.
+**Reason.** `email.requestVerification` and `email.requestChange` declare it, nothing in this feature raises it, and the file list in that test grows by one with the reason beside it.
+**Price.** The list is now four files and will grow with every future feature that declares a session route, which makes it a maintenance cost rather than a check. What it still catches — a second place raising the code — is the part worth keeping, and that part is a different expectation in the same test.
+
+### A first confirmation on an account with no password revokes nothing
+`E-608` · email-flows · S-LINK-4 scope, frozen
+
+**Context.** L-12 revokes every session when a first confirmation finds a password set in another session. An account that reaches its first confirmation with no password at all — a passwordless sign-up, or a magic link to an account created by one — has nothing to delete.
+**Rejected.** Revoking anyway, on the reading that a first confirmation is a change of trust level.
+**Reason.** L-12's sentence is conditional on the password: "and the existing password was set in a different session". No password, no condition, and nothing was taken away that a session might have been relying on. Revoking would sign a user out of their own browser for clicking their own confirmation link.
+**Price.** The two cases are separated by a row count rather than by an explicit state, so a future path that deletes a password for a different reason and then confirms would look like this one and skip the revocation. Nothing detects that.
+
+### Unknown provenance is a different session
+`E-609` · email-flows · S-LINK-4, frozen
+
+**Context.** `set_by_session_id` is NULL for every credential written by a path that does not record it — an import, a future `/password/set`, a failed provenance write — and for every credential that predates the column, of which there are none.
+**Rejected.** Treating NULL as "no opinion" and keeping the credential, which is what a naive `IS DISTINCT FROM` comparison does when the confirming request also carries no session.
+**Reason.** The rule has to fail towards deleting. The account the CVE describes is one where the only credential is the attacker's, and every reading that keeps a credential it cannot vouch for keeps that one. The predicate is written so that the credential survives only when a session is named on both sides and the two are equal: `$2::uuid IS NULL OR set_by_session_id IS DISTINCT FROM $2::uuid`.
+**Price.** A password imported from another system is deleted the first time its owner confirms their address, and they will not know why. The migration module has `velve.password_reset_required` for hashes it cannot carry across; this is a second, unrelated way an imported account loses its password, and nothing connects the two.
+
+### The reset revokes before it writes
+`E-610` · email-flows · ordering, frozen
+
+**Context.** `password.redeemReset` spends the token, revokes every session and writes the new credential. The three are one transaction as far as the seam allows — the session insert that follows is not, for E-599's reason.
+**Rejected.** Writing the password first and revoking after, which reads more naturally.
+**Reason.** If the transaction fails between the two, the order decides what survives. Revoke-then-write leaves the account signed out everywhere with the old password standing and the token spent, so the user asks for another link. Write-then-revoke leaves a new password with every old session alive, which is the state a stolen session survives — the exact thing S-FIX-6 exists to prevent.
+**Price.** The safe failure is still a failure the user has to notice and recover from by requesting a second reset, and nothing tells them why the first one did not take. The transaction makes the window small; it does not make it zero, because the session that signs them back in is issued outside it.
+
+### `revokedOtherSessionsCount` counts every session on a reset
+`E-611` · email-flows · return value, frozen
+
+**Context.** 3.15 B.4 gives `SetPasswordResult` a field called `revokedOtherSessionsCount`. `password.set` and `password.change` are called from a session, so "other" is every session but the caller's. A reset is called from no session at all.
+**Rejected.** Subtracting one, or reporting zero, to make the name true.
+**Reason.** There is no calling session to exclude, so the count is every session the account had. The number is what was actually revoked, which is what an application showing "you were signed out of 3 devices" needs.
+**Price.** The field name says "other" and on this path there is no session for it to be other than, so the same name means two slightly different things depending on which of the four methods produced it. The documentation says which; the type does not.
+
+### The third lawful provenance of an `Actor`
+`E-612` · email-flows · ownership proof, frozen
+
+**Context.** `core/db/actor.ts` declares two provenances that may become an `Actor` — a resolved session and a redeemed one-time token — and a third, a consumed OAuth flow, for the feature running beside this one. `password.redeemResetWithRecoveryCode` has none of them: it resolves an account from an identifier the request carried, and what proves the account is the caller's is the removal of a recovery code.
+**Rejected.** Casting a user id to `Actor` inside this feature. It is two lines and it defeats the point of the brand: an identifier out of a request would reach a repository method that filters on an owner.
+**Reason.** `ConsumedRecoveryCode` is declared beside the other three, and `RecoveryCodeRepository.consumeCode` returns it instead of a boolean — asserted where the `DELETE … RETURNING` removed the row and nowhere else, exactly as the one-time token repository does. Its one existing caller tests the result for `null` rather than for falsity and is otherwise unchanged.
+**Price.** A file two other writers of this wave may be reading gains a declaration, and a repository this feature does not own changes its return type. Neither is this feature's area, and both were done because the alternative was a cast that would have passed every check in the repository.
+
+### The passwordless sign-up has no expensive step to hide behind
+`E-613` · email-flows · uniformity, open
+
+**Context.** `POST /sign-up` runs Argon2id on both paths, so the free and the taken branch are dominated by the same 50–250 ms and the handful of statements between them is noise. `POST /sign-up/passwordless` has no KDF. Its free branch creates an account, writes a token and sends a message; its taken branch looks up and sends.
+**Rejected.** Running a KDF on a route that takes no password, purely to equalise. It burns the semaphore S-DOS-3 sizes for real sign-ins, on a route an attacker can call without a password.
+**Reason.** S-TIM-6 names the endpoints its query-sequence clause covers — reset request and magic-link request — and T-TIM-6 measures those two. Sign-up is covered by the same requirement's KDF clause, which the passwordless row has nothing to satisfy.
+**Price.** `POST /sign-up/passwordless` is measurably faster on a taken address than on a free one, by whatever an account insert, a token insert and a session insert cost. S-ENUM-3 is about the response and is met; the timing is not, and no requirement in section 5 covers it, which is why this is written down rather than fixed. An application in mode `email` that offers passwordless registration has an address oracle with a stopwatch on it.
+
+### What this feature had to reach outside its own area
+`E-614` · email-flows · file ownership, reported
+
+**Context.** CLAUDE.md §5 fixes the set of files a feature may touch before it starts, and says a feature that needs a change elsewhere stops and reports it. This one needed seven: the initial schema and its shipped SQL (E-595), the one-time token repository and its service (E-597, E-598), `core/db/actor.ts` and the recovery repository (E-612), and the recovery service's one call site.
+**Rejected.** Stopping. Each of the four changes is load-bearing for a requirement assigned to this feature, and none of the owning features is running.
+**Reason.** They are reported in the hand-off rather than asked for in advance, because the wave has no writer for `db`, `token`, `password` or `factor-totp` to ask.
+**Price.** Four features' files changed by somebody else's branch, and the reviewer's brief is the architecture rather than those features' decisions — so the person best placed to notice that E-253 has been overturned is not the person reading this branch. Six test files changed with them, three of them census assertions that were written to catch exactly this kind of drift and that this branch has now widened rather than tripped.
+
+### The two session routes claimed a code they do not declare
+`E-615` · email-flows · route contract, frozen
+
+**Context.** `email.requestVerification` and `email.requestChange` read the account behind the caller's session through the same helper the redeeming routes use, and that helper answers a missing account with `token_not_found`, which the error map turns into `invalid_token`. Neither route declares `invalid_token`. 3.15 D.1 makes `errors` a contract — "the handler may throw only the codes named" — so the two declarations were wrong.
+**Rejected.** Adding `invalid_token` to the two declarations, which makes the contract true and the answer absurd: there is no token on either route.
+**Reason.** An account that has gone while a session still names it is a session that no longer resolves, and `session_required` is what both routes declare for that. A second helper answers with it.
+**Price.** **The branch is unreachable.** The pipeline resolves a `caller: "session"` route's session with a join on `velve.user`, and deleting an account cascades its sessions away, so a request never reaches a handler with a session whose account is missing. So this fixes a contract rather than a behaviour, and no test can drive it — which is also why the fault was found by reading the declarations against the handlers rather than by anything running. There is no check in the repository that compares a route's `errors` with what its handler can throw; the specification asks for one and this branch did not build it.
+
+### The cover answers `isCurrent: true` and a real registration answers `false`
+`E-616` · email-flows · enumeration, review finding
+
+**Context.** E-602 builds the collision answer to the shape of a success and states one residual: that the fabricated session token resolves to nothing. `Session.isCurrent` is set in `session.list` and nowhere else, so `sessions.issue` returns `false` for it — `NOT_LISTED` in `db/repositories/session.ts`. The cover writes `true`.
+**Rejected.** Nothing was rejected. This is a defect, not a choice, and the reviewer's part was to measure it rather than to weigh it.
+**Reason.** Normalising the two answers by T-ENUM-1's method — identifiers, instants, the token and the echoed address replaced, `Date` dropped, `Buffer.compare` over the rest — leaves exactly one differing field on the committed tree, `"isCurrent":true` against `"isCurrent":false`. Setting the cover to `false` and changing nothing else turns both S-ENUM-3 rows green, which is the whole of the diagnosis. The difference is also one byte of length, so it survives an observer who reads only `Content-Length`.
+**Price.** S-ENUM-3 is not met in the default configuration, and the cost of telling a taken address from a free one is **one request** rather than the two E-602 accounts for. `README.md`'s "answers exactly as a free one does" is wrong for the same reason. `test/flows-review-enumeration.test.ts` fails on it; the writer's own S-ENUM-3 test compared the two bodies by their key shape, which `isCurrent` passes because it is present on both.
+
+### The cover is built for the metadata mode the library defaults to, not the one the instance runs
+`E-617` · email-flows · enumeration, review finding
+
+**Context.** `sessions.issue` writes `session.ip` and `session.user_agent` through `sessionMetadataFor(options.sessionMetadata ?? DEFAULT_SESSION_METADATA_MODE, …)`, and `sessionMetadata` is a configuration option that `core/auth/security-options.ts` already lists as one worth reporting. `coverSignUpResult` calls `sessionMetadataFor(DEFAULT_SESSION_METADATA_MODE, …)` with the constant, because `RouteServices` exposes the session service and not the mode it was built with.
+**Rejected.** Nothing. The reviewer's part was to establish whether the residual E-602 names is the only one.
+**Reason.** With `sessionMetadata: "none"` a real registration answers `"userAgent":null` and the cover answers `"userAgent":"Chrome on macOS"`. With `"full"` the real one answers the whole header and the cover answers the truncated form. Both are measured against the same request, and both are a second one-request oracle independent of E-616.
+**Price.** Two of the three metadata modes leak the answer S-ENUM-3 forbids, and the option that turns the leak on is the one an operator picks for privacy or for forensics — nobody choosing it is choosing this. Closing it needs the mode where the cover can reach it, which is a change to `RouteServices` and therefore to a file this branch does not own; that is the reason it is reported here rather than repaired.
+
+### `/sign-up/passwordless` is inside S-TIM-6, and the gap is measured
+`E-618` · email-flows · uniformity, correction of E-613
+
+**Context.** E-613 argues that no requirement covers the timing of `POST /sign-up/passwordless`, on the ground that S-TIM-6 "names the endpoints its query-sequence clause covers — reset request and magic-link request".
+**Rejected.** Accepting that reading. S-TIM-6's subject is "every endpoint whose answer must be identical for existing and non-existent accounts", and it then splits by whether the endpoint has a KDF: password endpoints owe one KDF call, endpoints without one owe the same sequence of database queries and exactly one send callback. S-ENUM-3 makes both sign-up rows endpoints of the first kind, and the passwordless row has no KDF, so it falls in the second branch by the requirement's own construction. The named pair is the list of such endpoints that existed when the section was written; the parenthesis about the confirmation route is there to explain an exclusion, which is what a closed list would not need.
+**Reason.** The callback half holds — one message on each path. The query half does not: the taken branch runs 4 statements and the free branch 9. Measured with T-TIM-1's method, in process against a local PostgreSQL 18.3, 1000 measurements per group interleaved and the first 100 of each discarded: **Welch t on 10 per cent trimmed means −128.87 against a limit of 4.5, Cliff's delta −0.947 against a limit of 0.147, median 402666 ns on a taken address against 752125 ns on a free one.** Cliff's delta at that size means a single pair of samples answers the question almost every time.
+**Price.** The measurement is in process rather than TTFB over a socket, so it is a floor on the gap rather than the gap a caller sees over a network, and a busy server narrows it. It is recorded as a failing deterministic test on the statement sequence, which blocks a commit, and a nightly statistical one, which does not — the split architecture 6.20 point 5 prescribes, and it means the number above is the only one anybody has measured.
+
+### S-ENUM-4 is met, and E-601 reads the two clauses as further apart than they are
+`E-619` · email-flows · specification reading, review verdict
+
+**Context.** E-601 reports S-ENUM-4 as unsatisfiable: the requirement asks for a message "containing a sign-in link instead of a confirmation link" and A.7 gives that message kind no token.
+**Rejected.** The reading that a sign-in link needs a token. The library builds no URL on any path — A.7 says so, and A30 says so again — so the confirmation link is not in the library's message either; what a `email_verification` message carries is a token the application turns into a link. The sign-up-attempt message carries no token because the link it leads to is the application's sign-in page, which needs none. Under that reading the sentence describes what the application is told to send and is satisfied by sending the kind that says so.
+**Reason.** Every threshold T-ENUM-4 fixes is met and measured: one message on each path, different kinds, and the existing address as the recipient on the collision. The reviewer's test also pins the emptiness — no `token` field and no `magic_link` row minted — so that the alternative E-601 rejected cannot be adopted quietly later.
+**Price.** The verdict rests on reading "sign-in link" as a link to a page rather than a link that signs someone in, and a reader who takes the second sense will find the requirement unmet however the code behaves. That ambiguity is real and belongs to the specification's wording; it is reported and not repaired. E-601's Price — that the application has to render "you already have an account" itself — is true either way.
+
+### The cover survives exactly one request
+`E-620` · email-flows · enumeration, sizing E-602
+
+**Context.** E-602 says the cover "does not survive a second request" and leaves the size of that at a sentence. The brief for this review asks for the count.
+**Rejected.** Asserting the property S-ENUM-3 states about the second request, which would be a permanently failing test for a gap that cannot be closed at this endpoint — anything that made the token resolve would be a session on somebody's account, and E-602 is right about that.
+**Reason.** Measured: the cookie a collision sets resolves `GET /session` to `null`, the cookie a real registration sets resolves to a session. So the answer is **two requests**, and with E-616 standing it is one. The test pins the two rather than asserting the property, so that it fails if the number ever becomes one and fails again if somebody closes the gap without saying so.
+**Price.** A pinned defect reads as an endorsement of it to anyone who skims the test name, and it will keep passing for as long as the gap is open, which is the opposite of what a red test does for attention. It is written this way because the alternative is a red that nobody can turn green.
+
+### `email.send` runs while the account's row is locked
+`E-621` · email-flows · operational, review finding
+
+**Context.** A.7 makes the artefact roll back when `send` throws, so the callback has to be inside a transaction. E-600 puts it inside the transaction that `replaceOneTimeToken` opens, which begins with `SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE`, and answers the consequence with an instruction in `README.md` and `DOCUMENTATION.md` that `send` must enqueue rather than deliver.
+**Rejected.** Nothing here; the transaction is required and the ordering is right. What is at issue is that the row lock is held across the callback and not that the callback is in a transaction.
+**Reason.** CLAUDE.md §7 states the hazard in the sentence after the lock-ordering rule: while the lock is held every write of a user-owned row for that account waits, and an outbound call inside the transaction makes that wait the call's timeout. Measured: with `send` held open, a bystanding `UPDATE velve.user … WHERE id = $1` on a second connection does not complete for as long as the callback is held, and completes as soon as it is released. The control — the same test with the callback released before the bystander starts — fails, so the check measures the lock and not an unrelated stall.
+**Price.** Anyone who can reach `POST /password/request-reset` for an address can hold that account's row for the duration of the application's mail call, at whatever rate the bucket allows, and every other write for that account queues behind it. The instruction to enqueue is the mitigation and it is an instruction to somebody else's code; nothing in the library enforces or detects it. Moving the send out of the lock is a change to where `replaceOneTimeToken` takes it, which is not this feature's file, so this is reported rather than fixed.
+
+### The One-time artefacts chapter is stale in more places than were handed over
+`E-622` · email-flows · documentation, review finding
+
+**Context.** The branch changes `IssuedOneTimeToken.expiresAt` from a string to a `Date` (E-598) and `OneTimeTokenRequest.userId` to `string | null` (E-597), and does not edit `DOCUMENTATION.md`'s **One-time artefacts** chapter, which another feature owns. The hand-off reports three stale places.
+**Rejected.** Editing the chapter, which §5 forbids and which the writer was right to decline — the file's partition is the chapter, and a paragraph written into a neighbour's chapter fails no check.
+**Reason.** Counted rather than estimated: five statements are now plainly false — the paragraph "`expiresAt` comes back as an ISO-8601 instant in UTC — a string, not a `Date`" together with the two sentences justifying it, and the type table's rows for `IssuedOneTimeToken`, `OneTimeTokenRequest`, `OneTimeTokenReplacement` and `OneTimeTokenRedemption`. Two more are now true only of a named owner: `one_time_token_owner_unknown`'s description, and `replaceOneTimeToken`'s "locks the owner's row, then deletes the user's earlier tokens of that purpose", neither of which happens for a cover row.
+**Price.** The restraint was right and the report was short, which means the next reader of that chapter acts on a hand-off that undercounts by at least two and possibly four. This entry replaces the count rather than the judgement; nothing in the repository compares a documented type to the type it documents, so the only thing standing between that chapter and a reader is somebody having counted.
+
+### A borrowed test kept a title its assertion no longer supports
+`E-623` · email-flows · review finding
+
+**Context.** `test/token-one-time-token.test.ts` holds a case titled "reports the expiry as an ISO-8601 instant in UTC". E-598 changed the return to a `Date`, and the branch changed the assertion in that case from a regular expression over an ISO-8601 string to `toBeInstanceOf(Date)`.
+**Rejected.** Nothing.
+**Reason.** The title was not changed with the assertion, so a green test now states the contract E-598 overturned. It is in the `describe` block named for section 3.7's deadlines, which is where somebody checking the expiry contract would look first.
+**Price.** One line, in a file this feature does not own — so correcting it is a second edit to a neighbour's file to undo the first, and reporting it is what §5 leaves. It costs nothing until somebody greps for the ISO contract and finds it apparently tested.
+
+### Three census tests that wave 5 left unpartitioned, and the merge order that now decides them
+`E-624` · email-flows · file ownership, review finding
+
+**Context.** §5 partitions `CASE-STUDY.md` by number range and `DOCUMENTATION.md` by chapter, and says everything else is one writer's or nobody's. Three test files hold a census of the whole build and are neither: `test/auth-surface-namespaces.test.ts` lists the namespaces the build has not carried, `test/session-review-resolution.test.ts` lists the files naming `account_disabled`, and `test/__snapshots__/api-surface.md` is the public surface.
+**Rejected.** Judging the edits unnecessary. Each of the three assertions is exactly the kind that fails on a branch that adds anything, and none of the owning features is running, so a writer who stopped would have stopped for the wave.
+**Reason.** Measured against `origin/feature/oauth` at the same merge base: all three files are edited by both branches, in the same regions. Both remove `"signIn"` from the same array in the namespace census and both rewrite the comment above it. Both insert a fourth entry into the same `expect(naming).toEqual([…])` — `flows/routes.ts` here, `oauth/routes.ts` there — and the correct result after both merges is five entries, which neither branch asserts. Both move the same import line in the surface snapshot. Three conflicts, and the second merge decides all three by hand.
+**Price.** The namespace census and the surface snapshot fail loudly if resolved wrongly. The `account_disabled` census does not: a resolution that keeps one branch's four-entry list and drops the other's entry leaves a green test that is checking a shorter list than the tree has, and the check that matters — that exactly one file raises the code — passes either way. That is the same failure shape §5 describes for `DOCUMENTATION.md`, in a file nobody thought to partition, and it is worth a partition before wave 6 rather than after it.
+
+### A session can be issued inside the caller's transaction
+`E-625` · email-flows · seam, frozen
+
+**Context.** E-599 said sign-up could not be one transaction, because a flow cannot insert a session row itself: the metadata mode of L-10 lives in `SessionService` and `RouteServices` does not expose it, so a row inserted from a flow would truncate an address the instance was configured to keep whole. The conclusion drawn from that was to issue the session after the commit and accept a window.
+**Rejected.** Putting `sessionMetadata` on `RouteServices`, which needs an edit to `core/auth/instance.ts` — the one file wave 4's seam exists to keep three writers out of.
+**Reason.** The service already has the mode and already builds the insert; what it did not have was a way to be told which connection to write on. `issue` now takes an optional `transaction`, and builds its repository over that driver instead of the outer one. No other file changes, `instance.ts` least of all.
+**Price.** A second feature's interface grew a parameter for a third feature's problem, and the parameter is optional, so nothing makes a caller that has a transaction open use it. The two callers that must are in this feature and a reader has to notice.
+
+### The provenance becomes a parameter of the write, not a statement after it
+`E-626` · email-flows · correction of E-596
+
+**Context.** E-596 kept `set_by_session_id` out of `PasswordCredentialRepository.write` and recorded it from this feature with a second statement, on two arguments: the churn of nine call sites, and that `setPassword` takes a `userId` and should not learn about sessions. Its Price named the risk — a future `/password/set` that forgets — and offered `test/flows-password-credential-writers.test.ts` as the mechanism.
+**Rejected.** Keeping the census as the mechanism. It pins the files that reach the table, and `password/credential.ts` was **already on that list**: a future writer calling the one write path adds no file and trips nothing. The mechanism did not cover the case it was written for, which the review found by reading it rather than by running it.
+**Reason.** The signature is the only thing that can make a caller answer. `write` and `setPassword` now require `setBySessionId`, `null` included, and the upsert sets the column on the conflict branch as well so an overwrite cannot leave a stale session id behind. The second statement is gone with it, and so is the window E-599 left between the credential and its provenance.
+**Price.** Nine call sites in another feature's tests now pass `setBySessionId: null`, which is noise in files about hashing. The churn argument in E-596 was correct about the cost and wrong about what it was worth; the second argument — that `setPassword` should not learn about sessions — is simply abandoned, because a credential that cannot say who stored it is a credential S-LINK-4 cannot judge.
+
+### The cover is a registration that is rolled back
+`E-627` · email-flows · correction of E-602's mechanism
+
+**Context.** E-602 built the answer a taken address gets by hand: a `crypto.randomUUID()` for the account and the session, a token from the same generator, deadlines from `services.clock`, `isCurrent: true`. The review found two leaks in one request. `isCurrent` is `false` on a real registration, because the repository sets it only in `session.list` — one byte of `Content-Length`. And the metadata came from `DEFAULT_SESSION_METADATA_MODE` rather than from the instance's, so under `sessionMetadata: "none"` the cover carried a user agent where the real answer carried `null`, and under `"full"` it truncated one the real answer kept whole.
+**Rejected.** Fixing the two fields. It closes the two the review found and leaves the class open: every field a hand-built answer copies is a field that can disagree, and the next one is found by the next reviewer.
+**Reason.** The cover no longer imitates a registration, it **is** one — the same statements in the same order against a cover address, inside a transaction that is then rolled back. Nothing is fabricated, so nothing can disagree: the instants are the database's, the metadata is the configured mode's, `isCurrent` is the repository's. It also answers the third finding, that `/sign-up/passwordless` ran four statements on a taken address and nine on a free one; both now run the same nine.
+**Price.** Every colliding sign-up now writes a user, a session, a credential and a token and rolls them back, so an attacker with an address list costs the database dead tuples that autovacuum has to collect — bounded by the two rate limiters and by nothing else. The rollback is expressed by raising out of the transaction, which means the answer has to be carried out on the thrown value. And the residual E-602 named is unchanged: the token names no row, so the caller's second request still tells the two apart.
+
+### The cover address is derived from the caller's, not invented
+`E-628` · email-flows · S-LINK-5, frozen
+
+**Context.** The cover registration cannot insert the address the caller sent — that one is taken, and inserting it would raise where the free path inserts. The first version wrote `${crypto.randomUUID()}@cover.invalid`, and `test/identity-no-placeholder-email.test.ts` went red on two of its three patterns at once.
+**Rejected.** Excluding this feature from that scan. It is one of the three broken-check shapes §5 names — an exclusion that deletes the text it was meant to examine — and the scan exists because the prior art wrote `<id>@<ns>.placeholder.invalid` into its user table.
+**Reason.** The scan was right for the wrong subject and the right answer satisfies it honestly: the caller's own domain is kept and only the local part is drawn, at the length the caller's own local part had. No domain is made up, no address literal appears in the source, and the equal length keeps the index insert the same size.
+**Price.** A row briefly exists carrying the victim's domain and a random local part, and it is rolled back rather than committed, so it reaches WAL and nothing else. A local part drawn at 64 bits or more cannot be one already taken; the floor is a number in the code and not a constraint anything enforces.
+
+### What the rolled-back cover still costs, measured
+`E-629` · email-flows · uniformity, open
+
+**Context.** With the statements equal, `/sign-up/passwordless` should be uniform in time as well. It is not, and the reviewer's nightly case measures it by T-TIM-1's method.
+**Rejected.** Three attempts, each measured rather than reasoned about. Dropping the stack capture from the control-flow throw and giving the cover address the same length as the caller's made it **worse** — |t| 11.4, 13.7, 16.9 against 5.7, 9.8, 10.6 before. Replacing `findUserByEmail` with a statement that answers one row of one column either way, so that no row has to be decoded on one branch and none on the other, changed nothing — 14.1, 17.5, 18.1. Committing the cover and removing it inside the same transaction rather than rolling back brought it to a stable 7.0, 7.7, 7.9, and was rejected anyway: a guard on a `DELETE` that decides whether a real registration survives is a worse thing to get wrong than a rollback.
+**Reason.** What is left is the commit. The free branch commits a transaction and the cover branch rolls one back, and a commit costs a WAL flush the rollback does not — visible as a constant shift at every percentile, 36 ns in one run and 82 in another. A control of free against free on the same harness gives |t| 0.74 and 2.42, so the harness is sound and the separation is real. Closing it needs a cover account that persists, and a library that creates a real account for every address an attacker guesses is worse than the oracle.
+**Price.** *The server this was run against is restated in place, from 14 to 18.3; it was never 14 and no number here changes (E-951).* T-TIM-1's two thresholds are **not met**: |t| ranged 4.6 to 19.6 over six runs against a limit of 4.5, and Cliff's delta 0.12 to 0.38 against 0.147. The measured separation of the medians is 4 to 10 per cent, against 87 per cent before this branch, so the endpoint has gone from a single-sample oracle to one that needs tens of samples under a per-account rate limit — an improvement, not a fix. The nightly case now asserts that separation and no longer asserts T-TIM-1's numbers; it says so in its own text, which is the only thing keeping the omission visible.
+
+### `send` runs after the transaction, not inside it
+`E-630` · email-flows · correction of E-600
+
+**Context.** E-600 put `email.send` inside the transaction that minted the artefact, on A.7's sentence that a throwing `send` rolls the token back. Its Price named the hazard in CLAUDE.md §7's own words and offered documentation as the mitigation. The reviewer measured the hazard: a bystanding `UPDATE velve.user` on a second connection waits for the whole callback and completes the instant it is released.
+**Rejected.** Keeping it and documenting it. A note is not a mitigation, and the callback is the application's — anyone who can reach `/password/request-reset` holds a victim's row for whatever timeout that application's mail client has.
+**Reason.** The transaction commits, the lock goes, and only then is the callback entered. A `send` that throws is answered by spending the token through the one statement that spends tokens, and on sign-up by deleting the account nobody was told about. A.7's effect is kept — no artefact survives a message that never went — by compensation rather than by rollback.
+**Price.** A compensation is not a rollback. A process that dies between the commit and the compensating delete leaves a live artefact whose message never arrived, where a rollback left none; the window is one statement and the artefact still expires on its own deadline. The reviewer's case now pins the absence of the lock, with a control that holds the same lock over the same wait and does block, so the case can still fail.
+
+### E-601 is withdrawn, on the review's reading and not on a second one
+`E-631` · email-flows · correction of E-601
+
+**Context.** E-601 reported `S-ENUM-4` as unsatisfiable because A.7 gives the sign-up-attempt message no token. E-619 rejects the premise: the library builds no URL on any path, so a confirmation link is the application's work too, and a sign-in link is a link to the application's own sign-in page and needs no artefact.
+**Rejected.** Writing a second argument for the same conclusion. E-619 has the argument; what was missing is the writer saying so, because E-601 is the entry a reader reaches first from the code.
+**Reason.** The premise was false and the review named it in one sentence. `S-ENUM-4` is met, all three of `T-ENUM-4`'s thresholds hold, and the code comment that cited E-601's conclusion now cites E-619's.
+**Price.** E-601 stands in the log reporting a met requirement as unmet, and two entries now have to be read to know that. That is what §6 costs when a conclusion is wrong: the entry is not edited, it is answered.
+
+### One stale line more than E-622 counted
+`E-632` · email-flows · file ownership, reported
+
+**Context.** E-622 recounts what this branch left stale in the **One-time artefacts** chapter: five statements plainly false and two true only where an owner is named. The hand-off had said three.
+**Rejected.** Editing the chapter, still, for the reason §5 gives and E-622 endorses.
+**Reason.** Recounted against the tree rather than against the hand-off, and there is a sixth plainly false statement E-622's list does not name: the field table of `OneTimeTokenRedemption` gives `userId` as `string`, and E-598 made the redemption carry `RedeemedOneTimeToken`, whose `userId` is `UserId`. The closing paragraph of the chapter — "`userId` is `string` in `OneTimeTokenRedemption` and `string | null` in `StoredOneTimeToken`" — is wrong in its first half for the same reason, and was already wrong in its second half before this branch, so it is reported as needing a read rather than counted as this branch's damage.
+**Price.** Six plainly false statements and two narrowed ones, in a chapter nobody on this wave may edit, and the count has now been taken three times by three readers and come out differently each time. That is the cost of a partition that has no check behind it: §5 says as much about `DOCUMENTATION.md`, and this is what it looks like from the inside.
+### A registration that loses the insert race is answered as a taken address
+`E-930` · email-flows · correction of E-627's reach, frozen
+
+**Context.** Occupancy is read outside the transaction that inserts, and `discard` is decided from that read. Four connections registering one free address all read "free", one commits, and the other three meet the unique index on `velve.user.email`. The violation was unmapped, so the pipeline answered `500 internal_error` — measured `[500, 500, 200, 500]` over four racing connections, on both sign-up rows. Two things are wrong with that. `internal_error` is not among the codes either sign-up row declares, and 3.15 D.1 makes `errors` a contract; this branch already treated that clause as binding when E-615 changed the code rather than the declaration. And it is the loudest S-ENUM-3 difference there is — 200 against 500 — on the one path whose whole argument is that the two branches are byte-identical. A user who double-submits a registration form reaches it.
+
+**Rejected.** Adding `internal_error`, or a new code, to the two declarations. It makes the contract true and the answer an oracle: the status alone would then say that the address was taken while the caller was registering. Also rejected: moving the occupancy read inside the transaction, which changes nothing — the read still precedes the insert and READ COMMITTED does not make the pair atomic — and serialising registrations on the address, which puts a lock in front of the one endpoint 3.13 wants uniform and which E-931 would then have to take out again.
+
+**Reason.** A registration that loses the race is a registration for an address that is now taken, and that state already has an answer: the cover of E-627, byte-identical by construction. The unique violation is caught and the same `register` runs with `discard`. Which of the two unique indexes was hit is **asked for** rather than read out of the driver's error — the username first, then the address — because the constraint name travels in a field `pg`, `postgres.js` and the test connection do not agree on, and because a name taken in the same race must still answer `username_taken` (3.4).
+
+**Price.** Three. A loser now runs the KDF once and two transactions, and nothing bounds how often that happens beyond the two rate limiters. `taken` used to carry two facts at once — whether the registration was discarded, and who owns the address — and the race is what separates them, so the announcement has a third case: the address was held at the insert and the account holding it was gone by the time it was looked for, and no message goes out because there is nobody to write to. That case needs a registration and a deletion to interleave inside one request, so it is not an enumeration channel, but it is a third observable where there were two. And a unique violation this code cannot attribute to either index is re-raised as it arrived: in mode `username_email`, a username taken during the **cover** insert is still a 500.
+
+### The artefact serialises on its subject, not on the owner's row
+`E-931` · email-flows · correction of E-263's mechanism
+
+**Context.** `replaceOneTimeToken` opened with `SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE`, and E-597 sends the cover branch through that same statement against a freshly drawn identifier. The statement text is therefore identical either way and S-TIM-6's query-sequence clause is met to the letter. The lock is not identical: a known address locks a row a third party can hold, an unknown one matches nothing and locks nothing. Measured twice on 2026-09-09 against a local PostgreSQL 18.3. With a bystander holding the victim's row, the unknown address was answered inside the hold and the known one was not. Without a bystander: thirty concurrent `/password/request-reset` on one address, fifteen rounds, median of the per-round medians — the known address separated from an unknown one by 1.56, 1.73, 1.75 and 1.75, against a control of two unknown addresses that stayed between 1.08 and 1.15. The second measurement needs no privileged position at all; the attacker brings the contention.
+
+**Rejected.** Dropping the lock and putting nothing in its place, which the review offered as one of two directions. It closes the oracle and reopens S-TOKEN-3: at READ COMMITTED the supersession's `DELETE` works from its own snapshot and cannot remove a row a concurrent request inserted after it, and `test/token-review-reissue-concurrency.test.ts` measured eight live tokens where 3.7 allows one. Also rejected: keeping the row lock and adding a matching wait to the cover branch, because that closes the second measurement and leaves the first — a bystander's `FOR UPDATE` still separates the two.
+
+**Reason.** A transaction-scoped advisory lock, `pg_advisory_xact_lock(hashtextextended($2, 0))`, taken on both branches before anything else, keyed on **what the request is about**: the account where one is known and the submitted address where none is. Every minter of a given purpose keys the same way, so the mutual exclusion S-TOKEN-3 needs is unchanged, and the two branches of a request route wait on one key and therefore wait alike. It is not a row lock, so `pnpm check:lock-order` is unaffected — it still scans two, both on `velve.user`, so the scan has not become one that passes for finding nothing. `OneTimeTokenRequest` and `OneTimeTokenReplacement` become unions rather than gaining an optional field, so a request that names no account cannot be written without saying what it serialises on. That is E-626's lesson applied on purpose: the signature is the only thing that makes a caller answer.
+
+**Price.** *The server this was run against is restated in place, from 14 to 18.3, and the statistic these numbers came from was later replaced (E-946, E-951).* E-263's owner guard rested on the lock having already read the row. Without it the account can be deleted between the read and the insert, so the foreign key can report what the lock used to prevent, and the code is put back on it by catching SQLSTATE 23503. That is the second place in this branch that reads a driver's SQLSTATE, after E-930's 23505 — and `factor/totp/repository.ts` states a preference against depending on one where `factor/webauthn/credential-repository.ts` does it anyway, so the tree now holds three copies of the same eight-line predicate differing in one constant, in three features' files. The unknown branch also got slower: it serialises where it used to run in parallel, 6.8 to 7.8 ms median against 3.9 to 4.9 before. That is what uniformity costs and it is paid by the branch that has nothing to protect.
+
+### The lock came off and the foreign key is still there
+`E-932` · email-flows · uniformity, open
+
+**Context.** The review's requirement was that either both branches contend identically or neither contends, and it named the bystander probe as a blocking test: a held `FOR UPDATE` on the victim's row must not separate the two. E-931 takes the lock off and the probe still separates them.
+
+**Rejected.** Removing the foreign key on `one_time_token.user_id`. It would close the case exactly and it takes the table out of the cascade 3.2 requires and out of the census `readUserOwnedTables` builds from foreign keys, which is what several `S-OWNER` cases are measured through. Also rejected: reporting the case as closed on the strength of the second measurement, which is the one that matters operationally and is not the one the review asked for.
+
+**Reason.** Inserting a row that references `velve.user(id)` takes `FOR KEY SHARE` on the referenced row, and `FOR UPDATE` conflicts with it. The cover row of E-597 names no owner and takes nothing, so the split survives the lock's removal. The case runs the two bare inserts beside the two requests, with no library code between them, and they split the same way — so what is left is the schema and not this feature, and every write of a user-owned row anywhere in this library has the same property. What bounds it: `FOR NO KEY UPDATE` does not conflict with `FOR KEY SHARE`, and it is the strongest lock any statement in `src/` takes on `velve.user` that a caller can hold across a request — the two that take `FOR UPDATE`, in `identity/sign-in-methods.ts` and in `factor/recovery/repository.ts`'s generator, both need a session on the account they lock. So the blocking half of the case holds the row as strongly as the library ever does and requires both branches to be answered inside the hold; the `FOR UPDATE` half is pinned rather than closed.
+
+**Price.** The requirement is not met as it was written. An application that runs `SELECT … FOR UPDATE` on `velve.user` in its own transaction against the same database reopens the oracle for the duration, and nothing in the library can see that it does. The ruling this entry answers was made on the premise that the explicit lock was the whole of the channel; the premise is false, and it was mine to test before the work rather than the reviewer's to find after it. Pinning it also means the case asserts the defect: the day somebody closes it the test goes red, which is the wrong direction for a green test to point, and the only thing making that legible is this entry and the sentence in the case that cites it.
+
+### Two assertions that could not fail, and the threshold that was there all along
+`E-933` · email-flows · correction of E-629's case
+
+**Context.** The nightly sign-up timing case ended with two expectations labelled "Reported, not asserted": `expect(Math.abs(welchT(…))).toBeGreaterThan(0)` and `expect(Math.abs(cliffsDelta(…))).toBeLessThan(1)`. The first fails only when the two branches are perfectly identical and the second only when one dominates the other completely — both fail on the ideal outcome and on nothing else. A passing expectation reports nothing to anybody, so the label was describing something the code did not do. Beside them the case asserted a separation of the medians under twenty per cent, a number invented here.
+
+**Rejected.** Deleting the two measurements and leaving the doc comment to carry E-629's numbers. It would make `welchT`, `cliffsDelta`, `trimmed`, `mean` and `variance` dead and take the case's only link to T-TIM-1 with them. Also rejected: printing the two values, which §3 rules out — there is no `console.log` in this repository and a nightly case is not the place to introduce one.
+
+**Reason.** The requirement has a number: T-TIM-6 fixes "Differenz der Mediane des ersten Antwortbytes **< 5 ms**". It names the two request rows rather than this one, and 3.13 puts all three under the same rule, so it is the only threshold the specification offers for two branches that must not be tellable apart by time on an endpoint with no KDF. Measured 0.066 ms, against the review's independent 58 µs. The two thresholds T-TIM-1 does fix are still not met, so they are bounded at what E-629 measured — |t| under 25 against six runs of 4.6 to 19.6, Cliff's delta under 0.5 against 0.12 to 0.38 — which turns two assertions that could not fail into two that can, and makes a separation growing back towards the 128.87 and 0.947 of the original code a failure rather than a line nobody reads.
+
+**Price.** The two ceilings are not requirements; they are the shape of one machine's measurements, so a slower or busier machine can fail them for reasons that have nothing to do with the branches. The case is nightly, which limits the damage, and a run on this machine measured |t| 5.7 and Cliff's delta 0.143 — the second inside T-TIM-1's own limit, which the ceiling of 0.5 is far too loose to notice. Asserting T-TIM-6's number on a row T-TIM-6 does not name is also a reading, not a citation, and it is the reading this entry is making rather than one the specification states.
+
+### The nine call sites were twenty-two
+`E-934` · email-flows · correction of E-626 and E-596
+
+**Context.** E-596 rejected making `setBySessionId` a required field of `PasswordCredentialRepository.write`, and one of its two reasons was the churn: "nine call sites in the password feature's own tests". E-626 reversed the decision and restated the same number as a measurement of what had happened: "Nine call sites in another feature's tests now pass `setBySessionId: null`."
+
+**Rejected.** Restating either in place. E-596's nine is a forecast made before the work and is accurate as history even though it was wrong; E-626's is a claim about what the branch did, and §6 permits restating a measurement on an unmerged branch — but E-626 has been read by the review and cited from its Price, and this entry carries an argument about how the count was got wrong rather than a bare digit.
+
+**Reason.** Counted at `1f85dbd` against the merge base `a24d014`: `git diff a24d014..1f85dbd -- test/ | grep '^+' | grep -c setBySessionId` reports **24 added lines**, and the call sites are **22**, in five files another feature owns — `password-check.test.ts` 11, `password-storage.test.ts` 8, `password-timing.test.ts` 1, `password-leakage.test.ts` 1, `auth-secrets-at-rest.test.ts` 1. The two remaining lines are in this feature's own `flows-password-credential-writers.test.ts`. E-596's forecast was low by a factor of two and a half, and E-626 restated the forecast instead of counting, which is the specific mistake: a number carried forward from a Rejected paragraph into a Price paragraph changes from an estimate into a claim without anybody re-measuring it.
+
+**Price.** *The command is restated in place, from `a24d014..HEAD` to `a24d014..1f85dbd`: a moving reference is the defect this entry's neighbour exists to forbid and it does not belong in the instruction for reproducing a number (E-951). Its "five files another feature owns" is corrected in E-949.* The conclusion is unchanged and stronger — twenty-two call sites of churn were worth paying, where nine were already judged to be. What is lost is that E-596 and E-626 both stand in the log with a number that is wrong, and a reader deciding how much a signature change costs in this repository will take nine from the two entries that discuss it and twenty-two only from this one.
+
+### E-614's counts were right when they were written
+`E-935` · email-flows · correction of E-614
+
+**Context.** E-614 reports what this feature had to change outside its own area: "This one needed seven", "Six test files changed with them", "Four features' files changed". All three were right at the commit that wrote them, and the branch went on growing.
+
+**Rejected.** Restating them in place. They are measurements and §6 permits it on an unmerged branch, and doing so would leave the same three numbers wrong again at the next commit, which is the whole of what E-936 is about.
+
+**Reason.** Counted at `1f85dbd` against `a24d014`. Files outside `src/core/flows/`: **ten** under `src/` — `db/actor.ts`, `db/migrations/initial-schema.ts`, `db/repositories/token.ts`, `factor/recovery/repository.ts`, `factor/recovery/service.ts`, `password/credential.ts`, `password/verify.ts`, `session/service.ts`, `token/one-time-token.ts`, `token/purpose.ts` — plus `migrations/0001_initial_schema.sql`, so **eleven** counting the shipped SQL the way E-614 counted it. Test files outside `test/flows-*`: **thirteen**. Features whose files changed: **five** — `db`, `token`, `password`, `session` and the recovery half of `factor-totp` — where E-614's own enumeration spans three and its sentence says four. E-625, E-626, E-931 and E-930's SQLSTATE predicate each added to the list after E-614 was written.
+
+**Price.** Three entries in this range now correct counts in earlier entries of the same branch, and a reader has to reach the last of them to get a number that is not stale. The reporting duty §5 imposes is also worse than E-614 makes it sound: eleven source files and thirteen test files in five features, changed by a branch none of whose reviewers is briefed on any of them.
+
+### A count of a branch's own work cannot be finished until the branch is
+`E-936` · email-flows · rule, frozen
+
+**Context.** Four entries in this feature's two ranges state a number about the branch itself, and three of them are wrong by the time the branch ends: E-596's nine call sites, E-626's restatement of it, and E-614's seven files, six test files and four features. Each was correct when it was written. E-898 and E-894 found the same shape in another range and drew a narrower conclusion about it — that a count over a branch's whole history cannot be finished before the branch is — and this is the fourth time this wave has paid for it.
+
+**Rejected.** Forbidding such counts. They are the most useful thing E-614 says; the reporting duty in §5 is worthless without a measure of how much was reported. Also rejected: a check. What a script can compare is a number in the log against a number in the tree, and it cannot know which of the log's numbers are claims about the branch — E-620's "one request", E-629's medians and E-931's ratios are all numbers that must **not** move.
+
+**Reason.** Two forms are safe and everything else is not. **State it against a named tree** — "counted at `1f85dbd` against `a24d014`" — which makes the number a historical fact that later commits cannot falsify, and which is what E-934 and E-935 do. Or **state a shape rather than a number**: "every test file of the password feature that constructs a credential", which stays true as the set grows. The unsafe form is the bare number written mid-branch about work still in progress, and it is unsafe in exactly one direction — it can only get too small.
+
+**Price.** A named tree in an entry is a commit identifier that means nothing to a reader who has not got the repository, and it dates the entry in a way the rest of the log does not. It is also advice rather than a mechanism: nothing stops the next writer producing the same defect, and the reason it keeps happening is that the number is right at the moment it is typed.
+
+### E-595 lists a column 3.2 does not have, in the sentence saying 3.2 has them all
+`E-937` · email-flows · correction of E-595
+
+**Context.** E-595's Context reads: "`velve.password_credential` in architecture 3.2 has `user_id`, `phc`, `key_version`, `scheme` and two timestamps, and 3.17's differences add none." The conclusion drawn from it — that nothing in the schema can answer S-LINK-4's question, so `set_by_session_id` has to be added — is correct and is unaffected.
+
+**Rejected.** Restating it in place. It is a claim about what the specification says, which is checkable and is not a measurement, and §6 puts that on the reason side of the line it draws.
+
+**Reason.** Architecture 3.2, lines 1172 to 1178, declares `user_id`, `phc`, `scheme`, `created_at` and `updated_at`, and **no** `key_version`. The column is added at line 2841, by 3.16's L-2 — that is, by exactly the differences the sentence says add none. So the enumeration is wrong twice in one clause: it lists a column 3.2 does not declare, and it denies the existence of the difference that declares it. Neither error touches the conclusion, because `set_by_session_id` is absent from both lists.
+
+**Price.** E-595 is the entry a reader reaches first from `credential.ts` and from the schema chapter, and it now needs a second entry read beside it to know which of its two lists a column belongs to. That is what §6 costs when an enumeration is wrong rather than a conclusion, and the enumeration is the part a reader is most likely to take at face value, because it looks like a quotation.
+
+### One table for eight exports, not a chapter for each
+`E-938` · email-flows · documentation, frozen
+
+**Context.** The API snapshot gained eight names — `ChangedUser`, `EmailFlowSurface`, `EmailNamespace`, `MagicLinkNamespace`, `MailedPasswordNamespace`, `RecoveryPasswordNamespace`, `SetPasswordResult` and `SignUpNamespace` — and the documentation covered one of them, `SetPasswordResult`, under the route that returns it. `EmailFlowSurface` appeared only in a seam table another feature wrote. Item 3 of the definition of done covers every new function, parameter and configuration, and the six remaining names appeared nowhere in `DOCUMENTATION.md` or `README.md`.
+
+**Rejected.** A section per type. Every method, parameter, route and error these eight declare is already documented under its `auth.*` name and matches `results.ts` field for field, so a section each would restate eleven routes a second time and go stale in two places instead of one.
+
+**Reason.** One table at the end of this feature's chapter, following the precedent the **One-time artefacts** chapter sets with its own fifteen-row export table: type, shape, and where it appears under its `auth.*` name. What the table adds beyond a pointer is the one thing the route documentation cannot say — that three of the namespaces are absent from `EmailFlowSurface<"username">` rather than present and refusing.
+
+**Price.** The table is a second place where the shape of `SetPasswordResult` is written down, so the two can disagree, and nothing compares a documented type to the type it documents — which is the same gap E-622 records for a neighbouring chapter. The chapter is now long enough that a reader looking for a type has to scroll past eleven routes to reach it, and `## Contents` lists chapters and not sections, so nothing points at it.
+
+### The cover address is not the caller's length when the caller's is short
+`E-939` · email-flows · correction of E-628
+
+**Context.** E-628 and the comment above `coverColumns` both end on the same claim: the local part of the cover address is drawn "at the length the caller's own local part had", and "the equal length keeps the index insert the same size". `randomLocalPart` draws `Math.max(length, UNTAKEN_LOCAL_PART_LENGTH)` characters, with the floor at sixteen, so `joe@example.com` — fifteen characters, a local part of three — gets a cover local part of sixteen and an address of twenty-eight.
+
+**Rejected.** Dropping the floor so the lengths really match. Three hexadecimal characters is twelve bits, and a local part drawn at twelve bits collides with one already taken often enough to raise on the cover insert, which is the failure E-628 exists to avoid. The floor is right and the sentence is what has to move.
+
+**Reason.** The comment now says what the code does: the drawn part is the caller's own length or the sixty-four-bit floor, whichever is longer, so a local part under sixteen characters gets a cover longer than the address the caller sent. The effect is a larger index insert on the taken branch for short addresses, which is a difference in the direction of the branch that already commits less, and it is not measurable through the KDF on `/sign-up` — but E-629 rests its whole argument on `/sign-up/passwordless`, where there is no KDF, and a comment asserting a property the code does not have is worst exactly there.
+
+**Price.** E-628 stands in the log with the claim in it, and this entry is what corrects it rather than an edit, so the code comment and the entry that produced the code now say different things about the same line. The property itself is not restored: for a local part under sixteen characters the two branches insert index entries of different sizes and nothing measures how much that is worth.
+
+### The documentation never told anybody to enqueue
+`E-940` · email-flows · correction of E-600 and E-621
+
+**Context.** E-600's Price says the hazard of running `send` inside the transaction is answered by documentation: "The documentation says so; that is the whole of the mitigation." E-621 is more specific — it says the consequence is answered "with an instruction in `README.md` and `DOCUMENTATION.md` that `send` must enqueue rather than deliver".
+
+**Rejected.** Nothing. This is a claim about the tree that was never true, not a decision that was weighed.
+
+**Reason.** `grep -n enqueue README.md DOCUMENTATION.md` returns nothing, at `1f85dbd` and at every commit of this branch. There is no such instruction and there never was. E-600 was written while the send was inside the transaction and described a mitigation the writer intended rather than one that existed; E-621 read E-600 and repeated it as a fact about the tree.
+
+**Price.** E-630 has since moved the send out of the transaction, so the mitigation is no longer needed and the missing instruction costs nothing operationally. What it cost was the argument: E-600 weighed "documented hazard" against "compensating write" and chose the first, and one half of that comparison was not on the table. A reader reconstructing why the send was ever inside the transaction will find a reason that rested on a file's contents nobody checked.
+
+### A cover artefact supersedes nothing, and E-597 says the bound applies
+`E-941` · email-flows · correction of E-597
+
+**Context.** E-597's Price concedes the row cost of the cover artefact and bounds it: "It expires on the purpose's own deadline and `maintenance.sweep` removes it, and the rate limiters bound how fast it can be done." Section 3.7's own bound — that requesting an artefact deletes the account's previous artefact of the same purpose — is not mentioned and does not apply.
+
+**Rejected.** Making the cover identifier stable per address so that the supersession does bite. E-597 rejected a fixed identifier because it names a row an import could create and the supersession would then delete that account's tokens, and an identifier derived from the address has the same defect in a narrower form. E-931 needed a stable key for a different purpose and gave it its own parameter rather than reusing the lookup identifier, for exactly this reason.
+
+**Reason.** Each ownerless mint draws a fresh `crypto.randomUUID()`, so `DELETE … WHERE user_id = $1 AND purpose = $2` matches nothing and every attempt leaves a row. A known address accumulates one row per purpose no matter how often it is asked for; an unknown address accumulates one row per attempt, until the sweep or the deadline. The two rate limiters are therefore the only bound, and the deadline is ten minutes for a magic link and an hour for a reset, so a bucket that permits *n* attempts per hour permits *n* live cover rows.
+
+**Price.** The asymmetry is the wrong way round: the branch that protects nobody is the one that costs rows. It is written down here rather than fixed, because every mechanism that bounds it needs the cover rows of one address to be findable, and a cover row that can be found by address is a cover row that answers the question the flow exists not to answer.
+
+### The fourth count of the One-time artefacts chapter, and why it moved again
+`E-942` · email-flows · file ownership, reported
+
+**Context.** E-622 counted what this branch left stale in a chapter it may not edit and found five plainly false statements and two narrowed. E-632 recounted and found six and two. The review recounted and found seven and five, plus three faults that predate this branch. E-931 has since made the chapter more wrong, so it is counted a fourth time.
+
+**Rejected.** Editing the chapter, still, for the reason §5 gives and E-622 and E-632 both endorse. Also rejected: reporting the count as a range, which reads as care and is a way of not counting.
+
+**Reason.** Counted at `1f85dbd`, statement by statement rather than paragraph by paragraph. **Fifteen plainly false:** the `replaceOneTimeToken` method row's "locks the owner's row"; "takes `SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE` before it writes"; "The statement declares what it locks, `/* locks: <schema>.user */`"; "The lock is wider than the invariant it protects … a concurrent session insert for the same user blocks"; "because the transaction carries the mail send, a hanging provider holds the lock for its whole timeout"; "the account guard runs on the lock, which has already read the row it needs"; "Every refusal it raises is an `OneTimeTokenError`"; "`expiresAt` comes back as an ISO-8601 instant in UTC — a string, not a `Date`" together with "the string form is the one every driver agrees on"; the `issue` parameter row `{ purpose, userId, payload? }`; "Issuing inside `driver.transaction` is what makes a rollback possible when the mail … cannot be sent"; and the type table's rows for `OneTimeTokenRequest`, `IssuedOneTimeToken`, `OneTimeTokenRedemption`, `OneTimeTokenReplacement` and the closing paragraph's first half. **Five narrowed:** `one_time_token_owner_unknown`'s description, which is now raised on two paths; "without the lock, eight simultaneous requests leave up to eight live tokens", which is true of serialisation and names a lock that is gone; "Repository rules section 7 requires `velve.user` to be locked before any other table", which is true of the rules and vacuous for this repository; "without them the account case surfaces as a foreign-key violation", which now has a guard on it; and "Requesting a token supersedes the user's earlier tokens of the same purpose", which was never true of a cover row (E-941). **Three that predate this branch:** the closing paragraph's second half, which E-632 already reports; "`EntityId` … which does not exist in the core", where `src/core/db/entity-id.ts` does; and "the only ones in the library that do", where `auth/maintenance.ts` reaches the table too and the static scan admits it by name.
+
+**Price.** The count has now been taken four times by four readers and come out at five, six, seven and fifteen. Six of the fifteen are E-931's own doing and are new since the review counted; the other two above the review's seven are a method difference and not a disagreement — the type table's rows and the `issue` parameter row are counted here as separate statements, and the review appears to have folded some of them together. That is the third consequence of a partition with no check behind it, and the honest reading is that nobody knows how stale that chapter is, only that it is staler each time somebody looks.
+
+### `DOCUMENTATION.md`'s error paragraph is false since E-598, and no count had it
+`E-943` · email-flows · file ownership, reported
+
+**Context.** The **One-time artefacts** chapter says "Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a code on it rather than one class per failure." E-598 added a fourth `throw` to that repository, `new TypeError("the driver must decode timestamptz into a Date")`, and E-598's own Price notes that the repository's test "now admits it by name". Neither E-622 nor E-632 counted the documentation sentence.
+
+**Rejected.** Nothing; this is a defect, not a choice.
+
+**Reason.** The sentence is false at `1f85dbd` and has been false since the commit E-598 records. It is counted in E-942's fifteen, and it gets its own entry because it is the one of them that is not about a lock, a type row or an expiry format: it is a claim about what the module can throw, in the paragraph a caller reads to decide what to catch, and a caller who writes `catch (e) { if (e instanceof OneTimeTokenError) … }` on the strength of it drops a `TypeError` that means their driver is misconfigured.
+
+**Price.** Reported and not fixed, like the rest of that chapter. It is also the second thing E-598 broke that E-598 did not notice, after the test title E-623 reports, which suggests the entry's own Price — "a decision taken in wave 1 … is overturned by the feature that needed it rather than by the feature that owns the file" — understated what that arrangement misses.
+
+### E-624 argued for a partition on a premise that is not true
+`E-944` · email-flows · correction of E-624
+
+**Context.** E-624 reports three census tests that wave 5 left unpartitioned and says the `account_disabled` census in `test/session-review-resolution.test.ts` is the dangerous one, because a merge resolved by keeping one branch's four-entry list "leaves a green test that is checking a shorter list than the tree has". It concludes that the file is worth a partition before wave 6.
+
+**Rejected.** Leaving it. E-624 stands in the log recommending a change to §5 on an argument that does not hold, and the recommendation is the kind another writer acts on.
+
+**Reason.** The assertion is `expect(naming).toEqual([…])`, which is deep array equality: a four-element expectation against a five-element tree throws. The review measured it on a trial merge of `email-flows` and `oauth` — the merged tree names `account_disabled` in five files and the four-element expectation fails. So the file behaves like the other two: it fails loudly on a bad resolution. The premise came from the wave owner's brief, which named the file as a silent merge hazard; it was taken and repeated without being run, and §5's own instruction — prove a check fails on a planted fault before trusting it — cuts in this direction too, at a check somebody else's brief said was broken.
+
+**Price.** E-624's conclusion may still be right for a weaker reason — three census files with no owner are three conflicts the second merge resolves by hand — but the reason it gave has gone, and an entry recommending a rule change on a false premise is worse than no entry. The other two findings in E-624 stand and were measured. And the general lesson is the awkward one: a brief from the wave owner arrived as a fact and was written into the log as a measurement, which is the same failure E-940 records in a different direction.
+
+### What this feature reached outside its area for the second time
+`E-945` · email-flows · file ownership, reported
+
+**Context.** E-614 reports the files this feature had to change outside its own set and says the reporting happens in the hand-off, because no writer for `db`, `token`, `password` or `factor-totp` is running. E-931 needed more of them: `src/core/db/repositories/token.ts` again, `src/core/token/one-time-token.ts` again, `src/core/token/purpose.ts` for the first time, and three of `token`'s test files — `token-repository.test.ts`, `token-static-scan.test.ts` and the census assertions in them that pin the repository's exact statements.
+
+**Rejected.** Stopping. The finding E-931 answers is the most serious of the review and the lock it removes is in `token`'s file; there is nowhere else to close it. Also rejected: leaving `token`'s census tests red for the owning feature to fix, which is not reporting, it is handing over a broken tree.
+
+**Reason.** Reported here and in the hand-off, at the time rather than afterwards, because §5 says a renegotiated file set is reported when it happens and this branch has done it once before without saying so at the time — `975c688` changed `core/password/*` after E-596 had refused to. The three census assertions that changed are the ones written to catch exactly this kind of drift: `token-static-scan.test.ts` pinned the repository's owner statement verbatim and its count of raises, and both were rewritten by this branch rather than tripped by it.
+
+**Price.** Eleven source files and thirteen test files in five features (E-935), and the reviewer's brief is the architecture rather than those features' decisions — so the person best placed to notice that `token`'s serialisation mechanism has changed under it is not the person reading this branch. The static scan is the sharper loss: a census that a foreign branch may rewrite is a census that reports what the last writer decided, not what the owning feature decided, and there is no check anywhere that says who was allowed to change it.
+
+### The oracle probe measured the machine before it measured the branches
+`E-946` · email-flows · correction of E-931's measurement
+
+**Context.** The batch half of the oracle case first took the median of thirty per-round medians and compared it against a fixed limit. Standalone it separated cleanly — 1.56 to 1.75 with the row lock in place, 1.08 to 1.17 without it, against a control of 1.05 to 1.18. Inside a full `pnpm test` it failed on the closed tree: case 1.41, control 1.30, with per-round medians swinging between 9 and 144 ms. The limit had been cut against a quiet machine and the gate does not run on one.
+
+**Rejected.** Raising the limit until the loaded run passed, which is the move that turns a check into a formality — the open tree measured 1.52 on one run and the limit would have had to reach it. Rejected too: asserting the case as a ratio of the control, which is the obvious way to divide the noise out and does not work here, because a stall lands in one of the three batches of a round and not in all of them; the ratio overlapped, 1.00 to 1.36 on the open tree against 0.72 to 1.16 on the closed one. And rejected: repeating the measurement until the control came in tight, which failed all five attempts on a busy machine and turned a real property into a test that reports the load average.
+
+**Reason.** A stall can only make a round slower. So the quickest rounds of a group are the ones no stall reached, and the low percentile of the per-round medians is what the group costs when nothing else is happening — where the median is whatever the machine was doing halfway through. Thirty rounds, tenth percentile: the open tree separates 1.48, 1.66, 1.82, 1.85, 1.88 and the closed one 1.06, 1.06, 1.09, 1.18, 1.20, with controls between 1.00 and 1.25 on both. The limit is 1.35, and the control has to be inside it too or the run is repeated rather than passed.
+
+**Price.** The measurement now reports a best case rather than a typical one, so it understates what a caller experiences on a loaded server — the number it asserts is a floor and not the gap. Thirty rounds of thirty requests is also 2700 requests per attempt and up to five attempts, which is the most expensive case in the concurrency project by an order of magnitude. And the residual it does measure, 1.06 to 1.20, is not zero: the known branch supersedes a row where the cover branch supersedes nothing and takes the foreign key's share lock where the cover's does not, so a fifth to a tenth of the separation this feature set out to close is work rather than waiting, and no lock change reaches it.
+
+### The cover registration races too, and its insert was outside the translation
+`E-947` · email-flows · correction of E-930
+
+**Context.** E-930 caught SQLSTATE 23505 around the **free** registration and answered a lost race with the cover. It left `register(discard)` outside that `try` in both places it is called, and `coverColumns` replaces only the address — the cover row keeps the name the caller sent. So in `identity: { mode: "username_email" }` the cover insert meets `user_username_key_key` and the violation escapes as `500 internal_error`. The caller controls both requests: an unused name `N`, one request `{email: <under test>, username: N}` and one `{email: <fresh>, username: N}`, fired together. Measured over 12 rounds on each sign-up row: **7 of 24 and 6 of 24 answers were 500 where the address was registered, and 0 of 24 where it was not.** The review measured 15 of 25 and 16 of 25 at a batch of 25.
+
+**Rejected.** Wrapping the two cover calls in the same `catch` and re-running the cover. It recurses on the case it is meant to answer — a cover that loses on the name loses again for the same reason — and it makes the retry count the thing that decides whether a caller sees a 500.
+
+**Reason.** The cover has its own function now, and its violations are asked about exactly as the free branch's are: a name that is now taken is answered `username_taken`, which is what the guard before the transaction answers a caller who did not race, and a cover address that collided is drawn again — twice, because a third draw at sixty-four bits is arguing with the arithmetic. The question "which index was it" also got a case it did not have: a row that carries no address has only the name index, so a violation there is the name whether or not a second read still finds it. That closes mode `username` as well, where the first version would have re-raised.
+
+**Price.** The cover now costs up to two transactions of its own on top of the free registration that lost, so a caller who loses a name race inside a lost address race pays for three. Two draws is a bound and not a proof: a second collision at sixty-four bits re-raises and is a 500, at a probability nobody will ever observe but which is written here rather than claimed away. And the branch that answers `username_taken` from inside the cover is telling the caller something true about the name while telling them nothing about the address, which is the correct split and is not obvious from reading either branch alone.
+
+### Every race and timing test ran in the mode with the fewest unique indexes
+`E-948` · email-flows · test coverage, frozen
+
+**Context.** `test/flows-review-signup-race.test.ts` was written for E-930 and ran `identity: { mode: "email" }`. So did every other race and timing file this feature added — `flows-review-redemption-race`, `flows-review-request-oracle-race`, `flows-review-send-lock-race`, `flows-review-signup-timing` — and so, by `mountAuth`'s default, did the five files that name no mode at all. Ten of the eleven flows test files exercise one mode; only `flows-review-modes.test.ts` exercises three.
+
+**Rejected.** Nothing was rejected, because nothing was considered. The mode was inherited from the fixture's default and never chosen.
+
+**Reason.** `email` is the mode with **one** unique index on `velve.user`. A test about what a unique-index race does, run in the mode that has the fewest of them, cannot see a second index and there is exactly one such index in this library. E-947's defect was invisible to the case written to catch its own class, and would have stayed invisible however many connections the case raced. The rule that falls out is narrow and checkable: **a case about a constraint runs in the mode that has the most of them**, and the race file now runs `username_email` beside `email` on every one of its cases.
+
+**Price.** Two schemas and eight connections where there were one and four, and every case runs twice. The rule is also stated here and enforced nowhere: `mountAuth`'s default is still `email`, so the next test written without thinking about it will be an `email` test, and the only thing standing between that and another E-947 is somebody reading this entry. Making the default explicit would touch a fixture four features share.
+
+### Three of the corrections are themselves imprecise, two inside the exemplar
+`E-949` · email-flows · correction of E-934, E-935 and E-936
+
+**Context.** E-934, E-935 and E-936 were written to correct three stale counts, and E-936 holds the first two up as how it should be done. The arithmetic in E-934 is right — 24 added lines, call sites 11, 8, 1, 1, 1 — and three claims around the numbers are not.
+
+**Rejected.** Restating them in place. Each is a claim about what a thing is — what counts as a feature, what counts as a test file, whether a number was ever a measurement — and §6 puts a claim on the reason side of the line it draws, however checkable it is. The one exception taken is E-934's command, which named `HEAD`; that is provenance rather than argument and is restated in place and disclosed there (E-951).
+
+**Reason.** Three corrections. E-934's "five files another feature owns" is **two** features: `password-check`, `password-storage`, `password-timing` and `password-leakage` are `password`'s, and `auth-secrets-at-rest.test.ts` is `auth-core`'s. E-935's "thirteen test files" is **twelve** `.test.ts` files plus `test/__snapshots__/api-surface.md`, which is a snapshot rather than a test and which E-624 already treats as a third thing; and its "five features" counts the features whose **source** this branch changed, where the whole diff spans **seven** once the two whose only changed files are tests are counted. E-936's Context says the counts "were correct when written" and includes E-596's nine among them, which E-934 itself calls a forecast that was never a measurement — so one of the three examples does not illustrate the rule it is offered for; and it says "four entries in this feature's two ranges state a number about the branch itself" and then names three.
+
+**Price.** The entry written to fix a class of imprecision was imprecise in the same paragraph that names the class, which is the least reassuring place for it. It also shows what E-936's rule does not reach: naming a tree fixes a *count*, and none of these three is a count — they are a category, a definition and a claim about an earlier entry, and against those a named tree buys nothing.
+
+### Four more chapters falsified, none of them reported, and the count that stops
+`E-950` · email-flows · file ownership, reported
+
+**Context.** E-622, E-632 and E-942 counted the **One-time artefacts** chapter three times between them. Four other chapters were falsified by the same branch and appear in none of those counts, two of them by a new required parameter on a documented function, which is definition-of-done item 3 and not a staleness question.
+
+**Rejected.** Editing any of them, for the reason §5 gives. Also rejected: a fifth count of the One-time artefacts chapter. Five readings have produced 5+2, 6+2, 7+5, 15+5+3 and 20+6+3, and the wave owner's judgement — adopted here — is that it will not converge, because "a statement" is undefined and the tree keeps moving under it. Each reading was honest and the disagreement is in the unit.
+
+**Reason.** Counted at `2ec29b3`. **Passwords, `1883`:** `write` and `setPassword` now require `setBySessionId` (E-626), and the identifier appears nowhere in that chapter. **Sessions, `3124`:** `issue` gained `transaction?: Driver` (E-625), undocumented. **Repositories, `543` and `549`–`551`:** "exactly three producers" of an `Actor`, over a table this branch adds a fourth row to — and E-612 calls its own addition "the third", off by one against the file it was editing. **Schema, `103`–`113`:** the canonical column list for `velve.password_credential` is missing `set_by_session_id`, which this branch added to the shipped SQL and to the TS migration both, and which its own chapter documents in a section of its own.
+
+**Price.** Two of the four are new parameters of documented functions, so the definition of done was not met for them and the branch reported them nowhere until this entry. The pattern across all five chapters is the same and is worth more than the counts: this feature changed things in five other features' documentation and looked hard at one of them, because that was the one it had been asked about. Nothing in the repository lists the chapters a branch's source changes reach, and the reason the other four were found is that somebody read the diff instead of the hand-off.
+
+### Four measurements named a server that was never there
+`E-951` · email-flows · correction of E-629 and E-931
+
+**Context.** E-629, E-931, `flows-review-signup-timing.test.ts` and `flows-review-request-oracle-race.test.ts` all record their numbers "against a local PostgreSQL 14". `VELVE_TEST_DATABASE_URL` is unset, the fallback in `test/db-postgres-connection.ts` is `localhost:5432`, and that server reports **18.3**. It was never 14.
+
+**Rejected.** A new entry naming the right version and leaving the four strings standing. A platform is the one part of a measurement a reader uses to decide whether it transfers — lock escalation, planner behaviour and `hashtextextended` are all version-sensitive — and four entries pointing at a fifth to find out which machine they ran on is worse than the mistake.
+
+**Reason.** Restated in place in all four, and disclosed inside each entry, on the wave owner's ruling: the platform is a fact about **how** a number was produced rather than an argument for a decision, so restating it is the honest repair and the disclosure settles the reading either way. No number changes; the numbers were always 18.3's.
+
+**Price.** This is E-936 one level up and it says so: the rule there is about counts going stale, and a platform string is not a count — it is a fact nobody re-derived because it looked like boilerplate, written from a habit rather than from `select version()`. E-936's remedy, naming a tree, would not have caught it. What would is asking the server, which costs one statement and which none of the four measurements did.
+
+### A borrowed census title, again, one commit after reporting the same defect
+`E-952` · email-flows · correction of E-623's scope
+
+**Context.** E-623 reports a case in `token`'s tests whose title outlived its assertion, and declines to fix it because the file belongs to another feature. One commit later this branch changed `test/token-static-scan.test.ts`'s marker census from 11 to 13 and from 6 files to 7 — and left the case titled "is one of eleven overall".
+
+**Rejected.** Reporting it rather than fixing it, which is what E-623 did with the neighbouring case. The distinction is who made it wrong: E-623's title was falsified by E-598 in a case this branch did not otherwise touch, and this one was falsified by this branch's own edit to the very assertion under it.
+
+**Reason.** A census a foreign branch may rewrite is worth what the rewriter's care is worth — E-945's price, arriving one commit later. The title reads thirteen now. `feature/oauth` changed the same assertion and did update its title, so the merged tree needs one number and that arithmetic is the wave owner's.
+
+**Price.** Two features editing one census in one wave is the shape E-945 reports and this is the second instance inside it; the number will be wrong again at the merge and correct only because somebody does the addition by hand. And the general point stands against this branch rather than for it: E-623 named the defect class in writing and the same writer committed an instance of it the next day, in the file the entry is about.
+
+### `E-932` names the locks that conflict and leaves out the one that deletes
+`E-953` · email-flows · correction of E-932
+
+**Context.** E-932 argues that the residual under a foreign key is bounded by what can hold a conflicting lock on `velve.user`, and enumerates the two statements in `src/` that take `FOR UPDATE`. The review probed the schema directly: an `UPDATE` of a non-key column, an `UPDATE` of `email`, `FOR NO KEY UPDATE` and `FOR SHARE` all pass a concurrent `FOR KEY SHARE`; `FOR UPDATE` and **`DELETE`** block it.
+
+**Rejected.** Nothing. The enumeration is incomplete, not wrong.
+
+**Reason.** `DELETE FROM velve.user` conflicts with the share lock a foreign key takes, and E-932's list does not name it. It does not change the conclusion — a delete of the row is held only for the length of the deleting transaction and no route offers one to an unauthenticated caller — but a bound stated as a list is worth exactly the completeness of the list, and this one was assembled by grepping for `FOR UPDATE`, which is a search for the shape the writer already had in mind. The partial unique index on `email` is what keeps every reachable `UPDATE` off the escalation path, and that is the load-bearing part of the argument; it survives.
+
+**Price.** The bound had to be re-derived by somebody else against the server rather than against the source, which is how the completeness gap was found and is not a method this entry can claim. It is also the second enumeration in this feature's log that was wrong while its conclusion held, after E-937.
+
+### Every malformed address serialises on one key
+`E-954` · email-flows · uniformity, frozen
+
+**Context.** E-931 keys the subject lock on the submitted address where no account resolves. `requestReset` and `requestMagicLink` both write `const address = normalised.accepted ? normalised.value : ""`, so every address the allowlist rejects — instance-wide, from every caller — reduces to the subject `""` and takes one advisory key.
+
+**Rejected.** Keying a rejected address on its raw text. It puts caller-controlled bytes with no normalisation behind them into a lock key, and the reason the empty string is there at all is E-46's: a malformed address is looked up exactly as a well-formed one that names nobody, so that the two cost the same.
+
+**Reason.** It is a throughput lane and not an oracle. A well-formed address never takes that key, so nothing an attacker does with malformed input can be observed by a caller who sends a real address, and the two branches S-TIM-6 compares are both well-formed by construction. What it costs is that a flood of malformed requests serialises against itself rather than spreading, which the two rate limiters already bound and which makes the flood cheaper for the server rather than more expensive.
+
+**Price.** One shared lock key for an unbounded set of inputs is the kind of thing that is fine until the set stops being unreachable — if a later change ever gives a malformed address a branch of its own, this key becomes the measurement point for it. Written down here so the next reader of `subjectOfAddress` finds the reasoning rather than re-deriving it from an empty string in two files.
+
+### The declared-set half of `E-930` rested on a clause that says the opposite
+`E-955` · email-flows · correction of E-930
+
+**Context.** E-930 gives two reasons that a lost race answering `500 internal_error` is a defect: that `internal_error` is not among the codes `/sign-up` declares, with 3.15 D.1 making `errors` a contract, and that 200 against 500 is the widest S-ENUM-3 difference there is. The first came from the wave owner's brief and is false.
+
+**Rejected.** Leaving it, on the ground that the conclusion is unaffected. It is unaffected, and the entry would still be teaching a reader a rule the specification does not have — in the same paragraph where it cites E-615 for treating that clause as binding, which E-615 did correctly about a different code.
+
+**Reason.** Architecture 2519–2522: *„Nicht aufgeführt, weil überall möglich: `429 rate_limited` … `403 origin_not_allowed` … `403 account_disabled` … und `500 internal_error`."* It is deliberately absent from every route's list because it is possible on all of them. So no route declares it and no route has to, and adding it to the two sign-up rows would have been wrong for a second reason rather than for the one E-930 gives. The decision not to add it stands and the S-ENUM-3 half carries the whole of it: 3.13 wants the two branches identical to the byte, and 200 against 500 is the loudest way to fail that. The code comment in `sign-up.ts` that cited the clause cites S-ENUM-3 now.
+
+**Price.** A ruling from the wave owner was taken as a reading of the specification and written into an entry as one, which is the second time in this feature — E-944 records the first, and its closing line says the two are the same failure in different directions. The pattern is that a brief arrives with the authority of the person who wrote it and the log records it with the authority of the document. Both times the correction came from somebody re-reading the specification rather than from the writer.
+
+### The cover claims the name and gives it back
+`E-956` · email-flows · enumeration, open
+
+**Context.** With E-947 in place the two branches no longer differ by a failure, and in `username_email` they still differ. The cover of E-627 rolls back, so a registration on a **taken** address does not durably claim the name it was sent, where a registration on a **free** address does. Two sequential requests read it off with no race at all: register `{email: <under test>, username: N}`, then register `{email: <fresh>, username: N}`. The second answers 200 when the first address was taken and `username_taken` when it was free. Deterministic, one bit, no privileged position.
+
+**Rejected.** Drawing a random name for the cover as well as a random address, which changes nothing — the name the caller sent stays free either way, so the second request still succeeds only on the taken branch. Also rejected: refusing to register a name that a rolled-back cover recently held, which is a durable record of the covers this endpoint has run and therefore a list of the addresses somebody asked about. And rejected, as E-629 rejected it, a cover account that persists: a library that creates a real account for every address an attacker guesses is worse than the oracle.
+
+**Reason.** It is not closable at this endpoint and it is the same shape as the residual E-602 named, one identifier further out. E-602's cover fails to survive the caller's next request because the session names no row; this cover fails to survive the caller's next *registration* because the name names no row either. Both follow from the cover being a rollback, and the rollback is what makes every field of the answer agree with a success. What can be done is done: the case is deterministic and blocking, so the day somebody closes it the test goes red and this entry is what they find.
+
+**Price.** *The count is restated in place, from a single request to two, which is what this entry's own Context, the case it pins, `README.md` and the chapter all say; a sharper single-batch form is recorded in E-959.* Mode `username_email` has a two-request address oracle that mode `email` does not, and `README.md` and this feature's chapter now say so rather than claiming the answers are identical. The blocking case also asserts the defect — the second pin in this branch after E-932's — and two green tests that would go red on a repair is as many as a feature should ever have.
+
+### `E-948` is right about the rule and wrong about the reason
+`E-957` · email-flows · correction of E-948
+
+**Context.** E-948 argues that a case about a unique-index race must run in the mode with the most unique indexes, and rests that on "`email` is the mode with **one** unique index on `velve.user`". Four of its claims are false against the tree.
+
+**Rejected.** Restating them in place. All four are categories and claims about the tree rather than counts of the work, and one of them is the entry's whole justification, which is a reason by any reading of §6.
+
+**Reason.** **One.** `migrations/0001_initial_schema.sql:27-28` and `initial-schema.ts:32-33` create both partial unique indexes unconditionally, and `identity-mode.ts` adds a `CHECK` and nothing else — so **every mode carries two**. Read charitably as *reachable* indexes it still does not pick out `email`: in mode `username` the address column stays NULL and `user_email_key` indexes nothing, so that mode has one reachable index too, and `username_email` is the only mode with two. **Two.** "Five by choice and five by `mountAuth`'s default" is **six and four**: the eleventh file, `flows-password-credential-writers.test.ts`, mounts nothing at all, and `flows-review-modes.test.ts:91` mounts `{ mode: "email" }` explicitly. Five and five works only by excluding a file that is an `email` test and including one that runs no mode. **Three.** "The race file now runs `username_email` beside `email` on every one of its cases" is false: one of four `it` blocks pairs the modes, one runs `email` alone and two run `username_email` alone — correctly, because they have no `email` counterpart by construction, but that is not what the sentence says. **Four.** The stated trade-off does not exist: `configFor` spreads `...overrides` **after** its `identity: { mode: "email" }`, so `mountAuth("x", { identity: { mode: "email" } })` compiles today, and each of the four default-mode call sites could have been made explicit without touching a file any other feature owns.
+
+**Price.** The entry written to teach a method got the fact under the method wrong, and the code comment at `flows-review-signup-race.test.ts` carried the same sentence, so the error was in two places and travelled with the fix. The rule survives and its correct statement is narrower and duller: **a case about a constraint runs in the mode that fills the most columns the constraint covers**, which for `velve.user` is `username_email` alone. What is lost is the neat claim that one mode has fewer indexes than another; what is gained is that the reason now matches what the migration does.
+
+### The tree treated all four titles alike and `E-952` said two were different
+`E-958` · email-flows · correction of E-952
+
+**Context.** E-952 fixes a case title this branch falsified and distinguishes it from the one E-623 reports: E-623's, it says, was falsified by E-598 "in a case this branch did not otherwise touch", so reporting it was right, where this one was falsified by an edit to the assertion under it. Both halves are false.
+
+**Rejected.** Nothing. There is no decision here to weigh, only a distinction that was never made.
+
+**Reason.** E-623's own Context says the opposite in its second sentence: *"the branch changed the assertion in that case from a regular expression over an ISO-8601 string to `toBeInstanceOf(Date)`"* — the same shape E-952 claims separates them. And E-623 did not decline: commit `06b5298` changed that title, `test/token-one-time-token.test.ts`, from "reports the expiry as an ISO-8601 instant in UTC" to "reports the expiry as the Date the driver decoded". E-623 was written eight commits earlier and still reads "**Rejected.** Nothing." and "reporting it is what §5 leaves". So the branch rewrote **four** titles in pre-existing files it does not own — that one, and three in `token-static-scan.test.ts`: "one of eleven overall", "reads only the owner row, and only to lock it", and "raises nothing that is not a coded refusal" — and treated all four the same way, which is to fix them. E-952 reconstructed a distinction for a decision nobody made, which is the one thing §6 forbids by name, and it did so in an entry about a title that no longer said what its assertion did.
+
+**Reason it is right anyway, stated properly.** The unit of an edit is the assertion **together with the sentence that names it**. A title is not an independent artefact, and changing `toHaveLength(11)` to `toHaveLength(13)` while leaving "one of eleven" standing is not a smaller edit but a wrong one. A title falsified elsewhere in a file this branch did not otherwise touch is a separate defect with a separate owner and is reported. That rule was applied four times and written down zero times until now.
+
+**Price.** The entry that named E-623's defect class committed an instance of it, and the entry correcting that committed a second one — a rationalisation, which is worse than the first. Three entries now describe one four-line change. What that buys is the rule above, which was implicit in four correct edits and is the kind of thing a reviewer cannot check for because there is nothing to check against.
+
+### The specification asserts for `username_email` what `username_email` cannot deliver
+`E-959` · email-flows · specification conflict, amendment queued
+
+**Context.** E-956 records the residual — the cover rolls back, so a registration on a taken address does not durably claim the name it sent — and stops at "not closable at this endpoint". It does not ask whether the specification claims the property anyway. It does.
+
+**Rejected.** Reading `S-ENUM-3` as implicitly scoped to `email`. The document scopes by mode wherever it means to: `S-ENUM-7` (`:3897`) opens *„In der Konfiguration `identity: \"email\"`…"* and `S-ENUM-8` (`:3898`) opens *„In den Konfigurationen `username` und `username_email`…"*. `S-ENUM-3` (`:3893`) opens with neither, and 3.13 (`:1638`) is mode-silent and stronger — the difference moves *„**ausschließlich** in die versendete E-Mail"*, where in `username_email` it also moves into the durable occupancy of the name. 3.4's table asserts it positively for that mode, `:1383`: *„für die E-Mail ja, für den Benutzernamen nein"*. Also rejected: treating the leak as covered by username enumerability. A name is deliberately public (`:1392`), but the attacker mints the probe name and already knows it is free; nothing they learn about the name is new, and what crosses the channel is one bit about the **address**, because the name's occupancy afterwards is a pure function of the address's.
+
+**Reason.** Two findings, and the second was in nobody's list. **`T-ENUM-3`'s threshold of *„0 abweichende Bytes"* (`:4297`) is unachievable in `username_email` by construction:** the two probes must send different names — a name can be held once — and 3.15 C puts `username` in `User`, so the body echoes it back. This branch measured it while writing the race case, whose comparison had to normalise the echoed name exactly as it already normalised the echoed address. No clause permits that normalisation. **And `test/flows-review-enumeration.test.ts`, the only file in the repository asserting byte-identity, mounts `email` in all six of its mounts,** so `T-ENUM-3` has never run in the mode where it cannot pass — E-948's own lesson, one level up, unmet in the file that lesson should have reached first. The residual also has a sharper form than E-956's two sequential requests: four racers on one taken address sharing one name give **48 answers of 200 and no refusal**, against **12 of 200 and 36 of `username_taken`** when the address is free, because every racer takes the cover, every cover rolls back and none of them claims the name. One batch, counted.
+
+**Price.** An amendment is queued and not written here, because the specification is not this feature's to edit and because the choice between narrowing `S-ENUM-3` and `T-ENUM-3` to the modes they can hold in, and stating a permitted normalisation for the echoed name, is a decision about what the library promises rather than about what it does. Until it is made, three requirement clauses and one test threshold assert something mode `username_email` does not do, and the byte-identity file cannot be pointed at that mode without going red for a reason that is not a defect. One more thing this makes visible: `CASE-STUDY.md:1197` records that CI runs `postgres:16-alpine` where these measurements ran on 18.3, so the coverage gap and the version gap are in the same place — the enumeration file has never run in that mode on either server.
+
+### Two mechanisms for one problem, and the one that cannot be silently omitted
+`E-1030` · email-flows · correction of E-625
+
+**Context.** E-625 gave `SessionService.issue` an optional `transaction?: Driver` so a flow could write a session inside a transaction it already owned, and argued that the alternative — putting `sessionMetadata` on `RouteServices` — meant editing `core/auth/instance.ts`, the file wave 4's seam exists to keep three writers out of. `oauth` met the same problem in the same wave and answered it with `boundTo(driver)`: the same service over another driver, deadlines and metadata mode carried with it. Both landed. Both compiled, both passed, and `src/core/session/service.ts` shipped two ways to do one job.
+
+**Rejected.** Keeping both, which is what the merge does by default and which no step of the gate objects to. Also rejected: keeping the parameter and deleting `boundTo`, on the ground that this branch was first — it is not the better mechanism and being first is not an argument.
+
+**Reason.** `boundTo` returns a service, so a caller that needs one either has it or does not; the parameter is a field a caller can leave out and still compile, and leaving it out writes the session on the wrong connection with nothing to say so. That is E-626's own lesson — the signature is the only thing that makes a caller answer — arriving from a sibling branch rather than from this one, at a seam this branch had already argued about once. `src/core/session/service.ts` is now byte-identical to `origin/main`'s, which is a stronger test of "one mechanism left standing" than counting call sites, and the two sites this feature owns read `sessions.boundTo(transaction).issue({…})`.
+
+**Price.** Two writers built two mechanisms for one problem in one file neither owned, in one wave, and the cost of finding out was a merge conflict and a central ruling. Nothing in the gate could have chosen between them: both are correct, both are used, and there is no check that says a module should expose one way to do a thing. E-625's Price already named the weaker half of this — "a second feature's interface grew a parameter for a third feature's problem" — and did not draw the conclusion that a second feature might grow a different one at the same time. The seam wave 4 built keeps writers out of `instance.ts` and does nothing to keep two of them out of `service.ts`.
+
+### Four census assertions, and the brief that would have reddened one
+`E-1031` · email-flows · file ownership, frozen
+
+**Context.** The merge met nine conflict markers in eight files. Four of them are censuses of the whole build, and for each one **neither side is the merged answer**: `token-static-scan.test.ts` asserted 13 markers in 7 files on this branch and 14 in 8 on `oauth`, where the merged tree has **16 in 9**; `db-schema-conformance.test.ts` added `password_credential.set_by_session_id` here and `oauth_flow.link_from_session_id` there, and picking a side drops a column; `auth-surface-namespaces.test.ts` had this branch removing `password` and `signUp` from the not-yet-built list and `oauth` removing `identity`, where the merged answer removes all three; `session-review-resolution.test.ts` listed four files naming `account_disabled` on each side, and the merged tree has **five**.
+
+**Rejected.** Resolving any of them by choosing. A conflict in a count is not a disagreement about what to do, it is two measurements of two different trees, and neither was taken of this one.
+
+**Reason.** Counted in the merged tree, and the title of the marker census rewritten in the same edit, because E-958 fixed that the unit is the assertion together with the sentence naming it — the third rewrite of that one title, after E-952's and the one before it. The wave owner's brief said `session-review-resolution` needed **four**, on the ground that `session/service.ts` is excluded by the assertion. It is not excluded: `naming` filters every `src/core` file matching `account_disabled` with no exclusion, and both pre-merge sides listed that file explicitly in their expected array. Four would have gone red. **A brief from the wave owner is not evidence**, and this is the second time in this wave that one carried a false fact into this branch's hands — E-955 records the first, where a ruling cited 3.15 D.1 for a rule the specification states the opposite of at 2519–2522. Both were caught by reading the source rather than by the writer noticing; this one was caught before it shipped and the other after.
+
+**Price.** Third instance of E-945's price in one wave: a census a foreign branch may rewrite reports what the last writer decided, and one with no owner at all is resolved correctly only by somebody counting. E-624 named three such files and asked for a partition before wave 6; the merge has now added a fourth to the list and the partition does not exist. Nothing here scales — four censuses is what two features cost, and the next wave has more features than this one.
+
+### The union is the resolution, and no check can tell a bad one
+`E-1032` · email-flows · file ownership, frozen
+
+**Context.** `CASE-STUDY.md` is the file §5 makes a sanctioned exception for, and every feature appends to it. Two features appending in one wave produce one conflict spanning both blocks whole — 989 lines from `oauth`, 634 from this branch — and git offers to keep either.
+
+**Rejected.** Choosing a side, which is what a conflict marker invites and which drops the other feature's entire wave of entries. Also rejected: interleaving by number, which reorders what `main` already carries for no gain, since the log is read by identifier and not by position.
+
+**Reason.** Concatenate, choose nothing: what `main` carries first, this branch's block after it. `pnpm check:log-append` reports **+635 −0** against the new merge base at the merge commit `723121a`, and **+679 −0** at `7c42f1b` once this range's entries are in — the tree is named because E-936 says a count of a branch's own work has to be (E-1034) — and the entry's point is that the same command reports the same thing after a **bad** resolution. It measures deletions against the merge base with `git diff <base>...HEAD --numstat`, and entries dropped during a conflict were never at the base, so their loss nets out as a smaller addition rather than as a deletion. §6 states this and calls the resolved-badly merge conflict "a routine mistake with no other detector". This merge is the worked example the rule has never had.
+
+**Price.** *The two sentences below are false for this merge and are answered by E-1034 rather than edited; the measurement above is restated in place with its tree named, which §6 permits.* The step that catches a bad resolution is a human concatenating, and nothing else — not the check, not the tests, not the reviewer, who has no reason to count a sibling's entries. It also gets worse per wave rather than per feature: three features appending produce three-way conflicts in one file, and the failure is silent in exactly the direction where the person who would notice has already merged.
+
+### Measuring the commit, which is not the same as measuring the worktree
+`E-1033` · email-flows · method, frozen
+
+**Context.** Something on this machine writes duplicate copies of tracked files — `token 2.ts`, `testing 2.mjs`, later `testing 3.mjs` — into `src/`, `test/` and `dist/` while a run is in progress. It cost this branch two false failures: `auth-testing-barriers.test.ts` twice, on a `dist/testing 2.mjs` that appeared between the build and the assertion.
+
+**Rejected.** Scanning for the duplicates and failing on them, which `E-996` measured and refused: the suffix increments, a scan sees only the level it is pointed at, and it runs after the tier where the interference happens during one. Also rejected: deleting them before each run, which this branch did for several rounds and which is why the failures were intermittent rather than absent — the same cause **removes** files mid-run, and no scan catches a file that is gone.
+
+**Reason.** Clone the branch at its exact commit into a directory outside the synchronised tree, install from the frozen lockfile, and run the tiers there. **What makes it a method rather than a workaround is the diff against the worktree**: `diff -r` over every tracked path, excluding `node_modules`, `dist` and `.git`, must produce nothing. Without it the clone is simply a different tree and a green run says nothing about the one under review. With it, the run is a statement about the **commit**, which is the right statement for a merge. Measured that way at `723121a`: gate exit 0 twice — 179 files passed and 2 skipped, 1930 tests passed and 13 skipped of 1943 — nightly 181 files and 1943 tests, release 1 file and 5 tests, and no duplicate artefact in the clone's `dist` at all.
+
+**Price.** A full install and three tiers in a scratch directory for every verification, and a second copy of the repository on disk. The method also proves less than it appears to: it says the commit is green on this machine, and a worktree that cannot be trusted to hold still is still where the work is done, so every edit between two clean-clone runs is unverified until the next one. The underlying fault is the environment's and is not fixed by anything in this repository — it is recorded from three independent directions now, `E-996`'s measurement, the wave owner hitting it on the `oauth` merge with the same commit red in the worktree and green in a clone, and this branch's two false barrier failures.
+
+### The entry about what the gate catches was the one thing not measured against it
+`E-1034` · email-flows · correction of E-1032
+
+**Context.** E-1032's Reason says `pnpm check:log-append` "reports the same thing after a **bad** resolution", on the premise that "entries dropped during a conflict were never at the base"; its Price says the catching step is "a human concatenating, and nothing else — not the check, **not the tests**, not the reviewer"; and its heading says no check can tell a bad resolution from a good one. All three were written from §6's statement of the rule and none of them was run.
+
+**Rejected.** Restating them in place. The measurement in that entry is restated there, with its tree named, because §6 permits a measurement; the three claims above are reasons and are answered here. Also rejected: narrowing the heading and leaving the body, which would leave the false half in the paragraph a reader quotes.
+
+**Reason.** Both resolutions reconstructed against `7c42f1b`, in a clean clone, rather than reasoned about. **The premise is false for this merge.** `oauth` merged as `#35`, which is `27e291e`, which is this branch's merge base — so its entries **were** at the base, and dropping them is a deletion the check can see. Keeping only this branch's side: `check:log-append` exits 1 naming the lines lost, and `test/decision-log.test.ts` fails on **74** citations resolving to no entry. Keeping only `main`'s side: `decision-log` fails on **76**. So `check:log-append` catches one direction and **`test/decision-log.test.ts` catches both**, because decision identifiers are cited from code, tests and documentation and it refuses a citation that resolves to nothing — a thing §6 lists among what it catches, built for renumbering and detecting this. The premise does hold between two feature branches neither of which has merged, which is the case §6 was written for and is not this one. What survives of E-1032 is its resolution: concatenate, choose nothing.
+
+**The reconstructions disagree in one place and the narrower reading is the true one.** In the keep-`main` direction the gate measured `+2 −0` and exit 0; replacing the file wholesale, as here, gives exit 1 — not on deletions but on the check's other clause, that the branch must have added at least one line. Any addition anywhere else in the file defeats that clause, and the gate's reconstruction had two. So the deletion half of `check:log-append` really is silent in that direction, and the half that fires is the one a single unrelated line switches off.
+
+**And the authority this inherited from is `CLAUDE.md` §6 itself,** whose own sentence cannot hold: *"resolving that conflict by keeping one's own side drops a sibling's entries silently — the branch is green, the entries are gone, and the sibling has already merged."* If the sibling has already merged, its entries are at the base and the branch is not green. That is a defect in the file that states the rule; the wave owner takes it on a branch of its own.
+
+**Price.** Third instance in this wave of the class E-1031 names four paragraphs above it — a rule arriving with authority, recorded as a measured fact, never measured — after E-955, which took a ruling, and E-1031, which took a brief. This one took the rules file, which is the strongest form of it: the three sources a writer is least likely to check are the specification, the wave owner and `CLAUDE.md`, and this feature has now been wrong from all three. E-1031's own attribution is also too kind to the process, and the sharper version belongs here: the four-against-five error did not merely start in a brief, it **passed through the gate twice unexamined**, because the gate read the conflict hunk through a `head -40` that cut the expected array short and never opened the file. Two independent readers and neither opened the source. What it costs a reader is that the entry written to tell the next merger what to rely on now needs a second entry read beside it, and the claim that survives is narrower and far less quotable than the one it replaces.
+
+### The flow table declares nine columns and has ten
+`E-1095` · specfix · specification, corrected
+
+**Context.** Architecture 3.2 spells `velve.oauth_flow` out in full: `state_sha256`, `provider`, `pkce_verifier_enc`, `key_version`, `nonce`, `redirect_path`, `link_to_user_id`, `created_at`, `expires_at`. `oauth` added a tenth, `link_from_session_id uuid`, and recorded in E-589 that the specification was now wrong about a table it declares and that no test said so. Verified here against the tree rather than against that entry: `migrations/0001_initial_schema.sql:169` and `src/core/db/migrations/initial-schema.ts:174` both create ten columns, and `test/db-schema-conformance.test.ts` asserts the list against a live migrated database, so the shipped column set is the one that passes a check and not the one a branch believed it had written.
+
+**Rejected.** Adding the column to 3.17 instead of 3.2, which is where the other schema differences live. Rejected because 3.17 is headed "the resulting schema changes" and carries the differences that follow from section 3.16's gaps and from the migration module; this column follows from neither. It belongs where the table is declared.
+
+**Reason.** The column joins 3.2's `CREATE TABLE`, and 3.10 gains a paragraph saying why it is there and why it carries no foreign key. Both halves of that paragraph are E-589's argument carried across and not a new one: `ON DELETE CASCADE` deletes the whole flow and refuses the link when the user signs out mid-flow, and `ON DELETE SET NULL` gives nothing an owner-scoped delete matching zero rows does not already give. S-FIX-1 is what needs the value, and the paragraph cites it, because a column with no clause behind it is the same defect one step smaller.
+
+**Price.** 3.2 now declares a column whose only justification in the document is a paragraph in 3.10, so a reader working from the schema alone reads a `uuid` with no foreign key and has to go looking. S-TOKEN-5 still counts thirteen user-bound tables and is still right, because this column deliberately does not reference `velve.user` — which means the schema now has a session identifier that no cascade cleans up, and the specification says that in a comment rather than in a requirement.
+
+### S-LINK-4 asks a question the schema could not answer
+`E-1097` · specfix · specification, corrected
+
+**Context.** S-LINK-4 turns on whether the existing password was set **in a different session** from the one confirming the address. `velve.password_credential` in 3.2 has `user_id`, `phc`, `scheme` and two timestamps, and 3.17's differences add `key_version` and nothing else. `email-flows` added `set_by_session_id uuid` and recorded in E-595 that the specification describes a table the tree does not have. Verified against the tree: `migrations/0001_initial_schema.sql:41` carries the column, and `test/db-schema-conformance.test.ts` asserts it against a live database — the same instrument that settled E-1095.
+
+**Rejected.** Putting the column in 3.2 beside the other five, which is where E-1095 put its column an hour earlier. Rejected because 3.2's `password_credential` is the pre-L-2 form — `phc text`, no `key_version` — and 3.17 is the section that carries every difference from it. A column added to 3.2 would be the only part of that table 3.17 does not restate, and the two sections would then disagree about which one is the current shape. Also rejected: naming the column inside S-LINK-4 itself. That requirement is written in terms of sessions and not of columns, as every other requirement in its class is, and a schema name in the requirement text would make the clause unimplementable by any other storage.
+
+**Reason.** An `ALTER TABLE` in 3.17's fenced block, in the shape the `recovery_code` difference beside it already uses, and the semantics in 3.16 where L-12 states the rule the column serves. The semantics are the load-bearing half and are E-595's argument unchanged: no foreign key, because `ON DELETE CASCADE` deletes the credential when the session that wrote it is revoked and `ON DELETE SET NULL` erases the answer at the exact moment the rule asks for it — the confirming flow revokes sessions. **NULL means unknown and is read as a different session**, so an unrecorded provenance costs the password rather than defeating the rule.
+
+**Price.** The rule now fails closed against a row written before the column existed, and the specification says so in a place — 3.16, L-12 — that a reader of the requirement list does not necessarily reach. S-LINK-4's own text is unchanged, so a reader who stops there still cannot tell how the question is decided.
+
+### One route without an origin check, and there are two of them
+`E-1096` · specfix · specification, corrected
+
+**Context.** Three clauses fix the exempt set at one and name it: S-CSRF-1 excepts `GET /sign-in/oauth/callback/:provider` and nothing else, T-CSRF-1's threshold is **genau 1** route with `exempt` and says which, and 3.15 D.3 calls the callback the only route without an origin check. E-576 recorded the disagreement and handed the repair to a specification branch. Established here from the route table rather than from that entry: `src/core/oauth/routes.ts:135` and `:154` are the only two `originCheck: "exempt"` declarations in the tree, on `signIn.oauth.callback` and `signIn.oauth.callbackFormPost`, and no third exists.
+
+**Rejected.** Widening S-CSRF-1 to except the path rather than the two methods — "every route except `/sign-in/oauth/callback/:provider`". It reads shorter and it exempts a route nobody has declared yet: the path would carry the exception, so a later PUT or DELETE on it would inherit one. The whole value of the clause is that a new exempt route has to be written into the specification before it can exist.
+
+**Reason.** Both methods are named in S-CSRF-1, the threshold becomes **genau 2** with both route names in it, and D.3 gains the `form_post` row and says the callback stands in the table twice. The reason given for the second is the reason E-541 gave and not a better one: a provider's cross-site POST carries no `Origin` the library may compare, and `form_post` is what Apple requires once the email scope is asked for.
+
+**Price.** D.3's route counts move with the row, from 46 · 44 · 38 to 47 · 45 · 39, and **that arithmetic is the specification's own and is not a statement about the tree** — only 27 routes exist at HEAD, because the factor and WebAuthn routes are unbuilt. The three counts were checkable against the table before this change and still are: the row is present in every mode, `email` drops the two `/username/*` rows and `username` six more. What is not checkable is whether the design totals were ever right, and this branch did not find out; it moved them by one because it added one row.
+
+### Byte-identity modulo what the caller itself sent
+`E-1098` · specfix · specification, corrected
+
+**Context.** S-ENUM-3 demands byte-identical response bodies for a taken and a free address, and T-ENUM-3's threshold is **0 abweichende Bytes**. In `identity: "username_email"` that is not reachable and the reason is not a leak: `username` is unique, so two registrations cannot send the same one, and 3.15 C puts `username` in `User`, so the answer echoes back what the caller sent. `email-flows` met it while writing its race case — its comparison had to normalise the echoed name exactly as it already normalised the echoed address, and the address normalisation carries a specification citation while the name normalisation carries none.
+
+**Rejected.** Dropping `username` from the registration answer so that the two probes agree byte for byte. It removes a field 3.15 C declares, from the one response that has to establish what the caller just created, to buy identity in a comparison the caller could do arithmetic on anyway. Also rejected: scoping S-ENUM-3 to `identity: "email"` and leaving `username_email` with no clause at all — the requirement holds in that mode, in everything except the echo.
+
+**Reason.** The requirement now says byte-identical **except for the fields the caller supplied and the answer returns**, and says why in one sentence: echoing back what the caller sent tells the caller nothing they did not already know. T-ENUM-3's threshold splits — 0 differing bytes in status and header set, 0 in the body once the caller's own fields are normalised — and its case says the two probes must send different names of the same length. *Both clauses were amended again later on this branch, so the two sentences above describe less than the tree now carries: the requirement also names the address as the first echoed field, and the case also gives the reason the names must differ rather than only the instruction. This note is the whole of the in-place edit — nothing above it was replaced — and what was wrong about this entry's own argument is corrected in E-1110 rather than here (E-1113).* The mode-silence of S-ENUM-3 was checked before touching it and is not a drafting accident: S-ENUM-7 opens *„In der Konfiguration `identity: "email"`…"* and S-ENUM-8 opens *„In den Konfigurationen `username` und `username_email`…"*, so the document scopes when it means to, and a clause that does not is meant to hold everywhere. It still does; only its notion of identical moved.
+
+**Price.** "The fields the caller supplied" is a phrase a reader has to apply rather than check, and it is exactly the phrase under which a real leak could be smuggled back: a field the server derives from what the caller sent is not what the caller sent, and nothing in the clause spells that boundary out. The requirement also now covers strictly less than it appeared to, and the entry beside it is the only place that says the removed part was never satisfiable rather than newly given up.
+
+### The difference does not go exclusively into the mail, in any configuration
+`E-1099` · specfix · specification, corrected — and one defect nobody reported
+
+**Context.** 3.13 says *„Der Unterschied wandert **ausschließlich** in die versendete E-Mail"* and 3.4's table gives `username_email` *„für die E-Mail ja"*. E-956 established that `username_email` breaks both: the cover rolls back, so a registration on a taken address does not durably claim the name it was sent and a registration on a free address does, which two requests read off as one bit. E-1098's repair does not touch that — no normalisation of a response reaches a row — so the two are separate defects with separate repairs, which is what `DOCUMENTATION.md` states under *"For whoever amends the specification"*.
+
+**Rejected.** Removing the enumeration promise from `username_email` altogether and letting the table say the address is unprotected there. Rejected because it is false in the direction that matters to somebody choosing a mode: a single `POST /sign-up` still does not read out existence, the status, the headers, the body modulo the echo, the statements run and the mail sent are all the same, and a reader told "no protection" would provision differently than the truth warrants. The honest repair is the narrow one — name the residual, name that it is deterministic, name what closing it would cost. Also rejected, following E-956: a random cover name, which changes nothing because the caller's name stays free either way; a durable record of covered names, which is a list of the addresses somebody probed; and a persisting cover account, which is worse than the oracle.
+
+**Reason.** 3.13 keeps the sentence and loses the word: the difference moves into the mail, and *exclusively* there it does not. Two residual-leak paragraphs follow it, 3.4's column says which mode has which, and 3.4 gains a third consequence pointing at them. **And the fifth repair as it was handed to this branch was scoped too narrowly, which is this branch's own finding.** `ausschließlich` is false in **every** configuration, not only `username_email`, and the mechanism is E-602's rather than E-956's: the cover is a rolled-back registration, so its session token names no row, and the caller's next `GET /session` answers `null` where a real registration answers with a session. That is verified against the tree and not against an entry — `test/flows-review-enumeration.test.ts:87` pins it, and `mountAuth` is typed `VelveAuthConfig<"email">`, so the test demonstrating it runs in the mode 3.4 called *„vollständig"*. E-602 named the residual and framed 3.13 as the **justification** for the design rather than as a clause the design falsifies, so nobody carried it here; it is the first residual leak now, and `email`'s column reads "complete except for the first residual leak from 3.13".
+
+**Price.** 3.4's headline property for `email` is gone, and it was the reason to choose that mode. What replaces it is accurate and much harder to act on: two modes that both leak on the second request, one of which leaks again through a name. A reader comparing versions cannot tell from the text that `vollständig` was false from the day the cover was built rather than newly given up — E-602 predates this branch by a wave — and only this entry says so. The second-order cost is that the brief for this branch listed five defects and this is the sixth, found by reading the tree instead of the report, which is the whole reason item 3 of the brief exists.
+
+### H14 counts two cookies and names a third in its own last clause
+`E-1100` · specfix · specification, corrected — nobody reported it
+
+**Context.** Section 1's row H14 opens *„Zwei Cookies: `__Host-velve_session` und `__Host-velve_pending`"* and closes, four clauses later, with *„der OAuth-State steht in der Datenbank, das Cookie hält nur einen Zeiger (C52)"*. The row counts two and names a third in its own sentence. `oauth` shipped that third cookie: `src/core/http/cookies.ts:26` enumerates `DEFAULT_COOKIE_NAMES` as `__Host-velve_session`, `__Host-velve_pending` and `__Host-velve_oauth_state`, and the comment above it cites S-COOKIE-6, whose whole content is that the set is enumerated in the source. `DOCUMENTATION.md` already says three.
+
+**Rejected.** Leaving it, on the ground that section 1 is a comparison against another library and not a requirement. Rejected because S-COOKIE-6 states no number and T-COOKIE-6 compares against the source constant, so H14 is the **only** place in the specification that counts the cookies — and it is the place a reader goes to find out how many there are.
+
+**Reason.** Three, named. Nothing else in the row changes, including the last clause, which was right all along.
+
+**Price.** This one was not on the branch's list and was found by a search for clauses wave 5 falsified, not by a report — E-583 recorded the neighbouring row H18 as a deviation and did not look at H14, which is what a report scoped to the clause you deviated from looks like from the outside. Nothing prevents the next added cookie from leaving the count at three: the number lives in prose in a comparison table, and the only check near it compares a source constant against a test suite.
+
+### Six routes read the pending cookie and four clauses say four
+`E-1101` · specfix · specification, reported not repaired
+
+**Context.** 3.6, 3.15 D.3, S-CACHE-4 and T-CACHE-4 all say exactly four routes read `__Host-velve_pending` and that every other route ignores it entirely, and section 1's D16 restates it twice more. The tree decides readership with `readsPendingCookie` (`src/core/http/route.ts:200`), which reads `pendingCookie === "readable"` and not `caller`, and `src/core/auth/routes.ts:301` and `:322` declare it on `pending.read` and `pending.cancel`, which are `caller: "anonymous"`. `test/auth-route-table.test.ts:200` asserts the reader set has size **six** and its own name says *"and no sixth"*.
+
+**Rejected.** Repairing it here. Three reasons, and the first is the strongest: the four `caller: "pending"` routes **do not exist in the tree at all** — no factor or WebAuthn route is built — so the shipped reader set is two routes the specification says ignore the cookie, and any requirement text written now describes a half-built route set. Second, the repair spans six locations across four sections plus a live error message in `src/core/auth/startup.ts:41`, and this branch does not touch `src/`. Third, the count is not wave 5's: E-530 records the same finding from the gate's third range and resolved it by adding a test constant rather than by recording a specification debt.
+
+**Reason.** It is written down with an owner instead, which is the mechanism this repository already has for exactly this — E-576 did it for the exempt-route count and E-1096 is that promise being kept. The distinction the amendment will need is the one E-530 already found and did not carry into the document: S-CACHE-4 conflates **authority** over the pending state, which is four routes and is `caller: "pending"`, with **readership** of the cookie, which is six and is `pendingCookie`. Splitting those two is a decision about what the requirement is for, not a count to be corrected, and it belongs to whoever owns 3.6. There was no third option to weigh: repairing it and reporting it were the two.
+
+**Price.** Four clauses of a binding document stay wrong on purpose, and the entry that says so is in a log rather than in the document. `test/auth-route-table.test.ts` is the only thing holding the number, it holds six, and a reader who trusts the specification over the test will build against four. If the amendment does not happen, this entry is the record that it was promised — the same sentence E-576 wrote, which is a worse sign the second time.
+
+### Repairing a route's name in one table while another still declares the old one
+`E-1102` · specfix · specification, corrected — introduced by this branch
+
+**Context.** E-1096 wrote `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` into S-CSRF-1 and T-CSRF-1 because those are the names in the tree. Two thousand lines above them, 3.15 B.1's `SignInNamespace` still declared `oauth.finish` and B.9's rate-limit table still had a `signIn.oauth.finish` row; B.7's `IdentityNamespace` declared `linkOAuth.start`, its prose explained `linkOAuth.start`, and B.9 had an `identity.linkOAuth.start` row. `nestServerMethods` (`src/core/auth/surface.ts:15-35`) splits each route name on `.` and hangs one method at the leaf, so the shipped surface has no `finish` and no `linkOAuth` at all.
+
+**Rejected.** Renaming the tree to match the document. The route names are shipped public surface guarded by the API snapshot, `identity.link.start` matches the path `/identity/link/start` that D.3 already carried, and a specification branch that edits `src/` to make its own prose true has inverted the direction the whole review structure runs in.
+
+**Reason.** Six places moved, in each language: the `oauth` namespace gains `callback` and `callbackFormPost` in place of `finish`, B.1's heading count goes from `signIn` (7) to (8), B.9's row names both, `linkOAuth` becomes `link` in the interface, in the prose and in B.9's row. The prose kept its argument — one callback address, `link_to_user_id` already knows which — and gained the sentence it now needs: there are two callback **methods** and that is not a branch the client must guess but the two delivery forms of one path, because out of every route comes exactly one server method.
+
+**Price.** This is a defect the branch introduced, not one it found. The name was checked against the tree at the site being repaired and nowhere else, which is precisely the failure E-1100 accuses an earlier entry of and which E-1104 below records this branch committing in its own turn. A document with the same identifier in two shapes reads as two things where there is one, and the only reason it was caught is that a reviewer read the file rather than the diff.
+
+### One count moved and its sibling did not
+`E-1103` · specfix · specification, corrected — introduced by this branch
+
+**Context.** E-1096 added a row to 3.15 D.3 and moved its three route counts, 46 · 44 · 38 to 47 · 45 · 39. `AuthSurface`'s method counts sit in B's preamble — 54 in `username_email`, 51 in `email`, 45 in `username` — and did not move. `nestServerMethods` creates exactly one method per route, so the two counts are locked together by construction and the added route is present in every mode, OAuth being mode-independent.
+
+**Rejected.** Deleting all six numbers on the ground that neither set is checkable against a tree with 27 routes. It throws away the one property the numbers still have — they are checkable against the document's own tables, which is how the 46 · 44 · 38 split was verified in the first place — to avoid maintaining an arithmetic relation that is two subtractions wide.
+
+**Reason.** 55 · 52 · 46, one more in each mode, derived from the mechanism rather than by recounting a surface that does not exist yet. The gaps between the two sets are unchanged at 8 · 7 · 7 and are the methods with no route — `user.*`, `maintenance.sweep`, the four resolvers B.3 exempts — which is what makes the increment safe to apply without enumerating the whole surface.
+
+**Price.** Two coupled counts, in two languages, with nothing checking the coupling; the next added route has the same two-of-four chance of moving one pair and not the other. B.1's `signIn` (8) is now a third number in the same relation, so the coupling is three-way and stated nowhere the reader looks.
+
+### H18 is four rows below the H14 this branch repaired
+`E-1104` · specfix · specification, corrected — the defect this branch named and then committed
+
+**Context.** Section 1 H18 says *„`SameSite=None` ist mit `__Host-` und der Origin-Prüfung nicht vorgesehen"*. The library sets it: `CROSS_SITE_ATTRIBUTES` (`src/core/http/cookies.ts:78`) on the state pointer of a `form_post` flow, and the code above it quotes H18 and declares itself a deviation. 3.15 C's `CookieInstruction.attributes` compounds it — a single string literal, `SameSite=Lax`, where the tree's `CookieAttributes` is a three-way union and `OAuthRedirect.stateCookie` returns a value the declared type cannot hold.
+
+**Rejected.** Marking H18 *„Anders gelöst"* and describing the deviation there. The row is about `advanced.defaultCookieAttributes`, a **globally settable** attribute default, and that really is omitted; changing the verdict would say the library offers something it does not, to fix a sentence in the justification column.
+
+**Reason.** The verdict stays `Weglassen` and the false half of the justification goes: globally settable cookie attributes do not exist, and `SameSite=None` is carried by exactly one cookie — the state pointer of a `form_post` flow — which authenticates nothing on a route that has no origin check to lose. That is E-582's bound restated where the claim was, not a new argument. `CookieInstruction.attributes` becomes the three-literal union the tree exports.
+
+**Price.** **E-1100's own Price criticises an earlier entry for reporting H18 and never looking at H14** — *"what a report scoped to the clause you deviated from looks like from the outside"* — and this branch then repaired H14 and did not look at H18, four rows below it, in the same table, in the same commit. The same defect, in the entry that names it. What makes it worth more than an apology is the pattern behind both: a clause is checked at the point where somebody had a reason to look, and its neighbours are not, whoever is looking and however recently they wrote the rule about it.
+
+### Nothing in the specification can configure OAuth
+`E-1105` · specfix · specification, corrected
+
+**Context.** 3.15 A.8's `OAuthConfig` declares `providers`, `trustedProviders` and `storeTokens`. `callbackBaseUrl` is a non-optional field of the shipped interface (`src/core/oauth/config.ts:82`) and builds every provider's `redirect_uri`; S-REDIR-6 is why it exists rather than being derived from a request header (E-540). The string `callbackBaseUrl` appears zero times in either specification file, so a reader building from 3.15 A.8 alone cannot start the library.
+
+**Rejected.** Deriving the field's description from the code comment beside it. The comment says what the value is; the reason it is configured rather than derived is a requirement, so the clause cites `S-REDIR-6` and the code's own wording is not copied in.
+
+**Reason.** One line in the interface, marked absolute and with the provider id appended, citing `S-REDIR-6`.
+
+**Price.** One further divergence in the same interface is **reported and not repaired**: the tree's custom-provider index signature is `ProviderCredentials | GenericProviderConfig` where the document has `GenericProviderConfig` alone. Widening it in the document would declare a configuration legal, which is a design question and not a transcription, and this branch has no ruling on it. It joins E-1101's list.
+
+### Seven inner causes, and the tree has eight
+`E-1106` · specfix · specification, corrected
+
+**Context.** 3.15 F.1 maps each outer error code to the inner causes that collapse into it. The `oauth_flow_invalid` row lists seven; `src/core/http/error-map.ts:248-255` maps eight, the eighth being `link_session_gone`, which `oauth` added in `27e291e` when the session a link started in can no longer be found.
+
+**Rejected.** Nothing on this one — the row is a list, the list was short by one, and the eighth is in the same file the other seven are read from.
+
+**Reason.** `link_session_gone` joins the row.
+
+**Price.** A **second divergence in the same table is reported and not repaired**, and it is wider than this one: four rows write `user_disabled` where the tree carries four context-suffixed names — `user_disabled_on_sign_in` for `invalid_credentials`, `user_disabled_on_token_redemption` for `invalid_token`, `user_disabled_on_oauth_flow` for `oauth_flow_invalid`, `user_disabled_on_webauthn_assertion` for `webauthn_credential_rejected`. The mapping is one-to-one and mechanically checkable, and it is **wave 1's** (`e270f86`), not wave 5's. This branch repairs the class it was given and does not reach a wave back on its own authority; the four pairs are written out here so that whoever takes it does not have to find them again. It joins E-1101's list.
+
+### A translation test proves the two files agree, not that either is true
+`E-1107` · specfix · what the checks cannot see
+
+**Context.** `test/architecture-translation.test.ts` compares headings, the identifier census, table heights and fenced-block counts, and it was green after every commit on this branch — including the ones carrying F1 through F5 and M1 through M3 of the review. It was green because the translation is faithful: **every one of those defects sat in both files, identically, and the check is built to pass exactly that.**
+
+**Rejected.** Treating it as a weakness of the check and proposing a stronger one. There is no version of a two-document comparison that can tell a true claim from a false one, and a check that tried would be a second specification.
+
+**Reason.** It is written down instead, because the failure it enables is a reader — or a writer — reading a green suite as evidence the document is right. The gate's other instruments have the same shape: `db-schema-conformance` proved the column list matched a live database, which is why amendments 1 and 3 were safe, and nothing in the suite could have said a word about whether `S-ENUM-3`'s stated reason was true. What caught F1 was a human opening `flows-review-signup-race.test.ts`.
+
+**Price.** The distinction has to be re-made by every reader, since the check reports success in the same words either way. The narrower statement — the two files say the same thing — is the one worth quoting, and it is not the one a green tick looks like.
+
+### The brief was a prohibition and the gap was read in this branch's favour
+`E-1108` · specfix · file ownership, disclosed
+
+**Context.** §5 fixes the set of files a feature may touch **before it starts**. This branch was given a prohibition instead — do not touch `src/` — and prohibitions and allowlists differ exactly on the files neither names. `test/db-schema-conformance.test.ts` was one of those, and its comment said the two session columns were carried by neither 3.2 nor 3.17, which the same commit made false.
+
+**Rejected.** Stopping and reporting it, which is what §5 prescribes for a file outside the set. Rejected on the ground that the comment was made false by this branch's own change and that a comment-only edit alters no behaviour — which is a reading of the gap in this branch's favour and is disclosed here as one rather than presented as compliance.
+
+**Reason.** The edit is right and the authority for it is thin. It stays, and the thinness is on the record, because the alternative was to merge a repair that knowingly left a false sentence in a file the branch had made false.
+
+**Price.** A prohibition read as an allowlist by whoever is inside it will keep producing edits that are individually defensible, and the next one may not be comment-only. The repair is upstream of this branch: a brief that lists the files, the way §5 says.
+
+### A threshold for a test that never runs alone
+`E-1109` · specfix · specification, corrected — test threshold, frozen
+
+**Context.** Section 6's `T-RAND-Verteilung` fixed α **per position**: *„Chi-Quadrat je Position p > 0,001; Monobit p > 0,001; Runs p > 0,001"*, with N = 100 000 in the same row. `test/token-review-randomness.test.ts` runs forty-five such tests in one file — 42 full character positions, the final position that can carry only sixteen characters, monobit, runs — and they fail the file together. At α = 0.001 each that is a false-failure rate of 1 − (1 − 0.001)⁴⁵ under independence, about 4.4%; **measured rather than derived, it is 4.29191% over 1 000 020 trials by one gate and 500 000 by a writer** — one honest run in twenty-three. Two nightly runs went red on it this session, on a branch that does not touch the generator, costing an investigation, a retracted explanation and a pooled million-token measurement to establish that the generator is sound. The file's own comment had said so — *"forty-two independent chi-square tests at p = 0.001 reject about four runs in a hundred"* — for as long as the row it contradicts has stood.
+
+**Rejected.** Three forms, and the choice between them is the whole judgement here. **A family-wise rate alone** — "this file goes red by chance at most once in a thousand runs" — states the property a reader actually wants and leaves the correction unnamed, so Bonferroni and Šidák both satisfy it and give different numbers. **A corrected per-test α alone** — writing 0.0000222 into the row — reproduces the exact defect being repaired one level down: it is a number that silently goes stale the day a forty-sixth case is added, which is how the row got here. Also rejected: raising N to 139 284 to hold the power constant, which `test/randomness-threshold` declines on the ground that it is a second deviation taken to soften the first, and this branch has no better argument for taking it than that branch had.
+
+**Reason.** Both, with the relationship stated and the family-wise rate binding. The row now fixes **family-wise p > 0,001** across all k tests of the file, gives α = 1 − (1 − 0,001)^(1/k) by Šidák as the per-test consequence, and defines k in its own *Vorgehen* column — today 45. That is what makes a forty-sixth case visible from the specification alone: k moves, α moves with it, and the binding number does not. Two paragraphs beneath the table carry what the row cannot: the old wording, the measured rate, and the price. **The price is stated because it is real.** Šidák costs power — against a bias at today's detection point the detection probability at N = 100 000 falls from 49.90% to 17.27% — and the loss is confined to a band between roughly 11.4% and 13.4% depletion of one character at one position, outside which the two versions decide alike. **N stays at 100 000, deliberately and in writing.** The measured 4.29191% is quoted rather than the modelled 4.4%, and the gap between them is left as a gap with the structural reason named: monobit and runs read the same bits the position tests read, so the forty-five are not the independent family the arithmetic assumes.
+
+**Price.** **The finding is not the number, it is that nothing could have caught it.** No check in this repository compares a threshold written in a test to the row of section 6 that fixes it; the gate that found this looked for one. Until a person reconciles them by hand, a test deviating from its row is invisible to everything except somebody reading a comment — and here the comment had been right, and stating it, for longer than anyone had noticed. This amendment also reaches beyond the branch's own work for the second time: it exists to unblock `test/randomness-threshold`, whose correction deliberately does not meet the row as written and whose gate has ruled it cannot merge while the row stands. A specification amended so another branch can merge is a shape worth naming out loud, even when — as here — the clause was independently wrong.
+
+### Two reasons E-1098 gave, and neither of them was true
+`E-1110` · specfix · correction of E-1098
+
+**Context.** E-1098 argued the amendment to `S-ENUM-3` from two claims, and a review of this branch found both false at the moment they were written. The first: *„`username` is unique, so two registrations cannot send the same one."* They can, and a merged test does — `test/flows-review-signup-race.test.ts:161-180` fires two concurrent sign-ups carrying the identical name, and E-947 measured that case at a batch of twenty-five. The second: that the echoed **address** normalisation *"carries a specification citation while the name normalisation carries none"*. It carries none either. 3.15 C says `User` carries `email`; it does not licence normalising it, and `normalisedBody` in `test/flows-fixtures.ts` was normalising a caller-supplied field without licence before this branch existed.
+
+**Rejected.** Correcting either of them inside E-1098. Both are reasons and both were wrong when written, which is the case §6's prohibition exists for and the case `E-538` violated rather than licensed; disclosure is not a remedy for it, because an entry whose argument is quietly replaced is exactly the entry that becomes true without anybody being able to see it happen. Also rejected: one entry per claim, which would put two links in a chain where the two errors were made in one sitting, by one reader, about one clause.
+
+**Reason.** The amendment E-1098 made was right and the arguments it gave for it were not, so the clause stands and the arguments are replaced here. The true reason the two probes must send different names is **not** that they cannot send the same one: it is that when they do, the comparison stops measuring the response and starts measuring the second residual leak of 3.13, which is a different property with a different threshold. And the reason the requirement now names the **address** first is that the address is the field the requirement is about and is echoed in both configurations the requirement reaches — reproduced by disabling only the `<address>` normalisation in `test/flows-fixtures.ts:16`, which fails four tests in `test/flows-review-enumeration.test.ts` under an instance typed `VelveAuthConfig<"email">`, a mode whose bodies carry `"username":null` throughout.
+
+**Price.** Two entries now argue one amendment and a reader wanting the reason must reach the second. That is what the no-restatement rule costs and the chain is real; it is the price E-845 recorded paying twice on the earlier specification branch, and it is smaller than the alternative. The sharper cost is what the pair reveals: both false claims **pointed at the right repair**, so the amendment was correct and unjustified at the same time, and nothing in the gate distinguishes those two states. Only a person reading the test the claim was about did.
+
+### The scope E-1099 claimed, and the protection it left out
+`E-1111` · specfix · correction of E-1099
+
+**Context.** E-1099 wrote that 3.13's *„ausschließlich"* is false in **every** configuration. It is not false in `username`, because there is no cover there at all: `coverColumns` returns its argument unchanged when the address is NULL, and `refuseTheNameIfItWasTheName` throws `username_taken` outright (`src/core/flows/sign-up.ts:88-90` and `:280-286`). The entry and the paragraph it put into 3.13 were written in one pass and said the same wrong thing; 3.4's column, written in the same pass, said *„beide"* and was right. Separately, the entry's Rejected paragraph argued against removing the mode's enumeration promise and omitted the strongest thing it had.
+
+**Rejected.** Editing E-1099. Same ground as E-1110: a scope is a reason, and adding the omitted argument to its Rejected paragraph would be supplying a justification the writer did not give, which is the thing §6 forbids a translator and forbids an author for the same reason.
+
+**Reason.** The specification was corrected — 3.13's first residual leak now says the two configurations that have an address — and the entry's claim is corrected here rather than there. **And the argument E-1099 should have made is that probing a taken address mails its real owner.** `S-ENUM-4` makes the message to the existing address the side effect of the probe, so enumeration at this endpoint is not silent: an attacker walking an address list writes into every mailbox they hit. That is the protection the narrow repair preserves and that removing the promise would have discarded, and it is why the narrow repair under-sells rather than flatters. E-1099 declined the removal for the right outcome on a weaker argument than was available to it.
+
+**Price.** The scope error was in the document and in the log at once, and only one of the three places written in that pass was checked against the tree — the one that happened to be right. Nothing distinguishes a claim restated consistently from a claim checked twice, and the two look identical in a diff. A reader of 3.4 alone would have caught it; a reader of 3.13 alone would not.
+
+### Removing an unchecked claim is still replacing one
+`E-1112` · specfix · correction of E-1103
+
+**Context.** E-1103 named the composition of the gap between `AuthSurface`'s method counts and 3.15 D.3's route counts: *"the methods with no route — `user.*`, `maintenance.sweep`, the four resolvers B.3 exempts"*. That decomposition was not checked against anything. D.3's prose supports the category — `auth.user.*` and `auth.maintenance.*` have no routes (B.3) — and does not support the four resolvers, two of which have routes at `GET /session` and `GET /pending`. Six user methods plus the sweep does not come to eight, seven or seven either.
+
+**Rejected.** Deleting the sentence from E-1103, which is what this branch did first and then undid. **A removal is a replacement whose new text is empty**, and it changes what the entry argues exactly as a rewrite would; treating it as a lighter act is how one rule acquires three shapes. The disclosure that accompanied the removal made it visible and did not make it permitted.
+
+**Reason.** The sentence is restored in E-1103 and corrected here. What carries the repair is not the decomposition but the invariant: the gap is unchanged at 8 · 7 · 7, so an added route increments both counts and neither has to be recomputed from a surface that does not exist yet. The mode-to-mode spread of 8 · 7 · 7 is consistent with the mode-dependent finders, and beyond that this branch does not know what the gap is made of and now says so instead of guessing.
+
+**Price.** This entry exists because of a rule about entries rather than because of anything in the specification, and it is the third of three in a row that do. A log in which corrections outnumber decisions for a stretch is what §6's own ratio predicts — twenty decisions and ten corrections per thirty — and this branch is running hotter than that.
+
+### An entry may be brought into step with its artefact; its reason may not be rewritten
+`E-1113` · specfix · log discipline, ruling applied
+
+**Context.** This branch corrected E-1098, E-1099 and E-1103 in place, disclosed, citing `E-538`'s precedent and §6's before-merge latitude. The wave owner had ruled twice this session, for `feature/oauth` and for `docs/log-append-guarantee`, that §6 forbids an in-place edit of a **reason** whether disclosed or not: the rule is stated flatly, `E-538`'s *"anyway"* concedes a violation rather than licensing one, and reading disclosure as a remedy empties the prohibition. §6 also says in terms that a statement about what the specification says is checkable and is **not** a measurement, which is what most of these corrections were.
+
+**Rejected.** The reading this branch had acted on — that disclosure converts a forbidden edit into a permitted one. Also rejected, on the owner's ruling, the argument that a removal is lighter than a replacement: E-1112 is that case and it goes to a new entry like the others.
+
+**Reason.** The line the owner drew, which neither side had before, is **whether the replaced text was wrong when written or was made stale by the branch's own later change.** Wrong when written is the case §6 protects and it takes a new entry, never an edit. Correct when written and overtaken by a subsequent amendment on the same branch is different in kind: an entry saying *"clause X now reads Y"* whose branch then changes X to read Z is not rationalising anything, it is out of step with the artefact it documents, and leaving it would publish an entry describing text the tree does not contain. So one in-place edit stands, in E-1098's Reason, marked as a step into line and reaching nothing but the two clause descriptions; everything else was reverted and is argued in E-1110, E-1111 and E-1112.
+
+**Price.** The distinction needs a human on every application, exactly as the rule it refines does, and it adds a second judgement to the first: not only *is this a measurement or a reason*, but *was it true when written*. A writer who gets the second one wrong in the permissive direction has rewritten a reason and disclosed it as bookkeeping. §6 does not carry the distinction yet — the owner is sending it to `docs/log-append-guarantee`, which is editing that file now — so until it lands, this entry is the only place it is written down, which is the same shape of debt as E-1101's and no better for being about the rules.
+
+### A nightly went red on a branch that changes no code
+`E-1114` · specfix · flaky test, reported not repaired
+
+**Context.** The nightly tier failed once on this branch at `4adb903`: `test/flows-review-request-oracle-race.test.ts`, *"separates the two addresses no further than the limit a tight control admits"*, case separation 1.54 against a limit of 1.35 with a control of 1.26. **The branch cannot have caused it.** Its `src` tree object is `e4436f5`, byte-identical to `main`'s; the failing test's blob is `0ab0135` on both, and `test/flows-fixtures.ts` is `a72b3ed` on both. The only test file this branch touches is a comment in `test/db-schema-conformance.test.ts`.
+
+**Rejected.** Repairing it. It is `email-flows`' review artefact, and a specification branch that edits another feature's timing test so that its own gate goes green has inverted the direction the review structure runs in — the same ground E-1101 and E-1106 refuse on. Also rejected, and worth naming because it is the tempting one: re-running until green and reporting only the green run. The re-runs happened; reporting only them would have been the dishonest half of doing them.
+
+**Reason.** It is measured and handed on. **Four full nightly runs of this branch's tree produced one failure; two full nightly runs of `main` at the merge base `2d54bdb` produced none; ten runs of the file in isolation — five on each tree — produced none.** So it needs the rest of the suite running beside it, which is the condition its own comment says it corrects for. The mechanism is visible in the test: it retries the measurement until an attempt's **control** separation is tight and then asserts the **case** separation once and returns, so the first attempt with a quiet control is the only one measured, and the case carries the same noise the control does. The failing run's per-round medians span 94.5 ms to 3360.3 ms, a thirty-five-fold spread.
+
+**Price.** This is the second instance in one session of the class E-1109 repairs one row above — a statistical threshold that goes red with nothing wrong — in a different file, by a different mechanism, and found by running the tier rather than by reading anything. One failure in four is far too coarse a rate to act on, and this entry offers an observation rather than a rate deliberately: E-1109's own standard is a million trials, and nothing here comes near it. What it costs meanwhile is that a green nightly on this file is weak evidence, and every branch that trips it will spend what this one spent establishing it was not theirs.
+### The rules file stated a rule and a false reason for it, and the reason was the part that got quoted
+`E-1130` · rules · rules file, frozen
+
+**Context.** §6 justified `pnpm check:log-append` with one sentence: resolving a conflict in `CASE-STUDY.md` "by keeping one's own side drops a sibling's entries silently — the branch is green, the entries are gone, and the sibling has already merged." The two halves cannot both hold. If the sibling has merged, its entries are at the merge base; dropping them is a deletion; the deletion clause fires; the branch is red. The sentence describes a merge between two unmerged feature branches and attributes the outcome to a merge with `main`.
+
+**Rejected.** Deleting the sentence. A rule whose justification has been removed and not replaced reads as arbitrary, and the next reader re-derives a justification for it — which is exactly how this one was arrived at. Also rejected: narrowing it to the branch-to-branch case it is true of, which leaves the case a merger actually performs undescribed.
+
+**Reason.** The false half is load-bearing, not decorative: E-1032 was written from it, believed it, and stated on its authority that no check can tell a bad resolution from a good one. E-1034 corrected E-1032 and named `CLAUDE.md` as the source. So the repair is to state both directions, name the clause that fires in each, and name the bound on the one that fires in the second — measured rather than reasoned about, which is the step E-1032 skipped and E-1034 took.
+
+**Price.** §6 grows from seven lines to thirty for one check, and the section that states the rules is now longer in the part explaining a check's limits than in the part stating the rule. A reader looking for the rule has more to read before reaching it. The alternative was a shorter section that is wrong, and this repository has now measured what a short wrong sentence costs downstream: two entries and a branch.
+
+### Keeping one's own side is the direction the step does catch
+`E-1131` · rules · measurement, frozen
+
+**Context.** §6's claim needed a merge to be tested against, and wave 5's is the only one on record: `723121a`, `feature/email-flows` merging `origin/main` at `27e291e`, one conflict hunk in `CASE-STUDY.md` — 634 lines from the branch, 989 from `main`, which is what E-1032 reports.
+
+**Rejected.** Replacing `CASE-STUDY.md` wholesale with one side's version, which was the first reconstruction run here and is not what a conflict presents. Git auto-merges everything outside the markers; only the hunk has a side to choose. The wholesale version reported the same exit code and a different line count, so it would have supported the conclusion with a wrong number.
+
+**Reason.** The hunk was cut at its markers and the three resolutions rebuilt from the pieces, each amended into `723121a` so that every other file stays as the real merge resolved it and the log is the only variable. The surgery is checked before it is used: `main`'s block then the branch's block reproduces `723121a`'s `CASE-STUDY.md` byte for byte but for one blank separator line the merger inserted. Control at `723121a`, base `27e291e`: `+635 −0`, exit 0, and `decision-log` 9 tests passed — `+635 −0` being the number E-1032 states, from a different party and a different machine. Keeping one's own side, tree `798dc86`: `+409 −764`, **exit 1** on the deletion clause, naming the lines; `decision-log` red on **74** citations, which is E-1034's number exactly. 115 of `main`'s entries are gone.
+
+**Price.** One merge is one merge. Everything below is measured on the only three-way conflict this repository has had in the log, and a wave with four features conflicting three ways may behave differently in ways nothing here would show. The reconstruction also cost a false failure of its own: `git add -A` in a throwaway worktree committed the `node_modules` symlink, `git ls-files` then handed the citation test a directory, and the test died on `EISDIR` rather than reporting a count. It was found by reading the failure instead of the number, which is the same discipline the entry is about.
+
+### The other direction is caught by the clause any unrelated line switches off
+`E-1132` · rules · measurement, frozen
+
+**Context.** Keeping `main`'s side drops entries that were never at the merge base, so the deletion clause has nothing to report. `tools/check-log-append.mjs` has a second clause — `commits > 0 && additions === 0` — written for a branch that never opens the log, and it is the only thing left standing in this direction.
+
+**Rejected.** Treating the hunk-local resolution and a wholesale replacement of the file as two cases, which E-1034 does. For this merge they are one: keeping `main`'s side of the hunk produces a file **byte-identical** to `27e291e:CASE-STUDY.md`, because the branch changed the log nowhere else. E-1034's `+2 −0` came from the two unrelated lines its reconstruction carried, not from the wholesale-versus-hunk distinction — the reading it reaches is right and the reason it gives for the difference is not.
+
+**Reason.** Tree `18a9bea`, base `27e291e`: `CASE-STUDY.md gained no line across 24 commits`, **exit 1** — the addition clause, not the deletion clause. Then the same tree with two lines of unrelated comment appended, `6c5b707`: `+2 −0`, **exit 0**, green, with **68** of the branch's entries gone and `decision-log` red on **76** citations, which is again E-1034's number. Two lines of comment is the whole cost of defeating it, and no rule in this repository forbids them.
+
+**Price.** The clause cannot be tightened into a guard without changing what it is for. It exists so a branch that records nothing is caught, and every branch that records something satisfies it — a check that demanded a plausible *quantity* of additions would have to know how many entries the wave produced, which nothing does. So the direction stays uncovered by this step and the repair is a sentence in §6 rather than a line in the script.
+
+### The window is the merge commit, and the workflow closes it
+`E-1133` · rules · measurement, frozen
+
+**Context.** E-1132's clause fires while the branch has added no line. Item 5 of §5's definition of done requires the branch to record the decisions it took, and resolving a conflict in the log is one of them — E-1032 is that entry. So the commit that follows the merge is, by the rules, a commit that adds lines to `CASE-STUDY.md`.
+
+**Rejected.** Recording this as an edge case. It is the ordinary order of work: merge, then write down what the merge decided. A branch that does what §5 asks arrives at exit 0 on its own.
+
+**Reason.** Measured on the keep-`main` tree with the branch's own follow-on entries appended, carrying `CLAUDE.md` with them so the range table is not a second variable. One commit after the merge, tree `9c7d5a9`: `+44 −0`, **exit 0**. Both commits, tree `914771b`: `+59 −0`, **exit 0**, and `decision-log` red on **86** citations with 68 entries missing. The clause that was the last guard in this direction is switched off by the commit the rules require next.
+
+**Price.** The instruction this yields — run the step on the merge commit before committing on top of it — is a thing a merger must remember, and nothing enforces it. It is a worse mechanism than a check and it is what there is. A step that refused to pass while a merge commit sits unexamined in its range would enforce it, and that is a change to the script this branch is not making (E-1136).
+
+### `decision-log` is the mechanism here, and it is the mirror of the range table
+`E-1134` · rules · rules file, frozen
+
+**Context.** §6 calls `test/decision-log.test.ts` "the backstop, not the mechanism" where it discusses reserved ranges: there the mechanism is not renumbering, and the test only catches what slips. §6 gave `check:log-append` the mechanism's role for badly resolved conflicts, and the measurements say it does not have it.
+
+**Rejected.** Leaving both steps described as equals and letting a reader weigh them, which is what the section did and which produced E-1032.
+
+**Reason.** `decision-log` is red in every resolution measured: 74 dangling citations keeping one's own side, 76 keeping `main`'s, 86 after the follow-on commits — because decision identifiers are cited from code, tests and documentation, and dropping a block of entries orphans every citation of it wherever it lives. It does not care which side was dropped and it does not have a window. `check:log-append` catches one direction, and in the other catches only a branch that has written nothing yet. So the roles are the reverse of the range-table case, and §6 now says so in both places.
+
+**Price.** It makes the log's integrity depend on entries being cited from outside the log. An entry nobody cites is invisible to `decision-log` and can be dropped in a conflict with nothing red anywhere — the numbers above are 74, 76 and 86 citations against 115 and 68 entries, so the coverage is real but partial and this branch has not measured how partial. `decision-log` is also in `pnpm test`, which is slow, where `check:log-append` is a second; the fast step is the one that answers less.
+
+### What was measured against the brief, and the two numbers that did not reproduce
+`E-1135` · rules · method, frozen
+
+**Context.** This branch was handed the three results it was asked to re-derive, and re-deriving them rather than transcribing them is the whole reason it exists — E-1034's price names `CLAUDE.md`, the specification and the wave owner as the three sources a writer is least likely to check, and a brief is the fourth.
+
+**Rejected.** Reporting agreement. Two numbers do not reproduce and the entry says so, because the value of the exercise is entirely in what it disagrees with.
+
+**Reason.** Exit codes and clauses reproduce in every shape, and so do 74, 76, 68 and `+2 −0`. Two numbers do not. The brief states 689 lines lost keeping one's own side; the measurement here is **764** (`+409 −764`), and 689 is not recovered by the wholesale variant either. The brief states `+58` for the merge plus the branch's own entries; the measurement here is **+59**, from `7c42f1b`'s 44 appended lines and the 15 `d37f857` appends at the tail — its other hunk edits E-1032 in place, and in a tree where E-1032 was dropped that edit has nothing to apply to, so a reconstruction that carries it differently lands one line away. Neither disagreement moves a conclusion: both are magnitudes inside a clause whose exit code is not in dispute.
+
+**Price.** Two numbers in a brief that two parties had already agreed on turned out to be two numbers nobody had re-run, and the only reason this is visible is that a third party was told to re-run them. That does not scale — it cost a full reconstruction to find a discrepancy that changes nothing. The honest reading is that the exercise was worth it for the clauses and the window, not for the line counts, and that a fourth party re-running it would be waste.
+
+### The change the step needs is not made here
+`E-1136` · rules · scope, frozen
+
+**Context.** E-1133 leaves an instruction a merger must remember where a check could enforce it: `tools/check-log-append.mjs` reads `git rev-list --count`, so it can see that a merge commit is in its range, and it could refuse rather than pass when one is there and the additions clause is the only thing that examined it.
+
+**Rejected.** Implementing it. This branch's file set is `CLAUDE.md` and its own range of `CASE-STUDY.md`, fixed before it started, and §5 says a feature that needs a change outside its area reports it.
+
+**Reason.** The step guards the file this branch is editing, so a branch that edits both is a branch whose own gate it has changed. The risk is also not small in the way it looks: every branch in flight merges `main` at some point, and a step that starts refusing on a merge commit refuses on all of them at once, including the three open right now. It is a change with a blast radius and it belongs on a branch that can be reverted without reverting a rules repair.
+
+**Price.** The instruction ships unenforced, and the next merger who does not read §6 to the end is in exactly the position wave 5's merger was in — except that what they will find there is now true. Reporting a defect instead of fixing it is also how E-624's file-partition request has stayed open for two waves, and this entry is one more of those.
+
+### The one-line difference had a mechanism, and it was not the one named
+`E-1137` · rules · correction of E-1135
+
+**Context.** E-1135 explains why its `+59` does not match the `+58` it was handed: "its other hunk edits E-1032 in place, and in a tree where E-1032 was dropped that edit has nothing to apply to, so a reconstruction that carries it differently lands one line away." Both halves are false, and a reviewer re-running the reconstruction found them.
+
+**Rejected.** Restating it in place. §6 now settles that a reason wrong when written is answered by a new entry and not by an edit, disclosure included, so the false sentence stays where it is and this entry is read beside it. Also rejected: withdrawing the `+59`, which reproduces in both variants and is not what was wrong.
+
+**Reason.** Measured. **E-1032 is dropped in no keep-`main` tree**: it is introduced by `7c42f1b`, whose parent is the merge commit, so it lands after the merge however the conflict was resolved — present at line 5178 of the reconstruction. **And carrying the edit differently does not move the line count at all**: with the hunk, 44 + 17 − 2; without it, 44 + 15; both `+59 −0`, both exit 0, trees `41fc1b7` and `79209e2` against base `27e291e`. What it does move is the **dangling count, 86 to 87**, because the hunk's replacement text cites `E-936`, which *is* in the dropped block — the one extra citation is `CASE-STUDY.md E-936` and nothing else, by diff of the two lists. So E-1135's 86 is the no-hunk variant and is consistent with its own reconstruction; its account of what the omission does is not. `+58` is producible from neither variant, which is the part of E-1135 that stands.
+
+**Price.** The branch whose subject is E-1130 — a rule that stated a false reason, "and the reason was the part that got quoted" — shipped a false stated mechanism of its own, inside the entry about not taking numbers on trust. Nothing in the gate detects that: every check and every test was green, because a wrong explanation of a right number is not a wrong number. It was caught by a second party re-running the reconstruction, which is the same detection story as E-1032's and one level further up, and it is the second time in two entries that the only working detector was somebody repeating the measurement.
+
+### How partial `decision-log`'s coverage is, measured
+`E-1138` · rules · measurement, frozen
+
+**Context.** E-1134 makes `test/decision-log.test.ts` the mechanism against a badly resolved log conflict and names the hole in it: an entry nobody cites is invisible to it and can be dropped with nothing red. Its Price says the coverage is "real but partial and this branch has not measured how partial", which is an invitation this entry takes up rather than leaves standing.
+
+**Rejected.** Restating E-1134's Price with the numbers in it. The claim there was true when written — the branch had not measured it — so bringing it into step would be rewriting a reason rather than an artefact, which §6 now forbids outright.
+
+**Reason.** Counted in the reconstructions, at `d37f857`'s tree for the citations and the two conflict blocks for the losses. Keeping `main`'s side loses **68** entries; 86 surviving citations name **35** of them, 30 from outside the log and 5 more from parts of the log that survive, so **33 vanish named by nothing**. Keeping one's own side loses **115**; 74 surviving citations name **36**, all from outside the log, so **79 vanish named by nothing**. Counted the way the gate that asked for it counted — citations from outside the log only — it is 30 of 68 and 36 of 115, 44% and 31%. **And the hole E-1134 discloses is empty for this merge**: of all 183 dropped entries, **zero** are cited nowhere at all. So the step detects the *event* with certainty in both directions and names half or less of what was lost — enough to fail a gate, not enough to rebuild from.
+
+**Price.** These are one merge's numbers and not a law, and the direction they would move in is unmeasured. 38 of the 68 are cited only from inside the log, and this branch did not measure which kinds of entry fall on which side of that split — so the plausible worry, that entries about method and about the log itself are the least cited from code and are also what a conflict in the log is most often about, is a worry and not a finding. Recording it as a finding would be the thing E-1137 is a correction of.
+
+### The rule that needs a human now records how the human decided
+`E-1139` · rules · rules file, frozen
+
+**Context.** §6 says of the measurement-versus-reason boundary that "This rule needs a human", and then leaves that human no record of how it was decided the last time. It has needed deciding **three times in one session** — on `feature/oauth`, on this branch, and on `fix/specification-defects-wave5` — and the third produced a case neither of the first two had.
+
+**Rejected.** Leaving it to be ruled on each time, which is what produced three adjudications and no record. Also rejected, and this is the one that matters: a single flat prohibition on any in-place edit of an entry's prose. It would forbid bringing an entry into step with an artefact its **own branch** subsequently changed, and so would require a writer to publish an entry describing text the tree does not contain, with a second entry aimed at it — the exact outcome §6's opening paragraph rejects for measurements.
+
+**Reason.** The distinction that survived all three cases is *when the text became wrong*. Wrong when written is retroactive rationalisation and is answered by a new entry, disclosure included, because disclosure as a remedy empties a prohibition any edit can satisfy. Made stale by the branch's own later change to the thing the entry describes is not rationalisation at all, and is answered in place with the change disclosed. The line is that an entry may be brought into step with its own artefact and the reason a decision was taken may not be rewritten. §6 also states that neither half has a diff signature and that a reader is the enforcement, because presenting a rule as decidable when it is not is how E-1032 happened.
+
+**Price.** This is the one thing this branch added that rests on judgement rather than on a measurement: three rulings, no experiment, and no check behind it, in a section whose other rules mostly have one. The second half is also what a bad-faith writer reaches for — "the artefact changed" is available as a story for very nearly any rewrite — and the only thing standing against that is a reviewer who reads the disclosure and looks at the artefact. It is a weaker mechanism than the file's others and it is stated as one rather than dressed up.
+
 ### The false-failure budget belongs to the file, not to each of its cases
 `E-1060` · gate · threshold, frozen
 

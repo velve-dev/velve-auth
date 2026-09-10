@@ -551,11 +551,11 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H11 `trustedProxies` (CIDR) | Läuft die Forwarded-Kette von rechts, fail-closed (`utils/ip.ts:317-331`) | Übernehmen | Unverändert übernommen, einschließlich der fail-closed-Behandlung malformierter Hops. |
 | H12 `disableIpTracking` | Schaltet die IP-Erfassung ab (`init-options.ts:298`) | Übernehmen | Als `sessionMetadata: "none"` (L-10); die Vorgabe ist `"truncated"`. Die Ratenbegrenzung arbeitet dann weiter auf der Verbindungsadresse, ohne sie zu speichern. |
 | H13 429-Antwort | Setzt `X-Retry-After` statt `Retry-After` (`rate-limiter/index.ts:94-107`) | Anders lösen | `Retry-After` nach RFC 9110, damit Clients und Zwischenschichten den Wert überhaupt auswerten. |
-| H14 Cookie-Namensschema | `session_token`, `session_data`, `account_data`, `dont_remember`, `state`, `oauth_state` (`cookies/index.ts:119-154`) | Anders lösen | Zwei Cookies: `__Host-velve_session` und `__Host-velve_pending`. Kein `session_data` (B23), kein `account_data` (C94), kein `dont_remember` (B14); der OAuth-State steht in der Datenbank, das Cookie hält nur einen Zeiger (C52). |
+| H14 Cookie-Namensschema | `session_token`, `session_data`, `account_data`, `dont_remember`, `state`, `oauth_state` (`cookies/index.ts:119-154`) | Anders lösen | Drei Cookies: `__Host-velve_session`, `__Host-velve_pending` und `__Host-velve_oauth_state`. Kein `session_data` (B23), kein `account_data` (C94), kein `dont_remember` (B14); der OAuth-State steht in der Datenbank, das Cookie hält nur einen Zeiger (C52). |
 | H15 `advanced.cookiePrefix` | Präfix aller Auth-Cookies frei wählbar (`cookies/index.ts:95`) | Weglassen | Niemand. `__Host-` ist keine Zierde, sondern die Zusicherung; ein freier Präfix hebt sie auf. |
 | H16 `advanced.cookies[x].name` | Einzelne Cookie-Namen überschreiben (`cookies/index.ts:96-98`) | Weglassen | Wie H15. Ein umbenanntes Cookie ohne `__Host-`-Präfix verliert die Zusicherung genauso wie ein umbenannter Präfix. |
 | H17 `advanced.cookies[x].attributes` | Attribute je Cookie überschreiben — gewinnt über alles, auch `httpOnly` (`cookies/index.ts:102-114`) | Weglassen | Niemand. Eine Option, mit der man `httpOnly` abschalten kann, ist eine Option, mit der man das Sitzungstoken an JavaScript ausliefert. |
-| H18 `advanced.defaultCookieAttributes` | Globale Vorgabeattribute, z. B. `SameSite=None`, `Partitioned` (`cookies/index.ts:102-114`) | Weglassen | Wie H17. `SameSite=None` ist mit `__Host-` und der Origin-Prüfung nicht vorgesehen; bei Better Auth bleibt in dieser Konfiguration kein CSRF-Schutz übrig (Inventur N3-23). |
+| H18 `advanced.defaultCookieAttributes` | Globale Vorgabeattribute, z. B. `SameSite=None`, `Partitioned` (`cookies/index.ts:102-114`) | Weglassen | Wie H17. Global einstellbare Cookie-Attribute gibt es nicht; bei Better Auth bleibt in dieser Konfiguration kein CSRF-Schutz übrig (Inventur N3-23). `SameSite=None` trägt genau ein Cookie: der Zustandszeiger eines `form_post`-Flusses (3.10). Er authentifiziert nichts, und die Route, die ihn liest, hat ohnehin keine Origin-Prüfung. |
 | H19 `useSecureCookies` + `__Secure-` | Vierstufige Auflösung, `__Secure-` bei `secure` (`cookies/index.ts:65-75`) | Übertreffen | `__Host-` erzwingt `Secure`, verbietet `Domain` und bindet an `Path=/` — damit ist Cookie-Tossing aus einer Subdomain strukturell ausgeschlossen. Better Auth definiert die Konstante, benutzt sie aber nie (`cookies/cookie-utils.ts:34-35`, Inventur N3-22). |
 | H20 `crossSubDomainCookies` | `enabled`, `domain`, `additionalCookies` (`cookies/index.ts:76-90`) | Weglassen | Die Anwendung übernimmt, über eine gemeinsame Origin oder eine eigene Tokenübergabe. `__Host-` verbietet `Domain`; Subdomain-weite Sitzungscookies vertrauen jeder Subdomain, auch der vergessenen. |
 | H21 Cookie-Signierung | HMAC-SHA256 über den Wert mit `ctx.secret` (`better-call dist/crypto.mjs:21-31`) | Anders lösen | Das Sitzungscookie trägt ein 256-bit-Zufallstoken, dessen Gültigkeit ausschließlich die Datenbank entscheidet — eine Signatur wäre wirkungslos und würde Integrität suggerieren, wo Existenz zählt. Signiert wird nur, wo ein Zeiger unversehrt bleiben muss, mit dem HKDF-abgeleiteten Schlüssel `cookie-sig`. |
@@ -1292,6 +1292,7 @@ CREATE TABLE velve.oauth_flow (
   nonce           text,
   redirect_path   text,            -- ein Pfad, niemals eine vollständige URL
   link_to_user_id uuid REFERENCES velve.user(id) ON DELETE CASCADE,
+  link_from_session_id uuid,       -- die Sitzung, in der die Verknüpfung gestartet wurde; kein Fremdschlüssel
   created_at      timestamptz NOT NULL DEFAULT now(),
   expires_at      timestamptz NOT NULL
 );
@@ -1378,9 +1379,9 @@ Drei Konfigurationen, gewählt bei der Initialisierung über `identity.mode`
 
 | Konfiguration | Anmeldename | Eindeutig | Zurücksetzen/Bestätigen über | Aufzählungsschutz |
 |---|---|---|---|---|
-| `email` | E-Mail | `email` | E-Mail | vollständig |
+| `email` | E-Mail | `email` | E-Mail | vollständig bis auf das erste Restleck aus 3.13 |
 | `username` | Benutzername | `username_key` | **nicht verfügbar** ohne Wiederherstellungscodes | für den Benutzernamen nicht möglich |
-| `username_email` | Benutzername **oder** E-Mail | beide | E-Mail | für die E-Mail ja, für den Benutzernamen nein |
+| `username_email` | Benutzername **oder** E-Mail | beide | E-Mail | für den Benutzernamen nein; für die E-Mail bis auf beide Restlecks aus 3.13 |
 
 Konsequenz, die dokumentiert wird: **In `username` gibt es kein Zurücksetzen per
 E-Mail.** Wer diese Konfiguration wählt, muss Wiederherstellungscodes bei der
@@ -1393,6 +1394,14 @@ Zweite Konsequenz: **Benutzernamen sind per Definition aufzählbar.**
 Wer eine Verfügbarkeitsprüfung anbietet, verrät die Existenz. Velve Auth bietet
 sie an, begrenzt sie hart und sagt es in der Dokumentation, statt so zu tun, als
 sei sie geschützt.
+
+Dritte Konsequenz, nur in `username_email`: **die Aufzählbarkeit des
+Benutzernamens reicht ein Bit über die Adresse durch.** Der Schutz der Adresse
+ist in dieser Konfiguration deshalb nicht vollständig, und die Spalte oben sagt
+es. Welcher Weg das ist, steht in 3.13 unter dem zweiten Restleck. In `email`
+gibt es diesen Weg nicht, weil es dort keinen Benutzernamen gibt — das ist der
+Unterschied, der bei der Wahl zwischen den beiden Konfigurationen zählt. Das
+erste Restleck aus 3.13 haben beide.
 
 Normalisierung an genau einer Stelle:
 - E-Mail: trimmen, NFKC, `lower()`. Datenbank prüft per CHECK nach.
@@ -1544,6 +1553,16 @@ Autorisierungscode-Fluss mit **PKCE S256 verpflichtend**, `state` serverseitig
 in `velve.oauth_flow` (Cookie hält nur den Zeiger), `nonce` bei OIDC, Prüfung
 von `iss` nach RFC 9207, ID-Token-Signatur gegen JWKS.
 
+Die Flow-Zeile hält neben `link_to_user_id` auch `link_from_session_id`: die
+Sitzung, in der die Verknüpfung gestartet wurde. S-FIX-1 verlangt beim
+Verknüpfen eine neue Sitzungszeile und das Löschen der vorherigen in derselben
+Transaktion, und der Callback kann die vorherige Zeile ohne diesen Wert nicht
+benennen. Ein Fremdschlüssel auf `velve.session` steht ausdrücklich nicht dabei:
+`ON DELETE CASCADE` würde den ganzen Fluss löschen und die Verknüpfung
+verweigern, wenn der Nutzer sich mittendrin abmeldet, und `ON DELETE SET NULL`
+bringt nichts, was ein besitzergebundenes Löschen mit null getroffenen Zeilen
+nicht ohnehin gibt.
+
 Anbieter zum Start: Google, GitHub, Apple, Microsoft/Entra, GitLab, Discord,
 Facebook, LinkedIn, Twitch, Spotify, Slack, Notion, Zoom, Dropbox — plus
 `genericOAuth` für alles Weitere. Kein Wettlauf um 36 Anbieter; die Schnittstelle
@@ -1635,12 +1654,40 @@ Zwei Fehlerarten:
 - **Absichtlich unsichtbar:** Alles, was Existenz verraten würde. Anmeldung,
   Registrierung, Kennwort-Reset und E-Mail-Wechsel liefern für existierende und
   nicht existierende Konten **byteweise identische** Antworten — gleicher Status,
-  gleiche Kopfzeilen, gleicher Körper. Der Unterschied wandert ausschließlich in
-  die versendete E-Mail.
+  gleiche Kopfzeilen, gleicher Körper, bis auf die Felder, die der Aufrufer selbst
+  gesendet hat und die die Antwort zurückgibt (S-ENUM-3). Der Unterschied wandert
+  in die versendete E-Mail; **ausschließlich dorthin wandert er nicht**, und die
+  beiden Absätze über die Restlecks sagen, wohin sonst.
 
 Registrierung mit bereits vergebener E-Mail: gleiche Antwort wie bei Erfolg, und
 an die vorhandene Adresse geht eine Nachricht „jemand hat versucht, sich mit
 deiner Adresse zu registrieren" mit einem Anmelde- statt Bestätigungslink.
+
+**Erstes Restleck, in beiden Konfigurationen mit E-Mail-Adresse: die Deckung
+überlebt die nächste Anfrage nicht.** In `username` gibt es keine Deckung, weil
+es keine Adresse gibt, die zu decken wäre: Ein vergebener Benutzername wird dort
+mit `username_taken` abgelehnt, und dieser Absatz betrifft die Konfiguration
+nicht. Die Antwort auf eine vergebene Adresse ist eine echte
+Registrierung auf eine Deckadresse, die zurückgerollt wird; sie führt deshalb
+einen Sitzungs-Token, der keine Zeile benennt. Das nächste `GET /session`
+desselben Aufrufers liefert `null`, wo es nach einer echten Registrierung eine
+Sitzung liefert. Zwei Anfragen genügen also, und an diesem Endpunkt ist das nicht
+zu schließen: Ein Token, der auflöste, wäre eine Sitzung auf einem fremden Konto.
+
+**Zweites Restleck, nur in `username_email`: der Benutzername reicht ein Bit über
+die Adresse durch.** Weil die Deckung zurückgerollt wird, beansprucht eine
+Registrierung auf eine vergebene Adresse den mitgesendeten Benutzernamen nicht
+dauerhaft; eine Registrierung auf eine freie Adresse legt ihn an. Zwei Anfragen
+lesen daraus ein Bit: erst `{E-Mail: die geprüfte, Benutzername: N}`, dann
+`{E-Mail: eine frische, Benutzername: N}`. Die zweite antwortet 200, wenn die
+erste Adresse vergeben war, und `username_taken`, wenn sie frei war. Das ist
+deterministisch, braucht keinen Wettlauf und keine privilegierte Position, und
+ein einziger nebenläufiger Stapel liest dasselbe Bit an der Zahl der Ablehnungen
+ab. Keine Normalisierung einer Antwort erreicht eine Zeile, also deckt die
+Ausnahme oben dieses Leck nicht mit ab. Es zu schließen verlangt eine Deckung,
+die bestehen bleibt — ein echtes Konto für jede Adresse, die ein Angreifer rät —,
+und das ist schlechter als das Orakel. Die Konfiguration hat diese Eigenschaft,
+und sie wird hier genannt statt weggeredet.
 
 Serverseitig wird der wahre Grund immer protokolliert. Der Unterschied zwischen
 innen und außen ist ausdrücklich und liegt an genau einer Stelle im Code.
@@ -1864,6 +1911,7 @@ nie ankam, nützt nur einem Angreifer.
 interface OAuthConfig {
   providers: Partial<Record<KnownProvider, ProviderCredentials>>
            & { [customId: string]: GenericProviderConfig }
+  callbackBaseUrl: string                       // absolut; die Anbieter-Id wird angehängt (S-REDIR-6)
   trustedProviders: readonly string[]
   storeTokens: boolean                          // Vorgabe false
 }
@@ -1940,11 +1988,11 @@ interface SweepReport     { deletedRowsByTable: Readonly<Record<string, number>>
 
 `routes` ist kein Implementierungsdetail, sondern die Datenstruktur, aus der Teil D den
 HTTP-Handler und Teil E den Client baut. Sie liegt zur Laufzeit vor, weil der Client sonst
-raten müsste. `AuthSurface` hat 54 Methoden im Modus `username_email`, 51 in `email`, 45 in
+raten müsste. `AuthSurface` hat 55 Methoden im Modus `username_email`, 52 in `email`, 46 in
 `username`. `maintenance.sweep` löscht abgelaufene Zeilen aus den sieben Tabellen mit
 `*_sweep_idx` (L-11); `@velve/auth/schema` liefert dasselbe als SQL für `pg_cron`.
 
-##### B.1 `signUp` (2), `signIn` (7), `signOut` (1)
+##### B.1 `signUp` (2), `signIn` (8), `signOut` (1)
 
 ```ts
 interface SignUpNamespace<M extends IdentityMode> {
@@ -1961,7 +2009,9 @@ interface SignInNamespace<M extends IdentityMode> {
   }
   oauth: {
     start(input: { provider: string; redirectPath?: string }): Promise<OAuthRedirect>
-    finish(input: { provider: string; code: string; state: string; issuer?: string })
+    callback(input: { provider: string; code: string; state: string; iss?: string })
+      : Promise<OAuthCallbackResult>
+    callbackFormPost(input: { provider: string; code: string; state: string; iss?: string })
       : Promise<OAuthCallbackResult>
   }
   magicLink: OnlyWhen<ModeHasEmail<M>, {
@@ -2158,7 +2208,7 @@ den Prozess genau hier, genau einmal. `remaining` gibt nur eine Zahl zurück, ge
 ```ts
 interface IdentityNamespace {
   list(input: { sessionToken: SessionToken }): Promise<Identity[]>
-  linkOAuth: {
+  link: {
     start(input: { sessionToken: SessionToken; provider: string; redirectPath?: string })
       : Promise<OAuthRedirect>
   }
@@ -2171,10 +2221,13 @@ interface PendingNamespace {
 }
 ```
 
-`linkOAuth.start` hat kein eigenes `finish`: Der Anbieter leitet auf genau eine Callback-Adresse
+`link.start` hat keinen eigenen Callback: Der Anbieter leitet auf genau eine Callback-Adresse
 zurück, und `velve.oauth_flow` weiß über `link_to_user_id` bereits, ob verknüpft oder angemeldet
-wird; ein zweites `finish` mit identischer Eingabe wäre eine Verzweigung, die der Client raten
-müsste.
+wird; ein zweiter Callback mit identischer Eingabe wäre eine Verzweigung, die der Client raten
+müsste. Zwei Callback-Methoden gibt es trotzdem, `callback` und `callbackFormPost`, und der Grund
+ist keine Verzweigung, sondern die Zustellform: Beide Routen liegen auf demselben Pfad, eine als
+GET und eine als `form_post` (Abschnitt 1, C50 und C70), und aus jeder Route entsteht genau eine
+Servermethode.
 
 **Die Regel der letzten Anmeldemöglichkeit (L-13).** `unlink` schlägt mit
 `last_sign_in_method` fehl, wenn danach keine Anmeldemöglichkeit übrig bliebe. Gezählt werden:
@@ -2214,7 +2267,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `signIn.password` | — | — | IP+Konto | `invalid_credentials` (schließt Deaktivierung ein, L-4) |
 | `signIn.passkey.start`, `signIn.oauth.start` | — | — | IP | `provider_not_configured` (nur oauth) |
 | `signIn.passkey.finish` | — | — | IP | `webauthn_challenge_invalid`, `webauthn_credential_rejected` |
-| `signIn.oauth.finish` | — | — | IP | `oauth_flow_invalid`, `oauth_provider_error`, `identity_already_linked` |
+| `signIn.oauth.callback`, `signIn.oauth.callbackFormPost` | — | — | IP | `oauth_flow_invalid`, `oauth_provider_error`, `identity_already_linked` |
 | `signIn.magicLink.request` | — | — | IP+Konto | — |
 | `signIn.magicLink.redeem` | — | — | IP | `invalid_token` |
 | `signOut`, `session.refresh`, `pending.cancel` | session/pending | — | IP | `session_required` (nur `refresh`) |
@@ -2241,7 +2294,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `factor.webauthn.remove`, `identity.unlink` | session | **ja** | IP | `session_required`, `freshness_required`, `last_sign_in_method` |
 | `factor.recovery.generate` | session | **ja** | IP | `session_required`, `freshness_required` |
 | `factor.recovery.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_recovery_code`, `too_many_factor_attempts` |
-| `identity.linkOAuth.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
+| `identity.link.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
 
 `session.resolve` und `pending.resolve` sind nicht ratenbegrenzt: Sie laufen bei jeder Anfrage
 der Anwendung, ein Zähler darauf wäre eine Selbstblockade.
@@ -2288,7 +2341,9 @@ interface PendingAuthentication {
 }
 interface OAuthRedirect { authorizationUrl: string; stateCookie: CookieInstruction }
 interface CookieInstruction { name: string; value: string; maximumAgeInSeconds: number
-                              attributes: "HttpOnly; Secure; SameSite=Lax; Path=/" }
+                              attributes: "HttpOnly; Secure; SameSite=Lax; Path=/"
+                                        | "HttpOnly; Secure; SameSite=Strict; Path=/"
+                                        | "HttpOnly; Secure; SameSite=None; Path=/" }
 interface PasskeyAuthenticationChallenge  { publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;  challengeToken: string }
 interface WebAuthnAuthenticationChallenge { publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;  challengeToken: string }
 interface WebAuthnRegistrationChallenge   { publicKeyOptions: PublicKeyCredentialCreationOptionsJSON; challengeToken: string }
@@ -2476,6 +2531,7 @@ einsetzt; `caller: "session"` erzeugt genau diese eine Differenz zwischen den Si
 | POST | `/sign-in/passkey/finish` | `{ challengeToken, response }` | `SignInResult` | 200, 400, 401 | IP | ja |
 | POST | `/sign-in/oauth/start` | `{ provider, redirectPath? }` | `OAuthRedirect` | 200, 400 | IP | ja |
 | GET | `/sign-in/oauth/callback/:provider` | Query `{ code, state, iss? }` | 302 | 302, 400, 409, 502 | IP | **nein** |
+| POST | `/sign-in/oauth/callback/:provider` | Formularkörper `{ code, state, iss? }` | 302 | 302, 400, 409, 502 | IP | **nein** |
 | POST | `/sign-in/magic-link/request` | `{ email }` | — | 204, 400 | IP+Konto | ja |
 | POST | `/sign-in/magic-link/redeem` | `{ token }` | `SignInResult` | 200, 400 | IP | ja |
 | POST | `/sign-out` | — | — | 204 | IP | ja |
@@ -2521,7 +2577,7 @@ drei ausgewiesenen 429 sind `too_many_factor_attempts`), `403 origin_not_allowed
 Route mit Origin-Prüfung, `403 account_disabled` bei jeder Route mit Aufrufer `session`
 (L-4) und `500 internal_error`.
 
-46 Routen im Modus `username_email`, 44 in `email` (ohne `/username/*`), 38 in `username`
+47 Routen im Modus `username_email`, 45 in `email` (ohne `/username/*`), 39 in `username`
 (zusätzlich ohne Magic Link, Passwort-Reset per E-Mail und `/email/*`); die Zahlen gelten mit
 konfiguriertem `webauthn`, ohne es fehlen die neun `webauthn`- und `passkey`-Routen. Die
 Tabelle wird beim Erzeugen der Instanz nach Modus und Konfiguration gefiltert; eine Route, die es im gewählten Modus nicht
@@ -2529,9 +2585,13 @@ gibt, antwortet nicht mit 403, sondern existiert nicht und ergibt 404. `auth.use
 `auth.maintenance.*` haben keine Routen (B.3). Jede Antwort trägt `Cache-Control: no-store`
 und `Vary: Cookie`, gesetzt vom Handler (L-6).
 
-Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung: Er ist eine Rückleitung des
-Anbieters per GET und hat systembedingt keinen `Origin`-Kopf; seine Absicherung ist der
-serverseitige `state` in `velve.oauth_flow`, dessen Zeiger im Cookie liegt. Die vier Routen mit
+Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung, und er steht zweimal in der
+Tabelle: Er ist eine Rückleitung des Anbieters und hat in beiden Formen systembedingt keinen
+`Origin`-Kopf, den die Bibliothek vergleichen dürfte — als GET-Rückleitung nicht, und als
+`form_post` nicht, das Apple verlangt, sobald der E-Mail-Bereich angefordert wird (Abschnitt 1,
+C50 und C70). Beide Zeilen tragen daher `originCheck: "exempt"`, und es sind genau zwei; seine
+Absicherung ist der serverseitige `state` in `velve.oauth_flow`, dessen Zeiger im Cookie liegt.
+Die vier Routen mit
 `caller: "pending"` sind die aus 3.6; nur sie lesen `__Host-velve_pending`, jede andere Route
 ignoriert es vollständig, und die Anzahl ist am Deklarationstyp ablesbar.
 
@@ -2661,7 +2721,7 @@ die inneren Codes werden ausschließlich protokolliert.
 | `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed` |
 | `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated` |
 | `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent` |
-| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled` |
+| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled`, `link_session_gone` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
 | `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled` |
 
@@ -2892,6 +2952,8 @@ Der Angriff: Ein Angreifer registriert `opfer@example.com` mit einem Kennwort, d
 
 Die Regel: **Wird eine E-Mail-Adresse erstmals bestätigt, und wurde das vorhandene Kennwort in einer anderen Sitzung gesetzt als der, die jetzt bestätigt, dann wird die Kennwortanmeldung gelöscht und jede bestehende Sitzung widerrufen.** Der rechtmäßige Inhaber setzt danach ein Kennwort. Es geht nichts verloren außer einem Zugang, den nie jemand nachgewiesen hat.
 
+Damit die Frage überhaupt beantwortbar ist, trägt `velve.password_credential` die Spalte `set_by_session_id` (3.17). Ein Fremdschlüssel auf `velve.session` steht nicht dabei: `ON DELETE CASCADE` würde die Anmeldedaten löschen, sobald die eintragende Sitzung widerrufen wird, und `ON DELETE SET NULL` würde die Antwort genau in dem Moment löschen, in dem diese Regel sie braucht, denn der bestätigende Ablauf widerruft Sitzungen. **NULL heißt unbekannt und wird als eine andere Sitzung gelesen** — eine nicht aufgezeichnete Herkunft kostet also das Kennwort und hebelt die Regel nicht aus.
+
 **L-13 — Der letzte Anmeldeweg darf nicht entfernt werden.**
 Ein Nutzer behält immer mindestens eines aus {Kennwort, WebAuthn-Anmeldedaten, verknüpfte Identität}. Der Versuch, das letzte zu entfernen, wird mit `last_sign_in_method` abgelehnt. Für zweite Faktoren gilt dasselbe nur dann, wenn die Konfiguration einen zweiten Faktor verlangt.
 
@@ -2904,6 +2966,11 @@ Zusammengeführt mit den Ergänzungen aus dem Migrationsmodul (Abschnitt 4) ergi
 -- umbenennen). Ergebnis in velve.password_credential:
 --   phc          bytea   NOT NULL             -- AES-256-GCM über den kanonischen PHC-String
 --   key_version  integer NOT NULL DEFAULT 1
+
+-- L-12: macht S-LINK-4 entscheidbar. Kein Fremdschlüssel auf velve.session, und
+-- NULL heißt unbekannt und wird als eine andere Sitzung gelesen.
+ALTER TABLE velve.password_credential
+  ADD COLUMN set_by_session_id uuid;
 
 -- L-3
 ALTER TABLE velve.recovery_code
@@ -3095,7 +3162,7 @@ Stattdessen wird der Nutzer in `velve.password_reset_required` markiert — eine
 
 Der Anmeldeweg, ohne neuen Aufzählungskanal: (1) Eingabelänge prüfen (Abschnitt 3.3, Schritt 1). (2) Nutzer auflösen; kein `password_credential` gefunden → **derselbe Codepfad wie bei einem unbekannten Nutzer**, also Prüfung gegen den Dummy-PHC mit den konfigurierten Standardparametern (Abschnitt 3.3, Schritt 2): gleiche Rechenzeit, gleicher Speicher, gleicher Semaphor. (3) Antwort ist die einheitliche Fehlantwort aus Abschnitt 3.13 — gleicher Status, gleiche Kopfzeilen, gleicher Körper; **kein Feld, kein Fehlercode und kein Zeitunterschied verrät die Markierung**. (4) *Nach* dem Senden der Antwort, in derselben begrenzten Hintergrundaufgabe, die auch den Rehash trägt (Abschnitt 3.3, Schritt 6): Existiert eine Zeile in `password_reset_required` und hat der Nutzer eine bestätigte E-Mail, wird ein `one_time_token` mit `purpose = 'password_reset'` erzeugt (1 h, Abschnitt 3.7) und die Reset-Mail versendet, mit einem Text, der die Migration erklärt. (5) Höchstens eine solche Mail pro Nutzer und Stunde, über denselben Token-Bucket wie der reguläre Reset (Abschnitt 3.9). (6) Setzt der Nutzer das Kennwort, löscht dieselbe Transaktion die Markierung und schreibt `password_credential`.
 
-Das ist exakt das Muster aus Abschnitt 3.13: *„Der Unterschied wandert ausschließlich in die versendete E-Mail."* Der Angreifer sieht nichts; der Kontoinhaber bekommt den Weg zurück, ohne je einen Fehler zu sehen, den er nicht versteht. In der Konfiguration `username` (Abschnitt 3.4) gibt es keinen E-Mail-Pfad — dort ist der Wiederherstellungscode der einzige Weg, und fehlt auch der, ist das Konto verloren. Genau diese Fälle zählt der Trockenlauf als `unrecoverable`.
+Das ist exakt das Muster aus Abschnitt 3.13: *„Der Unterschied wandert in die versendete E-Mail."* Der Angreifer sieht nichts; der Kontoinhaber bekommt den Weg zurück, ohne je einen Fehler zu sehen, den er nicht versteht. In der Konfiguration `username` (Abschnitt 3.4) gibt es keinen E-Mail-Pfad — dort ist der Wiederherstellungscode der einzige Weg, und fehlt auch der, ist das Konto verloren. Genau diese Fälle zählt der Trockenlauf als `unrecoverable`.
 
 #### 4.0.6 Kollisionsauflösung
 
@@ -3890,11 +3957,11 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 - **S-ENUM-1:** `POST /sign-in/password` liefert für eine existierende und eine nicht existierende Kennung bei falschem Kennwort identische HTTP-Status, identische Kopfzeilenmenge (nach Entfernen von `Date`) und byteweise identische Antwortkörper. *(Abschnitt 3.13: „byteweise identische Antworten — gleicher Status, gleiche Kopfzeilen, gleicher Körper")*
 - **S-ENUM-2:** `POST /sign-in/password` liefert für die Kontozustände *nicht vorhanden*, *vorhanden und unbestätigt*, *vorhanden und bestätigt*, *vorhanden und deaktiviert*, *vorhanden ohne `password_credential`* bei falschem Kennwort dieselbe Antwort; ein deaktiviertes Konto liefert diese Antwort auch bei korrektem Kennwort, und der Code `account_disabled` erscheint bei keiner Anmeldung, sondern nur bei der Auflösung einer bestehenden Sitzung. *(Abschnitt 3.16, L-4; Abschnitt 3.13; Abschnitt 3.3 Schritt 4: „einheitliche Antwort, kein Hinweis auf die Ursache")*
-- **S-ENUM-3:** `POST /sign-up` liefert für eine bereits vergebene und eine freie E-Mail identische HTTP-Status, identische Kopfzeilen und byteweise identische Antwortkörper. *(Abschnitt 3.13, Absatz „Registrierung mit bereits vergebener E-Mail")*
+- **S-ENUM-3:** `POST /sign-up` liefert für eine bereits vergebene und eine freie E-Mail identische HTTP-Status, identische Kopfzeilen und byteweise identische Antwortkörper — byteweise identisch bis auf die Felder, die der Aufrufer selbst gesendet hat und die die Antwort zurückgibt. Das erste solche Feld ist die **E-Mail-Adresse**, und zwar in beiden Konfigurationen, in denen diese Anforderung überhaupt greift: `User` trägt sie (3.15 C), und die beiden Proben senden verschiedene Adressen, weil sonst nichts zu vergleichen wäre. In `username_email` kommt der `username` dazu. Was die Antwort dem Aufrufer zurückgibt, sagt ihm nichts, was er nicht schon wusste. Diese Anforderung gilt für die eine Antwort und nicht für die dauerhaften Nebenwirkungen der Anfrage; für die gelten die beiden Restleck-Absätze in 3.13. *(Abschnitt 3.13, Absatz „Registrierung mit bereits vergebener E-Mail")*
 - **S-ENUM-4:** Bei `POST /sign-up` mit bereits vergebener E-Mail versendet der Kern genau eine Nachricht an die vorhandene Adresse, die einen Anmeldelink statt eines Bestätigungslinks enthält; die Anzahl versendeter Nachrichten ist in beiden Fällen gleich. *(Abschnitt 3.13: „an die vorhandene Adresse geht eine Nachricht … mit einem Anmelde- statt Bestätigungslink")*
 - **S-ENUM-5:** `POST /password/request-reset` und `POST /email/request-change` liefern für existierende und nicht existierende Zieladressen byteweise identische Antworten; eine Kollision beim E-Mail-Wechsel wird erst beim Einlösen des Tokens erkannt und dort mit derselben Antwort wie ein ungültiger Token (`invalid_token`) verworfen. *(Abschnitt 3.13, Aufzählung der vier uniformen Flüsse; Abschnitt 3.15 F.1, innere Ursache `email_taken_on_change`)*
 - **S-ENUM-6:** Der wahre Fehlergrund wird bei jedem abgewiesenen Anmeldeversuch serverseitig protokolliert, und der Unterschied zwischen protokolliertem und ausgeliefertem Grund entsteht an genau einer Stelle im Quelltext. *(Abschnitt 3.13, letzter Absatz)*
-- **S-ENUM-7:** In der Konfiguration `identity: "email"` existiert kein Endpunkt, der die Existenz einer E-Mail-Adresse als boolesche Antwort zurückgibt. *(Abschnitt 3.4, Spalte „Aufzählungsschutz": „vollständig")*
+- **S-ENUM-7:** In der Konfiguration `identity: "email"` existiert kein Endpunkt, der die Existenz einer E-Mail-Adresse als boolesche Antwort zurückgibt. *(Abschnitt 3.4, Spalte „Aufzählungsschutz": „vollständig bis auf das erste Restleck aus 3.13" — der Endpunkt, den diese Anforderung ausschließt, ist keines der beiden Restlecks)*
 - **S-ENUM-8:** In den Konfigurationen `username` und `username_email` gibt `GET /username/available` ausschließlich `available` und den Ablehnungsgrund zurück, unterliegt einem eigenen Eimer je IP-Präfix von 10 Anfragen je Minute und bietet keine Präfix- oder Ähnlichkeitssuche; die Dokumentation weist die Aufzählbarkeit von Benutzernamen ausdrücklich aus. *(Abschnitt 3.4: „Velve Auth bietet sie an, begrenzt sie hart und sagt es in der Dokumentation"; Abschnitt 3.15 B.5)*
 
 ---
@@ -3994,7 +4061,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 **(c) Die Anforderungen.**
 
-- **S-CSRF-1:** Jede Route außer `GET /sign-in/oauth/callback/:provider` trägt `originCheck: "checked"` und durchläuft die Origin-Prüfung, bevor der Handler läuft; das gilt auch für den direkten Serveraufruf über die aus der Routendeklaration erzeugte Servermethode. *(Abschnitt 3.15 D.3: „Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung"; Abschnitt 3.11: „Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen.")*
+- **S-CSRF-1:** Jede Route außer `GET /sign-in/oauth/callback/:provider` und `POST /sign-in/oauth/callback/:provider` trägt `originCheck: "checked"` und durchläuft die Origin-Prüfung, bevor der Handler läuft; das gilt auch für den direkten Serveraufruf über die aus der Routendeklaration erzeugte Servermethode. Ausgenommen sind genau diese zwei, und beide aus demselben Grund: eine Rückleitung des Anbieters trägt keinen `Origin`-Kopf, den die Bibliothek vergleichen dürfte. *(Abschnitt 3.15 D.3: „Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung, und er steht zweimal in der Tabelle"; Abschnitt 3.11: „Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen.")*
 - **S-CSRF-2:** Die Origin-Prüfung vergleicht `new URL(header).origin` per Zeichenkettengleichheit gegen einen Eintrag aus `origins`; die Bibliothek enthält keinen Präfix-, Teilstring- oder Musterabgleich auf Origins. *(Abschnitt 3.12, `origins: ["https://app.example.com"]`)*
 - **S-CSRF-3:** Ein Origin, der sich vom erlaubten nur im Schema, im Port, in einem Präfix oder in einem Suffix unterscheidet, wird mit `origin_not_allowed` abgelehnt; die Ablehnung ist für alle Fehlvarianten byteweise identisch. *(Abschnitt 3.12, `origins`; Abschnitt 3.15 F, `origin_not_allowed`)*
 - **S-CSRF-4:** Keine zustandsändernde Operation ist über `GET` erreichbar; die einzige Ausnahme ist der OAuth-Callback, der stattdessen durch `state`, PKCE und `iss` geschützt ist, und die übrigen `GET`-Routen (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`) sind lesend. *(Abschnitt 3.10, erster Absatz; Abschnitt 3.15 D.3, Routentabelle)*
@@ -4294,7 +4361,7 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 |---|---|---|---|---|---|
 | T-ENUM-1 | S-ENUM-1 | Integration | Zwei `POST /sign-in/password`-Anfragen mit gleich langen Kennungen, eine existierend, eine nicht. Antworten normalisieren (`Date` entfernen). | `status_a === status_b`, sortierte Kopfzeilennamen gleich, `Buffer.compare(body_a, body_b) === 0` — **0 abweichende Bytes** | CI bei jedem Commit |
 | T-ENUM-2 | S-ENUM-2 | Integration, tabellengetrieben | Fünf Kontozustände herstellen, jeweils `POST /sign-in/password` mit falschem Kennwort; als sechsten Fall das deaktivierte Konto mit korrektem Kennwort. | **6/6 Antworten byteweise identisch**; `account_disabled` kommt in **0** der Antworten vor | CI bei jedem Commit |
-| T-ENUM-3 | S-ENUM-3 | Integration | `POST /sign-up` mit vergebener und mit freier E-Mail gleicher Länge. | **0 abweichende Bytes** in Status, Kopfzeilenmenge und Körper | CI bei jedem Commit |
+| T-ENUM-3 | S-ENUM-3 | Integration | `POST /sign-up` mit vergebener und mit freier E-Mail gleicher Länge; in `username_email` zusätzlich mit zwei verschiedenen Benutzernamen gleicher Länge. Zwei Registrierungen **dürfen** denselben Namen senden — nebenläufig ist das ein eigener Testfall —, aber dann misst der Vergleich das zweite Restleck aus 3.13 und nicht mehr die Antwort. | **0 abweichende Bytes** in Status und Kopfzeilenmenge; im Körper **0 abweichende Bytes**, nachdem die vom Aufrufer gesendeten Felder normalisiert sind | CI bei jedem Commit |
 | T-ENUM-4 | S-ENUM-4 | Integration | Mailversand-Attrappe zählt Nachrichten und protokolliert die Vorlagenkennung. | Beide Fälle **genau 1 Nachricht**; Vorlagenkennungen **verschieden**; Empfängeradresse im Kollisionsfall die vorhandene | CI bei jedem Commit |
 | T-ENUM-5 | S-ENUM-5 | Integration | `POST /password/request-reset` und `POST /email/request-change` je zweimal (existierend / nicht existierend). Beim E-Mail-Wechsel zusätzlich den Token auf eine kollidierende Adresse einlösen. | **0 abweichende Bytes** je Endpunkt; das Einlösen bei Kollision ändert **0 Zeilen** und liefert byteweise die Antwort auf einen erfundenen Token (`invalid_token`) | CI bei jedem Commit |
 | T-ENUM-6 | S-ENUM-6 | Integration + Statisch | Protokoll-Senke prüfen: für jeden der 6 Fälle aus T-ENUM-2 muss der wahre Grund im Protokoll stehen. AST-Scan: die Abbildung von innerem Grund auf äußeren Code existiert an genau einer Stelle (`core/http/error-map.ts`). | **6/6 Gründe protokolliert**; **genau 1 Abbildungsstelle** | CI bei jedem Commit |
@@ -4326,8 +4393,26 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 | T-RAND-4 | S-RAND-4 | Unit | Je 1000 Werte für Einmal-Token, `state`, PKCE-Verifier und WebAuthn-Challenge. | jeweils **≥ 256 bit** dekodiert; PKCE-Verifier zusätzlich 43–128 Zeichen (RFC 7636) | CI bei jedem Commit |
 | T-RAND-5 | S-RAND-5 | Statisch | AST-Scan: Aufrufe von `crypto.getRandomValues` außerhalb des Zufallsmoduls. | **0 Treffer außerhalb** von `core/token/random.ts` | CI bei jedem Commit |
 | T-RAND-6 | S-RAND-6 | Statisch + Integration | Typprüfung: eine Funktion, die `EntityId` erwartet, nimmt kein `Secret` an und umgekehrt (`expectTypeOf`). Integrationstest durchsucht alle `Set-Cookie`- und Körperwerte der gesamten Suite nach `uuid`-Werten aus `velve.session.id`. | **0 Typfehler fehlen** (2 Negativfälle kompilieren nicht); **0 Treffer** über alle Integrationsantworten | CI bei jedem Commit |
-| T-RAND-Verteilung | S-RAND-2/3/4 (ergänzend) | Statistisch | N = 100 000 Tokens je Artefakttyp; Zeichenhäufigkeit je Position; Monobit- und Runs-Test auf Bitebene (NIST SP 800-22). | Chi-Quadrat je Position **p > 0,001**; Monobit **p > 0,001**; Runs **p > 0,001** | CI nächtlich |
+| T-RAND-Verteilung | S-RAND-2/3/4 (ergänzend) | Statistisch | N = 100 000 Tokens je Artefakttyp; Zeichenhäufigkeit je Position (42 volle Positionen und die letzte, die nur 16 Zeichen tragen kann); Monobit- und Runs-Test auf Bitebene (NIST SP 800-22) — zusammen **k = 45** Einzeltests über dieselbe Stichprobe. | **Familienweise p > 0,001** über alle k Einzeltests dieser Datei gemeinsam; je Einzeltest daher α = 1 − (1 − 0,001)^(1/k) nach Šidák — heute k = 45 und α ≈ 0,0000222. Jeder zusätzliche Fall verschiebt α. | CI nächtlich |
 | T-RAND-Kollision | S-RAND-2 (ergänzend) | Nebenläufigkeit | 1 Mio. Tokens in 8 parallelen Arbeitern erzeugen, in eine Menge schreiben. | `set.size === 1_000_000` | CI nächtlich |
+
+**Warum die Schwelle familienweise gilt.** Bis zu dieser Fassung stand in der Zeile ein α **je
+Position**: „Chi-Quadrat je Position p > 0,001; Monobit p > 0,001; Runs p > 0,001". Das ist eine
+Schwelle für einen Test, der nicht allein vorkommt. Die 45 Einzeltests liegen in einer Datei und
+färben sie gemeinsam rot. Wären sie unabhängig, ergäbe α = 0,001 je Test eine Fehlalarmrate von
+1 − (1 − 0,001)^45, also rund 4,4 %. Ganz unabhängig sind sie nicht — Monobit und Runs lesen
+dieselben Bits, aus denen die Positionstests ihre Zeichen nehmen —, und deshalb gilt die Messung
+und nicht das Modell: **4,29191 % über 1 000 020 Durchläufe**, ein ehrlicher Lauf von
+dreiundzwanzig.
+
+**Was die Korrektur kostet.** Sie ist nicht umsonst und wird hier nicht so hingeschrieben. Šidák
+drückt α je Einzeltest von 0,001 auf rund 0,0000222 und damit die Trennschärfe: Gegen eine
+Verzerrung am heutigen Erkennungspunkt fällt die Erkennungswahrscheinlichkeit bei N = 100 000 von
+49,90 % auf 17,27 %. Der Verlust liegt vollständig in einem schmalen Band — zwischen etwa 11,4 %
+und 13,4 % Ausdünnung eines einzelnen Zeichens an einer Position; außerhalb dieses Bandes
+entscheiden beide Fassungen gleich. **N bleibt bei 100 000.** Um die alte Trennschärfe zu halten,
+wären 139 284 nötig; das wäre eine zweite Abweichung, genommen um die erste weichzuspülen, und sie
+wird nicht genommen.
 
 ---
 
@@ -4376,7 +4461,7 @@ Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
-| T-CSRF-1 | S-CSRF-1 | Integration, generiert + Statisch | Jede Route aus der Routentabelle mit fremdem `Origin` aufrufen — einmal über den HTTP-Handler, einmal über die direkte Servermethode. Statisch: genau eine Route trägt `originCheck: "exempt"`. | **Alle Routen außer dem OAuth-Callback abgelehnt** mit `origin_not_allowed` auf beiden Wegen; 0 Zeilenänderungen; **genau 1** Route mit `exempt`, und das ist `signIn.oauth.callback` | CI bei jedem Commit |
+| T-CSRF-1 | S-CSRF-1 | Integration, generiert + Statisch | Jede Route aus der Routentabelle mit fremdem `Origin` aufrufen — einmal über den HTTP-Handler, einmal über die direkte Servermethode. Statisch: genau zwei Routen tragen `originCheck: "exempt"`. | **Alle Routen außer den beiden OAuth-Callbacks abgelehnt** mit `origin_not_allowed` auf beiden Wegen; 0 Zeilenänderungen; **genau 2** Routen mit `exempt`, und das sind `signIn.oauth.callback` und `signIn.oauth.callbackFormPost` | CI bei jedem Commit |
 | T-CSRF-2 | S-CSRF-2 | Statisch + Unit | AST-Scan: in `core/http/origin.ts` kein `startsWith`, `includes`, `endsWith`, `RegExp`. Unit: erlaubter Origin, gleicher Origin mit anderem Port, mit anderem Schema. | **0 Treffer**; **3/3 Unit-Fälle** korrekt | CI bei jedem Commit |
 | T-CSRF-3 | S-CSRF-3 | Integration, exhaustiv | Alle zustandsändernden Routen × 8 Origin-Varianten: erlaubt, fehlend, `null`, `http://` statt `https://`, `sub.erlaubt.de`, `erlaubt.de.evil.com`, `erlaubt.de:8443`, `evil.de`. | Nur die Variante *erlaubt* ist erfolgreich; **alle Ablehnungen byteweise identisch** | CI bei jedem Commit |
 | T-CSRF-4 | S-CSRF-4 | Statisch + Integration | Routentabelle filtern: jede `GET`-Route ist der OAuth-Callback oder eine der sieben lesenden Routen aus S-CSRF-4. Integration: jede lesende `GET`-Route aufrufen und die Zeilenzahl aller Tabellen vorher und nachher vergleichen (`last_used_at`/`idle_expires_at` der eigenen Sitzung ausgenommen). | **0 unklassifizierte GET-Routen**; **0 Zeilenänderungen** durch lesende Routen | CI bei jedem Commit |

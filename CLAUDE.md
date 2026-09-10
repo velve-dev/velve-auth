@@ -434,8 +434,32 @@ form separates the two cases** — an edit to an entry the branch itself introdu
 nets out to an addition against the merge base whichever way the edit went. This
 rule needs a human. E-536 found that boundary; E-538 records an instance where a
 wrong reason was corrected in place anyway, deliberately and disclosed in the
-entry, which is what disclosure is for and is not a precedent for doing it
-quietly.
+entry. What disclosure does and does not buy is settled next.
+
+**Disclosure is not a remedy, and E-538 is not a precedent.** A reason that was
+**wrong when it was written** is corrected by a new entry citing the old one, and
+never by an edit to the old one's text — disclosed or not. The prohibition above
+is stated flatly; E-538's own "anyway" concedes a violation rather than licensing
+one; and reading disclosure as a remedy empties the prohibition of everything it
+forbids, because any edit can be disclosed. That reason is the thing a later
+reader would otherwise find and believe, which is the whole point of the rule.
+
+**The half a writer actually hits is the other one.** An entry that was correct
+when written and was made stale by the branch's **own later change to the thing
+the entry describes** may be brought into step in place, with the change
+disclosed in the entry. An entry saying *"clause X now reads Y"* whose branch
+then changes X to read Z rationalises nothing; leaving it standing publishes an
+entry describing text the tree does not contain. So the line is: **an entry may
+be brought into step with its own artefact; the reason a decision was taken may
+not be rewritten.**
+
+**Neither half has a diff signature, and a reader is the mechanism for both.** An
+edit bringing an entry into step with its amended artefact and an edit rewriting
+a reason are the same shape in `git diff`, and `check:log-append` is blind to
+both, for the reason the paragraph below gives. Disclosure in the entry and a
+reviewer reading it are the whole enforcement, and this file says so rather than
+presenting the rule as decidable — a rule presented as decidable when it is not
+is how E-1032 happened (E-1139).
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
@@ -446,13 +470,43 @@ made them (E-538). The check is structurally blind to an edit of an entry the
 same branch introduced, because at the merge base that entry did not exist. That
 blindness is exactly right: it is the case this rule permits.
 
-**The loss the step actually prevents is a merge conflict resolved badly.** Four
-features append to `CASE-STUDY.md` in every wave, so a branch that merges `main`
-gets a conflict in it, and resolving that conflict by keeping one's own side
-drops a sibling's entries silently — the branch is green, the entries are gone,
-and the sibling has already merged. That is a routine mistake with no other
-detector. The in-branch edit E-538 records is the narrower case and the one the
-step cannot see.
+**The loss the step guards against is a merge conflict resolved badly, and it
+guards one of the two directions.** Features append to `CASE-STUDY.md` in every
+wave — three of them in wave 5 — so a branch that merges `main` gets a conflict
+in it, and a conflict offers two bad resolutions rather than one. The step
+answers them differently, and the difference is the whole of what follows.
+
+**Keeping one's own side** drops what `main` carries. Those entries are at the
+merge base by construction, because `main` is the base, so dropping them is a
+deletion and the **first** clause fires. Reconstructed at `27e291e`: the step
+reports 764 lines lost and exits 1, and `test/decision-log.test.ts` is red on 74
+citations resolving to no entry (E-1131).
+
+**Keeping `main`'s side** drops the branch's own entries, which were never at the
+base — so nothing is deleted, and the first clause sees nothing. What fires
+instead is the **second**, `commits > 0 && additions === 0`, and it fires only
+while the branch has added no line to the file at all. **Any addition anywhere in
+the file defeats it.** Two lines of unrelated comment turn a resolution that lost
+68 entries green at `+2 −0` (E-1132). **And its window is the merge commit and
+nothing after it**, because the next commit is the one recording the merge, which
+item 5 of the definition of done requires: measured one commit later at `+44 −0`,
+exit 0, with the same 68 entries still missing (E-1133).
+
+So `check:log-append` is a **detector of one direction, at one commit** — not the
+mechanism against a badly resolved conflict. **`test/decision-log.test.ts` is the
+mechanism**, which is the mirror of what this section says of it under the range
+table below: decision identifiers are cited from code, tests and documentation,
+and a citation resolving to no entry is a failure whichever side was dropped. It
+is red in both directions and stays red after the commits that close the other
+step's window (E-1134).
+
+**What a merger does with that.** Run `pnpm check:log-append` on the merge commit
+itself, before committing anything on top of it — or do not lean on it and read
+`pnpm test`'s decision-log failure instead. Run after the entries that record the
+merge, it is being run outside the window in which it can answer.
+
+The in-branch edit E-538 records is the narrower case and the one the step cannot
+see.
 
 ### Numbering the decision log
 
@@ -495,8 +549,12 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-845 … E-869 | outside the waves · `specfix` — the specification's own defects |
 | E-870 … E-879 | outside the waves · `notice` — the attribution line and the licence appendix |
 | E-880 … E-899 | outside the waves · `skillver` — the skill's version and its staleness |
+| E-930 … E-959 | wave 5 · `email-flows`, second range |
 | E-960 … E-979 | wave 5 · `oauth`, second range |
 | E-980 … E-999 | wave 5 · `oauth`, third range |
+| E-1030 … E-1059 | wave 5 · `email-flows`, third range |
+| E-1095 … E-1129 | outside the waves · `specfix`, second range |
+| E-1130 … E-1149 | outside the waves · `rules` — the rules file's own defects |
 | E-1060 … E-1094 | gate and infrastructure, sixth range |
 
 The next wave's ranges are added to that table before its features start,

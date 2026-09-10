@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { toEntityId } from "../src/core/db/entity-id.js";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
 import {
 	createOneTimeTokens,
@@ -46,7 +47,13 @@ function readThenWriteRedeemer(connection: TestConnection, schemaName: string): 
 				`DELETE FROM ${schemaName}.one_time_token WHERE token_sha256 = $1 AND purpose = $2`,
 				[hash, purpose],
 			);
-			return { purpose, userId: found.user_id, payload: null };
+			// E-234 asserts the provenance where the row is removed; the control forges it, which is
+			// the fault it models.
+			return {
+				purpose,
+				userId: toEntityId<"user">(found.user_id),
+				payload: null,
+			} as OneTimeTokenRedemption;
 		},
 	};
 }

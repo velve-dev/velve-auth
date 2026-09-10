@@ -58,17 +58,17 @@ describe("the namespaces a plugin may not take (3.11, 3.15 B)", () => {
 	});
 
 	/**
-	 * The build assembles a fraction of 3.15 B, and the list covers what it has not built. `oauth`
-	 * removed two of them: `signIn.oauth.*` and the three `identity` rows are in the table now.
+	 * The build assembles a fraction of 3.15 B, and the list covers what it has not built. Five of
+	 * the seven left when this was written are gone, from two features: `oauth` builds the three
+	 * `identity` rows and `signIn.oauth.*`, and `email-flows` builds `signUp`, `email` and both
+	 * halves of `password`, contributing `signIn.magicLink` to the namespace the two share.
+	 * `username` is absent from this mount because it is mounted in mode `email`.
 	 */
 	it("reserves more than the build carries, which is the point of it being a list", () => {
 		const carried = new Set(Object.keys(mounted.auth as unknown as Record<string, unknown>));
 
 		expect(SURFACE_NAMESPACES.filter((name) => !carried.has(name)).sort()).toStrictEqual([
-			"email",
 			"factor",
-			"password",
-			"signUp",
 			"username",
 		]);
 	});

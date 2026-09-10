@@ -18,3 +18,13 @@ export const ONE_TIME_TOKEN_LIFETIME_SECONDS: Readonly<Record<OneTimeTokenPurpos
 	email_change: HOUR_IN_SECONDS,
 	magic_link: 10 * 60,
 };
+
+/**
+ * Who an artefact is for. A request that names no account still says what it is about, because the
+ * serialisation S-TOKEN-3 needs and the uniformity 5.3 (a) needs are one lock: a request that
+ * waited on nothing where a request for an account waits on the account is an existence oracle with
+ * a stopwatch on it (E-931).
+ */
+export type OneTimeTokenSubject =
+	| { readonly userId: string; readonly serialisedOn?: undefined }
+	| { readonly userId: null; readonly serialisedOn: string };

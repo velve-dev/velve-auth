@@ -318,7 +318,10 @@ describe("L-7 — the validate hook cannot run at sign-in", () => {
 		const harness = await createHarness(stored, { validate: async () => undefined });
 		const decomposed = "passworéword";
 
-		await setPassword({ userId: USER_ID, plaintext: decomposed }, harness.environment);
+		await setPassword(
+			{ userId: USER_ID, plaintext: decomposed, setBySessionId: null },
+			harness.environment,
+		);
 
 		expect(harness.validateCalls).toEqual([decomposed.normalize("NFKC")]);
 	}, 120_000);
