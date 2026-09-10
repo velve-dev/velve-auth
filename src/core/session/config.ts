@@ -47,6 +47,12 @@ function millisecondsOf(option: string, duration: Duration): number {
 			`session.${option} must be a whole number of s, m, h or d above zero, not "${duration}"`,
 		);
 	}
+	// Refused at startup rather than at the first insert, which is where the database would refuse it (E-1573).
+	if (!Number.isSafeInteger(milliseconds)) {
+		throw new InvalidSessionConfigError(
+			`session.${option} is longer than a deadline this library can state exactly: "${duration}" is more than ${Number.MAX_SAFE_INTEGER} milliseconds`,
+		);
+	}
 	return milliseconds;
 }
 
