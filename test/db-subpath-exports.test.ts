@@ -43,7 +43,7 @@ describe("@velve/auth", () => {
 		expect(actor).toBe("not-a-uuid");
 		expect(typeof repository.deleteOwnedRow).toBe("function");
 		expect(new UnknownColumnError("velve.session", "user_id").code).toBe("unknown_column");
-		expect(VELVE_AUTH_VERSION).toBe("0.0.0");
+		expect(VELVE_AUTH_VERSION).toBe("1.0.0-next.1");
 	});
 
 	it("names the shape session resolution must return", () => {
