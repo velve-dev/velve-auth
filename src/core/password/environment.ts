@@ -20,8 +20,8 @@ export function createPasswordEnvironmentReader(
 		schema: services.schema,
 	});
 	const dummy = createDummyCredential(services.keys, services.password);
-	// The rejection is delivered to whichever check first awaits it; this keeps the eager start
-	// from being an unhandled rejection in the meantime.
+	// E-1183: the rejection is delivered to whichever check first awaits it, and this keeps the
+	// eager start from being an unhandled rejection until one does.
 	dummy.catch(() => undefined);
 
 	return async () => ({

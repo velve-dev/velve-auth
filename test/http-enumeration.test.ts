@@ -91,14 +91,17 @@ function signInRouteFailingWith(reason: ConcealedReason): AnyRoute {
 	});
 }
 
-function sourceFilesUnder(directory: URL): readonly { name: string; source: string }[] {
+function sourceFilesUnder(
+	directory: URL,
+	prefix = "",
+): readonly { name: string; path: string; source: string }[] {
 	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
 		const child = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, directory);
 		if (entry.isDirectory()) {
-			return sourceFilesUnder(child);
+			return sourceFilesUnder(child, `${prefix}${entry.name}/`);
 		}
 		return entry.name.endsWith(".ts")
-			? [{ name: entry.name, source: readFileSync(child, "utf8") }]
+			? [{ name: entry.name, path: `${prefix}${entry.name}`, source: readFileSync(child, "utf8") }]
 			: [];
 	});
 }
@@ -195,16 +198,28 @@ describe("enumeration — S-ENUM-1, S-ENUM-2, S-ENUM-6, L-4", () => {
 	 * nothing to do with a concealed failure. What the requirement is about is reading the reason
 	 * *off a `ConcealedError`*, so the file has to name that class to be reading one.
 	 */
+	/**
+	 * `core/password/routes.ts` reads a `.reason` that is not a `ConcealedError`'s: `checkPassword`
+	 * answers a refusal with the reason as a value, and the route raises it so the pipeline logs the
+	 * true one (S-ENUM-6). Producing a `ConcealedError` is the opposite of deciding what one means,
+	 * so the exemption is by path and covers that file alone — `instanceof ConcealedError`, which is
+	 * the only way to have one in hand to read, still fails for every file including this one
+	 * (E-1188).
+	 */
+	const MAY_NAME_A_REASON_BESIDE_THE_CLASS = "core/password/routes.ts";
+
 	it("decides the visible code from an internal reason in exactly one file", () => {
 		const files = sourceFilesUnder(new URL("../src/", import.meta.url));
 		const deciders = files.filter(
-			({ name, source }) =>
+			({ name, path, source }) =>
 				name !== "error-map.ts" &&
 				(source.includes("instanceof ConcealedError") ||
-					(source.includes("ConcealedError") && source.includes(".reason"))),
+					(path !== MAY_NAME_A_REASON_BESIDE_THE_CLASS &&
+						source.includes("ConcealedError") &&
+						source.includes(".reason"))),
 		);
 
-		expect(deciders.map(({ name }) => name)).toEqual([]);
+		expect(deciders.map(({ path }) => path)).toEqual([]);
 		expect(
 			files.filter(({ source }) => source.includes("VISIBLE_CODE_BY_CONCEALED_REASON")).length,
 		).toBe(1);
