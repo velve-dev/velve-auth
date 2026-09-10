@@ -70,3 +70,20 @@ export function nestServerMethods(
 	}
 	return root;
 }
+
+/**
+ * E-1192: the assembly spreads the derived namespaces and then states a handful of its own after
+ * them, so a name written by hand replaces a whole namespace a route source had contributed —
+ * silently, and however many methods were under it. A collision between the two is refused here
+ * instead of being resolved by the order of an object literal.
+ */
+export function assertNoStatedNameShadowsADerivedOne(
+	derived: Record<string, unknown>,
+	stated: Record<string, unknown>,
+): void {
+	for (const name of Object.keys(stated)) {
+		if (Object.hasOwn(derived, name)) {
+			throw new VelveStartupError("route_namespace_conflict");
+		}
+	}
+}

@@ -54,7 +54,7 @@ import {
 	assertKeysAnswerForEveryPurpose,
 	VelveStartupError,
 } from "./startup.js";
-import { nestServerMethods } from "./surface.js";
+import { assertNoStatedNameShadowsADerivedOne, nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
 
 const DEFAULT_SCHEMA = "velve";
@@ -335,14 +335,10 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const readSession = createServerMethod(read, environment);
 
-	const coreSurface = {
-		/**
-		 * The namespaces the seam modules contribute, folded out of their dotted names. The
-		 * hand-written ones below are written after them and win, so a name this file states is
-		 * never shadowed by a derived one.
-		 */
-		...nestServerMethods(seamRoutes, environment),
+	/** The namespaces the route sources contribute, folded out of their dotted names. */
+	const derivedSurface = nestServerMethods(seamRoutes, environment);
 
+	const statedSurface = {
 		routes: environment.routes,
 		identityMode: identity.mode,
 		errorCodes: ERROR_CODES,
@@ -402,6 +398,10 @@ export function assembleVelveAuth<M extends IdentityMode>(
 					} satisfies UsernameNamespace,
 				}),
 	};
+
+	// E-1192: what this file states after the fold would otherwise replace a derived namespace whole.
+	assertNoStatedNameShadowsADerivedOne(derivedSurface, statedSurface);
+	const coreSurface = { ...derivedSurface, ...statedSurface };
 
 	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
 	// E-665: the last statement of the start, because the registry it writes to is process-wide and
