@@ -43,7 +43,7 @@ const ACCOUNTS_PER_GROUP = 50;
  * 6.20 quotes Trail of Bits on runs longer than five minutes, because more measurements raise the
  * detection probability. The sampler spends up to this long buying the resolution the case needs
  * and reports what it reached; the timeout below leaves room for the block it is inside when the
- * budget expires (E-1532).
+ * budget expires (E-1533).
  */
 const RESOLUTION_BUDGET_MS = 900_000;
 const BLOCK_PER_GROUP = 250;

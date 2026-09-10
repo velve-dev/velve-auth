@@ -28,11 +28,11 @@ const CONTROL_EVERY_ROUNDS = 10;
  * rounds while the case arms take one every round, so under the stopping rule below the smallest
  * leak the control itself can separate settles at `RESOLVABLE_LEAK_NS * sqrt(CONTROL_EVERY_ROUNDS)`
  * — about 316 microseconds — on any machine, because the sample count and the dispersion move
- * together. This plant sits 3.16 times above that floor (E-1533).
+ * together. This plant sits 3.16 times above that floor (E-1534).
  */
 export const PLANTED_CONTROL_LEAK_NS = 1_000_000;
 
-/** The recovered plant is checked against a band rather than against an exact value (E-1533). */
+/** The recovered plant is checked against a band rather than against an exact value (E-1534). */
 export const CONTROL_RECOVERY_TOLERANCE = 0.5;
 
 export type TimingArm = "present" | "absent" | "controlQuiet" | "controlPlanted";
@@ -147,7 +147,7 @@ export function resolutionOf(left: readonly number[], right: readonly number[]):
  * dispersion of a single measurement. The value is the small-delta normal approximation
  * `delta * sqrt(pi) * sd`. Against the size at which Cliff's delta actually reaches its threshold,
  * measured by bisection on three sample sets from one machine, it ran 8.7 per cent optimistic once
- * and 7.1 and 39.8 per cent pessimistic twice, so it is reported rather than asserted (E-1536).
+ * and 7.1 and 39.8 per cent pessimistic twice, so it is reported rather than asserted (E-1535).
  */
 export function overlapResolutionNs(left: readonly number[], right: readonly number[]): number {
 	return (
@@ -229,7 +229,7 @@ async function collectBlock(
  * Grows the sample until the run separates `RESOLVABLE_LEAK_NS`, and stops the moment it does. The
  * stopping rule reads the dispersion of the two groups and never their difference, so it does not
  * select for the outcome the case then decides — under normality the sample mean and the sample
- * variance are independent, and that is the assumption it rests on (E-1532).
+ * variance are independent, and that is the assumption it rests on (E-1533).
  */
 export async function sampleUntilResolved(
 	run: (arm: TimingArm) => Promise<void>,

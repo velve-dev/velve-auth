@@ -124,7 +124,7 @@ describe("S-TIM-6, T-TIM-1b: the two branches of a sign-up issue the same calls"
  * What is asserted is the specification's own number where there is one, and the measured residual
  * where there is not (E-933). Those six |t| values were taken at whatever standard error the runner
  * happened to hand out, and |t| is a difference divided by that standard error, so they are six
- * measurements of six different things; the sampler below fixes the divisor instead (E-1535).
+ * measurements of six different things; the sampler below fixes the divisor instead (E-1538).
  */
 describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 	/**
@@ -140,7 +140,7 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 	 * what was measured instead, so a separation that grows back towards the 128.87 and 0.947 the
 	 * first paragraph records fails here rather than being reported to nobody (E-933). Neither is
 	 * moved here: what the sampler changes is that they are now read at a standard error the run had
-	 * to reach, so the same number means the same thing twice (E-1535).
+	 * to reach, so the same number means the same thing twice (E-1538).
 	 */
 	const WELCH_T_CEILING = 25;
 	const CLIFFS_DELTA_CEILING = 0.5;
