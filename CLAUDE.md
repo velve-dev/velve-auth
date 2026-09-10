@@ -498,11 +498,21 @@ of this decides.
 **So insert a complete note between standing sentences. Never edit inside a
 standing sentence, and never hide the original from rendering.** That is the rule
 itself rather than a consequence of one, so it holds whatever a diff says: leave
-every original word standing and rendering, put the note inside the entry it
-corrects at a boundary between finished sentences, and say in the note what
-changed. It does **not** remove the *was it true when written* judgement — nothing
-here does — but it guarantees a reader can answer it, because both claims are in
-front of them (E-1142).
+every original **sentence** standing verbatim and rendering, put the note inside
+the entry it corrects at a boundary between finished sentences, and say in the
+note what changed. Sentence, not word — a rule that asks only for the words to
+survive is satisfied by inserting `not ` into one of them, which is the
+counterexample this whole subsection was rewritten around (E-1147).
+
+**The last clause carries weight the property does not, and is not a restatement
+of it.** A note appended as a near-duplicate of the sentence it corrects —
+identical but for one word — satisfies every clause of the property and defeats
+what the property is for: both claims render, neither is modified, and a reader
+still cannot tell which is the original or that a correction happened at all.
+Saying what changed is the only thing that separates them. So the imperative does
+**not** remove the *was it true when written* judgement — nothing here does — but
+it guarantees a reader can answer it, because both claims are in front of them
+**and labelled** (E-1142, E-1147).
 
 **Nothing enforces the property, and no script is proposed here.** It is stated so
 that a reviewer can apply it. `check:log-append` counts lines with `--numstat` and
