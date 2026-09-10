@@ -190,12 +190,10 @@ function twoSidedNormalDeviate(alpha: number): number {
 	return Math.sqrt(chiSquareCriticalValue(alpha, 1));
 }
 
-/** A deliberate deviation from architecture section 6, whose T-RAND-Verteilung row fixes the
- * chi-square threshold *per position* rather than per file, and so states a per-case rate that
- * the file repeats once per case. Read literally against all 45 live cases it turns 4.40 per cent
- * of nightly runs red; the file as it stood on `main` had 44 live and measured 4.29 (E-1060), and
- * that cost one investigation and one retracted explanation (E-993, E-995). The 0.001 is kept and
- * spent on the file instead. Section 6 has not been amended; this is reported, not settled. */
+/** Architecture section 6, T-RAND-Verteilung: family-wise p > 0.001 across all k tests of this
+ * file together, so the rate is the file's and not each case's. The row fixed it per position
+ * until it was amended, which cost one investigation and one retracted explanation at a measured
+ * 4.29 per cent of nightly runs (E-993, E-995, E-1060, E-1072). */
 const FILE_FALSE_FAILURE_RATE = 0.001;
 
 const ownSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
@@ -221,7 +219,8 @@ const BIT_SEQUENCE_CASES = casesMeasuredAgainst("BIT_SEQUENCE_LIMIT");
  * outside a 32-sigma band, a repeated 256-bit token — are past 30 sigma and contribute nothing. */
 const INDEPENDENT_CASES = CHARACTER_POSITION_CASES + FINAL_CHARACTER_CASES + BIT_SEQUENCE_CASES;
 
-/** Šidák: the per-case rate whose INDEPENDENT_CASES-fold repetition is FILE_FALSE_FAILURE_RATE. */
+/** Šidák, and the row's own formula: α = 1 − (1 − 0.001)^(1/k), the per-case rate whose
+ * INDEPENDENT_CASES-fold repetition is FILE_FALSE_FAILURE_RATE. */
 const PER_CASE_ALPHA = 1 - (1 - FILE_FALSE_FAILURE_RATE) ** (1 / INDEPENDENT_CASES);
 
 const CHARACTER_POSITION_LIMIT = chiSquareCriticalValue(PER_CASE_ALPHA, 63);
