@@ -22,6 +22,7 @@ import {
 	TRIM_FRACTION,
 	trimmed,
 	WELCH_T_LIMIT,
+	WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING,
 	welchT,
 } from "./timing-fixtures.js";
 
@@ -194,7 +195,7 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
 			expect(
 				resolution.resolvesTheLeakThatMatters,
-				`the run could not resolve the smallest leak 5.1 (a) names, so the three numbers below bound nothing: ${measured}`,
+				`the run could not resolve the smallest leak 5.1 (a) names, so the three numbers below bound nothing: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
 			).toBe(true);
 			expect(
 				Math.abs(welchT(planted, quiet)),
@@ -206,12 +207,14 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 			).toBeLessThan(CONTROL_RECOVERY_TOLERANCE);
 
 			expect(medianDifference, `T-TIM-6: ${measured}`).toBeLessThan(MEDIAN_DIFFERENCE_LIMIT_MS);
-			expect(welch, `pinned above T-TIM-1, not meeting it: ${measured}`).toBeLessThan(
-				WELCH_T_CEILING,
-			);
-			expect(delta, `pinned above T-TIM-1, not meeting it: ${measured}`).toBeLessThan(
-				CLIFFS_DELTA_CEILING,
-			);
+			expect(
+				welch,
+				`pinned above T-TIM-1, not meeting it: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(WELCH_T_CEILING);
+			expect(
+				delta,
+				`pinned above T-TIM-1, not meeting it: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(CLIFFS_DELTA_CEILING);
 		},
 		CASE_TIMEOUT_MS,
 	);

@@ -17,6 +17,18 @@ export const MAD_OUTLIER_FACTOR = 3;
  */
 const RESOLVABLE_LEAK_NS = 100_000;
 
+/**
+ * A reviewer meeting a red timing case reaches for the threshold first, and 6.20 point 4 forbids
+ * that move in as many words. This rides on every message a reader of a red actually sees, because
+ * the reasoning for it lives in `E-1540` and `E-1549` and a reason nobody reaches protects nothing.
+ */
+export const WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING = [
+	"neither 4.5 nor 0.147 was moved to build this case and 6.20 point 4 forbids moving them now",
+	"what changed is how many measurements are taken before they are read",
+	"before reading this as a leak, run it from a clone outside every directory a file-sync daemon watches",
+	"the same commit passed three times there and gave one pass, one red and one refusal inside one",
+].join("; ");
+
 /** 6.1 and 6.20 fix 1000 per group; the sampler treats it as the floor it is, never as the total. */
 export const MEASUREMENTS_PER_GROUP = 1000;
 export const DISCARDED_WARMUP = 100;

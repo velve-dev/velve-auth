@@ -29,6 +29,7 @@ import {
 	TRIM_FRACTION,
 	trimmed,
 	WELCH_T_LIMIT,
+	WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING,
 	welchT,
 	withoutMadOutliers,
 } from "./timing-fixtures.js";
@@ -152,7 +153,7 @@ describe("T-TIM-1 — the sign-in path is uniform under measurement", () => {
 			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
 			expect(
 				resolution.resolvesTheLeakThatMatters,
-				`the run could not resolve the smallest leak 5.1 (a) names, so it reports neither a leak nor its absence: ${reached}, after ${samples.roundsPerGroup} rounds and ${Math.round(samples.elapsedMs / 1000)} s`,
+				`the run could not resolve the smallest leak 5.1 (a) names, so it reports neither a leak nor its absence: ${reached}, after ${samples.roundsPerGroup} rounds and ${Math.round(samples.elapsedMs / 1000)} s. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
 			).toBe(true);
 			expect(
 				Math.abs(welchT(trimmed(quietLeft, TRIM_FRACTION), trimmed(quietRight, TRIM_FRACTION))),
@@ -167,12 +168,15 @@ describe("T-TIM-1 — the sign-in path is uniform under measurement", () => {
 				`the planted leak was measured as ${Math.round(recovered)} ns, so the measurement is not on the scale it reports`,
 			).toBeLessThan(CONTROL_RECOVERY_TOLERANCE);
 
-			expect(Math.abs(welchT(present, absent)), `Welch t, ${reached}`).toBeLessThan(WELCH_T_LIMIT);
+			expect(
+				Math.abs(welchT(present, absent)),
+				`Welch t, ${reached}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(WELCH_T_LIMIT);
 			const overlapPresent = withoutMadOutliers(samples.present, MAD_OUTLIER_FACTOR);
 			const overlapAbsent = withoutMadOutliers(samples.absent, MAD_OUTLIER_FACTOR);
 			expect(
 				Math.abs(cliffsDelta(overlapPresent, overlapAbsent)),
-				`Cliff's delta, which no sample size sharpens and which separates about ${Math.round(overlapResolutionNs(overlapPresent, overlapAbsent))} ns here: ${reached}`,
+				`Cliff's delta, which no sample size sharpens and which separates about ${Math.round(overlapResolutionNs(overlapPresent, overlapAbsent))} ns here: ${reached}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
 			).toBeLessThan(CLIFFS_DELTA_LIMIT);
 		},
 		CASE_TIMEOUT_MS,
