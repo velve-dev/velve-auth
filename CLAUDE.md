@@ -504,6 +504,17 @@ note what changed. Sentence, not word — a rule that asks only for the words to
 survive is satisfied by inserting `not ` into one of them, which is the
 counterexample this whole subsection was rewritten around (E-1147).
 
+**All of that governs argument-bearing text.** A **measurement** restated in place
+is the one edit that needs none of it: the opening of this subsection permits it
+outright, and the paragraph defining a measurement above makes that partition
+exhaustive — a number or a count the entry states about the work is a measurement,
+and *everything else in an entry is a reason*. So the property and the imperative
+are about reasons, which is what they were always for, and saying so here sharpens
+the boundary rather than carving an exception into it. Without this clause the two
+paragraphs contradict each other for the ordinary case of a number sitting inside
+a sentence, and a reader reconciles them by picking whichever half suits them
+(E-1150).
+
 **The last clause carries weight the property does not, and is not a restatement
 of it.** A note appended as a near-duplicate of the sentence it corrects —
 identical but for one word — satisfies every clause of the property and defeats
@@ -618,6 +629,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1095 … E-1129 | outside the waves · `specfix`, second range |
 | E-1130 … E-1149 | outside the waves · `rules` — the rules file's own defects |
 | E-1060 … E-1094 | gate and infrastructure, sixth range |
+| E-1150 … E-1179 | outside the waves · `rules`, second range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
