@@ -13,9 +13,10 @@ The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
 > **Status: first prerelease.** The public interface is specified and frozen.
-> `1.0.0-next.1` is published under the `next` dist-tag, which means a bare
-> `pnpm add @velve/auth` does not reach it and a `^1.0.0` range does not match
-> it. A prerelease has to be asked for by name.
+> `1.0.0-next.1` is published under the `next` dist-tag, and publishing under a
+> tag leaves `latest` alone — so no version of this package carries `latest`
+> yet, `pnpm add @velve/auth` resolves nothing at all, and a `^1.0.0` range does
+> not match a prerelease either. Ask for it by tag: `@velve/auth@next`.
 
 ## Why it exists
 
@@ -68,10 +69,15 @@ binding, no install script, and no build step on your machine.
 pnpm add @velve/auth@next
 ```
 
-The `@next` is not optional while the line is a prerelease. Prereleases are
-published under the `next` dist-tag, and neither a bare install nor a `^1.0.0`
-range resolves to one — that is what the tag is for. Pinning the exact version,
-`@velve/auth@1.0.0-next.1`, works too and is what a lockfile will record.
+**The `@next` is not optional.** Publishing under a dist-tag leaves `latest`
+alone, and every version of this package so far has been published under `next`
+— so nothing carries `latest`, and `pnpm add @velve/auth` fails to resolve
+rather than installing something older. A `^1.0.0` range does not match a
+prerelease either. Pinning the exact version, `@velve/auth@1.0.0-next.1`, works
+and is what your lockfile will record.
+
+That changes on the day a stable version is published: it takes `latest`, and
+the bare install starts working and starts meaning "the stable line".
 
 A prerelease is a prerelease: the interface is frozen and the schema is
 versioned, but nothing here has been run by anyone outside this repository yet.
