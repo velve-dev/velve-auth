@@ -6399,3 +6399,135 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The scoping is not a new exception, because **the tree already carries the partition**: §6 defines a measurement as a number or a count the entry states about the work and then says *"Everything else in an entry is a reason."* Those two classes are exhaustive, so scoping the imperative to argument-bearing text adds no third category and grants nothing that was not already granted. What falls out is sharper than the contradiction it removes: **a measurement restated in place is the one edit that needs none of the syntactic property**, because the opening permits it outright — which makes the property and the imperative about reasons, which is what they were always for. Both sentences stay true, and the clause sits in the imperative's own paragraph rather than being left for a reader to derive.
 
 **Price.** Nothing detected this. Two paragraphs of the binding file can contradict each other with every check in the gate green, which is the third instance on this branch of the class `E-1143` and `E-1145` report, and the only reason it surfaced is that the branch was made to perform the case itself four rounds after writing the rule. One thing came free and is worth keeping, because a hazard that reproduces on the artefact describing it is the cheapest evidence that the hazard is real: making those two corrections as insertion-only notes produced **`−2` at line granularity and `0` at character granularity in the same working tree** — `E-1143`'s artefact demonstrating itself on the entry that documents it. And the four-character counterexample of `E-1144`, the recount that found the denominator wrong in `E-1148`, and the extractor that reported three entries at an identical byte length are one instinct rather than three: **the cheap falsification nobody ran.**
+
+### The client's types come from the route factories, and cost nothing at run time
+`E-670` · client · derivation mechanism, frozen
+
+**Context.** 3.15 E derives `ClientSurface` from the same declaration the server surface comes from, and the declaration lives in `sessionRoutes`, `pendingRoutes`, `usernameRoutes`, `oauthRoutes` and `emailFlowRoutes` — five factories that take `RouteServices` and therefore reach the driver, the key provider and every handler in the library. Importing any of them as a value puts the server core in the browser, which is the one thing 3.15 E forbids by name.
+
+**Rejected.** Restating the input and output types of twenty-seven routes in `src/client/`, which is what a client with no reach into the core would have to do. Rejected because it is a second copy of every signature in the library, kept in step by nothing.
+
+**Reason.** A type is not a value. `import type { sessionRoutes }` followed by `ReturnType<typeof sessionRoutes>` yields the exact tuple `[Route<"signOut", "/sign-out", …>, …]` with its input type, its output type and its error list, and is erased entirely by the compiler — `dist/client.mjs` carries no import of `core/auth/routes.mjs` at all. So the whole precise surface is available and the whole cost of it is zero bytes.
+
+**Price.** The declaration files do reference the core: `dist/client.d.mts` imports from `dist/core/auth/routes.d.mts` and from four more like it. A consumer resolving the client's types therefore parses declaration files for modules it will never load. That is real and it is the right trade — but it means `@velve/auth/client` is not a package that could be published without the rest of the library beside it.
+
+### The e-mail-flow factory hides its own tuple, so the module names it
+`E-671` · client · seam, frozen
+
+**Context.** Four of the five route factories return `as const` tuples whose inferred type is exact. `emailFlowRoutes` annotates `readonly AnyRoute[]`, because it returns one of two tuples depending on whether the mode has an address. `ReturnType` of it is therefore useless to `E-670`'s mechanism, and eleven of the twenty-seven rows — every sign-up, magic link, address and reset route — have no type the client can read.
+
+**Rejected.** Changing the return annotation to the union of the two tuples. That would give the client a union where it needs the full set, and it changes the type `instance.ts` consumes for no benefit to `instance.ts`.
+
+**Reason.** `src/core/flows/routes.ts` already computes both halves; it just does not name their concatenation. One exported type alias, `EmailFlowRouteTable`, names it. The alias is a type, changes no value, and lives in the file that owns the rows — so a row added there is in the client's type without any other file being edited.
+
+**Price.** A second edit to a file this feature does not own the rest of, and a name in that module whose only reader is the client. Both were accepted because the alternative was worse; the same shape would be needed again for any future factory that branches on configuration.
+
+### The table is written out as a value and held to the declarations by `satisfies`
+`E-672` · client · staleness mechanism, frozen
+
+**Context.** The client needs the table at run time, and the run-time half cannot come from a type. §6 records why this feature waited: a second table is stale the moment somebody adds a route.
+
+**Rejected.** Generating `src/client/routes.ts` from the tree with a script run in the gate, which is what would make the two halves impossible to diverge. Rejected because it adds a generator, a check for the generator and a file nobody may edit, to keep twenty-seven three-field rows in step — and because `satisfies` already does it inside the compiler.
+
+**Reason.** `as const satisfies ClientRoutesOf<VelveRouteTable>` maps the type table over the value table position by position. A row added, dropped, renamed or repathed changes the tuple's length or one of its literal types, and `pnpm typecheck` fails. Planted four ways — a renamed path, a deleted row, a route added to `sessionRoutes` and a changed method — the first three fail to compile.
+
+**Price.** The fourth does not. `defineRoute` carries `Name`, `Path`, `Input`, `Output` and `Code` as type parameters and **not** the method, so `Route` types `method` as `HttpMethod` and `satisfies` cannot tell `"GET"` from `"POST"`. A wrong method is caught by `test/client-route-table.test.ts` at run time instead, which is a weaker place to catch it. Adding a sixth type parameter to `defineRoute` would fix it and would touch every route module and every consumer of `Route`; it was not attempted here.
+
+### The client offers the library's table, not the instance's
+`E-673` · client · scope, frozen
+
+**Context.** Which routes an instance serves depends on the identity mode and on the configuration: `username.isAvailable` exists only where usernames do, and the eight address routes only where `email.send` is configured. The client is constructed in a browser from a `baseURL` and knows none of that.
+
+**Rejected.** Handing `createVelveClient` the identity mode so it could narrow. Rejected because the mode is a server-side fact and putting it in the browser's constructor invites it into the browser's bundle; and because it narrows the type without narrowing the truth — the configuration can still differ.
+
+**Reason.** The table is a statement about the library and the tests compare it against the widest instance there is, `username_email` with OAuth and e-mail configured. Every row it offers is a row some configuration serves.
+
+**Price.** A client against an `email`-mode server offers `username.isAvailable`, and the compiler does not stop the call. The server does not match the path, answers 404 with no body, and the client throws `VelveTransportError` — the right class for it, and a worse error message than a type error would have been.
+
+### `unwrap` throws the server's own error class, and that is the one module of the core the browser loads
+`E-674` · client · dependency, frozen
+
+**Context.** 3.15 E says whoever wants the server's symmetry calls `unwrap`, and the server's asymmetric half is a thrown `VelveError`. `VelveError` lives in `src/core/http/error-map.ts`, inside the directory the client is supposed to keep out of the browser.
+
+**Rejected.** A client-side error class carrying the same three fields. It costs nothing at run time and is what the "no server core" sentence reads like on first pass.
+
+**Reason.** The target of this library is an application that calls `auth.signIn.…` on the server and `client.signIn.…` in the browser, and such an application writes one `catch` for both. That only works if the two classes are the same class. `error-map.ts` imports nothing, so importing it drags nothing behind it: measured on the built tree, `dist/client.mjs` reaches five modules — itself, `client/routes.mjs`, `client/result.mjs`, `client/transport.mjs` and `core/http/error-map.mjs` — with no bare specifier anywhere in the closure, no Node built-in, no dependency, no SQL and no handler.
+
+**Price.** `VelveError`'s constructor rebuilds the message and the status from its own table rather than taking the wire's. For the twenty-five core codes the two tables are the same table and the strings are identical. For a code this build does not know — a newer server, or a plugin's — `unwrap` throws with `internal_error`'s message and a status the response did not carry, discarding what the server actually said. The un-unwrapped path keeps it: `result.error.message` is always the wire's.
+
+### Three request options that are decisions and not defaults
+`E-675` · client · request shape, frozen
+
+**Context.** `fetch` defaults decide three things the specification has opinions about elsewhere: whether cookies are sent, whether a cache may answer, and whether a redirect is followed.
+
+**Rejected.** Leaving all three at their defaults and documenting nothing. Also rejected: `credentials: "same-origin"`, which is what a client mounted under the application's own origin needs and nothing more — rejected because `baseURL` exists precisely so the auth server can sit elsewhere.
+
+**Reason.** `credentials: "include"` because the session cookie is the whole authentication and a cross-origin mount is a supported one; the `Origin` header S-CSRF-1 compares is written by the browser and cannot be written here. `cache: "no-store"` because S-CACHE-1 says every answer carries that header and a request that is answered from the cache never reads it. `redirect: "manual"` because the one 302 the library writes belongs to the OAuth callback, which a browser navigates to rather than calls — following it would fetch a page of the application and hand the caller its HTML.
+
+**Price.** `credentials: "include"` on a cross-origin mount needs CORS, and the README already says CORS is not this library's to answer. So the cross-origin case works only where the application's proxy has been configured, and the client cannot tell the difference — a missing `Access-Control-Allow-Credentials` surfaces as a `VelveTransportError` with a browser-written cause.
+
+### `Auth["routes"]` is widened, so the specification's own call shape needed a fallback
+`E-676` · client · reported not repaired — hand-off to the instance
+
+**Context.** 3.15 E writes `createVelveClient<Auth extends { routes: readonly AnyRoute[] }>` and its diagram assumes `typeof auth` carries `routes` as a preserved tuple, because the table is declared `as const`. In this tree `AuthInternals.routes` is `readonly AnyRoute[]`. `Nest<string, …>` over a widened table produces an index signature whose every member is `never`, so `createVelveClient<typeof auth>({ baseURL })` — the call the specification writes — yields an object on which nothing can be called. Planted by removing the fallback: `test/client-calls.test.ts` fails to compile.
+
+**Rejected.** Repairing it in `src/core/auth/instance.ts`. The table there is assembled conditionally — the username row depends on the mode, the address rows on the configuration — so a preserved tuple is not available at the value level at all, and the file belongs to another feature and to a branch in flight. Reported rather than edited.
+
+**Reason.** A widened route table is read as the library's own: `number extends Auth["routes"]["length"]` distinguishes a tuple from an array, and the array case falls back to `VelveRouteTable`. The specified call shape then works and narrows correctly — `client.session.revokeAll({})` returns the five codes that route declares and not the union of twenty-five.
+
+**Price.** The fallback is a lie the moment `routes` becomes a preserved tuple that differs from the library's own table, which is what a plugin's contributed routes would make it. It is also invisible: a reader of the signature sees `ClientSurface<Auth["routes"]>` and has to read `RouteTableOf` to learn that `Auth` is sometimes ignored. The honest repair is a preserved tuple on the instance, and this entry is the hand-off.
+
+### The nesting is written twice, because the one that exists reaches the core
+`E-677` · client · duplication, frozen
+
+**Context.** `nestServerMethods` in `src/core/auth/surface.ts` already splits a dotted `name` and builds the nested object. The client needs the same twelve lines.
+
+**Rejected.** Importing it. Its module imports `createServerMethodOfAnyRoute` and `VelveStartupError`, so importing it puts the pipeline in the browser — and `surface.ts` is being changed on another branch, so this feature may not move the function into a leaf module either.
+
+**Reason.** Twelve lines duplicated against a bundle that would otherwise carry the server's route runner. There is no third option that does not edit a file this feature does not own.
+
+**Price.** Two implementations of one rule, and the client's is the one that will be forgotten when the rule changes. The client's omits the start-error the server raises on a namespace conflict, because its table is fixed and compile-checked and a conflict in it cannot compile.
+
+### A path parameter is spent on the path and removed from everything else
+`E-678` · client · request shape, frozen
+
+**Context.** Two rows carry a `:provider` segment. The client has to substitute it, and the field is also a declared input field, so it could equally well be sent again in the query or the body — the server merges the path parameters over the parsed input and would take the path's value either way.
+
+**Rejected.** Sending it in both places, which needs no code and is what leaving the input untouched would do.
+
+**Reason.** One value in one place. The field is read for the path, deleted from the copy, and what remains becomes the query or the body — so what goes over the wire says the same thing once.
+
+**Price.** A call with no `provider`, which the types forbid and JavaScript does not, throws a `TypeError` before anything is sent rather than sending a literal `:provider` and reading a 404. **This entry exists because the mechanism caught its own author.** The enumeration of the twenty-seven paths used to write `src/client/routes.ts` was produced by a shell pipeline whose `sed` expression ate the colons, so both callback rows were written as `/sign-in/oauth/callback/provider`. `pnpm typecheck` refused it against `E-672`'s `satisfies`, before a single test had been written.
+
+### A plugin's routes are not in the client's table and cannot be
+`E-679` · client · scope, hand-off
+
+**Context.** §6 held this feature back until the route surface settled, and the premise of releasing it was that a plugin contributes its routes at run time rather than to the static table. `src/core/plugin/routes.ts` confirms it in so many words: a plugin's routes are configuration, `auth.<pluginId>.<method>` exists on the object and not in the type, and `PluginSurface` contributes nothing to `VelveAuth<M>`.
+
+**Rejected.** A registration call on the client — `createVelveClient({ baseURL, plugins: [...] })` — that would let an application add rows. Rejected because the row would then have to carry the input and output types too, which is the whole of `defineRoute` reimplemented on the client side, and because nothing would hold it in step with the server's.
+
+**Reason.** The client's table is what the library declares. A plugin route is reached through the application's own `fetch` against `/x/<id>/…`, and that is a smaller loss than it looks: the plugin author already owns both ends.
+
+**Price.** `client.<pluginId>` does not exist, so an application using plugins has two ways of calling its own auth server. `ClientMethodOf` also yields `never` for any route whose error list is not entirely core codes, which is what a plugin route's would be — so if a plugin route ever did reach the table, the failure would be a `never` leaf rather than a widened one.
+
+### An empty walk read as a clean bundle in three assertions of five
+`E-680` · client · check quality, frozen
+
+**Context.** `test/client-bundle-reach.test.ts` walks the import graph of the built `dist/client.mjs` to measure what a browser loads. §5 says a check must be able to tell *found nothing* from *found a fault*, and a graph walk is exactly the shape that cannot.
+
+**Rejected.** Trusting the four assertions that read as the requirement — no bare specifier, one core module, no handler, no SQL.
+
+**Reason.** Planted by making the specifier extractor return nothing: **three of the five assertions passed**. No bare specifier, no handler and no SQL are all trivially true of a walk that visited one file. What failed were the floor — the closure must hold more than the entry — and the equality against the one core module the client does load, which reads `[]` where it wants `["core/http/error-map.mjs"]`. Planted the other way, by deleting `dist/client.mjs`, all five fail.
+
+**Price.** The floor is a number with no meaning of its own, sitting in a test file forever, and it is the assertion doing most of the work. The second plant found the same class in the first assertion: without the check that the built entry contains `createVelveClient`, a stale `dist/` measures a client that is not the one in the tree.
+
+### The whole plant table, and the two things it could not redden
+`E-681` · client · check quality, frozen
+
+**Context.** Thirteen faults were planted against the tree at `c57910c` and each was run against the check it exists for. What follows is what actually happened, not what was expected.
+
+**Rejected.** Reporting the tests as passing, which they did from the first run.
+
+**Reason.** Compile-time seam: a renamed path, a deleted row and a route added to `sessionRoutes` each fail `pnpm typecheck`. Run-time seam: a changed method compiles and is caught by the table comparison and by the round trip. Bundle: a runtime import of `invocationOf` into the client compiles cleanly, builds cleanly, and is caught only by the reach test. Behaviour: following redirects, guessing the method from the presence of a body, `unwrap` returning instead of throwing, a non-envelope refusal read as a failure result, and a repeated path parameter each redden `test/client-calls.test.ts`. Typing: removing the widened-table fallback stops `test/client-calls.test.ts` compiling.
+
+**Price.** Two of the thirteen were planted against the measurement rather than against the library — the empty walk and the missing build — and they are the two that found something (E-680). The eleven aimed at the library found nothing wrong with it, which is the outcome a plant table is least able to distinguish from a plant table that was too easy.

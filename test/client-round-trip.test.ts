@@ -71,4 +71,16 @@ describe("the client against the handler the library mounts (architecture 3.15 E
 			error: { code: "origin_not_allowed", message: "The request origin is not allowed." },
 		});
 	});
+
+	it("is refused everywhere the browser is not, because nothing else writes the origin header", async () => {
+		const client = createVelveClient({
+			baseURL: BASE_URL,
+			fetch: mountHandler({ origin: null }).fetch,
+		});
+
+		expect(await client.session.read({})).toStrictEqual({
+			ok: false,
+			error: { code: "origin_not_allowed", message: "The request origin is not allowed." },
+		});
+	});
 });
