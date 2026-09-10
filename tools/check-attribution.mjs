@@ -106,7 +106,7 @@ function searched(what, command, argv, options) {
 		 * E-1488). */
 		refuse(
 			`the ${what} scan could not run, so it proves nothing`,
-			`${command} exited ${String(error.status ?? error.code)}, and its message is withheld because both search tools quote a pattern they reject`,
+			`${command} exited ${String(error.status ?? error.code)}, and its message is withheld because a search tool may quote a pattern it rejects`,
 		);
 	}
 }
