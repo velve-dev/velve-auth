@@ -151,9 +151,10 @@ describe("public API surface", () => {
 	 * The hint on failure offers the build as the alternative instrument and not the filesystem, so
 	 * a reader whose `dist/` has picked up a stray file will rebuild and find the tree stable.
 	 *
-	 * The two refusal tests below assert the error **class**, so they cannot tell one refusal from
-	 * the other: remove the empty-directory throw and the missing-directory throw catches the same
-	 * case, and both tests stay green (E-1390).
+	 * The two refusal tests below assert the error **class** and not which refusal fired. Here that
+	 * happens to be enough — removing either throw reddens its own test, planted both ways — but it
+	 * is a property of these two refusals and not of the assertion, and the same shape in
+	 * `test/brand-invariants.test.ts` does collapse (E-1390).
 	 */
 	it("matches the committed snapshot", async () => {
 		await expect(readPublicSurface()).toMatchFileSnapshot(

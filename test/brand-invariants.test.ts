@@ -135,9 +135,10 @@ type BaseIsRefusedBy<Brand, Base, Name extends string> = [Base] extends [Brand]
  * the minting site of three of the twelve. Two brands collapsing into each other while each still
  * refuses its base is invisible (E-1375), and so is a brand spelled in a way the census cannot read.
  *
- * The two refusal tests below assert the error **class**, so they cannot tell one refusal from the
- * other: remove the no-marker throw and the no-TypeScript-file throw catches the same case, and
- * both tests stay green (E-1390).
+ * The refusal tests below assert the error **class** and not which refusal fired, and here that is
+ * not enough: replacing the throw in `typeScriptFilesUnder`'s catch with an empty list collapses
+ * *cannot be listed* into *holds no TypeScript file*, the same class from the same function, and
+ * all seven stay green (E-1390).
  */
 const BRAND_REFUSES_ITS_BASE: {
 	readonly Actor: BaseIsRefusedBy<Actor, string, "Actor">;
