@@ -592,6 +592,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1030 … E-1059 | wave 5 · `email-flows`, third range |
 | E-1095 … E-1129 | outside the waves · `specfix`, second range |
 | E-1130 … E-1149 | outside the waves · `rules` — the rules file's own defects |
+| E-1060 … E-1094 | gate and infrastructure, sixth range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
