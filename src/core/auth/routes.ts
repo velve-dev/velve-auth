@@ -1,3 +1,5 @@
+import { actorOfResolvedSession } from "../db/actor.js";
+import type { SecondFactorCompletion } from "../factor/pending/complete.js";
 import { type PendingAuthenticationService, toPendingToken } from "../factor/pending/index.js";
 import type { PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock } from "../http/environment.js";
@@ -6,6 +8,8 @@ import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute } from "../http/route.js";
 import { object, string } from "../http/validators.js";
 import type { IdentityConfiguration, UsernameRules } from "../identity/configuration.js";
+import { comparisonFormOf } from "../identity/fold.js";
+import { normaliseUsername } from "../identity/normalise.js";
 import { usernameAvailability } from "../identity/resolution.js";
 import type { KeyProvider } from "../keys/index.js";
 import type { OAuthConfig } from "../oauth/config.js";
@@ -15,7 +19,13 @@ import type { RevokeReason } from "../plugin/config.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
 import type { OneTimeTokens } from "../token/one-time-token.js";
-import type { EmailConfig, RateLimitConfig } from "./config.js";
+import type {
+	EmailConfig,
+	RateLimitConfig,
+	RecoveryCodesConfig,
+	TotpConfig,
+	WebAuthnConfig,
+} from "./config.js";
 import type { User, UserRepository } from "./user.js";
 
 export interface ResolvedSessionView {
@@ -52,14 +62,42 @@ export interface RouteServices {
 	readonly kdfSemaphore: KdfSemaphore;
 	readonly oauth?: OAuthConfig;
 	readonly email?: EmailConfig;
+	/** 3.15 A.2: absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones. */
+	readonly webauthn?: WebAuthnConfig;
+	readonly totp?: Partial<TotpConfig>;
+	readonly recoveryCodes?: RecoveryCodesConfig;
+	/** The allowed origins of 3.15 A.2, which is also the only name of the application the configuration always carries. */
+	readonly origins: readonly string[];
+	/** S-FIX-1: the pending row and the session it becomes are one transaction, and it is built once (E-410). */
+	readonly completeSecondFactor: SecondFactorCompletion;
 	/** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */
 	readonly pluginRuntime: PluginRuntime;
 	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
 	readonly fetch?: typeof globalThis.fetch;
 }
 
-function addressOnly(services: RouteServices): RateLimitRule {
+export function addressOnly(services: RouteServices): RateLimitRule {
 	return { perIpAddress: services.rateLimit.perIpAddress, perAccount: "none" };
+}
+
+export function addressAndAccount(services: RouteServices): RateLimitRule {
+	return {
+		perIpAddress: services.rateLimit.perIpAddress,
+		perAccount: services.rateLimit.perAccount,
+	};
+}
+
+/**
+ * S-RATE-7: a route that names no identifier still has to key its account bucket by one, and it is
+ * the same comparison form the account is resolved through — two forms that disagree are two
+ * buckets for one account, which is a limit that can be walked around by spelling (E-1194).
+ */
+export async function accountRateLimitKeyOf(
+	services: RouteServices,
+	userId: string,
+): Promise<string> {
+	const user = await services.users.findUserById(userId);
+	return comparisonFormOf(user?.email ?? user?.username ?? userId);
 }
 
 const UNLIMITED: RateLimitRule = { perIpAddress: "none", perAccount: "none" };
@@ -343,6 +381,17 @@ export interface UsernameAvailabilityAnswer {
 	readonly reason?: string;
 }
 
+const UNIQUE_VIOLATION = "23505";
+
+/** `pg` and `postgres.js` name it `code`, the test connection names it `sqlState`; both carry the five characters PostgreSQL sent. */
+function isUniqueViolation(cause: unknown): boolean {
+	if (typeof cause !== "object" || cause === null) {
+		return false;
+	}
+	const fields = cause as { readonly code?: unknown; readonly sqlState?: unknown };
+	return fields.code === UNIQUE_VIOLATION || fields.sqlState === UNIQUE_VIOLATION;
+}
+
 /**
  * S-ENUM-8: the one place the enumeration protection ends, and 3.4 decided to offer it, bound it
  * hard and say so. It exists only where usernames do.
@@ -367,5 +416,56 @@ export function usernameRoutes(services: RouteServices, rules: UsernameRules) {
 			}),
 	});
 
-	return [isAvailable] as const;
+	const change = defineRoute({
+		name: "username.change",
+		method: "POST",
+		path: "/username/change",
+		input: object({ newUsername: string() }),
+		errors: [
+			"invalid_input",
+			"session_required",
+			"freshness_required",
+			"account_disabled",
+			"username_taken",
+			"username_invalid",
+			"rate_limited",
+			"origin_not_allowed",
+		] as const,
+		caller: "session",
+		freshness: "required",
+		originCheck: "checked",
+		rateLimit: addressAndAccount(services),
+		/**
+		 * 3.15 B.5. The name is normalised by `core/identity` and never here, so the form that is
+		 * written and the form the account is later resolved through are the one form (E-1246).
+		 */
+		handler: async (input, context): Promise<{ readonly user: User }> => {
+			const resolved = requireSession(services, context.session);
+			await context.enforceAccountRateLimit(await accountRateLimitKeyOf(services, resolved.userId));
+			const normalised = normaliseUsername(input.newUsername, rules);
+			if (!normalised.accepted) {
+				throw new VelveError("username_invalid");
+			}
+			// The unique index is what decides, so the race between the two statements loses here
+			// rather than writing a name the index would have refused.
+			const changed = await services.users
+				.updateUsername({
+					actor: actorOfResolvedSession(resolved),
+					username: normalised.value.username,
+					usernameKey: normalised.value.usernameKey,
+				})
+				.catch((cause: unknown) => {
+					if (isUniqueViolation(cause)) {
+						throw new VelveError("username_taken");
+					}
+					throw cause;
+				});
+			if (changed === null) {
+				throw new ConcealedError("user_not_found");
+			}
+			return { user: changed };
+		},
+	});
+
+	return [isAvailable, change] as const;
 }

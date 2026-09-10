@@ -259,15 +259,17 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 
 		expect(files.length).toBeGreaterThan(20);
 		expect(raising).toEqual(["session/service.ts"]);
-		// Four files name the code without raising it, each the route contract D.3 fixes for every
+		// Five files name the code without raising it, each the route contract D.3 fixes for every
 		// route with caller `session`. The assembly named it a second time until `instance.ts`
 		// stopped keeping its own copy of the twenty-five codes and read the error map's own list
 		// (E-734); `flows/routes.ts` is that contract for the two `/email/*` rows with that caller
-		// (E-607), `oauth/routes.ts` for the three `identity` rows (E-564) and `password/routes.ts`
-		// for `password.set` and `password.change` (E-1187). Nothing in any of them raises it,
-		// which is what the first expectation holds.
+		// (E-607), `oauth/routes.ts` for the three `identity` rows (E-564), `password/routes.ts`
+		// for `password.set` and `password.change` (E-1187) and `factor/routes.ts` for the eleven
+		// factor rows with that caller (E-1242). Nothing in any of them raises it, which is what
+		// the first expectation holds.
 		expect(naming).toEqual([
 			"auth/routes.ts",
+			"factor/routes.ts",
 			"flows/routes.ts",
 			"http/error-map.ts",
 			"oauth/routes.ts",

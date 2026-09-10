@@ -7,9 +7,11 @@ import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
+	createSecondFactorCompletion,
 	type PendingAuthenticationService,
 	type PendingToken,
 } from "../factor/pending/index.js";
+import { type FactorSurface, factorRoutes } from "../factor/routes.js";
 import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
@@ -90,6 +92,7 @@ export interface UserNamespace {
 
 export interface UsernameNamespace {
 	isAvailable(input: { username: string } & ServerCallFields): Promise<UsernameAvailabilityAnswer>;
+	change(input: { newUsername: string } & ServerCallFields): Promise<{ readonly user: User }>;
 }
 
 export interface AuthInternals {
@@ -114,7 +117,8 @@ export interface AuthInternals {
 type SeamSurface<M extends IdentityMode> = OAuthSurface<M> &
 	EmailFlowSurface<M> &
 	PasswordSurface<M> &
-	PluginSurface<M>;
+	PluginSurface<M> &
+	FactorSurface;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &
 	SeamSurface<M> & {
@@ -276,9 +280,19 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		clock,
 		oneTimeTokens,
 		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
+		origins: config.origins,
+		completeSecondFactor: createSecondFactorCompletion({
+			driver,
+			schema,
+			...(config.session === undefined ? {} : { session: config.session }),
+			...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
+		}),
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
 		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
 		...(config.email === undefined ? {} : { email: config.email }),
+		...(config.webauthn === undefined ? {} : { webauthn: config.webauthn }),
+		...(config.totp === undefined ? {} : { totp: config.totp }),
+		...(config.recoveryCodes === undefined ? {} : { recoveryCodes: config.recoveryCodes }),
 		pluginRuntime,
 	};
 
@@ -291,6 +305,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...oauthRoutes(services),
 		...emailFlowRoutes(services),
 		...passwordRoutes(services),
+		...factorRoutes(services),
 	];
 	const coreRoutes: readonly AnyRoute[] = [
 		signOut,
@@ -395,6 +410,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			: {
 					username: {
 						isAvailable: createServerMethod(usernameTable[0], environment),
+						change: createServerMethod(usernameTable[1], environment),
 					} satisfies UsernameNamespace,
 				}),
 	};

@@ -1,4 +1,5 @@
 import type { pendingRoutes, sessionRoutes, usernameRoutes } from "../core/auth/routes.js";
+import type { FactorRouteTable } from "../core/factor/routes.js";
 import type { EmailFlowRouteTable } from "../core/flows/routes.js";
 import type { AnyRoute, HttpMethod } from "../core/http/route.js";
 import type { oauthRoutes } from "../core/oauth/routes.js";
@@ -16,6 +17,7 @@ export type VelveRouteTable = readonly [
 	...ReturnType<typeof oauthRoutes>,
 	...EmailFlowRouteTable,
 	...ReturnType<typeof passwordRoutes>,
+	...FactorRouteTable,
 ];
 
 /** What a call needs from its own row and nothing else, so no handler is reachable from it (3.15 E). */
@@ -50,6 +52,7 @@ export const VELVE_CLIENT_ROUTES = [
 	{ name: "session.revokeAll", method: "POST", path: "/session/revoke-all" },
 	{ name: "session.refresh", method: "POST", path: "/session/refresh" },
 	{ name: "username.isAvailable", method: "GET", path: "/username/available" },
+	{ name: "username.change", method: "POST", path: "/username/change" },
 	{ name: "pending.read", method: "GET", path: "/pending" },
 	{ name: "pending.cancel", method: "POST", path: "/pending/cancel" },
 	{ name: "signIn.oauth.start", method: "POST", path: "/sign-in/oauth/start" },
@@ -80,4 +83,36 @@ export const VELVE_CLIENT_ROUTES = [
 	{ name: "signIn.password", method: "POST", path: "/sign-in/password" },
 	{ name: "password.set", method: "POST", path: "/password/set" },
 	{ name: "password.change", method: "POST", path: "/password/change" },
+	{ name: "factor.totp.enroll.start", method: "POST", path: "/factor/totp/enroll/start" },
+	{ name: "factor.totp.enroll.finish", method: "POST", path: "/factor/totp/enroll/finish" },
+	{ name: "factor.totp.verify", method: "POST", path: "/factor/totp/verify" },
+	{ name: "factor.totp.remove", method: "POST", path: "/factor/totp/remove" },
+	{ name: "factor.recovery.generate", method: "POST", path: "/factor/recovery/generate" },
+	{ name: "factor.recovery.verify", method: "POST", path: "/factor/recovery/verify" },
+	{ name: "factor.recovery.remaining", method: "GET", path: "/factor/recovery/remaining" },
+	{
+		name: "factor.webauthn.register.start",
+		method: "POST",
+		path: "/factor/webauthn/register/start",
+	},
+	{
+		name: "factor.webauthn.register.finish",
+		method: "POST",
+		path: "/factor/webauthn/register/finish",
+	},
+	{
+		name: "factor.webauthn.authenticate.start",
+		method: "POST",
+		path: "/factor/webauthn/authenticate/start",
+	},
+	{
+		name: "factor.webauthn.authenticate.finish",
+		method: "POST",
+		path: "/factor/webauthn/authenticate/finish",
+	},
+	{ name: "factor.webauthn.list", method: "GET", path: "/factor/webauthn/list" },
+	{ name: "factor.webauthn.rename", method: "POST", path: "/factor/webauthn/rename" },
+	{ name: "factor.webauthn.remove", method: "POST", path: "/factor/webauthn/remove" },
+	{ name: "signIn.passkey.start", method: "POST", path: "/sign-in/passkey/start" },
+	{ name: "signIn.passkey.finish", method: "POST", path: "/sign-in/passkey/finish" },
 ] as const satisfies ClientRoutesOf<VelveRouteTable>;

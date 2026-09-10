@@ -52,6 +52,12 @@ export interface UserRepository {
 		readonly email: string;
 		readonly emailVerifiedAt: Date | null;
 	}): Promise<void>;
+	/** The comparison form is normalised by `core/identity` and passed in, exactly as `createUser` takes it. */
+	updateUsername(input: {
+		readonly actor: Actor;
+		readonly username: string;
+		readonly usernameKey: string;
+	}): Promise<User | null>;
 	setDisabledAt(input: { readonly userId: string; readonly disabled: boolean }): Promise<void>;
 	deleteUser(userId: string): Promise<void>;
 }
@@ -165,6 +171,23 @@ export function createUserRepository(options: {
 				WHERE id = $1`,
 				[actor, email, emailVerifiedAt],
 			);
+		},
+
+		/** 3.15 B.5: the row is returned so the answer is the account as it now stands, and a `RETURNING` that names no row is the account having gone. */
+		async updateUsername({ actor, username, usernameKey }) {
+			const [row] = await options.driver.query<UserRowShape>(
+				`WITH updated AS (
+					UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
+					SET username = $2, username_key = $3, updated_at = now()
+					WHERE id = $1
+					RETURNING id, created_at, updated_at, email, email_verified_at, username,
+						disabled_at, imported_from
+				)
+				SELECT u.*, EXISTS (SELECT 1 FROM ${credentials} c WHERE c.user_id = u.id) AS has_password
+				FROM updated u`,
+				[actor, username, usernameKey],
+			);
+			return row === undefined ? null : toUser(row);
 		},
 
 		/**

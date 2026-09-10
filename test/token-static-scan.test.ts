@@ -165,15 +165,17 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of sixteen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of seventeen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
 		// Five more since wave 5, from two features: the flow row is reached by its state hash and
 		// the identity row by the pair that identifies it (E-565), and a first confirmation is
 		// reached by the account it is about, which is the owned row itself (E-607). No owner
-		// predicate could narrow any of them.
-		expect(markers).toHaveLength(16);
+		// predicate could narrow any of them. The seventeenth is `updateUsername`, on the same
+		// rule the two address writes beside it carry: `velve.user` is the owned row and `id` is
+		// its owner column, so `WHERE id = $1` already is the ownership predicate (E-1246).
+		expect(markers).toHaveLength(17);
 		expect(carrying).toHaveLength(9);
 		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
 	});
