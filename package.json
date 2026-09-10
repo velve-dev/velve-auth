@@ -83,6 +83,7 @@
 		"check:codex-skill": "node tools/check-codex-skill.mjs",
 		"check:lock-order": "node tools/check-lock-order.mjs",
 		"check:log-append": "node tools/check-log-append.mjs",
+		"check:published-version": "node tools/check-published-version.mjs",
 		"check:release-tag": "node tools/check-release-tag.mjs",
 		"check:reviewable": "node tools/check-reviewable-text.mjs",
 		"check:session-owner": "node tools/check-session-owner-update.mjs",
