@@ -34,6 +34,49 @@ const CI_SETUP = ["install"];
  * exemption is asserted against the job it names rather than merely listed (E-1464). */
 const RUN_BY_CI_AS_A_JOB_OF_ITS_OWN = ["check:attribution"];
 
+/** A second, independent statement of the detector's shape, in a file that is not the detector.
+ * `pnpm check:attribution` derives everything it searches with from the `attribution` job, so it
+ * proves the branches that are there and cannot see one the job no longer states — a deletion
+ * narrows the scan silently. Counts are not patterns, so stating them here trips no scan. Floors
+ * rather than exact numbers, because adding a branch is not a narrowing (E-1478). */
+const DETECTOR_STATES_AT_LEAST = { assistants: 7, markers: 6, claims: 3 };
+
+/** A backslash escape or a whole bracket expression, including a POSIX class carrying its own
+ * `]`. Removing these leaves only the structure the count below is about. */
+const ESCAPE_OR_BRACKET = /\\[\s\S]|\[\^?\]?(?:\[:[a-z]+:\]|[^\]])*\]/g;
+
+/** A `|` outside every group and bracket expression. Counted here rather than read through the
+ * check's own parser, which would agree with the check whatever that parser did (E-537). */
+function topLevelAlternatives(pattern: string): number {
+	let depth = 0;
+	let alternatives = 1;
+	for (const character of pattern.replace(ESCAPE_OR_BRACKET, "")) {
+		if (character === "(") {
+			depth += 1;
+		}
+		if (character === ")") {
+			depth -= 1;
+		}
+		if (character === "|" && depth === 0) {
+			alternatives += 1;
+		}
+	}
+	return alternatives;
+}
+
+/** A job runs to the next job heading and not to the end of the file. Slicing to the end pins
+ * every assertion below to whichever job happens to be last, which `attribution` is today and
+ * need not stay (E-1479). */
+function jobRegion(source: string, name: string): string {
+	const start = source.indexOf(`\n  ${name}:`);
+	if (start === -1) {
+		return "";
+	}
+	const rest = source.slice(start + 1);
+	const end = rest.search(/\n {2}[A-Za-z0-9_-]+:\n/);
+	return end === -1 ? rest : rest.slice(0, end);
+}
+
 /** Anchored to the start of a YAML scalar, and reading the script name rather than searching
  * for it: `workflow.includes("run: pnpm test")` is satisfied by a step commented out and by
  * `run: pnpm test:release`, and both of those remove the step from CI while staying green. */
@@ -123,12 +166,42 @@ describe("the gate's command lists", () => {
 	// subtracted step reads out of it — losing any of them leaves that step with nothing to
 	// derive its patterns from, and it refuses rather than passing.
 	it("declares the job the subtracted gate step reads its patterns from", () => {
-		const start = workflow.indexOf("\n  attribution:");
-		const job = start === -1 ? "" : workflow.slice(start);
+		const job = jobRegion(workflow, "attribution");
 
-		expect(start).toBeGreaterThan(-1);
+		expect(job).not.toBe("");
 		expect(job).toMatch(/^ +ASSISTANTS: '/m);
 		expect(job).toMatch(/^ +MARKERS="/m);
 		expect(job).toMatch(/^ +CLAIMS="/m);
+	});
+
+	// The check derives its patterns from that job, so a branch deleted from one of them narrows
+	// the scan and the check reports a clean tree over the rest. Measured: five of the six marker
+	// branches removed and all five markers planted leaves it at exit 0. This is the statement
+	// that is not derived from the job, so it is the one that can fail on a deletion.
+	it("states a detector whose patterns still carry every branch the scan is meant to have", () => {
+		const job = jobRegion(workflow, "attribution");
+		const value = (shape: RegExp) => String(shape.exec(job)?.[1] ?? "");
+
+		expect(value(/^ +ASSISTANTS: '([^']+)'$/m).split("|").length).toBeGreaterThanOrEqual(
+			DETECTOR_STATES_AT_LEAST.assistants,
+		);
+		expect(topLevelAlternatives(value(/^ +MARKERS="(.+)"$/m))).toBeGreaterThanOrEqual(
+			DETECTOR_STATES_AT_LEAST.markers,
+		);
+		expect(topLevelAlternatives(value(/^ +CLAIMS="(.+)"$/m))).toBeGreaterThanOrEqual(
+			DETECTOR_STATES_AT_LEAST.claims,
+		);
+	});
+
+	// The other half of §9's exemption says a person runs these, which is not assertable; that
+	// no workflow runs them is, and it is the claim that would be false if one were automated
+	// and left in this half. What it does not establish is that anybody runs them at all.
+	it("runs in no workflow the commands exempted on the grounds that a person runs them", () => {
+		const automated = [...workflow.matchAll(WORKFLOW_STEP), ...release.matchAll(WORKFLOW_STEP)].map(
+			(match) => String(match[1]),
+		);
+
+		expect(automated.length).toBeGreaterThan(4);
+		expect(RUN_BY_A_PERSON.filter((name) => automated.includes(name))).toEqual([]);
 	});
 });
