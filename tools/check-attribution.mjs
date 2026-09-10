@@ -140,6 +140,218 @@ function expanded(raw, assistants, what) {
 	return value;
 }
 
+/** A representative character for each POSIX class an extended regular expression may name, and
+ * the candidates a negated bracket expression is sampled from. */
+const POSIX_CLASS = new Map([
+	["[:alnum:]", "a"],
+	["[:alpha:]", "a"],
+	["[:blank:]", " "],
+	["[:cntrl:]", "\t"],
+	["[:digit:]", "0"],
+	["[:graph:]", "a"],
+	["[:lower:]", "a"],
+	["[:print:]", "a"],
+	["[:punct:]", "."],
+	["[:space:]", " "],
+	["[:upper:]", "A"],
+	["[:word:]", "a"],
+	["[:xdigit:]", "0"],
+]);
+const OUTSIDE_A_NEGATED_CLASS = ["x", "0", " ", "-", "."];
+const INTERVAL = /^\{(\d+)(?:,\d*)?\}/;
+
+function membersOf(text) {
+	const characters = new Set();
+	for (let at = 0; at < text.length; at += 1) {
+		if (text[at + 1] === "-" && text[at + 2] !== undefined) {
+			for (let code = text.charCodeAt(at); code <= text.charCodeAt(at + 2); code += 1) {
+				characters.add(String.fromCharCode(code));
+			}
+			at += 2;
+			continue;
+		}
+		characters.add(text[at]);
+	}
+	return characters;
+}
+
+function readBracketExpression(reader) {
+	reader.at += 1;
+	const negated = reader.source[reader.at] === "^";
+	if (negated) {
+		reader.at += 1;
+	}
+	let members = "";
+	const classes = [];
+	if (reader.source[reader.at] === "]") {
+		members += "]";
+		reader.at += 1;
+	}
+	while (reader.at < reader.source.length && reader.source[reader.at] !== "]") {
+		if (reader.source.startsWith("[:", reader.at)) {
+			const end = reader.source.indexOf(":]", reader.at);
+			if (end === -1) {
+				break;
+			}
+			classes.push(reader.source.slice(reader.at, end + 2));
+			reader.at = end + 2;
+			continue;
+		}
+		members += reader.source[reader.at];
+		reader.at += 1;
+	}
+	reader.at += 1;
+	return { members, classes, negated };
+}
+
+function bracketSample(reader, bracket) {
+	const characters = membersOf(bracket.members);
+	for (const name of bracket.classes) {
+		const representative = POSIX_CLASS.get(name);
+		if (representative === undefined) {
+			reader.unsampled.push(`an unknown character class ending at offset ${reader.at}`);
+			return "";
+		}
+		characters.add(representative);
+	}
+	if (bracket.negated) {
+		const outside = OUTSIDE_A_NEGATED_CLASS.find((candidate) => !characters.has(candidate));
+		if (outside === undefined) {
+			reader.unsampled.push(`a negated bracket expression ending at offset ${reader.at}`);
+		}
+		return outside ?? "";
+	}
+	const [first] = characters;
+	if (first === undefined) {
+		reader.unsampled.push(`an empty bracket expression ending at offset ${reader.at}`);
+	}
+	return first ?? "";
+}
+
+function readGroup(reader) {
+	reader.at += 1;
+	const sample = sampleBranch(reader, true);
+	let depth = 1;
+	while (reader.at < reader.source.length && depth > 0) {
+		const character = reader.source[reader.at];
+		if (character === "\\") {
+			reader.at += 2;
+			continue;
+		}
+		if (character === "[") {
+			readBracketExpression(reader);
+			continue;
+		}
+		depth += character === "(" ? 1 : 0;
+		depth -= character === ")" ? 1 : 0;
+		reader.at += 1;
+	}
+	return sample;
+}
+
+function readAtom(reader) {
+	const character = reader.source[reader.at];
+	if (character === "\\") {
+		reader.at += 2;
+		return reader.source[reader.at - 1] ?? "";
+	}
+	if (character === "(") {
+		return readGroup(reader);
+	}
+	if (character === "[") {
+		return bracketSample(reader, readBracketExpression(reader));
+	}
+	reader.at += 1;
+	if (character === "^" || character === "$") {
+		return "";
+	}
+	return character === "." ? "x" : character;
+}
+
+function readRepetition(reader) {
+	const character = reader.source[reader.at];
+	if (character === "*" || character === "?") {
+		reader.at += 1;
+		return 0;
+	}
+	if (character === "+") {
+		reader.at += 1;
+		return 1;
+	}
+	if (character !== "{") {
+		return 1;
+	}
+	const interval = INTERVAL.exec(reader.source.slice(reader.at));
+	if (interval === null) {
+		return 1;
+	}
+	reader.at += interval[0].length;
+	return Number(interval[1]);
+}
+
+/** One branch of an extended regular expression, sampled as the shortest string it accepts:
+ * the first arm of every alternation, no optional part, one repetition where one is required. */
+function sampleBranch(reader, insideGroup) {
+	let sample = "";
+	while (reader.at < reader.source.length) {
+		const character = reader.source[reader.at];
+		if (character === "|" || (character === ")" && insideGroup)) {
+			break;
+		}
+		sample += readAtom(reader).repeat(readRepetition(reader));
+	}
+	return sample;
+}
+
+function samplesOf(pattern) {
+	const reader = { source: pattern, at: 0, unsampled: [] };
+	const samples = [];
+	do {
+		samples.push(sampleBranch(reader, false));
+		reader.at += 1;
+	} while (reader.at <= pattern.length);
+	return { samples, unsampled: reader.unsampled };
+}
+
+function ordinalsOf(samples, unwanted) {
+	return samples.flatMap((sample, index) => (unwanted(sample) ? [index + 1] : [])).join(", ");
+}
+
+/** Every top-level branch of a derived pattern is required to match a string built from that
+ * branch, so a branch mangled into something unmatchable is found wherever it sits and not only
+ * where it happens to be first. The samples come from the derived pattern, so what they
+ * establish is that every branch is live and matchable and not that the derivation is faithful;
+ * the two probes below are the independent half of that, and neither half sees a branch the
+ * detector no longer states at all (E-1477, E-1478). */
+function provesEveryBranch(what, pattern) {
+	const { samples, unsampled } = samplesOf(pattern);
+	if (unsampled.length > 0) {
+		refuse(
+			`${DETECTOR}'s ${what} uses ${unsampled.length} construct${unsampled.length === 1 ? "" : "s"} this script cannot build a sample from`,
+			`${unsampled.join(", ")} — a branch nothing samples is a branch nothing proves`,
+		);
+	}
+	const blank = ordinalsOf(samples, (sample) => sample === "");
+	if (blank !== "") {
+		refuse(
+			`${DETECTOR}'s ${what} has branches that sample to the empty string`,
+			`branch ${blank} of ${samples.length} — a branch matching everything finds nothing in particular`,
+		);
+	}
+	const unmatched = ordinalsOf(
+		samples,
+		(sample) =>
+			!searched(`${what} self-test`, "grep", ["-Eani", "-e", pattern], { input: sample }).matched,
+	);
+	if (unmatched !== "") {
+		refuse(
+			`${DETECTOR}'s ${what} does not match the sample built from every branch of it`,
+			`branch ${unmatched} of ${samples.length} — the derivation lost what that branch matches`,
+		);
+	}
+	return samples.length;
+}
+
 /** Proof that a pattern read out of the detector still matches what it is for: a bad unescaping
  * yields one that matches nothing, and a scan carrying it reports a clean tree. The assistant
  * name is taken from the detector at run time, so this file states no marker of its own — and
@@ -175,6 +387,12 @@ if (exemptions.length === 0) {
 	);
 }
 
+const markerBranches = provesEveryBranch("marker pattern", markers);
+const claimBranches = provesEveryBranch("claim pattern", claims);
+
+/** The two probes the samples above cannot be: they are built here rather than from the derived
+ * pattern, so they answer whether the derivation still matches text a person would write. They
+ * reach one branch of each pattern, which is why they are not the whole self-test. */
 const assistant = String(assistants.split("|")[0]);
 proves("marker pattern", markers, `Co-authored-by: ${assistant}`);
 proves("claim pattern", claims, `written by ${assistant}`);
@@ -256,5 +474,5 @@ if (findings.length > 0) {
 
 const files = tracked.split("\n").filter(Boolean).length;
 console.log(
-	`attribution: ${commits} commit messages in ${range}, ${files} tracked files and ${diff.length} bytes of diff searched with ${DETECTOR}'s own patterns, no finding`,
+	`attribution: ${markerBranches} marker and ${claimBranches} claim branches proved, then ${commits} commit messages in ${range}, ${files} tracked files and ${diff.length} bytes of diff searched with ${DETECTOR}'s own patterns, no finding`,
 );
