@@ -48,6 +48,22 @@ describe("the mounted table against 3.15 D.3", () => {
 		);
 	});
 
+	/**
+	 * `auth-route-table.test.ts` holds S-CSRF-1 over a mount in mode `email` with no `webauthn`,
+	 * which is nine rows short of the table. The nine it does not see are this branch's, so the
+	 * same property is asserted here over the configuration that serves them.
+	 */
+	it("exempts exactly the two OAuth callbacks from the origin check, over the whole table", () => {
+		const routes = widestVelveAuth().routes;
+		const exempt = routes.filter((route) => route.originCheck !== "checked");
+
+		expect(routes).toHaveLength(47);
+		expect(exempt.map((route) => route.name)).toStrictEqual([
+			"signIn.oauth.callback",
+			"signIn.oauth.callbackFormPost",
+		]);
+	});
+
 	it("counts what D.3's closing paragraph counts, in each of the three modes", () => {
 		expect(declaredAddresses({ mode: "username_email", webauthn: true })).toHaveLength(47);
 		expect(declaredAddresses({ mode: "email", webauthn: true })).toHaveLength(45);
