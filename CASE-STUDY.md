@@ -6819,3 +6819,80 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The edit is the same shape as the one to `instance.ts`: one type import, one member of the tuple type, three rows in the value, appended in the order the assembly produces them. `passwordRoutes` returns `as const` so the tuple type carries the three rows precisely, which is the same device `EmailFlowRouteTable` uses.
 
 **Price.** This feature's file set named one contested assembly file and there were two. `feature/plugin` does not touch the client table — plugin rows are per-instance and deliberately absent from it — so no conflict is expected, but that is luck rather than a partition, and the next feature to add a row will find the same second file the same way.
+
+### The account bucket was keyed by a second comparison form
+`E-1194` · signin-routes · rate limiting, frozen
+
+**Context.** `accountKeyOf` was `identifier.trim().toLowerCase()`, written to match what `test/limit-fixtures.ts` does to its synthetic route's identifier. The account is *resolved* through `normaliseEmail`/`normaliseUsername`, which NFKC-normalise and use `caseFolded`. Two forms, two functions, and they disagree: whole-string `toLowerCase()` applies Final_Sigma, so `ΟΔΟΣ` folds to `οδος` where `caseFolded` gives `οδοσ`, and no NFKC pass ran at all. `fold.ts` closes with "Every comparison form in this module comes from here, so no two of them can disagree" — which stopped being true the moment a second one was written outside it.
+
+**Rejected.** Nothing was considered at the time, which is the defect. The shape was copied from a test fixture because that fixture was the only precedent in sight, and a fixture is not a specification.
+
+**Reason.** `comparisonFormOf` is the module's one form and is what the resolution already uses, so keying the counter with it makes the bucket and the lookup agree by construction.
+
+**Price.** Measured before the repair against the mounted handler at `capacity: 3, refillPerSecond: 0` with six NFKC-equivalent spellings of one address: **18 guesses reached the credential check where 6 should have** — eighteen full Argon2id derivations against a real account — and the ceiling scales with the number of distinct spellings, which is unbounded. The account bucket is the defence that survives IP rotation, which is what S-RATE-2 cites CVE-2026-45364 for. This shipped in the first commit of the feature and was found by the gate, not by the branch.
+
+### Two semaphores are not a bound, and this branch made the second one
+`E-1195` · signin-routes · correction of `E-1184`, frozen
+
+**Context.** `E-1184` recorded that mounting the password routes created a second `KdfSemaphore` beside the one `emailFlowRoutes` builds, and filed it as a hand-off. Instrumenting `createKdfSemaphore` and assembling an instance gives **2 semaphores with limits `[4, 4]`** — a process ceiling of 8 concurrent derivations and 8 × 19 MiB, where S-DOS-3 permits 4.
+
+**Rejected.** `E-1184`'s own reason, which is that "T-DOS-3 drives sign-ins alone, so the measured peak is still bounded correctly". That is an argument that the test will not notice, and §5 names that failure mode in as many words. It was wrong when it was written and this entry is how it is corrected, because §6 does not permit rewriting it.
+
+**Reason.** Before this branch there was one semaphore and the bound held; this branch creates the second and mounts the library's highest-volume KDF path behind it. A requirement that held on `main` and does not hold on the branch is broken by the branch, whatever the ownership of the file the fix lands in. `RouteServices` now carries one `kdfSemaphore` built once by the assembly, and both seams read it — which is what that interface's own comment already says it is for.
+
+**Price.** Four files outside this feature's declared set changed: `auth/routes.ts`, `auth/instance.ts`, `flows/routes.ts` and the assembly's construction of `services`. A timing probe was built first and discarded: it came back **80 / 79 / 150 ms**, sitting on the shared-semaphore prediction, but only because the fixtures' Argon2 parameters are cheap enough that database round trips dominate — it would have read as exculpatory and could not have answered either way. The count is what settles it, and the probe is recorded here so the next reader does not build it again.
+
+### The cheapest hostile attempt was the one that cost nothing
+`E-1196` · signin-routes · rate limiting, frozen
+
+**Context.** The handler judged the password's length before consuming the account bucket, so a one-character password threw out of the route with the token unspent. `pipeline.ts` runs `warnOnUnconsumedAccountBucket` in a `finally` on purpose, so each such request also made the library log "route declares an account rate limit it never consumed" — an operator signal meaning *this route has a bug*, emitted on ordinary hostile input by an unauthenticated caller.
+
+**Rejected.** Suppressing the warning for this route. The warning is right; the order was wrong.
+
+**Reason.** The bucket is consumed first, so the cheapest possible attempt costs a token like every other, and the warning goes back to meaning what it says.
+
+**Price.** The length check now runs after a write to `rate_bucket`, so T-DOS-1's "no database query" for an unusable password is true only of the account resolution and not of the request. That was already true — S-DOS-5 puts the address bucket ahead of the handler — and `E-1190`'s test is written against the account resolution for exactly that reason, but the margin is now one statement narrower.
+
+### The scan is a drift detector and cannot be made a proof
+`E-1197` · signin-routes · security scan, frozen
+
+**Context.** Clause (b) is keyed on the internal-reason literals, read out of the `ConcealedReason` union in `error-map.ts` rather than copied by hand, and fires on a **comparison** against one. A first attempt fired on any reason literal outside a construction and caught `password/verify.ts`, whose `refusalReason` returns the literals as values — a producer in a spelling neither the scan nor the entry it replaces had considered.
+
+**Rejected.** Adding `verify.ts` to an allowlist, which is the path exemption again under another name.
+
+**Reason.** Producing a reason names it; deciding from one has to compare against it, so comparison position is the property that separates them and it needs no file named. Deriving the literal set from the union means a reason added later is covered without anyone remembering to widen the scan.
+
+**Price.** It is still not sound and the test now says so where a reader meets it. A decision spelled `inspected.startsWith("user_")` names neither the class nor a reason and passes every clause. The scan is worth what a drift detector is worth, and the sentence saying so is the only thing standing between that and a reader trusting it past what it proves.
+
+### The mechanism is behavioural, and the oracle was in the state no synthetic route can reach
+`E-1198` · signin-routes · testing, frozen
+
+**Context.** The gate planted an enumeration oracle confined to `legacy_scheme_rejected` — an account whose stored hash is in a scheme the configuration will not read answers `400 invalid_input` where every other refusal answers `401` — and it survived **109 of 109 tests** in the relevant suite. `http-enumeration.test.ts` holds the uniformity property over a route the test file declares itself, and a synthetic route has no stored credential, so it cannot reach a legacy hash at all. The area looked covered and the state was unreachable from the cover.
+
+**Rejected.** Strengthening the synthetic-route suite, which cannot be given a stored hash without becoming the mounted route.
+
+**Reason.** The five account states that produce five distinct internal reasons are driven through the mounted handler and their answers compared byte for byte. The five logged reasons are asserted alongside, because five states that reached one reason would be byte-identical for a reason that has nothing to do with the requirement.
+
+**Price.** The block needs its own instance, configured with `acceptLegacy: []` and a key provider the test holds, because the legacy credential has to be sealed with the same keys the instance opens it with. That is a fifth mounted instance in one file and it is the slowest block in it. Three of the five states were already covered before the gate ran; the two that were not — the credential-less account and the legacy scheme — are precisely where the oracle lived.
+
+### A plant the repair selects is worth nothing, and this one was selected twice over
+`E-1199` · signin-routes · correction of `E-1188`, frozen
+
+**Context.** The note appended to `E-1188` states that an `instanceof`-free planted inspection "reddens the repaired clause and passes the path exemption". The gate planted an inspection that reads the reason through a **structural** cast — `(failure as { readonly reason?: string }).reason` — which names `ConcealedError` nowhere. Clause (a) needs `instanceof`; the repaired clause (b) asked whether the class name survived stripping the constructions, and there was no class name to survive. **It passed the repaired scan and it failed the original one.** The original caught it only because the file carried the name from its six constructions and the over-broad conjunct turned that into a catch — which the narrowing cut away.
+
+**Rejected.** Editing `E-1188`'s note to say something true. The claim is a reason and not a measurement, §6's partition makes everything that is not a number a reason, and it was wrong when it was written — so it is corrected by this entry and never by an edit to that one, disclosed or not.
+
+**Reason.** The plant that was run was described to the writer as "a cast or a helper that reads `.reason` off a caught `ConcealedError`", and the most natural spelling of that description names the class — which is the one spelling the repair handled. The plant was steered by the repair twice: once by whoever specified it and once by whoever wrote it. That is the rule this repository already owns, and neither party applied it.
+
+**Price.** The counts inside `E-1188`'s note are exact and the gate confirmed them — seven occurrences, six constructions, one import, and the sole file in `src/` doing both. They stand; the conclusion drawn from them does not, and a reader who reaches that note before this entry will believe the repair was demonstrated when it was not. Nothing in the log ordering prevents that beyond this entry naming the one it corrects.
+
+### A session route has no identifier to key a counter with, and used the account id
+`E-1200` · signin-routes · rate limiting, frozen
+
+**Context.** `password.set` and `password.change` passed `resolved.userId` to `enforceAccountRateLimit`, whose parameter is named `normalisedIdentifier`. S-RATE-7 says the key is `HMAC(token-pepper, normalised identifier)` and says "nicht die Konto-ID" in as many words; `flows/address.ts` shows the established shape, where the address comes from the request.
+
+**Rejected.** Leaving it, on the argument that the enumeration reason behind S-RATE-7 — that a present and an absent account advance the same row — cannot apply to a route that already required a session. The requirement is stated flatly and the argument is a local reading of a rule written for the whole class.
+
+**Reason.** The account's identifier is read from the user row and put through `comparisonFormOf`, so a caller's counter is the same row whichever route reached it, and a password change and a sign-in attempt on one account cannot advance two.
+
+**Price.** Both routes now read the user row before consuming the bucket, so the counter no longer protects that read. The read is behind a resolved session and the pipeline has already read the database to resolve it, so the added exposure is one authenticated statement — but it is a real inversion of the usual order and it is written down here rather than discovered later.

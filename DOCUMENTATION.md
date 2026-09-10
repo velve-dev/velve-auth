@@ -5740,7 +5740,18 @@ field `reason`, and is the only place the difference is visible (`S-ENUM-6`).
 
 A password shorter than `minimumLength` or longer than `maximumLengthInBytes` is
 refused before the account is looked up, so it costs no query against the account
-and no key derivation (`S-DOS-2`).
+and no key derivation (`S-DOS-2`). The account's rate-limit token is spent before
+that check, so the cheapest hostile attempt is not the one that costs nothing.
+
+The per-account bucket is keyed by the same comparison form the account is
+resolved through — NFKC, then case folding per code point — so two spellings of
+one identifier cannot advance two counters. `password.set` and `password.change`
+key theirs by the account's own identifier rather than by its id, for the same
+reason.
+
+Concurrent key derivation is bounded by one semaphore per assembled instance,
+sized by `password.concurrentHashLimit`, and every route that hashes shares it —
+signing in, signing up and both writing rows (`S-DOS-3`).
 
 After a successful verification against a credential whose stored parameters or
 key version are behind the configuration, the credential is rewritten in the
