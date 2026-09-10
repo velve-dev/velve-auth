@@ -116,13 +116,20 @@ WHERE pg_has_role(session_user, role_.oid, 'MEMBER')
 /**
  * `GRANT SET ON PARAMETER track_counts` reaches the same capability as `rolsuper` and moves neither
  * role attribute, so a guard reading the two above alone accepted a connection that could switch the
- * row half off (E-1006). It is a second statement rather than a fourth column because
- * `has_parameter_privilege` does not exist before PostgreSQL 15, and every name a statement mentions
- * is resolved before any branch inside it is taken.
+ * row half off (E-1006). It quantifies over the same reachable roles as the statement above rather
+ * than over the two current identities: a `NOINHERIT` member does not hold what it may `SET ROLE`
+ * to, which is the gap E-929 closed for the attributes and E-1011 for this half. It is a second
+ * statement rather than a fourth column because `has_parameter_privilege` does not exist before
+ * PostgreSQL 15, and every name a statement mentions is resolved before any branch inside it is
+ * taken.
  */
 const MAY_SET_THE_COUNTER_PARAMETER = `
-SELECT has_parameter_privilege(session_user, 'track_counts', 'SET')
-    OR has_parameter_privilege(current_user, 'track_counts', 'SET') AS may_switch_the_counters`;
+SELECT EXISTS (
+  SELECT 1 FROM pg_roles role_
+  WHERE (pg_has_role(session_user, role_.oid, 'MEMBER')
+      OR pg_has_role(current_user, role_.oid, 'MEMBER'))
+    AND has_parameter_privilege(role_.rolname, 'track_counts', 'SET')
+) AS may_switch_the_counters`;
 
 /**
  * Every object that belongs to the schema, of every catalogue there is, walked from the schema
