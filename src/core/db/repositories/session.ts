@@ -130,12 +130,12 @@ interface OwnedRowShape extends SessionRowShape {
 const SELECTED_COLUMNS = `id, user_id, created_at, last_used_at, idle_expires_at,
 	absolute_expires_at, array_to_string(factors, ',') AS factors, ip, user_agent`;
 
-/** Decoding a PostgreSQL type is the driver's work, not the repository's (E-227). */
+/** Decoding a PostgreSQL type is the driver's work, not the repository's (E-227); an Invalid Date is a `Date`, so a deadline past the range a `Date` holds arrives here looking decoded (E-1584). */
 function toDate(value: unknown): Date {
-	if (value instanceof Date) {
+	if (value instanceof Date && !Number.isNaN(value.getTime())) {
 		return value;
 	}
-	throw new TypeError("the driver must decode timestamptz into a Date");
+	throw new TypeError("the driver must decode timestamptz into a Date this runtime can hold");
 }
 
 function toOptionalDate(value: unknown): Date | null {
