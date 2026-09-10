@@ -1,0 +1,215 @@
+name: Release
+
+# A tag is the only thing that fires this. There is deliberately no workflow_dispatch: a run
+# started without a tag has no name to compare package.json against, and check:release-tag
+# refuses rather than guessing — so an entry point that cannot be checked is not offered.
+#
+# The jobs gate each other in the order the brief fixes: the whole gate, then the two tiers
+# section 6 puts before a release, then the tag against the manifest, then the publish, then
+# the registry. Nothing is published that has not been through all four.
+on:
+  push:
+    tags: ["v*"]
+
+# A publish is not interruptible half way through, so a second tag waits rather than cancelling
+# the first — the opposite of ci.yml, where cancelling a superseded run is the point.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DIST_TAG: next
+  REGISTRY_URL: https://registry.npmjs.org
+
+jobs:
+  # A copy of ci.yml's gate, on the same service and the same matrix. A release that skips a
+  # check the ordinary pull request runs is worse than no workflow, and the copy is held to
+  # that by test/release-workflow.test.ts rather than by anyone remembering.
+  gate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19", "26"]
+    name: gate (node ${{ matrix.node }})
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: velve
+          POSTGRES_USER: velve
+          POSTGRES_DB: velve_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      VELVE_TEST_DATABASE_URL: postgres://velve:velve@localhost:5432/velve_test
+    steps:
+      # check:log-append and check:skill-version need the merge base with origin/main, and
+      # refuse a run where it cannot be computed rather than passing (CLAUDE.md §6).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A tag is checked out as a detached head, so the remote-tracking branch those two checks
+      # resolve their base against is fetched by name rather than assumed to be present.
+      - name: Fetch the base the log and skill checks resolve against
+        run: git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Reviewable text
+        run: pnpm check:reviewable
+
+      - name: Session owner reassignment
+        run: pnpm check:session-owner
+
+      - name: Lock order
+        run: pnpm check:lock-order
+
+      - name: SQL survives normalisation
+        run: pnpm check:sql-collapse
+
+      - name: The decision log only grows
+        run: pnpm check:log-append
+
+      - name: A changed skill raises its version
+        run: pnpm check:skill-version
+
+      - name: The Codex skill is generated, not written
+        run: pnpm check:codex-skill
+
+      - name: Dead code
+        run: pnpm knip
+
+      - name: Test
+        run: pnpm test
+
+      - name: Package exports
+        run: pnpm publint
+
+      - name: Type resolution
+        run: pnpm attw
+
+  # Section 6 puts the statistical cases on a nightly schedule and three further cases before
+  # every release. This is that release moment, so both run here rather than only on their
+  # schedules — a tier whose last run was hours ago has not seen this tree.
+  tiers:
+    needs: gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: velve
+          POSTGRES_USER: velve
+          POSTGRES_DB: velve_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      VELVE_TEST_DATABASE_URL: postgres://velve:velve@localhost:5432/velve_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Nightly tier
+        run: pnpm test:nightly
+      - name: Release tier
+        run: pnpm test:release
+
+  # A tag saying one version over a tree saying another publishes the wrong artefact under the
+  # right name, and nothing else in this repository reads the version at all.
+  version:
+    needs: tiers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: The tag and package.json agree
+        run: pnpm check:release-tag "$GITHUB_REF_NAME" "$DIST_TAG"
+
+  publish:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm mints the provenance attestation from this token, and it is what trusted publishing
+      # will authenticate with when NODE_AUTH_TOKEN below is deleted.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          registry-url: ${{ env.REGISTRY_URL }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # npm's provenance documentation requires 9.5.0 or newer; the version that actually ran is
+      # recorded rather than assumed from whatever the Node image happened to carry.
+      - name: Record the npm version that publishes
+        run: npm --version
+
+      # The scope is private by default, so the first publish of it has to say public; npm's
+      # documentation states that requirement in the provenance context.
+      #
+      # NODE_AUTH_TOKEN is the only credential this workflow names, and it is transitional. The
+      # npm CLI prefers a detected OIDC environment over a token, so registering a trusted
+      # publisher for this package makes these two lines inert, and the migration is their
+      # deletion followed by revoking the token (E-1416).
+      - name: Publish to npm
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # The publish step exiting zero is not the version being resolvable, which is the step people
+  # leave out. This asks the registry for the version, for the dist-tag and for the attestation.
+  verify:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: The registry resolves what was published
+        run: pnpm check:published-version "$DIST_TAG"
