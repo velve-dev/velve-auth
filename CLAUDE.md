@@ -636,6 +636,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1000 … E-1029 | wave 5 · `plugin`, third range |
 | E-1285 … E-1329 | outside the waves · `requirement-coverage` — the requirements no test cites |
 | E-1330 … E-1369 | outside the waves · `open-requirements` — the two requirements the coverage audit reported as unbuilt |
+| E-1370 … E-1409 | gate and infrastructure, seventh range — the two blind spots E-1341 and E-1344 report |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
