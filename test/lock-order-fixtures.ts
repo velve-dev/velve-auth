@@ -143,6 +143,8 @@ const WAITS_FOR: Record<Mode, ReadonlySet<Mode>> = {
 
 const STRENGTH: Record<Mode, number> = { "key-share": 0, "no-key": 1, exclusive: 2 };
 
+const THE_ACCOUNT_ROW = "user";
+
 export interface Acquisition {
 	readonly table: string;
 	readonly mode: Mode;
@@ -177,7 +179,7 @@ export function acquisitionsIn(sql: string, schema: string, owned: ReadonlySet<s
 			found.push({ table: String(table), mode: "exclusive" });
 		}
 		if (owned.has(String(table))) {
-			found.push({ table: "user", mode: "key-share" });
+			found.push({ table: THE_ACCOUNT_ROW, mode: "key-share" });
 		}
 	}
 	return found;
@@ -211,24 +213,27 @@ export function locksHeldBy(
 	return held;
 }
 
-function serialisedBefore(
+/**
+ * Whether a lock on **`velve.user`** ordered these two transactions: both took one, in modes that
+ * wait for each other, before either of the two tables in question. Only the account row counts.
+ * Any other table in common is a coincidence of table names and not a mutex — the four tables whose
+ * row is a secret are the case that matters, since two transactions consuming `one_time_token` are
+ * almost always consuming different rows of it, and reading that as serialisation hid cycle A from
+ * this analysis until a planted run reported one pair where two were expected (E-1606).
+ */
+function serialisedOnTheAccountRow(
 	one: Map<string, HeldLock>,
 	other: Map<string, HeldLock>,
 	tables: readonly string[],
-): string | null {
-	for (const [table, mine] of one) {
-		const theirs = other.get(table);
-		if (theirs === undefined || !WAITS_FOR[mine.mode].has(theirs.mode)) {
-			continue;
-		}
-		const beforeBoth = tables.every(
-			(other_) => mine.at < (one.get(other_)?.at ?? 0) && theirs.at < (other.get(other_)?.at ?? 0),
-		);
-		if (beforeBoth) {
-			return table;
-		}
+): boolean {
+	const mine = one.get(THE_ACCOUNT_ROW);
+	const theirs = other.get(THE_ACCOUNT_ROW);
+	if (mine === undefined || theirs === undefined || !WAITS_FOR[mine.mode].has(theirs.mode)) {
+		return false;
 	}
-	return null;
+	return tables.every(
+		(table) => mine.at < (one.get(table)?.at ?? 0) && theirs.at < (other.get(table)?.at ?? 0),
+	);
 }
 
 /**
@@ -283,7 +288,7 @@ export function cyclesAmong(
 					) {
 						continue;
 					}
-					if (serialisedBefore(one, other, [x, y]) !== null) {
+					if (serialisedOnTheAccountRow(one, other, [x, y])) {
 						continue;
 					}
 					const reported = `${x} then ${y} against ${y} then ${x}`;
