@@ -20,6 +20,9 @@ function workflow(name: string): string {
 
 const JOB_HEADING = /^ {2}([A-Za-z0-9_-]+):$/gm;
 const EVERY_RUN_LINE = /^\s+(?:- )?run: (.+)$/gm;
+const BASE_FETCH = /^\s+run: git fetch .*origin\/main$/gm;
+const GUARDED_BASE_FETCH = /^\s+if: (.+)\n\s+run: git fetch .*origin\/main$/gm;
+const TAG_REF_GUARD = "startsWith(github.ref, 'refs/tags/')";
 
 function jobRegions(source: string): Map<string, string> {
 	const body = source.slice(source.indexOf("\njobs:\n"));
@@ -73,6 +76,16 @@ describe("the release workflow", () => {
 			"workflow_call:",
 		);
 		expect([...jobRegions(ci).keys()]).toStrictEqual(["gate", "attribution"]);
+	});
+
+	/** Both jobs that resolve `origin/main` fetch it, and only where a tag is the ref.
+	 * `actionlint` type-checks the expression and cannot see a well-formed one with the wrong
+	 * value or the wrong context, and each of those restores the hole silently (E-1441). */
+	it("guards both of ci.yml's base fetches on a tag ref", () => {
+		const guards = [...ci.matchAll(GUARDED_BASE_FETCH)].map((match) => String(match[1]));
+
+		expect([...ci.matchAll(BASE_FETCH)]).toHaveLength(2);
+		expect(guards).toStrictEqual([TAG_REF_GUARD, TAG_REF_GUARD]);
 	});
 
 	it("runs both tiers section 6 puts before a release", () => {
