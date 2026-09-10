@@ -913,6 +913,26 @@ pnpm check:codex-skill
                  rewording it can no longer find is a refusal, not a pass. Add
                  --write to regenerate the file instead of comparing it, which is
                  the only way the file is ever changed
+pnpm check:release-tag
+                 the tag a release is cut from names the version package.json
+                 states, that version is a semantic one, and a prerelease is not
+                 about to be published under latest. Takes the tag and the
+                 dist-tag as arguments, or reads them from GITHUB_REF_NAME and
+                 VELVE_RELEASE_DIST_TAG. Refuses the run if either is missing or
+                 the manifest cannot be read as an object — an unchecked tag is
+                 not a matching one. release.yml runs it before the publish;
+                 pnpm gate does not, because an ordinary branch carries no tag
+                 for it to check and it would refuse every one of them
+pnpm check:published-version
+                 the registry resolves the version package.json states, the
+                 dist-tag points at that version, and it carries a provenance
+                 attestation. Takes the dist-tag as its argument; VELVE_REGISTRY
+                 names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS
+                 how long it polls for a publish to become readable. Tells a
+                 registry saying the version is absent from one that could not be
+                 asked, and refuses only on the second. release.yml runs it after
+                 the publish; pnpm gate does not, because a version nobody has
+                 published has nothing to resolve
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

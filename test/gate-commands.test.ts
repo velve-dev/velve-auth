@@ -5,14 +5,25 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const rules = readFileSync(`${repositoryRoot}/CLAUDE.md`, "utf8");
 const workflow = readFileSync(`${repositoryRoot}/.github/workflows/ci.yml`, "utf8");
+const release = readFileSync(`${repositoryRoot}/.github/workflows/release.yml`, "utf8");
 const manifest = JSON.parse(readFileSync(`${repositoryRoot}/package.json`, "utf8")) as {
 	scripts: Record<string, string>;
 };
 
-/** §9 is the command reference and names four commands the gate does not run: the formatter, the
- * two tiers section 6 puts on a schedule rather than on a commit (E-526, E-535), and the gate
- * itself. Anything else appearing there without appearing in the script is drift. */
-const NOT_RUN_BY_THE_GATE = ["format", "gate", "test:nightly", "test:release"];
+/** §9 is the command reference, so it names commands the gate does not run. Two are run by a
+ * person and by nothing else — the formatter and the gate itself — and four are run by
+ * release.yml: the two tiers section 6 puts on a schedule rather than on a commit (E-526, E-535)
+ * and the two release checks §9 documents and §5's checklist deliberately does not, because one
+ * refuses a branch carrying no tag and the other a version nobody has published (E-1461).
+ * Anything else appearing in §9 without appearing in the gate script is drift. */
+const RUN_BY_A_PERSON = ["format", "gate"];
+const RUN_BY_THE_RELEASE_WORKFLOW = [
+	"test:nightly",
+	"test:release",
+	"check:release-tag",
+	"check:published-version",
+];
+const NOT_RUN_BY_THE_GATE = [...RUN_BY_A_PERSON, ...RUN_BY_THE_RELEASE_WORKFLOW];
 
 /** The one pnpm invocation in the workflow that is not a gate step. */
 const CI_SETUP = ["install"];
@@ -77,6 +88,17 @@ describe("the gate's command lists", () => {
 			.filter((check) => !existsSync(`${repositoryRoot}/${check.path}`))
 			.map((check) => `${check.name} runs ${check.path}, which is not there`);
 		expect(missing).toEqual([]);
+	});
+
+	// Every name §9 is allowed to carry beyond the gate's own steps says where it does run, and
+	// the half of that answer naming a workflow is read out of the workflow. Without this the
+	// exemption list is a hole in the comparison above: a name added to it is documented, exempt
+	// from the gate, and run by nothing.
+	it("runs in release.yml every command exempted on the grounds that the release runs it", () => {
+		const invoked = [...release.matchAll(WORKFLOW_STEP)].map((match) => String(match[1]));
+
+		expect(invoked.length).toBeGreaterThan(4);
+		expect(RUN_BY_THE_RELEASE_WORKFLOW.filter((name) => !invoked.includes(name))).toEqual([]);
 	});
 
 	// The gate list and CI are two statements of the same set, and CI is the one that blocks a
