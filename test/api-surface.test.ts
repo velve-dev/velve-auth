@@ -8,6 +8,17 @@ const EXPORT_LIST = /^(export \{)([^}]*)(\};)$/gm;
 const MEMBER_LINE = /^(\s+)(?:readonly )?(?:\[[^\]]+\]|[A-Za-z_$][\w$]*)\??: .*;$/;
 const STRING_LITERAL_UNION = /"[^"\\]*"(?: \| "[^"\\]*")+/g;
 
+/**
+ * A diff here has two possible causes and they look identical, so the message names the second one:
+ * a reader who assumes their own change can spend an hour before suspecting the build (E-1377).
+ */
+const MIGHT_BE_THE_INSTRUMENT = [
+	"The subject may have changed, or the instrument may have moved — this diff looks the same either way.",
+	"The build does not emit dist/core/oauth/routes.d.mts identically twice (E-1377): fourteen clean builds of an unchanged tree produced three distinct forms of it.",
+	"Two orderings are normalised away before this comparison, member order and union-constituent order, and a third instability would surface here looking exactly like a surface change.",
+	"To tell them apart: run `pnpm build` twice without touching the tree, comparing dist/**/*.d.mts between the two runs. Files that differ are the build, not your change.",
+].join(" ");
+
 class UnreadableDistributionError extends Error {
 	constructor(what: string) {
 		super(`cannot read the shipped declarations: ${what}`);
@@ -32,9 +43,14 @@ function oneExportPerLine(body: string): string {
 
 /**
  * Two orderings the build does not hold fixed, measured over sixteen clean builds of an unchanged
- * tree: the members of an inferred object type, and the constituents of a union of string literals
- * (E-1377). Neither is API, and sorting them hides a reordering and nothing else — a member or a
- * constituent added, removed or retyped still moves the line it is on.
+ * tree (E-1377). Exactly two, named so that a third is recognisably a third rather than a mystery:
+ *
+ * 1. **member order** — the members of an inferred object type, `MEMBER_LINE` below;
+ * 2. **union-constituent order** — the constituents of a union of string literals,
+ *    `STRING_LITERAL_UNION` below.
+ *
+ * Neither is API, and sorting them hides a reordering and nothing else — a member or a constituent
+ * added, removed or retyped still moves the line it is on.
  */
 function inTheOrderTheBuildDoesNotDecide(body: string): string {
 	const sortedUnions = body.replace(STRING_LITERAL_UNION, (union) =>
@@ -109,7 +125,10 @@ describe("public API surface", () => {
 	 * It says nothing about `dist/*.mjs`. A behaviour change under an unchanged type is invisible.
 	 */
 	it("matches the committed snapshot", async () => {
-		await expect(readPublicSurface()).toMatchFileSnapshot("./__snapshots__/api-surface.md");
+		await expect(readPublicSurface()).toMatchFileSnapshot(
+			"./__snapshots__/api-surface.md",
+			MIGHT_BE_THE_INSTRUMENT,
+		);
 	});
 
 	/**
