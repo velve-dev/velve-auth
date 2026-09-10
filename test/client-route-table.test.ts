@@ -7,6 +7,18 @@ function everyRouteTheLibraryDeclares(): readonly AnyRoute[] {
 	return widestVelveAuth().routes;
 }
 
+/** `AnyRoute` hides the validator so no caller can reach past the checks; a test comparing declarations needs it. */
+interface DeclaredRoute {
+	readonly name: string;
+	readonly method: string;
+	readonly path: string;
+	readonly input: { readonly fields: readonly string[] };
+}
+
+function everyDeclarationTheLibraryMakes(): readonly DeclaredRoute[] {
+	return everyRouteTheLibraryDeclares() as unknown as readonly DeclaredRoute[];
+}
+
 function addressOf(route: { name: string; method: string; path: string }): string {
 	return `${route.name} ${route.method} ${route.path}`;
 }
@@ -35,7 +47,7 @@ describe("the client table against the table the server serves (architecture 3.1
 
 	it("declares every path parameter as a field of the route that has it", () => {
 		const parameterised = VELVE_CLIENT_ROUTES.filter((route) => route.path.includes("/:"));
-		const served = new Map(everyRouteTheLibraryDeclares().map((route) => [route.name, route]));
+		const served = new Map(everyDeclarationTheLibraryMakes().map((route) => [route.name, route]));
 
 		expect(parameterised.length).toBeGreaterThan(0);
 		for (const route of parameterised) {
@@ -43,10 +55,21 @@ describe("the client table against the table the server serves (architecture 3.1
 				.split("/")
 				.filter((segment) => segment.startsWith(":"))
 				.map((segment) => segment.slice(1));
-			const declared = served.get(route.name) as unknown as {
-				readonly input: { readonly fields: readonly string[] };
-			};
-			expect(names.every((name) => declared.input.fields.includes(name))).toBe(true);
+			const declared = served.get(route.name);
+			expect(names.every((name) => declared?.input.fields.includes(name) === true)).toBe(true);
 		}
+	});
+
+	/**
+	 * S-REDIR-4: no query string the library writes carries a one-time artefact, and a GET is the
+	 * one shape in which the client puts input into one. Every route that redeems one is a POST.
+	 */
+	it("puts no one-time artefact in a query string, because no route that takes one is a GET", () => {
+		const carryingAnArtefact = everyDeclarationTheLibraryMakes().filter((route) =>
+			route.input.fields.includes("token"),
+		);
+
+		expect(carryingAnArtefact.length).toBeGreaterThan(0);
+		expect(carryingAnArtefact.filter((route) => route.method === "GET")).toStrictEqual([]);
 	});
 });
