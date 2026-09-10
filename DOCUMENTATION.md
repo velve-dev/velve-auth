@@ -2990,12 +2990,26 @@ Reading the block also refuses combinations that cannot hold, each with the
 name of the option it refused:
 
 - a deadline of zero or less,
+- a deadline longer than 9007199254740991 milliseconds — about 285,000 years, and the
+  point past which the number stops being one JavaScript can state exactly, so the
+  deadline asked for would not be the deadline given,
 - `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
 - `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
 - `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh.
 
 The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
-outlive the one deadline nothing extends.
+outlive the one deadline nothing extends. **`absoluteTimeout` above 400 days is
+accepted at startup and cannot be served over HTTP**: the cookie writer refuses a
+`Max-Age` above 34,560,000 seconds, so the first sign-in that would write the
+cookie raises `internal_error` instead. That is a limit, not a refusal — it is not
+checked when the block is read (E-1578).
+
+Deadlines are computed by the database as `now() + make_interval(secs => …)` and
+never from an interval literal. PostgreSQL before 15 caps an interval literal's
+millisecond and second fields at 2147483647, and the default `absoluteTimeout` of
+`"30d"` is 2,592,000,000 milliseconds — so on PostgreSQL 14 the literal form made
+every session insert fail. `make_interval` has no such field, and the deadlines it
+produces are identical to the literal's wherever the literal worked (E-1571).
 
 `freshnessWindow` is measured against `created_at`, not `last_used_at`:
 freshness is time since sign-in, and only a new sign-in restores it.
