@@ -56,8 +56,12 @@ function oneExportPerLine(body: string): string {
  * whichever member sorts into that slot, which is a changed record and not a hidden reordering
  * (E-1383).
  */
-/** Returning 1 for both orders of an equal pair is not an ordering; equal keys are reachable
- * only through the misclassification the limits below name (E-1388). */
+/**
+ * Returning 1 for both orders of an equal pair is not an ordering. Equal keys are reachable only
+ * through the misclassification the limits below name, and no input separates this from the
+ * invalid form (E-1388, E-1389) — it is written correctly because the contract says so, not
+ * because a test caught it.
+ */
 function compareMemberLines(left: string, right: string): number {
 	if (left === right) {
 		return 0;
@@ -202,8 +206,13 @@ describe("public API surface", () => {
 		expect(inTheOrderTheBuildDoesNotDecide(onB)).not.toBe(inTheOrderTheBuildDoesNotDecide(onA));
 	});
 
-	/** The comparator must return 0 for an equal pair; equal member lines are reachable only through
-	 * the misclassification the limits above name, and an invalid ordering is not the way to meet it. */
+	/**
+	 * This pins that the reader is total on duplicate keys, and **not** that the comparator is
+	 * valid: no input distinguishes the two comparators. Searched at 23, 30, 40, 64 and 100
+	 * members, 200 randomised trials each, and the outputs are identical every time, because V8
+	 * keeps equal elements adjacent whatever an inconsistent comparator answers. The repair stands
+	 * on the ordering contract rather than on an observed failure (E-1389).
+	 */
 	it("orders a run carrying two identical member lines", () => {
 		const twice = "interface A {\n  a: string;\n  a: string;\n  b: string;\n}\n";
 
