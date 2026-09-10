@@ -1,4 +1,4 @@
-import { VelveStartupError } from "../auth/startup.js";
+import { type RouteConflict, THE_CORE, VelveStartupError } from "../auth/startup.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
@@ -59,6 +59,8 @@ export interface PluginRuntime {
 	readonly declaredErrorCodes: readonly PluginErrorCode[];
 	readonly hooks: PluginHookDispatcher;
 	contextOf(route: RouteMetadata): FrozenContext;
+	/** Which plugin contributed a route, so a start error can name it as a contributor (T-OWNER-11). */
+	ownerOf(route: RouteMetadata): string;
 	/** Whether any plugin listens at a point, so a caller can skip the work an event costs to build. */
 	listensTo(point: keyof PluginHooks): boolean;
 }
@@ -210,19 +212,32 @@ function foldedPath(route: RouteMetadata): string {
 	return `${route.method} ${route.path}`;
 }
 
+/** T-OWNER-11: the side that already held the claim is one contributor and the one arriving is the other. */
+function claimOrRefuseTheStart(
+	claimants: Map<string, string>,
+	claimed: string,
+	arriving: string,
+): void {
+	const held = claimants.get(claimed);
+	if (held !== undefined) {
+		const conflict: RouteConflict = { claimed, contributors: [held, arriving] };
+		throw new VelveStartupError("plugin_route_conflict", conflict);
+	}
+	claimants.set(claimed, arriving);
+}
+
 /** 3.11: a plugin cannot overwrite a core route, and a name collision is a start error. */
 export function assertNoCoreRouteIsOverwritten(
 	contributed: readonly AnyRoute[],
 	core: readonly AnyRoute[],
+	ownerOf: (route: RouteMetadata) => string,
 ): void {
-	const names = new Set(core.map((route) => route.name));
-	const paths = new Set(core.map(foldedPath));
+	const names = new Map(core.map((route) => [route.name, THE_CORE]));
+	const paths = new Map(core.map((route) => [foldedPath(route), THE_CORE]));
 	for (const route of contributed) {
-		if (names.has(route.name) || paths.has(foldedPath(route))) {
-			throw new VelveStartupError("plugin_route_conflict");
-		}
-		names.add(route.name);
-		paths.add(foldedPath(route));
+		const arriving = ownerOf(route);
+		claimOrRefuseTheStart(names, route.name, arriving);
+		claimOrRefuseTheStart(paths, foldedPath(route), arriving);
 	}
 }
 
@@ -517,10 +532,14 @@ export function createPluginRuntime(options: {
 
 	// E-740: the context a route gets is recorded against the route object, not read out of its name.
 	const contextByRoute = new WeakMap<RouteMetadata, FrozenContext>();
+	// E-740 again, for T-OWNER-11: a conflicting route's contributor is recorded here rather than
+	// read back out of its name, which a plugin written in JavaScript need not have namespaced yet.
+	const ownerByRoute = new WeakMap<RouteMetadata, string>();
 	const routes: AnyRoute[] = [];
 	for (const entry of registered) {
 		for (const route of routesOf(entry.plugin)) {
 			contextByRoute.set(route, entry.context);
+			ownerByRoute.set(route, entry.plugin.id);
 			routes.push(route);
 		}
 	}
@@ -533,6 +552,7 @@ export function createPluginRuntime(options: {
 		),
 		hooks,
 		contextOf: (route) => contextByRoute.get(route) ?? coreContext,
+		ownerOf: (route) => ownerByRoute.get(route) ?? THE_CORE,
 		listensTo,
 	};
 }

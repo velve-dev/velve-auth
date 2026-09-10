@@ -89,7 +89,7 @@ import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
 import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
 import { SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
-import { VelveStartupError } from "./core/auth/startup.mjs";
+import { RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
 import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, createOwnedRowRepository } from "./core/db/repositories/owned-row-repository.mjs";
 
@@ -163,6 +163,7 @@ export {
 	type ResolvedSession,
 	type ResolvedSessionView,
 	RevokeReason,
+	type RouteConflict,
 	SECURITY_OPTIONS,
 	type SecurityOption,
 	type Session,
@@ -181,6 +182,7 @@ export {
 	SignUpNamespace,
 	type SignUpResult,
 	type SweepReport,
+	THE_CORE,
 	TRUST_LEVEL_EVENTS,
 	TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS,
 	type TotpConfig,
