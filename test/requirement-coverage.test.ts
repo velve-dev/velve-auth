@@ -62,7 +62,7 @@ function requirementsWithATestCase(): string[] {
 const NAMED_BY_NO_TEST: ReadonlyMap<string, string> = new Map([
 	[
 		"S-REDIR-1",
-		"T-REDIR-1 counts redirect-carrying fields of the route declarations that are typed `string` and requires zero. Three are: `src/core/oauth/routes.ts` declares `redirectPath: optional(string())` on two rows and `OAuthStartInput.redirectPath` is `string`. The behaviour holds — `acceptedRedirectPath` refuses a URL at run time — so the requirement is met and the case as written is not. Branding the ingress field is a change to the OAuth surface and is reported rather than made (E-1296).",
+		"T-REDIR-1 counts redirect-carrying fields of the route declarations that are typed `string` and requires zero. The requirement itself is met: `acceptedRedirectPath` refuses a URL at run time and `test/oauth-redirect-corpus.test.ts` drives a corpus at it. The case as written cannot be met, because the specification declares the same field `string` where it declares the public interface — 3.15 B.1 `oauth.start(input: { provider: string; redirectPath?: string })` and 3.15 B.7 `link.start` — and a route declaration'''s input type is the type of that method'''s parameter. Branding it was tried and measured: it type-checks, and a consumer calling the method with a plain path is then refused with TS2322, because `RedirectPath` is exported from no entry point and cannot be minted. Reported rather than built (E-1335, E-1336).",
 	],
 ]);
 
