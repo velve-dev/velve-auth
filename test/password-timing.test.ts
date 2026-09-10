@@ -145,7 +145,10 @@ describe("T-TIM-1 — the sign-in path is uniform under measurement", () => {
 			const quiet = trimmed(samples.controlQuiet, TRIM_FRACTION);
 			const recovered = mean(planted) - mean(quiet);
 
-			expect(samples.roundsPerGroup).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
+			expect(
+				samples.roundsPerGroup,
+				`the budget ran out before 6.1's own sample size was reached, after ${Math.round(samples.elapsedMs / 1000)} s`,
+			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
 			expect(
 				resolution.resolvesTheLeakThatMatters,
 				`the run could not resolve the smallest leak 5.1 (a) names, so it reports neither a leak nor its absence: ${reached}, after ${samples.roundsPerGroup} rounds and ${Math.round(samples.elapsedMs / 1000)} s`,

@@ -187,7 +187,10 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 			const delta = Math.abs(cliffsDelta(samples.present, samples.absent));
 			const measured = `median difference ${medianDifference.toFixed(3)} ms, |t| ${welch.toFixed(1)}, Cliff's delta ${delta.toFixed(3)} separating about ${Math.round(overlapResolutionNs(samples.present, samples.absent))} ns, ${reached}`;
 
-			expect(samples.roundsPerGroup).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
+			expect(
+				samples.roundsPerGroup,
+				`the budget ran out before 6.1's own sample size was reached, after ${Math.round(samples.elapsedMs / 1000)} s`,
+			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
 			expect(
 				resolution.resolvesTheLeakThatMatters,
 				`the run could not resolve the smallest leak 5.1 (a) names, so the three numbers below bound nothing: ${measured}`,
