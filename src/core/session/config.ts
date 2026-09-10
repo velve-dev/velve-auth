@@ -50,7 +50,7 @@ function millisecondsOf(option: string, duration: Duration): number {
 	// Refused at startup rather than at the first insert, which is where the database would refuse it (E-1573).
 	if (!Number.isSafeInteger(milliseconds)) {
 		throw new InvalidSessionConfigError(
-			`session.${option} is longer than a deadline this library can state exactly: "${duration}" is more than ${Number.MAX_SAFE_INTEGER} milliseconds`,
+			`session.${option} is longer than a deadline this library can state exactly, which is ${Number.MAX_SAFE_INTEGER} in milliseconds: "${duration}"`,
 		);
 	}
 	return milliseconds;
