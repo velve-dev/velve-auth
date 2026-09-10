@@ -225,6 +225,9 @@ repair anything itself.
   the version it states, and both skill files state the same one (§6)
 - `pnpm check:codex-skill` — `CODEX-SKILL.md` is byte-identical to what
   `CLAUDE-SKILL.md` produces, so it is generated and not written (§6)
+- `pnpm check:attribution` — §4 over the tracked tree, the branch's commit
+  messages and the branch's diff, searched with the patterns `ci.yml`'s own
+  job states rather than with a second copy of them (E-1439)
 - `pnpm knip` — no dead code, no unused export
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
@@ -913,6 +916,21 @@ pnpm check:codex-skill
                  rewording it can no longer find is a refusal, not a pass. Add
                  --write to regenerate the file instead of comparing it, which is
                  the only way the file is ever changed
+pnpm check:attribution
+                 §4 over three surfaces and in four scans: the tracked tree for
+                 markers and for authorship claims, the commit messages of the
+                 range against origin/main, and that range's diff. It states no
+                 pattern of its own — it reads them out of
+                 .github/workflows/ci.yml, which §4 exempts, so that a second
+                 copy does not become a fourth file needing exemption. Refuses
+                 the run if the detector was reworded past what it can read, if
+                 a pattern read from it fails to match a probe built for it, if
+                 the base cannot be resolved, or if a surface came back empty
+                 where emptiness is not an answer. VELVE_ATTRIBUTION_BASE names
+                 a base other than origin/main. It reads committed history for
+                 the messages and the diff and the working tree for the tree
+                 scan, so an uncommitted marker is found and an uncommitted
+                 commit message is not a thing that exists
 pnpm check:release-tag
                  the tag a release is cut from names the version package.json
                  states, that version is a semantic one, and a prerelease is not

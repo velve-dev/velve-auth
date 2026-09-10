@@ -28,6 +28,12 @@ const NOT_RUN_BY_THE_GATE = [...RUN_BY_A_PERSON, ...RUN_BY_THE_RELEASE_WORKFLOW]
 /** The one pnpm invocation in the workflow that is not a gate step. */
 const CI_SETUP = ["install"];
 
+/** The one gate step ci.yml runs as a job rather than as a step. `pnpm check:attribution` reads
+ * its patterns out of the `attribution` job and searches the same surfaces, so a step for it in
+ * the gate job would be a second run of what the workflow already does on every push. The
+ * exemption is asserted against the job it names rather than merely listed (E-1464). */
+const RUN_BY_CI_AS_A_JOB_OF_ITS_OWN = ["check:attribution"];
+
 /** Anchored to the start of a YAML scalar, and reading the script name rather than searching
  * for it: `workflow.includes("run: pnpm test")` is satisfied by a step commented out and by
  * `run: pnpm test:release`, and both of those remove the step from CI while staying green. */
@@ -106,6 +112,23 @@ describe("the gate's command lists", () => {
 	// author, and a step in the workflow that the script does not run blocks nobody locally.
 	it("runs in CI exactly the commands the gate script runs", () => {
 		const inWorkflow = [...workflow.matchAll(WORKFLOW_STEP)].map((match) => String(match[1]));
-		expect(sorted(inWorkflow)).toEqual(sorted([...gateSteps, ...CI_SETUP]));
+		const asSteps = gateSteps.filter((name) => !RUN_BY_CI_AS_A_JOB_OF_ITS_OWN.includes(name));
+
+		expect(asSteps.length).toBe(gateSteps.length - RUN_BY_CI_AS_A_JOB_OF_ITS_OWN.length);
+		expect(sorted(inWorkflow)).toEqual(sorted([...asSteps, ...CI_SETUP]));
+	});
+
+	// Subtracting a name from the comparison above without checking what it names is the same
+	// hole the §9 exemption had. The job is asserted, and so are the three definitions the
+	// subtracted step reads out of it — losing any of them leaves that step with nothing to
+	// derive its patterns from, and it refuses rather than passing.
+	it("declares the job the subtracted gate step reads its patterns from", () => {
+		const start = workflow.indexOf("\n  attribution:");
+		const job = start === -1 ? "" : workflow.slice(start);
+
+		expect(start).toBeGreaterThan(-1);
+		expect(job).toMatch(/^ +ASSISTANTS: '/m);
+		expect(job).toMatch(/^ +MARKERS="/m);
+		expect(job).toMatch(/^ +CLAIMS="/m);
 	});
 });
