@@ -2,6 +2,7 @@ import type { pendingRoutes, sessionRoutes, usernameRoutes } from "../core/auth/
 import type { EmailFlowRouteTable } from "../core/flows/routes.js";
 import type { AnyRoute, HttpMethod } from "../core/http/route.js";
 import type { oauthRoutes } from "../core/oauth/routes.js";
+import type { passwordRoutes } from "../core/password/routes.js";
 
 /**
  * Every row the library declares, in the order `assembleVelveAuth` puts them in. A mode or a
@@ -14,6 +15,7 @@ export type VelveRouteTable = readonly [
 	...ReturnType<typeof pendingRoutes>,
 	...ReturnType<typeof oauthRoutes>,
 	...EmailFlowRouteTable,
+	...ReturnType<typeof passwordRoutes>,
 ];
 
 /** What a call needs from its own row and nothing else, so no handler is reachable from it (3.15 E). */
@@ -75,4 +77,7 @@ export const VELVE_CLIENT_ROUTES = [
 	{ name: "email.redeemChange", method: "POST", path: "/email/redeem-change" },
 	{ name: "password.requestReset", method: "POST", path: "/password/request-reset" },
 	{ name: "password.redeemReset", method: "POST", path: "/password/redeem-reset" },
+	{ name: "signIn.password", method: "POST", path: "/sign-in/password" },
+	{ name: "password.set", method: "POST", path: "/password/set" },
+	{ name: "password.change", method: "POST", path: "/password/change" },
 ] as const satisfies ClientRoutesOf<VelveRouteTable>;
