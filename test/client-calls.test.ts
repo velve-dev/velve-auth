@@ -7,6 +7,15 @@ import {
 	VelveTransportError,
 } from "../src/client/index.js";
 import { VELVE_CLIENT_ROUTES } from "../src/client/routes.js";
+import { widestVelveAuth } from "./client-fixtures.js";
+
+/** The five codes `session.revokeAll` declares, written out so a widened one would not compile. */
+type SessionRevokeCode =
+	| "session_required"
+	| "freshness_required"
+	| "account_disabled"
+	| "rate_limited"
+	| "origin_not_allowed";
 
 const BASE_URL = "https://api.example.com/auth";
 
@@ -279,5 +288,25 @@ describe("the object the client is (architecture 3.15 E)", () => {
 
 		expect(() => unmapped.factor.verify()).toThrow(TypeError);
 		expect(() => unmapped.session.destroy()).toThrow(TypeError);
+	});
+});
+
+describe("the two ways 3.15 E's signature is called", () => {
+	it("narrows the error codes to that one route through the instance's own type", async () => {
+		const auth = widestVelveAuth();
+		const client = createVelveClient<typeof auth>({
+			baseURL: BASE_URL,
+			fetch: () =>
+				Promise.resolve(
+					jsonAnswer(401, {
+						error: { code: "session_required", message: "A session is required." },
+					}),
+				),
+		});
+
+		const answer = await client.session.revokeAll({});
+
+		const code: SessionRevokeCode | null = answer.ok ? null : answer.error.code;
+		expect(code).toBe("session_required");
 	});
 });
