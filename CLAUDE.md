@@ -453,50 +453,65 @@ entry describing text the tree does not contain. So the line is: **an entry may
 be brought into step with its own artefact; the reason a decision was taken may
 not be rewritten.**
 
-**One half has a diff signature, and it is the permitted one.** A removal is a
-replacement whose new text is empty (E-1112), so an edit that removes nothing
-replaces nothing — and a reason cannot be rewritten by pure insertion, because
-the old reason would still be standing beside its replacement. **Zero deletions
-inside an entry is therefore a necessary condition for the permitted half**, and
-`fix/specification-defects-wave5` is what one looks like from the outside: its
-single surviving in-place edit adds one contiguous 460-character italicised note
-to E-1098's `**Reason.**` and removes nothing, so a reader recovers the original
-exactly by deleting the italics (E-1140).
+**Neither half has a diff signature, and a reader is the mechanism for both.** An
+edit bringing an entry into step with its amended artefact and an edit rewriting
+a reason are the same shape in `git diff`, and `check:log-append` is blind to
+both, for the reason the paragraph below gives. Disclosure in the entry and a
+reviewer reading it are the whole enforcement, and this file says so rather than
+presenting the rule as decidable — a rule presented as decidable when it is not
+is how E-1032 happened (E-1139). What follows adds a signature that is **not** a
+diff property and does not change any of that.
 
-**It is necessary and not sufficient, and it is loose in both directions.** A
-writer can insert a sentence that contradicts the reason above it without
-deleting a character, so an insertion-only edit is not thereby permitted. A
-measurement restated in place is a deletion this section allows, so a
-deletion-bearing edit is not thereby a violation. Disclosure in the entry and a
-reviewer reading it remain the enforcement for every insertion — what the
-asymmetry changes is how much a reviewer has to read, not who decides.
+**The permitted half does have a signature, and it is syntactic rather than
+differential.** What distinguishes an annotation is the shape of the result, not
+the shape of its diff: **the original text survives unmodified and still renders,
+and the addition is a complete unit inserted at a boundary between standing
+sentences.** E-1098's edit on `fix/specification-defects-wave5` exhibits it — a
+460-character italicised note between two finished sentences, every original
+character intact and rendering, so a reader recovers the original exactly by
+deleting the italics. The note sits at a **sentence** boundary inside a single
+paragraph, not at a block boundary, because a log paragraph is one block. That is
+what makes an annotation an annotation: **the reader sees both claims**, which is
+what a disclosure is for (E-1140, E-1145).
 
-**What it buys is a reviewable set.** A deletion inside an entry is mechanically
-findable and every rewritten reason is one, so *a reader is the whole
-enforcement* becomes *a script flags every deletion-bearing edit to an entry, and
-a reader judges the insertions* — which meets §5's standard that a check tell
-**found nothing** from **found a fault**, where the sentence this paragraph
-replaces conceded there was nothing to check. **That sentence said neither half
-had a diff signature and that a reader was the mechanism for both**, and its
-first half was wrong; it is corrected here rather than having always read this
-way (E-1141). A rule presented as decidable when it is not is how E-1032 happened
-(E-1139), and this replacement is bounded so that it stays a flag and does not
-become that. `check:log-append` is blind to both halves either way, for the
-reason the paragraph below gives.
+**Zero deletions is not that signature, and reading it as one briefly put a false
+rule in this file.** Insert `not ` into a reason and it says the opposite: `+1 −1`
+under `--numstat`, **zero** removed tokens under `--word-diff=porcelain`, and
+longest common prefix plus suffix equal to the whole original — the same signature
+as the permitted case under every measurement, with one reason inverted and
+nothing standing beside it. Wrap a reason in an HTML comment and insert a
+replacement and it is `+3 −0` with zero removed tokens, and the original does not
+render at all. So an insertion-only edit **can** be the forbidden half, and no
+diff granularity repairs that (E-1144).
 
-**So bring an entry into step by inserting a note, never by editing the
-sentence.** An insertion-only edit cannot be the forbidden half, so writing one
-removes the *was it true when written* judgement from the case a writer actually
-hits. Leave every original word standing, put the note inside the entry it
-corrects, and say in the note what changed (E-1142).
+**The syntactic property is necessary and not sufficient either, and it is loose
+in three ways.** A writer can insert a complete, well-formed note at a proper
+boundary that **contradicts** the reason above it, and the result satisfies every
+clause of the property. A **measurement** restated in place is a deletion this
+section allows, so a deletion-bearing edit is not thereby a violation. And both of
+those presuppose what the third does not — that the original survives as a
+readable claim at all, which an insertion inside a sentence and an insertion that
+suppresses the original from rendering each defeat. What the property buys is that
+the reader is shown both claims; whether the second is fair is not something any
+of this decides.
 
-**Nothing enforces the signature, and no script is proposed here.** It is stated
-so that a reviewer can use it. `check:log-append` counts lines with `--numstat`
-and a log paragraph is one long line, so an insertion into an existing paragraph
-reads to it as `−1 +1`, and the property has to be measured at word granularity
-instead. Whether such a check belongs in `pnpm gate`, in §5's reviewer checklist
-or nowhere is a decision with its own cost, and it is left open as a hand-off in
-E-1143.
+**So insert a complete note between standing sentences. Never edit inside a
+standing sentence, and never hide the original from rendering.** That is the rule
+itself rather than a consequence of one, so it holds whatever a diff says: leave
+every original word standing and rendering, put the note inside the entry it
+corrects at a boundary between finished sentences, and say in the note what
+changed. It does **not** remove the *was it true when written* judgement — nothing
+here does — but it guarantees a reader can answer it, because both claims are in
+front of them (E-1142).
+
+**Nothing enforces the property, and no script is proposed here.** It is stated so
+that a reviewer can apply it. `check:log-append` counts lines with `--numstat` and
+a log paragraph is one long line, so an insertion into a standing paragraph reads
+to it as `−1 +1`; finer granularity does not rescue it, because the counterexample
+above removes zero tokens at word granularity too. A check for this would have to
+compare **rendered blocks** rather than diff hunks. Whether one belongs in
+`pnpm gate`, in §5's reviewer checklist or nowhere is a decision with its own cost
+and is left open as a hand-off in E-1143.
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
