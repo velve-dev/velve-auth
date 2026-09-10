@@ -43,8 +43,8 @@ const MINIMUM_BATCH = 30;
  * leak the control itself can separate settles at
  * `RESOLVABLE_LEAK_NS * sqrt(CONTROL_EVERY_ROUNDS / 2)` — 223 607 ns — on any machine, because the
  * sample count and the dispersion move together. Computed exactly at every reachable round count it
- * runs from 212 132 ns to 222 896 ns, so this plant sits between 4.5 and 4.7 times above it
- * (E-1534, E-1548).
+ * runs from 212 132 ns to 223 159 ns, so this plant sits between 4.481 and 4.714 times above it
+ * (E-1534, E-1548, E-1551).
  */
 export const PLANTED_CONTROL_LEAK_NS = 1_000_000;
 
@@ -175,9 +175,10 @@ export function overlapResolutionNs(left: readonly number[], right: readonly num
  * The same resolution figure without the independence assumption `resolutionOf` inherits from
  * 6.20's statistic: the run is cut into batches in the order it was measured, and the spread of the
  * per-batch differences is what the standard error is taken from. Measured against three sample
- * sets it came out 1.26 to 2.60 times the independent estimate depending on the batch count, so the
- * samples carry time correlation and the figure beside it is optimistic by about that much
- * (E-1542). Reported, never asserted — 6.1 fixes the statistic that decides.
+ * sets it came out 1.26 to 2.60 times the independent estimate depending on the batch count, and
+ * 2.40 and 3.04 times it on a second machine, so the samples carry time correlation and the figure
+ * beside it is optimistic by about that much (E-1542, E-1551). Reported, never asserted — 6.1 fixes
+ * the statistic that decides.
  */
 export function correlatedResolutionNs(
 	orderedLeft: readonly number[],
