@@ -1,6 +1,7 @@
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
+import { lockAccountRow } from "../db/lock.js";
 import { createSessionRepository } from "../db/repositories/session.js";
 import { ConcealedError } from "../http/error-map.js";
 import { createPasswordProvenance } from "./credential.js";
@@ -51,6 +52,10 @@ RETURNING owned.id`;
  * GHSA-qq9h-g4jm-xgf3 describes.
  */
 export async function confirmAddress(input: AddressConfirmation): Promise<ConfirmationOutcome> {
+	// CLAUDE.md §7: three user-owned tables are written below, so the account's row is taken first and
+	// unconditionally — the `UPDATE` after it takes the same mode but only where it matches a row, and
+	// a password replacement running beside this one has to be ordered against every path (E-1602).
+	await lockAccountRow(input.transaction, input.schema, input.actor);
 	const marked = await input.transaction.query(markFirstConfirmationStatement(input.schema), [
 		input.actor,
 	]);

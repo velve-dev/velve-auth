@@ -1,6 +1,7 @@
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
+import { lockAccountRow } from "../db/lock.js";
 import { VelveError } from "../http/error-map.js";
 
 export interface SignInMethodCount {
@@ -108,12 +109,8 @@ async function removeUnderALockThatHolds(
 	driver: Driver,
 	request: SignInMethodRemovalRequest,
 ): Promise<boolean> {
-	const user = qualifiedTableName(request.schema, "user");
 	// The user row is taken before any other table this call reads or writes (E-143).
-	await driver.query(
-		`SELECT id FROM ${user} WHERE id = $1 FOR UPDATE /* locks: ${request.schema}.user */`,
-		[request.actor],
-	);
+	await lockAccountRow(driver, request.schema, request.actor);
 	const remaining = await countSignInMethods({
 		driver,
 		schema: request.schema,
