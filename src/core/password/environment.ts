@@ -1,6 +1,5 @@
 import type { RouteServices } from "../auth/routes.js";
 import { createPasswordCredentialRepository } from "./credential.js";
-import { createKdfSemaphore } from "./semaphore.js";
 import { createDummyCredential, type PasswordEnvironment } from "./verify.js";
 
 export type PasswordEnvironmentReader = () => Promise<PasswordEnvironment>;
@@ -13,7 +12,6 @@ export type PasswordEnvironmentReader = () => Promise<PasswordEnvironment>;
 export function createPasswordEnvironmentReader(
 	services: RouteServices,
 ): PasswordEnvironmentReader {
-	const semaphore = createKdfSemaphore({ limit: services.password.concurrentHashLimit });
 	const credentials = createPasswordCredentialRepository({
 		driver: services.driver,
 		keys: services.keys,
@@ -26,7 +24,7 @@ export function createPasswordEnvironmentReader(
 
 	return async () => ({
 		config: services.password,
-		semaphore,
+		semaphore: services.kdfSemaphore,
 		keys: services.keys,
 		credentials,
 		dummy: await dummy,

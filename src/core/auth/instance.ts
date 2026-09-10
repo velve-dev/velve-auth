@@ -21,6 +21,7 @@ import { createRateLimiter } from "../limit/index.js";
 import { type OAuthSurface, oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
 import { type PasswordSurface, passwordRoutes } from "../password/routes.js";
+import { createKdfSemaphore } from "../password/semaphore.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import type { VelvePlugin } from "../plugin/config.js";
 import type { FrozenContextServices } from "../plugin/context.js";
@@ -269,6 +270,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		keys: config.keys,
 		clock,
 		oneTimeTokens,
+		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
 		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
 		...(config.email === undefined ? {} : { email: config.email }),
