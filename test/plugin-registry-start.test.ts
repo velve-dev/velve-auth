@@ -112,7 +112,7 @@ describe("dependsOn is sorted topologically (3.11)", () => {
 	});
 });
 
-describe("a name collision is a start error, not a warning (3.11)", () => {
+describe("a name collision is a start error, not a warning (3.11, S-OWNER-11)", () => {
 	it("refuses a plugin route whose name is a core route's", () => {
 		const plugin = asJavaScriptPlugin({
 			id: "demo",

@@ -30,7 +30,8 @@ async function setCookiesOf(path: string, body: unknown): Promise<readonly strin
 }
 
 describe("cookie policy — S-COOKIE-1 to S-COOKIE-6", () => {
-	it("names the session cookie exactly and gives it exactly four attributes", async () => {
+	/** T-FIX-5: exactly one entry carrying the session name, and the attribute set it fixes. */
+	it("names the session cookie exactly and gives it exactly four attributes (S-FIX-5)", async () => {
 		const [header, ...rest] = await setCookiesOf("/test/sign-in", {
 			identifier: "someone@example.com",
 		});
@@ -142,7 +143,8 @@ describe("cookie policy — S-COOKIE-1 to S-COOKIE-6", () => {
 		}
 	});
 
-	it("rejects a request that carries either enumerated cookie twice", async () => {
+	/** T-COOKIE-5: the header the row names, both orders, on a route that resolves a session. */
+	it("rejects a request that carries either enumerated cookie twice (S-COOKIE-5)", async () => {
 		const { environment } = createHarness();
 		const handler = toWebHandler({ http: environment });
 

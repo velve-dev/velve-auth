@@ -334,7 +334,8 @@ describe("one code path regardless of the outcome", () => {
 });
 
 describe("needsRehash and the silent rehash", () => {
-	it("is false only for a hash at the current scheme and parameters", async () => {
+	/** T-REST-7, the needsRehash half: true in both legacy cases, false for the current one. */
+	it("is false only for a hash at the current scheme and parameters (S-REST-7)", async () => {
 		const config = resolvePasswordConfig({ argon2id: ARGON2ID_FLOOR });
 
 		expect(needsRehash(stored.byScheme.argon2id, config)).toBe(true);

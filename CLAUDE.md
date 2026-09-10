@@ -634,6 +634,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1240 … E-1284 | wave 6 · `factor-routes` — the seventeen rows of 3.15 D.3 that no source declares |
 | E-900 … E-929 | wave 5 · `plugin`, second range |
 | E-1000 … E-1029 | wave 5 · `plugin`, third range |
+| E-1285 … E-1329 | outside the waves · `requirement-coverage` — the requirements no test cites |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not

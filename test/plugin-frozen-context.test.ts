@@ -97,7 +97,7 @@ describe("every request carries a frozen plugin context (3.15 D.1, 3.15 G)", () 
 	});
 });
 
-describe("FrozenRepositories carries no writing method on the four core tables (3.15 G)", () => {
+describe("FrozenRepositories carries no writing method on the four core tables (3.15 G, S-OWNER-10)", () => {
 	it("publishes exactly the three reading and revoking methods the specification names", async () => {
 		const context = await contextOfAPluginRoute();
 
