@@ -86,8 +86,11 @@ taken at the version you actually installed.
 
 ## What works today
 
-The schema and the database layer are built. The rest of the surface is being
-added feature by feature.
+Everything below is built and ships in `1.0.0-next.1`. The mounted route table
+serves all forty-seven addresses architecture 3.15 D.3 declares in the widest
+configuration, and a narrower configuration serves fewer because it declares
+fewer. What the library deliberately does not do has a section of its own
+further down.
 
 **The schema.** Sixteen tables in their own PostgreSQL schema, `velve` by
 default. The SQL is shipped as files under `migrations/`, so it can be read,

@@ -39,6 +39,9 @@ function packageUnderTest() {
 	} catch (error) {
 		refuse("package.json could not be read", String(error));
 	}
+	if (manifest === null || typeof manifest !== "object") {
+		refuse("package.json is JSON but not an object", `it parses to ${String(manifest)}`);
+	}
 	if (typeof manifest.name !== "string" || typeof manifest.version !== "string") {
 		refuse("package.json states no name or no version");
 	}

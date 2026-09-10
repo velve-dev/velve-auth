@@ -29,6 +29,9 @@ function manifestVersion() {
 	} catch (error) {
 		refuse(`${MANIFEST} is not JSON`, String(error));
 	}
+	if (parsed === null || typeof parsed !== "object") {
+		refuse(`${MANIFEST} is JSON but not an object`, `it parses to ${String(parsed)}`);
+	}
 	if (typeof parsed.version !== "string" || parsed.version === "") {
 		refuse(
 			`${MANIFEST} states no version`,

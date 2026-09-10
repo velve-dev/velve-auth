@@ -4,9 +4,9 @@ name: Release
 # started without a tag has no name to compare package.json against, and check:release-tag
 # refuses rather than guessing — so an entry point that cannot be checked is not offered.
 #
-# The jobs gate each other in the order the brief fixes: the whole gate, then the two tiers
-# section 6 puts before a release, then the tag against the manifest, then the publish, then
-# the registry. Nothing is published that has not been through all four.
+# The jobs gate each other in the order the brief fixes: everything ci.yml runs, then the two
+# tiers section 6 puts before a release, then the tag against the manifest, then the publish,
+# then the registry. Nothing is published that has not been through all four.
 on:
   push:
     tags: ["v*"]
@@ -25,100 +25,18 @@ env:
   REGISTRY_URL: https://registry.npmjs.org
 
 jobs:
-  # A copy of ci.yml's gate, on the same service and the same matrix. A release that skips a
-  # check the ordinary pull request runs is worse than no workflow, and the copy is held to
-  # that by test/release-workflow.test.ts rather than by anyone remembering.
-  gate:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ["20.19", "26"]
-    name: gate (node ${{ matrix.node }})
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: velve
-          POSTGRES_USER: velve
-          POSTGRES_DB: velve_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      VELVE_TEST_DATABASE_URL: postgres://velve:velve@localhost:5432/velve_test
-    steps:
-      # check:log-append and check:skill-version need the merge base with origin/main, and
-      # refuse a run where it cannot be computed rather than passing (CLAUDE.md §6).
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # A tag is checked out as a detached head, so the remote-tracking branch those two checks
-      # resolve their base against is fetched by name rather than assumed to be present.
-      - name: Fetch the base the log and skill checks resolve against
-        run: git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Build
-        run: pnpm build
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Reviewable text
-        run: pnpm check:reviewable
-
-      - name: Session owner reassignment
-        run: pnpm check:session-owner
-
-      - name: Lock order
-        run: pnpm check:lock-order
-
-      - name: SQL survives normalisation
-        run: pnpm check:sql-collapse
-
-      - name: The decision log only grows
-        run: pnpm check:log-append
-
-      - name: A changed skill raises its version
-        run: pnpm check:skill-version
-
-      - name: The Codex skill is generated, not written
-        run: pnpm check:codex-skill
-
-      - name: Dead code
-        run: pnpm knip
-
-      - name: Test
-        run: pnpm test
-
-      - name: Package exports
-        run: pnpm publint
-
-      - name: Type resolution
-        run: pnpm attw
+  # ci.yml is called rather than copied, so "the whole gate" is the same definition and not a
+  # second one that drifts — and its attribution job runs at publish time, which it would not
+  # otherwise, because a tag ref matches neither of ci.yml's own triggers. A release that skips
+  # a check the ordinary pull request runs is worse than no workflow (E-1429).
+  ci:
+    uses: ./.github/workflows/ci.yml
 
   # Section 6 puts the statistical cases on a nightly schedule and three further cases before
   # every release. This is that release moment, so both run here rather than only on their
   # schedules — a tier whose last run was hours ago has not seen this tree.
   tiers:
-    needs: gate
+    needs: ci
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -161,8 +79,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: The tag and package.json agree
         run: pnpm check:release-tag "$GITHUB_REF_NAME" "$DIST_TAG"
+
+      # The one rehearsal of the publish that costs nothing and needs no credential. It packs
+      # what would be uploaded and refuses a manifest npm will not accept, here rather than
+      # after the gate and both tiers have run.
+      - run: pnpm build
+      - name: Rehearse the publish
+        run: npm publish --dry-run --provenance --access public --tag "$DIST_TAG"
 
   publish:
     needs: version
