@@ -23,7 +23,7 @@ export interface ClientRoute {
 	readonly path: string;
 }
 
-type ClientRouteOf<Route> = Route extends {
+type ClientRouteOf<Declared> = Declared extends {
 	readonly name: infer Name;
 	readonly path: infer Path;
 }

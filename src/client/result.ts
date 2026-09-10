@@ -3,7 +3,7 @@ import { VelveError, type VelveErrorCode } from "../core/http/error-map.js";
 export interface VelveFailure<Code extends VelveErrorCode> {
 	readonly code: Code;
 	readonly message: string;
-	/** 3.15 F: only `rate_limited` carries one, so every other code leaves the key absent. */
+	/** 3.15 E: only `rate_limited` carries one, so every other code leaves the key absent. */
 	readonly retryAfterSeconds?: number;
 }
 
