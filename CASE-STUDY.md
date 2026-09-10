@@ -6517,20 +6517,20 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Rejected.** Trusting the four assertions that read as the requirement — no bare specifier, one core module, no handler, no SQL.
 
-**Reason.** Planted by making the specifier extractor return nothing: **three of the five assertions passed**. No bare specifier, no handler and no SQL are all trivially true of a walk that visited one file. What failed were the floor — the closure must hold more than the entry — and the equality against the one core module the client does load, which reads `[]` where it wants `["core/http/error-map.mjs"]`. Planted the other way, by deleting `dist/client.mjs`, all five fail.
+**Reason.** Planted by making the specifier extractor return nothing: **five of the seven assertions passed**. No bare specifier, no handler, no SQL, the shared error class and the table being an array are all trivially true of a walk that visited one file. What failed were the floor — the closure must hold more than the entry — and the equality against the one core module the client does load, which reads `[]` where it wants `["core/http/error-map.mjs"]`. Planted the other way, by deleting `dist/client.mjs`, all seven fail.
 
 **Price.** The floor is a number with no meaning of its own, sitting in a test file forever, and it is the assertion doing most of the work. The second plant found the same class in the first assertion: without the check that the built entry contains `createVelveClient`, a stale `dist/` measures a client that is not the one in the tree.
 
 ### The whole plant table, and the two things it could not redden
 `E-681` · client · check quality, frozen
 
-**Context.** Thirteen faults were planted against the tree at `c57910c` and each was run against the check it exists for. What follows is what actually happened, not what was expected.
+**Context.** Fifteen faults were planted against the tree at `de04c9c` and each was run against the check it exists for. What follows is what actually happened, not what was expected.
 
 **Rejected.** Reporting the tests as passing, which they did from the first run.
 
-**Reason.** Compile-time seam: a renamed path, a deleted row and a route added to `sessionRoutes` each fail `pnpm typecheck`. Run-time seam: a changed method compiles and is caught by the table comparison and by the round trip. Bundle: a runtime import of `invocationOf` into the client compiles cleanly, builds cleanly, and is caught only by the reach test. Behaviour: following redirects, guessing the method from the presence of a body, `unwrap` returning instead of throwing, a non-envelope refusal read as a failure result, and a repeated path parameter each redden `test/client-calls.test.ts`. Typing: removing the widened-table fallback stops `test/client-calls.test.ts` compiling.
+**Reason.** Compile-time seam: a renamed path, a deleted row and a route added to `sessionRoutes` each fail `pnpm typecheck`. Run-time seam: a changed method compiles and is caught by the table comparison and by the round trip. Bundle: a runtime import of `invocationOf` into the client compiles cleanly, builds cleanly, and is caught only by the reach test. Behaviour: following redirects, guessing the method from the presence of a body, `unwrap` returning instead of throwing, a non-envelope refusal read as a failure result, and a repeated path parameter each redden `test/client-calls.test.ts`. Typing: removing the widened-table fallback stops `test/client-calls.test.ts` compiling. *Two plants and their results were added after this entry was first written, and the counts and the tree in it were restated to match: the entry read* thirteen *against* `c57910c`, *and E-680 read* three of the five *and* all five. *The two added are: a redeem route turned into a `GET`, which reddens the property that no one-time artefact can ride in a query string; and a `VelveError` defined in the client instead of imported from the core, which typechecks and builds cleanly and reddens two assertions of the reach test. Nothing already recorded changed its result on the later tree.*
 
-**Price.** Two of the thirteen were planted against the measurement rather than against the library — the empty walk and the missing build — and they are the two that found something (E-680). The eleven aimed at the library found nothing wrong with it, which is the outcome a plant table is least able to distinguish from a plant table that was too easy.
+**Price.** Two of the fifteen were planted against the measurement rather than against the library — the empty walk and the missing build — and they are the two that found something (E-680). The thirteen aimed at the library found nothing wrong with it, which is the outcome a plant table is least able to distinguish from a plant table that was too easy.
 
 ### No security requirement names the client, and five of them a client can still weaken
 `E-682` · client · requirement derivation, frozen
