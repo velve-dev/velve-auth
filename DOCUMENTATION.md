@@ -4882,10 +4882,11 @@ through the optional field rather than by branching on the code first.
 `claimed` is what the two sides both claimed, in the form the collision was
 found in: a route name (`session.list`), a folded method and path
 (`POST /sign-out`), or one of the eighteen surface namespaces of 3.15 B
-(`session`). `contributors` is the two of them, the side that already held the
-claim first and the side that arrived second. A plugin appears under its own
-`id`; the library appears as the literal `the core`, which is what a conflict
-between a plugin route and a core route names on the other side.
+(`session`). `contributors` is the two of them, in a fixed order: the side that
+already held the claim first, and the side that arrived second. A plugin appears
+under its own `id`; the library appears as `THE_CORE`, which is exported beside
+`VelveStartupError` so that a caller comparing against it does not hard-code the
+string it holds.
 
 The same pair is written into `message`, in a trailing bracketed clause built
 from these fields rather than written beside them:

@@ -72,7 +72,9 @@ function routeNamed(name: string, path: string): PluginRoute<string> {
 
 /**
  * One id is a proper prefix of the other, so a message naming only `cartridge` still contains
- * `cart`. Every assertion below compares whole captured tokens for that reason.
+ * `cart`. Every assertion below compares whole captured tokens in order for that reason, and the
+ * order is the incumbent first and the arriving second, which `DOCUMENTATION.md` states as the
+ * contract (E-1342).
  */
 const SHADOWING_ID = "cart";
 const SHADOWED_BY = "cartridge";
@@ -84,8 +86,8 @@ describe("a route conflict names both contributors (S-OWNER-11, T-OWNER-11)", ()
 		]);
 
 		expect(refusal.code).toBe("plugin_route_conflict");
-		expect([...refusal.contributors].sort()).toEqual([THE_CORE, "demo"].sort());
-		expect([...refusal.statedInTheMessage].sort()).toEqual([THE_CORE, "demo"].sort());
+		expect(refusal.contributors).toEqual([THE_CORE, "demo"]);
+		expect(refusal.statedInTheMessage).toEqual([THE_CORE, "demo"]);
 		expect(refusal.claimedInTheMessage).toBe(refusal.claimed);
 		expect(refusal.claimed).toBe("POST /sign-out");
 	});
@@ -103,8 +105,8 @@ describe("a route conflict names both contributors (S-OWNER-11, T-OWNER-11)", ()
 		]);
 
 		expect(refusal.code).toBe("plugin_route_conflict");
-		expect([...refusal.contributors].sort()).toEqual([SHADOWING_ID, SHADOWED_BY].sort());
-		expect([...refusal.statedInTheMessage].sort()).toEqual([SHADOWING_ID, SHADOWED_BY].sort());
+		expect(refusal.contributors).toEqual([SHADOWING_ID, SHADOWED_BY]);
+		expect(refusal.statedInTheMessage).toEqual([SHADOWING_ID, SHADOWED_BY]);
 		expect(refusal.claimedInTheMessage).toBe(refusal.claimed);
 		expect(refusal.claimed).toBe("shared.x");
 	});
@@ -148,8 +150,8 @@ describe("a route conflict names both contributors (S-OWNER-11, T-OWNER-11)", ()
 		]);
 
 		expect(refusal.code).toBe("plugin_route_conflict");
-		expect([...refusal.contributors].sort()).toEqual([THE_CORE, "session"].sort());
-		expect([...refusal.statedInTheMessage].sort()).toEqual([THE_CORE, "session"].sort());
+		expect(refusal.contributors).toEqual([THE_CORE, "session"]);
+		expect(refusal.statedInTheMessage).toEqual([THE_CORE, "session"]);
 		expect(refusal.claimed).toBe("session");
 	});
 

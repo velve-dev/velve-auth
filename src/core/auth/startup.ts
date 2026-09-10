@@ -65,16 +65,14 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 };
 
 /**
- * T-OWNER-11 asks the start error to name both contributors to a route conflict. `claimed` is the
- * route name, the folded `METHOD /path` or the surface namespace that two sides claimed, and
- * `contributors` is the two of them.
+ * T-OWNER-11 asks the start error to name both contributors to a route conflict.
  */
 export interface RouteConflict {
 	readonly claimed: string;
 	readonly contributors: readonly [string, string];
 }
 
-/** A conflict has two contributors even where one of them is the library, so the library has a name. */
+/** A conflict has two contributors even where one of them is the library, so the library has a name (E-1342). */
 export const THE_CORE = "the core";
 
 function namesBothContributors(conflict: RouteConflict): string {
