@@ -75,7 +75,13 @@ function searched(what, command, argv, options) {
 		if (error.status === 1) {
 			return { matched: false, hits: "" };
 		}
-		refuse(`the ${what} scan could not run, so it proves nothing`, String(error.stderr ?? error));
+		/** The failing command is named by its status and never by its argument vector, which
+		 * would print the pattern this file exists in order not to state. */
+		const detail = String(error.stderr ?? "").trim();
+		refuse(
+			`the ${what} scan could not run, so it proves nothing`,
+			detail || `${command} exited ${String(error.status ?? error.code)}`,
+		);
 	}
 }
 
