@@ -6065,3 +6065,112 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** It is measured and handed on. **Four full nightly runs of this branch's tree produced one failure; two full nightly runs of `main` at the merge base `2d54bdb` produced none; ten runs of the file in isolation — five on each tree — produced none.** So it needs the rest of the suite running beside it, which is the condition its own comment says it corrects for. The mechanism is visible in the test: it retries the measurement until an attempt's **control** separation is tight and then asserts the **case** separation once and returns, so the first attempt with a quiet control is the only one measured, and the case carries the same noise the control does. The failing run's per-round medians span 94.5 ms to 3360.3 ms, a thirty-five-fold spread.
 
 **Price.** This is the second instance in one session of the class E-1109 repairs one row above — a statistical threshold that goes red with nothing wrong — in a different file, by a different mechanism, and found by running the tier rather than by reading anything. One failure in four is far too coarse a rate to act on, and this entry offers an observation rather than a rate deliberately: E-1109's own standard is a million trials, and nothing here comes near it. What it costs meanwhile is that a green nightly on this file is weak evidence, and every branch that trips it will spend what this one spent establishing it was not theirs.
+### The rules file stated a rule and a false reason for it, and the reason was the part that got quoted
+`E-1130` · rules · rules file, frozen
+
+**Context.** §6 justified `pnpm check:log-append` with one sentence: resolving a conflict in `CASE-STUDY.md` "by keeping one's own side drops a sibling's entries silently — the branch is green, the entries are gone, and the sibling has already merged." The two halves cannot both hold. If the sibling has merged, its entries are at the merge base; dropping them is a deletion; the deletion clause fires; the branch is red. The sentence describes a merge between two unmerged feature branches and attributes the outcome to a merge with `main`.
+
+**Rejected.** Deleting the sentence. A rule whose justification has been removed and not replaced reads as arbitrary, and the next reader re-derives a justification for it — which is exactly how this one was arrived at. Also rejected: narrowing it to the branch-to-branch case it is true of, which leaves the case a merger actually performs undescribed.
+
+**Reason.** The false half is load-bearing, not decorative: E-1032 was written from it, believed it, and stated on its authority that no check can tell a bad resolution from a good one. E-1034 corrected E-1032 and named `CLAUDE.md` as the source. So the repair is to state both directions, name the clause that fires in each, and name the bound on the one that fires in the second — measured rather than reasoned about, which is the step E-1032 skipped and E-1034 took.
+
+**Price.** §6 grows from seven lines to thirty for one check, and the section that states the rules is now longer in the part explaining a check's limits than in the part stating the rule. A reader looking for the rule has more to read before reaching it. The alternative was a shorter section that is wrong, and this repository has now measured what a short wrong sentence costs downstream: two entries and a branch.
+
+### Keeping one's own side is the direction the step does catch
+`E-1131` · rules · measurement, frozen
+
+**Context.** §6's claim needed a merge to be tested against, and wave 5's is the only one on record: `723121a`, `feature/email-flows` merging `origin/main` at `27e291e`, one conflict hunk in `CASE-STUDY.md` — 634 lines from the branch, 989 from `main`, which is what E-1032 reports.
+
+**Rejected.** Replacing `CASE-STUDY.md` wholesale with one side's version, which was the first reconstruction run here and is not what a conflict presents. Git auto-merges everything outside the markers; only the hunk has a side to choose. The wholesale version reported the same exit code and a different line count, so it would have supported the conclusion with a wrong number.
+
+**Reason.** The hunk was cut at its markers and the three resolutions rebuilt from the pieces, each amended into `723121a` so that every other file stays as the real merge resolved it and the log is the only variable. The surgery is checked before it is used: `main`'s block then the branch's block reproduces `723121a`'s `CASE-STUDY.md` byte for byte but for one blank separator line the merger inserted. Control at `723121a`, base `27e291e`: `+635 −0`, exit 0, and `decision-log` 9 tests passed — `+635 −0` being the number E-1032 states, from a different party and a different machine. Keeping one's own side, tree `798dc86`: `+409 −764`, **exit 1** on the deletion clause, naming the lines; `decision-log` red on **74** citations, which is E-1034's number exactly. 115 of `main`'s entries are gone.
+
+**Price.** One merge is one merge. Everything below is measured on the only three-way conflict this repository has had in the log, and a wave with four features conflicting three ways may behave differently in ways nothing here would show. The reconstruction also cost a false failure of its own: `git add -A` in a throwaway worktree committed the `node_modules` symlink, `git ls-files` then handed the citation test a directory, and the test died on `EISDIR` rather than reporting a count. It was found by reading the failure instead of the number, which is the same discipline the entry is about.
+
+### The other direction is caught by the clause any unrelated line switches off
+`E-1132` · rules · measurement, frozen
+
+**Context.** Keeping `main`'s side drops entries that were never at the merge base, so the deletion clause has nothing to report. `tools/check-log-append.mjs` has a second clause — `commits > 0 && additions === 0` — written for a branch that never opens the log, and it is the only thing left standing in this direction.
+
+**Rejected.** Treating the hunk-local resolution and a wholesale replacement of the file as two cases, which E-1034 does. For this merge they are one: keeping `main`'s side of the hunk produces a file **byte-identical** to `27e291e:CASE-STUDY.md`, because the branch changed the log nowhere else. E-1034's `+2 −0` came from the two unrelated lines its reconstruction carried, not from the wholesale-versus-hunk distinction — the reading it reaches is right and the reason it gives for the difference is not.
+
+**Reason.** Tree `18a9bea`, base `27e291e`: `CASE-STUDY.md gained no line across 24 commits`, **exit 1** — the addition clause, not the deletion clause. Then the same tree with two lines of unrelated comment appended, `6c5b707`: `+2 −0`, **exit 0**, green, with **68** of the branch's entries gone and `decision-log` red on **76** citations, which is again E-1034's number. Two lines of comment is the whole cost of defeating it, and no rule in this repository forbids them.
+
+**Price.** The clause cannot be tightened into a guard without changing what it is for. It exists so a branch that records nothing is caught, and every branch that records something satisfies it — a check that demanded a plausible *quantity* of additions would have to know how many entries the wave produced, which nothing does. So the direction stays uncovered by this step and the repair is a sentence in §6 rather than a line in the script.
+
+### The window is the merge commit, and the workflow closes it
+`E-1133` · rules · measurement, frozen
+
+**Context.** E-1132's clause fires while the branch has added no line. Item 5 of §5's definition of done requires the branch to record the decisions it took, and resolving a conflict in the log is one of them — E-1032 is that entry. So the commit that follows the merge is, by the rules, a commit that adds lines to `CASE-STUDY.md`.
+
+**Rejected.** Recording this as an edge case. It is the ordinary order of work: merge, then write down what the merge decided. A branch that does what §5 asks arrives at exit 0 on its own.
+
+**Reason.** Measured on the keep-`main` tree with the branch's own follow-on entries appended, carrying `CLAUDE.md` with them so the range table is not a second variable. One commit after the merge, tree `9c7d5a9`: `+44 −0`, **exit 0**. Both commits, tree `914771b`: `+59 −0`, **exit 0**, and `decision-log` red on **86** citations with 68 entries missing. The clause that was the last guard in this direction is switched off by the commit the rules require next.
+
+**Price.** The instruction this yields — run the step on the merge commit before committing on top of it — is a thing a merger must remember, and nothing enforces it. It is a worse mechanism than a check and it is what there is. A step that refused to pass while a merge commit sits unexamined in its range would enforce it, and that is a change to the script this branch is not making (E-1136).
+
+### `decision-log` is the mechanism here, and it is the mirror of the range table
+`E-1134` · rules · rules file, frozen
+
+**Context.** §6 calls `test/decision-log.test.ts` "the backstop, not the mechanism" where it discusses reserved ranges: there the mechanism is not renumbering, and the test only catches what slips. §6 gave `check:log-append` the mechanism's role for badly resolved conflicts, and the measurements say it does not have it.
+
+**Rejected.** Leaving both steps described as equals and letting a reader weigh them, which is what the section did and which produced E-1032.
+
+**Reason.** `decision-log` is red in every resolution measured: 74 dangling citations keeping one's own side, 76 keeping `main`'s, 86 after the follow-on commits — because decision identifiers are cited from code, tests and documentation, and dropping a block of entries orphans every citation of it wherever it lives. It does not care which side was dropped and it does not have a window. `check:log-append` catches one direction, and in the other catches only a branch that has written nothing yet. So the roles are the reverse of the range-table case, and §6 now says so in both places.
+
+**Price.** It makes the log's integrity depend on entries being cited from outside the log. An entry nobody cites is invisible to `decision-log` and can be dropped in a conflict with nothing red anywhere — the numbers above are 74, 76 and 86 citations against 115 and 68 entries, so the coverage is real but partial and this branch has not measured how partial. `decision-log` is also in `pnpm test`, which is slow, where `check:log-append` is a second; the fast step is the one that answers less.
+
+### What was measured against the brief, and the two numbers that did not reproduce
+`E-1135` · rules · method, frozen
+
+**Context.** This branch was handed the three results it was asked to re-derive, and re-deriving them rather than transcribing them is the whole reason it exists — E-1034's price names `CLAUDE.md`, the specification and the wave owner as the three sources a writer is least likely to check, and a brief is the fourth.
+
+**Rejected.** Reporting agreement. Two numbers do not reproduce and the entry says so, because the value of the exercise is entirely in what it disagrees with.
+
+**Reason.** Exit codes and clauses reproduce in every shape, and so do 74, 76, 68 and `+2 −0`. Two numbers do not. The brief states 689 lines lost keeping one's own side; the measurement here is **764** (`+409 −764`), and 689 is not recovered by the wholesale variant either. The brief states `+58` for the merge plus the branch's own entries; the measurement here is **+59**, from `7c42f1b`'s 44 appended lines and the 15 `d37f857` appends at the tail — its other hunk edits E-1032 in place, and in a tree where E-1032 was dropped that edit has nothing to apply to, so a reconstruction that carries it differently lands one line away. Neither disagreement moves a conclusion: both are magnitudes inside a clause whose exit code is not in dispute.
+
+**Price.** Two numbers in a brief that two parties had already agreed on turned out to be two numbers nobody had re-run, and the only reason this is visible is that a third party was told to re-run them. That does not scale — it cost a full reconstruction to find a discrepancy that changes nothing. The honest reading is that the exercise was worth it for the clauses and the window, not for the line counts, and that a fourth party re-running it would be waste.
+
+### The change the step needs is not made here
+`E-1136` · rules · scope, frozen
+
+**Context.** E-1133 leaves an instruction a merger must remember where a check could enforce it: `tools/check-log-append.mjs` reads `git rev-list --count`, so it can see that a merge commit is in its range, and it could refuse rather than pass when one is there and the additions clause is the only thing that examined it.
+
+**Rejected.** Implementing it. This branch's file set is `CLAUDE.md` and its own range of `CASE-STUDY.md`, fixed before it started, and §5 says a feature that needs a change outside its area reports it.
+
+**Reason.** The step guards the file this branch is editing, so a branch that edits both is a branch whose own gate it has changed. The risk is also not small in the way it looks: every branch in flight merges `main` at some point, and a step that starts refusing on a merge commit refuses on all of them at once, including the three open right now. It is a change with a blast radius and it belongs on a branch that can be reverted without reverting a rules repair.
+
+**Price.** The instruction ships unenforced, and the next merger who does not read §6 to the end is in exactly the position wave 5's merger was in — except that what they will find there is now true. Reporting a defect instead of fixing it is also how E-624's file-partition request has stayed open for two waves, and this entry is one more of those.
+
+### The one-line difference had a mechanism, and it was not the one named
+`E-1137` · rules · correction of E-1135
+
+**Context.** E-1135 explains why its `+59` does not match the `+58` it was handed: "its other hunk edits E-1032 in place, and in a tree where E-1032 was dropped that edit has nothing to apply to, so a reconstruction that carries it differently lands one line away." Both halves are false, and a reviewer re-running the reconstruction found them.
+
+**Rejected.** Restating it in place. §6 now settles that a reason wrong when written is answered by a new entry and not by an edit, disclosure included, so the false sentence stays where it is and this entry is read beside it. Also rejected: withdrawing the `+59`, which reproduces in both variants and is not what was wrong.
+
+**Reason.** Measured. **E-1032 is dropped in no keep-`main` tree**: it is introduced by `7c42f1b`, whose parent is the merge commit, so it lands after the merge however the conflict was resolved — present at line 5178 of the reconstruction. **And carrying the edit differently does not move the line count at all**: with the hunk, 44 + 17 − 2; without it, 44 + 15; both `+59 −0`, both exit 0, trees `41fc1b7` and `79209e2` against base `27e291e`. What it does move is the **dangling count, 86 to 87**, because the hunk's replacement text cites `E-936`, which *is* in the dropped block — the one extra citation is `CASE-STUDY.md E-936` and nothing else, by diff of the two lists. So E-1135's 86 is the no-hunk variant and is consistent with its own reconstruction; its account of what the omission does is not. `+58` is producible from neither variant, which is the part of E-1135 that stands.
+
+**Price.** The branch whose subject is E-1130 — a rule that stated a false reason, "and the reason was the part that got quoted" — shipped a false stated mechanism of its own, inside the entry about not taking numbers on trust. Nothing in the gate detects that: every check and every test was green, because a wrong explanation of a right number is not a wrong number. It was caught by a second party re-running the reconstruction, which is the same detection story as E-1032's and one level further up, and it is the second time in two entries that the only working detector was somebody repeating the measurement.
+
+### How partial `decision-log`'s coverage is, measured
+`E-1138` · rules · measurement, frozen
+
+**Context.** E-1134 makes `test/decision-log.test.ts` the mechanism against a badly resolved log conflict and names the hole in it: an entry nobody cites is invisible to it and can be dropped with nothing red. Its Price says the coverage is "real but partial and this branch has not measured how partial", which is an invitation this entry takes up rather than leaves standing.
+
+**Rejected.** Restating E-1134's Price with the numbers in it. The claim there was true when written — the branch had not measured it — so bringing it into step would be rewriting a reason rather than an artefact, which §6 now forbids outright.
+
+**Reason.** Counted in the reconstructions, at `d37f857`'s tree for the citations and the two conflict blocks for the losses. Keeping `main`'s side loses **68** entries; 86 surviving citations name **35** of them, 30 from outside the log and 5 more from parts of the log that survive, so **33 vanish named by nothing**. Keeping one's own side loses **115**; 74 surviving citations name **36**, all from outside the log, so **79 vanish named by nothing**. Counted the way the gate that asked for it counted — citations from outside the log only — it is 30 of 68 and 36 of 115, 44% and 31%. **And the hole E-1134 discloses is empty for this merge**: of all 183 dropped entries, **zero** are cited nowhere at all. So the step detects the *event* with certainty in both directions and names half or less of what was lost — enough to fail a gate, not enough to rebuild from.
+
+**Price.** These are one merge's numbers and not a law, and the direction they would move in is unmeasured. 38 of the 68 are cited only from inside the log, and this branch did not measure which kinds of entry fall on which side of that split — so the plausible worry, that entries about method and about the log itself are the least cited from code and are also what a conflict in the log is most often about, is a worry and not a finding. Recording it as a finding would be the thing E-1137 is a correction of.
+
+### The rule that needs a human now records how the human decided
+`E-1139` · rules · rules file, frozen
+
+**Context.** §6 says of the measurement-versus-reason boundary that "This rule needs a human", and then leaves that human no record of how it was decided the last time. It has needed deciding **three times in one session** — on `feature/oauth`, on this branch, and on `fix/specification-defects-wave5` — and the third produced a case neither of the first two had.
+
+**Rejected.** Leaving it to be ruled on each time, which is what produced three adjudications and no record. Also rejected, and this is the one that matters: a single flat prohibition on any in-place edit of an entry's prose. It would forbid bringing an entry into step with an artefact its **own branch** subsequently changed, and so would require a writer to publish an entry describing text the tree does not contain, with a second entry aimed at it — the exact outcome §6's opening paragraph rejects for measurements.
+
+**Reason.** The distinction that survived all three cases is *when the text became wrong*. Wrong when written is retroactive rationalisation and is answered by a new entry, disclosure included, because disclosure as a remedy empties a prohibition any edit can satisfy. Made stale by the branch's own later change to the thing the entry describes is not rationalisation at all, and is answered in place with the change disclosed. The line is that an entry may be brought into step with its own artefact and the reason a decision was taken may not be rewritten. §6 also states that neither half has a diff signature and that a reader is the enforcement, because presenting a rule as decidable when it is not is how E-1032 happened.
+
+**Price.** This is the one thing this branch added that rests on judgement rather than on a measurement: three rulings, no experiment, and no check behind it, in a section whose other rules mostly have one. The second half is also what a bad-faith writer reaches for — "the artefact changed" is available as a story for very nearly any rewrite — and the only thing standing against that is a reviewer who reads the disclosure and looks at the artefact. It is a weaker mechanism than the file's others and it is stated as one rather than dressed up.
