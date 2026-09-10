@@ -111,7 +111,7 @@ describe("the shipped schema", () => {
 		expect(rows).toHaveLength(1);
 	});
 
-	it("gives no user-owned table a counted-up primary key", async () => {
+	it("gives no user-owned table a counted-up primary key (S-OWNER-9)", async () => {
 		const owned = await userOwnedTableNames();
 		const rows = await connection.query<{ table_name: string; column_name: string }>(
 			`SELECT child.relname AS table_name, column_.attname AS column_name

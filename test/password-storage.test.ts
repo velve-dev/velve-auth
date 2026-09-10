@@ -232,7 +232,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 	}, 180_000);
 });
 
-describe("3.3 step 6 — the silent rehash is a compare and swap", () => {
+describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", () => {
 	it("replaces a legacy credential after a correct sign-in and only then", async () => {
 		const userId = await createUser("rehash");
 		await credentials.write({

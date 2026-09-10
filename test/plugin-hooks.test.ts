@@ -153,7 +153,8 @@ describe("the dispatcher runs the seven enumerated points (3.11, 3.15 G)", () =>
 		expect(observed.map((entry) => entry.plugin)).toStrictEqual(["first", "second"]);
 	});
 
-	it("stops at a hook that throws and does not run the ones behind it", async () => {
+	/** T-OWNER-12: a throwing hook rejects the operation, which is the half a hook is allowed. */
+	it("stops at a hook that throws and does not run the ones behind it (S-OWNER-12)", async () => {
 		const observed: Observation[] = [];
 		const runtime = createPluginRuntime({
 			plugins: [
