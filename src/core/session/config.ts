@@ -40,11 +40,20 @@ export interface SessionSettings {
 
 const COOKIE_NAME = /^__Host-[A-Za-z0-9_-]+$/;
 
+/** The end of the range a `Date` holds, which is nearer than `Number.MAX_SAFE_INTEGER` and is the limit that binds a deadline this library reads back (E-1584). */
+const LONGEST_DEADLINE_IN_MILLISECONDS = 8_640_000_000_000_000;
+
 function millisecondsOf(option: string, duration: Duration): number {
 	const milliseconds = durationInMilliseconds(duration);
 	if (milliseconds === null || milliseconds <= 0) {
 		throw new InvalidSessionConfigError(
 			`session.${option} must be a whole number of s, m, h or d above zero, not "${duration}"`,
+		);
+	}
+	// Refused at startup rather than at the first insert, which is where the database would refuse it (E-1573, E-1584).
+	if (!Number.isSafeInteger(milliseconds) || milliseconds > LONGEST_DEADLINE_IN_MILLISECONDS) {
+		throw new InvalidSessionConfigError(
+			`session.${option} must be at most ${LONGEST_DEADLINE_IN_MILLISECONDS} in milliseconds, where the Date this library hands back ends, not "${duration}"`,
 		);
 	}
 	return milliseconds;

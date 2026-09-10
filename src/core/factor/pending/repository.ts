@@ -92,11 +92,12 @@ interface OwnedPendingRowShape extends InsertedPendingRowShape {
 	readonly observed_at: unknown;
 }
 
+/** An Invalid Date is a `Date`, so a deadline past the range a `Date` holds arrives here looking decoded (E-1584). */
 function toDate(value: unknown): Date {
-	if (value instanceof Date) {
+	if (value instanceof Date && !Number.isNaN(value.getTime())) {
 		return value;
 	}
-	throw new TypeError("the driver must decode timestamptz into a Date");
+	throw new TypeError("the driver must decode timestamptz into a Date this runtime can hold");
 }
 
 function toOptionalDate(value: unknown): Date | null {
@@ -130,10 +131,6 @@ function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	return `{${[...new Set(factors)].join(",")}}`;
 }
 
-function toInterval(seconds: number): string {
-	return `${Math.round(seconds)} seconds`;
-}
-
 function availableFactorsOf(row: EnrolmentColumns): readonly SecondFactor[] {
 	const available: SecondFactor[] = [];
 	if (row.has_totp) {
@@ -163,7 +160,7 @@ function toStored(row: InsertedPendingRowShape): StoredPendingAuthentication {
 function insertStatement(table: string, totp: string, webauthn: string, recovery: string): string {
 	return `WITH inserted AS (
 		INSERT INTO ${table} (token_sha256, user_id, factors_completed, expires_at)
-		VALUES ($1, $2, $3::text[], now() + $4::interval)
+		VALUES ($1, $2, $3::text[], now() + make_interval(secs => $4::double precision))
 		RETURNING user_id, factors_completed, attempts, created_at, expires_at
 	)
 	SELECT i.user_id, array_to_string(i.factors_completed, ',') AS factors_completed,
@@ -247,7 +244,7 @@ export function createPendingAuthenticationRepository(
 				tokenHash,
 				userId,
 				toFactorArray(factorsCompleted),
-				toInterval(lifetimeInSeconds),
+				lifetimeInSeconds,
 			]);
 			if (row === undefined) {
 				throw new TypeError("the insert of a pending authentication returned no row");
