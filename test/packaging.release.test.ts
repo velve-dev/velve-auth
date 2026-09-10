@@ -36,6 +36,32 @@ function namesExportedByTheTestingSubpath(): readonly string[] {
 	);
 }
 
+function declaredFiles(): readonly string[] {
+	const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8")) as {
+		files: readonly string[];
+	};
+	return manifest.files;
+}
+
+/**
+ * npm reads a `files` entry as a path, a directory or a glob, so a name resolves if a packed path
+ * is it, sits under it, or matches it as a pattern. `*` stops at a separator and `**` does not.
+ * `?` is escaped rather than translated: the manifest has never carried one, and an entry using
+ * it would be reported as resolving to nothing rather than quietly matching the wrong thing.
+ */
+function matchesPackedPath(entry: string, packedPath: string): boolean {
+	if (packedPath === entry || packedPath.startsWith(`${entry}/`)) {
+		return true;
+	}
+	const pattern = entry.replace(/\*\*|\*|[.+^${}()|[\]\\?]/g, (token) => {
+		if (token === "**") {
+			return ".*";
+		}
+		return token === "*" ? "[^/]*" : `\\${token}`;
+	});
+	return new RegExp(`^${pattern}$`).test(packedPath);
+}
+
 function subpathTargets(): readonly string[] {
 	const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8")) as {
 		exports: Readonly<Record<string, string | Readonly<Record<string, string>>>>;
@@ -78,6 +104,25 @@ describe("what the package actually ships (6.19, before every release)", () => {
 			1,
 		);
 		expect(leaked).toStrictEqual([]);
+	});
+
+	/**
+	 * `files` is the part of the manifest nothing here reads. A name in it that resolves to no
+	 * file is invisible to the publish rehearsal, to `npm pack`, to `publint`, to `attw` and to
+	 * every other case in this tier: all of them exit 0 and none prints the name (E-1436). The
+	 * case above writes its expected list by hand on purpose and catches a name being **dropped**
+	 * from `files`; this is the converse, which adding a name that matches nothing walks past
+	 * because it adds nothing, removes nothing and leaves every existing assertion passing.
+	 */
+	it("resolves every name in files to at least one packed path", () => {
+		const declared = declaredFiles();
+		const unresolved = declared.filter(
+			(entry) => !packed.some((path) => matchesPackedPath(entry, path)),
+		);
+
+		expect(declared.length).toBeGreaterThanOrEqual(7);
+		expect(declared.filter((entry) => entry.startsWith("!"))).toStrictEqual([]);
+		expect(unresolved).toStrictEqual([]);
 	});
 
 	it("carries no environment file and no dotfile of the working tree", () => {
