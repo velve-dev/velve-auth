@@ -199,24 +199,28 @@ describe("enumeration — S-ENUM-1, S-ENUM-2, S-ENUM-6, L-4", () => {
 	 * *off a `ConcealedError`*, so the file has to name that class to be reading one.
 	 */
 	/**
-	 * `core/password/routes.ts` reads a `.reason` that is not a `ConcealedError`'s: `checkPassword`
-	 * answers a refusal with the reason as a value, and the route raises it so the pipeline logs the
-	 * true one (S-ENUM-6). Producing a `ConcealedError` is the opposite of deciding what one means,
-	 * so the exemption is by path and covers that file alone — `instanceof ConcealedError`, which is
-	 * the only way to have one in hand to read, still fails for every file including this one
-	 * (E-1188).
+	 * Deciding what a reason means requires having a `ConcealedError` in hand; constructing one is
+	 * the opposite operation. A file whose every mention of the class is a construction — or the
+	 * import that lets it construct — is producing a reason, and `core/password/routes.ts` does
+	 * exactly that: it forwards `checkPassword`'s refusal so the pipeline logs the true one
+	 * (S-ENUM-6). Telling the two apart by what the file does rather than by what it is called keeps
+	 * the clause firing for every consumer, this file included, and needs no edit for the next
+	 * producer (E-1188).
 	 */
-	const MAY_NAME_A_REASON_BESIDE_THE_CLASS = "core/password/routes.ts";
+	function mentionsTheClassWithoutConstructingIt(source: string): boolean {
+		return source
+			.replace(/import[\s\S]*?from\s+"[^"]*";/g, "")
+			.replaceAll("new ConcealedError(", "")
+			.includes("ConcealedError");
+	}
 
 	it("decides the visible code from an internal reason in exactly one file", () => {
 		const files = sourceFilesUnder(new URL("../src/", import.meta.url));
 		const deciders = files.filter(
-			({ name, path, source }) =>
+			({ name, source }) =>
 				name !== "error-map.ts" &&
 				(source.includes("instanceof ConcealedError") ||
-					(path !== MAY_NAME_A_REASON_BESIDE_THE_CLASS &&
-						source.includes("ConcealedError") &&
-						source.includes(".reason"))),
+					(mentionsTheClassWithoutConstructingIt(source) && source.includes(".reason"))),
 		);
 
 		expect(deciders.map(({ path }) => path)).toEqual([]);
