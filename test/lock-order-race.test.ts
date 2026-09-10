@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { createVelveAuth } from "../src/index.js";
@@ -192,6 +194,52 @@ describe("no interleaving of two account writes deadlocks (CLAUDE.md §7)", () =
 		// same interleaving answered 500 with `40P01` behind it.
 		expect(deadlocksReportedTo([held, watched])).toBe(0);
 		expect(statuses(outcomes)).toEqual([200, 401]);
+	}, 60_000);
+
+	/**
+	 * The mode, pinned where it matters: with the account row held, an insert of a user-owned row for
+	 * that account must not wait, because the `FOR KEY SHARE` its foreign key takes waits for
+	 * `FOR UPDATE` and for nothing else (E-1604). `lock_timeout` turns a wait into a reported failure
+	 * rather than a hung case, so the outcome is decided rather than timed out. It is the only case
+	 * here that reddens when the mode is put back (E-1607).
+	 */
+	it("lets a foreign key's own lock through while the account row is held", async () => {
+		const address = "cycle-c@example.com";
+		await signUp(address);
+		const [account] = await observer.query<{ id: string }>(
+			`SELECT id FROM ${schema}.user WHERE email = $1`,
+			[address],
+		);
+		let locked = (): void => {};
+		let finish = (): void => {};
+		const isLocked = new Promise<void>((resolve) => {
+			locked = resolve;
+		});
+		const mayFinish = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+
+		const holding = firstConnection.transaction(async (transaction) => {
+			await transaction.query(lockAccountRowStatement(schema), [account?.id]);
+			locked();
+			await mayFinish;
+		});
+		await isLocked;
+
+		await secondConnection.query("SET lock_timeout = '2000ms'", []);
+		const outcome = await secondConnection
+			.query(
+				`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+				 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day') RETURNING id`,
+				[account?.id, randomBytes(32)],
+			)
+			.then(() => "the insert went through")
+			.catch((failure: unknown) => `the insert waited: ${String(failure)}`);
+		await secondConnection.query("SET lock_timeout = 0", []);
+		finish();
+		await holding;
+
+		expect(outcome).toBe("the insert went through");
 	}, 60_000);
 
 	/**

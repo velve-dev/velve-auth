@@ -27,12 +27,22 @@ export class HeldDriver implements Driver {
 		this.inner = inner;
 	}
 
-	/** Resolves once the next statement matching `matches` has been reached and is being held. */
-	holdBefore(matches: RegExp): Promise<void> {
+	/**
+	 * Resolves once the next statement matching `matches` has been reached and is being held, and
+	 * raises if no statement matches it within the deadline. Raising is the point: a hold that matches
+	 * nothing leaves the two requests never overlapping, and without the deadline the case hangs until
+	 * the runner's timeout and fails with a message that names neither the file nor the statement
+	 * (E-1608).
+	 */
+	holdBefore(matches: RegExp, within = 15_000): Promise<void> {
 		let reached = (): void => {};
 		let release = (): void => {};
-		const reachedIt = new Promise<void>((resolve) => {
+		const reachedIt = new Promise<void>((resolve, reject) => {
 			reached = resolve;
+			setTimeout(
+				() => reject(new Error(`no statement matched ${String(matches)}. They were:\n${this.statements.join("\n")}`)),
+				within,
+			).unref();
 		});
 		const open = new Promise<void>((resolve) => {
 			release = resolve;
