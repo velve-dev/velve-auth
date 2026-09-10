@@ -6896,3 +6896,14 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The account's identifier is read from the user row and put through `comparisonFormOf`, so a caller's counter is the same row whichever route reached it, and a password change and a sign-in attempt on one account cannot advance two.
 
 **Price.** Both routes now read the user row before consuming the bucket, so the counter no longer protects that read. The read is behind a resolved session and the pipeline has already read the database to resolve it, so the added exposure is one authenticated statement — but it is a real inversion of the usual order and it is written down here rather than discovered later.
+
+### The account bucket already had the route in its key, so the two never shared a row
+`E-1201` · signin-routes · correction of `E-1200`, frozen
+
+**Context.** `E-1200` gives as its reason that keying the writing routes by the account's identifier makes "a caller's counter the same row whichever route reached it, and a password change and a sign-in attempt on one account cannot advance two". `accountBucketKey` composes `["account", routeName, HMAC(pepper, identifier)]`. The route name is in the key, so `signIn.password` and `password.change` have separate account buckets by construction and always did — whatever the identifier.
+
+**Rejected.** Editing `E-1200`'s reason. It was wrong when it was written, which §6 corrects by a new entry citing the old one and never by an edit, disclosed or not — the same rule `E-1199` applies to `E-1188`.
+
+**Reason.** The measurement came from a test written to prove the shared row and failing: after a sign-up and two failed sign-ins had emptied a three-token bucket, `password.change` answered 200 rather than 429. The test was removed rather than weakened, because its premise was false and not its threshold. What the change to `resolved.userId` actually buys is conformance with S-RATE-7's wording — the HMAC input is the normalised identifier rather than the account id — and nothing observable beyond it.
+
+**Price.** The repair in `E-1200` now has **no behavioural discriminator**: keyed by id or by identifier, a session route's counter is one stable row either way, so no test can tell the two apart and none is offered. It rests on reading the requirement, which is the weakest footing a change in this branch has. It also cost a wrong reason published in the entry beside it, found only because the test written to guard it failed — which is the argument for writing the guard before believing the reason.

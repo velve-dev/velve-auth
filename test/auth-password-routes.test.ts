@@ -718,3 +718,106 @@ describe("every refusal of the real sign-in answers alike (S-ENUM-1)", () => {
 		]);
 	});
 });
+
+/**
+ * S-RATE-7: the counter's key is the identifier in the comparison form the account is resolved
+ * through, so the spellings of one address share one bucket. Keyed by a second form the counter is
+ * evadable by spelling, and the ceiling scales with a set that has no bound (E-1194).
+ */
+describe("one account, one bucket, however it is spelled (S-RATE-7)", () => {
+	let counted: { connection: TestConnection; schema: string; handler: Handler };
+
+	/** Six NFKC-equivalent spellings: case, fullwidth forms and surrounding space. */
+	const SPELLINGS = [
+		"folded@example.com",
+		"Folded@example.com",
+		"FOLDED@EXAMPLE.COM",
+		"ｆｏｌｄｅｄ@example.com",
+		"folded@ＥＸＡＭＰＬＥ.com",
+		"  Folded@Example.com  ",
+	];
+
+	const ACCOUNT_CAPACITY = 3;
+
+	beforeAll(async () => {
+		const { connection, schema } = await openMigratedSchema("passwordfold");
+		const auth = createVelveAuth(
+			configFor({
+				database: connection,
+				schema,
+				rateLimit: {
+					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+					perAccount: { capacity: ACCOUNT_CAPACITY, refillPerSecond: 0 },
+				},
+			}),
+		);
+		counted = { connection, schema, handler: toWebHandler(auth) };
+	});
+
+	afterAll(async () => {
+		await dropSchema(counted.connection, counted.schema);
+		await counted.connection.close();
+	});
+
+	it("spends one account's tokens across every spelling of it", async () => {
+		const statuses: number[] = [];
+		for (const email of SPELLINGS) {
+			statuses.push(
+				(await counted.handler(postTo("/sign-in/password", { email, password: PASSWORD }))).status,
+			);
+		}
+
+		expect(statuses.filter((status) => status === 429)).toHaveLength(
+			SPELLINGS.length - ACCOUNT_CAPACITY,
+		);
+		expect(statuses.slice(0, ACCOUNT_CAPACITY).every((status) => status !== 429)).toBe(true);
+	});
+});
+
+/**
+ * The account token is spent before the password's shape is judged, so the cheapest hostile attempt
+ * is not the free one, and the pipeline's unconsumed-bucket warning keeps meaning "this route has a
+ * bug" rather than firing on ordinary hostile input (E-1196).
+ */
+describe("what an unusable password spends (S-RATE-7)", () => {
+	let cheap: { connection: TestConnection; schema: string; handler: Handler; log: LogSink };
+
+	beforeAll(async () => {
+		const { connection, schema } = await openMigratedSchema("passwordcheap");
+		const log = createLogSink();
+		const auth = createVelveAuth(
+			configFor({
+				database: connection,
+				schema,
+				log: log.write,
+				rateLimit: {
+					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+					perAccount: { capacity: 2, refillPerSecond: 0 },
+				},
+			}),
+		);
+		cheap = { connection, schema, handler: toWebHandler(auth), log };
+	});
+
+	afterAll(async () => {
+		await dropSchema(cheap.connection, cheap.schema);
+		await cheap.connection.close();
+	});
+
+	it("spends a token, so a one-character password runs the bucket down like any other", async () => {
+		const attempt = () =>
+			cheap.handler(postTo("/sign-in/password", { email: "short@example.com", password: "x" }));
+
+		expect([(await attempt()).status, (await attempt()).status, (await attempt()).status]).toEqual([
+			401, 401, 429,
+		]);
+	});
+
+	it("emits no unconsumed-bucket warning while doing it", async () => {
+		const warned = cheap.log.lines.filter((line) =>
+			line.message.includes("account rate limit it never consumed"),
+		);
+
+		expect(warned).toEqual([]);
+	});
+});
