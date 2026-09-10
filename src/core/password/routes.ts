@@ -10,6 +10,7 @@ import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute, type RequestContext, type ServerCallFields } from "../http/route.js";
 import { object, string } from "../http/validators.js";
 import type { IdentityConfiguration } from "../identity/configuration.js";
+import { comparisonFormOf } from "../identity/fold.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
 import type { SessionResolution } from "../session/service.js";
 import { createPasswordEnvironmentReader, type PasswordEnvironmentReader } from "./environment.js";
@@ -54,11 +55,12 @@ function lookupIn(input: SubmittedLookup): string {
 }
 
 /**
- * S-RATE-7: the counter is keyed before the account is resolved, so a present and an absent
- * identifier advance the same row; the shape is the one the rate-limit suite already assumes.
+ * S-RATE-7: the counter is keyed by the same comparison form the account is resolved through, so
+ * two spellings of one identifier cannot advance two rows (E-1194).
  */
-function accountKeyOf(identifier: string): string {
-	return identifier.trim().toLowerCase();
+async function accountKeyOfSession(services: RouteServices, userId: string): Promise<string> {
+	const user = await services.users.findUserById(userId);
+	return comparisonFormOf(user?.email ?? user?.username ?? userId);
 }
 
 function addressAndAccount(services: RouteServices): RateLimitRule {
@@ -144,14 +146,16 @@ export function passwordRoutes(services: RouteServices) {
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
 		handler: async (input, context): Promise<SignInResult> => {
-			// S-DOS-2: the length check depends only on the input, so an unusable password costs no
-			// database query and no KDF call whether or not the identifier names an account.
+			const identifier = lookupIn(input);
+			// S-RATE-7 and E-1196: the token is spent before the password's shape is judged, so the
+			// cheapest possible attempt is not the one that costs nothing.
+			await context.enforceAccountRateLimit(comparisonFormOf(identifier));
+
+			// S-DOS-2: the length check depends only on the input, so an unusable password resolves no
+			// account and runs no KDF whether or not the identifier names one.
 			if (acceptSubmittedPassword(input.password, services.password) === null) {
 				throw new ConcealedError("password_mismatch");
 			}
-
-			const identifier = lookupIn(input);
-			await context.enforceAccountRateLimit(accountKeyOf(identifier));
 
 			const environment = await readEnvironment();
 			const found = await findUserByIdentifier({
@@ -194,7 +198,7 @@ export function passwordRoutes(services: RouteServices) {
 		rateLimit: addressAndAccount(services),
 		handler: async (input, context): Promise<SetPasswordResult> => {
 			const resolved = requireSessionResolution(services, context.session);
-			await context.enforceAccountRateLimit(resolved.userId);
+			await context.enforceAccountRateLimit(await accountKeyOfSession(services, resolved.userId));
 			const environment = await readEnvironment();
 			await refuseIfCredentialExists(environment, resolved.userId);
 			return replacePasswordOfSession(services, environment, context, {
@@ -225,7 +229,7 @@ export function passwordRoutes(services: RouteServices) {
 		rateLimit: addressAndAccount(services),
 		handler: async (input, context): Promise<SetPasswordResult> => {
 			const resolved = requireSessionResolution(services, context.session);
-			await context.enforceAccountRateLimit(resolved.userId);
+			await context.enforceAccountRateLimit(await accountKeyOfSession(services, resolved.userId));
 			const environment = await readEnvironment();
 			await verifiedAccount(environment, {
 				userId: resolved.userId,
