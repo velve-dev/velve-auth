@@ -220,7 +220,7 @@ export function oauthRoutes(services: RouteServices) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// S-OWNER-4: an identity of another account and one that never existed both change nothing.
+		// S-OWNER-5, S-OWNER-8: an identity of another account and one that never existed both change nothing.
 		handler: async (input, context): Promise<void> => {
 			await oauth.unlinkIdentity({
 				actor: actorOf(services, context.session),
