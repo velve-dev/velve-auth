@@ -67,7 +67,10 @@ describe("a deadline the configuration cannot state exactly is refused at startu
 	}
 
 	it("takes the longest deadline it can state in milliseconds", () => {
-		const settings = sessionSettingsOf({ idleTimeout: "104249991d", absoluteTimeout: "104249991d" });
+		const settings = sessionSettingsOf({
+			idleTimeout: "104249991d",
+			absoluteTimeout: "104249991d",
+		});
 
 		expect(settings.absoluteTimeoutMs).toBe(104_249_991 * DAY);
 		expect(Number.isSafeInteger(settings.absoluteTimeoutMs)).toBe(true);
