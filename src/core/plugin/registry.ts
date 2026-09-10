@@ -213,7 +213,7 @@ function foldedPath(route: RouteMetadata): string {
 }
 
 /** T-OWNER-11: the side that already held the claim is one contributor and the one arriving is the other. */
-function assertNobodyElseClaims(
+function claimOrRefuseTheStart(
 	claimants: Map<string, string>,
 	claimed: string,
 	arriving: string,
@@ -236,8 +236,8 @@ export function assertNoCoreRouteIsOverwritten(
 	const paths = new Map(core.map((route) => [foldedPath(route), THE_CORE]));
 	for (const route of contributed) {
 		const arriving = ownerOf(route);
-		assertNobodyElseClaims(names, route.name, arriving);
-		assertNobodyElseClaims(paths, foldedPath(route), arriving);
+		claimOrRefuseTheStart(names, route.name, arriving);
+		claimOrRefuseTheStart(paths, foldedPath(route), arriving);
 	}
 }
 
