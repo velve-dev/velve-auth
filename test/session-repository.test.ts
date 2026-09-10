@@ -31,14 +31,15 @@ let strangerId: string;
 let stranger: Actor;
 
 async function ageSession(sessionId: string, by: number): Promise<void> {
+	const backwards = "make_interval(secs => $2::double precision)";
 	await migrated.connection.query(
 		`UPDATE ${migrated.schema}.session
-		 SET created_at = created_at - $2::interval,
-		     last_used_at = last_used_at - $2::interval,
-		     idle_expires_at = idle_expires_at - $2::interval,
-		     absolute_expires_at = absolute_expires_at - $2::interval
+		 SET created_at = created_at - ${backwards},
+		     last_used_at = last_used_at - ${backwards},
+		     idle_expires_at = idle_expires_at - ${backwards},
+		     absolute_expires_at = absolute_expires_at - ${backwards}
 		 WHERE id = $1 AND user_id = $3`,
-		[sessionId, `${by} milliseconds`, ownerId],
+		[sessionId, by / 1000, ownerId],
 	);
 }
 

@@ -2990,12 +2990,43 @@ Reading the block also refuses combinations that cannot hold, each with the
 name of the option it refused:
 
 - a deadline of zero or less,
+- a deadline longer than 8640000000000000 milliseconds — the end of the range a
+  `Date` holds, and the point past which the deadline asked for is not the deadline
+  given back,
 - `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
 - `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
 - `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh.
 
 The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
-outlive the one deadline nothing extends.
+outlive the one deadline nothing extends. **`absoluteTimeout` above 400 days is
+accepted at startup and cannot be served over HTTP**: the cookie writer refuses a
+`Max-Age` above 34,560,000 seconds, so the first sign-in that would write the
+cookie raises `internal_error` instead. That is a limit, not a refusal — it is not
+checked when the block is read (E-1578).
+
+Deadlines are computed by the database as `now() + make_interval(secs => …)` and
+never from an interval literal. PostgreSQL 14 caps an interval literal's
+millisecond and second fields at 2147483647, and the default `absoluteTimeout` of
+`"30d"` is 2,592,000,000 milliseconds — so on PostgreSQL 14 the literal form made
+every session insert fail. `make_interval` has no such field, and the deadlines it
+produces were identical to the literal's for every value measured — 1, 7, 999,
+1000, 1500, 604800000 and 2147483647 milliseconds — on 14.24 and on 18.3, which
+caps neither field; 15, 16 and 17 were not measured (E-1571, E-1581).
+
+**No continuous-integration leg runs PostgreSQL 14.** All four workflows start
+`postgres:16-alpine`, so what stands behind the paragraph above is one 14.24
+cluster on one machine: the whole suite, the nightly tier and the release tier
+were run against it, and nothing repeats that on a push. A leg that would is on a
+separate branch and is not merged. Until it is, treat 14 as measured once rather
+than as covered (E-1583).
+
+A deadline is also bounded by what a `Date` can hold. `absoluteTimeout` and
+`idleTimeout` are refused above 8640000000000000 milliseconds when the block is
+read, and a deadline that lands past the end of the `Date` range — which a
+duration inside that limit can still do, because the range is measured from the
+epoch and the deadline is measured from now — raises a `TypeError` from the
+repository rather than returning a session whose deadline reads back as `NaN`
+(E-1584, E-1585).
 
 `freshnessWindow` is measured against `created_at`, not `last_used_at`:
 freshness is time since sign-in, and only a new sign-in restores it.
