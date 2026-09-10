@@ -225,6 +225,9 @@ repair anything itself.
   the version it states, and both skill files state the same one (§6)
 - `pnpm check:codex-skill` — `CODEX-SKILL.md` is byte-identical to what
   `CLAUDE-SKILL.md` produces, so it is generated and not written (§6)
+- `pnpm check:attribution` — §4 over the tracked tree, the branch's commit
+  messages and the branch's diff, searched with the patterns `ci.yml`'s own
+  job states rather than with a second copy of them (E-1439)
 - `pnpm knip` — no dead code, no unused export
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
@@ -646,6 +649,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1370 … E-1409 | gate and infrastructure, seventh range — the two blind spots E-1341 and E-1344 report |
 | E-1410 … E-1439 | gate and infrastructure, eighth range — the release workflow and the first published version; eighth on the merge order E-1428 fixes, where the branch reserving E-1370 … E-1409 lands first |
 | E-1440 … E-1459 | gate and infrastructure, ninth range — the release workflow's second range, its first block having run out at thirty of thirty |
+| E-1460 … E-1499 | gate and infrastructure, tenth range — the four hand-offs E-1446 lists |
 | E-1570 … E-1599 | outside the waves · `session-interval` — the interval literal PostgreSQL 14 refuses. The start is counted rather than continued: the highest row of this table at 5e033d9 ends at E-1459, and E-1460 … E-1569 are reserved on branches that have not merged, so this table cannot show them. Two of the three were read from their branches — E-1460 … E-1499 on feature/queued-handoffs and E-1500 … E-1529 on ci/postgres-14. The third, E-1530 … E-1569, is taken from the brief that opened this branch and was found on no ref this repository holds |
 
 The next wave's ranges are added to that table before its features start,
@@ -913,6 +917,62 @@ pnpm check:codex-skill
                  rewording it can no longer find is a refusal, not a pass. Add
                  --write to regenerate the file instead of comparing it, which is
                  the only way the file is ever changed
+pnpm check:attribution
+                 §4 over three surfaces and in four scans: the tracked tree for
+                 markers and for authorship claims, the commit messages of the
+                 range against origin/main, and that range's diff. It states no
+                 pattern of its own — it reads them out of
+                 .github/workflows/ci.yml, which §4 exempts, so that a second
+                 copy does not become a fourth file needing exemption. It
+                 performs the one shell expansion the detector's values use and
+                 refuses by name every other spelling it knows of — which is an
+                 enumeration and not a proof: two spellings have been found
+                 missing from it by a reader rather than by anything that runs,
+                 and a third would be performed by the detector's shell and left
+                 literal here, so the two would search with different patterns.
+                 Refuses the run if
+                 the detector cannot be read or is reworded past what it can
+                 parse, if a value still names an expansion it does not perform,
+                 if any branch of a pattern cannot be sampled or does not match
+                 the sample built from it, if the base cannot be resolved, or if
+                 a surface came back empty where emptiness is not an answer. No
+                 refusal prints a pattern. VELVE_ATTRIBUTION_BASE names a base
+                 other than origin/main. It reads committed history for the
+                 messages and the diff and the working tree for the tree scan,
+                 so an uncommitted marker is found and an uncommitted commit
+                 message is not a thing that exists. What it cannot see is a
+                 branch the detector no longer states, because every branch it
+                 proves is derived from the detector; test/gate-commands.test.ts
+                 states that shape where it is not derived from it, and is what
+                 fails on a deletion. A spelling missing from the enumeration
+                 above lands on a second guard rather than on nothing: what it
+                 leaves behind is a literal $ mid-branch, the sample built for
+                 that branch drops it, and the branch then fails against its own
+                 sample. That holds on an engine treating a mid-pattern $ as an
+                 anchor or as an ordinary character, and not on one that ignores
+                 it. Measured on BSD grep 2.6.0-FreeBSD, which is what this
+                 machine resolves grep to; not measured on GNU grep, which is
+                 what CI runs
+pnpm check:release-tag
+                 the tag a release is cut from names the version package.json
+                 states, that version is a semantic one, and a prerelease is not
+                 about to be published under latest. Takes the tag and the
+                 dist-tag as arguments, or reads them from GITHUB_REF_NAME and
+                 VELVE_RELEASE_DIST_TAG. Refuses the run if either is missing or
+                 the manifest cannot be read as an object — an unchecked tag is
+                 not a matching one. release.yml runs it before the publish;
+                 pnpm gate does not, because an ordinary branch carries no tag
+                 for it to check and it would refuse every one of them
+pnpm check:published-version
+                 the registry resolves the version package.json states, the
+                 dist-tag points at that version, and it carries a provenance
+                 attestation. Takes the dist-tag as its argument; VELVE_REGISTRY
+                 names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS
+                 how long it polls for a publish to become readable. Tells a
+                 registry saying the version is absent from one that could not be
+                 asked, and refuses only on the second. release.yml runs it after
+                 the publish; pnpm gate does not, because a version nobody has
+                 published has nothing to resolve
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
