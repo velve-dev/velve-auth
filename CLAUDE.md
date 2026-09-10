@@ -459,7 +459,80 @@ a reason are the same shape in `git diff`, and `check:log-append` is blind to
 both, for the reason the paragraph below gives. Disclosure in the entry and a
 reviewer reading it are the whole enforcement, and this file says so rather than
 presenting the rule as decidable — a rule presented as decidable when it is not
-is how E-1032 happened (E-1139).
+is how E-1032 happened (E-1139). What follows adds a signature that is **not** a
+diff property and does not change any of that.
+
+**The permitted half does have a signature, and it is syntactic rather than
+differential.** What distinguishes an annotation is the shape of the result, not
+the shape of its diff: **the original text survives unmodified and still renders,
+and the addition is a complete unit inserted at a boundary between standing
+sentences.** E-1098's edit on `fix/specification-defects-wave5` exhibits it — a
+460-character italicised note between two finished sentences, every original
+character intact and rendering, so a reader recovers the original exactly by
+deleting the italics. The note sits at a **sentence** boundary inside a single
+paragraph, not at a block boundary, because a log paragraph is one block. That is
+what makes an annotation an annotation: **the reader sees both claims**, which is
+what a disclosure is for (E-1140, E-1145).
+
+**Zero deletions is not that signature, and reading it as one briefly put a false
+rule in this file.** Insert `not ` into a reason and it says the opposite: `+1 −1`
+under `--numstat`, **zero** removed tokens under `--word-diff=porcelain`, and
+longest common prefix plus suffix equal to the whole original — the same signature
+as the permitted case under every measurement, with one reason inverted and
+nothing standing beside it. Wrap a reason in an HTML comment and insert a
+replacement and it is `+3 −0` with zero removed tokens, and the original does not
+render at all. So an insertion-only edit **can** be the forbidden half, and no
+diff granularity repairs that (E-1144).
+
+**The syntactic property is necessary and not sufficient either, and it is loose
+in three ways.** A writer can insert a complete, well-formed note at a proper
+boundary that **contradicts** the reason above it, and the result satisfies every
+clause of the property. A **measurement** restated in place is a deletion this
+section allows, so a deletion-bearing edit is not thereby a violation. And both of
+those presuppose what the third does not — that the original survives as a
+readable claim at all, which an insertion inside a sentence and an insertion that
+suppresses the original from rendering each defeat. What the property buys is that
+the reader is shown both claims; whether the second is fair is not something any
+of this decides.
+
+**So insert a complete note between standing sentences. Never edit inside a
+standing sentence, and never hide the original from rendering.** That is the rule
+itself rather than a consequence of one, so it holds whatever a diff says: leave
+every original **sentence** standing verbatim and rendering, put the note inside
+the entry it corrects at a boundary between finished sentences, and say in the
+note what changed. Sentence, not word — a rule that asks only for the words to
+survive is satisfied by inserting `not ` into one of them, which is the
+counterexample this whole subsection was rewritten around (E-1147).
+
+**All of that governs argument-bearing text.** A **measurement** restated in place
+is the one edit that needs none of it: the opening of this subsection permits it
+outright, and the paragraph defining a measurement above makes that partition
+exhaustive — a number or a count the entry states about the work is a measurement,
+and *everything else in an entry is a reason*. So the property and the imperative
+are about reasons, which is what they were always for, and saying so here sharpens
+the boundary rather than carving an exception into it. Without this clause the two
+paragraphs contradict each other for the ordinary case of a number sitting inside
+a sentence, and a reader reconciles them by picking whichever half suits them
+(E-1150).
+
+**The last clause carries weight the property does not, and is not a restatement
+of it.** A note appended as a near-duplicate of the sentence it corrects —
+identical but for one word — satisfies every clause of the property and defeats
+what the property is for: both claims render, neither is modified, and a reader
+still cannot tell which is the original or that a correction happened at all.
+Saying what changed is the only thing that separates them. So the imperative does
+**not** remove the *was it true when written* judgement — nothing here does — but
+it guarantees a reader can answer it, because both claims are in front of them
+**and labelled** (E-1142, E-1147).
+
+**Nothing enforces the property, and no script is proposed here.** It is stated so
+that a reviewer can apply it. `check:log-append` counts lines with `--numstat` and
+a log paragraph is one long line, so an insertion into a standing paragraph reads
+to it as `−1 +1`; finer granularity does not rescue it, because the counterexample
+above removes zero tokens at word granularity too. A check for this would have to
+compare **rendered blocks** rather than diff hunks. Whether one belongs in
+`pnpm gate`, in §5's reviewer checklist or nowhere is a decision with its own cost
+and is left open as a hand-off in E-1143.
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
@@ -556,6 +629,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1095 … E-1129 | outside the waves · `specfix`, second range |
 | E-1130 … E-1149 | outside the waves · `rules` — the rules file's own defects |
 | E-1060 … E-1094 | gate and infrastructure, sixth range |
+| E-1150 … E-1179 | outside the waves · `rules`, second range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
