@@ -28,9 +28,11 @@ const MINIMUM_BATCH = 30;
 /**
  * Ten times the leak that matters. The control arms take one sample every `CONTROL_EVERY_ROUNDS`
  * rounds while the case arms take one every round, so under the stopping rule below the smallest
- * leak the control itself can separate settles at `RESOLVABLE_LEAK_NS * sqrt(CONTROL_EVERY_ROUNDS)`
- * — about 316 microseconds — on any machine, because the sample count and the dispersion move
- * together. This plant sits 3.16 times above that floor (E-1534).
+ * leak the control itself can separate settles at
+ * `RESOLVABLE_LEAK_NS * sqrt(CONTROL_EVERY_ROUNDS / 2)` — 223 607 ns — on any machine, because the
+ * sample count and the dispersion move together. Computed exactly at every reachable round count it
+ * runs from 212 132 ns to 222 896 ns, so this plant sits between 4.5 and 4.7 times above it
+ * (E-1534, E-1548).
  */
 export const PLANTED_CONTROL_LEAK_NS = 1_000_000;
 
