@@ -12,9 +12,10 @@ between you and them.
 The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
-> **Status: in development.** The public interface is specified and frozen; the
-> implementation is being built feature by feature. Nothing here is published to
-> npm yet, and the version is `0.0.0` deliberately.
+> **Status: first prerelease.** The public interface is specified and frozen.
+> `1.0.0-next.1` is published under the `next` dist-tag, which means a bare
+> `pnpm add @velve/auth` does not reach it and a `^1.0.0` range does not match
+> it. A prerelease has to be asked for by name.
 
 ## Why it exists
 
@@ -64,8 +65,18 @@ binding, no install script, and no build step on your machine.
 ## Installation
 
 ```sh
-pnpm add @velve/auth
+pnpm add @velve/auth@next
 ```
+
+The `@next` is not optional while the line is a prerelease. Prereleases are
+published under the `next` dist-tag, and neither a bare install nor a `^1.0.0`
+range resolves to one — that is what the tag is for. Pinning the exact version,
+`@velve/auth@1.0.0-next.1`, works too and is what a lockfile will record.
+
+A prerelease is a prerelease: the interface is frozen and the schema is
+versioned, but nothing here has been run by anyone outside this repository yet.
+Read `CASE-STUDY.md`, which ships inside the package, for why each decision was
+taken at the version you actually installed.
 
 ## What works today
 
