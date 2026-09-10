@@ -55,7 +55,7 @@ wrong:
 ## Requirements
 
 - Node 20.19 or newer
-- PostgreSQL 14 or newer (CI exercises 16; 14 and 15 are stated from the features
+- PostgreSQL 14 or newer (CI exercises 14 and 16; 15 is stated from the features
   the library uses, not measured)
 - A PostgreSQL driver, which you supply
 

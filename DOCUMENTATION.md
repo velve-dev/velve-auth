@@ -5367,9 +5367,10 @@ cannot unbind the next plugin's check.
 `rolsuper` and `rolcreaterole` come from `pg_roles`; the third is
 `has_parameter_privilege` for `track_counts`, which reads the parameter ACL
 PostgreSQL 15 added and which is asked only where the server records one, so
-PostgreSQL 14 answers the first two and is not asked the third — read from the
-release that added the ACL rather than measured, because no test tier runs a
-server older than 16. **All three
+PostgreSQL 14 answers the first two and is not asked the third — measured on
+PostgreSQL 14.24, where `to_regprocedure` finds no `has_parameter_privilege` and
+`pg_parameter_acl` is not a catalogue, and on 18.3, where both are there, with a
+gate leg running that branch on 14. **All three
 quantify over the same set** — every role `pg_has_role` says `session_user` or
 `current_user` can reach — because a `NOINHERIT` member does not hold what it may
 `SET ROLE` to, and a question asked of the two current identities would miss it.
