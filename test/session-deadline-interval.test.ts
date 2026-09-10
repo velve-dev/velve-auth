@@ -21,8 +21,8 @@ const A_VALUE_RENDERED_BEFORE_AN_INTERVAL_UNIT =
 	/\$\{[^}]*\}[ \t]+(?:millisecond|second|minute|hour|day|week|month|year)s?\b/g;
 const A_PARAMETER_CAST_TO_AN_INTERVAL = /\$\d+::interval\b/g;
 
-/** PostgreSQL below 15 caps an interval literal's millisecond and second fields at this (E-1571). */
-const THE_FIELD_CAP_BELOW_POSTGRESQL_15 = 2_147_483_647;
+/** PostgreSQL 14 caps an interval literal's millisecond and second fields at this (E-1571). */
+const THE_FIELD_CAP_ON_POSTGRESQL_14 = 2_147_483_647;
 
 function scannedFiles(): string[] {
 	return execFileSync("git", ["ls-files", "-z"], { cwd: repositoryRoot, encoding: "utf8" })
@@ -112,7 +112,7 @@ describe("the deadlines the database actually stores (PostgreSQL 14 and newer)",
 	});
 
 	it("writes the default 30-day absolute deadline, which is past the field cap in milliseconds", async () => {
-		expect(30 * DAY).toBeGreaterThan(THE_FIELD_CAP_BELOW_POSTGRESQL_15);
+		expect(30 * DAY).toBeGreaterThan(THE_FIELD_CAP_ON_POSTGRESQL_14);
 
 		const session = await sessions.insertSession(sessionInsertFor(userId));
 		const lived = session.absoluteExpiresAt.getTime() - session.createdAt.getTime();
@@ -121,7 +121,7 @@ describe("the deadlines the database actually stores (PostgreSQL 14 and newer)",
 	});
 
 	it("writes a deadline one millisecond past the cap", async () => {
-		const past = THE_FIELD_CAP_BELOW_POSTGRESQL_15 + 1;
+		const past = THE_FIELD_CAP_ON_POSTGRESQL_14 + 1;
 		const session = await sessions.insertSession(
 			sessionInsertFor(userId, { idleTimeoutMs: past, absoluteTimeoutMs: past }),
 		);

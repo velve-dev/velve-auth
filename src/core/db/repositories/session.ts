@@ -169,7 +169,7 @@ function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	return `{${[...new Set(factors)].join(",")}}`;
 }
 
-/** Every deadline below is `make_interval`, never an interval literal: PostgreSQL before 15 caps the literal's millisecond and second fields at a signed 32-bit value, and the default absolute timeout is past it (E-1571). */
+/** Every deadline below is `make_interval`, never an interval literal: PostgreSQL 14 caps the literal's millisecond and second fields at a signed 32-bit value, and the default absolute timeout is past it (E-1571, E-1581). */
 function secondsOf(milliseconds: number): number {
 	return Math.round(milliseconds) / 1000;
 }
