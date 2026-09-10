@@ -3009,9 +3009,9 @@ never from an interval literal. PostgreSQL 14 caps an interval literal's
 millisecond and second fields at 2147483647, and the default `absoluteTimeout` of
 `"30d"` is 2,592,000,000 milliseconds — so on PostgreSQL 14 the literal form made
 every session insert fail. `make_interval` has no such field, and the deadlines it
-produces are identical to the literal's wherever the literal worked. Measured on
-14.24 and on 18.3, which does not cap either field; 15, 16 and 17 were not
-measured (E-1571, E-1581).
+produces were identical to the literal's for every value measured — 1, 7, 999,
+1000, 1500, 604800000 and 2147483647 milliseconds — on 14.24 and on 18.3, which
+caps neither field; 15, 16 and 17 were not measured (E-1571, E-1581).
 
 `freshnessWindow` is measured against `created_at`, not `last_used_at`:
 freshness is time since sign-in, and only a new sign-in restores it.
