@@ -206,6 +206,10 @@ describe("the plugin boundary against a real instance (S-CACHE-5, S-OWNER-10, S-
 		).rejects.toThrow(/may reach tables named/);
 	});
 
+	/**
+	 * `tsc --noEmit` is what fails on the type half; `pnpm test` cannot, because a widened key set
+	 * is a value-level no-op. The runtime assertion below it is the other half (E-1288).
+	 */
 	it("offers no member through which a statement could reach a core table (S-OWNER-10)", async () => {
 		const context = await contextOfAPluginRoute();
 
