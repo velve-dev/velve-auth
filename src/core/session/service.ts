@@ -46,6 +46,12 @@ export interface SessionServiceOptions {
 
 export interface SessionService {
 	readonly settings: SessionSettings;
+	/**
+	 * The same service over another driver. A caller that must write a session inside a transaction
+	 * it already owns needs one carrying the configured deadlines and metadata mode, and no seam
+	 * hands those on beside the service itself (E-969).
+	 */
+	boundTo(driver: Driver): SessionService;
 	issue(input: {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -59,6 +65,18 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	reissueAfterCredentialChange(input: {
 		readonly resolved: SessionResolution;
+		readonly factors: readonly AuthenticationFactor[];
+		readonly observed: ObservedRequest;
+	}): Promise<IssuedSession>;
+	/**
+	 * S-FIX-1 where the proof of ownership is a consumed row and not a session cookie: the caller
+	 * names the one session to replace, and every other session of the account is left alone. A
+	 * named row that is no longer there raises `PreviousSessionMissingError` unmapped, because what
+	 * the outside is told about it depends on which artefact named the row (E-961).
+	 */
+	reissueSessionOfUser(input: {
+		readonly actor: Actor;
+		readonly previousSessionId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
@@ -162,6 +180,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	return {
 		settings,
 
+		boundTo: (driver) => createSessionService({ ...options, driver }),
+
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.insertSession(
@@ -188,6 +208,16 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
 				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash),
+			});
+			return { token: issued.token, session };
+		},
+
+		async reissueSessionOfUser({ actor, previousSessionId, factors, observed }) {
+			const issued = createSessionToken();
+			const session = await sessions.replaceSessionOwnedBy({
+				actor,
+				previousSessionId,
+				insert: insertFor(actor, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},

@@ -3904,74 +3904,851 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
 
 ## Email flows
 
-Reserved for `email-flows` (wave 5). Architecture 3.7 and 3.15 B.1, B.4 and
-B.5: the artefacts that arrive by mail and are redeemed — the confirmation
-link, the address change, the password reset and the magic link — each with the
-deadline 3.7 fixes for it, and `S-LINK-4`, the rule that a first confirmation
-deletes a password set in a different session and revokes every session that
-predates it (L-12).
+Everything that carries a one-time artefact through an e-mail: the confirmation
+link, the address change, the password reset and the magic link, plus the two
+registration routes and the reset that spends a recovery code instead of an
+address.
 
-It stands here because everything it uses stands above it. Its artefacts are the
-one-time tokens of that chapter and its deadlines are read from there, the
-credential `S-LINK-4` deletes is the Passwords chapter's, and the sessions it
-revokes are the Sessions chapter's. What holds it below the two factor chapters
-is the result type: `signIn.magicLink.redeem` returns a `SignInResult`, whose
-`second_factor_required` branch carries `availableFactors` over `"totp"`,
-`"webauthn"` and `"recovery"` (3.15 C.1), so a magic link can end in the pending
-state offering a factor those chapters define rather than in a session. The reset
-family is not all mailed either — `password.redeemResetWithRecoveryCode` consumes
-a recovery code, which is documented two chapters above.
+The library builds no URLs and sends no mail. It calls `email.send` with a
+message that carries the token, and the application decides what the link looks
+like. That is why there is no `redirectTo` parameter anywhere in this chapter:
+a redirect target taken from a request would have to be checked against an
+allowlist, and the one that does not exist cannot be checked wrongly.
 
-`S-LINK-4`'s deletion is **unconditional**, and the last-way-in count of L-13 is
-not a guard on it. That count refuses exactly two operations, `webauthn.remove`
-and `identity.unlink`, and a confirmed address is excluded from it although a
-magic link works with one (3.15 B.7). L-12's attack is a pre-account whose only
-credential is the attacker's password, so a flow that declined to delete it for
-leaving no way in would fail closed on precisely the account the rule exists for.
+### The routes
 
-`T-LINK-4` pins that as a number rather than leaving it to reading: on the
-attacker path it requires `password_credential` at **0 rows**, every session
-created before the confirmation revoked, and the original password refused with
-`invalid_credentials` — and it runs on every commit. An implementation that adds
-the last-way-in check leaves 1 row and turns the case red. The counter-case in
-the same row is the one to keep beside it: the same registration with the
-confirmation redeemed **in the same session** keeps `password_credential` at 1
-row and leaves the session valid. What separates the two is the provenance of the
-password, not a count of credentials.
+Eleven rows of the route table. Three exist in every identity mode; the eight
+that need an address are absent in mode `username`, where a route that does not
+exist answers 404 rather than 403.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `email-flows`'
-partition of this file: that feature appends here and nowhere else, and removing
-this paragraph is the first thing it does.
+| Method | Path | Server method | Answer |
+|---|---|---|---|
+| POST | `/sign-up` | `auth.signUp.withPassword` | `SignUpResult` |
+| POST | `/sign-up/passwordless` | `auth.signUp.withoutPassword` | `SignUpResult` |
+| POST | `/password/redeem-reset-with-recovery-code` | `auth.password.redeemResetWithRecoveryCode` | `SetPasswordResult` |
+| POST | `/sign-in/magic-link/request` | `auth.signIn.magicLink.request` | 204 |
+| POST | `/sign-in/magic-link/redeem` | `auth.signIn.magicLink.redeem` | `SignInResult` |
+| POST | `/email/request-verification` | `auth.email.requestVerification` | 204 |
+| POST | `/email/redeem-verification` | `auth.email.redeemVerification` | `{ user }` |
+| POST | `/email/request-change` | `auth.email.requestChange` | 204 |
+| POST | `/email/redeem-change` | `auth.email.redeemChange` | `{ user }` |
+| POST | `/password/request-reset` | `auth.password.requestReset` | 204 |
+| POST | `/password/redeem-reset` | `auth.password.redeemReset` | `SetPasswordResult` |
 
-### Nothing is documented here yet
+The last eight are the ones that need an address.
 
-`email-flows` replaces this heading with its own sub-tree.
+### `auth.signUp.withPassword(input)` and `auth.signUp.withoutPassword(input)`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `email` | `string` | in modes `email` and `username_email` |
+| `username` | `string` | in modes `username` and `username_email` |
+| `password` | `string` | `withPassword` only |
+
+Both create the account and a session. `withPassword` writes the credential in
+the same transaction as the account and records `factors: ["password"]`;
+`withoutPassword` writes no credential and records no factors, for applications
+that begin with a passkey or a magic link.
+
+Errors: `invalid_input` when an address is malformed, `username_invalid` when a
+name fails the allowlist or the length rules, `username_taken` when the name is
+taken, `password_unacceptable` when the password fails the length policy or the
+`password.validate` hook.
+
+**A taken address is not an error.** `username_taken` exists because usernames
+are enumerable by construction (architecture 3.4) and the library says so. An
+address is not: a registration on one that already has an account answers with
+the same status, the same headers and a byte-identical body, and sends
+`sign_up_attempt_on_existing_account` to the existing address instead of
+`email_verification` to a new one.
+
+It answers identically because it **is** a registration. The collision path runs
+the same statements in the same order — the account, the session, the credential,
+the confirmation artefact — against an address built from the caller's own
+domain and a local part drawn at random, inside a transaction that is then rolled
+back. Nothing is fabricated, so no field can drift out of step with what a
+success answers.
+
+The consequence for the application: **the identifiers in that answer name
+nothing.** The `user.id` and the session token in a collision answer were rolled
+back with the rest, and resolving the session immediately afterwards yields
+`null`. An application that keys its own rows on `user.id` must resolve the
+session first, or read the account back through `auth.user.findByEmail` from a
+context that is allowed to. This is the cost of the cover; architecture 3.13
+accepts it, because the alternative is telling an unauthenticated caller which
+addresses have accounts.
+
+**An address that is taken while the registration runs is a taken address.**
+Occupancy is read before the transaction that inserts, so simultaneous
+registrations for one free address all read "free" and all but one of them meet
+the unique index. The one that wins commits; the others answer with the cover,
+byte for byte as they would have if the address had been taken before they
+started. Four callers submitting the same form at once therefore get four
+identical 200s and leave one account behind. A **username** taken in the same
+race still answers `username_taken`, because architecture 3.4 makes names
+enumerable and says so; which of the two indexes the race hit is asked for, not
+read out of the driver's error. The cover registration races on the same two
+indexes and is answered the same way — it keeps the name the caller sent and
+only the address is drawn afresh, so in `username_email` its insert can meet the
+name index too.
+
+**In `username_email` the cover does not durably claim the name.** It rolls
+back, so a registration on a taken address leaves the name it was sent free,
+where a registration on a free address takes it. Two sequential requests read
+that off: register `{email: <under test>, username: N}`, then register
+`{email: <fresh>, username: N}`. The second answers 200 when the first address
+was taken and `username_taken` when it was free. One concurrent batch reads the
+same bit: four registrations for one taken address sharing one name are all
+answered 200, where four for a free address answer one 200 and three
+`username_taken`. Closing it needs a cover that persists, which is a real account
+for every address an attacker guesses, so this is the residual the cover leaves
+in that mode — the same shape as the cover's session naming no row, one
+identifier further out.
+
+**For whoever amends the specification.** Three requirement clauses and one test
+threshold assert this property for `username_email`: `S-ENUM-3`, architecture
+3.13's *„der Unterschied wandert ausschließlich in die versendete E-Mail"*, 3.4's
+table row *„für die E-Mail ja"*, and `T-ENUM-3`'s *„0 abweichende Bytes"*. Two
+repairs are on the table and they do not cover the same ground. Permitting a
+normalisation for the echoed `username` closes `T-ENUM-3` and the body half of
+`S-ENUM-3`, because those are about the response bytes, and it is needed:
+`username` is unique, so the two probes cannot send the same one and the answer
+echoes what the caller sent. It closes **neither** 3.13 nor 3.4, because those
+are broken by the durable occupancy of the name after the request rather than by
+any byte in the response, and no normalisation of a response reaches a row. A
+repair that stops at the first therefore leaves the second standing, and the
+second is the one the leak is actually in.
+
+### `auth.signIn.magicLink.request(input)`
+
+| Parameter | Type |
+|---|---|
+| `email` | `string` |
+
+Returns `void`, and 204 over HTTP, whether or not the address names an account —
+a boolean would be the enumeration answer the whole flow exists to avoid. Both
+branches run the same statements and call `email.send` exactly once: a known
+address gets `magic_link` with a ten-minute token, an unknown one gets
+`request_for_unknown_address` with `requested: "magic_link"`, and the
+application decides whether that becomes a message or nothing.
+
+A request for an unknown address still writes a row in `velve.one_time_token`.
+It names no account, `expires_at` is the same ten minutes, and it can never be
+redeemed — a row with a NULL owner is answered exactly as no row is. It exists
+so that the two branches cost the same, and `auth.maintenance.sweep()` removes
+it like any other expired artefact.
+
+Unlike a request for a known address, it **supersedes nothing**. Each ownerless
+mint draws a fresh account identifier, so the delete that removes the account's
+earlier artefact of that purpose matches no row, and a repeated request for one
+unknown address leaves one row per attempt until the sweep. The rate limiters
+bound how fast that can be done; the one-live-token rule of section 3.7 does not,
+because it is written in terms of an account and there is none.
+
+Both branches also **wait the same**. Requests about one subject are serialised,
+so that a re-issue cannot be overtaken by a concurrent one, and the subject is
+the account where one is known and the submitted address where none is. Neither
+branch takes a lock on any row of `velve.user`: with a row lock, a request for a
+known address would queue behind a lock somebody else held on that account and a
+request for an unknown one would not, which architecture 5.3 (a) counts as an
+oracle whether or not the two run the same statements.
+
+### `auth.signIn.magicLink.redeem(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+
+Spends the token and answers with a `SignInResult`. Redeeming a magic link is a
+**confirmation of the address** and runs the rule below.
+
+The result is not always a session. If the account has TOTP, a WebAuthn
+credential or recovery codes, the answer is `second_factor_required` with the
+pending token and the factors on offer, exactly as a password sign-in would be:
+a link is a first factor, not a bypass. Otherwise it is `signed_in` with a new
+session whose `factors` is empty, because no factor of the five 3.5 enumerates
+was used.
+
+An expired token, a spent one, an invented one, a token minted for another
+purpose and a token belonging to a disabled account are one answer:
+`invalid_token`, byte for byte.
+
+### The first confirmation of an address (`S-LINK-4`, L-12)
+
+This is the rule the chapter exists for, and it runs on both routes that confirm
+an address — `signIn.magicLink.redeem` and `email.redeemVerification` — and on
+`email.redeemChange` when the account had never confirmed an address before.
+
+**When an address is confirmed for the first time, and the account's password
+credential was not written by the session that is confirming, the credential is
+deleted and every session of the account is revoked.**
+
+The attack it closes: an attacker registers the victim's address with a password
+they choose. They cannot confirm it. The victim later signs in by magic link,
+which proves control of the mailbox and confirms the address — and without this
+rule the attacker's password is still valid on a now-confirmed account. That is
+GHSA-qq9h-g4jm-xgf3, and CVE-2026-53516 is the same cause through OAuth.
+
+What decides it is `velve.password_credential.set_by_session_id`, a column this
+library adds beyond the schema chapter above. It holds the id of the session
+that stored the password, carries no foreign key, and is NULL when nothing
+recorded it.
+
+| Confirming request | `set_by_session_id` | Outcome |
+|---|---|---|
+| carries session S | S | credential and sessions kept |
+| carries session S | any other session | credential deleted, all sessions revoked |
+| carries session S | NULL | credential deleted, all sessions revoked |
+| carries no session | anything | credential deleted, all sessions revoked |
+| any | no credential at all | nothing deleted, nothing revoked |
+
+**NULL is read as a different session.** The rule has to fail towards deleting,
+because the account it exists for is one whose only credential is the
+attacker's — anything that keeps a credential it cannot vouch for keeps that
+one. Two consequences follow. A password imported from another system has no
+provenance and is deleted at its owner's first confirmation; those users need a
+reset, and `velve.password_reset_required` does not cover this case. And a
+session that cannot be resolved — expired, or belonging to a disabled account —
+counts as no session at all.
+
+The deletion is **not** guarded by the last-sign-in-method count of L-13. That
+count refuses `factor.webauthn.remove` and `identity.unlink` and nothing else; a
+guard here would decline to delete precisely on the account shape the attack
+produces, which is one credential and nothing else.
+
+The last row of the table is the one to hold on to when reading the code: an
+account that reaches its first confirmation with no password loses no session,
+because nothing was taken away from it.
+
+### `auth.email.requestVerification(input)`
+
+Takes no address. The one it confirms is the one on the account, read from the
+caller's session — an address as a parameter would be an open enumeration
+interface with a session in front of it. Requires a session; freshness is not
+required. Sends `email_verification` with a 24-hour token.
+
+### `auth.email.redeemVerification(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+
+Confirms the address on the account the token names — **only** the token names
+it; no input field and no cookie chooses the account. Answers `{ user }` with
+the account as it now stands. Runs the first-confirmation rule above, so a
+caller redeeming it in the session that signed up keeps its password and its
+session, and a caller redeeming it anywhere else does not.
+
+### `auth.email.requestChange(input)`
+
+| Parameter | Type |
+|---|---|
+| `newEmail` | `string` |
+
+Requires a session and freshness. Mints an `email_change` token carrying the
+normalised new address and sends `email_change` to **the new address**, with
+`previousEmail` naming the one the account has now.
+
+**No collision check happens here.** If `newEmail` belongs to another account
+the request still mints and still sends, and the answer is 204 either way. The
+collision is found an hour later when the token is redeemed, which is the only
+place it can be found without answering the question the caller asked. The
+consequence is that a confirmation link can arrive at an address whose owner did
+not ask for one; it cannot do anything, because redeeming it changes no rows.
+
+### `auth.email.redeemChange(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+
+Moves the address and sets `email_verified_at` to now — redeeming the link is
+the proof that the new address is reachable. If the address has been taken since
+the token was minted, **nothing changes and the answer is `invalid_token`**,
+byte for byte the answer an invented token gets.
+
+### `auth.password.requestReset(input)`
+
+| Parameter | Type |
+|---|---|
+| `email` | `string` |
+
+The reset counterpart of the magic-link request, and uniform in the same way:
+one code path, the same statements on both branches, `email.send` called exactly
+once — `password_reset` with a one-hour token for a known address,
+`request_for_unknown_address` with `requested: "password_reset"` for an unknown
+one. Returns `void` and 204.
+
+### `auth.password.redeemReset(input)`
+
+| Parameter | Type |
+|---|---|
+| `token` | `string` |
+| `newPassword` | `string` |
+
+Spends the token, revokes **every** session of the account, writes the new
+credential and issues a new session. There is no option that keeps the other
+sessions alive. The password is validated and hashed before the token is spent,
+so a password the policy refuses does not burn the link.
+
+`SetPasswordResult`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionToken` | `SessionToken` | new; the caller is signed in |
+| `session` | `Session` | the row it names |
+| `revokedOtherSessionsCount` | `number` | every session the account had |
+
+The count is every session, not every session but the caller's: a reset is not
+made from a session, so there is none to exclude.
+
+### `auth.password.redeemResetWithRecoveryCode(input)`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `email` / `username` / `emailOrUsername` | `string` | one field, decided by the identity mode |
+| `recoveryCode` | `string` | |
+| `newPassword` | `string` | |
+
+The way back into an account that has no address, which architecture 3.4
+requires in mode `username`. The code is consumed by `DELETE … RETURNING`, so
+fifty simultaneous attempts yield one winner, and no new codes are generated in
+its place — that is `factor.recovery.generate`.
+
+Everything that can fail answers `invalid_recovery_code`: a wrong code, an
+identifier that names no account, an account that never generated codes, an
+account whose codes were all spent, and a disabled account. As with the mailed
+reset, every session is revoked and a new one is issued.
+
+### Deadlines
+
+Fixed per purpose, from architecture 3.7, and **not configurable**.
+
+| Purpose | Lifetime | Minted by |
+|---|---|---|
+| `email_verify` | 24 hours | sign-up, `email.requestVerification` |
+| `password_reset` | 1 hour | `password.requestReset` |
+| `email_change` | 1 hour | `email.requestChange` |
+| `magic_link` | 10 minutes | `signIn.magicLink.request` |
+
+Requesting an artefact deletes the account's previous artefact of the same
+purpose in the same transaction, so a user who clicks "send it again" invalidates
+the first link.
+
+### `email.send` runs after the transaction, not inside it
+
+A `send` that throws fails the operation and takes the artefact with it — a reset
+token whose message never arrived is of use to nobody but an attacker. On
+sign-up the account goes with it too, so no account is left behind that nobody
+was told about.
+
+It is undone rather than rolled back. The transaction that wrote the artefact
+commits first, so everything it held is released **before** the application's
+callback is entered: a slow `send` cannot make another write of that account's
+rows wait for it. A `send` that throws is answered by spending the token through
+the one statement that spends tokens, and by deleting the account on the sign-up
+path.
+
+The difference from a rollback is one window: a process that dies between the
+commit and the compensation leaves a live artefact whose message never arrived.
+It expires on its own deadline like any other.
+
+### The six message kinds
+
+Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
+
+| Kind | Sent by | Carries a token |
+|---|---|---|
+| `email_verification` | sign-up on a free address, `email.requestVerification` | yes |
+| `password_reset` | `password.requestReset`, known address | yes |
+| `email_change` | `email.requestChange` | yes |
+| `magic_link` | `signIn.magicLink.request`, known address | yes |
+| `sign_up_attempt_on_existing_account` | sign-up on a taken address | **no** |
+| `request_for_unknown_address` | reset or magic link, unknown address | **no** |
+
+The fifth carries no token on purpose, and that satisfies `S-ENUM-4` rather
+than deviating from it: the library builds no URL on any path, so the
+confirmation link is the application's work too, and the sign-in link the
+requirement asks for is a link to the application's own sign-in page, which needs
+no artefact. Render "you already have an account — sign in" and link to it.
+
+### `velve.password_credential.set_by_session_id`
+
+| Column | Type | Notes |
+|---|---|---|
+| `set_by_session_id` | `uuid` | the session that stored the password; NULL means unknown |
+
+Beyond the schema in architecture 3.2 and 3.17, and created by migration 1 with
+the rest of the table. There is **no foreign key**: a cascade would delete the
+credential when the session it names is revoked, and a nulling one would erase
+the answer at the moment the first-confirmation rule asks for it — which is a
+moment at which that rule revokes sessions.
+
+Written by the sign-up routes and by both reset redemptions, each naming the
+session it has just issued — in the same statement that writes the credential,
+because `PasswordCredentialRepository.write` requires the field. A caller may
+answer `null`, and `null` is a different session, but it cannot decline to
+answer: a credential that could not say who stored it is one this rule cannot
+judge.
+
+### The types this feature exports
+
+Every method, parameter, route and error these declare is documented above under
+its `auth.*` name; the table says which name, so a reader who arrives at one of
+them from the package's exports lands in the right section.
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `SignUpNamespace<M>` | `{ withPassword; withoutPassword }` | `auth.signUp`, in every identity mode |
+| `MagicLinkNamespace` | `{ request; redeem }` | `auth.signIn.magicLink`, in modes `email` and `username_email` |
+| `EmailNamespace` | `{ requestVerification; redeemVerification; requestChange; redeemChange }` | `auth.email`, in modes `email` and `username_email` |
+| `MailedPasswordNamespace` | `{ requestReset; redeemReset }` | the half of `auth.password` that needs an address |
+| `RecoveryPasswordNamespace<M>` | `{ redeemResetWithRecoveryCode }` | the half of `auth.password` that does not, and therefore present in every mode |
+| `SetPasswordResult` | `{ sessionToken; session; revokedOtherSessionsCount }` | what both reset redemptions answer with |
+| `ChangedUser` | `{ user: User }` | what `email.redeemVerification` and `email.redeemChange` answer with |
+| `EmailFlowSurface<M>` | the five namespaces above, assembled | what this feature contributes to `VelveAuth<M>`; the `/email/*` and magic-link halves are conditional on `M` |
+
+`M` is the identity mode. The three namespaces that need an address are absent
+from `EmailFlowSurface<"username">` rather than present and refusing, which is
+the same rule the route table follows: a route the mode does not have does not
+exist.
+
+### What this feature deliberately does not do
+
+- **It builds no URLs.** No base URL, no path template, no `redirectTo`.
+- **It sends nothing.** `email.send` is the whole of the outbound surface.
+- **It does not link a provider identity.** A magic link confirms an address; it
+  writes no row in `velve.identity`, and the address is never a linking key.
+- **It offers no "resend" flow of its own.** Requesting again replaces the
+  artefact, which is the same thing without a second name.
+- **It has no `requireEmailVerification`.** An unconfirmed account signs in like
+  any other and `User.emailVerifiedAt` carries the state; a sign-in block would
+  be an enumeration channel and a dead end, because requesting a confirmation
+  needs a session.
 
 ## OAuth and identity linking
 
-Reserved for `oauth` (wave 5). Architecture 3.10 and 3.15 B.1 and B.7: the
-authorisation-code flow with PKCE S256 mandatory, `state` held server-side in
-`velve.oauth_flow` with the cookie carrying only the pointer, `nonce` under
-OIDC, the `iss` check of RFC 9207, the ID-token signature against JWKS, and the
-linking rule — `(provider, subject)` is the only key and the address is never
-one (`S-LINK-1` … `S-LINK-7`).
+Third-party sign-in is the authorisation-code flow with PKCE S256, a `state`
+held server-side in `velve.oauth_flow`, a `nonce` under OIDC, the `iss` check of
+RFC 9207 and the ID token verified against the provider's JWKS. Which account a
+provider identity belongs to is decided by one rule, and that rule is not
+configurable: `(provider, subject)` is the only linking key and the e-mail
+address is never one.
 
 It follows Email flows because the linking rule cites it rather than restating
 it. `S-LINK-4` belongs to that chapter, and the three conditions `S-LINK-2` puts
 on an automatic link read `email_verified_at` on the local row — the state those
-flows produce. A reader who has not read them takes the second condition for a
-restatement of the first, which is the reading CVE-2026-53516 shipped.
+flows produce.
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `oauth`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does. Its configuration seam is
-`src/core/oauth/config.ts`, which is open and is `oauth`'s file — the field on
-`BaseConfig` is already declared, so nothing in `core/auth/config.ts` has to be
-edited for it.
+### Configuring providers
 
-### Nothing is documented here yet
+```ts
+const auth = createVelveAuth({
+  // …
+  oauth: {
+    callbackBaseUrl: "https://api.example.com/sign-in/oauth/callback",
+    providers: {
+      google: { clientId: process.env.GOOGLE_ID!, clientSecret: process.env.GOOGLE_SECRET! },
+      mycorp: {
+        clientId: process.env.MYCORP_ID!,
+        clientSecret: process.env.MYCORP_SECRET!,
+        authorizationEndpoint: "https://sso.mycorp.example/authorize",
+        tokenEndpoint: "https://sso.mycorp.example/token",
+        issuer: "https://sso.mycorp.example",
+        jwksUri: "https://sso.mycorp.example/jwks",
+        subjectClaim: "sub",
+      },
+    },
+    trustedProviders: ["google"],
+  },
+});
+```
 
-`oauth` replaces this heading with its own sub-tree.
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `callbackBaseUrl` | `string` | — required | The absolute URL the callback route answers on. The provider id is appended to it, so the value above sends `google` to `https://api.example.com/sign-in/oauth/callback/google`. That URL is what you register with the provider, and it is what the token request sends as `redirect_uri`. |
+| `providers` | object | — required | One entry per provider, keyed by its id. |
+| `trustedProviders` | `readonly string[]` | — required | The providers whose `email_verified` claim you accept as proof of address ownership. It is the third of the three conditions an automatic link needs. An empty list switches automatic linking off entirely. |
+| `storeTokens` | `boolean` | `false` | Whether the provider's tokens are stored, encrypted, on the identity row. |
+
+Every provider entry takes the same fields; a built-in provider needs only the
+first two.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `clientId` | `string` | — required | |
+| `clientSecret` | `string` | — required | Sent in the token request body as `client_secret_post`. For Apple this is the signed JWT Apple requires as a client secret; the library does not build it. |
+| `scopes` | `readonly string[]` | the provider's defaults | Replaces the defaults rather than adding to them. |
+| `redirectUri` | `string` | `${callbackBaseUrl}/${id}` | A complete callback URL for this provider alone. |
+| `authorizationEndpoint` | `string` | the descriptor's | Overrides the built-in endpoint — a self-hosted GitLab, for instance. |
+| `tokenEndpoint` | `string` | the descriptor's | |
+| `userInfoEndpoint` | `string` | the descriptor's | |
+| `issuer` | `string` | the descriptor's | Checked against the ID token's `iss` and against the callback's `iss` parameter. |
+| `jwksUri` | `string` | the descriptor's | Its presence is what makes the provider an OIDC provider for this library: a `nonce` is minted and the ID token is verified. |
+| `prompt` | `"select_account" \| "consent" \| "login" \| "none"` | absent | Passed through as `prompt`. |
+| `responseMode` | `"query" \| "form_post"` | `"query"`, `"form_post"` for `apple` | How the provider hands the code back. |
+
+An id that is not one of the fourteen built in must carry
+`authorizationEndpoint`, `tokenEndpoint` and `subjectClaim`, and may carry
+`emailClaim` and `emailVerifiedClaim`; a missing one of the three refuses the
+start with `VelveStartupError("oauth_provider_incomplete")`. `subjectClaim` has
+no default on purpose — `"sub"` is convenient and, in the one case where it is
+wrong, an account-takeover bug. A dot reaches into a nested claim, as in
+`bot.owner.user.id`.
+
+Every endpoint the server calls itself must be an absolute `https` URL, checked
+while the instance is built. A provider configured with neither `jwksUri` nor
+`userInfoEndpoint` starts, and every sign-in through it answers
+`oauth_provider_error`, because nothing can name its subject.
+
+### The fourteen built-in providers
+
+`google`, `github`, `apple`, `microsoft`, `gitlab`, `discord`, `facebook`,
+`linkedin`, `twitch`, `spotify`, `slack`, `notion`, `zoom`, `dropbox`. Their
+endpoints, default scopes and claim names are compiled into the library; no
+discovery document is ever fetched, because an endpoint that comes out of a
+response body is an endpoint an attacker can move (`S-REDIR-6`).
+
+Three of them behave in ways worth knowing before you configure them.
+
+- **`apple`** uses `responseMode: "form_post"`, which Apple requires as soon as
+  the e-mail scope is asked for. The provider then posts the code to the
+  callback path instead of redirecting to it. See *The `form_post` callback*
+  below for what that changes.
+- **`microsoft`** carries no issuer, because Entra ID's `iss` names the tenant
+  and a fixed value would refuse every real token. The ID token's signature,
+  audience and nonce are still checked. If you need the issuer bound as well,
+  configure Entra as an id of your own with your tenant's `issuer`.
+- **`github`** reports no verification state for an address, so
+  `providerEmailVerified` is `false` for every GitHub identity and GitHub can
+  never produce an automatic link, whatever `trustedProviders` says. Four other
+  built-in providers carry no verified-email claim either — `facebook`,
+  `microsoft`, `notion` and `spotify` — and the same follows for them.
+
+The verification claim is read as the JSON boolean `true` and as nothing else. A
+provider that reports the flag as the string `"true"` or the number `1` — Zoom's
+`verified` is numeric — counts as **not** verified, and its identities cannot
+produce an automatic link. That is the safe direction of the only mistake this
+reader can make, and it is the reason `zoom` behaves like the five above in
+practice.
+
+### The routes and the methods
+
+| Method | Path | Server method | Input | Output |
+|---|---|---|---|---|
+| POST | `/sign-in/oauth/start` | `auth.signIn.oauth.start` | `{ provider, redirectPath? }` | `OAuthRedirect` |
+| GET | `/sign-in/oauth/callback/:provider` | `auth.signIn.oauth.callback` | query `{ code, state, iss? }` | 302, or `OAuthCallbackOutcome` |
+| POST | `/sign-in/oauth/callback/:provider` | `auth.signIn.oauth.callbackFormPost` | form `{ code, state, iss? }` | 302, or `OAuthCallbackOutcome` |
+| GET | `/identity/list` | `auth.identity.list` | — | `Identity[]` |
+| POST | `/identity/link/start` | `auth.identity.link.start` | `{ provider, redirectPath? }` | `OAuthRedirect` |
+| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204) |
+
+`signIn.oauth.start` and `identity.link.start` return
+
+```ts
+interface OAuthRedirect { authorizationUrl: string; stateCookie: CookieInstruction }
+```
+
+Over HTTP the pointer cookie is set for you and `authorizationUrl` is where you
+send the browser — the library never redirects there itself, and the only
+`Location` it ever emits is the callback's 302. A caller using the server method
+directly sets `stateCookie` itself; it is the one place a server method mentions
+a cookie.
+
+`redirectPath` is a **path**, never a URL. It is rejected — with
+`invalid_input` — if it begins `//` or `/\`, carries a scheme, a userinfo part
+or a host. The check is applied to the value, to its one percent decoding and to
+the decoding of that: three readings over two decodings, which is what
+`S-REDIR-2` asks for. A target that needs a *third* decoding to become a URL is
+still accepted, and `test/oauth-redirect-corpus.test.ts` names the two vectors
+of its corpus that are; both resolve to a path on your own origin. It is stored
+with the flow and becomes the 302's `Location` at the callback. It resolves
+against the host the callback is mounted on, so an application on another host
+than its API cannot be returned to by path alone. A flow that names none
+redirects to `/`.
+
+`identity.link.start` requires a session and a **fresh** one (`freshnessWindow`,
+15 minutes by default), and records the account **and the session it runs in**
+server-side in the flow row — `link_to_user_id` and `link_from_session_id`. The
+callback for a link therefore cannot be pointed at another account or another
+session, and there is no `link.finish`: one callback answers both.
+
+**Linking replaces the session it began in, and only that one.** A new identity
+changes the trust level, so `S-LINK-7` requires a re-issue: the row named on the
+flow row is deleted and a new row with a new token is inserted, both in one
+transaction (`S-FIX-1`). Every other session of the account keeps working.
+Revoking the rest is what a password change and a password reset do, and
+`S-FIX-6` names those two events and not this one —
+`TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS.identity_linked` is `false` and says so
+to an application that asks. A user who links a provider on a laptop stays signed
+in on their phone.
+
+Both facts come out of the flow row because the callback reads no session cookie:
+that cookie is `SameSite=Lax` and a browser does not send it on a `form_post`
+callback — nor, in a `sessionSameSite: "strict"` installation, on the redirect
+one.
+
+**A flow whose session is gone when the callback arrives is refused**
+(`oauth_flow_invalid`), and the flow row is spent either way, so it cannot be
+retried. The flow's authority is the session it was started from: once that
+session has been revoked, signed out, replaced by a password change or reset, or
+simply expired, there is no authority left to spend. Without the refusal the two
+columns are a bearer artefact good for the flow's ten-minute lifetime that mints
+a session against an account whose sessions were all deleted — which is the
+opposite of what a revocation is for.
+
+**A disabled account counts as gone too.** The delete joins `velve.user` and
+requires `disabled_at IS NULL`, and the callback asks the same question before
+it writes anything, answering `oauth_flow_invalid` with `user_disabled_on_oauth_flow`
+in the log. Without it the one path that resolves no session was the one path
+that accepted a cookie every other route refused with 403 — and it would have
+written the identity, which `identity.unlink` counts as a way in and which
+outlives the account being re-enabled. An OAuth **sign-in** against a disabled
+account is refused the same way.
+
+**Expired counts as gone, whether or not the sweep has run.** An expired session
+is still a row until `maintenance.sweep()` removes it, so the delete behind the
+replacement carries both deadlines in its predicate. Without them the same
+callback would be granted or refused depending on when garbage collection last
+ran, and a completed link would hand back a session whose `absolute_expires_at`
+had moved — a deadline §3.5 says is never extended.
+
+**A refused link writes no identity either.** The identity row and the session
+replacement are one transaction, so they commit together or not at all. That
+matters because a linked identity is a *sign-in method* — `identity.unlink`
+counts it, and it outlives any session — so a link that survived a revocation
+by leaving a credential behind would be the same failure with a durable artefact
+instead of a session. Both calls to the provider are finished before the
+transaction opens, so it never waits on a third party, and a `beforeSessionCreate`
+veto is asked before it opens at all: a plugin that refuses leaves neither the
+identity nor the session written.
+
+The new session's `factors` are `["oauth"]`, not the factors the replaced session
+carried: a session that signed in with a password and a TOTP code becomes an
+`oauth` session when a provider is linked from it. `S-LINK-7` does not say what
+the new row should carry, and `factors` is *„keine Berechtigung"* — nothing in
+this library reads it to decide what a caller may do — so this is a change in
+what `session.list` reports about how the caller signed in, not a change in what
+they can reach. An application that shows "signed in with" will show the link.
+
+**Linking an identity the account already holds is refused**
+(`identity_already_linked`, 409) rather than refreshing it. `S-FIX-1` is *„jede
+Verknüpfung einer **neuen** Identität"* and `S-LINK-7` *„einer **weiteren**"*;
+re-completing a link changes no trust level, so re-issuing there would move
+`created_at` — and `freshnessWindow` measures against `created_at`, which would
+make it a repeatable way to restore the freshness that gates the seventeen
+methods of 3.15 B.9.
+
+**So re-linking is not the way to refresh a provider's data**, and if you built a
+"reconnect" button on `identity.link.start` it will now answer 409. Sign in
+through the provider instead: the sign-in path rewrites the claims — the address,
+the verification flag, the scopes — on every pass, and where `storeTokens` is on
+it rewrites the stored access, refresh and ID tokens with them. That is the only
+route that refreshes them.
+
+Two consequences of that rule are worth stating outright. **Two link flows
+started from the same session cannot both complete:** the first replaces that
+session, so the second names a row that no longer exists and is refused, and the
+user re-links from the session they are now holding. And **signing out on the
+device that started a link cancels the link**, rather than the callback quietly
+signing that device back in.
+
+The session service call behind this is
+`reissueSessionOfUser({ actor, previousSessionId, factors, observed })`. It is
+the third re-issue shape beside `reissue`, which finds the previous row by its
+token, and `reissueAfterCredentialChange`, which replaces every row the account
+has; this one names the row by id, touches no other, and refuses when the named
+row is not there. It is reached through `boundTo(driver)`, which returns the same
+session service over another driver so that the session write joins the
+transaction the identity write is already in — carrying the configured deadlines
+and metadata mode with it, which a service rebuilt from defaults would not.
+
+`identity.unlink` requires a session and freshness, and refuses with
+`last_sign_in_method` when the identity is the account's last way in — counted
+across the password credential, every WebAuthn credential and every other
+identity. A confirmed address does not count, and recovery codes do not count.
+
+`identity.list` returns `Identity` as 3.15 C declares it:
+
+```ts
+interface Identity {
+  id: string; provider: string; subject: string; createdAt: Date
+  providerEmail: string | null; providerEmailVerified: boolean
+  profile: unknown; scopes: readonly string[]; tokenExpiresAt: Date | null
+}
+```
+
+No token is in it, and no method of this library returns one. `profile` is the
+provider's raw claims, overwritten on every sign-in; the library writes them and
+never reads them.
+
+### What the callback does, in order
+
+1. Reads the `__Host-velve_oauth_state` cookie. It is the only route pair that
+   may see it.
+2. Checks that the cookie is the pointer belonging to this `state`. The pointer
+   is 256 random bits and the `state` the provider saw is its SHA-256, so a
+   `state` that leaks somewhere cannot be turned back into the cookie. A
+   callback presented in another cookie context, or with no cookie, is refused
+   (`S-CSRF-5`).
+3. Consumes the flow row by `DELETE … RETURNING` on the hash of the `state`. A
+   state can be spent exactly once; an expired row and a state that never
+   existed are the same answer.
+4. Checks `iss` where the provider sent one. Against the configured issuer where
+   there is one; against the `iss` claim of the verified ID token where the
+   provider has none — which is `microsoft`, whose issuer names the tenant. An
+   `iss` that arrives where neither can answer it is refused rather than passed
+   over.
+5. Decrypts the PKCE verifier and exchanges the code at the token endpoint. The
+   request carries a ten-second deadline, and a 3xx answer is refused rather
+   than followed.
+6. Reads the account's claims: from the ID token where the provider has a JWKS,
+   otherwise from the userinfo endpoint. A flow that minted a nonce and received
+   no ID token fails rather than continuing unchecked.
+7. Resolves the identity by `(provider, subject)` and applies the linking rule.
+   For a link flow this is deferred to step 8, so that the identity row and the
+   session replacement commit together.
+8. Issues a session — or, where the account has a second factor enrolled, a
+   pending authentication instead — and answers 302 to the stored path. A link
+   flow writes the identity and replaces the session named on the flow row in a
+   single transaction, and leaves the account's other sessions untouched.
+
+**A link is refused unless the session it was started from still authorises it,
+and "still authorises" is a list.** The flow row is a ten-minute artefact, and in
+that window the session it names can stop being an authority in more than one
+way. All of these refuse the link, writing neither identity nor session:
+
+| the recorded session… | reached by |
+|---|---|
+| was revoked, singly or by `revoke-all` or `revoke-others` | `session.revoke*` |
+| was signed out | `signOut` |
+| was replaced by a password change or reset | `S-FIX-6` |
+| was replaced by an earlier link from the same session | a second flow |
+| passed its idle or its absolute deadline, swept or not | time |
+| belongs to an account that has since been disabled | `disabled_at` |
+
+The list is written out because it has been wrong twice. Each earlier version
+refused on a narrower question — first *does the row exist*, then *does the row
+exist and is it in date* — and each time the state that got through was one where
+the row itself was untouched and something else had ceased to authorise it. A
+reader adding a seventh way for a session to stop counting should assume this
+list does not cover it until they have checked.
+
+Every failure between steps 2 and 6 answers `oauth_flow_invalid` (400) to the
+caller and carries its own reason in the log line: `state_not_found`,
+`pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`,
+`id_token_signature_invalid`. A link refused at step 8 answers the same code,
+logging `link_session_gone` for the first five rows above and
+`user_disabled_on_oauth_flow` for the last. A provider that answers wrongly is
+`oauth_provider_error` (502).
+
+### The linking rule
+
+`(provider, subject)` is the only key. The e-mail address is an attribute, and
+it is never a linking key.
+
+An identity that already exists signs its account in. An identity that does not
+exist yet is joined to an **existing** account only when **all three** of these
+hold:
+
+1. the provider reports the address verified, **and**
+2. the local account carries `email_verified_at`, **and**
+3. the provider stands in `trustedProviders`.
+
+There is no option that removes one of the three and no order in which two of
+them suffice. Better Auth read the second condition never — that is
+CVE-2026-53516 (CVSS 8.3) — and after its fix the conditions are still not all
+mandatory there.
+
+Where the three do not all hold, a **new account** is created instead, or the
+user links the identity explicitly from inside an existing session. Where a new
+account cannot be created — because the address already belongs to another
+account — the flow ends with `oauth_flow_invalid` and links nothing.
+
+A new account's address is taken from the provider and normalised. It is marked
+verified only where the provider reported it verified **and** the provider is
+trusted; otherwise it is stored unverified and has to be confirmed by e-mail.
+
+Nothing is invented. A provider that reports no address creates no account —
+the callback answers `oauth_provider_error` — and no placeholder address is
+generated anywhere in this library.
+
+`provider_email_verified` is stored per identity and rewritten from the claims
+on every sign-in, so one identity's verification state never travels to another
+identity of the same user.
+
+Linking an identity to an account **re-issues the session the link began in**: a
+new row, a new token, and the previous row removed in the same transaction. A new
+identity changes the trust level, and every change of the trust level re-issues
+(`S-LINK-7`, `S-FIX-1`). The account's other sessions are not touched, and a link
+whose own session has gone is refused rather than issuing one; see *The routes
+and the methods* for both.
+
+### Sign-in through a provider in the username modes
+
+An OAuth sign-in can only create an account in the `email` identity mode. In
+`username` and `username_email` the account needs a username, no provider claim
+can supply one, and the library invents nothing — so a callback for an unknown
+identity answers `oauth_flow_invalid`. Third-party sign-in still works in those
+modes for an account that already carries the identity, and identities can be
+linked from inside a session as usual.
+
+### The `form_post` callback
+
+A provider configured with `responseMode: "form_post"` — Apple, by default —
+posts the code to the callback path as an HTML form instead of redirecting to
+it. Two things follow.
+
+- A second route is declared, `POST /sign-in/oauth/callback/:provider`. It reads
+  a `application/x-www-form-urlencoded` body, ignores fields it does not declare
+  (Apple sends a `user` object on the first sign-in), and is the only other
+  route in the library without an origin check — a cross-site POST from a
+  provider carries no `Origin` worth comparing, exactly as the redirect carries
+  none.
+- The flow pointer for that flow is written with `SameSite=None; Secure`,
+  because a `Lax` cookie is not sent on a cross-site POST and the pointer would
+  be missing where the callback reads it. Only flows whose provider posts get
+  that attribute; a redirecting provider's pointer stays `Lax`.
+
+The callback reads **no** session cookie in either delivery, so a link works the
+same on both; the session it replaces is named on the flow row, and *The routes
+and the methods* has the rest.
+
+`requestBody` is the route-declaration field behind this. Absent it means JSON,
+which is what every route an application calls itself sends; `"form"` is declared
+by the `form_post` callback alone and makes the handler read a
+`application/x-www-form-urlencoded` body, restricted to the fields the route
+declares. It is required on `RouteMetadata` — what `defineRoute` produces — and
+optional on the declaration a route writes, so anything constructing an
+`HttpEnvironment` by hand must now supply it.
+
+Nothing else changes: the code never enters a query string, no second redirect
+is added, and the state row and PKCE are what secure the callback either way.
+Section 1 C50 solves the same problem the other way, by converting the POST into
+a GET redirect; this library does not, and `CASE-STUDY.md` E-586 sets out why and
+what that costs.
+
+### Storing provider tokens
+
+`storeTokens` defaults to `false`, and with it off the three token columns of
+`velve.identity` stay NULL. With it on, the access token, the refresh token and
+the ID token are stored AES-256-GCM encrypted under the purpose key
+`oauth-token-enc`, with the key version in `token_key_version`.
+
+The library never reads them back and offers no method that returns them: it
+does not refresh a provider token and does not call provider APIs. An
+application that needs them reads and decrypts the columns itself.
+
+### Rate limits and cookies
+
+All six routes carry the per-address limit and no per-account limit; the account
+an OAuth flow belongs to is not known when the request arrives.
+
+The flow pointer is `__Host-velve_oauth_state`, ten minutes, `HttpOnly`,
+`Secure`, `Path=/`, and `SameSite=Lax` — or `None` for a `form_post` flow. It
+outlives the row it points at by design, so an expired flow answers
+`oauth_flow_invalid` rather than losing its cookie first. The callback clears it
+whether or not the flow was valid.
 
 ## The instance
 
@@ -5038,24 +5815,233 @@ the route's name.
 
 ## The client
 
-Reserved for `client` (wave 6, last — the client is derived from a route table
-the waves before it are still adding rows to). Architecture 3.15 E: `createVelveClient`, the
-`ClientSurface` derived from the same route declaration the server surface is,
-the result object that makes `ok` checkable instead of throwable, `unwrap` for a
-caller who wants the server's symmetry back, and `VelveTransportError` for the
-two failures that can carry no code.
+`@velve/auth/client` is the browser half. It is derived from the same route
+declaration the server methods are, it carries no handler and no database code,
+and it is an ordinary nested object rather than a proxy: what it can call is
+fixed when it is constructed, from a table that is a real array at run time.
 
-It stands last because it is generated from the route table and adds nothing to
-it. The table is assembled by The instance and extended by a plugin; the client
-iterates it once at construction and builds an ordinary nested object out of the
-`name` fields, so every route this chapter describes is declared in a chapter
-above it. There is no `Proxy` and no path assembled from property names, which is
-why nothing here can exist that is not written down there.
+```ts
+import { createVelveClient, unwrap } from "@velve/auth/client";
 
-Empty on purpose. Under §5 of `CLAUDE.md` this chapter is `client`'s partition of
-this file: that feature appends here and nowhere else, and removing this
-paragraph is the first thing it does.
+const client = createVelveClient({ baseURL: "/api/auth" });
 
-### Nothing is documented here yet
+const answer = await client.signIn.magicLink.request({ email });
+if (!answer.ok) {
+  switch (answer.error.code) {
+    case "invalid_input":  return show("That address does not look right.");
+    case "rate_limited":   return show(`Try again in ${answer.error.retryAfterSeconds}s.`);
+    case "origin_not_allowed": return show("This page is not allowed to sign you in.");
+  }
+}
+```
 
-`client` replaces this heading with its own sub-tree.
+The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
+is narrowed to the codes **that route** declares and not to the union of all
+twenty-five.
+
+### `createVelveClient(options)`
+
+```ts
+createVelveClient<Auth extends { routes: readonly AnyRoute[] } = { routes: VelveRouteTable }>(
+  options: VelveClientOptions,
+): ClientSurface<…>
+```
+
+| Option | Type | Meaning |
+|---|---|---|
+| `baseURL` | `string` | Where the handler is mounted. A route's path is appended to it, so `"/api/auth"` and `"https://auth.example.com"` are both valid and a trailing slash is not doubled. |
+| `fetch` | `typeof fetch` | The function that sends the request. Optional; absent means `globalThis.fetch`, read at call time so a test double installed on the global is used. |
+
+There is nothing else. The client holds no state, no cache and no token — the
+session lives in a cookie the browser sends and the library never lets JavaScript
+read.
+
+`createVelveClient` is synchronous and does its whole job once: it walks the
+route table, splits each `name` at the dots, and puts a function at each leaf.
+That function closes over its own row and reads the `method` and the `path` from
+it. There is no `Proxy`, no path assembled from property names, no kebab-case
+transformation and no rule that guesses `POST` from the presence of a body.
+
+**A call the table does not carry does not exist.** `client.factor.totp.verify`
+is a compile error, and in JavaScript a `TypeError` — not a request to a path
+that answers 404.
+
+#### The type parameter
+
+Passing `typeof auth` is what architecture 3.15 E writes:
+
+```ts
+const client = createVelveClient<typeof auth>({ baseURL: "/api/auth" });
+```
+
+It is optional and changes nothing today. `VelveAuth` types its `routes` as
+`readonly AnyRoute[]` rather than as the preserved tuple 3.15 E's diagram
+assumes, and a client derived from a widened table would have a surface on which
+nothing can be called; so a route table type that is not a tuple is read as the
+library's own table, which is what the default already is. Both forms therefore
+give the same surface, and the explicit one will start to mean something when the
+instance carries its table as a tuple.
+
+### What a call returns
+
+```ts
+type VelveResult<Value, Code extends VelveErrorCode> =
+  | { ok: true;  value: Value }
+  | { ok: false; error: VelveFailure<Code> }
+
+interface VelveFailure<Code extends VelveErrorCode> {
+  readonly code: Code
+  readonly message: string
+  readonly retryAfterSeconds?: number
+}
+```
+
+The server throws and the client returns, and the asymmetry is deliberate
+(3.15 E). Server-side a call sits in a request handler with a central error map,
+where a `throw` carries the failure straight to the response. Client-side every
+call site is a screen that has to render the failure itself, and a forgotten
+`catch` is a screen that says nothing. `ok` has to be checked before `value` is
+readable.
+
+`retryAfterSeconds` is present only on `rate_limited`; on every other code the
+key is absent rather than `undefined`.
+
+| Answer | Result |
+|---|---|
+| `200` with a JSON body | `{ ok: true, value: <the body> }` |
+| `200` with the body `null` | `{ ok: true, value: null }` |
+| `204` | `{ ok: true, value: undefined }` |
+| `4xx`/`5xx` with a Velve error envelope | `{ ok: false, error: { code, message } }` |
+| anything else | throws `VelveTransportError` |
+
+### `unwrap(result)`
+
+```ts
+unwrap<Value, Code extends VelveErrorCode>(result: VelveResult<Value, Code>): Value
+```
+
+The way back to the server's shape, for a caller who would rather catch than
+check. It returns `value` on success and throws `VelveError` — the same class the
+server throws, from the same module — on failure, carrying the same `code` and
+the same `retryAfterSeconds`.
+
+```ts
+import { unwrap, VelveError } from "@velve/auth/client";
+
+try {
+  const session = unwrap(await client.session.refresh({}));
+} catch (error) {
+  if (error instanceof VelveError && error.code === "session_required") {
+    return redirectToSignIn();
+  }
+  throw error;
+}
+```
+
+`VelveError` rebuilds its message from its own copy of the error table rather
+than from the wire. For the twenty-five core codes the two are the same table and
+the strings are identical; for a code this build of the package does not know,
+`unwrap` throws with `internal_error`'s message and the response's status is
+lost. The un-unwrapped path always keeps what the server said, in
+`result.error.message`.
+
+### `VelveTransportError`
+
+```ts
+class VelveTransportError extends Error { readonly cause: unknown }
+```
+
+The client throws in exactly two cases, and both are the same class because both
+mean the same thing: *the server did not answer*, as against *the server said no*.
+
+- **The request did not reach the server.** `fetch` rejected — no network, DNS,
+  a refused connection, a CORS preflight the application's proxy did not answer.
+  `cause` is what `fetch` threw.
+- **The answer was not a Velve response.** A body that is not JSON, JSON that is
+  not the error envelope, a refusal with no body at all, a redirect. `cause` is
+  the HTTP status where there was one, and the parse error where there was not.
+
+A failure the server names is never one of these. `origin_not_allowed`,
+`rate_limited` and `internal_error` all arrive as `{ ok: false }`.
+
+### The request the client sends
+
+| | |
+|---|---|
+| Method | The `method` of the row, always. A `GET` row is sent as a `GET` with no body whatever its input is. |
+| Path | `baseURL` + the `path` of the row. A `:segment` is filled from the input field of that name and percent-encoded. A value that would leave the path something other than the row's is refused with a `TypeError` before anything is sent — that is a missing one, an empty one, and `.` or `..`, which survive encoding and are then removed by the URL parser. A value merely *containing* a dot or a slash is encoded and sent as one segment. |
+| Input | For `GET`, the query string. For `POST`, a JSON body with `Content-Type: application/json`. A field spent on a path segment appears in neither. |
+| `credentials` | `"include"`, because the session is a cookie and the handler may be mounted on another origin. |
+| `cache` | `"no-store"`, the other half of the `Cache-Control` every answer already carries. |
+| `redirect` | `"manual"`. The one redirect the library writes belongs to the OAuth callback, which a browser navigates to rather than calls. |
+
+The `Origin` header the origin check compares is written by the browser and
+cannot be written here, which has one consequence worth stating plainly: **this
+client does not work from Node.** Every route but the two OAuth callbacks carries
+`originCheck: "checked"`, and a `fetch` outside a browser sends no `Origin`, so
+every call answers `origin_not_allowed`. Server-side, call the instance's own
+methods instead.
+
+Mounting the handler on a different origin from the page needs CORS with
+credentials, and CORS is deliberately not this library's to answer — see
+[the README](./README.md#what-it-deliberately-does-not-do). Without it the browser
+refuses the request and the client reports a `VelveTransportError`.
+
+### The table
+
+```ts
+import { VELVE_CLIENT_ROUTES } from "@velve/auth/client";
+// [{ name: "signOut", method: "POST", path: "/sign-out" }, …]
+```
+
+`VELVE_CLIENT_ROUTES` is the table as a value: `ClientRoute` rows carrying a
+`name`, a `method` and a `path` and nothing else. It is what the client iterates,
+and it is exported because an application that needs to reach a route without the
+client — a form post, a service worker, a redirect target — should read the path
+from the same place the client does rather than write it out again.
+
+It is the table **the library declares**, not the table an instance serves. Which
+routes an instance serves depends on its identity mode and its configuration:
+`username.isAvailable` exists only where usernames do, and the eight routes that
+need an address — magic link, verification, address change and password reset —
+only where the mode has one and `email.send` is configured. The client knows none
+of that, so it offers all of them; a call to one the server does not serve reaches
+no route, and the 404 arrives as a `VelveTransportError`.
+
+A plugin's routes are **not** in it. A plugin contributes its routes at start from
+its configuration, so they are not known when this table is written, and
+`auth.<pluginId>.<method>` has the same gap on the server side. Reach a plugin
+route with your own `fetch` against `/x/<plugin-id>/…`.
+
+### The types
+
+| Name | What it is |
+|---|---|
+| `VelveClientOptions` | The two options above. |
+| `VelveResult<Value, Code>` | The result object. |
+| `VelveFailure<Code>` | Its `error` half. |
+| `ClientRoute` | One row of the table: `name`, `method`, `path`. |
+| `VelveRouteTable` | The tuple type of every row the library declares, derived from the route factories themselves. |
+| `ClientMethodOf<Route>` | One route's client signature: `(input) => Promise<VelveResult<Output, Code>>`. |
+| `ClientSurface<Routes>` | The nested surface of a whole table, the mirror of `ServerSurface`. |
+| `VelveError`, `VelveErrorCode` | Re-exported from `@velve/auth`, so a browser bundle gets them without importing the core. |
+
+`VelveRouteTable` is the mechanism that keeps this table honest. It is built from
+`ReturnType<typeof sessionRoutes>` and its four siblings through type-only
+imports, so the client's types come from the route declarations themselves and
+are erased entirely at build time; the value table is then held against it with
+`satisfies`. A row added, dropped, renamed or repathed in any route module fails
+to compile here. A row whose **method** changes does not — `defineRoute` does not
+carry the method as a type parameter — and is caught by a test against a live
+instance instead.
+
+### What reaches the browser
+
+`@velve/auth/client` loads five modules and no more: its own entry, the table,
+the result types, the transport, and `core/http/error-map.mjs`. That last one is
+the only piece of `core/` a browser gets, it imports nothing itself, and it is
+there so that `instanceof VelveError` holds on both sides of an application that
+calls the library on the server and in the browser alike. Nothing in the closure
+imports a package, a Node built-in, a driver, a handler or a line of SQL, and
+`test/client-bundle-reach.test.ts` walks the built output to say so rather than
+asserting it.

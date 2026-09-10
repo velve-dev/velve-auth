@@ -127,6 +127,10 @@ function encodeParameter(value: unknown): Buffer | null {
 	if (typeof value === "string") {
 		return Buffer.from(value, "utf8");
 	}
+	// A real driver sends a `Date` as a timestamptz, and a repository that writes one hands it over.
+	if (value instanceof Date) {
+		return Buffer.from(value.toISOString(), "utf8");
+	}
 	if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") {
 		return Buffer.from(String(value), "utf8");
 	}

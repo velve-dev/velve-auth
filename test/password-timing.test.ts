@@ -123,7 +123,7 @@ beforeAll(async () => {
 			[`present-${index}@timing.example`],
 		);
 		const userId = (row as { id: string }).id;
-		await credentials.write({ userId, phc, scheme: "argon2id" });
+		await credentials.write({ userId, phc, scheme: "argon2id", setBySessionId: null });
 		presentUserIds.push(userId);
 	}
 }, 600_000);

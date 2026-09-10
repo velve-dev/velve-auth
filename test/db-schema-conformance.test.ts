@@ -3,7 +3,10 @@ import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
 import { dropSchema, type MigratedSchema, openMigratedSchema, readColumns } from "./db-fixtures.js";
 
 // Every entry is one column of the schema in architecture 3.2 with the differences
-// from 3.17 (L-2, L-3, import_mapping, password_reset_required) already applied.
+// from 3.17 (L-2, L-12, L-3, import_mapping, password_reset_required) already applied.
+// `password_credential.set_by_session_id` and `oauth_flow.link_from_session_id` were
+// once carried by neither section; the specification was amended to declare both, so
+// this list is again what its first sentence says it is (E-1095, E-1097).
 const SPECIFIED_COLUMNS: readonly string[] = [
 	"identity.access_token_enc bytea",
 	"identity.created_at timestamp with time zone NOT NULL DEFAULT",
@@ -28,6 +31,7 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"oauth_flow.created_at timestamp with time zone NOT NULL DEFAULT",
 	"oauth_flow.expires_at timestamp with time zone NOT NULL",
 	"oauth_flow.key_version integer NOT NULL",
+	"oauth_flow.link_from_session_id uuid",
 	"oauth_flow.link_to_user_id uuid",
 	"oauth_flow.nonce text",
 	"oauth_flow.pkce_verifier_enc bytea NOT NULL",
@@ -44,6 +48,7 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"password_credential.key_version integer NOT NULL DEFAULT",
 	"password_credential.phc bytea NOT NULL",
 	"password_credential.scheme text NOT NULL",
+	"password_credential.set_by_session_id uuid",
 	"password_credential.updated_at timestamp with time zone NOT NULL DEFAULT",
 	"password_credential.user_id uuid NOT NULL",
 	"password_reset_required.created_at timestamp with time zone NOT NULL DEFAULT",

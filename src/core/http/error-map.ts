@@ -72,7 +72,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	factor_not_enrolled: "The factor is not enrolled.",
 	factor_already_enrolled: "The factor is already enrolled.",
 	last_sign_in_method: "The last remaining sign-in method cannot be removed.",
-	identity_already_linked: "The identity belongs to another account.",
+	identity_already_linked: "This provider identity is already linked to an account.",
 	provider_not_configured: "The provider is not configured.",
 	oauth_flow_invalid: "The authorization flow is not valid.",
 	oauth_provider_error: "The provider did not answer correctly.",
@@ -237,6 +237,7 @@ export type ConcealedReason =
 	| "issuer_mismatch"
 	| "id_token_signature_invalid"
 	| "user_disabled_on_oauth_flow"
+	| "link_session_gone"
 	| "challenge_not_found"
 	| "challenge_expired"
 	| "challenge_purpose_mismatch"
@@ -280,6 +281,7 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	issuer_mismatch: "oauth_flow_invalid",
 	id_token_signature_invalid: "oauth_flow_invalid",
 	user_disabled_on_oauth_flow: "oauth_flow_invalid",
+	link_session_gone: "oauth_flow_invalid",
 	challenge_not_found: "webauthn_challenge_invalid",
 	challenge_expired: "webauthn_challenge_invalid",
 	challenge_purpose_mismatch: "webauthn_challenge_invalid",

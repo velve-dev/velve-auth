@@ -123,13 +123,14 @@ describe("where the two new brands may be asserted", () => {
 		expect(asserting).toStrictEqual(["/db/repositories/token.ts"]);
 	});
 
-	it("asserts the OAuth flow brand nowhere yet, because no repository consumes a flow", () => {
+	/** It was asserted nowhere until a repository consumed a flow; `oauth` is that repository (E-582). */
+	it("asserts the OAuth flow brand in the repository that removes the row and nowhere else", () => {
 		const asserting = coreFiles()
 			.filter((path) => /\bas ConsumedOAuthFlow\b/.test(readFileSync(path, "utf8")))
 			.map((path) => path.replace(core, ""));
 
 		expect(coreFiles().length).toBeGreaterThan(20);
-		expect(asserting).toStrictEqual([]);
+		expect(asserting).toStrictEqual(["/oauth/flow-repository.ts"]);
 	});
 
 	it("mints an actor in one file, over a core that is not empty", () => {

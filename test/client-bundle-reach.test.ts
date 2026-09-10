@@ -1,0 +1,149 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const distDirectory = fileURLToPath(new URL("../dist", import.meta.url));
+const clientEntry = resolve(distDirectory, "client.mjs");
+
+const RE_EXPORTED_OR_IMPORTED = /(?:^|[\s;}])(?:import|export)\b[^"'\n]*?from\s*["']([^"']+)["']/gm;
+const IMPORTED_FOR_EFFECT = /^\s*import\s*["']([^"']+)["']/gm;
+/** A dynamic import is a live edge with no `from` and no line of its own, and the two patterns above read neither (E-685). */
+const IMPORTED_DYNAMICALLY = /\bimport\s*\(\s*["']([^"']+)["']/g;
+
+function specifiersIn(source: string): readonly string[] {
+	return [RE_EXPORTED_OR_IMPORTED, IMPORTED_FOR_EFFECT, IMPORTED_DYNAMICALLY].flatMap((pattern) =>
+		[...source.matchAll(pattern)].map((match) => match[1] ?? ""),
+	);
+}
+
+interface Reach {
+	readonly modules: readonly string[];
+	readonly bare: readonly string[];
+	readonly source: string;
+}
+
+/**
+ * 3.15 E's price: the client imports the route table as a value, and `unbundle: true` keeps every
+ * import of every module reached from the entry. What a browser loads is therefore this walk and
+ * not a claim about it.
+ */
+function reachOf(entry: string): Reach {
+	const visited = new Set<string>();
+	const bare = new Set<string>();
+	const sources: string[] = [];
+	const pending = [entry];
+	while (pending.length > 0) {
+		const file = pending.pop();
+		if (file === undefined || visited.has(file)) {
+			continue;
+		}
+		visited.add(file);
+		const source = readFileSync(file, "utf8");
+		sources.push(source);
+		for (const specifier of specifiersIn(source)) {
+			if (specifier.startsWith(".")) {
+				pending.push(resolve(dirname(file), specifier));
+			} else {
+				bare.add(specifier);
+			}
+		}
+	}
+	return {
+		modules: [...visited].map((file) => relative(distDirectory, file)).toSorted(),
+		bare: [...bare].toSorted(),
+		source: sources.join("\n"),
+	};
+}
+
+/**
+ * The one module of `core/` a browser loads. §3 of the repository rules keeps it the only place
+ * that decides what a caller learns, it imports nothing itself, and it is what makes
+ * `instanceof VelveError` hold on both sides of the call (E-677).
+ */
+const THE_ONLY_CORE_MODULE = "core/http/error-map.mjs";
+
+/** Names that exist only where a request is served: the handler registry, the driver, the SQL. */
+const SERVER_ONLY_NAMES = ["invocationOf", "defineRoute", "runRoute", "transaction(", "SELECT "];
+
+const NODE_BUILTIN_PREFIX = "node:";
+
+/**
+ * The walk above reads the import forms it knows, and a form it cannot read is a hole rather than a
+ * finding. This reads no syntax at all: the name of a package the browser must not load cannot
+ * appear as a quoted string anywhere in the closure, however it would have been reached (E-685).
+ */
+function forbiddenNames(): readonly string[] {
+	const manifest = JSON.parse(
+		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+	) as {
+		readonly dependencies: Readonly<Record<string, string>>;
+		readonly peerDependencies: Readonly<Record<string, string>>;
+	};
+	return [...Object.keys(manifest.dependencies), ...Object.keys(manifest.peerDependencies)];
+}
+
+function quotedNamesIn(source: string, names: readonly string[]): readonly string[] {
+	return names.filter((name) => source.includes(`"${name}"`) || source.includes(`'${name}'`));
+}
+
+describe("what reaches the browser through @velve/auth/client (architecture 3.15 E)", () => {
+	it("was built before it was measured, and is the client that was built", () => {
+		expect(existsSync(clientEntry)).toBe(true);
+		expect(readFileSync(clientEntry, "utf8")).toContain("createVelveClient");
+	});
+
+	it("loads more than its entry file, so an empty walk cannot read as a clean one", () => {
+		expect(reachOf(clientEntry).modules.length).toBeGreaterThan(1);
+	});
+
+	it("reaches no dependency and no Node built-in", () => {
+		expect(reachOf(clientEntry).bare).toStrictEqual([]);
+	});
+
+	it("reaches exactly one module of the server core", () => {
+		const fromCore = reachOf(clientEntry).modules.filter((file) => file.startsWith("core/"));
+
+		expect(fromCore).toStrictEqual([THE_ONLY_CORE_MODULE]);
+	});
+
+	it("carries no handler, no driver and no SQL", () => {
+		const { source } = reachOf(clientEntry);
+
+		expect(SERVER_ONLY_NAMES.filter((name) => source.includes(name))).toStrictEqual([]);
+	});
+
+	it("names no dependency and no Node built-in, in any syntax at all", () => {
+		const { source } = reachOf(clientEntry);
+		const names = forbiddenNames();
+
+		expect(names.length).toBeGreaterThan(0);
+		expect(quotedNamesIn(source, names)).toStrictEqual([]);
+		expect(source.includes(NODE_BUILTIN_PREFIX)).toBe(false);
+	});
+
+	it("hands out the same error class the core does, which is what the one core module is for", async () => {
+		const core = (await import(new URL("../dist/index.mjs", import.meta.url).href)) as {
+			readonly VelveError: unknown;
+		};
+		const client = (await import(new URL("../dist/client.mjs", import.meta.url).href)) as {
+			readonly VelveError: unknown;
+			readonly unwrap: (result: unknown) => unknown;
+			readonly VELVE_CLIENT_ROUTES: unknown;
+		};
+
+		expect(client.VelveError).toBe(core.VelveError);
+		expect(() =>
+			client.unwrap({ ok: false, error: { code: "session_required", message: "x" } }),
+		).toThrow(core.VelveError as ErrorConstructor);
+	});
+
+	it("carries the route table as a real array, not as something assembled on first use", async () => {
+		const client = (await import(new URL("../dist/client.mjs", import.meta.url).href)) as {
+			readonly VELVE_CLIENT_ROUTES: readonly { readonly name: string }[];
+		};
+
+		expect(Array.isArray(client.VELVE_CLIENT_ROUTES)).toBe(true);
+		expect(client.VELVE_CLIENT_ROUTES.map((route) => route.name)).toContain("signOut");
+	});
+});

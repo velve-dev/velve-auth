@@ -1,5 +1,6 @@
-import type { Actor } from "../../db/actor.js";
+import type { Actor, ConsumedRecoveryCode } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
+import { toEntityId } from "../../db/entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../../db/identifier.js";
 import type { PepperedRecoveryCode } from "./pepper.js";
 
@@ -14,10 +15,11 @@ export interface RecoveryCodeRepository {
 		readonly codes: readonly PepperedRecoveryCode[];
 	}): Promise<number>;
 	pepperVersionsOf(input: { readonly userId: string }): Promise<readonly number[]>;
+	/** E-234, E-612: the removal is what proved the owner, so it hands back that proof rather than a flag. */
 	consumeCode(input: {
 		readonly userId: string;
 		readonly candidateHmacs: readonly Uint8Array<ArrayBuffer>[];
-	}): Promise<boolean>;
+	}): Promise<ConsumedRecoveryCode | null>;
 	countCodes(input: { readonly actor: Actor }): Promise<number>;
 }
 
@@ -87,10 +89,11 @@ RETURNING key_version`;
 			for (const candidateHmac of candidateHmacs) {
 				const rows = await options.driver.query(consumeStatement, [userId, candidateHmac]);
 				if (rows.length === 1) {
-					return true;
+					// E-234: the brand is asserted where the row was removed and nowhere else.
+					return { userId: toEntityId<"user">(userId) } as ConsumedRecoveryCode;
 				}
 			}
-			return false;
+			return null;
 		},
 
 		async countCodes({ actor }) {

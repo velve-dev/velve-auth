@@ -136,15 +136,65 @@ option of both functions.
 
 ### Third-party sign-in
 
-Not built yet. The configuration is declared — `oauth.providers` takes the
-fourteen providers of architecture 3.10 by name and any other id with its own
-endpoints, beside `trustedProviders` and `storeTokens` — and no route reads it.
+Built. The authorisation-code flow with PKCE S256 — not optional, and with no
+branch that downgrades it — a `state` that lives in the database while the
+cookie holds only a pointer to it, a `nonce` under OIDC, the `iss` check of
+RFC 9207, and the ID token verified against the provider's JWKS under a list of
+asymmetric algorithms that does not contain `none`. Fourteen providers are built
+in and any other is a set of endpoints and a subject claim in your
+configuration; no discovery document is ever fetched, so an endpoint the library
+calls is one you wrote down.
+
+`auth.signIn.oauth.start` hands you an authorisation URL and the cookie
+instruction that belongs to it; the callback answers 302 to a path you chose,
+and that redirect is the only `Location` this library emits. In an existing
+session, `auth.identity.link.start` links a second provider to the account you
+are signed in as — the account and the session are both fixed server-side, so no
+callback can point either somewhere else — and `auth.identity.unlink` refuses to
+remove your last way in. Linking re-issues the session it was started from, a new
+token in place of the old row, and leaves your other devices signed in; a link
+whose own session was revoked or signed out while it was outstanding is refused
+rather than handing back a fresh one.
+
+**The linking rule is the part that does not bend.** `(provider, subject)` is
+the only key; the e-mail address is an attribute and never a link. An identity
+is joined to an existing account automatically only when the provider reports
+the address verified **and** the local account is verified **and** the provider
+stands in `trustedProviders` — three conditions, no switch that removes one. The
+library invents no address for a provider that reports none, and creates no
+account it cannot name.
 
 ### Email flows
 
-Not built yet. The confirmation link, the address change, the password reset and
-the magic link are one-time artefacts over a store that exists; the flows over
-them do not.
+Built. Eleven routes: sign-up with and without a password, the magic link and
+its redemption, the confirmation link, the address change and both redemptions,
+the mailed password reset and its redemption, and the reset that spends a
+recovery code instead of an address.
+
+The library sends nothing itself. It calls `email.send` with one of six message
+kinds and the token, and the application builds the URL and delivers it — so no
+`redirectTo` from a request has to be validated against an allowlist, because
+none exists. A `send` that throws takes the artefact with it, and on sign-up the
+account too; it runs after the transaction has committed, so a slow callback
+never holds a lock on the account it is about.
+
+Two answers are deliberately uninformative. A registration on an address that
+already has an account answers byte for byte as a free one does, because it runs
+the same registration and rolls it back; the difference is that a message goes to
+the existing address instead. A registration that loses a race to the same
+address is that answer too, so simultaneous submissions of one form come back
+alike. Telling a taken address from a free one takes a second request —
+resolving the session the answer hands back — and no further. In
+`username_email` there is a second identifier and the cover does not durably
+claim it: a registration on a taken address leaves the name it sent free, where
+one on a free address takes it, so a second registration of that name tells the
+two apart. A reset or magic
+link for an address that names no account runs the same statements as one that
+does, calls `send` the same single time, and waits the same, because the two
+serialise on the address and neither takes a lock on the account's row. And when
+an address is confirmed for the first time, a password that was set in a
+different session is deleted and every session revoked — the account-takeover
+path of GHSA-qq9h-g4jm-xgf3, closed by construction rather than by a flag.
 
 ### Plugins
 
@@ -215,6 +265,47 @@ back. What the measurements still do not see — a table dropped in the same
 transaction, a comment, an empty schema left behind, a lock — is written down in
 the reference rather than glossed here. There is no rollback of an applied
 migration, and removing a plugin leaves its tables where they are.
+
+### The client
+
+Built. `@velve/auth/client` is the browser half, derived from the same route
+declaration the server methods are. It is an ordinary nested object, not a proxy:
+`createVelveClient` walks the route table once and puts a function at each leaf
+that reads the method and the path from its own row. A call the table does not
+carry is a compile error, and in JavaScript a `TypeError` — never a request to a
+path that answers 404.
+
+```ts
+import { createVelveClient } from "@velve/auth/client";
+
+const client = createVelveClient({ baseURL: "/api/auth" });
+
+const answer = await client.signIn.magicLink.request({ email });
+if (!answer.ok) {
+  switch (answer.error.code) {
+    case "invalid_input": return show("That address does not look right.");
+    case "rate_limited":  return show(`Try again in ${answer.error.retryAfterSeconds}s.`);
+    case "origin_not_allowed": return show("This page is not allowed to sign you in.");
+  }
+}
+```
+
+A call returns a result rather than throwing, and the asymmetry with the server
+is on purpose: on the server a call sits in a request handler with a central
+error map, in the browser every call site is a screen that has to render the
+failure itself, and a forgotten `catch` is a screen that says nothing. The
+compiler makes `ok` checkable before `value` is readable, and `error.code` is
+narrowed to the codes **that** route declares, so the `switch` above is checked
+exhaustively. `unwrap(…)` is there for whoever wants the throw back.
+
+It throws in exactly two cases, both `VelveTransportError`: the server did not
+answer, and the server answered with something that is not a Velve response.
+"The server said no" is never one of them.
+
+What reaches a browser is five modules, and one of them is the library's error
+table so that `instanceof VelveError` holds on both sides. No driver, no handler,
+no SQL, no dependency and no Node built-in — measured by walking the built output
+rather than asserted.
 
 ## Mounting it
 
