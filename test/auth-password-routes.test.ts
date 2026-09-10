@@ -2,11 +2,21 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
+import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
 import { createVelveAuth } from "../src/index.js";
-import { configFor, type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
+import {
+	configFor,
+	createLogSink,
+	type LogSink,
+	type MountedAuth,
+	mountAuth,
+	TEST_ORIGIN,
+	testKeyProvider,
+} from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
-import { difference, postTo } from "./flows-fixtures.js";
+import { difference, normalisedAnswer, postTo } from "./flows-fixtures.js";
+import { storedHashesFor } from "./password-fixtures.js";
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -584,5 +594,127 @@ describe("what an unusable password costs (S-DOS-2)", () => {
 		);
 
 		expect(accountLookups(counted.statements).length).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * S-ENUM-1 and S-ENUM-2 over the **mounted** route, across every account state that produces a
+ * distinct internal reason. `http-enumeration.test.ts` holds the same property over a synthetic
+ * route, and a synthetic route cannot reach a legacy stored hash — which is exactly where an
+ * oracle confined to `legacy_scheme_rejected` sat undetected through the whole suite (E-1198).
+ */
+describe("every refusal of the real sign-in answers alike (S-ENUM-1)", () => {
+	let uniform: {
+		connection: TestConnection;
+		schema: string;
+		handler: Handler;
+		auth: ReturnType<typeof createVelveAuth<"email">>;
+		log: LogSink;
+	};
+
+	async function accountWith(email: string, password?: string): Promise<string> {
+		const answer = await uniform.handler(
+			postTo(password === undefined ? "/sign-up/passwordless" : "/sign-up", {
+				email,
+				...(password === undefined ? {} : { password }),
+			}),
+		);
+		expect(answer.status).toBe(200);
+		return ((await answer.json()) as { user: { id: string } }).user.id;
+	}
+
+	beforeAll(async () => {
+		const { connection, schema } = await openMigratedSchema("passworduniform");
+		const keys = testKeyProvider();
+		const log = createLogSink();
+		const auth = createVelveAuth(
+			configFor({
+				database: connection,
+				schema,
+				keys,
+				log: log.write,
+				// The refusal needs a stored scheme the configuration will not read.
+				password: { acceptLegacy: [] },
+				rateLimit: {
+					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+					perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
+				},
+			}),
+		);
+		uniform = { connection, schema, handler: toWebHandler(auth), auth, log };
+
+		await accountWith("present@example.com", PASSWORD);
+		await accountWith("credentialless@example.com");
+		const disabled = await accountWith("disabled@example.com", PASSWORD);
+		await auth.user.disable({ userId: disabled, reason: "a test" });
+
+		const legacy = await accountWith("legacy@example.com");
+		await createPasswordCredentialRepository({ driver: connection, keys, schema }).write({
+			userId: legacy,
+			phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,
+			scheme: "bcrypt",
+			setBySessionId: null,
+		});
+	});
+
+	afterAll(async () => {
+		await dropSchema(uniform.connection, uniform.schema);
+		await uniform.connection.close();
+	});
+
+	const REFUSALS: readonly {
+		readonly state: string;
+		readonly email: string;
+		readonly password: string;
+	}[] = [
+		{ state: "no such account", email: "absent@example.com", password: PASSWORD },
+		{ state: "wrong password", email: "present@example.com", password: OTHER_PASSWORD },
+		{ state: "no credential", email: "credentialless@example.com", password: PASSWORD },
+		{ state: "disabled, right password", email: "disabled@example.com", password: PASSWORD },
+		{ state: "legacy scheme refused", email: "legacy@example.com", password: PASSWORD },
+	];
+
+	async function refuse(email: string, password: string): Promise<Response> {
+		return uniform.handler(postTo("/sign-in/password", { email, password }));
+	}
+
+	it("answers all five states with one byte-identical response", async () => {
+		const answers = new Map<string, string>();
+		for (const { state, email, password } of REFUSALS) {
+			const answer = await refuse(email, password);
+			expect([state, answer.status]).toEqual([state, 401]);
+			answers.set(state, await normalisedAnswer(answer));
+		}
+
+		expect(answers.size).toBe(REFUSALS.length);
+		expect(new Set(answers.values()).size).toBe(1);
+	});
+
+	/**
+	 * Without this the test above is vacuous: five states that reach one internal reason would be
+	 * byte-identical for a reason that has nothing to do with the requirement.
+	 */
+	it("reaches five distinct internal reasons to get there", async () => {
+		const reasons: string[] = [];
+		for (const { email, password } of REFUSALS) {
+			const before = uniform.log.lines.length;
+			await refuse(email, password);
+			reasons.push(
+				String(
+					uniform.log.lines
+						.slice(before)
+						.map((line) => line.fields.reason)
+						.at(-1),
+				),
+			);
+		}
+
+		expect(reasons).toEqual([
+			"user_not_found",
+			"password_mismatch",
+			"no_password_credential",
+			"user_disabled_on_sign_in",
+			"legacy_scheme_rejected",
+		]);
 	});
 });
