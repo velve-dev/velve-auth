@@ -90,4 +90,29 @@ describe("what reaches the browser through @velve/auth/client (architecture 3.15
 
 		expect(SERVER_ONLY_NAMES.filter((name) => source.includes(name))).toStrictEqual([]);
 	});
+
+	it("hands out the same error class the core does, which is what the one core module is for", async () => {
+		const core = (await import(new URL("../dist/index.mjs", import.meta.url).href)) as {
+			readonly VelveError: unknown;
+		};
+		const client = (await import(new URL("../dist/client.mjs", import.meta.url).href)) as {
+			readonly VelveError: unknown;
+			readonly unwrap: (result: unknown) => unknown;
+			readonly VELVE_CLIENT_ROUTES: unknown;
+		};
+
+		expect(client.VelveError).toBe(core.VelveError);
+		expect(() =>
+			client.unwrap({ ok: false, error: { code: "session_required", message: "x" } }),
+		).toThrow(core.VelveError as ErrorConstructor);
+	});
+
+	it("carries the route table as a real array, not as something assembled on first use", async () => {
+		const client = (await import(new URL("../dist/client.mjs", import.meta.url).href)) as {
+			readonly VELVE_CLIENT_ROUTES: readonly { readonly name: string }[];
+		};
+
+		expect(Array.isArray(client.VELVE_CLIENT_ROUTES)).toBe(true);
+		expect(client.VELVE_CLIENT_ROUTES.map((route) => route.name)).toContain("signOut");
+	});
 });
