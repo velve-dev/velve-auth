@@ -4862,6 +4862,44 @@ because nothing else would tell you.
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 
+#### A route conflict names both contributors
+
+`plugin_route_conflict` is the one code that carries a second field. Reading it
+back is what tells an operator which two sides claimed the same thing, and
+`S-OWNER-11` is the reason it exists:
+
+```ts
+interface RouteConflict {
+  readonly claimed: string;
+  readonly contributors: readonly [string, string];
+}
+```
+
+`conflict` is present on a `VelveStartupError` whose `code` is
+`plugin_route_conflict`, and absent on every other code — so a caller reads it
+through the optional field rather than by branching on the code first.
+
+`claimed` is what the two sides both claimed, in the form the collision was
+found in: a route name (`session.list`), a folded method and path
+(`POST /sign-out`), or one of the eighteen surface namespaces of 3.15 B
+(`session`). `contributors` is the two of them, the side that already held the
+claim first and the side that arrived second. A plugin appears under its own
+`id`; the library appears as the literal `the core`, which is what a conflict
+between a plugin route and a core route names on the other side.
+
+The same pair is written into `message`, in a trailing bracketed clause built
+from these fields rather than written beside them:
+
+```
+a plugin route collides with a core route or with another plugin's; 3.11 makes
+that a start error and not a warning [POST /sign-out is claimed by the core and
+by demo]
+```
+
+An operator reading only the log gets both contributors out of that clause; a
+caller that would rather not parse a message reads `conflict`. Both come from
+one value, so they cannot disagree.
+
 Two more refusals come from the modules and keep their own error types: a root
 key shorter than 32 bytes raises `KeyError` while `rootKeyProvider` is being
 built, and Argon2id parameters below the floor raise

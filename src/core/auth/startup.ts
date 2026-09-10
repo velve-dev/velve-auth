@@ -64,13 +64,37 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
 };
 
+/**
+ * T-OWNER-11 asks the start error to name both contributors to a route conflict. `claimed` is the
+ * route name, the folded `METHOD /path` or the surface namespace that two sides claimed, and
+ * `contributors` is the two of them.
+ */
+export interface RouteConflict {
+	readonly claimed: string;
+	readonly contributors: readonly [string, string];
+}
+
+/** A conflict has two contributors even where one of them is the library, so the library has a name. */
+export const THE_CORE = "the core";
+
+function namesBothContributors(conflict: RouteConflict): string {
+	const [first, second] = conflict.contributors;
+	return `${conflict.claimed} is claimed by ${first} and by ${second}`;
+}
+
 export class VelveStartupError extends Error {
 	readonly code: StartupErrorCode;
+	/** Present where the code is a conflict between two contributors, and absent otherwise. */
+	readonly conflict?: RouteConflict;
 
-	constructor(code: StartupErrorCode) {
-		super(MESSAGE_BY_STARTUP_ERROR_CODE[code]);
+	constructor(code: StartupErrorCode, conflict?: RouteConflict) {
+		const stated = MESSAGE_BY_STARTUP_ERROR_CODE[code];
+		super(conflict === undefined ? stated : `${stated} [${namesBothContributors(conflict)}]`);
 		this.name = "VelveStartupError";
 		this.code = code;
+		if (conflict !== undefined) {
+			this.conflict = conflict;
+		}
 	}
 }
 

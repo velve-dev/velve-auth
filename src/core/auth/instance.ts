@@ -21,7 +21,7 @@ import {
 	VELVE_ERROR_CODES,
 	type VelveErrorCode,
 } from "../http/error-map.js";
-import type { AnyRoute, ServerCallFields } from "../http/route.js";
+import type { AnyRoute, RouteMetadata, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
@@ -54,6 +54,8 @@ import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
 import {
 	assertConfigurationIsStartable,
 	assertKeysAnswerForEveryPurpose,
+	type RouteConflict,
+	THE_CORE,
 	VelveStartupError,
 } from "./startup.js";
 import { assertNoStatedNameShadowsADerivedOne, nestServerMethods } from "./surface.js";
@@ -190,14 +192,21 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 function assertNoPluginTakesACoreNamespace(
 	plugins: readonly VelvePlugin[],
 	contributed: readonly AnyRoute[],
+	ownerOf: (route: RouteMetadata) => string,
 ): void {
 	const reserved = new Set(SURFACE_NAMESPACES);
-	const claimed = [
-		...plugins.map((plugin) => plugin.id),
-		...contributed.map((route) => route.name.split(".")[0] ?? ""),
+	const claims: readonly (readonly [string, string])[] = [
+		...plugins.map((plugin) => [plugin.id, plugin.id] as const),
+		...contributed.map((route) => [route.name.split(".")[0] ?? "", ownerOf(route)] as const),
 	];
-	if (claimed.some((namespace) => reserved.has(namespace))) {
-		throw new VelveStartupError("plugin_route_conflict");
+	for (const [namespace, claimant] of claims) {
+		if (reserved.has(namespace)) {
+			const conflict: RouteConflict = {
+				claimed: namespace,
+				contributors: [THE_CORE, claimant],
+			};
+			throw new VelveStartupError("plugin_route_conflict", conflict);
+		}
 	}
 }
 
@@ -333,8 +342,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...seamRoutes,
 	];
 	const contributedRoutes = pluginRoutes(services);
-	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes);
-	assertNoPluginTakesACoreNamespace(pluginRuntime.plugins, contributedRoutes);
+	const ownerOfRoute = (route: RouteMetadata): string => pluginRuntime.ownerOf(route);
+	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, ownerOfRoute);
+	assertNoPluginTakesACoreNamespace(pluginRuntime.plugins, contributedRoutes, ownerOfRoute);
 
 	const environment: HttpEnvironment = {
 		routes: [...coreRoutes, ...contributedRoutes],

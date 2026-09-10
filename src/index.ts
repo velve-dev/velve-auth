@@ -39,7 +39,7 @@ export type {
 } from "./core/auth/results.js";
 export type { ResolvedSessionView } from "./core/auth/routes.js";
 export { SECURITY_OPTIONS, type SecurityOption } from "./core/auth/security-options.js";
-export { VelveStartupError } from "./core/auth/startup.js";
+export { type RouteConflict, VelveStartupError } from "./core/auth/startup.js";
 export {
 	TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS,
 	TRUST_LEVEL_EVENTS,
