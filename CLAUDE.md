@@ -453,13 +453,50 @@ entry describing text the tree does not contain. So the line is: **an entry may
 be brought into step with its own artefact; the reason a decision was taken may
 not be rewritten.**
 
-**Neither half has a diff signature, and a reader is the mechanism for both.** An
-edit bringing an entry into step with its amended artefact and an edit rewriting
-a reason are the same shape in `git diff`, and `check:log-append` is blind to
-both, for the reason the paragraph below gives. Disclosure in the entry and a
-reviewer reading it are the whole enforcement, and this file says so rather than
-presenting the rule as decidable — a rule presented as decidable when it is not
-is how E-1032 happened (E-1139).
+**One half has a diff signature, and it is the permitted one.** A removal is a
+replacement whose new text is empty (E-1112), so an edit that removes nothing
+replaces nothing — and a reason cannot be rewritten by pure insertion, because
+the old reason would still be standing beside its replacement. **Zero deletions
+inside an entry is therefore a necessary condition for the permitted half**, and
+`fix/specification-defects-wave5` is what one looks like from the outside: its
+single surviving in-place edit adds one contiguous 460-character italicised note
+to E-1098's `**Reason.**` and removes nothing, so a reader recovers the original
+exactly by deleting the italics (E-1140).
+
+**It is necessary and not sufficient, and it is loose in both directions.** A
+writer can insert a sentence that contradicts the reason above it without
+deleting a character, so an insertion-only edit is not thereby permitted. A
+measurement restated in place is a deletion this section allows, so a
+deletion-bearing edit is not thereby a violation. Disclosure in the entry and a
+reviewer reading it remain the enforcement for every insertion — what the
+asymmetry changes is how much a reviewer has to read, not who decides.
+
+**What it buys is a reviewable set.** A deletion inside an entry is mechanically
+findable and every rewritten reason is one, so *a reader is the whole
+enforcement* becomes *a script flags every deletion-bearing edit to an entry, and
+a reader judges the insertions* — which meets §5's standard that a check tell
+**found nothing** from **found a fault**, where the sentence this paragraph
+replaces conceded there was nothing to check. **That sentence said neither half
+had a diff signature and that a reader was the mechanism for both**, and its
+first half was wrong; it is corrected here rather than having always read this
+way (E-1141). A rule presented as decidable when it is not is how E-1032 happened
+(E-1139), and this replacement is bounded so that it stays a flag and does not
+become that. `check:log-append` is blind to both halves either way, for the
+reason the paragraph below gives.
+
+**So bring an entry into step by inserting a note, never by editing the
+sentence.** An insertion-only edit cannot be the forbidden half, so writing one
+removes the *was it true when written* judgement from the case a writer actually
+hits. Leave every original word standing, put the note inside the entry it
+corrects, and say in the note what changed (E-1142).
+
+**Nothing enforces the signature, and no script is proposed here.** It is stated
+so that a reviewer can use it. `check:log-append` counts lines with `--numstat`
+and a log paragraph is one long line, so an insertion into an existing paragraph
+reads to it as `−1 +1`, and the property has to be measured at word granularity
+instead. Whether such a check belongs in `pnpm gate`, in §5's reviewer checklist
+or nowhere is a decision with its own cost, and it is left open as a hand-off in
+E-1143.
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
