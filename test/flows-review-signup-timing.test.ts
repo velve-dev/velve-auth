@@ -8,6 +8,7 @@ import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtur
 import {
 	CONTROL_RECOVERY_TOLERANCE,
 	cliffsDelta,
+	correlatedResolutionNs,
 	DISCARDED_WARMUP,
 	describeResolution,
 	MEASUREMENTS_PER_GROUP,
@@ -175,7 +176,7 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 			const taken = trimmed(samples.present, TRIM_FRACTION);
 			const free = trimmed(samples.absent, TRIM_FRACTION);
 			const resolution = resolutionOf(taken, free);
-			const reached = describeResolution(taken, free);
+			const reached = `${describeResolution(taken, free)}, and ${Math.round(correlatedResolutionNs(samples.present, samples.absent))} ns once the batches are allowed to be correlated`;
 			const planted = trimmed(samples.controlPlanted, TRIM_FRACTION);
 			const quiet = trimmed(samples.controlQuiet, TRIM_FRACTION);
 			const recovered = mean(planted) - mean(quiet);

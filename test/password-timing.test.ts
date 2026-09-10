@@ -15,6 +15,7 @@ import {
 	CLIFFS_DELTA_LIMIT,
 	CONTROL_RECOVERY_TOLERANCE,
 	cliffsDelta,
+	correlatedResolutionNs,
 	DISCARDED_WARMUP,
 	describeResolution,
 	MAD_OUTLIER_FACTOR,
@@ -138,7 +139,7 @@ describe("T-TIM-1 — the sign-in path is uniform under measurement", () => {
 			const present = trimmed(samples.present, TRIM_FRACTION);
 			const absent = trimmed(samples.absent, TRIM_FRACTION);
 			const resolution = resolutionOf(present, absent);
-			const reached = describeResolution(present, absent);
+			const reached = `${describeResolution(present, absent)}, and ${Math.round(correlatedResolutionNs(samples.present, samples.absent))} ns once the batches are allowed to be correlated`;
 
 			const [quietLeft, quietRight] = alternating(samples.controlQuiet);
 			const planted = trimmed(samples.controlPlanted, TRIM_FRACTION);

@@ -22,6 +22,8 @@ export const MEASUREMENTS_PER_GROUP = 1000;
 export const DISCARDED_WARMUP = 100;
 
 const CONTROL_EVERY_ROUNDS = 10;
+const BATCHES = 20;
+const MINIMUM_BATCH = 30;
 
 /**
  * Ten times the leak that matters. The control arms take one sample every `CONTROL_EVERY_ROUNDS`
@@ -153,6 +155,31 @@ export function overlapResolutionNs(left: readonly number[], right: readonly num
 	return (
 		CLIFFS_DELTA_LIMIT * Math.sqrt(Math.PI) * Math.sqrt((variance(left) + variance(right)) / 2)
 	);
+}
+
+/**
+ * The same resolution figure without the independence assumption `resolutionOf` inherits from
+ * 6.20's statistic: the run is cut into batches in the order it was measured, and the spread of the
+ * per-batch differences is what the standard error is taken from. Measured against three sample
+ * sets it came out 1.26 to 2.60 times the independent estimate depending on the batch count, so the
+ * samples carry time correlation and the figure beside it is optimistic by about that much
+ * (E-1542). Reported, never asserted — 6.1 fixes the statistic that decides.
+ */
+export function correlatedResolutionNs(
+	orderedLeft: readonly number[],
+	orderedRight: readonly number[],
+): number {
+	const size = Math.floor(Math.min(orderedLeft.length, orderedRight.length) / BATCHES);
+	if (size < MINIMUM_BATCH) {
+		return Number.NaN;
+	}
+	const differences = Array.from({ length: BATCHES }, (_, index) => {
+		const from = index * size;
+		const left = trimmed(orderedLeft.slice(from, from + size), TRIM_FRACTION);
+		const right = trimmed(orderedRight.slice(from, from + size), TRIM_FRACTION);
+		return mean(left) - mean(right);
+	});
+	return WELCH_T_LIMIT * Math.sqrt(variance(differences) / BATCHES);
 }
 
 export function describeResolution(left: readonly number[], right: readonly number[]): string {
