@@ -55,6 +55,9 @@ afterAll(async () => {
 	}
 	await driver.query("DROP SCHEMA IF EXISTS p_outside CASCADE", []).catch(() => undefined);
 	await driver.query("DROP ROLE IF EXISTS p_backdoor", []).catch(() => undefined);
+	await driver
+		.query("DROP FUNCTION IF EXISTS public.p_delegated_write(uuid)", [])
+		.catch(() => undefined);
 	await driver.close();
 	shared = undefined;
 });
@@ -167,6 +170,89 @@ describe("what the restricted role closes and what it does not (3.11)", () => {
 			expect(outcome.code).toBeUndefined();
 		},
 	);
+});
+
+/** PostgreSQL 15 and newer. Before that there is no parameter ACL, so the grant cannot be made. */
+async function serverRecordsParameterGrants(driver: TestConnection): Promise<boolean> {
+	const [row] = await driver.query<{ recorded: boolean }>(
+		"SELECT to_regprocedure('pg_catalog.has_parameter_privilege(name, text, text)') IS NOT NULL AS recorded",
+		[],
+	);
+	return row?.recorded === true;
+}
+
+/**
+ * `GRANT SET ON PARAMETER track_counts` reaches the capability `rolsuper` reaches and moves neither
+ * role attribute, so the two columns the guard read first answered `false` for a connection that
+ * could switch the row half off around its own statements (E-1006). The case beside it holds the
+ * same capability by a route no catalogue the guard reads records, and is green on purpose: it is
+ * what keeps the reference's claim about residue a measurement rather than an assertion.
+ */
+describe("a capability that is not a role attribute (3.11)", () => {
+	it("refuses a migration role granted SET on the parameter track_counts", async () => {
+		const schema = await freshSchema();
+		const owner = await connection();
+		const victim = await createUser(owner, schema, { email: "victim@example.com" });
+		const recorded = await serverRecordsParameterGrants(owner);
+		if (recorded) {
+			await owner.query(`GRANT SET ON PARAMETER track_counts TO ${theRole().name}`, []);
+		}
+
+		const outcome = await outcomeOf(
+			schema,
+			migrationOf(
+				`SET LOCAL track_counts = off;
+				UPDATE velve.user SET email = 'attacker@example.com' WHERE id = '${victim}';
+				SET LOCAL track_counts = on`,
+			),
+			true,
+		);
+
+		expect(outcome.code).toBe(recorded ? "migration_role_unbounded" : undefined);
+		if (recorded) {
+			expect(outcome.message).toContain("track_counts");
+		}
+		const rows = await owner.query<{ email: string }>(
+			`SELECT email FROM ${schema}.user WHERE id = $1`,
+			[victim],
+		);
+		expect(rows[0]?.email).toBe("victim@example.com");
+	});
+
+	it("accepts a role that reaches the same capability through a function it may only call", async () => {
+		const schema = await freshSchema();
+		const owner = await connection();
+		const victim = await createUser(owner, schema, { email: "victim@example.com" });
+		await owner.query(
+			`CREATE OR REPLACE FUNCTION public.p_delegated_write(target uuid) RETURNS void
+			LANGUAGE plpgsql SECURITY DEFINER AS $delegated$
+			BEGIN
+				PERFORM set_config('track_counts', 'off', true);
+				EXECUTE format('UPDATE %I.user SET email = $1 WHERE id = $2', '${schema}')
+					USING 'attacker@example.com', target;
+				PERFORM set_config('track_counts', 'on', true);
+			END
+			$delegated$`,
+			[],
+		);
+		await owner.query(
+			`GRANT EXECUTE ON FUNCTION public.p_delegated_write(uuid) TO ${theRole().name}`,
+			[],
+		);
+
+		const outcome = await outcomeOf(
+			schema,
+			migrationOf(`SELECT public.p_delegated_write('${victim}')`),
+			true,
+		);
+
+		expect(outcome.code).toBeUndefined();
+		const rows = await owner.query<{ email: string }>(
+			`SELECT email FROM ${schema}.user WHERE id = $1`,
+			[victim],
+		);
+		expect(rows[0]?.email).toBe("attacker@example.com");
+	});
 });
 
 /**
