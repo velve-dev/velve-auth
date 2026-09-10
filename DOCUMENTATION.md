@@ -5638,10 +5638,11 @@ from the same place the client does rather than write it out again.
 
 It is the table **the library declares**, not the table an instance serves. Which
 routes an instance serves depends on its identity mode and its configuration:
-`username.isAvailable` exists only where usernames do, and the eight `/email/*`
-and reset routes only where `email.send` is configured. The client knows neither,
-so it offers all of them; a call to one the server does not serve reaches no
-route, and the 404 arrives as a `VelveTransportError`.
+`username.isAvailable` exists only where usernames do, and the eight routes that
+need an address — magic link, verification, address change and password reset —
+only where the mode has one and `email.send` is configured. The client knows none
+of that, so it offers all of them; a call to one the server does not serve reaches
+no route, and the 404 arrives as a `VelveTransportError`.
 
 A plugin's routes are **not** in it. A plugin contributes its routes at start from
 its configuration, so they are not known when this table is written, and
