@@ -225,16 +225,17 @@ path of GHSA-qq9h-g4jm-xgf3, closed by construction rather than by a flag.
 
 ### Plugins
 
-Half built. A plugin declared in `plugins` is registered at start: its routes
-join the route table under `/x/<plugin-id>/…` and become methods on the
-instance, and its `dependsOn` is sorted topologically. A hook can refuse by
-throwing and observe by returning; it cannot replace the answer, because every
-one of them returns `Promise<void>`.
+A plugin declared in `plugins` is registered at start: its routes join the route
+table under `/x/<plugin-id>/…` and become methods on the instance, its
+`dependsOn` is sorted topologically, its migrations run, its error codes answer
+and its rate-limit rules apply. A hook can refuse by throwing and observe by
+returning; it cannot replace the answer, because every one of them returns
+`Promise<void>`.
 
 **A hook point only fires if an operation reaches it, and most of the operations
-are not built yet.** `beforeSessionRevoke` runs today, on sign-out and on all
-three revocation routes, before the rows go, so a hook that throws leaves the
-session standing. Which of the seven have a producer is a table in
+are not built yet.** `beforeSessionRevoke` runs today, on sign-out, on all three
+revocation routes and on a revocation a plugin performs itself, before the rows
+go, so a hook that throws leaves the session standing. Which of the seven have a producer is a table in
 [`DOCUMENTATION.md`](./DOCUMENTATION.md) and is stated there and not here: a
 plugin can register a point nothing reaches, and it will not run.
 
@@ -248,18 +249,50 @@ inside a string literal the database later executes is not seen. The reference
 says exactly what it refuses, what it lets through and where that hole is.
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
-and on the direct server call alike, and a plugin route cannot make itself a
-reader of the cookie that carries a half-finished sign-in. Six ways of
-configuring plugins wrongly refuse the start rather than warning: a duplicate id,
-a dependency on a plugin that is not configured, a cycle, a route that collides
-with a core one, a route reaching for one of those cookies, and a field the
-interface does not enumerate — which is how a plugin trying to put a middleware
-in front of the origin check is answered.
+and on the direct server call alike; a plugin route cannot make itself a reader
+of the cookie that carries a half-finished sign-in, and it cannot declare itself
+exempt from the origin check. Twelve ways of configuring plugins wrongly refuse
+the start rather than warning, among them a duplicate id, two ids where one is
+the other's table prefix, a dependency on a plugin that is not configured, a
+cycle, a route that collides with a core one, a route reaching for one of those
+cookies or skipping the origin check, an error code outside the plugin's own
+namespace, a route name folding onto something every object already has, and a
+field the interface does not enumerate — which is how a plugin trying to put a
+middleware in front of the origin check is answered.
 
-What is not built is the rest: plugin migrations do not run, and declared error
-codes and rate-limit rules are not read. Each of those three writes a line to
-your log at start naming the plugin and the field, so a declaration that does
-nothing says so.
+A plugin's migrations run in the same versioned runner the core's do, recorded
+under the plugin's own id so its version numbers are its own. What such a
+migration did is measured while it runs, not read out of its SQL: what it created
+or altered is read out of the catalogue rows its own transaction wrote, and what
+it wrote and read out of the transaction's own counters. It may add exactly the
+tables it declares, each carrying its prefix, and inside its own tables it may do
+as it likes; it may create only tables and the objects a table brings with it, so
+a view, a function or a trigger is refused whatever it is called, and so is
+anything else it creates that belongs to none of its own tables; and it may not
+create, alter, empty or remove anything it does not own, in any schema, nor write
+a row into one, nor read one — **its own tables and no others, with no exception
+for the ones it points at.** Declaring a foreign key to `velve.user` costs no
+read and is the ordinary plugin table; filling such a table with rows naming real
+accounts is refused, because the constraint check that costs is indistinguishable
+from a copy of the table, and those rows are written after `migrate()` returns.
+**Nothing that was in the schema before it ran may be gone or renamed
+afterwards** unless it belongs to a table the plugin declared — which is how a
+core index, a core constraint and a core trigger are covered without any list of
+names to fall behind, since everything present before a plugin migration runs is
+the core by construction. And **a plugin migration does not run on a superuser
+connection**, nor on one whose role may create roles or holds `SET` on
+`track_counts`, nor on one that can `SET ROLE` to any of them: every measurement
+above is a privilege away from being switched off, so the connection is part of
+the boundary. Run migrations as a role that **owns** the schema and holds none of
+the three — the reference gives the four statements that produce one, says why
+owning it rather than being granted it is what makes the advice work, and names
+what a check reading three catalogue answers cannot rule out. Core migrations are unaffected, and
+the refusal happens after the core schema has applied and before any plugin
+migration has run, so nothing is left half-done. The refusal rolls the whole migration
+back. What the measurements still do not see — a table dropped in the same
+transaction, a comment, an empty schema left behind, a lock — is written down in
+the reference rather than glossed here. There is no rollback of an applied
+migration, and removing a plugin leaves its tables where they are.
 
 ### The client
 

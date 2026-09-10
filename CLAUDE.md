@@ -631,6 +631,8 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1060 … E-1094 | gate and infrastructure, sixth range |
 | E-1150 … E-1179 | outside the waves · `rules`, second range |
 | E-1180 … E-1239 | wave 6 · `signin-routes` — the password and second-factor rows of 3.15 D.3 |
+| E-900 … E-929 | wave 5 · `plugin`, second range |
+| E-1000 … E-1029 | wave 5 · `plugin`, third range |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not

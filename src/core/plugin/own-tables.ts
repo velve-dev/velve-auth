@@ -1,6 +1,6 @@
 import type { Driver } from "../db/driver.js";
 import { assertIdentifier, assertSchemaName } from "../db/identifier.js";
-import { coreTableNames } from "../db/migrations/index.js";
+import { coreTableNameSet, namesTableOfPlugin } from "../db/migrations/index.js";
 
 class ForeignTableError extends Error {
 	readonly code = "plugin_table_not_its_own";
@@ -137,7 +137,7 @@ function namesAnOwnTable(reference: string, pluginId: string, schema: string): b
 	}
 	const table = parts.at(-1) ?? "";
 	const qualifier = parts.length === 2 ? parts[0] : schema;
-	return qualifier === schema && table.startsWith(`${pluginId}_`);
+	return qualifier === schema && namesTableOfPlugin(table, pluginId);
 }
 
 function namesTheCoreSchema(token: string, pluginId: string, schema: string): boolean {
@@ -285,11 +285,7 @@ export function createOwnTables(options: {
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
-	const coreTables = new Set(coreTableNames());
-	// E-775: an empty list would make the rule the boundary rests on permit everything, silently.
-	if (coreTables.size === 0) {
-		throw new TypeError("no core table name could be read out of the migrations that create them");
-	}
+	const coreTables = coreTableNameSet();
 	// E-747: the refusal is a rejection and never a synchronous throw, so one `catch` covers both.
 	return Object.freeze({
 		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {

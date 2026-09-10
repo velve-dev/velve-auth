@@ -13,7 +13,12 @@ import {
 import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
-import { ConcealedError, VELVE_ERROR_CODES, type VelveErrorCode } from "../http/error-map.js";
+import {
+	ConcealedError,
+	registerDeclaredPluginErrorCodes,
+	VELVE_ERROR_CODES,
+	type VelveErrorCode,
+} from "../http/error-map.js";
 import type { AnyRoute, ServerCallFields } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
@@ -399,5 +404,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	};
 
 	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
+	// E-665: the last statement of the start, because the registry it writes to is process-wide and
+	// a refusal above it must leave nothing of a plugin behind.
+	registerDeclaredPluginErrorCodes(pluginRuntime.declaredErrorCodes);
 	return surface as VelveAuth<M>;
 }

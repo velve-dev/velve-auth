@@ -66,13 +66,14 @@ describe("a plugin's own error codes (3.11, §3)", () => {
 		});
 	});
 
-	// An unregistered namespaced code must not leak the plugin's own text as a message.
+	// A code nobody declared is not part of any published interface, so neither its text nor the
+	// code itself reaches the caller (E-647).
 	it("answers an unregistered namespaced code as an internal error", () => {
 		const error = new VelveError("audit.never-registered");
 
 		expect(error.httpStatus).toBe(500);
 		expect(error.message).toBe("The request could not be completed.");
-		expect(toErrorBody(error).error.code).toBe("audit.never-registered");
+		expect(toErrorBody(error).error.code).toBe("internal_error");
 	});
 
 	it("carries the registered status and message onto VelveError and into the body", () => {

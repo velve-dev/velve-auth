@@ -94,8 +94,9 @@ const PLUGIN_ERRORS = new Map<PluginErrorCode, PluginErrorDefinition>();
 const PLUGIN_ERROR_STATUS_FLOOR = 400;
 const PLUGIN_ERROR_STATUS_CEILING = 599;
 
+/** `Object.hasOwn` and not `in`: `in` walks the prototype, so `toString` read as a core code (E-663). */
 function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
-	return !(code in MESSAGE_BY_ERROR_CODE);
+	return !Object.hasOwn(MESSAGE_BY_ERROR_CODE, code);
 }
 
 /**
@@ -132,9 +133,34 @@ export function registerPluginErrorCodes(
 	}
 }
 
+/**
+ * 3.15 G gives a plugin a bare list of code strings and 3.15 F needs a status and a message for
+ * every code; a declared code answers with the library's own pair, which says the request was
+ * refused and nothing about the plugin. The declaration is held apart from the registrations
+ * above, so that a start never blocks the richer answer an application registers for the same
+ * code — in either order, the explicit one wins (E-646).
+ */
+const DECLARED_PLUGIN_ERROR: PluginErrorDefinition = {
+	httpStatus: 400,
+	message: "The request was refused.",
+};
+
+const DECLARED_PLUGIN_CODES = new Set<PluginErrorCode>();
+
+export function registerDeclaredPluginErrorCodes(codes: readonly PluginErrorCode[]): void {
+	for (const code of codes) {
+		DECLARED_PLUGIN_CODES.add(code);
+	}
+}
+
 /** Not exported from the package: the registry is process-wide, so a public reset is a way for one caller to erase another's codes. */
 export function forgetPluginErrorCodes(): void {
 	PLUGIN_ERRORS.clear();
+	DECLARED_PLUGIN_CODES.clear();
+}
+
+function isKnownPluginErrorCode(code: PluginErrorCode): boolean {
+	return PLUGIN_ERRORS.has(code) || DECLARED_PLUGIN_CODES.has(code);
 }
 
 const UNREGISTERED: PluginErrorDefinition = {
@@ -149,6 +175,9 @@ export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 			httpStatus: HTTP_STATUS_BY_ERROR_CODE[code],
 			message: MESSAGE_BY_ERROR_CODE[code],
 		};
+	}
+	if (DECLARED_PLUGIN_CODES.has(code)) {
+		return PLUGIN_ERRORS.get(code) ?? DECLARED_PLUGIN_ERROR;
 	}
 	return PLUGIN_ERRORS.get(code) ?? UNREGISTERED;
 }
@@ -318,11 +347,20 @@ export function writableWaitInSeconds(retryAfterSeconds: number | undefined): nu
 		: null;
 }
 
+/**
+ * A namespaced code nobody declared is not part of any published interface, so the body carries
+ * `internal_error` rather than a string the caller cannot look up (E-647).
+ */
+function visibleCodeOf(code: AnyErrorCode): AnyErrorCode {
+	return !isPluginErrorCode(code) || isKnownPluginErrorCode(code) ? code : "internal_error";
+}
+
 export function toErrorBody(error: VelveError): ErrorBody {
-	const { message } = resolveErrorCode(error.code);
+	const code = visibleCodeOf(error.code);
+	const { message } = resolveErrorCode(code);
 	const wait = writableWaitInSeconds(error.retryAfterSeconds);
 	if (wait === null) {
-		return { error: { code: error.code, message } };
+		return { error: { code, message } };
 	}
-	return { error: { code: error.code, message, retryAfterSeconds: wait } };
+	return { error: { code, message, retryAfterSeconds: wait } };
 }

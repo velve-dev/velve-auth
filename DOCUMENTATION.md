@@ -5166,9 +5166,10 @@ may add can only be read after the chapter that says what it is added to and wha
 happens when the addition is refused. Its migrations are the same versioned
 runner, which stands further above still.
 
-The registry, the frozen context and the seven hook points are built. What is
-not built is listed at the end of this chapter and remains `plugin`'s (wave 5):
-that feature appends here and owns the rest.
+The registry, the frozen context and the seven hook points are built, and so is
+everything the three declared fields promise: a plugin's migrations run, its
+error codes answer, and its rate-limit rules replace the ones its routes
+declare. What is still not built is listed at the end of this chapter.
 
 ### `VelvePlugin`
 
@@ -5176,41 +5177,62 @@ that feature appends here and owns the rest.
 |---|---|---|
 | `id` | `string` | The namespace. Every route name begins `<id>.`, every path `/x/<id>/`, every table `<id>_`, every error code `<id>.` — all four as types, so a plugin that wants a core route cannot write one that compiles. |
 | `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
-| `migrations` | `readonly PluginMigration<Id>[]?` | Declared and **not yet run**; see below. |
-| `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it: see below. |
+| `migrations` | `readonly PluginMigration<Id>[]?` | Run by the same versioned runner the core's use, under a ledger of the plugin's own; see below. |
+| `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it and a fourth is narrowed to one value: see below. |
 | `hooks` | `PluginHooks?` | Any of the seven points below. |
-| `errorCodes` | `readonly \`${Id}.${string}\`[]?` | Declared and not yet registered; `registerPluginErrorCodes` needs a status and a message, which this list does not carry. |
-| `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | Declared and not yet read; a plugin route carries its own `rateLimit` in its declaration. |
+| `errorCodes` | `readonly \`${Id}.${string}\`[]?` | The codes this plugin's routes may answer with. Each answers `400` with the library's own message; see below. |
+| `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | A rule per route name, which **replaces** the `rateLimit` that route declares. The key must name a route this plugin contributes. |
 
 ### Start errors
 
-Six configurations refuse the start with a `VelveStartupError`. None of them is
-a warning, because each leaves a question with no answer:
+Fourteen configurations refuse the start with a `VelveStartupError` — twelve
+codes only a plugin can trip, and two more a plugin can trip and so can a core
+route. None of them is a warning, because each leaves a question with no answer:
 
 | Code | When |
 |---|---|
 | `plugin_id_duplicated` | Two plugins claim the same `id`, so neither owns its namespace. |
+| `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` is a namespace the instance surface already carries — read from the surface the assembly just built, not from a list of them. |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the eighteen namespaces 3.15 B gives the instance. Those eighteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
+| `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
+| `plugin_migration_table_not_prefixed` | A migration's `createsTables` names a table outside `<id>_`. |
+| `plugin_error_code_not_namespaced` | An `errorCodes` entry does not begin `<id>.` (S-DEFAULT-5). |
+| `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
+| `plugin_rate_limit_rule_unmatched` | A `rateLimitRules` key names no route this plugin contributes. |
 | `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
+| `route_name_segment_reserved` | A route name has a segment every object already carries — `__proto__`, `constructor` or `prototype`. |
 
 `plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
 core route is a start error and not a warning. The type constraint already
 refuses it at compile time; this is the half that holds for a plugin written in
 JavaScript.
 
-#### The three fields a plugin route does not have
+#### The three fields a plugin route does not have, and the fourth it cannot choose
 
 `PluginRoute<Id>` is `RouteDeclaration` without `pendingCookie` and
-`oauthStateCookie`, and with `caller` narrowed to `"anonymous" | "session" |
-"server_only"`. 3.6 names the four routes that accept `__Host-velve_pending` and
-says every other route ignores it completely, and S-CSRF-5 says the same of the
-state pointer — a plugin route is one of the others. The type removes the fields;
+`oauthStateCookie`, with `caller` narrowed to `"anonymous" | "session" |
+"server_only"`, and with `originCheck` narrowed to `"checked"`. 3.6 names the
+four routes that accept `__Host-velve_pending` and says every other route ignores
+it completely, and S-CSRF-5 says the same of the state pointer — a plugin route is
+one of the others. The type removes the fields;
 `plugin_route_reads_a_core_cookie` is the start error that holds for a plugin
 written in JavaScript, where the type is not read.
+
+`originCheck` is the fourth and it is **S-CSRF-6**. The pipeline runs the origin
+check where the route says `"checked"` and skips it where it does not, so a
+plugin route declaring itself `"exempt"` bypasses the check without replacing
+anything and without running ahead of anything — which is the third of the three
+things S-CSRF-6 names. S-CSRF-1 leaves exactly one exempt route, the OAuth
+callback, and a plugin route is not it. The value is kept in the declaration
+rather than removed from it, because 3.15 G.1's example writes
+`originCheck: "checked"` and an example that cannot start is worse than a field
+with one legal value. `plugin_route_exempts_the_origin_check` refuses anything
+else, `undefined` included: a JavaScript plugin that omits the field would
+otherwise reach the pipeline with a route the origin check skips.
 
 Without it the rule held in the core table and not in the table that ships: a
 plugin route could declare itself a reader of the pending cookie and be handed
@@ -5222,15 +5244,350 @@ mounts without plugins.
 `middleware` array or an `assertOriginAllowed` beside the seven declared fields
 would otherwise be dropped without a word and its author left believing it runs.
 3.11 says the extension points are **enumerated**; a field outside the
-enumeration is refused rather than ignored. It sees own enumerable properties, so
-a field carried on a prototype or behind a symbol is not seen.
+enumeration is refused rather than ignored.
 
-A field the interface **does** declare and this version does not read is a
-different case and is not refused: it is a promise the library owes, and refusing
-it would make a documented field unusable. `migrations`, `errorCodes` and
-`rateLimitRules` each write one `warn` line at start naming the plugin and the
-field. That line goes to the configured `log` sink, which by default drops
-everything — so an installation that passes no sink sees nothing.
+**Every name the object answers to is read**, not only its own enumerable ones:
+its own properties enumerable or not, its symbols, and everything it inherits
+short of `Object.prototype`. A plugin written as a **class** carries its methods
+on a prototype, which is the most ordinary way to write one — and it was accepted
+while `Object.keys` was what looked. `constructor` is the one name skipped,
+because every prototype carries it and nothing here reads it. The same reading is
+applied to `hooks`, so a hooks object written as a class is held to the seven
+points as well.
+
+A field the interface **does** declare and this version does not read was a
+different case and was announced rather than refused: `migrations`, `errorCodes`
+and `rateLimitRules` each wrote one `warn` line at start. All three are read now
+and the warning is gone with them, so nothing here writes a line at start about a
+field it does not use. There is no such field left.
+
+### `migrations`
+
+```ts
+interface PluginMigration<Id extends string> {
+  readonly version: number
+  readonly name: string
+  readonly sql: string
+  readonly createsTables: readonly `${Id}_${string}`[]
+}
+```
+
+They run inside `auth.migrate()`, in the same runner as the core's, under the
+same advisory lock, with the same checksum rule, the same statement splitting,
+the same `velve.` rewriting for a configured schema, and the same cascade guard
+(S-TOKEN-6). Every core migration runs first, because a plugin's table
+references `velve.user`. Plugins run in dependency order, and each plugin's
+migrations in ascending `version`.
+
+**The ledger is keyed on the plugin and its own version.** The runner's ledger
+`velve.schema_migration` is keyed on the version alone, and 3.15 G.1's example
+numbers its first migration `1` — the number the core's first carries. Plugin
+migrations are recorded in `velve.plugin_schema_migration` instead, with
+`PRIMARY KEY (plugin_id, version)`, so a plugin's version space is its own and
+two plugins numbering their first migration `1` collide with nothing.
+
+That table is **created only where a plugin brings a migration**, so an
+installation without plugin migrations has the schema `migrations/*.sql`
+describes and nothing more. It is not among the shipped SQL files for the same
+reason: it belongs to a configuration those files do not describe.
+
+`velve.plugin_schema_migration` is a core table for every plugin, so
+`ownTables.query` refuses it — including for a plugin called `plugin`, whose own
+prefix its name begins with. **A core table name is not a plugin's own, whatever
+its prefix**, and all three places that decide it — `ownTables.query`, the
+migration runner, and the check that reads `createsTables` before a statement
+runs — read one predicate built from the core migrations. A plugin called `one`
+does not own `velve.one_time_token`, one called `recovery` does not own
+`velve.recovery_code`, and a core table added later is covered by all three
+without any of them being edited.
+
+#### What a plugin migration may do
+
+**A plugin migration does not run on a superuser connection**, nor on one whose
+role may create roles, nor on one that can reach a role holding `SET` on the
+parameter `track_counts`. Every measurement below is a privilege away from being switched
+off — `SET LOCAL track_counts = off` suppresses the row counters without either
+reading of the guard seeing it, and a role created inside a migration needs no
+counters at all — so the connection is part of the boundary. The library cannot
+check that a restricted role was provisioned, because a role that was never
+created looks exactly like one that was not needed; it can refuse a role too
+powerful for anything it measures to bind, and a missing provision is then a
+refusal rather than a silent pass. It is refused with
+`migration_role_unbounded`, and the message names which of the three refused.
+**Core migrations are unaffected** and run on whatever connection the
+application supplies; only a plugin's do.
+
+The check reads every role the connection can **reach**, not the one it is
+currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it
+back, so a connection that may `SET ROLE` to a superuser is refused whichever
+role it is wearing. It runs again for every migration, so one plugin's escape
+cannot unbind the next plugin's check.
+
+**What the check reads is three catalogue answers, not the capability itself.**
+`rolsuper` and `rolcreaterole` come from `pg_roles`; the third is
+`has_parameter_privilege` for `track_counts`, which reads the parameter ACL
+PostgreSQL 15 added and which is asked only where the server records one, so
+PostgreSQL 14 answers the first two and is not asked the third. **All three
+quantify over the same set** — every role `pg_has_role` says `session_user` or
+`current_user` can reach — because a `NOINHERIT` member does not hold what it may
+`SET ROLE` to, and a question asked of the two current identities would miss it.
+A capability inside that set and missed by the question is a defect and not
+residue; residue is what lies outside it. A capability delegated by a mechanism
+none of those three records — a `SECURITY DEFINER`
+function owned by a more powerful role, an event trigger, an extension — is
+outside the check's reach. It is residue, listed with the rest below, and no
+finite set of columns can be read to rule it out.
+
+**Owning the schema is part of the requirement, not an optimisation.** A role
+that merely holds privileges on the schema gets past this check and is refused
+by PostgreSQL on its first plugin table instead, which is a second and
+unrelated-looking error. Connect as a role produced like this:
+
+```sql
+CREATE ROLE velve_migrator LOGIN PASSWORD '…';
+GRANT CONNECT, CREATE ON DATABASE your_database TO velve_migrator;
+ALTER SCHEMA velve OWNER TO velve_migrator;
+REASSIGN OWNED BY the_role_that_ran_the_core_migrations TO velve_migrator;
+```
+
+`REASSIGN OWNED BY` moves **everything** that role owns in the database, which is
+what you want when the role is dedicated to this schema and is not when it owns
+other things; in that case transfer the schema's tables and functions one at a
+time instead.
+
+The refusal happens **after the core migrations have applied** and before any
+plugin migration has run, so a first `migrate()` that fails this way leaves a
+complete core schema and no plugin schema. Nothing is half-done; fix the
+connection and run it again.
+
+Most managed-Postgres master users hold `CREATEROLE`, so on those a separate
+migration role is required rather than optional.
+
+Four measurements, taken **inside the migration's own transaction**, and none of
+them reads the migration's SQL:
+
+1. **What it created or altered.** Every table whose catalogue row this
+   transaction wrote — its `pg_class` row or one of its `pg_attribute` rows —
+   in **any** schema of the database. That is attribution rather than a
+   before-and-after picture: a picture of every schema is a picture of other
+   people's work, and it moves while a migration runs.
+2. **What tables the configured schema gained and lost**, which is a
+   before-and-after, and safe to take because the schema is the instance's own.
+3. **What rows it wrote**, as the difference between two readings of this
+   transaction's write counters, per table, in any schema.
+4. **What was in the schema before it ran, and still is.** The schema's whole
+   object set, of every catalogue there is, walked from the schema itself along
+   the dependency graph rather than looked up in any list of names. Core
+   migrations run before any plugin migration, so what this reads before a
+   plugin's transaction is the core by construction — nothing to fall behind
+   when a table, an index, a constraint or a trigger is added to it.
+
+The rule those three carry:
+
+- a migration may create exactly the tables `createsTables` names, no more and no
+  fewer, all of them in the configured schema and all carrying the `<id>_`
+  prefix;
+- **nothing that was in the schema before it ran may be gone or renamed
+  afterwards**, unless it belongs to a table the plugin declared. That covers
+  what no list of table names reaches: a core index — `velve.user_email_key` is
+  the bare unique index one account per address rests on — a core constraint, and
+  a core trigger or function, of which S-FIX-2's runtime half is one. What a
+  plugin may still alter and drop is what belongs to the tables it declared in
+  `createsTables`, so the exemption comes from the declaration and is not widened
+  by choosing an id: a plugin called `user_email` does not reach
+  `velve.user_email_key`, and a plugin called `one` does not reach
+  `velve.one_time_token`;
+- **it may create only tables and what a table brings with it** — an index, a
+  sequence, a partitioned parent. A view, a materialized view, a foreign table, a
+  function, a trigger or a rule is refused whatever it is called and wherever it
+  sits, because each of them carries a query or a body, and a query of its own
+  reads what it likes: `CREATE VIEW velve.<id>_peek AS SELECT * FROM
+  velve.password_credential` is two legal-looking steps that end in a complete
+  read of a core table through `ownTables.query`;
+- **everything else it creates must belong to one of its own tables.** That is
+  the rule stated positively, and it is what bounds the kinds this reference does
+  not name. A table's row type, its array type, its indexes, its constraints, its
+  column defaults and the internal triggers a foreign key installs all belong to
+  it; a type, a domain, a collation, an operator or an extension belongs to the
+  schema and not to a table, and is refused. A kind PostgreSQL adds after this
+  was written is refused by the same rule, because nothing has to be added to a
+  list for it to be caught;
+- **inside its own tables it may do as it likes** — a later migration may alter,
+  fill or drop a table an earlier one of the same plugin created;
+- **outside them nothing at all**: nothing created, altered, emptied or removed
+  in any schema, no row written, and **no row read**.
+
+**A migration reads its own tables and no others, with no exception for the ones
+it references.** Declaring a foreign key costs no read — `CREATE TABLE
+velve.audit_entry (user_id uuid REFERENCES velve.user(id) ON DELETE CASCADE)`
+reads no row of `velve.user`, and that is the ordinary plugin table. What is
+refused is a migration that **fills** such a table with rows naming real
+accounts, because each row costs one index probe of `velve.user` and no counter
+here separates that probe from a copy of the table. Write those rows from the
+application after `migrate()` has returned, where the plugin's own tables are
+its to write. The refusal says so.
+
+A migration that breaks any of it is refused with a `MigrationRefusedError` and
+its transaction rolls back, so the schema is as it was and the ledger has no row
+for it.
+
+| `code` | When |
+|---|---|
+| `migration_duplicate_version` | Two of one plugin's migrations claim the same `version`. |
+| `migration_checksum_changed` | A migration's SQL changed after it was applied. |
+| `migration_table_undeclared` | The set of tables that appeared in the schema is not the set `createsTables` names. |
+| `migration_table_unprefixed` | It reached a relation of the configured schema that does not carry the plugin's prefix. |
+| `migration_table_outside_the_schema` | It reached a relation in another schema, `public` included. |
+| `migration_foreign_table_changed` | It altered, emptied, removed or renamed something it does not own — a core index, a core constraint, a core trigger or a core function included. |
+| `migration_created_more_than_a_table` | It made a relation that is not a table or one of a table's own objects — a view, a materialized view, a foreign table — or it created an object belonging to none of its own tables, such as a type, a collation or an extension. |
+| `migration_left_code_behind` | It left a function, a trigger or a rule behind, its own tables included. |
+| `migration_wrote_a_foreign_table` | It wrote a row into a table it does not own. |
+| `migration_read_a_foreign_table` | It read rows of a table it does not own. |
+| `migration_write_check_unavailable` | `track_counts` is off, so what it wrote and read cannot be read. The migration is refused rather than run unmeasured. |
+| `migration_role_unbounded` | The connection reaches a role that is a superuser, may create roles, or holds `SET` on `track_counts`, so nothing measured here binds it. Only plugin migrations are refused. |
+
+Those twelve are the whole of `MigrationRefusalCode`. **S-TOKEN-6's
+`migration_missing_cascade` is not one of them** — a `user_id` column without a
+foreign key to `velve.user` that cascades is refused with a `MissingCascadeError`
+carrying that code, not with a `MigrationRefusedError`. Both roll the same
+transaction back and both leave the ledger without a row; a caller that narrows
+on `MigrationRefusedError` and tests for `migration_missing_cascade` inside it
+writes a branch that cannot be reached.
+
+Measuring rather than parsing is the point, and the boundary is only as wide as
+the measurements. Named by example, what they do **not** see:
+
+- a table **created and dropped inside the same transaction**. It leaves no
+  catalogue row to attribute and no difference to compare, so a scratch table
+  built and thrown away is invisible — though what it could have been filled from
+  is not, because the read of any foreign table is measured.
+- a change that writes no dependency and no catalogue row of a relation: a
+  `COMMENT`, which writes only `pg_description`. A grant is seen, because it
+  rewrites the relation's own catalogue row.
+- **an object that records no dependency on the schema at all.** Not every
+  creation writes a `pg_depend` row, and which ones do is PostgreSQL's choice
+  rather than this library's: a global object records itself in `pg_shdepend`, a
+  schema records only its owner, and a dependency on a pinned system object is
+  deliberately not recorded. `CREATE SCHEMA`, `CREATE ROLE`, `CREATE CAST` and
+  `ALTER ROLE … SET` are each accepted for that reason. The restricted migration
+  role above refuses `CREATE ROLE` and `CREATE CAST` outright, and it does **not**
+  refuse the other two: a role may always alter its own settings, and `migrate()`
+  itself needs `CREATE` on the database, so the privilege that lets a migration
+  leave an empty schema behind is one the library requires. What each of the four
+  costs is a stray object, not a reach into the core schema.
+- **a lock.** `LOCK TABLE velve.user IN ACCESS EXCLUSIVE MODE` changes no
+  catalogue row, writes no row and reads none, so nothing here sees it. It ends
+  with the transaction.
+- a change to a system catalogue, which needs privileges a library cannot assume
+  it lacks.
+- what a statement did that wrote and read nothing and left nothing: a `SELECT`
+  with no table in it, an advisory lock, a `pg_sleep`.
+- **anything at all, if the migration turns the counters off and on again.** The
+  three capabilities the role check reads are refused, so this needs a fourth
+  route to `SET track_counts` — most plainly a `SECURITY DEFINER` function owned
+  by a more powerful role and executable by this one, which no catalogue the
+  check reads records as a property of the connected role. The check makes the
+  three named ways a refusal; it does not, and cannot, promise there is no
+  fourth.
+
+A plugin migration is arbitrary SQL from a package the application installed, on
+the same footing as any other dependency it installs. This is a guardrail against
+the accident rather than a sandbox — the same distinction `ownTables.query`
+makes.
+
+**Qualify every name with `velve.`**, as the core's own migrations do:
+`CREATE TABLE velve.audit_entry (…)`. An unqualified `CREATE TABLE audit_entry`
+creates the table wherever the connection's `search_path` points, which is not
+the configured schema — the cascade guard would not see it, `ownTables.query`
+would resolve the name to the schema and never find it, and it would not be
+dropped with the schema. It is refused as a table reached outside the schema.
+3.15 G.1's example writes exactly that and would be refused; the fault is the
+example's.
+
+The report `auth.migrate()` returns describes the **core** schema:
+`appliedVersions` and `currentVersion` count core migrations, and neither names a
+plugin's. What a plugin's ledger holds is in `velve.plugin_schema_migration`, and
+reading it is a query.
+
+`readSchemaStatus` and `assertSchemaUpToDate` read the core ledger and answer
+about the core schema. A plugin migration handed to either of them is looked for
+in the wrong ledger and reads as permanently pending; give them
+`coreMigrations(mode)`, which is what they are for.
+
+### `errorCodes`
+
+3.15 G declares a bare list of code strings; 3.15 F's contract needs a status and
+a message for each. The list cannot carry either, so the library supplies both,
+identically for every declared code:
+
+- **status `400`**, because a code a plugin declares is a refusal the caller
+  caused, not a fault of the server;
+- **message `"The request was refused."`**, because the declaration carries no
+  text and none is invented for it.
+
+What a declared code buys is therefore the **code**: it survives to the caller,
+in the body and against the route's own `errors` list, and it answers 400 rather
+than 500. A plugin that needs its own status or its own message calls
+`registerPluginErrorCodes` itself — the declaration never overwrites what an
+application registered, in either order, and a registration never has to wait for
+a start.
+
+**A namespaced code nobody declared answers `internal_error`** — 500, the core
+message, and `internal_error` as the code in the body. The plugin's string
+reaches nothing. `errors` is a contract (3.15 D.1), so a route naming a
+namespaced code that `errorCodes` does not declare is a start error rather than a
+500 the caller discovers.
+
+The registry behind this is **process-wide**: two instances in one process share
+it. Since every declared code answers the same way, a second instance declaring
+the same code cannot disagree with the first, and the conflict
+`registerPluginErrorCodes` refuses is only possible between two explicit
+registrations. What remains is that a code declared by one instance's plugin
+stays known to the process after that instance is discarded.
+
+### `rateLimitRules`
+
+3.15 G keys a rule on a route name and 3.15 D.1 puts a rule in the route's own
+declaration. **The map wins**, and it is applied where the registry builds the
+route, so exactly one rule ever reaches the pipeline and the route object carries
+it. A reader of a route declaration therefore has to read the map beside it: the
+`rateLimit` in the declaration is the default, and an entry in the map replaces
+it whole — there is no merging of the two halves.
+
+A key that names no route the plugin contributes is a start error. That is what
+keeps a plugin's rule off a core route's bucket: `"session.revoke"` in the map
+of a plugin that does not contribute `session.revoke` refuses the start rather
+than limiting nothing, and there is no key it could write that reaches a route
+it does not own.
+
+### One reading of the declaration
+
+A plugin's declaration is a JavaScript object a plugin wrote, so any field of it
+may be an accessor. Until this was closed, every check read the declaration and
+`defineRoute` read it **again** — and nothing obliged the two reads to answer the
+same way:
+
+```js
+let reads = 0;
+{ ...route, get originCheck() { return reads++ === 0 ? "checked" : "exempt"; } }
+```
+
+That mounted a route the origin check skipped, which is `S-CSRF-6`. The same
+trick on `caller` made a fifth reader of `__Host-velve_pending` where 3.6
+enumerates four.
+
+**Every field is now read once**, at the start, into a plain object nothing else
+can reach: the id, the dependencies, each migration's four fields, each route's
+ten, the seven hook points, the error codes and the rate-limit map. Every check
+below reads that object, and so do the route table, the migration runner and the
+hook dispatcher. There is one read and one value.
+
+Two consequences worth naming. The reading takes each field by **property
+access** rather than copying own properties, so a field a plugin carries on a
+prototype still reaches the route the way it did before — which is what the
+`in` in the core-cookie refusal is there for. And the array and record fields are
+copied, so a plugin that mutates its own declaration after `createVelveAuth`
+returns changes nothing that runs.
 
 ### The seven hook points
 
@@ -5285,6 +5642,8 @@ revocation routes list the sessions the account owns and announce the ones the
 operation is about to remove — so a `session.revoke` naming a session that is not
 the caller's announces nothing, which is the same answer S-OWNER-4 gives the
 caller. `signOut` needs no listing: it announces the session it already resolved.
+`FrozenRepositories.revokeSession` is the fifth producer and announces the one
+session it was given.
 
 The announcement and the deletion are **not one transaction**. A plugin is told
 about a revocation that a later failure could still prevent, and on
@@ -5339,11 +5698,36 @@ missing either field throws before it reaches the database.
 
 `reason` on `revokeSession` is a `RevokeReason`: `"sign_out"`,
 `"revoked_by_user"`, `"password_changed"`, `"password_reset"` or
-`"identity_linked"`. It is written to the log beside the actor and **nothing
-else**: `revokeSession` dispatches no `beforeSessionRevoke`, so a revocation a
-plugin performs is invisible to every other plugin, while the same revocation
-over HTTP is announced. That asymmetry is deliberate — a hook that revoked would
-re-enter its own hook — and it is a real gap rather than a tidy one (E-766).
+`"identity_linked"`. It is written to the log beside the actor **and announced**:
+`revokeSession` dispatches `beforeSessionRevoke` with the session, its owner and
+that reason, before the row goes, so a hook that throws leaves the session
+standing and the throw reaches the plugin that called `revokeSession`. E-766 left
+this asymmetry open — a revocation a plugin performed was invisible to every
+other plugin while the same revocation over HTTP announced — and named a
+re-entry guard as the precondition for closing it.
+
+**The re-entry guard is the context, not a flag.** A `beforeSessionRevoke` hook
+is handed a context whose own `repositories.revokeSession` revokes without
+announcing, so a hook that revokes a session while being told about one cannot be
+told about that one in turn. The loop 3.11 would otherwise allow — hook revokes,
+announcement fires, hook revokes — cannot start. Nothing is shared between
+requests to make it work, so two revocations running at the same time do not
+silence one another.
+
+The owner is read before the row goes, because the event names it and a deleted
+row cannot be asked. A `sessionId` that is not in the table announces nothing and
+deletes nothing, which is the answer `session.revoke` gives for a session that is
+not the caller's.
+
+Two prices. A hook that keeps a context it was given at another point — an
+`afterSignIn` context, say — and revokes through *that* one inside a
+`beforeSessionRevoke` is announcing again, and can build the loop by hand; the
+guard is structural and structure is what a plugin can route around. **That loop
+is unbounded**: nothing counts the announcements and nothing stops them, so the
+request hangs holding its connection — a plugin built that way is a denial of
+service against the application that installed it, not a noisy error. And the
+announcement and the deletion are not one transaction here either, so a plugin is
+told about a revocation that a later failure could still prevent.
 
 ### `ownTables.query`
 
@@ -5359,11 +5743,13 @@ reference in a position the scan did not model. The boundary is therefore no
 longer carried by recognising positions — but it is not free of the parse
 either, and the residual is named under Rule 1.
 
-**Rule 1 — a core table is refused by its name, wherever the name stands.** The
-sixteen core table names are read out of the SQL that creates them, so no second
-list of them exists; a statement containing any of them, bare or qualified, in
-any position the reader treats as code, is refused. It is the one rule that does
-not depend on recognising a *position*, which is why the boundary rests on it.
+**Rule 1 — a core table is refused by its name, wherever the name stands.**
+Seventeen core table names: sixteen read out of the SQL that creates them, so no
+second list of those exists, and `plugin_schema_migration`, which no migration
+creates — the runner does — and which is therefore named from the one place it is
+defined. A statement containing any of the seventeen, bare or qualified, in any
+position the reader treats as code, is refused. It is the one rule that does not
+depend on recognising a *position*, which is why the boundary rests on it.
 
 It does depend on **one** step of the parse: text inside a string literal is
 erased before the names are looked for, because a literal is data. So a core
@@ -5434,21 +5820,21 @@ the route's name.
 
 ### Not built here
 
-These belong to `plugin` (wave 5) and are the rest of this chapter:
-
-- **Migrations do not run.** 3.11 puts a plugin's migrations in the same
-  versioned runner, and the runner keys its ledger on `version` alone — so a
-  plugin numbering its first migration `1` collides with the core's first. The
-  namespacing that resolves it is a decision, not a wiring step, and it is not
-  taken here.
-- **`errorCodes` are not registered**, because the declaration carries no status
-  and no message and `registerPluginErrorCodes` needs both.
-- **`rateLimitRules` are not read**, because a plugin route already declares its
-  own `rateLimit` and which of the two wins is a decision.
-- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count.
-
-Each of the three fields announces itself at start; the six hook points do not,
-because a plugin that registers one is not wrong to have registered it.
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. Six of the seven are still waiting for the operation that fires them; nothing is said at start about registering one, because a plugin that registers it is not wrong to have done so.
+- **A plugin cannot roll a migration back.** There is no `down`, and removing a
+  plugin from the configuration leaves its tables and its ledger rows standing.
+  Dropping them is the application's to do, by hand — or the plugin's, in a
+  later migration of its own, which may drop a table an earlier one created.
+- **`auth.migrate()` says nothing about a plugin's migrations.** Its report is
+  about the core schema, and widening it would change a return type documented in
+  a chapter this feature does not own. `velve.plugin_schema_migration` is where
+  the answer is.
+- **Nothing bounds what a plugin migration does inside its own tables**, nor how
+  long it takes. A migration that fills a table of its own with a hundred million
+  rows, or takes a lock, or calls a function, is a migration the application
+  chose to install. What it may not reach is [listed with the three measurements
+  above](#what-a-plugin-migration-may-do), and so is what those measurements do
+  not see.
 
 ## The client
 

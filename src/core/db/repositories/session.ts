@@ -77,6 +77,8 @@ export interface SessionRepository {
 	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
 	/** 3.15 G: `revokeSession` is given a session id and no owner, so the id is the whole predicate. */
 	deleteSessionById(input: { readonly sessionId: string }): Promise<RemovedSession | null>;
+	/** The owner a `SessionRevokeEvent` names, read before the row goes so the hook can still refuse (E-640). */
+	findUserIdOfSession(input: { readonly sessionId: string }): Promise<string | null>;
 	deleteSessionOwnedBy(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -229,6 +231,10 @@ function deleteByIdStatement(table: string): string {
 	WHERE id = $1 RETURNING id, user_id`;
 }
 
+function findUserIdStatement(table: string): string {
+	return `SELECT user_id FROM ${table} WHERE id = $1`;
+}
+
 function deleteOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE id = $1 AND user_id = $2 RETURNING id`;
 }
@@ -287,6 +293,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const extendSql = extendIdleDeadlineStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
 	const deleteByIdSql = deleteByIdStatement(table);
+	const findUserIdSql = findUserIdStatement(table);
 	const deleteOwnedSql = deleteOwnedStatement(table);
 	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
@@ -343,6 +350,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				sessionId,
 			]);
 			return row === undefined ? null : { id: row.id, userId: row.user_id };
+		},
+
+		async findUserIdOfSession({ sessionId }) {
+			const [row] = await options.driver.query<{ user_id: string }>(findUserIdSql, [sessionId]);
+			return row === undefined ? null : row.user_id;
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {

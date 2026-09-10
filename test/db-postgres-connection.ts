@@ -516,7 +516,7 @@ export interface TestConnection extends Driver {
 	close(): Promise<void>;
 }
 
-const FALLBACK_DATABASE_URL = "postgres://velve:velve@localhost:5432/velve_test";
+export const FALLBACK_DATABASE_URL = "postgres://velve:velve@localhost:5432/velve_test";
 
 export async function openTestConnection(
 	url = process.env.VELVE_TEST_DATABASE_URL ?? FALLBACK_DATABASE_URL,

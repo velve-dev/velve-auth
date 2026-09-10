@@ -16,7 +16,14 @@ type StartupErrorCode =
 	| "plugin_route_conflict"
 	| "plugin_field_unknown"
 	| "plugin_route_reads_a_core_cookie"
-	| "route_namespace_conflict";
+	| "plugin_route_exempts_the_origin_check"
+	| "plugin_table_prefix_conflict"
+	| "plugin_migration_table_not_prefixed"
+	| "plugin_error_code_not_namespaced"
+	| "plugin_error_code_undeclared"
+	| "plugin_rate_limit_rule_unmatched"
+	| "route_namespace_conflict"
+	| "route_name_segment_reserved";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: the six purpose keys are derived from a root key of 32 bytes",
@@ -39,8 +46,22 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a plugin carries a field the interface does not enumerate; the extension points are enumerated and the security middleware is not one of them (S-CSRF-6)",
 	plugin_route_reads_a_core_cookie:
 		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes that read __Host-velve_pending and a plugin route is not one of them',
+	plugin_route_exempts_the_origin_check:
+		'a plugin route declares an originCheck other than "checked"; S-CSRF-1 leaves the OAuth callback as the only route without it, and exempting one is how a plugin bypasses it (S-CSRF-6)',
+	plugin_table_prefix_conflict:
+		"one plugin id is the table prefix of another, so a table would belong to both of them (S-DEFAULT-5)",
+	plugin_migration_table_not_prefixed:
+		"a plugin migration declares a table outside its own prefix; 3.11 gives a plugin the tables named <plugin-id>_ and no others",
+	plugin_error_code_not_namespaced:
+		"a plugin declares an error code outside its own namespace, which would let two plugins answer for one code (S-DEFAULT-5)",
+	plugin_error_code_undeclared:
+		"a plugin route names an error code the plugin does not declare in errorCodes, so the caller would be answered internal_error for a code the route promises",
+	plugin_rate_limit_rule_unmatched:
+		"a plugin declares a rateLimitRules entry for a route it does not contribute, so the rule would limit nothing",
 	route_namespace_conflict:
 		"two route names fold onto the same object path, so one server method would shadow the other",
+	route_name_segment_reserved:
+		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
 };
 
 export class VelveStartupError extends Error {
