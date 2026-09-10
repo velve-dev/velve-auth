@@ -6553,3 +6553,80 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The client is derived from the table, so it offers twenty-seven calls and cannot offer a twenty-eighth. The moment a row is added in any route module, `E-672`'s `satisfies` refuses to compile until it is added here too — so this gap closes by being unable to stay open, and no separate list has to be kept.
 
 **Price.** `@velve/auth/client` ships without the call the specification uses to introduce it. A reader who reaches for `client.signIn.password` gets a compile error naming a property that does not exist, with nothing to say why. The documentation chapter states the property — the client offers what the library declares — rather than a count, because a count in a reference is wrong on the next merge.
+
+### The requirement count in `E-682` is wrong, and so is the conclusion it carries
+`E-684` · client · correction of `E-682`
+
+**Context.** `E-682` opens *"The spec declares 128 requirements across eighteen classes in section 5"* and argues from that enumeration that none of them binds the client. **The number is 123.** Counted four ways, all agreeing: definitions in section 5 matching `- **S-…:**` → 123; distinct IDs mentioned in section 5 → 123; distinct IDs in the whole German file → 123; distinct IDs in the English translation → 123, and `diff` says the two ID sets are identical. The class count of eighteen is right. **And the specification states the total itself, three times** — line 46 *„123 Sicherheitsanforderungen in achtzehn Fehlerklassen"*, the contents at line 58, and line 4322 *„Zu jeder der 123 Anforderungen…"*.
+
+**Rejected.** Restating the number inside `E-682`. §6 permits a measurement to be restated in place and forbids it for a reason, and it adjudicates this exact case: *"Everything else in an entry is a reason, including a statement about what the specification says, which is checkable but is not a measurement."* The count is a statement about the specification. It is also load-bearing — the entry's whole argument is *I enumerated all of them* — so editing it would repair the appearance of the argument and not the argument.
+
+**Reason.** The count **is** the evidence, and an enumeration returning 128 against an artefact containing 123 was not an enumeration of that artefact. The honest account of how it happened: the list was produced with `grep -oE "S-[A-Z]+-[0-9]+" | sort -u` and printed, and the total was then written from looking at it rather than from `wc -l`. Nothing was miscounted; nothing was counted. The artefact states its own total three times and none of the three was read.
+
+**Price.** Two further claims in `E-682` fall with it, and both are narrower than the count. **The `Client` search was case-sensitive**: eight capital-C occurrences in sections 5 and 6, twelve case-insensitive. The four extra are `client_secret`, `clientDataJSON` and two foreign source paths, so the classification survives and the *completeness* claim does not — the entry says "searched the other way as well" of a search that could not have found a lowercase mention. And **`S-CSRF-4` was cited nowhere** in `src/client/` or `test/client-*.ts` when `E-682` claimed five requirements traced: `S-CACHE-1`, `S-CSRF-1`, `S-REDIR-3` and `S-REDIR-4` were cited and `S-CSRF-4` was not, so the claim was **four of five traced**, not five. Closed in `E-687`.
+
+### Twenty-one requirements are scoped to text the client is part of, and all twenty-one hold anyway
+`E-685` · client · correction of `E-682`
+
+**Context.** `E-682` concludes *"none of them binds the client"*. Read for textual scope rather than for subject, that is wrong. **`S-REDIR-1` is scoped to „Die öffentliche Schnittstelle"** — and section 3.15 is titled *„Die öffentliche Schnittstelle im Detail"* with **E) Der Client** as a subsection of it, so the client sits inside the noun the requirement names. Nineteen further definition lines name *„Bibliothek"* in some case form and carry twenty distinct IDs, one line naming two: `S-TIM-3`, `S-FIX-2`, `S-REPLAY-1`, `S-RAND-1`, `S-COOKIE-6`, `S-CSRF-1`, `S-CSRF-2`, `S-LINK-5`, `S-REDIR-3`, `S-REDIR-4`, `S-REDIR-5`, `S-REDIR-6`, `S-REDIR-7`, `S-REST-5`, `S-REST-7`, `S-KEY-6`, `S-DEFAULT-1`, `S-DEFAULT-2`, `S-DEFAULT-3`, `S-DEFAULT-4`. `@velve/auth/client` is a subpath export of that library. Twenty-one in all.
+
+**Rejected.** Claiming all twenty-one for this feature. Most are vacuous here — the client stores nothing at rest, holds no key, mints no artefact and writes no response — and a feature that claims a requirement it satisfies by not having the code is inflating a list, which is the failure `E-682` avoided in the other direction.
+
+**Reason.** Each holds, and by which construction is worth more than that it holds. `S-REDIR-1` — the client's only redirect-shaped value is a `redirectPath` field forwarded verbatim; it builds no URL for anything to follow. `S-COOKIE-6` — the client sets no cookie at all, the browser does. `S-RAND-1` — the client calls no random source. `S-REPLAY-1` — it mints no artefact. `S-TIM-3` — it compares no secret; the one string operation it performs on a URL is `baseURL.endsWith("/")`, which is a join and not a comparison against an allowlist, which is also what answers `S-CSRF-2` and `S-REDIR-5`. **`S-DEFAULT-1` is the one that bites**, and it is the requirement `E-675` decided without knowing it had a number: the three request options that are not defaults — `credentials`, `cache`, `redirect` — are fixed at their safe settings and are not configurable, so there is no weakening for a caller to choose and none to log.
+
+**Price.** The result stands and the derivation is what was wrong: no requirement is violated and this entry adds none the client fails. The gap `E-682` did **not** anticipate is the one it opened with: its Price names only the *implicit* case, while `S-REDIR-1` is explicit, textual, and invisible for a duller reason — a search for the string `Client` structurally cannot find a requirement that names the client by the title of the section it lives in. **And this entry's own first draft repeated the failure it corrects.** It said fifteen, because the enumeration behind it grepped for the nominative `die Bibliothek` and missed the genitive `der Bibliothek`, which is how `S-RAND-1`, `S-REPLAY-1`, `S-REDIR-4`, `S-REDIR-7` and `S-DEFAULT-1` — including the only one that bites — were dropped. Caught before it was committed, by checking a requirement the draft cited in its Reason but had not listed in its Context. The residual bound is stated rather than hidden: this counts the scopes *„Bibliothek"* and *„öffentliche Schnittstelle"*, and a requirement scoped by some third noun would be missed again.
+
+### A dynamic import walked straight through the guard defending the central constraint
+`E-686` · client · check quality, frozen
+
+**Context.** `E-680` and `E-681` present `test/client-bundle-reach.test.ts` as the measurement of 3.15 E's one hard constraint. It read two import forms — `from "…"` and a bare `import "…"` on its own line. Planted: `export async function planted() { return import("jose"); }` in `src/client/transport.ts`, re-exported from the entry. It typechecks, it builds, `dist/client/transport.mjs` carries `import("jose")` as a live edge, and **all seven assertions passed.**
+
+**Rejected.** Adding a third regex and calling it done. That closes the one hole that was demonstrated and leaves the class open: every import form the pattern set does not enumerate is a hole, and a walker made of patterns cannot know which forms it is missing.
+
+**Reason.** Two guards that fail differently. The walk gains a dynamic-import pattern, so it resolves the edge and reports the bare specifier. Beside it sits one that **reads no syntax at all**: the names of the package's own `dependencies` and `peerDependencies`, read from `package.json` rather than listed here, may not appear as a quoted string anywhere in the closure, and neither may `node:`. It is oblivious to how the module would have been reached.
+
+**Price.** The second guard is what earns the entry rather than the first. Planted three ways: `import("jose")` fails **two** assertions, `import("node:crypto")` fails two, and `import(PLANTED_MODULE)` with the specifier behind a `const` fails **one** — the walk still cannot see it, and only the syntax-free scan does. So the extra pattern would not have been enough, and the guard that catches the harder plant is the one that knows nothing about JavaScript. The cost is that the scan can only refuse names it can enumerate: a bare specifier that is not a declared dependency and not a `node:` builtin — a CDN URL, a name resolved by an import map — passes both guards, and nothing here closes that.
+
+### A path parameter could consume the segment it was meant to fill
+`E-687` · client · correction of `E-678`, frozen
+
+**Context.** `E-678` decided that a path parameter is read for the path and deleted from the rest, and its Price argues that a missing one throws before anything is sent. It did not consider what a *present* one can do. `encodeURIComponent` escapes `/` as `%2F` but leaves `.` alone, so `{ provider: ".." }` built `/sign-in/oauth/callback/..` — which the URL parser normalises to `/sign-in/oauth/` before the request leaves. A segment could not be injected; one could be consumed. No test fed an adversarial value.
+
+**Rejected.** A list of bad values — `.`, `..`, and whatever percent-encoded spellings of them the parser also folds. Rejected because the list is a guess about a parser this project does not own, and the two obvious spellings are not obviously the whole set.
+
+**Reason.** The check is structural: the built path is normalised against a fixed probe origin and must come back byte-identical, so **whatever the URL parser would remove is refused whether or not it was foreseen**. Measured against the character classes `encodeURIComponent` can emit — a slash, a space, a non-ASCII letter, the unreserved marks `!~*'()`, an already-percent-encoded value, a NUL — every one survives unchanged and only `.` and `..` do not, so the check has no false positive to trade against. An empty value is refused beside it, because it collapses the segment and the server answers 404.
+
+**Price.** The first version of the test that proves this over-claimed, and the assertion caught it: it listed `../..` and `%2e%2e/..` as values to be refused, and both are safe — a dot travels only when it is the *whole* segment, and both of those encode to one segment containing dots. The refusal set is exactly `""`, `"."` and `".."`, and it is smaller than the intuition that wrote the test. This is not a server-side vulnerability: the server refuses a literal `..` segment in `toSegments` and would answer 404 for any of these. What was broken is 3.15 E's own property — that each leaf sends the path of its own row.
+
+### Closing the traceability gap cost one comment and one property
+`E-688` · client · correction of `E-682`, frozen
+
+**Context.** `E-682` claims five requirements traced. `S-CSRF-4` was cited in no file this feature owns; the property was argued in prose and reddened by a plant, but nothing in the tree named the requirement.
+
+**Rejected.** Citing it in the entry and leaving the tree alone. §3 encourages a specification reference where code exists because of it, and the argument that a plant reddens the property is not a citation a reader can find from the code.
+
+**Reason.** `S-CSRF-4` now sits on the line it constrains — `method: route.method` in `requestInitOf` — and a test asserts the whole of it: every row of the table is sent with the method the row declares and no other, compared as two lists rather than one route at a time. Guessing the method from the presence of a body reddens three tests where it reddened two.
+
+**Price.** A second correction fell out of the same reading, in a comment rather than in code. `test/client-route-table.test.ts` claimed *"no query string the library writes carries a one-time artefact"* while asserting only that no route taking a `token` field is a GET — and the client does write `code` and `state` into a query string on the OAuth callback. No requirement is broken: `S-REDIR-4` is scoped to a redirect the library generates and the client generates none, and `state` is a pointer whose other half is a cookie (S-CSRF-5). The comment was wider than its test, and the repair splits it in two — one assertion that no envelope field can be a route input, which is what makes `token` the only minted secret an input can carry, and one that every route taking a `token` is a POST.
+
+### The one core module is eight kilobytes, and `E-674` weighed only its behaviour
+`E-689` · client · correction of `E-674`, frozen
+
+**Context.** `E-674` decided that `unwrap` throws the core's `VelveError` and that this is worth letting one module of `core/http/` into the browser. Its Price discusses exactly one cost: that the message is rebuilt from the local table rather than taken from the wire. It never states what the module weighs.
+
+**Rejected.** Reversing the decision. The measurement below does not change the argument — the class identity is what an isomorphic `catch` needs, and it is now checked against the built output rather than asserted.
+
+**Reason.** Measured on the built tree: `dist/core/http/error-map.mjs` is **8082 bytes raw and 2501 gzipped**, against **16862 bytes** for the whole five-module closure — so it is roughly half of what a browser downloads for this entry point. It carries six exported functions, two classes and three tables: two of twenty-five entries each and the concealment map of forty-two. The concealment map is dead weight in a browser specifically: it maps internal reasons to outer codes, and a browser never sees an internal reason. Nothing in it is confidential — 3.15 F.1 publishes the whole table — so this is payload and not disclosure.
+
+**Price.** Half the bundle to make one `instanceof` work, and the entry that decided it did not say so. Splitting the code union and the class out of `error-map.ts` into a leaf both sides import would fix it, and it is not this feature's to do: `error-map.ts` was being changed on another branch while this one ran.
+
+### The plant harness reverted the guard it was planting against, three times, greenly
+`E-690` · client · check quality, frozen
+
+**Context.** After writing the dynamic-import guard and the path-parameter check, both uncommitted, three plants were run through a loop that begins each iteration with `git checkout -- src test`. That restored the working tree to `HEAD` — which did not contain either guard. All three plants reported the same thing they had reported before the guards existed, and the loop printed nothing at all, because the reporting `grep` matched per-test lines that vitest prints **only on failure**.
+
+**Rejected.** Reading the silence as a pass, which is what it looked like: three plants, no failures listed, restored cleanly.
+
+**Reason.** It was caught by a probe written for something else — a throwaway test printing which of three adversarial values was refused, which answered *all three were sent*. That is the only reason it surfaced; nothing in the harness could have said so. The repair is the ordering rule this feature should have had from the start: **commit the guard, then plant against the committed tree**, so that the restore step cannot remove the thing under test.
+
+**Price.** This is §5's own class — *a check must be able to tell found nothing from found a fault* — committed by the writer of `E-680`, which is the entry about exactly this, in the same session and about the same file. Two green signals were wrong at once and they reinforced each other: the plant appeared not to break anything, and the reporter appeared to have nothing to report. `E-680` counts the assertions that pass on an empty walk; it does not count the runs that pass on an empty change.

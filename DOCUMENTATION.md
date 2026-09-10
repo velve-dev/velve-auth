@@ -5605,7 +5605,7 @@ A failure the server names is never one of these. `origin_not_allowed`,
 | | |
 |---|---|
 | Method | The `method` of the row, always. A `GET` row is sent as a `GET` with no body whatever its input is. |
-| Path | `baseURL` + the `path` of the row. A `:segment` is filled from the input field of that name and percent-encoded; a call missing it throws a `TypeError` before anything is sent. |
+| Path | `baseURL` + the `path` of the row. A `:segment` is filled from the input field of that name and percent-encoded. A value that would leave the path something other than the row's is refused with a `TypeError` before anything is sent — that is a missing one, an empty one, and `.` or `..`, which survive encoding and are then removed by the URL parser. A value merely *containing* a dot or a slash is encoded and sent as one segment. |
 | Input | For `GET`, the query string. For `POST`, a JSON body with `Content-Type: application/json`. A field spent on a path segment appears in neither. |
 | `credentials` | `"include"`, because the session is a cookie and the handler may be mounted on another origin. |
 | `cache` | `"no-store"`, the other half of the `Cache-Control` every answer already carries. |
