@@ -169,8 +169,9 @@ function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	return `{${[...new Set(factors)].join(",")}}`;
 }
 
-function toInterval(milliseconds: number): string {
-	return `${Math.round(milliseconds)} milliseconds`;
+/** Every deadline below is `make_interval`, never an interval literal: PostgreSQL before 15 caps the literal's millisecond and second fields at a signed 32-bit value, and the default absolute timeout is past it (E-1571). */
+function secondsOf(milliseconds: number): number {
+	return Math.round(milliseconds) / 1000;
 }
 
 /** 3.15 C: `isCurrent` is set in `session.list` and nowhere else, so everywhere else it is false. */
@@ -194,7 +195,8 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 function insertStatement(table: string): string {
 	return `INSERT INTO ${table}
 		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent)
-	VALUES ($1, $2, now() + $3::interval, now() + $4::interval, $5::text[], $6::inet, $7)
+	VALUES ($1, $2, now() + make_interval(secs => $3::double precision),
+		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7)
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
@@ -214,9 +216,9 @@ function resolveStatement(table: string, users: string): string {
 /** The write interval is a condition of the statement, so two concurrent requests cannot both write. */
 function extendIdleDeadlineStatement(table: string): string {
 	return `UPDATE ${table}
-	SET last_used_at = now(), idle_expires_at = now() + $3::interval
+	SET last_used_at = now(), idle_expires_at = now() + make_interval(secs => $3::double precision)
 	WHERE id = $1 AND user_id = $2
-		AND last_used_at <= now() - $4::interval
+		AND last_used_at <= now() - make_interval(secs => $4::double precision)
 		AND idle_expires_at > now() AND absolute_expires_at > now()
 	RETURNING idle_expires_at`;
 }
@@ -277,8 +279,8 @@ function insertParameters(insert: SessionInsert): unknown[] {
 	return [
 		insert.userId,
 		insert.tokenHash,
-		toInterval(insert.idleTimeoutMs),
-		toInterval(insert.absoluteTimeoutMs),
+		secondsOf(insert.idleTimeoutMs),
+		secondsOf(insert.absoluteTimeoutMs),
 		toFactorArray(insert.factors),
 		insert.ipAddress,
 		insert.userAgent,
@@ -361,8 +363,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			const [row] = await options.driver.query<{ idle_expires_at: unknown }>(extendSql, [
 				sessionId,
 				actor,
-				toInterval(idleTimeoutMs),
-				toInterval(writtenNoSoonerThanMs),
+				secondsOf(idleTimeoutMs),
+				secondsOf(writtenNoSoonerThanMs),
 			]);
 			return row === undefined ? null : toDate(row.idle_expires_at);
 		},

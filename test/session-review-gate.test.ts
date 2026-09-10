@@ -12,7 +12,8 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const REPOSITORY = "src/core/db/repositories/session.ts";
 const source = readFileSync(`${repositoryRoot}${REPOSITORY}`, "utf8");
 
-const IDLE_DEADLINE_ASSIGNMENT = "SET last_used_at = now(), idle_expires_at = now() + $3::interval";
+const IDLE_DEADLINE_ASSIGNMENT =
+	"SET last_used_at = now(), idle_expires_at = now() + make_interval(secs => $3::double precision)";
 
 function flags(text: string): boolean {
 	return statementsIn(text, "//").some(reassignsSessionOwner);
@@ -22,7 +23,7 @@ function flags(text: string): boolean {
 function withOwnerReassignment(text: string): string {
 	const planted = text.replace(
 		IDLE_DEADLINE_ASSIGNMENT,
-		`SET user_id = $5, last_used_at = now(), idle_expires_at = now() + $3::interval`,
+		`SET user_id = $5, last_used_at = now(), idle_expires_at = now() + make_interval(secs => $3::double precision)`,
 	);
 	if (planted === text) {
 		throw new Error("the planted fault did not apply; the statement this test edits has moved");
