@@ -55,8 +55,11 @@ wrong:
 ## Requirements
 
 - Node 20.19 or newer
-- PostgreSQL 14 or newer (CI exercises 14 and 16; 15 is stated from the features
-  the library uses, not measured)
+- PostgreSQL 14 or newer. CI runs the whole test suite against 14 and against 16
+  on every push, so the oldest version this list promises is exercised rather
+  than inferred. 15, 17 and 18 are exercised by no leg and are stated from the
+  features the library uses; 18 is what development runs against, which is one
+  machine and not a tier.
 - A PostgreSQL driver, which you supply
 
 The library assumes Web standards only — `globalThis.crypto` with `subtle` and

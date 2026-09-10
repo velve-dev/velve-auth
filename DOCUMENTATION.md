@@ -3013,12 +3013,14 @@ produces were identical to the literal's for every value measured — 1, 7, 999,
 1000, 1500, 604800000 and 2147483647 milliseconds — on 14.24 and on 18.3, which
 caps neither field; 15, 16 and 17 were not measured (E-1571, E-1581).
 
-**No continuous-integration leg runs PostgreSQL 14.** All four workflows start
-`postgres:16-alpine`, so what stands behind the paragraph above is one 14.24
-cluster on one machine: the whole suite, the nightly tier and the release tier
-were run against it, and nothing repeats that on a push. A leg that would is on a
-separate branch and is not merged. Until it is, treat 14 as measured once rather
-than as covered (E-1583).
+**One continuous-integration leg runs PostgreSQL 14, and three workflows do not.**
+The gate in `ci.yml` runs the whole suite on `postgres:14-alpine` under Node 20.19,
+beside the two legs that run 16, so the paragraph above is repeated on every push
+and at every tag. `nightly.yml`, `release-tier.yml` and the tiers job of
+`release.yml` still start `postgres:16-alpine` alone, so the statistical cases and
+the three cases section 6 puts before a release say nothing about 14 — they were
+each run once against a 14.24 cluster on one machine and nothing repeats them
+(E-1583, E-1507).
 
 A deadline is also bounded by what a `Date` can hold. `absoluteTimeout` and
 `idleTimeout` are refused above 8640000000000000 milliseconds when the block is
