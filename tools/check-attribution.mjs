@@ -76,6 +76,10 @@ function searched(what, command, argv, options) {
 		const hits = execFileSync(command, argv, {
 			encoding: "utf8",
 			maxBuffer: MAX_OUTPUT,
+			/** execFileSync writes the child's stderr to this process's stderr unless stdio says
+			 * otherwise, so a search tool rejecting a pattern prints it whatever this script then
+			 * does with the message. It is captured here and never forwarded (E-1482). */
+			stdio: ["pipe", "pipe", "pipe"],
 			...options,
 		});
 		return { matched: true, hits };
@@ -83,12 +87,13 @@ function searched(what, command, argv, options) {
 		if (error.status === 1) {
 			return { matched: false, hits: "" };
 		}
-		/** The failing command is named by its status and never by its argument vector, which
-		 * would print the pattern this file exists in order not to state. */
-		const detail = String(error.stderr ?? "").trim();
+		/** Neither the argument vector nor the command's own message: `git grep` and `grep` both
+		 * quote the pattern back when they reject one, so forwarding either states the pattern in
+		 * a second place. What is reported is the command and its status, and the message is lost
+		 * — the same trade the rest of this file makes (E-1482). */
 		refuse(
 			`the ${what} scan could not run, so it proves nothing`,
-			detail || `${command} exited ${String(error.status ?? error.code)}`,
+			`${command} exited ${String(error.status ?? error.code)}, and its message is withheld because both search tools quote a pattern they reject`,
 		);
 	}
 }
