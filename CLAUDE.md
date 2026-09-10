@@ -650,6 +650,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1410 … E-1439 | gate and infrastructure, eighth range — the release workflow and the first published version; eighth on the merge order E-1428 fixes, where the branch reserving E-1370 … E-1409 lands first |
 | E-1440 … E-1459 | gate and infrastructure, ninth range — the release workflow's second range, its first block having run out at thirty of thirty |
 | E-1460 … E-1499 | gate and infrastructure, tenth range — the four hand-offs E-1446 lists |
+| E-1570 … E-1599 | outside the waves · `session-interval` — the interval literal PostgreSQL 14 refuses. The start is counted rather than continued: the highest row of this table at 5e033d9 ends at E-1459, and E-1460 … E-1569 are reserved on branches that have not merged, so this table cannot show them. Two of the three were read from their branches — E-1460 … E-1499 on feature/queued-handoffs and E-1500 … E-1529 on ci/postgres-14. The third, E-1530 … E-1569, is taken from the brief that opened this branch and was found on no ref this repository holds |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
