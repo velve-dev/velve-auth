@@ -140,6 +140,22 @@ describe("the rows are served by the instance and not by the test", () => {
 		);
 	});
 
+	/**
+	 * B.9 gives both writing rows `Frisch: ja`. The behavioural tests below cannot hold this on
+	 * their own: `listEveryIdOwnedBy` refuses a stale resolution in the service too, so they stay
+	 * green with the declaration flipped. The declaration is therefore read directly (E-1191).
+	 */
+	it("declares the freshness B.9 requires of the two writing rows", () => {
+		const freshnessOf = (name: string) =>
+			mounted.auth.routes.find((route) => route.name === name)?.freshness;
+
+		expect([freshnessOf("password.set"), freshnessOf("password.change")]).toEqual([
+			"required",
+			"required",
+		]);
+		expect(freshnessOf("signIn.password")).toBe("not_required");
+	});
+
 	it("answers each of them with something other than the router's 404", async () => {
 		for (const path of ["/sign-in/password", "/password/set", "/password/change"]) {
 			expect((await mounted.handler(postTo(path, {}))).status).not.toBe(404);
