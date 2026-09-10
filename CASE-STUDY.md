@@ -6907,3 +6907,14 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The measurement came from a test written to prove the shared row and failing: after a sign-up and two failed sign-ins had emptied a three-token bucket, `password.change` answered 200 rather than 429. The test was removed rather than weakened, because its premise was false and not its threshold. What the change to `resolved.userId` actually buys is conformance with S-RATE-7's wording — the HMAC input is the normalised identifier rather than the account id — and nothing observable beyond it.
 
 **Price.** The repair in `E-1200` now has **no behavioural discriminator**: keyed by id or by identifier, a session route's counter is one stable row either way, so no test can tell the two apart and none is offered. It rests on reading the requirement, which is the weakest footing a change in this branch has. It also cost a wrong reason published in the entry beside it, found only because the test written to guard it failed — which is the argument for writing the guard before believing the reason.
+
+### Thirteen plants, and the one that is meant to be missed
+`E-1202` · signin-routes · testing, frozen
+
+**Context.** The gate's finding was that a plant chosen to suit the repair proves nothing. The table was rebuilt with the gate's own spelling taken verbatim rather than a spelling this branch would have picked: an enumeration oracle confined to the legacy-scheme refusal, reached through a structural cast and a `startsWith` prefix test, naming neither `ConcealedError` nor any reason literal.
+
+**Rejected.** Reporting a single pass or fail per plant. Two of the thirteen are aimed at two different guards and a combined verdict would hide which one answered.
+
+**Reason.** Thirteen plants against the committed tree: the eight of the first table, all still caught, plus the two spellings of the oracle, the second semaphore, the account key reverted to its second comparison form, and the token spent after the shape check. The oracle is run against the static scan and the behavioural suite separately, and the results are reported apart.
+
+**Price.** One row reads **missed** on purpose and must keep reading that way: the structural-cast oracle passes the static scan and is caught only by the byte-identity suite. A table with no missed row would mean the scan was being credited with a spelling it cannot see, which is the reading `E-1197` exists to prevent — so the honest table is the one with a hole in it, and a later reader who "fixes" that row will have made the scan lie.
