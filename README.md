@@ -53,7 +53,8 @@ wrong:
 ## Requirements
 
 - Node 20.19 or newer
-- PostgreSQL 14 or newer
+- PostgreSQL 14 or newer (CI exercises 16; 14 and 15 are stated from the features
+  the library uses, not measured)
 - A PostgreSQL driver, which you supply
 
 The library assumes Web standards only — `globalThis.crypto` with `subtle` and
@@ -157,9 +158,44 @@ re-issues the calling one in the same transaction as the write. That is not a
 switch, and both routes require a session created within the last fifteen
 minutes.
 
-The routes that complete a second factor are **not built yet**, so an account
-with TOTP, a WebAuthn credential or recovery codes can begin the handshake and
-cannot finish it. Do not enrol a second factor against this version.
+The routes that complete the handshake are below.
+
+### Second factors, passkeys and the username change
+
+Built. Seventeen routes, which are the last rows of the specification's table
+that no source declared. A password sign-in that ends in `second_factor_required`
+is now finished by `POST /factor/totp/verify`, `POST /factor/recovery/verify` or
+the two `POST /factor/webauthn/authenticate/*` rows — and those four, and only
+those four, read the five-minute pending cookie. The session that comes out
+records both factors; the pending row and the session are written in one
+transaction, so a failure between them cannot leave a spent state behind.
+
+**TOTP** is enrolled from a fresh session in two steps and removed with a code,
+because whoever can remove a factor without holding it has no factor. A code is
+accepted at most once per thirty-second step, so a code spent to confirm an
+enrolment cannot immediately be spent again to sign in.
+
+**Recovery codes** are ten codes of 160 bits, handed out once in plaintext and
+stored as HMACs. `POST /factor/recovery/generate` always replaces the whole set;
+`GET /factor/recovery/remaining` answers a count and nothing else. This is the
+way back into a username-only account, which is why that mode refuses to start
+without them.
+
+**Passkeys** sign in with no password at all: `POST /sign-in/passkey/start`
+names no account, and which account it was is learned from the authenticator's
+answer. The same credential spent after a password is a second factor instead,
+and the two differ in precondition, in user verification and in the factors the
+session records. Credentials are listed, renamed and removed from a session; a
+credential belonging to another account and one that never existed give the same
+answer, byte for byte, and the account's last remaining way in is refused rather
+than removed.
+
+The nine WebAuthn and passkey routes exist only where `webauthn` is configured.
+Without it they are not refused — they do not exist, and answer 404.
+
+**`POST /username/change`** is the last row: a fresh session, the same
+normalisation a sign-in resolves through, and the unique index rather than a
+prior read deciding whether the name is free.
 
 ### Third-party sign-in
 

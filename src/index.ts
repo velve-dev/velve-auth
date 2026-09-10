@@ -73,6 +73,24 @@ export {
 } from "./core/db/repositories/owned-row-repository.js";
 export type { PendingToken } from "./core/factor/pending/index.js";
 /**
+ * 3.15 B.6 and C: the return types of the `factor.*` and `signIn.passkey.*` methods, and the four
+ * namespaces they fold into. Without them a caller can hold what the methods answer and cannot
+ * write its type down (E-1255).
+ */
+export type {
+	AuthenticatorResponse,
+	RecoveryNamespace,
+	SignInPasskeyNamespace,
+	TotpNamespace,
+	WebAuthnNamespace,
+} from "./core/factor/routes.js";
+export type { TotpEnrollment } from "./core/factor/totp/index.js";
+export type { WebAuthnCredential } from "./core/factor/webauthn/credential-repository.js";
+export type {
+	WebAuthnAuthenticationChallenge,
+	WebAuthnRegistrationChallenge,
+} from "./core/factor/webauthn/service.js";
+/**
  * The three lines below are the whole of what wave 5's features add to this barrel: each owns one
  * module and adds names there, so three writers never meet in this file (E-744).
  */

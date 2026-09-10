@@ -7,9 +7,11 @@ import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
+	createSecondFactorCompletion,
 	type PendingAuthenticationService,
 	type PendingToken,
 } from "../factor/pending/index.js";
+import { type FactorSurface, factorRoutes } from "../factor/routes.js";
 import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
@@ -54,7 +56,7 @@ import {
 	assertKeysAnswerForEveryPurpose,
 	VelveStartupError,
 } from "./startup.js";
-import { nestServerMethods } from "./surface.js";
+import { assertNoStatedNameShadowsADerivedOne, nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
 
 const DEFAULT_SCHEMA = "velve";
@@ -90,6 +92,7 @@ export interface UserNamespace {
 
 export interface UsernameNamespace {
 	isAvailable(input: { username: string } & ServerCallFields): Promise<UsernameAvailabilityAnswer>;
+	change(input: { newUsername: string } & ServerCallFields): Promise<{ readonly user: User }>;
 }
 
 export interface AuthInternals {
@@ -114,7 +117,8 @@ export interface AuthInternals {
 type SeamSurface<M extends IdentityMode> = OAuthSurface<M> &
 	EmailFlowSurface<M> &
 	PasswordSurface<M> &
-	PluginSurface<M>;
+	PluginSurface<M> &
+	FactorSurface;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &
 	SeamSurface<M> & {
@@ -215,6 +219,30 @@ function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakenin
 }
 
 /**
+ * `exactOptionalPropertyTypes` is on, so an option nobody configured has to reach `RouteServices`
+ * as an absent key rather than as a key holding `undefined`. Gathered here rather than written
+ * into the object literal, where six of them are six branches of one function (E-1258).
+ */
+function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
+	return {
+		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
+		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+		...(config.email === undefined ? {} : { email: config.email }),
+		...(config.webauthn === undefined ? {} : { webauthn: config.webauthn }),
+		...(config.totp === undefined ? {} : { totp: config.totp }),
+		...(config.recoveryCodes === undefined ? {} : { recoveryCodes: config.recoveryCodes }),
+	};
+}
+
+/** The session settings the completion needs, in the same absent-key shape and for the same reason. */
+function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
+	return {
+		...(config.session === undefined ? {} : { session: config.session }),
+		...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
+	};
+}
+
+/**
  * E-231: the core reads no clock of its own, so the caller brings the one the configuration falls
  * back to. `src/index.ts` is that caller, and it is where `new Date()` is allowed.
  */
@@ -234,12 +262,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const sessionSettings = sessionSettingsOf(config.session);
 	const rateLimit = rateLimitConfigOf(config.rateLimit);
 
-	const sessions = createSessionService({
-		driver,
-		schema,
-		...(config.session === undefined ? {} : { session: config.session }),
-		...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
-	});
+	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
 	const pending = createPendingAuthenticationService({ driver, schema });
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
@@ -276,9 +299,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		clock,
 		oneTimeTokens,
 		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
-		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
-		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
-		...(config.email === undefined ? {} : { email: config.email }),
+		origins: config.origins,
+		completeSecondFactor: createSecondFactorCompletion({
+			driver,
+			schema,
+			...sessionOptionsOf(config),
+		}),
+		...optionalConfigurationOf(config),
 		pluginRuntime,
 	};
 
@@ -291,6 +318,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...oauthRoutes(services),
 		...emailFlowRoutes(services),
 		...passwordRoutes(services),
+		...factorRoutes(services),
 	];
 	const coreRoutes: readonly AnyRoute[] = [
 		signOut,
@@ -335,14 +363,10 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const readSession = createServerMethod(read, environment);
 
-	const coreSurface = {
-		/**
-		 * The namespaces the seam modules contribute, folded out of their dotted names. The
-		 * hand-written ones below are written after them and win, so a name this file states is
-		 * never shadowed by a derived one.
-		 */
-		...nestServerMethods(seamRoutes, environment),
+	/** The namespaces the route sources contribute, folded out of their dotted names. */
+	const derivedSurface = nestServerMethods(seamRoutes, environment);
 
+	const statedSurface = {
 		routes: environment.routes,
 		identityMode: identity.mode,
 		errorCodes: ERROR_CODES,
@@ -399,9 +423,14 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			: {
 					username: {
 						isAvailable: createServerMethod(usernameTable[0], environment),
+						change: createServerMethod(usernameTable[1], environment),
 					} satisfies UsernameNamespace,
 				}),
 	};
+
+	// E-1192: what this file states after the fold would otherwise replace a derived namespace whole.
+	assertNoStatedNameShadowsADerivedOne(derivedSurface, statedSurface);
+	const coreSurface = { ...derivedSurface, ...statedSurface };
 
 	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
 	// E-665: the last statement of the start, because the registry it writes to is process-wide and

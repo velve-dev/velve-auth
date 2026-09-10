@@ -39,6 +39,7 @@ here as well, where nothing removes it.
 - [Plugins](#plugins)
 - [The client](#the-client)
 - [Signing in with a password](#signing-in-with-a-password)
+- [The factor and passkey routes](#the-factor-and-passkey-routes)
 
 ## Package entry points
 
@@ -5327,7 +5328,9 @@ cannot unbind the next plugin's check.
 `rolsuper` and `rolcreaterole` come from `pg_roles`; the third is
 `has_parameter_privilege` for `track_counts`, which reads the parameter ACL
 PostgreSQL 15 added and which is asked only where the server records one, so
-PostgreSQL 14 answers the first two and is not asked the third. **All three
+PostgreSQL 14 answers the first two and is not asked the third — read from the
+release that added the ACL rather than measured, because no test tier runs a
+server older than 16. **All three
 quantify over the same set** — every role `pg_has_role` says `session_user` or
 `current_user` can reach — because a `NOINHERIT` member does not hold what it may
 `SET ROLE` to, and a question asked of the two current identities would miss it.
@@ -6132,8 +6135,15 @@ that check, so the cheapest hostile attempt is not the one that costs nothing.
 The per-account bucket is keyed by the same comparison form the account is
 resolved through — NFKC, then case folding per code point — so two spellings of
 one identifier cannot advance two counters. `password.set` and `password.change`
-key theirs by the account's own identifier rather than by its id, for the same
-reason.
+key theirs by the account's own identifier rather than by its id, but **not** for
+that reason: neither takes an identifier from the request, so no spelling of one
+could reach them and there is nothing for the folding to collapse. What keying by
+the identifier buys there is that the HMAC input is the normalised identifier
+`S-RATE-7` names rather than the account id, and nothing observable beyond it
+(`E-1201`). Every route that reaches an account through a cookie keys its bucket
+the same way for the same narrow reason — `password.set`, `password.change`,
+`username.change`, the two TOTP rows a session reaches, and the three
+`caller: "pending"` rows that spend a factor.
 
 Concurrent key derivation is bounded by one semaphore per assembled instance,
 sized by `password.concurrentHashLimit`, and every route that hashes shares it —
@@ -6214,3 +6224,256 @@ and `recoveryCodes` — is declared on `VelveAuthConfig` and read by nothing tha
 builds a route. Until they are mounted, an account that offers a second factor
 can begin the handshake and cannot finish it, and `identity: "username"` has no
 way back into a locked-out account. This is recorded as `E-1182`.
+
+## The factor and passkey routes
+
+Architecture 3.15 D.3 declares 47 rows over 46 distinct paths. Seventeen of them
+had no source in the tree: the fourteen under `/factor/`, the two under
+`/sign-in/passkey/` and `POST /username/change`. This chapter is those rows, the
+configuration that reaches them and the two namespaces they add to the instance.
+
+The services behind them — `core/factor/totp`, `core/factor/recovery`,
+`core/factor/webauthn` and `core/factor/pending` — are documented in
+[TOTP and recovery codes](#totp-and-recovery-codes) and [WebAuthn](#webauthn).
+Nothing here repeats them; what is documented here is how a request reaches them.
+
+### The configuration that mounts them
+
+Three optional fields of `VelveAuthConfig` decide what is served.
+
+| Field | Type | Default | What it does |
+|---|---|---|---|
+| `webauthn` | `WebAuthnConfig` | absent | Its absence removes the seven `/factor/webauthn/*` rows and both `/sign-in/passkey/*` rows. They are not refused — they do not exist, and a request to one answers 404. |
+| `totp` | `Partial<TotpConfig>` | absent | `issuer` is the name an authenticator app shows. `stepToleranceInSteps` is declared and **not yet read**; see below. |
+| `recoveryCodes` | `RecoveryCodesConfig` | absent | Required in `identity.mode: "username"`, where a recovery code is the only way back into an account (`S-DEFAULT-4`). Its `count` and `groupSize` are declared and **not yet read**; see below. |
+
+```ts
+const auth = createVelveAuth({
+  // …
+  webauthn: {
+    relyingPartyId: "example.com",
+    relyingPartyName: "Example",
+    origins: ["https://app.example.com"],
+    userVerification: "required",
+  },
+  totp: { issuer: "Example" },
+  recoveryCodes: { count: 10, groupSize: 5 },
+});
+```
+
+The four TOTP rows and the three recovery rows are served in every
+configuration, because D.3 names only `webauthn` as a field whose absence
+removes rows. `recoveryCodes` being absent therefore removes nothing: the codes
+are still generated and redeemed, and what the field is for is the two numbers
+below.
+
+**`totp.issuer` has no default in the specification and the rows mount without
+one.** Where it is absent the issuer is the host of the first entry of `origins`
+— an application configured with `origins: ["https://app.example.com"]` and no
+`totp` block shows `app.example.com` in its users' authenticators. Set `issuer`
+to your product's name. Nothing warns about this at start.
+
+**Three fields do not reach the module behind them.**
+`recoveryCodes.groupSize` is ignored: codes are grouped in eights, where A.8's
+default is five. `recoveryCodes.count` is ignored too, and happens to agree —
+ten codes either way. `totp.stepToleranceInSteps` is ignored: the tolerance is
+one step in both directions and `0` cannot be expressed. All three are recorded
+in `CASE-STUDY.md` under `E-1249`; setting any of them changes nothing today.
+
+### The rows
+
+Every row below carries `originCheck: "checked"` — `S-CSRF-1` leaves the two
+OAuth callbacks as the only exceptions in the library, and nothing here joins
+them. Every answer carries `Cache-Control: no-store` and `Vary: Cookie`.
+
+| Method | Path | Caller | Fresh | Limit |
+|---|---|---|---|---|
+| POST | `/factor/totp/enroll/start` | session | yes | IP |
+| POST | `/factor/totp/enroll/finish` | session | yes | IP + account |
+| POST | `/factor/totp/verify` | pending | — | IP + account |
+| POST | `/factor/totp/remove` | session | yes | IP + account |
+| POST | `/factor/recovery/generate` | session | yes | IP |
+| POST | `/factor/recovery/verify` | pending | — | IP + account |
+| GET | `/factor/recovery/remaining` | session | — | IP |
+| POST | `/factor/webauthn/register/start` | session | yes | IP |
+| POST | `/factor/webauthn/register/finish` | session | yes | IP |
+| POST | `/factor/webauthn/authenticate/start` | pending | — | IP |
+| POST | `/factor/webauthn/authenticate/finish` | pending | — | IP + account |
+| GET | `/factor/webauthn/list` | session | — | IP |
+| POST | `/factor/webauthn/rename` | session | — | IP |
+| POST | `/factor/webauthn/remove` | session | yes | IP |
+| POST | `/sign-in/passkey/start` | — | — | IP |
+| POST | `/sign-in/passkey/finish` | — | — | IP |
+| POST | `/username/change` | session | yes | IP + account |
+
+**Fresh** means the session must have been created inside `session.freshnessWindow`,
+which defaults to fifteen minutes, measured from `created_at` and not from last
+use. **Caller `pending`** means the route is authorised by `__Host-velve_pending`
+and not by a session.
+
+The four rows with caller `pending` are exactly the four architecture 3.6 names,
+and they are the only routes in the library that read that cookie for authority.
+`GET /pending` and `POST /pending/cancel` read its value without being authorised
+by it. Every other route ignores it completely, and answers a request carrying
+only that cookie exactly as one carrying no cookie at all.
+
+### The instance methods
+
+The rows fold into two namespaces, from their dotted names.
+
+```ts
+auth.factor.totp.enroll.start({ sessionToken })            // TotpEnrollment
+auth.factor.totp.enroll.finish({ sessionToken, code })     // void
+auth.factor.totp.verify({ pendingToken, code })            // SignInResult
+auth.factor.totp.remove({ sessionToken, code })            // void
+
+auth.factor.recovery.generate({ sessionToken })            // { codes }
+auth.factor.recovery.verify({ pendingToken, code })        // SignInResult
+auth.factor.recovery.remaining({ sessionToken })           // { remainingCount }
+
+auth.factor.webauthn.register.start({ sessionToken })
+auth.factor.webauthn.register.finish({ sessionToken, challengeToken, response, label })
+auth.factor.webauthn.authenticate.start({ pendingToken })
+auth.factor.webauthn.authenticate.finish({ pendingToken, challengeToken, response })
+auth.factor.webauthn.list({ sessionToken })                // WebAuthnCredential[]
+auth.factor.webauthn.rename({ sessionToken, credentialId, label })
+auth.factor.webauthn.remove({ sessionToken, credentialId })  // void
+
+auth.signIn.passkey.start({})                              // a challenge
+auth.signIn.passkey.finish({ challengeToken, response })   // SignInResult
+
+auth.username.change({ sessionToken, newUsername })        // { user }
+```
+
+Every one of them also takes `origin`, which the origin check reads on the direct
+server call exactly as it reads the header over HTTP (`S-CSRF-1`).
+
+`response` is the authenticator's answer, passed through as the browser produced
+it. It is checked for being an object and not for its contents: WebAuthn
+extension outputs are open-ended, the library reads none of them, and what judges
+the answer is the verifier rather than a validator that would need widening for
+every extension a browser adds.
+
+**`auth.factor.webauthn` is declared on the instance type whether or not
+`webauthn` is configured, and is absent at run time where it is not.** 3.15 B
+declares the namespace without a condition and the library's mechanism for a
+conditional namespace works on the identity mode, which this is not a function
+of. Calling into it on an instance with no `webauthn` block is a
+`TypeError: … is not a function` rather than a type error or a named refusal
+(`E-1244`).
+
+### Completing a second factor
+
+`POST /sign-in/password` against an account with a factor enrolled answers
+`second_factor_required`, sets `__Host-velve_pending` for five minutes and writes
+no session row. `pending.availableFactors` names what the account can be finished
+with — `"totp"`, `"webauthn"`, `"recovery"` — and `attemptsRemaining` counts down
+from five.
+
+Any of the four completing routes then turns the state into a session in **one
+transaction**: the pending row is deleted and the session inserted together, so
+a failure between them can leave neither a spent state nor a session whose state
+could be spent again (`S-FIX-1`). The answer sets the session cookie and clears
+the pending one.
+
+```ts
+// after a 200 answering second_factor_required
+const result = await auth.factor.totp.verify({ origin, pendingToken, code: "123456" });
+if (result.status === "signed_in") {
+  result.session.factors; // ["password", "totp"]
+}
+```
+
+Five failed attempts destroy the state and the sign-in starts again at the
+password. The fifth failure answers `too_many_factor_attempts` (429); a request
+made after the row is gone answers `invalid_pending_authentication` (401),
+which is also what an expired, a cancelled and an invented state answer.
+
+**A code spent on an enrolment cannot be spent again in the same window.** TOTP
+accepts one code per account per thirty-second step, and confirming an enrolment
+claims that step. Confirming and then immediately signing in with the same code
+is refused as `invalid_factor_code`, which is the same code a wrong guess gets
+(`S-REPLAY-4`).
+
+### Signing in with a passkey
+
+`POST /sign-in/passkey/start` takes no input and names no account: the
+authenticator offers whatever discoverable credential it holds, and which
+account it was is learned from the answer. User verification is `"required"`
+here and no configuration lowers it.
+
+The resulting session records `factors: ["webauthn"]` — no password took part.
+The same credential presented after a password through
+`/factor/webauthn/authenticate/*` gives `["password", "webauthn"]` instead. The
+two are separate namespaces rather than one with a flag, because they differ in
+precondition, in user verification and in outcome.
+
+`signCountRegressed` is present on both WebAuthn results. It reports that the
+authenticator's counter did not advance, which a synchronised passkey does not
+keep; it is never a refusal (`L-9`).
+
+A challenge is valid for five minutes, is consumed by `DELETE … RETURNING`, and
+is bound to the ceremony it was issued for. Replaying an assertion answers
+`webauthn_challenge_invalid` (400).
+
+### Managing credentials
+
+`GET /factor/webauthn/list` answers the caller's own credentials with their
+label, transports, AAGUID, backup flags and last use. `label` is required at
+registration: three rows all called "Security key" is not a list anyone can act
+on, and an AAGUID names a model rather than a device.
+
+`POST /factor/webauthn/remove` deletes a row only where `user_id` matches the
+calling session. A credential belonging to another account, and a `credentialId`
+that names no row at all, produce byte-identical answers — same status, same
+headers, same body (`S-OWNER-3`, `S-OWNER-8`). Removing the account's last
+remaining way in is refused with `last_sign_in_method` (409); the count is a
+`password_credential`, every WebAuthn credential and every further identity, and
+recovery codes do not count because they are a second factor and not a way in.
+
+### `POST /username/change`
+
+Exists only in the identity modes that have usernames. It takes a session
+created inside the freshness window and one field.
+
+```ts
+const { user } = await auth.username.change({ origin, sessionToken, newUsername: "ada" });
+```
+
+The name is normalised by `core/identity` — the same NFKC-then-case-fold that a
+sign-in is resolved through — so the form written and the form later matched
+cannot disagree. A name the rules reject answers `username_invalid` (400); a name
+already taken answers `username_taken` (409), decided by the unique index at the
+moment of the write rather than by an earlier read that a race could invalidate.
+Two spellings that fold onto one comparison form are one name, so `OCCUPIED` is
+refused where `occupied` is taken.
+
+Changing a username does not revoke other sessions. Only the four password
+writes do that, and that is not a switch.
+
+### Error codes these rows can answer
+
+Beyond `invalid_input`, `rate_limited`, `origin_not_allowed` and
+`account_disabled`, which every route with the matching declaration can answer:
+
+| Code | Status | Where |
+|---|---|---|
+| `invalid_factor_code` | 401 | a wrong TOTP code, a replayed step, a factor not confirmed |
+| `invalid_recovery_code` | 401 | a code not found, exhausted, or never generated |
+| `invalid_pending_authentication` | 401 | a pending state absent, expired, consumed or invented |
+| `too_many_factor_attempts` | 429 | the fifth failed attempt, which also destroys the state |
+| `factor_already_enrolled` | 409 | a second TOTP enrolment |
+| `factor_not_enrolled` | 409 | confirming or removing a TOTP factor there is none of, or a WebAuthn challenge for an account with no credential |
+| `webauthn_challenge_invalid` | 400 | a challenge absent, expired or issued for the other ceremony |
+| `webauthn_credential_rejected` | 401 | an unknown credential, a bad signature, a wrong relying party or origin, or a user not verified |
+| `last_sign_in_method` | 409 | removing the account's last way in |
+| `username_taken` | 409 | the unique index refused the new name |
+| `username_invalid` | 400 | the name fails the configured rules |
+| `session_required` | 401 | no session, or one that no longer resolves |
+| `freshness_required` | 403 | a session older than the freshness window |
+
+Which internal reason produced a visible code is decided in
+`core/http/error-map.ts` and nowhere else, and the true reason goes to the log.
+Several distinct reasons collapse onto one code deliberately: a credential that
+is unknown and one whose signature is wrong are one answer, and so are a
+recovery code that was already spent and one that never existed.

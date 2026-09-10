@@ -79,6 +79,10 @@ import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthRe
 import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
+import { TotpEnrollment } from "./core/factor/totp/secret.mjs";
+import { WebAuthnCredential } from "./core/factor/webauthn/credential-repository.mjs";
+import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "./core/factor/webauthn/service.mjs";
+import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpNamespace, WebAuthnNamespace } from "./core/factor/routes.mjs";
 import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
@@ -100,6 +104,7 @@ export {
 	type AnyRoute,
 	type AuthInternals,
 	type AuthenticationFactor,
+	type AuthenticatorResponse,
 	type BaseConfig,
 	type CallerRequirement,
 	ChangedUser,
@@ -152,6 +157,7 @@ export {
 	type RateLimitConfig,
 	type RecoveryCodesConfig,
 	type RecoveryCodesRequirement,
+	type RecoveryNamespace,
 	RecoveryPasswordNamespace,
 	type RedeemedOneTimeToken,
 	type ResolvedSession,
@@ -170,6 +176,7 @@ export {
 	SignInCompletedEvent,
 	SignInEvent,
 	type SignInLookup,
+	type SignInPasskeyNamespace,
 	type SignInResult,
 	SignUpNamespace,
 	type SignUpResult,
@@ -177,6 +184,8 @@ export {
 	TRUST_LEVEL_EVENTS,
 	TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS,
 	type TotpConfig,
+	type TotpEnrollment,
+	type TotpNamespace,
 	type TrustLevelEvent,
 	UnknownColumnError,
 	type User,
@@ -193,8 +202,12 @@ export {
 	type VelveErrorCode,
 	VelvePlugin,
 	VelveStartupError,
+	type WebAuthnAuthenticationChallenge,
 	type WebAuthnConfig,
+	type WebAuthnCredential,
 	type WebAuthnCredentialId,
+	type WebAuthnNamespace,
+	type WebAuthnRegistrationChallenge,
 	actorOfConsumedOAuthFlow,
 	actorOfRedeemedOneTimeToken,
 	actorOfResolvedSession,

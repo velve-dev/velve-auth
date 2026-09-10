@@ -25,5 +25,13 @@ export function widestVelveAuth(): VelveAuth<"username_email"> {
 			callbackBaseUrl: `${TEST_ORIGIN}/api/auth/sign-in/oauth/callback`,
 			trustedProviders: [],
 		},
+		// A.2: without this the nine webauthn and passkey rows are not served, and the widest
+		// configuration is what the client table is compared against (E-1242).
+		webauthn: {
+			relyingPartyId: "app.example.com",
+			relyingPartyName: "Velve Auth tests",
+			origins: [TEST_ORIGIN],
+			userVerification: "required",
+		},
 	});
 }
