@@ -2,5 +2,5 @@
 	"$schema": "https://unpkg.com/knip@5/schema.json",
 	"entry": ["test/**/*.test.ts", "tools/check-*.mjs"],
 	"project": ["src/**/*.ts", "test/**/*.ts", "tools/**/*.mjs"],
-	"ignoreDependencies": ["@simplewebauthn/server", "hash-wasm", "jose", "otpauth"]
+	"ignoreDependencies": ["hash-wasm"]
 }

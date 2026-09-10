@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { IdentityMode } from "../src/core/db/migrations/identity-mode.js";
 
-export interface DeclaredRow {
+interface DeclaredRow {
 	readonly method: string;
 	readonly path: string;
 }
