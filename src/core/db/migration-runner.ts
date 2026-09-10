@@ -96,19 +96,33 @@ FROM pg_stat_xact_user_tables`;
 const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
 /**
- * What the connection may do regardless of anything measured here. `track_counts` takes a superuser
- * to change, and a superuser migration turns the row half off and on again around its own statements
- * without either reading of the guard seeing it; creating a role takes a superuser or `CREATEROLE`,
- * and a role needs no counters at all (E-920). Every role the connection can reach is read, not the
- * one it is currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it back,
- * so a guard that read that alone was one statement from being undone (E-929).
+ * The two role attributes that reach past everything measured here: a superuser turns the row half
+ * off and on again around its own statements without either reading of the guard seeing it, and
+ * creating a role needs no counters at all (E-920). Every role the connection can reach is read, not
+ * the one it is currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it
+ * back, so a guard that read that alone was one statement from being undone (E-929). The third
+ * column reports whether this server records parameter grants at all, which is what decides whether
+ * the statement below can be sent (E-1006).
  */
 const PRIVILEGES_OF_THE_CONNECTED_ROLE = `
 SELECT coalesce(bool_or(role_.rolsuper), false) AS is_superuser,
-       coalesce(bool_or(role_.rolcreaterole), false) AS creates_roles
+       coalesce(bool_or(role_.rolcreaterole), false) AS creates_roles,
+       to_regprocedure('pg_catalog.has_parameter_privilege(name, text, text)') IS NOT NULL
+         AS parameter_grants_are_recorded
 FROM pg_roles role_
 WHERE pg_has_role(session_user, role_.oid, 'MEMBER')
    OR pg_has_role(current_user, role_.oid, 'MEMBER')`;
+
+/**
+ * `GRANT SET ON PARAMETER track_counts` reaches the same capability as `rolsuper` and moves neither
+ * role attribute, so a guard reading the two above alone accepted a connection that could switch the
+ * row half off (E-1006). It is a second statement rather than a fourth column because
+ * `has_parameter_privilege` does not exist before PostgreSQL 15, and every name a statement mentions
+ * is resolved before any branch inside it is taken.
+ */
+const MAY_SET_THE_COUNTER_PARAMETER = `
+SELECT has_parameter_privilege(session_user, 'track_counts', 'SET')
+    OR has_parameter_privilege(current_user, 'track_counts', 'SET') AS may_switch_the_counters`;
 
 /**
  * Every object that belongs to the schema, of every catalogue there is, walked from the schema
@@ -189,31 +203,62 @@ export class MigrationRefusedError extends Error {
 	}
 }
 
-/**
- * The library cannot check that a restricted migration role was provisioned — a role that does not
- * exist is indistinguishable from one that was never needed — but it can refuse a role too powerful
- * for anything measured here to bind. A missing provision is then a refusal and not a silent pass,
- * which is the property the role form was declined for lacking in E-909. Only plugin migrations are
- * refused; the core's own run on whatever connection the application supplies (E-920).
- */
-async function assertTheRoleCannotOutrunTheMeasurement(
-	driver: Driver,
-	schema: string,
-): Promise<void> {
-	const [role] = await driver.query<{ is_superuser: boolean; creates_roles: boolean }>(
-		PRIVILEGES_OF_THE_CONNECTED_ROLE,
-		[],
-	);
+interface ConnectedRoleRow {
+	readonly is_superuser: boolean;
+	readonly creates_roles: boolean;
+	readonly parameter_grants_are_recorded: boolean;
+}
+
+/** Named in the refusal, so a reader is told which of the three catalogue answers refused them. */
+async function capabilityThatOutrunsTheMeasurement(driver: Driver): Promise<string | undefined> {
+	const [role] = await driver.query<ConnectedRoleRow>(PRIVILEGES_OF_THE_CONNECTED_ROLE, []);
 	if (role === undefined) {
 		throw new MigrationRefusedError(
 			"migration_role_unbounded",
 			"the privileges of the connected role could not be read, so what a plugin migration may do is unknown",
 		);
 	}
-	if (role.is_superuser || role.creates_roles) {
+	if (role.is_superuser) {
+		return "is a superuser";
+	}
+	if (role.creates_roles) {
+		return "may create roles";
+	}
+	if (!role.parameter_grants_are_recorded) {
+		return undefined;
+	}
+	const [grant] = await driver.query<{ may_switch_the_counters: boolean }>(
+		MAY_SET_THE_COUNTER_PARAMETER,
+		[],
+	);
+	if (grant === undefined) {
 		throw new MigrationRefusedError(
 			"migration_role_unbounded",
-			`a plugin migration does not run on a connection that can reach a role which ${role.is_superuser ? "is a superuser" : "may create roles"}: such a role switches off the measurements this boundary rests on. The core schema is applied and no plugin migration has run, so nothing is half-done. Connect as a role that owns the schema and holds neither privilege — owning it is part of the requirement, not an optimisation, because a role that merely has privileges on the schema is refused by PostgreSQL on its first plugin table instead: CREATE ROLE velve_migrator LOGIN PASSWORD '<password>'; GRANT CREATE ON DATABASE <database> TO velve_migrator; ALTER SCHEMA ${schema} OWNER TO velve_migrator; REASSIGN OWNED BY <the role that ran the core migrations> TO velve_migrator;`,
+			"whether the connected role was granted SET on track_counts could not be read, so what a plugin migration may do is unknown",
+		);
+	}
+	return grant.may_switch_the_counters ? "holds SET on the parameter track_counts" : undefined;
+}
+
+/**
+ * The library cannot check that a restricted migration role was provisioned — a role that does not
+ * exist is indistinguishable from one that was never needed — but it can refuse a role too powerful
+ * for anything measured here to bind. A missing provision is then a refusal and not a silent pass,
+ * which is the property the role form was declined for lacking in E-909. Only plugin migrations are
+ * refused; the core's own run on whatever connection the application supplies (E-920). What this
+ * reads is three catalogue answers and not the capability itself, so a mechanism that delegates the
+ * same capability by some other route is outside its reach and is named as residue rather than
+ * denied (E-1006).
+ */
+async function assertTheRoleCannotOutrunTheMeasurement(
+	driver: Driver,
+	schema: string,
+): Promise<void> {
+	const capability = await capabilityThatOutrunsTheMeasurement(driver);
+	if (capability !== undefined) {
+		throw new MigrationRefusedError(
+			"migration_role_unbounded",
+			`a plugin migration does not run on a connection that can reach a role which ${capability}: such a role switches off the measurements this boundary rests on. The core schema is applied and no plugin migration has run, so nothing is half-done. Connect as a role that owns the schema and holds none of the three — owning it is part of the requirement, not an optimisation, because a role that merely has privileges on the schema is refused by PostgreSQL on its first plugin table instead: CREATE ROLE velve_migrator LOGIN PASSWORD '<password>'; GRANT CREATE ON DATABASE <database> TO velve_migrator; ALTER SCHEMA ${schema} OWNER TO velve_migrator; REASSIGN OWNED BY <the role that ran the core migrations> TO velve_migrator;`,
 		);
 	}
 }
