@@ -110,8 +110,14 @@ function shellValue(name) {
 
 function expanded(raw, assistants, what) {
 	const value = raw.replace(SHELL_ESCAPE, "$1").split("$ASSISTANTS").join(assistants);
-	if (UNEXPANDED_VARIABLE.test(value)) {
-		refuse(`${DETECTOR}'s ${what} names a shell variable this script does not expand`, value);
+	const unexpanded = UNEXPANDED_VARIABLE.exec(value);
+	if (unexpanded !== null) {
+		/** The variable is named and the value is not: a refusal that prints the derived pattern
+		 * states it in a second place, which is the whole thing this script is built to avoid. */
+		refuse(
+			`${DETECTOR}'s ${what} names a shell variable this script does not expand`,
+			`${unexpanded[0]}… at offset ${unexpanded.index} — the pattern itself is not printed here`,
+		);
 	}
 	return value;
 }
