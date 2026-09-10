@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
@@ -98,18 +98,19 @@ function sessionCookieOf(answer: Response): string | null {
  * the *account* has to be held equal — which one account read twice does and two accounts cannot.
  */
 interface SignedIn {
-	readonly user: Record<string, unknown>;
-	readonly sessionToken: string;
+	readonly status: number;
+	readonly body: { status?: string; user?: Record<string, unknown> };
+	readonly sessionToken: string | null;
 }
 
-async function signInSuccessfully(): Promise<SignedIn> {
+/** Collected rather than asserted, so a violation fails a named test instead of skipping four. */
+async function attemptToSignIn(): Promise<SignedIn> {
 	const { answer } = await signIn(PASSWORD);
-	const body = (await answer.json()) as { status: string; user: Record<string, unknown> };
-	const token = sessionCookieOf(answer);
-
-	expect([answer.status, body.status]).toEqual([200, "signed_in"]);
-	expect(token).not.toBeNull();
-	return { user: body.user, sessionToken: token ?? "" };
+	return {
+		status: answer.status,
+		body: (await answer.json()) as SignedIn["body"],
+		sessionToken: sessionCookieOf(answer),
+	};
 }
 
 function keysWhoseValuesDiffer(
@@ -128,16 +129,24 @@ describe("T-TIM-7: an unverified address changes nothing about signing in (S-TIM
 	let verifiedRefusal: Attempt;
 	let verifiedSuccess: SignedIn;
 
+	let verificationBefore: Date | null = null;
+	let verificationAfter: Date | null = null;
+
 	beforeAll(async () => {
-		expect(await storedVerificationState()).toBeNull();
+		verificationBefore = await storedVerificationState();
 		unverifiedRefusal = await signIn(WRONG_PASSWORD);
-		unverifiedSuccess = await signInSuccessfully();
+		unverifiedSuccess = await attemptToSignIn();
 
 		await markTheAddressVerified();
 
-		expect(await storedVerificationState()).not.toBeNull();
+		verificationAfter = await storedVerificationState();
 		verifiedRefusal = await signIn(WRONG_PASSWORD);
-		verifiedSuccess = await signInSuccessfully();
+		verifiedSuccess = await attemptToSignIn();
+	});
+
+	it("reads the two states it means to compare", () => {
+		expect(verificationBefore).toBeNull();
+		expect(verificationAfter).not.toBeNull();
 	});
 
 	it("issues the same sequence of statements for a wrong password either way", () => {
@@ -154,26 +163,34 @@ describe("T-TIM-7: an unverified address changes nothing about signing in (S-TIM
 	});
 
 	it("issues a session for a correct password either way, and a different one each time", () => {
-		expect(unverifiedSuccess.sessionToken).not.toBe("");
-		expect(verifiedSuccess.sessionToken).not.toBe("");
+		expect([unverifiedSuccess.status, verifiedSuccess.status]).toEqual([200, 200]);
+		expect([unverifiedSuccess.body.status, verifiedSuccess.body.status]).toEqual([
+			"signed_in",
+			"signed_in",
+		]);
+		expect(unverifiedSuccess.sessionToken).not.toBeNull();
+		expect(verifiedSuccess.sessionToken).not.toBeNull();
 		expect(verifiedSuccess.sessionToken).not.toBe(unverifiedSuccess.sessionToken);
 	});
 
 	it("returns a user that differs in emailVerifiedAt and in nothing else", () => {
-		expect(keysWhoseValuesDiffer(unverifiedSuccess.user, verifiedSuccess.user)).toEqual([
-			"emailVerifiedAt",
-		]);
-		expect(unverifiedSuccess.user.emailVerifiedAt).toBeNull();
-		expect(verifiedSuccess.user.emailVerifiedAt).not.toBeNull();
+		const unverified = unverifiedSuccess.body.user ?? {};
+		const verified = verifiedSuccess.body.user ?? {};
+
+		expect(keysWhoseValuesDiffer(unverified, verified)).toEqual(["emailVerifiedAt"]);
+		expect(unverified.emailVerifiedAt).toBeNull();
+		expect(verified.emailVerifiedAt).not.toBeNull();
 	});
 
 	/**
 	 * Without this the comparison above is vacuous: two users that carry one field each would also
-	 * differ in exactly one key.
+	 * differ in exactly one key, and two absent users in none.
 	 */
 	it("compares a user with more than one field, so the one difference means something", () => {
-		expect(Object.keys(unverifiedSuccess.user).length).toBeGreaterThan(4);
-		expect(Object.keys(unverifiedSuccess.user)).toContain("emailVerifiedAt");
+		const unverified = unverifiedSuccess.body.user ?? {};
+
+		expect(Object.keys(unverified).length).toBeGreaterThan(4);
+		expect(Object.keys(unverified)).toContain("emailVerifiedAt");
 	});
 });
 
@@ -194,11 +211,17 @@ describe("no option withholds a session from an unverified address (S-TIM-7)", (
 		expect(carrying).toEqual([]);
 	});
 
+	/**
+	 * `tsc --noEmit` is what fails here; `pnpm test` cannot, because a type that widens is still a
+	 * value-level no-op. An earlier form of this assertion declared an empty array of the extracted
+	 * key type and passed with the key present (E-1287).
+	 */
 	it("is not a key of the configuration type", () => {
-		type Forbidden = Extract<keyof VelveAuthConfig<"email">, typeof FORBIDDEN>;
-		const never: Forbidden[] = [];
+		expectTypeOf<
+			Extract<keyof VelveAuthConfig<"email">, "requireEmailVerification">
+		>().toEqualTypeOf<never>();
 
-		expect(never).toEqual([]);
+		expect(FORBIDDEN).toBe("requireEmailVerification");
 	});
 
 	it("finds the file set it scans, so an empty scan is a failure and not a pass", () => {
