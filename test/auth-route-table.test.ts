@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PENDING_CALLER_ROUTES } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { type AnyRoute, readsPendingCookie } from "../src/core/http/route.js";
+import { rowsServedUnder } from "./architecture-route-table.js";
 import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 
@@ -21,11 +22,14 @@ afterAll(async () => {
 /**
  * E-342 named the seven routes exactly, so that a route added or lost showed up as a name rather
  * than as a number nobody reads — and called the file a merge conflict waiting for four branches.
- * What replaces it is a property over whatever the table holds, plus a floor that an empty table
- * fails: the floor carries no meaning of its own, it exists because a wave-3 gate found eight of
- * eleven assertions here passing on an empty list.
+ * What replaced it was a property over whatever the table holds plus a floor of **seven**, which
+ * twelve assertions then rested on while the table grew to twenty-nine: a floor that could not
+ * have noticed three rows going missing carries no meaning of its own, which is what it said about
+ * itself. What replaces the floor is the count 3.15 D.3 declares for this mount's configuration —
+ * mode `email`, no `webauthn` — read out of the specification rather than written here, so it can
+ * neither be a stale number nor a merge conflict (E-1245).
  */
-const MINIMUM_ROUTES = 7;
+const ROUTES_THIS_MOUNT_SERVES = rowsServedUnder({ mode: "email", webauthn: false }).length;
 const MINIMUM_GET_ROUTES = 2;
 const MINIMUM_PENDING_READERS = 2;
 
@@ -97,7 +101,7 @@ describe("the origin check over the whole table (S-CSRF-1)", () => {
 			routes.filter((route) => ROUTES_THAT_MAY_BE_EXEMPT.has(route.name)),
 		);
 
-		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(routes).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect([...ROUTES_THAT_MAY_BE_EXEMPT]).toStrictEqual([
 			"signIn.oauth.callback",
 			"signIn.oauth.callbackFormPost",
@@ -121,7 +125,7 @@ describe("the origin check over the whole table (S-CSRF-1)", () => {
 			}),
 		);
 
-		expect(checked.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(checked).toHaveLength(ROUTES_THIS_MOUNT_SERVES - ROUTES_THAT_MAY_BE_EXEMPT.size);
 		expect(codes).toHaveLength(checked.length);
 		expect(codes).toStrictEqual(checked.map(() => "403 origin_not_allowed"));
 	});
@@ -141,7 +145,7 @@ describe("what a GET may do (S-CSRF-4)", () => {
 	it("classifies every GET route as reading, over a set that is not empty", () => {
 		const gets = namesOf(routes.filter((route) => route.method === "GET"));
 
-		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(routes).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect(gets.length).toBeGreaterThanOrEqual(MINIMUM_GET_ROUTES);
 		expect(gets.filter((name) => !READING_GET_ROUTES.has(name))).toStrictEqual([]);
 	});
@@ -187,7 +191,7 @@ describe("the routes that read the pending cookie (S-CACHE-4)", () => {
 		const namedAndDeclared = namesOf(routes.filter((route) => four.includes(route.name)));
 
 		expect(PENDING_CALLER_ROUTES).toHaveLength(4);
-		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(routes).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect(declaredPending).toStrictEqual(namedAndDeclared);
 	});
 
@@ -198,7 +202,7 @@ describe("the routes that read the pending cookie (S-CACHE-4)", () => {
 		);
 
 		expect(ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.size).toBe(6);
-		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(routes).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect(readers.length).toBeGreaterThanOrEqual(MINIMUM_PENDING_READERS);
 		expect(readers).toStrictEqual(namedAndDeclared);
 	});
@@ -219,8 +223,10 @@ describe("the routes that read the pending cookie (S-CACHE-4)", () => {
 		);
 		const withoutCookie = await Promise.all(mustIgnore.map((route) => answerFor(route, undefined)));
 
-		expect(routes.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
-		expect(mustIgnore.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES - MINIMUM_PENDING_READERS);
+		expect(routes).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
+		expect(mustIgnore.length).toBeGreaterThanOrEqual(
+			ROUTES_THIS_MOUNT_SERVES - ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE.size,
+		);
 		expect(withPending).toHaveLength(mustIgnore.length);
 		expect(withPending).toStrictEqual(withoutCookie);
 	});
@@ -235,14 +241,14 @@ describe("the table as a table", () => {
 	it("names every route once, over a table that is not empty", () => {
 		const names = namesOf(routes);
 
-		expect(names.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(names).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect(new Set(names).size).toBe(names.length);
 	});
 
 	it("answers a distinct path for every route", () => {
 		const folded = routes.map((route) => `${route.method} ${route.path}`);
 
-		expect(folded.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(folded).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect(new Set(folded).size).toBe(folded.length);
 	});
 });
@@ -302,7 +308,7 @@ describe("the cookies this library can ever set (S-COOKIE-6)", () => {
 
 		const enumerated = new Set<string>(Object.values(DEFAULT_COOKIE_NAMES));
 		expect(swept).toBe(routes.length);
-		expect(swept).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(swept).toBe(ROUTES_THIS_MOUNT_SERVES);
 		expect(enumerated.size).toBe(3);
 		expect([...seen].filter((name) => !enumerated.has(name))).toStrictEqual([]);
 	});
@@ -313,7 +319,7 @@ describe("what the answers carry (S-REDIR-3, S-REDIR-7, S-CACHE-1)", () => {
 		const answers = await Promise.all(routes.map((route) => mounted.handler(requestFor(route))));
 
 		expect(answers).toHaveLength(routes.length);
-		expect(answers.length).toBeGreaterThanOrEqual(MINIMUM_ROUTES);
+		expect(answers).toHaveLength(ROUTES_THIS_MOUNT_SERVES);
 		expect(answers.filter((answer) => answer.headers.has("Location"))).toStrictEqual([]);
 		expect(
 			answers
