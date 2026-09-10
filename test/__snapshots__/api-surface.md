@@ -476,24 +476,24 @@ type RecoveryCodesRequirement<M extends IdentityMode> = M extends "username" ? {
   recoveryCodes?: RecoveryCodesConfig;
 };
 interface BaseConfig<M extends IdentityMode> {
+  readonly clock?: Clock;
   readonly database: Driver;
   readonly email?: EmailConfig;
+  /** 3.10's outbound calls; absent means `globalThis.fetch`. */
+  readonly fetch?: typeof globalThis.fetch;
   readonly identity: IdentityConfig<M>;
   readonly keys: KeyProvider;
+  readonly log?: (level: "error" | "info" | "warn", message: string, fields?: Readonly<Record<string, unknown>>) => void;
   readonly oauth?: OAuthConfig;
   readonly origins: readonly string[];
   readonly password?: PasswordConfig;
+  readonly plugins?: readonly VelvePlugin[];
   readonly rateLimit?: Partial<RateLimitConfig>;
+  readonly schema?: string;
   readonly session?: Partial<SessionConfig>;
   readonly sessionMetadata?: SessionMetadataMode;
-  readonly trustedProxies?: readonly string[];
-  /** 3.10's outbound calls; absent means `globalThis.fetch`. */
-  readonly clock?: Clock;
-  readonly fetch?: typeof globalThis.fetch;
-  readonly log?: (level: "error" | "info" | "warn", message: string, fields?: Readonly<Record<string, unknown>>) => void;
-  readonly plugins?: readonly VelvePlugin[];
-  readonly schema?: string;
   readonly totp?: Partial<TotpConfig>;
+  readonly trustedProxies?: readonly string[];
   readonly webauthn?: WebAuthnConfig;
 }
 type VelveAuthConfig<M extends IdentityMode> = BaseConfig<M> & RecoveryCodesRequirement<M>;
@@ -678,10 +678,10 @@ interface SignUpResult {
 type SignInResult = {
   readonly session: Session;
   readonly sessionToken: SessionToken;
-  readonly status: "signed_in";
-  readonly user: User;
   /** Only on the WebAuthn paths; `undefined` means "not applicable", never "no" (L-9). */
   readonly signCountRegressed?: boolean;
+  readonly status: "signed_in";
+  readonly user: User;
 } | {
   readonly pending: PendingAuthentication;
   readonly pendingToken: PendingToken;
@@ -747,36 +747,36 @@ type ResolutionMemo = WeakMap<Session, SessionResolution>;
  */
 interface RouteServices {
   readonly clock: Clock;
+  /** S-FIX-1: the pending row and the session it becomes are one transaction, and it is built once (E-410). */
+  readonly completeSecondFactor: SecondFactorCompletion;
   readonly driver: Driver;
+  readonly email?: EmailConfig;
+  /** 3.10's outbound calls; absent means `globalThis.fetch`. */
+  readonly fetch?: typeof globalThis.fetch;
   readonly identity: IdentityConfiguration;
-  readonly keys: KeyProvider;
-  readonly oneTimeTokens: OneTimeTokens;
-  readonly password: ResolvedPasswordConfig;
-  readonly pending: PendingAuthenticationService;
-  readonly rateLimit: RateLimitConfig;
-  readonly resolutions: ResolutionMemo;
-  readonly schema: string;
-  readonly sessions: SessionService;
-  readonly users: UserRepository;
   /**
    * S-DOS-3 bounds concurrent key derivation for the whole process, so the bound is one object
    * every route source shares rather than one each of them makes (E-1195).
    */
-  readonly email?: EmailConfig;
   readonly kdfSemaphore: KdfSemaphore;
+  readonly keys: KeyProvider;
   readonly oauth?: OAuthConfig;
-  /** 3.15 A.2: absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones. */
-  readonly recoveryCodes?: RecoveryCodesConfig;
-  readonly totp?: Partial<TotpConfig>;
-  readonly webauthn?: WebAuthnConfig;
+  readonly oneTimeTokens: OneTimeTokens;
   /** The allowed origins of 3.15 A.2, which is also the only name of the application the configuration always carries. */
   readonly origins: readonly string[];
-  /** S-FIX-1: the pending row and the session it becomes are one transaction, and it is built once (E-410). */
-  readonly completeSecondFactor: SecondFactorCompletion;
+  readonly password: ResolvedPasswordConfig;
+  readonly pending: PendingAuthenticationService;
   /** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */
   readonly pluginRuntime: PluginRuntime;
-  /** 3.10's outbound calls; absent means `globalThis.fetch`. */
-  readonly fetch?: typeof globalThis.fetch;
+  readonly rateLimit: RateLimitConfig;
+  readonly recoveryCodes?: RecoveryCodesConfig;
+  readonly resolutions: ResolutionMemo;
+  readonly schema: string;
+  readonly sessions: SessionService;
+  readonly totp?: Partial<TotpConfig>;
+  readonly users: UserRepository;
+  /** 3.15 A.2: absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones. */
+  readonly webauthn?: WebAuthnConfig;
 }
 declare function sessionRoutes(services: RouteServices): readonly [Route<"signOut", "/sign-out", {} & {}, void, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"session.read", "/session", {} & {}, ResolvedSessionView | null, "account_disabled" | "origin_not_allowed">, Route<"session.list", "/session/list", {} & {}, Session[], "account_disabled" | "freshness_required" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"session.revoke", "/session/revoke", {
   targetSessionId: string;
@@ -921,9 +921,9 @@ interface User {
 type ImportSource = "auth0" | "clerk" | "firebase" | "nextauth" | "supabase";
 interface NewUser {
   readonly email: string | null;
+  readonly emailVerifiedAt: Date | null;
   readonly username: string | null;
   /** The comparison form, normalised by `core/identity`; this repository does not derive it. */
-  readonly emailVerifiedAt: Date | null;
   readonly usernameKey: string | null;
 }
 /**
@@ -1630,9 +1630,9 @@ interface WebAuthnAuthenticationChallenge {
 }
 interface VerifiedWebAuthnAssertion {
   readonly credential: WebAuthnCredential;
-  readonly userId: string;
   /** L-9: reported, never a rejection — a synchronised passkey does not keep the counter. */
   readonly signCountRegressed: boolean;
+  readonly userId: string;
 }
 interface WebAuthnService {
   readonly settings: WebAuthnSettings;
@@ -1700,9 +1700,9 @@ import { RouteServices } from "../auth/routes.mjs";
 //#region src/core/flows/environment.d.ts
 
 interface FlowEnvironment {
-  readonly services: RouteServices;
   /** S-DOS-3: the same bound the sign-in path is under, so a sign-up wave cannot displace it. */
   readonly semaphore: KdfSemaphore;
+  readonly services: RouteServices;
 }
 //#endregion
 export {
@@ -1727,13 +1727,13 @@ import { SignInResult, SignUpResult } from "../auth/results.mjs";
  * the declaration moves to a password module when they are (E-604).
  */
 interface SetPasswordResult {
-  readonly session: Session;
-  readonly sessionToken: SessionToken;
   /**
    * Every session the account had when the password was written. A reset has no calling session
    * to keep, so nothing is subtracted from the count (E-611).
    */
   readonly revokedOtherSessionsCount: number;
+  readonly session: Session;
+  readonly sessionToken: SessionToken;
 }
 /** 3.15 D.3: the two redeeming `/email/*` rows answer with the account and nothing else. */
 interface ChangedUser {
@@ -1891,10 +1891,10 @@ interface PendingAuthentication {
  * act on the account it belongs to, which the presentation above deliberately withholds.
  */
 interface ResolvedPendingAuthentication {
-  readonly pending: PendingAuthentication;
-  readonly userId: string;
   /** The database's clock at the moment it answered. */
   readonly observedAt: Date;
+  readonly pending: PendingAuthentication;
+  readonly userId: string;
 }
 interface CallerResolver {
   resolveSession(sessionToken: string): Promise<Session>;
@@ -1960,19 +1960,19 @@ interface Clock {
 }
 type LogLevel = "error" | "info" | "warn";
 interface HttpEnvironment {
-  readonly origins: readonly string[];
-  readonly routes: readonly AnyRoute[];
-  /** A.2: the CIDR ranges whose `X-Forwarded-For` counts; empty means the connection address does. */
   readonly callers: CallerResolver;
+  readonly clock: Clock;
   readonly cookieSameSite: CookieSameSite;
   readonly freshnessWindowInSeconds: number;
-  readonly sessionCookieMaximumAgeInSeconds: number;
-  readonly trustedProxies: readonly string[];
-  /** Which frozen context a route's handler is given; a route the assembly did not register gets the core one. */
-  readonly clock: Clock;
   readonly log: (level: LogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
+  readonly origins: readonly string[];
+  /** Which frozen context a route's handler is given; a route the assembly did not register gets the core one. */
   readonly pluginContextOf: (route: RouteMetadata) => FrozenContext;
   readonly rateLimiter: RateLimiter;
+  readonly routes: readonly AnyRoute[];
+  readonly sessionCookieMaximumAgeInSeconds: number;
+  /** A.2: the CIDR ranges whose `X-Forwarded-For` counts; empty means the connection address does. */
+  readonly trustedProxies: readonly string[];
 }
 interface WebHandlerTarget {
   readonly http: HttpEnvironment;
@@ -2109,29 +2109,29 @@ interface RequestContext {
   readonly oauthStateToken: string | null;
   readonly pending: ResolvedPendingAuthentication | null;
   readonly pendingToken: string | null;
+  /** 3.15 D.1: part G's context, frozen; for a core route it carries no tables of its own. */
+  readonly plugin: FrozenContext;
   readonly session: Session | null;
   readonly sessionToken: string | null;
   readonly userAgent: string | null;
-  /** 3.15 D.1: part G's context, frozen; for a core route it carries no tables of its own. */
-  readonly plugin: FrozenContext;
   enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
 }
 interface RouteDeclaration<Name extends string, Path extends string, Input$1, Output$1, Code extends AnyErrorCode> {
   readonly caller: CallerRequirement;
   readonly errors: readonly Code[];
   readonly freshness: FreshnessRequirement;
+  readonly handler: (input: Input$1, context: RequestContext) => Promise<Output$1>;
   readonly input: ObjectValidator<Input$1>;
   readonly method: HttpMethod;
   readonly name: Name;
-  readonly originCheck: OriginRequirement;
-  readonly path: Path;
-  readonly rateLimit: RateLimitRule;
-  /** Absent means hidden; `caller: "pending"` implies readable and may not say otherwise. */
-  readonly pendingCookie?: PendingCookieAccess;
   /** Absent means hidden; no caller requirement implies it, so the route that reads the pointer says so. */
   readonly oauthStateCookie?: OAuthStateCookieAccess;
+  readonly originCheck: OriginRequirement;
+  readonly path: Path;
+  /** Absent means hidden; `caller: "pending"` implies readable and may not say otherwise. */
+  readonly pendingCookie?: PendingCookieAccess;
+  readonly rateLimit: RateLimitRule;
   /** Absent means JSON, which is what every route the application itself calls sends. */
-  readonly handler: (input: Input$1, context: RequestContext) => Promise<Output$1>;
   readonly requestBody?: RequestBodyFormat;
 }
 interface RouteMetadata {
@@ -2321,17 +2321,17 @@ type OAuthPrompt = "consent" | "login" | "none" | "select_account";
 /** Section 1, C70. `form_post` is what Apple requires once the e-mail scope is asked for (E-541). */
 type OAuthResponseMode = "form_post" | "query";
 interface ProviderCredentials {
-  readonly clientId: string;
-  readonly clientSecret: string;
-  readonly scopes?: readonly string[];
-  /** C74. Absent means `${callbackBaseUrl}/${provider}`, which is where the callback route answers. */
-  readonly redirectUri?: string;
   /** C75, the self-hosted case: a built-in provider whose endpoints live on another host. */
   readonly authorizationEndpoint?: string;
+  readonly clientId: string;
+  readonly clientSecret: string;
   readonly issuer?: string;
   readonly jwksUri?: string;
   readonly prompt?: OAuthPrompt;
+  /** C74. Absent means `${callbackBaseUrl}/${provider}`, which is where the callback route answers. */
+  readonly redirectUri?: string;
   readonly responseMode?: OAuthResponseMode;
+  readonly scopes?: readonly string[];
   readonly tokenEndpoint?: string;
   readonly userInfoEndpoint?: string;
 }
@@ -2360,10 +2360,10 @@ interface OAuthConfig {
    * the library never derives it from a request header (S-REDIR-6, E-540).
    */
   readonly callbackBaseUrl: string;
-  /** The third of the three conditions S-LINK-2 puts on an automatic link. */
-  readonly trustedProviders: readonly string[];
   /** 3.10 makes `false` the default, so omitting it stores no provider token. */
   readonly storeTokens?: boolean;
+  /** The third of the three conditions S-LINK-2 puts on an automatic link. */
+  readonly trustedProviders: readonly string[];
 }
 //#endregion
 export {
@@ -2722,11 +2722,6 @@ interface PluginHookDispatcher {
   beforeSessionRevoke(event: SessionRevokeEvent): Promise<void>;
 }
 interface PluginRuntime {
-  /** The configured plugins in dependency order, which is the order every hook point runs them in. */
-  readonly plugins: readonly VelvePlugin[];
-  readonly routes: readonly AnyRoute[];
-  /** 3.11: the same versioned runner, in the same dependency order, each under its own id (E-635). */
-  readonly migrations: readonly OwnedMigration[];
   /**
    * The codes every configured plugin declares. They are published to the process-wide registry by
    * the assembly and not here, because a start that refuses after this returns must leave nothing
@@ -2734,6 +2729,11 @@ interface PluginRuntime {
    */
   readonly declaredErrorCodes: readonly PluginErrorCode[];
   readonly hooks: PluginHookDispatcher;
+  /** 3.11: the same versioned runner, in the same dependency order, each under its own id (E-635). */
+  readonly migrations: readonly OwnedMigration[];
+  /** The configured plugins in dependency order, which is the order every hook point runs them in. */
+  readonly plugins: readonly VelvePlugin[];
+  readonly routes: readonly AnyRoute[];
   contextOf(route: RouteMetadata): FrozenContext;
   /** Which plugin contributed a route, so a start error can name it as a contributor (T-OWNER-11). */
   ownerOf(route: RouteMetadata): string;
@@ -2826,9 +2826,9 @@ import { SessionToken } from "./token.mjs";
  * It is produced in `resolve` and nowhere else, so an actor cannot be built from a request.
  */
 type SessionResolution = ResolvedSession & {
-  readonly session: Session;
   /** The database's clock at the moment it answered, and therefore the only clock freshness is decided by (E-238). */
   readonly observedAt: Date;
+  readonly session: Session;
 };
 interface IssuedSession {
   readonly session: Session;

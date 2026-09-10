@@ -232,10 +232,13 @@ repair anything itself.
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
 - the shipped type declarations have not changed unrecorded — `test/api-surface.test.ts`
-  compares every `dist/**/*.d.mts` against a committed copy, with the two orderings the
-  build does not hold fixed normalised away. Re-recording it is one command, so the step
-  announces a change and never refuses one; and it records more than the public surface,
-  because a module-level export no entry point re-exports is in there too (E-1376, E-1378)
+  compares every `dist/**/*.d.mts` against a committed copy. It buys the announcement and
+  not the refusal, because re-recording is one command. What it does **not** cover is
+  listed at the check and is longer than this line: it normalises member order and
+  string-literal-union order in **45 of the 79 files**, wherever they occur and not only
+  where the build is unstable; it records more than the public surface; it reads the last
+  build rather than the tree; it says nothing about `dist/*.mjs`; and it does not reach a
+  type resolved from a dependency (E-1376, E-1378, E-1383, E-1384)
 
 A check must be able to tell **found nothing** from **found a fault**. Three of
 this repository's checks were written so it could not — a scan reporting success
@@ -807,14 +810,6 @@ the renumber, and removing the renumber removes the whole failure class.
 A reserved range that is not used up leaves a gap in the numbering. That is
 fine and expected. Contiguity is worth nothing here; a silent wrong citation
 costs a great deal.
-
-**Outside the table above, a range is named by its opening number and a count,
-never as a span.** `test/decision-log.test.ts` scans every tracked file for
-citations and reads a range's closing number as one; a closing number is usually
-not an entry, so a span written in prose is one citation and one dangler by
-construction. The table is the exception because the scan removes its rows before
-it looks — which is why the two files state the same reservation in two forms and
-only one of them is checkable (E-1251, E-1371).
 
 `test/decision-log.test.ts` is the backstop, not the mechanism. It catches a
 number used twice, an entry missing one of its four parts, a citation anywhere

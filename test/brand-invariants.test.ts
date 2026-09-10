@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type {
 	Actor,
 	ConsumedOAuthFlow,
@@ -18,7 +18,7 @@ import type { SecretToken } from "../src/core/token/secret-token.js";
 
 const sourceDirectory = fileURLToPath(new URL("../src", import.meta.url));
 
-const UNIQUE_SYMBOL_MARKER = /^declare const (\w+): unique symbol;$/gm;
+const UNIQUE_SYMBOL_MARKER = /^(?:export )?declare const (\w+): unique symbol;$/gm;
 const LITERAL_MARKER = /readonly (__brand)\??:/g;
 
 class UnreadableSourceTreeError extends Error {
@@ -55,81 +55,140 @@ function brandMarkersUnder(directory: string): readonly string[] {
 }
 
 /**
- * Every brand marker `src/` declares, and what stands behind it. A marker absent from this map
- * fails the census below, so a brand cannot enter the tree without a line saying whether it carries
- * an invariant — which is the one judgement no scan can make for itself (E-1373).
+ * Every brand marker `src/` declares: the brand it keys, or `null` and the reason it carries no
+ * invariant — the one judgement no scan can make for itself (E-1373). A marker absent from here
+ * fails the census, and a brand named here without an assertion below fails it too.
  */
-const BRAND_MARKERS: ReadonlyMap<string, string> = new Map([
-	["core/db/actor.ts:actorBrand", "Actor, asserted below"],
-	["core/db/actor.ts:consumedOAuthFlowBrand", "ConsumedOAuthFlow, asserted below"],
-	["core/db/actor.ts:consumedRecoveryCodeBrand", "ConsumedRecoveryCode, asserted below"],
-	["core/db/actor.ts:redeemedOneTimeTokenBrand", "RedeemedOneTimeToken, asserted below"],
-	["core/db/actor.ts:resolvedSessionBrand", "ResolvedSession, asserted below"],
-	["core/db/entity-id.ts:entityIdBrand", "EntityId, asserted below through UserId"],
-	["core/factor/pending/token.ts:pendingTokenBrand", "PendingToken, asserted below"],
-	["core/http/redirect.ts:__brand", "RedirectPath, asserted below"],
+const BRAND_MARKERS: ReadonlyMap<
+	string,
+	{ readonly asserts: string | null; readonly note: string }
+> = new Map([
+	["core/db/actor.ts:actorBrand", { asserts: "Actor", note: "a bare string is not an owner" }],
+	[
+		"core/db/actor.ts:consumedOAuthFlowBrand",
+		{ asserts: "ConsumedOAuthFlow", note: "a hand-built row is not a consumed flow" },
+	],
+	[
+		"core/db/actor.ts:consumedRecoveryCodeBrand",
+		{ asserts: "ConsumedRecoveryCode", note: "a hand-built row is not a redeemed code" },
+	],
+	[
+		"core/db/actor.ts:redeemedOneTimeTokenBrand",
+		{ asserts: "RedeemedOneTimeToken", note: "a hand-built row is not a redemption" },
+	],
+	[
+		"core/db/actor.ts:resolvedSessionBrand",
+		{ asserts: "ResolvedSession", note: "a hand-built row is not a resolved session" },
+	],
+	[
+		"core/db/entity-id.ts:entityIdBrand",
+		{ asserts: "UserId", note: "a bare string is not a row identifier" },
+	],
+	[
+		"core/factor/pending/token.ts:pendingTokenBrand",
+		{ asserts: "PendingToken", note: "a bare string is not a pending token" },
+	],
+	[
+		"core/http/redirect.ts:__brand",
+		{ asserts: "RedirectPath", note: "a bare string is not a vetted path (S-REDIR-3)" },
+	],
 	[
 		"core/http/route.ts:routeOutput",
-		"RunnableRoute's phantom output carrier, and not a value brand. 3.11 requires the route object to hold no member Reflect.ownKeys can find, so the property is optional deliberately and nothing is refused assignment into it. It is the counterexample to telling a load-bearing brand from a decorative one by shape (E-1373).",
+		{
+			asserts: null,
+			note: "RunnableRoute's phantom output carrier, and not a value brand. 3.11 requires the route object to hold no member Reflect.ownKeys can find, so the property is optional deliberately and nothing is refused assignment into it. It is the counterexample to telling a load-bearing brand from a decorative one by shape (E-1373).",
+		},
 	],
 	[
 		"core/oauth/flow-secrets.ts:__brand",
-		"OAuthFlowPointer, asserted below through createFlowPointer",
+		{ asserts: "OAuthFlowPointer", note: "a bare string is not a flow pointer" },
 	],
-	["core/password/secret.ts:SECRET_BRAND", "Secret, asserted below through DerivedKey"],
-	["core/session/token.ts:__brand", "SessionToken, asserted below"],
-	["core/token/secret-token.ts:secretTokenBrand", "SecretToken, asserted below"],
+	[
+		"core/password/secret.ts:SECRET_BRAND",
+		{ asserts: "DerivedKey", note: "a bare buffer is not key material (S-TIM-3)" },
+	],
+	[
+		"core/session/token.ts:__brand",
+		{ asserts: "SessionToken", note: "a bare string is not a session token" },
+	],
+	[
+		"core/token/secret-token.ts:secretTokenBrand",
+		{ asserts: "SecretToken", note: "a bare string is not a one-time token" },
+	],
 ]);
 
 /** The shape a brand takes when it has stopped branding: present, named, and optional. */
 type ABrandThatBrandsNothing = string & { readonly __brand?: "decorative" };
 
-describe("a brand refuses the type it brands", () => {
-	/**
-	 * What this does not catch, and none of it is closeable by widening the assertions below.
-	 *
-	 * It asserts that a base type does not widen into a branded one. It does not assert that a
-	 * brand is minted only by the function that vets the value: every brand here is minted by a
-	 * cast, and a cast added anywhere in `src/` is invisible from this file.
-	 * `test/db-entity-id.test.ts` scans for `as <Brand>` and pins the minting site of three of
-	 * them; the other nine have no such scan.
-	 *
-	 * It does not catch two brands collapsing into each other while each still refuses its base —
-	 * `readonly __brand: string` in place of a literal does that, and every assertion below still
-	 * holds. The pairwise property is 132 assertions over these twelve, and picking a subset would
-	 * be picking which collapse to notice.
-	 *
-	 * The census reads two spellings, a `unique symbol` declaration and the literal `__brand`. A
-	 * brand written a third way is neither listed nor guarded, and no pattern closes that, because
-	 * every pattern has a complement.
-	 */
-	it("takes no string where a branded string belongs", () => {
-		expectTypeOf<string>().not.toExtend<Actor>();
-		expectTypeOf<string>().not.toExtend<PendingToken>();
-		expectTypeOf<string>().not.toExtend<RedirectPath>();
-		expectTypeOf<string>().not.toExtend<SecretToken>();
-		expectTypeOf<string>().not.toExtend<SessionToken>();
-		expectTypeOf<string>().not.toExtend<UserId>();
-		expectTypeOf<string>().not.toExtend<ReturnType<typeof createFlowPointer>>();
-	});
+type BaseIsRefusedBy<Brand, Base, Name extends string> = [Base] extends [Brand]
+	? { readonly thisBrandNoLongerRefusesItsBase: Name }
+	: true;
 
-	it("takes no buffer where key material belongs (S-TIM-3)", () => {
-		expectTypeOf<Uint8Array<ArrayBuffer>>().not.toExtend<DerivedKey>();
-	});
+/**
+ * Checked by `pnpm typecheck` and by nothing else — `vitest.config.ts` enables no typecheck
+ * project, so a weakened brand leaves this suite green and reddens `tsc --noEmit` (E-1385). Each
+ * entry names its own brand, so the failure reads `thisBrandNoLongerRefusesItsBase: "RedirectPath"`
+ * rather than an argument count.
+ *
+ * What this does not reach: it says a base does not widen into a brand, never that only the vetting
+ * function mints one — every brand here is minted by a cast, and `test/db-entity-id.test.ts` pins
+ * the minting site of three of the twelve. Two brands collapsing into each other while each still
+ * refuses its base is invisible (E-1375), and so is a brand spelled in a way the census cannot read.
+ */
+const BRAND_REFUSES_ITS_BASE: {
+	readonly Actor: BaseIsRefusedBy<Actor, string, "Actor">;
+	readonly ConsumedOAuthFlow: BaseIsRefusedBy<
+		ConsumedOAuthFlow,
+		{ readonly userId: UserId },
+		"ConsumedOAuthFlow"
+	>;
+	readonly ConsumedRecoveryCode: BaseIsRefusedBy<
+		ConsumedRecoveryCode,
+		{ readonly userId: UserId },
+		"ConsumedRecoveryCode"
+	>;
+	readonly DerivedKey: BaseIsRefusedBy<DerivedKey, Uint8Array<ArrayBuffer>, "DerivedKey">;
+	readonly OAuthFlowPointer: BaseIsRefusedBy<
+		ReturnType<typeof createFlowPointer>,
+		string,
+		"OAuthFlowPointer"
+	>;
+	readonly PendingToken: BaseIsRefusedBy<PendingToken, string, "PendingToken">;
+	readonly RedeemedOneTimeToken: BaseIsRefusedBy<
+		RedeemedOneTimeToken,
+		{ readonly userId: UserId },
+		"RedeemedOneTimeToken"
+	>;
+	readonly RedirectPath: BaseIsRefusedBy<RedirectPath, string, "RedirectPath">;
+	readonly ResolvedSession: BaseIsRefusedBy<
+		ResolvedSession,
+		{ readonly userId: string },
+		"ResolvedSession"
+	>;
+	readonly SecretToken: BaseIsRefusedBy<SecretToken, string, "SecretToken">;
+	readonly SessionToken: BaseIsRefusedBy<SessionToken, string, "SessionToken">;
+	readonly UserId: BaseIsRefusedBy<UserId, string, "UserId">;
+} = {
+	Actor: true,
+	ConsumedOAuthFlow: true,
+	ConsumedRecoveryCode: true,
+	DerivedKey: true,
+	OAuthFlowPointer: true,
+	PendingToken: true,
+	RedeemedOneTimeToken: true,
+	RedirectPath: true,
+	SecretToken: true,
+	SessionToken: true,
+	ResolvedSession: true,
+	UserId: true,
+};
 
-	/** S-OWNER-7: a provenance is what a repository returned, so a hand-built row is not one. */
-	it("takes no hand-built row where a proof of ownership belongs", () => {
-		expectTypeOf<{ readonly userId: string }>().not.toExtend<ResolvedSession>();
-		expectTypeOf<{ readonly userId: UserId }>().not.toExtend<ConsumedOAuthFlow>();
-		expectTypeOf<{ readonly userId: UserId }>().not.toExtend<ConsumedRecoveryCode>();
-		expectTypeOf<{ readonly userId: UserId }>().not.toExtend<RedeemedOneTimeToken>();
-	});
-
-	/** Without this the lines above pass for an assertion machinery that has stopped asserting. */
-	it("reports a brand that has stopped branding as one its base widens into", () => {
-		expectTypeOf<string>().toExtend<ABrandThatBrandsNothing>();
-	});
-});
+/** Without this the twelve above pass for machinery that has stopped deciding anything. */
+const A_DECORATIVE_BRAND_IS_REPORTED: BaseIsRefusedBy<
+	ABrandThatBrandsNothing,
+	string,
+	"decorative"
+> = { thisBrandNoLongerRefusesItsBase: "decorative" };
 
 describe("the census of brand markers", () => {
 	it("reads a source tree that is more than one file and states more than one marker", () => {
@@ -141,12 +200,29 @@ describe("the census of brand markers", () => {
 		expect(brandMarkersUnder(sourceDirectory)).toEqual([...BRAND_MARKERS.keys()].sort());
 	});
 
-	it("gives every listed marker a reason", () => {
+	/**
+	 * The runtime half of the guard: a brand cannot be listed without an assertion, or asserted
+	 * without being listed, whichever way the omission is made (E-1385).
+	 */
+	it("asserts exactly the brands the census says are asserted", () => {
+		const listed = [...BRAND_MARKERS.values()]
+			.map((marker) => marker.asserts)
+			.filter((brand) => brand !== null)
+			.sort();
+
+		expect(Object.keys(BRAND_REFUSES_ITS_BASE).sort()).toEqual(listed);
+	});
+
+	it("gives every listed marker a note", () => {
 		const unexplained = [...BRAND_MARKERS]
-			.filter(([, reason]) => reason.trim() === "")
+			.filter(([, marker]) => marker.note.trim() === "")
 			.map(([marker]) => marker);
 
 		expect(unexplained).toEqual([]);
+	});
+
+	it("reports a brand that has stopped branding, which is what makes the assertions assertions", () => {
+		expect(A_DECORATIVE_BRAND_IS_REPORTED.thisBrandNoLongerRefusesItsBase).toBe("decorative");
 	});
 
 	it("refuses to answer where the tree it was pointed at is not there", () => {

@@ -7,6 +7,7 @@ const distDirectory = fileURLToPath(new URL("../dist", import.meta.url));
 const EXPORT_LIST = /^(export \{)([^}]*)(\};)$/gm;
 const MEMBER_LINE = /^(\s+)(?:readonly )?(?:\[[^\]]+\]|[A-Za-z_$][\w$]*)\??: .*;$/;
 const STRING_LITERAL_UNION = /"[^"\\]*"(?: \| "[^"\\]*")+/g;
+const DOCUMENTATION_LINE = /^\s*(?:\/\*\*|\*\/|\*(?!\/)|\/\/)/;
 
 /**
  * A diff here has two possible causes and they look identical, so the message names the second one:
@@ -14,9 +15,9 @@ const STRING_LITERAL_UNION = /"[^"\\]*"(?: \| "[^"\\]*")+/g;
  */
 const MIGHT_BE_THE_INSTRUMENT = [
 	"The subject may have changed, or the instrument may have moved — this diff looks the same either way.",
-	"The build does not emit dist/core/oauth/routes.d.mts identically twice (E-1377): fourteen clean builds of an unchanged tree produced three distinct forms of it.",
+	"The build does not emit the same declarations twice (E-1386): over fifty clean builds of an unchanged tree, dist/ took three distinct forms at 29/12/9, and five files moved — core/{auth,factor,flows,oauth,password}/routes.d.mts.",
 	"Two orderings are normalised away before this comparison, member order and union-constituent order, and a third instability would surface here looking exactly like a surface change.",
-	"To tell them apart: run `pnpm build` twice without touching the tree, comparing dist/**/*.d.mts between the two runs. Files that differ are the build, not your change.",
+	"To tell them apart, rebuild without touching the tree and compare dist/**/*.d.mts across the runs. TWO BUILDS ARE NOT ENOUGH: two agree 43% of the time, so a single comparison showing no difference is close to a coin flip. Eight builds leave 1.3%, ten leave 0.4%.",
 ].join(" ");
 
 class UnreadableDistributionError extends Error {
@@ -42,43 +43,55 @@ function oneExportPerLine(body: string): string {
 }
 
 /**
- * Two orderings the build does not hold fixed, measured over sixteen clean builds of an unchanged
- * tree (E-1377). Exactly two, named so that a third is recognisably a third rather than a mystery:
+ * Two orderings the build does not hold fixed (E-1377, E-1386). Exactly two, named so that a third
+ * is recognisably a third rather than a mystery — and applied to all 45 of the 79 files that carry
+ * either, not only to the five the build actually moves:
  *
  * 1. **member order** — the members of an inferred object type, `MEMBER_LINE` below;
  * 2. **union-constituent order** — the constituents of a union of string literals,
  *    `STRING_LITERAL_UNION` below.
  *
- * Neither is API, and sorting them hides a reordering and nothing else — a member or a constituent
- * added, removed or retyped still moves the line it is on.
+ * A doc comment belongs to the member beneath it, so it is sorted **with** that member and never
+ * on its own: sorting the member lines alone leaves the comment at a position and re-attaches it to
+ * whichever member sorts into that slot, which is a changed record and not a hidden reordering
+ * (E-1383).
  */
 function inTheOrderTheBuildDoesNotDecide(body: string): string {
 	const sortedUnions = body.replace(STRING_LITERAL_UNION, (union) =>
 		union.split(" | ").sort().join(" | "),
 	);
-	const lines = sortedUnions.split("\n");
 	const normalised: string[] = [];
-	let run: string[] = [];
+	let run: { readonly key: string; readonly lines: readonly string[] }[] = [];
+	let documentation: string[] = [];
 	let indent: string | null = null;
 	const flushRun = () => {
-		normalised.push(...run.toSorted());
+		for (const documented of run.toSorted((left, right) => (left.key < right.key ? -1 : 1))) {
+			normalised.push(...documented.lines);
+		}
 		run = [];
 		indent = null;
 	};
-	for (const line of lines) {
+	for (const line of sortedUnions.split("\n")) {
+		if (DOCUMENTATION_LINE.test(line)) {
+			documentation.push(line);
+			continue;
+		}
 		const member = MEMBER_LINE.exec(line);
 		if (member === null) {
 			flushRun();
-			normalised.push(line);
+			normalised.push(...documentation, line);
+			documentation = [];
 			continue;
 		}
 		if (indent !== null && String(member[1]) !== indent) {
 			flushRun();
 		}
 		indent = String(member[1]);
-		run.push(line);
+		run.push({ key: line, lines: [...documentation, line] });
+		documentation = [];
 	}
 	flushRun();
+	normalised.push(...documentation);
 	return normalised.join("\n");
 }
 
@@ -108,21 +121,11 @@ function readPublicSurface(): string {
 
 describe("public API surface", () => {
 	/**
-	 * What this does not catch.
-	 *
-	 * It compares the shipped declarations against a recorded copy, and re-recording is one
-	 * command. So it reports a change nobody wrote down, and never a change that is unwise — what
-	 * it buys is the announcement, not the refusal.
-	 *
-	 * It reads `dist/`, so it is a statement about the last build. `pnpm test` rebuilds first and
-	 * `pnpm api` does not, so run alone it can compare a stale tree and pass.
-	 *
-	 * Every one of these files is on the type-resolution path of a published entry point, but not
-	 * every declaration in them is reachable from one: a module-level export that no entry
-	 * re-exports is recorded here too, so the step reddens for changes that are not changes to the
-	 * public surface.
-	 *
-	 * It says nothing about `dist/*.mjs`. A behaviour change under an unchanged type is invisible.
+	 * What this does not catch: it announces a change rather than refusing one, because re-recording
+	 * is one command; it reads the last build, so `pnpm api` alone can compare a stale tree; it
+	 * records module-level exports no entry re-exports, so it reddens for more than the surface; it
+	 * says nothing about `dist/*.mjs`; and it stops at `dist/`, so the four `@simplewebauthn/server`
+	 * types that are structurally in the surface move nothing here (E-1384).
 	 */
 	it("matches the committed snapshot", async () => {
 		await expect(readPublicSurface()).toMatchFileSnapshot(
@@ -165,6 +168,25 @@ describe("public API surface", () => {
 		expect(inTheOrderTheBuildDoesNotDecide(oneWay)).toBe(inTheOrderTheBuildDoesNotDecide(theOther));
 		expect(inTheOrderTheBuildDoesNotDecide(added)).not.toBe(
 			inTheOrderTheBuildDoesNotDecide(theOther),
+		);
+	});
+
+	/** E-1383: sorting the member lines alone re-attaches a doc comment to whichever member sorts
+	 * into its slot, so the record disagreed with the declaration it copies. */
+	it("keeps a doc comment on the member it documents, whichever way the members sort", () => {
+		const onB = "interface A {\n  /** about b */\n  b: string;\n  a: string;\n}\n";
+		const onA = "interface A {\n  /** about a */\n  a: string;\n  b: string;\n}\n";
+
+		expect(inTheOrderTheBuildDoesNotDecide(onB)).toContain("  /** about b */\n  b: string;");
+		expect(inTheOrderTheBuildDoesNotDecide(onA)).toContain("  /** about a */\n  a: string;");
+		expect(inTheOrderTheBuildDoesNotDecide(onB)).not.toBe(inTheOrderTheBuildDoesNotDecide(onA));
+	});
+
+	it("keeps a doc comment spanning several lines with its member", () => {
+		const spanning = "interface A {\n  /**\n   * about b\n   */\n  b: string;\n  a: string;\n}\n";
+
+		expect(inTheOrderTheBuildDoesNotDecide(spanning)).toContain(
+			"  /**\n   * about b\n   */\n  b: string;",
 		);
 	});
 });
