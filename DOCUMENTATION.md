@@ -6273,12 +6273,12 @@ one.** Where it is absent the issuer is the host of the first entry of `origins`
 `totp` block shows `app.example.com` in its users' authenticators. Set `issuer`
 to your product's name. Nothing warns about this at start.
 
-**Two fields do not yet reach the module behind them.**
+**Three fields do not reach the module behind them.**
 `recoveryCodes.groupSize` is ignored: codes are grouped in eights, where A.8's
-default is five. `recoveryCodes.count` is ignored and happens to agree — ten
-codes either way. `totp.stepToleranceInSteps` is ignored: the tolerance is one
-step in both directions and `0` cannot be expressed. Both are recorded in
-`CASE-STUDY.md` under `E-1249`; setting either changes nothing today.
+default is five. `recoveryCodes.count` is ignored too, and happens to agree —
+ten codes either way. `totp.stepToleranceInSteps` is ignored: the tolerance is
+one step in both directions and `0` cannot be expressed. All three are recorded
+in `CASE-STUDY.md` under `E-1249`; setting any of them changes nothing today.
 
 ### The rows
 

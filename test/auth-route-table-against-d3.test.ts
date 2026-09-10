@@ -90,6 +90,14 @@ describe("every row the table serves is reachable as the server method its name 
 		"pending.read": "pending.resolve",
 	};
 
+	/**
+	 * The limit of this case, stated where it is read: it asserts that walking the name arrives at
+	 * **a** function, not at the right one. A row wired to a neighbour's handler passes it. Closing
+	 * that would mean comparing the method against the route's handler, and `defineRoute` puts the
+	 * handler in a `WeakMap` precisely so no holder of a route can reach it — so the check would
+	 * have to defeat the property it is testing around. What catches a wrong wiring is a
+	 * behavioural test of the row, and those live in `auth-factor-routes` and `auth-webauthn-routes`.
+	 */
 	it("walks the dotted name of every row to a function", () => {
 		const widest = widestVelveAuth() as unknown as Record<string, unknown>;
 		const served = widest.routes as readonly AnyRoute[];

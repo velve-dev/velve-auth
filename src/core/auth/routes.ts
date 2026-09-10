@@ -41,7 +41,12 @@ export interface ResolvedSessionView {
  */
 export type ResolutionMemo = WeakMap<Session, SessionResolution>;
 
-/** The three seam modules take this and nothing else, so the seven fields below are declared here rather than by whichever feature reaches for one first, and no core route reads any of them yet (E-719). */
+/**
+ * What every route source takes, and the whole of what it takes. The fields are declared here
+ * rather than by whichever feature reaches for one first (E-719); the count is deliberately not
+ * stated, because a number in a sentence is checked by nobody and went stale the moment this
+ * interface grew (E-1262).
+ */
 export interface RouteServices {
 	readonly sessions: SessionService;
 	readonly pending: PendingAuthenticationService;

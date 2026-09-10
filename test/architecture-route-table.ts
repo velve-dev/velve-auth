@@ -24,9 +24,12 @@ const FEWEST_ROWS_D3_COULD_HOLD = 30;
 export function everyRowDeclaredByD3(): readonly DeclaredRow[] {
 	const specification = readFileSync(SPECIFICATION, "utf8");
 	const opens = specification.indexOf(TABLE_OPENS);
-	const closes = specification.indexOf(TABLE_CLOSES, opens);
-	if (opens < 0 || closes < 0) {
+	if (opens < 0) {
 		throw new Error(`${TABLE_OPENS} was not found in the specification; this scan cannot look`);
+	}
+	const closes = specification.indexOf(TABLE_CLOSES, opens);
+	if (closes < 0) {
+		throw new Error(`the paragraph closing D.3 was not found; this scan cannot look`);
 	}
 	const rows = specification
 		.slice(opens, closes)
