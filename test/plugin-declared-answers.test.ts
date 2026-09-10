@@ -222,11 +222,17 @@ describe("a plugin route cannot exempt itself from the origin check (S-CSRF-6)",
 		).rejects.toMatchObject({ code: "plugin_route_exempts_the_origin_check" });
 	});
 
+	/** S-CSRF-1: exempt are exactly these two, because 3.15 D.3 puts the callback in the table twice. */
+	const ROUTES_THAT_MAY_BE_EXEMPT = new Set([
+		"signIn.oauth.callback",
+		"signIn.oauth.callbackFormPost",
+	]);
+
 	/**
 	 * S-CSRF-1 over the table that ships. `test/auth-route-table.test.ts` reads the same property
 	 * and mounts without plugins, so until here nothing read it over a table a plugin contributed to.
 	 */
-	it("leaves the OAuth callback as the only exempt route in a table mounted with a plugin", async () => {
+	it("leaves the two OAuth callback rows as the only exempt routes in a table mounted with a plugin", async () => {
 		const instance = await mount([
 			asJavaScriptPlugin({ id: "quota", routes: [exemptRoute("checked")] }),
 		]);
@@ -235,7 +241,7 @@ describe("a plugin route cannot exempt itself from the origin check (S-CSRF-6)",
 			.filter((route) => route.originCheck !== "checked")
 			.map((route) => route.name);
 
-		expect(exempt.filter((name) => name !== "signIn.oauth.callback")).toStrictEqual([]);
+		expect(exempt.filter((name) => !ROUTES_THAT_MAY_BE_EXEMPT.has(name))).toStrictEqual([]);
 	});
 });
 

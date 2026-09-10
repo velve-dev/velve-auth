@@ -24,8 +24,11 @@ const ROUTES_THAT_MAY_READ_THE_PENDING_COOKIE = new Set<string>([
 	"pending.cancel",
 ]);
 
-/** S-CSRF-5: the pointer belongs to the callback and to nothing else. */
-const ROUTES_THAT_MAY_READ_THE_STATE_POINTER = new Set(["signIn.oauth.callback"]);
+/** S-CSRF-5: the pointer belongs to the callback, which 3.15 D.3 puts in the table twice. */
+const ROUTES_THAT_MAY_READ_THE_STATE_POINTER = new Set([
+	"signIn.oauth.callback",
+	"signIn.oauth.callbackFormPost",
+]);
 
 /**
  * A floor with no meaning of its own, carried because a wave-3 gate found eight of eleven assertions in
