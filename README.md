@@ -12,9 +12,11 @@ between you and them.
 The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
-> **Status: in development.** The public interface is specified and frozen; the
-> implementation is being built feature by feature. Nothing here is published to
-> npm yet, and the version is `0.0.0` deliberately.
+> **Status: first prerelease.** The public interface is specified and frozen.
+> `1.0.0-next.1` is published under the `next` dist-tag, and publishing under a
+> tag leaves `latest` alone — so no version of this package carries `latest`
+> yet, `pnpm add @velve/auth` resolves nothing at all, and a `^1.0.0` range does
+> not match a prerelease either. Ask for it by tag: `@velve/auth@next`.
 
 ## Why it exists
 
@@ -64,13 +66,31 @@ binding, no install script, and no build step on your machine.
 ## Installation
 
 ```sh
-pnpm add @velve/auth
+pnpm add @velve/auth@next
 ```
+
+**The `@next` is not optional.** Publishing under a dist-tag leaves `latest`
+alone, and every version of this package so far has been published under `next`
+— so nothing carries `latest`, and `pnpm add @velve/auth` fails to resolve
+rather than installing something older. A `^1.0.0` range does not match a
+prerelease either. Pinning the exact version, `@velve/auth@1.0.0-next.1`, works
+and is what your lockfile will record.
+
+That changes on the day a stable version is published: it takes `latest`, and
+the bare install starts working and starts meaning "the stable line".
+
+A prerelease is a prerelease: the interface is frozen and the schema is
+versioned, but nothing here has been run by anyone outside this repository yet.
+Read `CASE-STUDY.md`, which ships inside the package, for why each decision was
+taken at the version you actually installed.
 
 ## What works today
 
-The schema and the database layer are built. The rest of the surface is being
-added feature by feature.
+Everything below is built and ships in `1.0.0-next.1`. The mounted route table
+serves all forty-seven addresses architecture 3.15 D.3 declares in the widest
+configuration, and a narrower configuration serves fewer because it declares
+fewer. What the library deliberately does not do has a section of its own
+further down.
 
 **The schema.** Sixteen tables in their own PostgreSQL schema, `velve` by
 default. The SQL is shipped as files under `migrations/`, so it can be read,

@@ -1,6 +1,6 @@
 {
 	"name": "@velve/auth",
-	"version": "0.0.0",
+	"version": "1.0.0-next.1",
 	"description": "The European authentication library for TypeScript and PostgreSQL. Answers exactly one question: who is signed in.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -83,6 +83,8 @@
 		"check:codex-skill": "node tools/check-codex-skill.mjs",
 		"check:lock-order": "node tools/check-lock-order.mjs",
 		"check:log-append": "node tools/check-log-append.mjs",
+		"check:published-version": "node tools/check-published-version.mjs",
+		"check:release-tag": "node tools/check-release-tag.mjs",
 		"check:reviewable": "node tools/check-reviewable-text.mjs",
 		"check:session-owner": "node tools/check-session-owner-update.mjs",
 		"check:skill-version": "node tools/check-skill-version.mjs",
