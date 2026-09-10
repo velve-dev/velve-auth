@@ -231,7 +231,14 @@ repair anything itself.
 - `pnpm attw` — the types resolve under every module mode the package claims
 - `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
-- the public surface has not changed unannounced (API snapshot comparison)
+- the shipped type declarations have not changed unrecorded — `test/api-surface.test.ts`
+  compares every `dist/**/*.d.mts` against a committed copy. It buys the announcement and
+  not the refusal, because re-recording is one command. What it does **not** cover is
+  listed at the check and is longer than this line: it normalises member order and
+  string-literal-union order in **45 of the 79 files**, wherever they occur and not only
+  where the build is unstable; it records more than the public surface; it reads the last
+  build rather than the tree; it says nothing about `dist/*.mjs`; and it does not reach a
+  type resolved from a dependency (E-1376, E-1378, E-1383, E-1384)
 
 A check must be able to tell **found nothing** from **found a fault**. Three of
 this repository's checks were written so it could not — a scan reporting success
@@ -636,6 +643,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1000 … E-1029 | wave 5 · `plugin`, third range |
 | E-1285 … E-1329 | outside the waves · `requirement-coverage` — the requirements no test cites |
 | E-1330 … E-1369 | outside the waves · `open-requirements` — the two requirements the coverage audit reported as unbuilt |
+| E-1370 … E-1409 | gate and infrastructure, seventh range — the two blind spots E-1341 and E-1344 report |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
