@@ -124,7 +124,7 @@ describe("the release workflow", () => {
 		const references = [...release.matchAll(/secrets\.[A-Z_]+/g)].map((match) => match[0]);
 
 		expect(references).toStrictEqual(["secrets.NPM_TOKEN"]);
-		expect(release).toContain("NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}");
+		expect(release).toMatch(/NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
 		expect(release).not.toMatch(/^\s+run: .*(NODE_AUTH_TOKEN|NPM_TOKEN)/m);
 	});
 
