@@ -922,15 +922,24 @@ pnpm check:attribution
                  range against origin/main, and that range's diff. It states no
                  pattern of its own — it reads them out of
                  .github/workflows/ci.yml, which §4 exempts, so that a second
-                 copy does not become a fourth file needing exemption. Refuses
-                 the run if the detector was reworded past what it can read, if
-                 a pattern read from it fails to match a probe built for it, if
-                 the base cannot be resolved, or if a surface came back empty
-                 where emptiness is not an answer. VELVE_ATTRIBUTION_BASE names
-                 a base other than origin/main. It reads committed history for
-                 the messages and the diff and the working tree for the tree
-                 scan, so an uncommitted marker is found and an uncommitted
-                 commit message is not a thing that exists
+                 copy does not become a fourth file needing exemption. It
+                 performs the one shell expansion the detector's values use and
+                 refuses every other, in whichever spelling, so that a rewording
+                 cannot narrow the scan without saying so. Refuses the run if
+                 the detector cannot be read or is reworded past what it can
+                 parse, if a value still names an expansion it does not perform,
+                 if any branch of a pattern cannot be sampled or does not match
+                 the sample built from it, if the base cannot be resolved, or if
+                 a surface came back empty where emptiness is not an answer. No
+                 refusal prints a pattern. VELVE_ATTRIBUTION_BASE names a base
+                 other than origin/main. It reads committed history for the
+                 messages and the diff and the working tree for the tree scan,
+                 so an uncommitted marker is found and an uncommitted commit
+                 message is not a thing that exists. What it cannot see is a
+                 branch the detector no longer states, because every branch it
+                 proves is derived from the detector; test/gate-commands.test.ts
+                 states that shape where it is not derived from it, and is what
+                 fails on a deletion
 pnpm check:release-tag
                  the tag a release is cut from names the version package.json
                  states, that version is a semantic one, and a prerelease is not
