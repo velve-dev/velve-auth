@@ -56,6 +56,15 @@ function oneExportPerLine(body: string): string {
  * whichever member sorts into that slot, which is a changed record and not a hidden reordering
  * (E-1383).
  */
+/** Returning 1 for both orders of an equal pair is not an ordering; equal keys are reachable
+ * only through the misclassification the limits below name (E-1388). */
+function compareMemberLines(left: string, right: string): number {
+	if (left === right) {
+		return 0;
+	}
+	return left < right ? -1 : 1;
+}
+
 function inTheOrderTheBuildDoesNotDecide(body: string): string {
 	const sortedUnions = body.replace(STRING_LITERAL_UNION, (union) =>
 		union.split(" | ").sort().join(" | "),
@@ -65,7 +74,9 @@ function inTheOrderTheBuildDoesNotDecide(body: string): string {
 	let documentation: string[] = [];
 	let indent: string | null = null;
 	const flushRun = () => {
-		for (const documented of run.toSorted((left, right) => (left.key < right.key ? -1 : 1))) {
+		for (const documented of run.toSorted((left, right) =>
+			compareMemberLines(left.key, right.key),
+		)) {
 			normalised.push(...documented.lines);
 		}
 		run = [];
@@ -124,8 +135,17 @@ describe("public API surface", () => {
 	 * What this does not catch: it announces a change rather than refusing one, because re-recording
 	 * is one command; it reads the last build, so `pnpm api` alone can compare a stale tree; it
 	 * records module-level exports no entry re-exports, so it reddens for more than the surface; it
-	 * says nothing about `dist/*.mjs`; and it stops at `dist/`, so the four `@simplewebauthn/server`
-	 * types that are structurally in the surface move nothing here (E-1384).
+	 * says nothing about `dist/*.mjs`; and it stops at `dist/`, so of the four `@simplewebauthn/server`
+	 * types structurally in the surface, the two held by `satisfies DeclaresEveryFieldOf` in
+	 * `core/factor/webauthn/payload.ts` are held by `pnpm typecheck` and not by this, and the two
+	 * `PublicKeyCredential*OptionsJSON` are held by nothing (E-454, E-1384).
+	 *
+	 * It also classifies lines context-free, so a JSDoc body line carrying no leading `*` reads as a
+	 * member and sorts away from its block. None exist in `dist` today — 0 of 384 doc-block lines — and if
+	 * one appears the record becomes a broken fragment rather than a wrong one (E-1388).
+	 *
+	 * The hint on failure offers the build as the alternative instrument and not the filesystem, so
+	 * a reader whose `dist/` has picked up a stray file will rebuild and find the tree stable.
 	 */
 	it("matches the committed snapshot", async () => {
 		await expect(readPublicSurface()).toMatchFileSnapshot(
@@ -180,6 +200,14 @@ describe("public API surface", () => {
 		expect(inTheOrderTheBuildDoesNotDecide(onB)).toContain("  /** about b */\n  b: string;");
 		expect(inTheOrderTheBuildDoesNotDecide(onA)).toContain("  /** about a */\n  a: string;");
 		expect(inTheOrderTheBuildDoesNotDecide(onB)).not.toBe(inTheOrderTheBuildDoesNotDecide(onA));
+	});
+
+	/** The comparator must return 0 for an equal pair; equal member lines are reachable only through
+	 * the misclassification the limits above name, and an invalid ordering is not the way to meet it. */
+	it("orders a run carrying two identical member lines", () => {
+		const twice = "interface A {\n  a: string;\n  a: string;\n  b: string;\n}\n";
+
+		expect(inTheOrderTheBuildDoesNotDecide(twice)).toBe(twice);
 	});
 
 	it("keeps a doc comment spanning several lines with its member", () => {
