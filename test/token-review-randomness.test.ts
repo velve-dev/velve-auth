@@ -92,29 +92,207 @@ const SAMPLE = 100_000;
 const TOKEN_CHARACTERS = 43;
 const TOKEN_BYTES = 32;
 
-/** T-RAND-Verteilung is a nightly row in section 6, and its own numbers say why: forty-two
- * independent chi-square tests at p = 0.001 reject about four runs in a hundred with a perfect
- * generator, whatever N is. That belongs where a person reads the result, not in front of a
- * merge. The per-commit obligation is T-RAND-4, which lives in test/token-secret-token.test.ts
- * at its own threshold of 1000. Set VELVE_NIGHTLY=1 to run this. */
+/** Section 6 puts T-RAND-Verteilung on the nightly tier and T-RAND-4 on every commit; the
+ * per-commit half lives in test/token-secret-token.test.ts at its own threshold of 1000. Set
+ * VELVE_NIGHTLY=1 to run this. */
 const NIGHTLY = process.env.VELVE_NIGHTLY === "1";
 
 // A 32-byte value is 258 base64url bits, so the last character carries four bits of data
 // and two of padding: sixteen of the sixty-four characters can appear there and no others.
 const FINAL_CHARACTER_VALUES = Array.from({ length: 16 }, (_, index) => index * 4);
 
-// Critical values of the chi-square distribution at p = 0.001, the threshold T-RAND-Verteilung
-// fixes, for 63 and for 15 degrees of freedom.
-const CHI_SQUARE_63_AT_P_001 = 103.442;
-const CHI_SQUARE_15_AT_P_001 = 37.697;
-// Two-sided normal deviate for the same p.
-const NORMAL_AT_P_001 = 3.29;
+function logGamma(value: number): number {
+	const coefficients = [
+		676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+		12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+	];
+	if (value < 0.5) {
+		return Math.log(Math.PI / Math.sin(Math.PI * value)) - logGamma(1 - value);
+	}
+	const shifted = value - 1;
+	let series = 0.99999999999980993;
+	for (let index = 0; index < coefficients.length; index += 1) {
+		series += (coefficients[index] as number) / (shifted + index + 1);
+	}
+	const t = shifted + coefficients.length - 0.5;
+	return 0.5 * Math.log(2 * Math.PI) + (shifted + 0.5) * Math.log(t) - t + Math.log(series);
+}
+
+function regularizedLowerGammaBySeries(shape: number, x: number): number {
+	let term = 1 / shape;
+	let sum = term;
+	for (let n = 1; n < 10_000; n += 1) {
+		term *= x / (shape + n);
+		sum += term;
+		if (Math.abs(term) < Math.abs(sum) * Number.EPSILON) {
+			break;
+		}
+	}
+	return sum * Math.exp(-x + shape * Math.log(x) - logGamma(shape));
+}
+
+function regularizedUpperGammaByContinuedFraction(shape: number, x: number): number {
+	const tiny = 1e-300;
+	let b = x + 1 - shape;
+	let c = 1 / tiny;
+	let d = 1 / b;
+	let fraction = d;
+	for (let i = 1; i < 10_000; i += 1) {
+		const a = -i * (i - shape);
+		b += 2;
+		d = a * d + b;
+		if (Math.abs(d) < tiny) {
+			d = tiny;
+		}
+		c = b + a / c;
+		if (Math.abs(c) < tiny) {
+			c = tiny;
+		}
+		d = 1 / d;
+		const step = d * c;
+		fraction *= step;
+		if (Math.abs(step - 1) < Number.EPSILON) {
+			break;
+		}
+	}
+	return Math.exp(-x + shape * Math.log(x) - logGamma(shape)) * fraction;
+}
+
+function chiSquareUpperTailProbability(statistic: number, degreesOfFreedom: number): number {
+	if (statistic <= 0) {
+		return 1;
+	}
+	const shape = degreesOfFreedom / 2;
+	const x = statistic / 2;
+	return x < shape + 1
+		? 1 - regularizedLowerGammaBySeries(shape, x)
+		: regularizedUpperGammaByContinuedFraction(shape, x);
+}
+
+function chiSquareCriticalValue(alpha: number, degreesOfFreedom: number): number {
+	let low = 0;
+	let high = degreesOfFreedom + 1;
+	while (chiSquareUpperTailProbability(high, degreesOfFreedom) > alpha) {
+		high *= 2;
+	}
+	for (let step = 0; step < 200; step += 1) {
+		const middle = (low + high) / 2;
+		if (chiSquareUpperTailProbability(middle, degreesOfFreedom) > alpha) {
+			low = middle;
+		} else {
+			high = middle;
+		}
+	}
+	return (low + high) / 2;
+}
+
+function twoSidedNormalDeviate(alpha: number): number {
+	return Math.sqrt(chiSquareCriticalValue(alpha, 1));
+}
+
+/** Architecture section 6, T-RAND-Verteilung: family-wise p > 0.001 across all k tests of this
+ * file together, so the rate is the file's and not each case's. The row fixed it per position
+ * until it was amended, which cost one investigation and one retracted explanation at a measured
+ * 4.29 per cent of nightly runs (E-993, E-995, E-1060, E-1072). */
+const FILE_FALSE_FAILURE_RATE = 0.001;
+
+const ownSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
+const DERIVED_LIMIT_ASSERTION = /toBeLessThan\(([A-Z_]+)\)/g;
+
+function limitsAssertedInThisFile(): string[] {
+	return [...ownSource.matchAll(DERIVED_LIMIT_ASSERTION)].map((match) => match[1] as string);
+}
+
+/** Counts assertion *sites* rather than live cases — a site inside a loop contributes more than
+ * one and a site inside a comment contributes none, neither is visible to this scan, and either
+ * needs a count of its own. */
+function casesMeasuredAgainst(limit: string): number {
+	return limitsAssertedInThisFile().filter((name) => name === limit).length;
+}
+
+const CHARACTER_POSITION_CASES = TOKEN_CHARACTERS - 1;
+const FINAL_CHARACTER_CASES = casesMeasuredAgainst("FINAL_CHARACTER_LIMIT");
+const BIT_SEQUENCE_CASES = casesMeasuredAgainst("BIT_SEQUENCE_LIMIT");
+/** Every case below whose failure probability under a sound generator is not negligible, counted
+ * from this file rather than stated beside it — the three cases E-995 missed are exactly the three
+ * that were literals. The remaining assertions — an unseen character, an unseen byte, a byte mean
+ * outside a 32-sigma band, a repeated 256-bit token — are past 30 sigma and contribute nothing. */
+const INDEPENDENT_CASES = CHARACTER_POSITION_CASES + FINAL_CHARACTER_CASES + BIT_SEQUENCE_CASES;
+
+/** Šidák, and the row's own formula: α = 1 − (1 − 0.001)^(1/k), the per-case rate whose
+ * INDEPENDENT_CASES-fold repetition is FILE_FALSE_FAILURE_RATE. */
+const PER_CASE_ALPHA = 1 - (1 - FILE_FALSE_FAILURE_RATE) ** (1 / INDEPENDENT_CASES);
+
+const CHARACTER_POSITION_LIMIT = chiSquareCriticalValue(PER_CASE_ALPHA, 63);
+const FINAL_CHARACTER_LIMIT = chiSquareCriticalValue(PER_CASE_ALPHA, 15);
+const BIT_SEQUENCE_LIMIT = twoSidedNormalDeviate(PER_CASE_ALPHA);
 
 function chiSquare(counts: readonly number[]): number {
 	const total = counts.reduce((sum, count) => sum + count, 0);
 	const expected = total / counts.length;
 	return counts.reduce((sum, count) => sum + (count - expected) ** 2 / expected, 0);
 }
+
+// The thresholds below are computed rather than quoted, so nothing external states what they
+// are. These cases are the external statement: published critical values the implementation has
+// to reproduce before the ones it derives mean anything.
+describe("the thresholds this file derives for itself", () => {
+	it("reproduces published critical values of the chi-square distribution", () => {
+		const published = [
+			[0.05, 1, 3.841459],
+			[0.001, 1, 10.827566],
+			[0.025, 2, 7.377759],
+			[0.05, 10, 18.307038],
+			[0.001, 15, 37.697298],
+			[0.005, 30, 53.671962],
+			[0.001, 63, 103.442377],
+			[0.01, 100, 135.806723],
+		] as const;
+		for (const [alpha, degreesOfFreedom, expected] of published) {
+			expect(
+				chiSquareCriticalValue(alpha, degreesOfFreedom),
+				`chi-square critical value at p = ${alpha}, ${degreesOfFreedom} degrees of freedom`,
+			).toBeCloseTo(expected, 5);
+		}
+		expect(twoSidedNormalDeviate(0.001)).toBeCloseTo(3.290527, 5);
+	});
+
+	it("inverts its own tail probability", () => {
+		for (const degreesOfFreedom of [1, 15, 63]) {
+			expect(
+				chiSquareUpperTailProbability(
+					chiSquareCriticalValue(PER_CASE_ALPHA, degreesOfFreedom),
+					degreesOfFreedom,
+				),
+			).toBeCloseTo(PER_CASE_ALPHA, 12);
+		}
+	});
+
+	it("spends the file's whole false-failure budget and no more", () => {
+		expect(1 - (1 - PER_CASE_ALPHA) ** INDEPENDENT_CASES).toBeCloseTo(FILE_FALSE_FAILURE_RATE, 12);
+	});
+
+	// A scan that matched nothing would leave INDEPENDENT_CASES at 42 and every threshold too low,
+	// with nothing failing — so the corpus, the count and the set of names are all asserted.
+	it("counts its cases from its own source rather than from a literal beside it", () => {
+		expect(ownSource.length).toBeGreaterThan(10_000);
+		expect(limitsAssertedInThisFile().length).toBeGreaterThan(2);
+		expect(new Set(limitsAssertedInThisFile())).toStrictEqual(
+			new Set(["CHARACTER_POSITION_LIMIT", "FINAL_CHARACTER_LIMIT", "BIT_SEQUENCE_LIMIT"]),
+		);
+		expect(FINAL_CHARACTER_CASES).toBeGreaterThan(0);
+		expect(BIT_SEQUENCE_CASES).toBeGreaterThan(0);
+		expect(INDEPENDENT_CASES).toBeGreaterThan(TOKEN_CHARACTERS);
+	});
+
+	// Uncorrected, each case spent the file's budget on its own and the file spent it 45 times
+	// over. Every derived threshold therefore has to sit above the value it replaced (E-995).
+	it("sits above the uncorrected thresholds it replaced", () => {
+		expect(CHARACTER_POSITION_LIMIT).toBeGreaterThan(103.442);
+		expect(FINAL_CHARACTER_LIMIT).toBeGreaterThan(37.697);
+		expect(BIT_SEQUENCE_LIMIT).toBeGreaterThan(3.29);
+	});
+});
 
 describe("the width the generator is asked for (S-RAND-4)", () => {
 	it("draws the width it is asked for and nothing shorter", () => {
@@ -156,7 +334,7 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 		expect(new Set(sample).size).toBe(SAMPLE);
 	});
 
-	it("spreads every character position across the alphabet (chi-square, p > 0.001)", () => {
+	it("spreads every character position across the alphabet (chi-square, the file's shared p)", () => {
 		for (let position = 0; position < TOKEN_CHARACTERS - 1; position += 1) {
 			const counts = new Array<number>(BASE64URL_ALPHABET.length).fill(0);
 			for (const token of sample) {
@@ -167,7 +345,7 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 				counts.filter((count) => count === 0),
 				`position ${position} misses a character`,
 			).toStrictEqual([]);
-			expect(chiSquare(counts), `position ${position}`).toBeLessThan(CHI_SQUARE_63_AT_P_001);
+			expect(chiSquare(counts), `position ${position}`).toBeLessThan(CHARACTER_POSITION_LIMIT);
 		}
 	});
 
@@ -180,7 +358,7 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 			counts[slot] = (counts[slot] ?? 0) + 1;
 		}
 		expect(counts.filter((count) => count === 0)).toStrictEqual([]);
-		expect(chiSquare(counts)).toBeLessThan(CHI_SQUARE_15_AT_P_001);
+		expect(chiSquare(counts)).toBeLessThan(FINAL_CHARACTER_LIMIT);
 	});
 
 	// A generator that fills only part of the buffer, or that repeats a block, shows up here
@@ -200,7 +378,7 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 		}
 	});
 
-	it("passes the monobit test over every bit drawn (p > 0.001)", () => {
+	it("passes the monobit test over every bit drawn (the file's shared p)", () => {
 		let ones = 0;
 		for (const bytes of decoded) {
 			for (const byte of bytes) {
@@ -211,12 +389,12 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 		}
 		const bits = SAMPLE * TOKEN_BYTES * 8;
 		const deviate = Math.abs(ones - bits / 2) / (Math.sqrt(bits) / 2);
-		expect(deviate).toBeLessThan(NORMAL_AT_P_001);
+		expect(deviate).toBeLessThan(BIT_SEQUENCE_LIMIT);
 	});
 
 	// NIST SP 800-22, runs test: the number of alternations between adjacent bits. A generator
 	// with the right proportion of ones can still fail this by producing them in blocks.
-	it("passes the runs test over every bit drawn (p > 0.001)", () => {
+	it("passes the runs test over every bit drawn (the file's shared p)", () => {
 		const bits: number[] = [];
 		for (const bytes of decoded) {
 			for (const byte of bytes) {
@@ -236,8 +414,11 @@ describe.skipIf(!NIGHTLY)("the tokens the generator produces (T-RAND-Verteilung)
 			}
 		}
 
-		const expected = 2 * total * proportion * (1 - proportion);
-		const deviation = 2 * Math.sqrt(2 * total) * proportion * (1 - proportion);
-		expect(Math.abs(runs - expected) / deviation).toBeLessThan(NORMAL_AT_P_001);
+		// SP 800-22 divides by 2√(2n)·π(1−π) because that ratio is the argument it hands to erfc,
+		// and erfc takes a deviate over √2. The threshold here is a deviate, so the divisor is the
+		// standard deviation itself.
+		const expectedRuns = 2 * total * proportion * (1 - proportion);
+		const standardDeviation = 2 * Math.sqrt(total) * proportion * (1 - proportion);
+		expect(Math.abs(runs - expectedRuns) / standardDeviation).toBeLessThan(BIT_SEQUENCE_LIMIT);
 	});
 });
