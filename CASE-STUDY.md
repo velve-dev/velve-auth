@@ -6630,3 +6630,25 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** It was caught by a probe written for something else — a throwaway test printing which of three adversarial values was refused, which answered *all three were sent*. That is the only reason it surfaced; nothing in the harness could have said so. The repair is the ordering rule this feature should have had from the start: **commit the guard, then plant against the committed tree**, so that the restore step cannot remove the thing under test.
 
 **Price.** This is §5's own class — *a check must be able to tell found nothing from found a fault* — committed by the writer of `E-680`, which is the entry about exactly this, in the same session and about the same file. Two green signals were wrong at once and they reinforced each other: the plant appeared not to break anything, and the reporter appeared to have nothing to report. `E-680` counts the assertions that pass on an empty walk; it does not count the runs that pass on an empty change.
+
+### The worktree is not where this branch is measured, and iCloud is why
+`E-691` · client · working method, frozen
+
+**Context.** The worktree sits under `~/Desktop`, which is iCloud-synchronised. Repeated builds made iCloud write conflict copies into `dist/`: eighteen of them, named `client 2.mjs`, `index.d 2.mts` and so on. Two tests that enumerate `dist/*.mjs` rather than walking it from an entry — `auth-testing-barriers` and its sibling — went red on artefacts no build produced, and `pnpm gate` in the worktree exited 1 on a tree whose source was correct.
+
+**Rejected.** Adding a filter for the `X 2.ext` shape to the tests that broke. That is teaching the repository's own checks about one machine's file-synchronisation service, in files this feature does not own, to hide a fault that is not in the code.
+
+**Reason.** A clean clone at a path unique to this branch, outside the synchronised tree, with byte parity established by `cmp` over every tracked file — 429 files, zero differences — is the run that counts. The worktree run is advisory and is useful only for the fast loop.
+
+**Price.** The clone has to be refreshed and re-compared after every push, which is four commands each time and was forgotten once — a gate was run against a clone one commit behind, and the only reason it was noticed is that the run printed its own `HEAD`. Printing it is the whole defence, and nothing enforces it. The duplicates also cost a red gate that read as a real failure for as long as it took to look at the file names.
+
+### The probe origin tripped the scan that forbids an invented address
+`E-692` · client · correction of `E-687`, frozen
+
+**Context.** `E-687`'s structural check normalises the built path against a fixed origin, and the first one written was `https://velve.invalid`. `test/identity-no-placeholder-email.test.ts` scans every source file for `/\.(?:invalid|placeholder)\b/`, because `<id>@<ns>.placeholder.invalid` is the shape the prior art writes into its user table (E-16, S-LINK-5). It matched.
+
+**Rejected.** Widening the scan to exclude a URL that is not an address. The pattern is deliberately blunt, it belongs to another feature, and §4 already settles the general case for the attribution check in the same words: text that trips a check gets reworded rather than excused.
+
+**Reason.** The probe host is arbitrary — only the pathname is read back — so it costs nothing to pick one that names no domain at all. `https://velve-auth` is a single-label host, which cannot be a public domain and cannot read as an invented address.
+
+**Price.** None to the check, which is unchanged and still blunt. What it cost was a red gate at the end rather than at the start, because the scan runs in `pnpm test` and this branch had been running the three client files alone while iterating.

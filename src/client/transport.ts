@@ -22,7 +22,8 @@ interface AddressedRoute {
 	readonly rest: Readonly<Record<string, unknown>>;
 }
 
-const PATH_NORMALISATION_PROBE = "https://velve.invalid";
+/** A single-label host, so the probe cannot name a domain and cannot read as an invented address (E-16, S-LINK-5). */
+const PATH_NORMALISATION_PROBE = "https://velve-auth";
 
 /**
  * 3.15 E has each leaf send the path of its own row, and percent-encoding does not make that true
