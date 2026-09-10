@@ -153,8 +153,15 @@ describe("the connection a plugin migration runs on (3.11)", () => {
  * here. The other two survive, and the entry says so rather than the reference implying otherwise.
  */
 describe("what the restricted role closes and what it does not (3.11)", () => {
-	it.each([
-		["CREATE ROLE p_backdoor LOGIN SUPERUSER", "create role"],
+	// The complaint is the server's own and its wording is the server's to change: PostgreSQL 14
+	// answers "must be superuser to create superusers" where 16 and newer answer "permission
+	// denied to create role", both refusing, and the alternation is what makes the case a
+	// statement about the refusal rather than about a release (E-1503).
+	it.each<[string, string | RegExp]>([
+		[
+			"CREATE ROLE p_backdoor LOGIN SUPERUSER",
+			/permission denied to create role|must be superuser to create superusers/,
+		],
 		["CREATE CAST (text AS integer) WITH INOUT AS IMPLICIT", "must be owner of type"],
 		["SET LOCAL track_counts = off; SELECT 1; SET LOCAL track_counts = on", "track_counts"],
 	])("refuses %s", async (sql, complaint) => {
@@ -162,7 +169,7 @@ describe("what the restricted role closes and what it does not (3.11)", () => {
 
 		const outcome = await outcomeOf(schema, migrationOf(sql), true);
 
-		expect(outcome.message ?? "").toContain(complaint);
+		expect(outcome.message ?? "").toMatch(complaint);
 	});
 
 	it.each([["CREATE SCHEMA p_outside"], ["ALTER ROLE CURRENT_USER SET search_path = velve"]])(

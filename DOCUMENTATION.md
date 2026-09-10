@@ -3013,12 +3013,14 @@ produces were identical to the literal's for every value measured — 1, 7, 999,
 1000, 1500, 604800000 and 2147483647 milliseconds — on 14.24 and on 18.3, which
 caps neither field; 15, 16 and 17 were not measured (E-1571, E-1581).
 
-**No continuous-integration leg runs PostgreSQL 14.** All four workflows start
-`postgres:16-alpine`, so what stands behind the paragraph above is one 14.24
-cluster on one machine: the whole suite, the nightly tier and the release tier
-were run against it, and nothing repeats that on a push. A leg that would is on a
-separate branch and is not merged. Until it is, treat 14 as measured once rather
-than as covered (E-1583).
+**One continuous-integration leg runs PostgreSQL 14, and three workflows do not.**
+The gate in `ci.yml` runs the whole suite on `postgres:14-alpine` under Node 20.19,
+beside the two legs that run 16, so the paragraph above is repeated on every push
+and at every tag. `nightly.yml`, `release-tier.yml` and the tiers job of
+`release.yml` still start `postgres:16-alpine` alone, so the statistical cases and
+the three cases section 6 puts before a release say nothing about 14 — they were
+each run once against a 14.24 cluster on one machine and nothing repeats them
+(E-1583, E-1507).
 
 A deadline is also bounded by what a `Date` can hold. `absoluteTimeout` and
 `idleTimeout` are refused above 8640000000000000 milliseconds when the block is
@@ -5398,9 +5400,10 @@ cannot unbind the next plugin's check.
 `rolsuper` and `rolcreaterole` come from `pg_roles`; the third is
 `has_parameter_privilege` for `track_counts`, which reads the parameter ACL
 PostgreSQL 15 added and which is asked only where the server records one, so
-PostgreSQL 14 answers the first two and is not asked the third — read from the
-release that added the ACL rather than measured, because no test tier runs a
-server older than 16. **All three
+PostgreSQL 14 answers the first two and is not asked the third — measured on
+PostgreSQL 14.24, where `to_regprocedure` finds no `has_parameter_privilege` and
+`pg_parameter_acl` is not a catalogue, and on 18.3, where both are there, with a
+gate leg running that branch on 14. **All three
 quantify over the same set** — every role `pg_has_role` says `session_user` or
 `current_user` can reach — because a `NOINHERIT` member does not hold what it may
 `SET ROLE` to, and a question asked of the two current identities would miss it.

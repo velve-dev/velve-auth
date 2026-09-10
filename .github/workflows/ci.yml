@@ -19,14 +19,28 @@ concurrency:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    # Three legs and not six. The runtime dimension and the server dimension have never produced
+    # a failure that needed a pair of them: E-1197 is a server difference alone, and the node
+    # floor is a runtime one, so a cross product buys coverage of an interaction with no instance
+    # behind it at three times the cost. What each leg is for: 16 on both node versions is the
+    # surface every measurement in DOCUMENTATION.md and CASE-STUDY.md was taken against and is
+    # kept whole; the third leg is §7's stated minimum server under the stated minimum runtime,
+    # which is the promise nothing checked. Both dimensions stay separately covered, so a failure
+    # on the third leg alone localises to the server by elimination (E-1501).
     strategy:
       fail-fast: false
       matrix:
-        node: ["20.19", "26"]
-    name: gate (node ${{ matrix.node }})
+        include:
+          - node: "20.19"
+            postgres: "16-alpine"
+          - node: "26"
+            postgres: "16-alpine"
+          - node: "20.19"
+            postgres: "14-alpine"
+    name: gate (node ${{ matrix.node }}, postgres ${{ matrix.postgres }})
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: velve
           POSTGRES_USER: velve
