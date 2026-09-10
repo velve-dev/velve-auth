@@ -91,14 +91,17 @@ function signInRouteFailingWith(reason: ConcealedReason): AnyRoute {
 	});
 }
 
-function sourceFilesUnder(directory: URL): readonly { name: string; source: string }[] {
+function sourceFilesUnder(
+	directory: URL,
+	prefix = "",
+): readonly { name: string; path: string; source: string }[] {
 	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
 		const child = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, directory);
 		if (entry.isDirectory()) {
-			return sourceFilesUnder(child);
+			return sourceFilesUnder(child, `${prefix}${entry.name}/`);
 		}
 		return entry.name.endsWith(".ts")
-			? [{ name: entry.name, source: readFileSync(child, "utf8") }]
+			? [{ name: entry.name, path: `${prefix}${entry.name}`, source: readFileSync(child, "utf8") }]
 			: [];
 	});
 }
@@ -190,21 +193,53 @@ describe("enumeration — S-ENUM-1, S-ENUM-2, S-ENUM-6, L-4", () => {
 		}
 	});
 
+	/** Deciding what a reason means needs one in hand, and constructing one is the opposite. */
+	function mentionsTheClassWithoutConstructingIt(source: string): boolean {
+		return source
+			.replace(/import[\s\S]*?from\s+"[^"]*";/g, "")
+			.replaceAll("new ConcealedError(", "")
+			.includes("ConcealedError");
+	}
+
+	/** A hand-copied set goes stale the first time a reason is added, so it is read from the type. */
+	function internalReasonsDeclaredIn(errorMap: string): readonly string[] {
+		const union = /export type ConcealedReason =([\s\S]*?);/.exec(errorMap)?.[1];
+		if (union === undefined) {
+			throw new Error("error-map.ts declares no ConcealedReason union; this scan cannot look");
+		}
+		const reasons = [...union.matchAll(/"([a-z_]+)"/g)].map(([, reason]) => reason ?? "");
+		if (reasons.length === 0) {
+			throw new Error("the ConcealedReason union parsed to no literals; this scan cannot look");
+		}
+		return reasons;
+	}
+
+	/** Producing a reason names it; deciding from one has to compare against it (E-1197). */
+	function comparesAgainstAReason(source: string, reasons: readonly string[]): boolean {
+		const alternatives = reasons.join("|");
+		return new RegExp(
+			`(?:===|!==|case)\\s*"(?:${alternatives})"|"(?:${alternatives})"\\s*(?:===|!==)`,
+		).test(source);
+	}
+
 	/**
-	 * `.reason` alone names any property so called, and 3.15 G gives `PluginActor` one that has
-	 * nothing to do with a concealed failure. What the requirement is about is reading the reason
-	 * *off a `ConcealedError`*, so the file has to name that class to be reading one.
+	 * A drift detector and not a proof: a decision spelled without naming the class or a reason —
+	 * `inspected.startsWith("user_")` — passes every clause below, and what actually holds S-ENUM-1
+	 * is the byte-identity suite over the mounted route in `auth-password-routes.test.ts` (E-1197).
 	 */
 	it("decides the visible code from an internal reason in exactly one file", () => {
 		const files = sourceFilesUnder(new URL("../src/", import.meta.url));
+		const errorMap = files.find(({ name }) => name === "error-map.ts")?.source ?? "";
+		const reasons = internalReasonsDeclaredIn(errorMap);
 		const deciders = files.filter(
 			({ name, source }) =>
 				name !== "error-map.ts" &&
 				(source.includes("instanceof ConcealedError") ||
-					(source.includes("ConcealedError") && source.includes(".reason"))),
+					(mentionsTheClassWithoutConstructingIt(source) && source.includes(".reason")) ||
+					comparesAgainstAReason(source, reasons)),
 		);
 
-		expect(deciders.map(({ name }) => name)).toEqual([]);
+		expect(deciders.map(({ path }) => path)).toEqual([]);
 		expect(
 			files.filter(({ source }) => source.includes("VISIBLE_CODE_BY_CONCEALED_REASON")).length,
 		).toBe(1);

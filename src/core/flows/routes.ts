@@ -7,7 +7,6 @@ import type { RateLimitRule } from "../http/rate-limit.js";
 import { type AnyRoute, defineRoute, type RequestContext } from "../http/route.js";
 import { object, string } from "../http/validators.js";
 import type { IdentityConfiguration } from "../identity/configuration.js";
-import { createKdfSemaphore } from "../password/semaphore.js";
 import { redeemChange, redeemVerification, requestChange, requestVerification } from "./address.js";
 import type { FlowEnvironment } from "./environment.js";
 import { redeemMagicLink, requestMagicLink } from "./magic-link.js";
@@ -322,7 +321,7 @@ export type EmailFlowRouteTable = readonly [
 export function emailFlowRoutes(services: RouteServices): readonly AnyRoute[] {
 	const environment: FlowEnvironment = {
 		services,
-		semaphore: createKdfSemaphore({ limit: services.password.concurrentHashLimit }),
+		semaphore: services.kdfSemaphore,
 	};
 	const email = services.email;
 	// 3.15 D.3: a route the mode does not have is not refused, it does not exist. `email.send` is a
