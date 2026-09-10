@@ -219,6 +219,30 @@ function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakenin
 }
 
 /**
+ * `exactOptionalPropertyTypes` is on, so an option nobody configured has to reach `RouteServices`
+ * as an absent key rather than as a key holding `undefined`. Gathered here rather than written
+ * into the object literal, where six of them are six branches of one function (E-1258).
+ */
+function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
+	return {
+		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
+		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+		...(config.email === undefined ? {} : { email: config.email }),
+		...(config.webauthn === undefined ? {} : { webauthn: config.webauthn }),
+		...(config.totp === undefined ? {} : { totp: config.totp }),
+		...(config.recoveryCodes === undefined ? {} : { recoveryCodes: config.recoveryCodes }),
+	};
+}
+
+/** The session settings the completion needs, in the same absent-key shape and for the same reason. */
+function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
+	return {
+		...(config.session === undefined ? {} : { session: config.session }),
+		...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
+	};
+}
+
+/**
  * E-231: the core reads no clock of its own, so the caller brings the one the configuration falls
  * back to. `src/index.ts` is that caller, and it is where `new Date()` is allowed.
  */
@@ -238,12 +262,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const sessionSettings = sessionSettingsOf(config.session);
 	const rateLimit = rateLimitConfigOf(config.rateLimit);
 
-	const sessions = createSessionService({
-		driver,
-		schema,
-		...(config.session === undefined ? {} : { session: config.session }),
-		...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
-	});
+	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
 	const pending = createPendingAuthenticationService({ driver, schema });
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
@@ -284,15 +303,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		completeSecondFactor: createSecondFactorCompletion({
 			driver,
 			schema,
-			...(config.session === undefined ? {} : { session: config.session }),
-			...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
+			...sessionOptionsOf(config),
 		}),
-		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
-		...(config.fetch === undefined ? {} : { fetch: config.fetch }),
-		...(config.email === undefined ? {} : { email: config.email }),
-		...(config.webauthn === undefined ? {} : { webauthn: config.webauthn }),
-		...(config.totp === undefined ? {} : { totp: config.totp }),
-		...(config.recoveryCodes === undefined ? {} : { recoveryCodes: config.recoveryCodes }),
+		...optionalConfigurationOf(config),
 		pluginRuntime,
 	};
 
