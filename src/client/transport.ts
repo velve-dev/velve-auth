@@ -22,6 +22,19 @@ interface AddressedRoute {
 	readonly rest: Readonly<Record<string, unknown>>;
 }
 
+const PATH_NORMALISATION_PROBE = "https://velve.invalid";
+
+/**
+ * 3.15 E has each leaf send the path of its own row, and percent-encoding does not make that true
+ * on its own: `.` and `..` come through `encodeURIComponent` unchanged and are then removed by the
+ * URL parser before the request is made, so a value can consume a segment it was meant to fill.
+ */
+function assertPathIsStillTheRoutes(route: ClientRoute, path: string): void {
+	if (new URL(path, PATH_NORMALISATION_PROBE).pathname !== path) {
+		throw new TypeError(`Route ${route.name} was given a path parameter that changes its path`);
+	}
+}
+
 /** A field that names a path segment is spent there and not repeated in the query or the body, so exactly one place carries it. */
 function addressOf(route: ClientRoute, input: unknown): AddressedRoute {
 	const fields = isRecord(input) ? { ...input } : {};
@@ -31,13 +44,17 @@ function addressOf(route: ClientRoute, input: unknown): AddressedRoute {
 		}
 		const name = segment.slice(1);
 		const value = fields[name];
-		if (typeof value !== "string") {
-			throw new TypeError(`Route ${route.name} needs a string ${name} to address its path`);
+		if (typeof value !== "string" || value === "") {
+			throw new TypeError(
+				`Route ${route.name} needs a non-empty string ${name} to address its path`,
+			);
 		}
 		delete fields[name];
 		return encodeURIComponent(value);
 	});
-	return { path: segments.join("/"), rest: fields };
+	const path = segments.join("/");
+	assertPathIsStillTheRoutes(route, path);
+	return { path, rest: fields };
 }
 
 function queryOf(fields: Readonly<Record<string, unknown>>): string {
@@ -53,6 +70,7 @@ function queryOf(fields: Readonly<Record<string, unknown>>): string {
 
 function requestInitOf(route: ClientRoute, addressed: AddressedRoute): RequestInit {
 	const envelope = {
+		// S-CSRF-4: the method is the row's, so nothing that changes state can be reached with a GET.
 		method: route.method,
 		// The session cookie has to ride along, and the `Origin` header S-CSRF-1 compares is written by the browser and not here.
 		credentials: "include",

@@ -7,6 +7,7 @@ import {
 	VelveTransportError,
 } from "../src/client/index.js";
 import { VELVE_CLIENT_ROUTES } from "../src/client/routes.js";
+import { createRouteCall } from "../src/client/transport.js";
 import { widestVelveAuth } from "./client-fixtures.js";
 
 /** The five codes `session.revokeAll` declares, written out so a widened one would not compile. */
@@ -108,6 +109,47 @@ describe("what the client sends (architecture 3.15 E)", () => {
 
 		await expect(callable({ code: "c", state: "s" })).rejects.toBeInstanceOf(TypeError);
 		expect(recorder.calls).toHaveLength(0);
+	});
+
+	/**
+	 * `encodeURIComponent` escapes a slash and leaves a dot, so a segment cannot be injected but one
+	 * can be consumed: `..` reaches the URL parser intact and removes the segment before it.
+	 */
+	it("refuses a path parameter that would change the path rather than fill a segment", async () => {
+		const { recorder, client } = clientAnswering(() => jsonAnswer(200, {}));
+		const callable = client.signIn.oauth.callback as (input: unknown) => Promise<unknown>;
+
+		for (const provider of ["..", ".", ""]) {
+			await expect(callable({ provider, code: "c", state: "s" })).rejects.toBeInstanceOf(TypeError);
+		}
+		expect(recorder.calls).toHaveLength(0);
+	});
+
+	/** A dot only travels if it is the whole segment, so a value that merely contains one is encoded and sent. */
+	it("sends a path parameter that merely looks dangerous as one encoded segment", async () => {
+		const { recorder, client } = clientAnswering(() => jsonAnswer(200, {}));
+
+		for (const provider of ["a/../b", "../..", "%2e%2e/..", "a.b"]) {
+			await client.signIn.oauth.callback({ provider, code: "c", state: "s" });
+			const sent = new URL(recorder.last().url).pathname;
+			expect(sent).toBe(`/auth/sign-in/oauth/callback/${encodeURIComponent(provider)}`);
+		}
+	});
+
+	/** S-CSRF-4: the method comes from the row, so no state-changing route can be reached with a GET. */
+	it("sends every row with the method the row declares and no other", async () => {
+		const recorder = recorderAnswering(() => new Response(null, { status: 204 }));
+		const call = createRouteCall({ baseURL: BASE_URL, fetch: recorder.fetch });
+
+		for (const route of VELVE_CLIENT_ROUTES) {
+			await call(route, route.path.includes("/:provider") ? { provider: "github" } : {}).catch(
+				() => undefined,
+			);
+		}
+
+		expect(recorder.calls.map((call) => call.init.method)).toStrictEqual(
+			VELVE_CLIENT_ROUTES.map((route) => route.method),
+		);
 	});
 
 	it("joins a base URL that ends in a slash without doubling it", async () => {

@@ -61,10 +61,21 @@ describe("the client table against the table the server serves (architecture 3.1
 	});
 
 	/**
-	 * S-REDIR-4: no query string the library writes carries a one-time artefact, and a GET is the
-	 * one shape in which the client puts input into one. Every route that redeems one is a POST.
+	 * A GET is the one shape in which the client puts input into a query string, so what may not
+	 * end up there is what the library mints as a secret. That is `token` and only `token`: the
+	 * clause below is what makes the six envelope fields unreachable as inputs. `code` and `state`
+	 * are the provider's callback parameters and travel in a query by protocol — `state` is a
+	 * pointer whose other half is a cookie (S-CSRF-5), not a secret on its own.
 	 */
-	it("puts no one-time artefact in a query string, because no route that takes one is a GET", () => {
+	it("declares no envelope field as a route input, so no session or pending token can be one", () => {
+		const reserved = ["sessionToken", "pendingToken", "oauthStateToken", "ipAddress", "userAgent"];
+
+		for (const route of everyDeclarationTheLibraryMakes()) {
+			expect(route.input.fields.filter((field) => reserved.includes(field))).toStrictEqual([]);
+		}
+	});
+
+	it("takes a one-time token only on routes the client sends as a POST", () => {
 		const carryingAnArtefact = everyDeclarationTheLibraryMakes().filter((route) =>
 			route.input.fields.includes("token"),
 		);

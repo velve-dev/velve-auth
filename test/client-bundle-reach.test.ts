@@ -8,12 +8,13 @@ const clientEntry = resolve(distDirectory, "client.mjs");
 
 const RE_EXPORTED_OR_IMPORTED = /(?:^|[\s;}])(?:import|export)\b[^"'\n]*?from\s*["']([^"']+)["']/gm;
 const IMPORTED_FOR_EFFECT = /^\s*import\s*["']([^"']+)["']/gm;
+/** A dynamic import is a live edge with no `from` and no line of its own, and the two patterns above read neither (E-685). */
+const IMPORTED_DYNAMICALLY = /\bimport\s*\(\s*["']([^"']+)["']/g;
 
 function specifiersIn(source: string): readonly string[] {
-	return [
-		...[...source.matchAll(RE_EXPORTED_OR_IMPORTED)].map((match) => match[1] ?? ""),
-		...[...source.matchAll(IMPORTED_FOR_EFFECT)].map((match) => match[1] ?? ""),
-	];
+	return [RE_EXPORTED_OR_IMPORTED, IMPORTED_FOR_EFFECT, IMPORTED_DYNAMICALLY].flatMap((pattern) =>
+		[...source.matchAll(pattern)].map((match) => match[1] ?? ""),
+	);
 }
 
 interface Reach {
@@ -65,6 +66,27 @@ const THE_ONLY_CORE_MODULE = "core/http/error-map.mjs";
 /** Names that exist only where a request is served: the handler registry, the driver, the SQL. */
 const SERVER_ONLY_NAMES = ["invocationOf", "defineRoute", "runRoute", "transaction(", "SELECT "];
 
+const NODE_BUILTIN_PREFIX = "node:";
+
+/**
+ * The walk above reads the import forms it knows, and a form it cannot read is a hole rather than a
+ * finding. This reads no syntax at all: the name of a package the browser must not load cannot
+ * appear as a quoted string anywhere in the closure, however it would have been reached (E-685).
+ */
+function forbiddenNames(): readonly string[] {
+	const manifest = JSON.parse(
+		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+	) as {
+		readonly dependencies: Readonly<Record<string, string>>;
+		readonly peerDependencies: Readonly<Record<string, string>>;
+	};
+	return [...Object.keys(manifest.dependencies), ...Object.keys(manifest.peerDependencies)];
+}
+
+function quotedNamesIn(source: string, names: readonly string[]): readonly string[] {
+	return names.filter((name) => source.includes(`"${name}"`) || source.includes(`'${name}'`));
+}
+
 describe("what reaches the browser through @velve/auth/client (architecture 3.15 E)", () => {
 	it("was built before it was measured, and is the client that was built", () => {
 		expect(existsSync(clientEntry)).toBe(true);
@@ -89,6 +111,15 @@ describe("what reaches the browser through @velve/auth/client (architecture 3.15
 		const { source } = reachOf(clientEntry);
 
 		expect(SERVER_ONLY_NAMES.filter((name) => source.includes(name))).toStrictEqual([]);
+	});
+
+	it("names no dependency and no Node built-in, in any syntax at all", () => {
+		const { source } = reachOf(clientEntry);
+		const names = forbiddenNames();
+
+		expect(names.length).toBeGreaterThan(0);
+		expect(quotedNamesIn(source, names)).toStrictEqual([]);
+		expect(source.includes(NODE_BUILTIN_PREFIX)).toBe(false);
 	});
 
 	it("hands out the same error class the core does, which is what the one core module is for", async () => {
