@@ -924,8 +924,12 @@ pnpm check:attribution
                  .github/workflows/ci.yml, which §4 exempts, so that a second
                  copy does not become a fourth file needing exemption. It
                  performs the one shell expansion the detector's values use and
-                 refuses every other, in whichever spelling, so that a rewording
-                 cannot narrow the scan without saying so. Refuses the run if
+                 refuses by name every other spelling it knows of — which is an
+                 enumeration and not a proof: two spellings have been found
+                 missing from it by a reader rather than by anything that runs,
+                 and a third would be performed by the detector's shell and left
+                 literal here, so the two would search with different patterns.
+                 Refuses the run if
                  the detector cannot be read or is reworded past what it can
                  parse, if a value still names an expansion it does not perform,
                  if any branch of a pattern cannot be sampled or does not match
@@ -939,7 +943,15 @@ pnpm check:attribution
                  branch the detector no longer states, because every branch it
                  proves is derived from the detector; test/gate-commands.test.ts
                  states that shape where it is not derived from it, and is what
-                 fails on a deletion
+                 fails on a deletion. A spelling missing from the enumeration
+                 above lands on a second guard rather than on nothing: what it
+                 leaves behind is a literal $ mid-branch, the sample built for
+                 that branch drops it, and the branch then fails against its own
+                 sample. That holds on an engine treating a mid-pattern $ as an
+                 anchor or as an ordinary character, and not on one that ignores
+                 it. Measured on BSD grep 2.6.0-FreeBSD, which is what this
+                 machine resolves grep to; not measured on GNU grep, which is
+                 what CI runs
 pnpm check:release-tag
                  the tag a release is cut from names the version package.json
                  states, that version is a semantic one, and a prerelease is not

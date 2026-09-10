@@ -16,13 +16,19 @@ const SINGLE_QUOTED = /'([^']*)'/g;
 const SHELL_ESCAPED = new Set(['"', "$", "`", "\\"]);
 const EXPANDED_HERE = "ASSISTANTS";
 
-/** Every form bash expands inside a double-quoted value, in one pass so that no expansion can
- * hide behind a spelling of another: a backslash escape, a braced name, a bare name, and the
- * command substitutions, arithmetic and positional parameters this script performs none of. A
- * `$` that is a regular expression's end-of-line anchor matches none of these alternatives and
- * is left where it stands. */
+/** The forms of expansion this script knows bash performs inside a double-quoted value, read in
+ * one pass so that no expansion hides behind a spelling of another: a backslash escape, a braced
+ * name, a bare name, and the command substitutions, both arithmetic forms — `$(( ))` and the
+ * older `$[ ]` — and the positional parameters it performs none of and refuses by name. A `$`
+ * that is a regular expression's end-of-line anchor matches none of these alternatives and is
+ * left where it stands.
+ *
+ * This is an enumeration and not a proof, and it has twice been found short by a reader rather
+ * than by anything that runs: `${…}` was missing until E-1476 and `$[…]` until E-1484. A
+ * spelling missing from it is performed by the detector's shell and left literal here, so the
+ * pattern this script searches with is not the pattern CI searches with. */
 const SHELL_TOKEN =
-	/\\([\s\S])|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)|\$[({0-9!#?*@$-]|`/g;
+	/\\([\s\S])|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)|\$[({[0-9!#?*@$-]|`/g;
 
 function refuse(reason, detail) {
 	console.error(`The attribution scan cannot be run: ${reason}`);
@@ -32,6 +38,11 @@ function refuse(reason, detail) {
 	process.exit(1);
 }
 
+/** This is the one call that sets no `stdio`, so a failing `git` inherits stderr, and the
+ * refusal that reads it reports `String(error)`, whose message is the whole argument vector.
+ * Every call passes `log`, `ls-files` or `rev-list` with pathspecs and none carries a pattern,
+ * so nothing leaks today — it is the one path where the audit behind E-1482 is absent rather
+ * than applied, and E-1487 states that rather than leaving it to be rediscovered. */
 function run(argv) {
 	return execFileSync("git", argv, {
 		cwd: repositoryRoot,
@@ -87,10 +98,12 @@ function searched(what, command, argv, options) {
 		if (error.status === 1) {
 			return { matched: false, hits: "" };
 		}
-		/** Neither the argument vector nor the command's own message: `git grep` and `grep` both
-		 * quote the pattern back when they reject one, so forwarding either states the pattern in
-		 * a second place. What is reported is the command and its status, and the message is lost
-		 * — the same trade the rest of this file makes (E-1482). */
+		/** Neither the argument vector nor the command's own message. Which tools quote a rejected
+		 * pattern back depends on which one the path resolves: `git grep` does, ugrep 7.8.4 prints
+		 * it under a caret, and BSD grep 2.6.0-FreeBSD does not — so withholding is the only
+		 * answer that does not depend on that. What is reported is the command and its status,
+		 * and the message is lost, which is the trade the rest of this file makes (E-1482,
+		 * E-1488). */
 		refuse(
 			`the ${what} scan could not run, so it proves nothing`,
 			`${command} exited ${String(error.status ?? error.code)}, and its message is withheld because both search tools quote a pattern they reject`,
@@ -327,7 +340,15 @@ function ordinalsOf(samples, unwanted) {
  * where it happens to be first. The samples come from the derived pattern, so what they
  * establish is that every branch is live and matchable and not that the derivation is faithful;
  * the two probes below are the independent half of that, and neither half sees a branch the
- * detector no longer states at all (E-1477, E-1478). */
+ * detector no longer states at all (E-1477, E-1478).
+ *
+ * It is also what makes an expansion missing from SHELL_TOKEN fail loudly rather than quietly:
+ * the remnant is a literal `$` mid-branch, the sample built for that branch drops it, and the
+ * branch then fails against its own sample. That holds where the engine treats a mid-pattern `$`
+ * as an anchor or as an ordinary character, and fails where an engine ignores one. Measured on
+ * BSD grep 2.6.0-FreeBSD, which is what this machine resolves `grep` to: `a$b` matches neither
+ * `a$b` nor `ab`. **Not measured on GNU grep, which is what CI runs** — it is on no path here and
+ * no container was available (E-1485). */
 function provesEveryBranch(what, pattern) {
 	const { samples, unsampled } = samplesOf(pattern);
 	if (unsampled.length > 0) {
