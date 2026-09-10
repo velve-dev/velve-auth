@@ -13,8 +13,16 @@ const MAX_OUTPUT = 256 * 1024 * 1024;
 const ASSISTANT_LIST = /^[ \t]*ASSISTANTS: '([^']+)'$/m;
 const EXEMPT_LIST = /^[ \t]*EXEMPT=\(([^)]*)\)$/m;
 const SINGLE_QUOTED = /'([^']*)'/g;
-const SHELL_ESCAPE = /\\(["$`\\])/g;
-const UNEXPANDED_VARIABLE = /\$[A-Za-z_]/;
+const SHELL_ESCAPED = new Set(['"', "$", "`", "\\"]);
+const EXPANDED_HERE = "ASSISTANTS";
+
+/** Every form bash expands inside a double-quoted value, in one pass so that no expansion can
+ * hide behind a spelling of another: a backslash escape, a braced name, a bare name, and the
+ * command substitutions, arithmetic and positional parameters this script performs none of. A
+ * `$` that is a regular expression's end-of-line anchor matches none of these alternatives and
+ * is left where it stands. */
+const SHELL_TOKEN =
+	/\\([\s\S])|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)|\$[({0-9!#?*@$-]|`/g;
 
 function refuse(reason, detail) {
 	console.error(`The attribution scan cannot be run: ${reason}`);
@@ -109,14 +117,24 @@ function shellValue(name) {
 }
 
 function expanded(raw, assistants, what) {
-	const value = raw.replace(SHELL_ESCAPE, "$1").split("$ASSISTANTS").join(assistants);
-	const unexpanded = UNEXPANDED_VARIABLE.exec(value);
-	if (unexpanded !== null) {
-		/** The variable is named and the value is not: a refusal that prints the derived pattern
-		 * states it in a second place, which is the whole thing this script is built to avoid. */
+	const unperformed = [];
+	const value = raw.replace(SHELL_TOKEN, (token, escaped, braced, bare) => {
+		if (escaped !== undefined) {
+			return SHELL_ESCAPED.has(escaped) ? escaped : `\\${escaped}`;
+		}
+		const name = braced ?? bare;
+		if (name === EXPANDED_HERE) {
+			return assistants;
+		}
+		unperformed.push(name === undefined ? token : `$${name}`);
+		return "";
+	});
+	if (unperformed.length > 0) {
+		/** The expansions are named and the value is not: a refusal that prints the derived
+		 * pattern states it in a second place, which is what this script exists to avoid. */
 		refuse(
-			`${DETECTOR}'s ${what} names a shell variable this script does not expand`,
-			`${unexpanded[0]}… at offset ${unexpanded.index} — the pattern itself is not printed here`,
+			`${DETECTOR}'s ${what} contains ${unperformed.length} shell expansion${unperformed.length === 1 ? "" : "s"} this script does not perform`,
+			`${unperformed.join(", ")} — the pattern itself is not printed here`,
 		);
 	}
 	return value;
