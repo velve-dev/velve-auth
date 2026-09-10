@@ -5303,22 +5303,34 @@ without any of them being edited.
 #### What a plugin migration may do
 
 **A plugin migration does not run on a superuser connection**, nor on one whose
-role may create roles. Every measurement below is a privilege away from being
-switched off — `SET LOCAL track_counts = off` suppresses the row counters
-without either reading of the guard seeing it, and a role created inside a
-migration needs no counters at all — so the connection is part of the boundary.
-The library cannot check that a restricted role was provisioned, because a role
-that was never created looks exactly like one that was not needed; it can refuse
-a role too powerful for anything it measures to bind, and a missing provision is
-then a refusal rather than a silent pass. It is refused with
-`migration_role_unbounded`. **Core migrations are unaffected** and run on
-whatever connection the application supplies; only a plugin's do.
+role may create roles, nor on one that holds `SET` on the parameter
+`track_counts`. Every measurement below is a privilege away from being switched
+off — `SET LOCAL track_counts = off` suppresses the row counters without either
+reading of the guard seeing it, and a role created inside a migration needs no
+counters at all — so the connection is part of the boundary. The library cannot
+check that a restricted role was provisioned, because a role that was never
+created looks exactly like one that was not needed; it can refuse a role too
+powerful for anything it measures to bind, and a missing provision is then a
+refusal rather than a silent pass. It is refused with
+`migration_role_unbounded`, and the message names which of the three refused.
+**Core migrations are unaffected** and run on whatever connection the
+application supplies; only a plugin's do.
 
 The check reads every role the connection can **reach**, not the one it is
 currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it
 back, so a connection that may `SET ROLE` to a superuser is refused whichever
 role it is wearing. It runs again for every migration, so one plugin's escape
 cannot unbind the next plugin's check.
+
+**What the check reads is three catalogue answers, not the capability itself.**
+`rolsuper` and `rolcreaterole` come from `pg_roles`; the third is
+`has_parameter_privilege(…, 'track_counts', 'SET')`, which reads the parameter
+ACL PostgreSQL 15 added and which is asked only where the server records one, so
+PostgreSQL 14 answers the first two and is not asked the third. A capability
+delegated by a mechanism none of those three records — a `SECURITY DEFINER`
+function owned by a more powerful role, an event trigger, an extension — is
+outside the check's reach. It is residue, listed with the rest below, and no
+finite set of columns can be read to rule it out.
 
 **Owning the schema is part of the requirement, not an optimisation.** A role
 that merely holds privileges on the schema gets past this check and is refused
@@ -5426,7 +5438,7 @@ for it.
 | `migration_wrote_a_foreign_table` | It wrote a row into a table it does not own. |
 | `migration_read_a_foreign_table` | It read rows of a table it does not own. |
 | `migration_write_check_unavailable` | `track_counts` is off, so what it wrote and read cannot be read. The migration is refused rather than run unmeasured. |
-| `migration_role_unbounded` | The connected role is a superuser or may create roles, so nothing measured here binds it. Only plugin migrations are refused. |
+| `migration_role_unbounded` | The connected role is a superuser, may create roles, or holds `SET` on `track_counts`, so nothing measured here binds it. Only plugin migrations are refused. |
 
 Those twelve are the whole of `MigrationRefusalCode`. **S-TOKEN-6's
 `migration_missing_cascade` is not one of them** — a `user_id` column without a
@@ -5464,8 +5476,13 @@ the measurements. Named by example, what they do **not** see:
   it lacks.
 - what a statement did that wrote and read nothing and left nothing: a `SELECT`
   with no table in it, an advisory lock, a `pg_sleep`.
-- **anything at all, if the migration turns the counters off and on again** —
-  which needs a superuser, and is why a plugin migration does not run on one.
+- **anything at all, if the migration turns the counters off and on again.** The
+  three capabilities the role check reads are refused, so this needs a fourth
+  route to `SET track_counts` — most plainly a `SECURITY DEFINER` function owned
+  by a more powerful role and executable by this one, which no catalogue the
+  check reads records as a property of the connected role. The check makes the
+  three named ways a refusal; it does not, and cannot, promise there is no
+  fourth.
 
 A plugin migration is arbitrary SQL from a package the application installed, on
 the same footing as any other dependency it installs. This is a guardrail against
