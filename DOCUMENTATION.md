@@ -38,6 +38,7 @@ here as well, where nothing removes it.
 - [The instance](#the-instance)
 - [Plugins](#plugins)
 - [The client](#the-client)
+- [Signing in with a password](#signing-in-with-a-password)
 
 ## Package entry points
 
@@ -5681,3 +5682,138 @@ calls the library on the server and in the browser alike. Nothing in the closure
 imports a package, a Node built-in, a driver, a handler or a line of SQL, and
 `test/client-bundle-reach.test.ts` walks the built output to say so rather than
 asserting it.
+
+## Signing in with a password
+
+Three rows of architecture 3.15 D.3 live in `src/core/password/routes.ts`:
+the way into an account with a password, and the two ways a session writes one.
+They are mounted by `assembleVelveAuth` like any other route source, so they are
+reachable both over HTTP and as server methods on the instance.
+
+The other three rows of the `password` namespace — `requestReset`,
+`redeemReset` and `redeemResetWithRecoveryCode` — belong to the email flows and
+are documented under [Email flows](#email-flows).
+
+### `POST /sign-in/password` — `auth.signIn.password`
+
+| | |
+|---|---|
+| Input | `SignInLookup<M> & { password: string }` |
+| Output | `SignInResult` |
+| Status | 200, 400, 401 |
+| Caller | none |
+| Fresh | not required |
+| Limit | per IP address and per account |
+| Origin | checked |
+
+The lookup field follows the identity mode: `email` in mode `email`, `username`
+in mode `username`, and `emailOrUsername` in mode `username_email`, where an
+identifier containing `@` is resolved against the address and any other against
+the username key.
+
+The answer is a `SignInResult`, which is one of two shapes.
+
+```ts
+{ status: "signed_in", sessionToken, session, user }
+{ status: "second_factor_required", pendingToken, pending }
+```
+
+Over HTTP the `sessionToken` and `pendingToken` fields never reach the body: the
+handler moves them into `__Host-velve_session` and `__Host-velve_pending`
+respectively. A server method called in the application's own process receives
+them in the returned object.
+
+The second shape is not an error. A correct password against an account that has
+a confirmed TOTP credential, a WebAuthn credential or recovery codes is not a
+session (architecture 3.6): the route writes a row in
+`velve.pending_authentication`, sets the pending cookie, and writes no session
+row at all. `pending.availableFactors` names the factors the account offers.
+
+**Every refusal is `invalid_credentials` with status 401.** An identifier that
+names no account, a wrong password, an account with no password credential, an
+account whose stored scheme the configuration no longer accepts, and a disabled
+account given the correct password all produce the same status, the same header
+set and the same body (`S-ENUM-1`, `S-ENUM-2`). The code `account_disabled` is
+never produced by a sign-in; it belongs to the resolution of a session that
+already exists. The true reason is written to the configured `log` under the
+field `reason`, and is the only place the difference is visible (`S-ENUM-6`).
+
+A password shorter than `minimumLength` or longer than `maximumLengthInBytes` is
+refused before the account is looked up, so it costs no query against the account
+and no key derivation (`S-DOS-2`).
+
+After a successful verification against a credential whose stored parameters or
+key version are behind the configuration, the credential is rewritten in the
+background. The rewrite is started and not awaited, so it does not lengthen the
+sign-in that triggered it (`S-TIM-5`).
+
+### `POST /password/set` — `auth.password.set`
+
+| | |
+|---|---|
+| Input | `{ newPassword: string }` |
+| Output | `SetPasswordResult` |
+| Status | 200, 400, 401, 403, 409 |
+| Caller | session |
+| Fresh | required |
+| Limit | per IP address and per account |
+| Origin | checked |
+
+For an account that has no password credential — one created through
+`signUp.withoutPassword`, a passkey or a provider. An account that already has
+one is refused with `factor_already_enrolled` and status 409; changing an
+existing password is `password.change`, which requires the current one. There is
+no optional `currentPassword`, because an optional current password is the gap
+through which a foreign password gets overwritten.
+
+### `POST /password/change` — `auth.password.change`
+
+| | |
+|---|---|
+| Input | `{ currentPassword: string; newPassword: string }` |
+| Output | `SetPasswordResult` |
+| Status | 200, 400, 401, 403 |
+| Caller | session |
+| Fresh | required |
+| Limit | per IP address and per account |
+| Origin | checked |
+
+A wrong `currentPassword` is refused with `invalid_credentials` and status 401,
+and nothing is written.
+
+### `SetPasswordResult`
+
+```ts
+interface SetPasswordResult {
+  sessionToken: SessionToken
+  session: Session
+  revokedOtherSessionsCount: number
+}
+```
+
+Both routes revoke **every other session of the account** and re-issue the
+calling one, in a single transaction with the credential write (`S-FIX-1`,
+`S-FIX-6`, `S-RACE-5`). This is not configurable and no option exists that turns
+it off. `revokedOtherSessionsCount` counts the sessions that were revoked, not
+counting the calling session, which is replaced rather than revoked. The new
+token arrives in `__Host-velve_session`; the previous token resolves to nothing
+from that moment.
+
+Both routes require a **fresh** session — one created within `freshnessWindow`,
+15 minutes by default, measured from `created_at` and not from last use. A stale
+session is refused with `freshness_required` and status 403. Freshness is
+restored only by signing in again.
+
+The new password is put through the configured `password.validate` hook and the
+length policy before it is hashed; a rejection is `password_unacceptable` with
+status 400.
+
+### What is not here yet
+
+The fourteen `factor.*` rows and the two `signIn.passkey.*` rows of 3.15 D.3 are
+not mounted. Their services exist under `src/core/factor` and are complete, but
+no route reaches them, because the configuration they need — `totp`, `webauthn`
+and `recoveryCodes` — is declared on `VelveAuthConfig` and read by nothing that
+builds a route. Until they are mounted, an account that offers a second factor
+can begin the handshake and cannot finish it, and `identity: "username"` has no
+way back into a locked-out account. This is recorded as `E-1182`.
