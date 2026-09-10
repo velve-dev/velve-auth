@@ -126,12 +126,11 @@ a startup error, not a warning.
 refuses to start on one that cannot be made safe — a root key shorter than 32
 bytes, an empty origin list, a username-only mode without recovery codes, Argon2
 parameters below the floor — and returns the route table, the server methods and
-the maintenance sweep. Sessions, sign-out and the state between password and
-second factor work end to end today. [`DOCUMENTATION.md`](./DOCUMENTATION.md) states,
-chapter by chapter, what each of the other areas has built; **this paragraph
-names none of them**, because a sentence about everybody's progress is a
-sentence everybody has to edit, and this one was wrong within a wave of being
-written.
+the maintenance sweep. [`DOCUMENTATION.md`](./DOCUMENTATION.md) states, chapter
+by chapter, what each area has built; **this paragraph names none of them**,
+because a sentence about everybody's progress is a sentence everybody has to
+edit — the sentence that stood here was wrong within a wave of being written,
+and understated once the route table was complete.
 
 ```ts
 import { createVelveAuth, rootKeyProvider } from "@velve/auth";
