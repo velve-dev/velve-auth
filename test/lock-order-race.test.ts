@@ -10,6 +10,7 @@ import { configFor, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema, readUserOwnedTables } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import {
+	accountLockAudit,
 	backendPidOf,
 	cyclesAmong,
 	deadlocksReportedTo,
@@ -239,6 +240,94 @@ describe("no interleaving of two account writes deadlocks (CLAUDE.md §7)", () =
 		finish();
 		await holding;
 
+		expect(outcome).toBe("the insert went through");
+	}, 60_000);
+
+	/**
+	 * The declared statement, not the ordering it happens to produce. Deleting `lockAccountRow` from
+	 * `confirmAddress` leaves that transaction correctly ordered anyway — its own `UPDATE velve.user`
+	 * takes the same mode on the same row — so a case reading the order stays green and the statement
+	 * is unpinned. This reads the marker's position instead, and reddens for every one of the eight
+	 * sites the file drives (E-1617).
+	 */
+	it("runs the declared account lock before the first of the account's own tables", () => {
+		const { late, considered } = accountLockAudit(
+			[...held.transactions, ...watched.transactions],
+			schema,
+			owned,
+		);
+
+		expect(late).toEqual([]);
+		expect(considered).toBeGreaterThanOrEqual(4);
+	});
+
+	/**
+	 * The classification of an `UPDATE` as `FOR NO KEY UPDATE` is true of this schema and not of SQL:
+	 * `moveAddressStatement` writes `email`, which **is** a unique-index column, and the update stays at
+	 * the weaker strength only because both unique indexes on the account table are partial and a
+	 * partial index cannot be a foreign key's target. Planted both ways on 14.24 and 18.3: with a total
+	 * index the same update blocks a child insert. Migration `0002_identity_email.sql` adds
+	 * `CHECK (email IS NOT NULL)`, which makes the partial predicate redundant in email mode and
+	 * invites removing it — so the property is asserted here rather than assumed (E-1618).
+	 */
+	it("changes an address without blocking a child insert, and says why", async () => {
+		const indexes = await observer.query<{ name: string; columns: string; partial: boolean }>(
+			`SELECT index_.relname AS name,
+			        (SELECT string_agg(column_.attname, ',' ORDER BY column_.attname)
+			           FROM pg_attribute column_
+			          WHERE column_.attrelid = table_.oid AND column_.attnum = ANY (i.indkey)) AS columns,
+			        (i.indpred IS NOT NULL) AS partial
+			   FROM pg_index i
+			   JOIN pg_class index_ ON index_.oid = i.indexrelid
+			   JOIN pg_class table_ ON table_.oid = i.indrelid
+			   JOIN pg_namespace namespace_ ON namespace_.oid = table_.relnamespace
+			  WHERE namespace_.nspname = $1 AND table_.relname = 'user' AND i.indisunique`,
+			[schema],
+		);
+		const totalOnAnythingButTheKey = indexes
+			.filter((index) => !index.partial && index.columns !== "id")
+			.map((index) => `${index.name} on ${index.columns}`);
+
+		const address = "cycle-d@example.com";
+		await signUp(address);
+		const [account] = await observer.query<{ id: string }>(
+			`SELECT id FROM ${schema}.user WHERE email = $1`,
+			[address],
+		);
+		let changed = (): void => {};
+		let finish = (): void => {};
+		const isChanged = new Promise<void>((resolve) => {
+			changed = resolve;
+		});
+		const mayFinish = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+
+		const holding = firstConnection.transaction(async (transaction) => {
+			await transaction.query(
+				`UPDATE ${schema}.user SET email = $2, updated_at = now() WHERE id = $1`,
+				[account?.id, "cycle-d-moved@example.com"],
+			);
+			changed();
+			await mayFinish;
+		});
+		await isChanged;
+
+		await secondConnection.query("SET lock_timeout = '2000ms'", []);
+		const outcome = await secondConnection
+			.query(
+				`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+				 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day') RETURNING id`,
+				[account?.id, randomBytes(32)],
+			)
+			.then(() => "the insert went through")
+			.catch((failure: unknown) => `the insert waited: ${String(failure)}`);
+		await secondConnection.query("SET lock_timeout = 0", []);
+		finish();
+		await holding;
+
+		expect(indexes.length).toBeGreaterThan(2);
+		expect(totalOnAnythingButTheKey).toEqual([]);
 		expect(outcome).toBe("the insert went through");
 	}, 60_000);
 

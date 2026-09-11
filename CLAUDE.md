@@ -867,11 +867,22 @@ These follow from architecture section 2 and are not open for local decision:
   redemption learns which account it is acting for by consuming a row of
   `one_time_token`, `pending_authentication`, `oauth_flow` or `webauthn_challenge`, so it
   cannot lock the account row before that row. Those four come first; everything else comes
-  after `velve.user`. An implicit acquisition — a foreign key's key share, an
-  `ON CONFLICT` index wait — is ordered by nothing at all, and what makes that safe is the
-  mode restriction above and not this rule. **Do not read this bullet as a guarantee that
-  the tree holds no cycle.** Two were reproduced on `main`; one of them obeyed this rule
-  while deadlocking.
+  after `velve.user`. **Two implicit acquisitions matter, and the mode reaches exactly one
+  of them.** A foreign key's `FOR KEY SHARE` on `velve.user` is the one the mode disarms:
+  measured on 14.24 and on 18.3, it passes while `FOR NO KEY UPDATE` is held on that row
+  and blocks while `FOR UPDATE` is. An `ON CONFLICT` index wait is on the **child's** index
+  and the account row's mode has nothing to do with it; what orders that one is the mutex,
+  as for any other lock on a child. Neither is ordered by this rule. **Do not read this
+  section as a guarantee that the tree holds no cycle.** Two were reproduced on `main`; one
+  of them obeyed this rule while deadlocking.
+- **A second ordering holds and nothing checks it.** Four redeem flows consume a
+  `one_time_token` row *before* they reach `lockAccountRow`, so for them the account lock is
+  not the transaction's first statement — `velve.one_time_token` is written first. What keeps
+  that safe is that `one_time_token` is ordered **before** `velve.user` everywhere: every mint
+  runs in a transaction of its own and every redemption runs first, and no transaction that
+  takes the account row touches that table at all. Verified by reading every site; **no check
+  and no test decides it**, and a transaction that took the account row and then wrote
+  `one_time_token` would close a cycle with every redemption (E-1616).
 - **Two mechanisms, doing different things.** `pnpm check:lock-order` decides the mode, the
   declaration and the one file — properties of a single statement — and decides **no
   ordering whatever**, which its own output says. The ordering is

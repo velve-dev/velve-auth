@@ -268,6 +268,95 @@ interface LockCycle {
 	readonly reported: string;
 }
 
+/**
+ * The four tables whose row *is* the account's name: a redemption consumes one of them to learn which
+ * account it is acting for, so it cannot lock the account row first. Everything else must come after
+ * the declared lock (CLAUDE.md §7, E-1616).
+ */
+const TABLES_THAT_NAME_THE_ACCOUNT = new Set([
+	"one_time_token",
+	"pending_authentication",
+	"oauth_flow",
+	"webauthn_challenge",
+]);
+
+const DECLARES_THE_ACCOUNT_LOCK = /\/\*\s*locks:/;
+
+/**
+ * The transactions that write two or more of the account's own tables without running the **declared**
+ * statement of `src/core/db/lock.ts` before the first of them. The declaration is what is read, not
+ * the ordering: `confirmAddress` orders itself against a password replacement through the
+ * `FOR NO KEY UPDATE` its own `UPDATE velve.user` takes, so a case reading the order alone stays green
+ * when the explicit lock is deleted — which is how an unpinned statement rots (E-1617).
+ */
+interface AccountLockTrace {
+	readonly children: readonly string[];
+	readonly declaredAt: number;
+	readonly firstChildAt: number;
+}
+
+/** The account's own tables a statement locks: not the account row, and not a table whose row named
+ * the account. */
+function childTablesLockedBy(
+	sql: string,
+	schema: string,
+	owned: ReadonlySet<string>,
+): readonly string[] {
+	return acquisitionsIn(sql, schema, owned)
+		.map(({ table }) => table)
+		.filter((table) => table !== THE_ACCOUNT_ROW && !TABLES_THAT_NAME_THE_ACCOUNT.has(table));
+}
+
+function traceTheAccountLock(
+	statements: readonly string[],
+	schema: string,
+	owned: ReadonlySet<string>,
+): AccountLockTrace {
+	const children: string[] = [];
+	let declaredAt = -1;
+	let firstChildAt = -1;
+	for (const [index, sql] of statements.entries()) {
+		if (declaredAt === -1 && DECLARES_THE_ACCOUNT_LOCK.test(sql)) {
+			declaredAt = index;
+		}
+		const locked = childTablesLockedBy(sql, schema, owned);
+		for (const table of locked) {
+			if (!children.includes(table)) {
+				children.push(table);
+			}
+		}
+		if (firstChildAt === -1 && locked.length > 0) {
+			firstChildAt = index;
+		}
+	}
+	return { children, declaredAt, firstChildAt };
+}
+
+export function accountLockAudit(
+	transactions: readonly (readonly string[])[],
+	schema: string,
+	owned: ReadonlySet<string>,
+): { readonly late: string[]; readonly considered: number } {
+	const late: string[] = [];
+	let considered = 0;
+	for (const statements of transactions) {
+		if (createsTheAccount(statements, schema)) {
+			continue;
+		}
+		const trace = traceTheAccountLock(statements, schema, owned);
+		if (trace.children.length < 2) {
+			continue;
+		}
+		considered += 1;
+		if (trace.declaredAt === -1 || trace.declaredAt > trace.firstChildAt) {
+			late.push(
+				`${trace.children.join(", ")} — declared lock at ${trace.declaredAt}, first of them at ${trace.firstChildAt}`,
+			);
+		}
+	}
+	return { late, considered };
+}
+
 /** Whether `one` takes `x` then `y`, `other` takes `y` then `x`, and each of the two requests waits
  * for what the other holds. Both halves have to conflict: one conflicting wait is a queue. */
 function opposedAndWaiting(

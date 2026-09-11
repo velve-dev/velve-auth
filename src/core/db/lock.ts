@@ -16,9 +16,13 @@ WHERE id = $1 FOR NO KEY UPDATE /* locks: ${schema}.user */`;
 }
 
 /**
- * Taken as the first statement of a transaction that writes rows in more than one user-owned table.
- * An account that does not exist locks nothing and raises nothing, so a caller running the statement
- * for an identifier that resolved to nobody runs the same statement as one that resolved (S-TIM-1).
+ * Taken by a transaction that writes rows in more than one user-owned table, and taken before any of
+ * them — except the row that named the account. Four redeem flows consume a `one_time_token` row
+ * first and reach this afterwards, so for them this is not the transaction's first statement; what
+ * keeps that safe is that `one_time_token` is ordered before the account row everywhere, which
+ * nothing checks (E-1616). An account that does not exist locks nothing and raises nothing, so a
+ * caller running the statement for an identifier that resolved to nobody runs the same statement as
+ * one that resolved (S-TIM-1).
  */
 export async function lockAccountRow(
 	driver: Driver,

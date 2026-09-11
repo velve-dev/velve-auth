@@ -648,6 +648,13 @@ as one that resolved (S-TIM-1).
 | `lockAccountRowStatement(schema)` | the statement, for a repository that wants to run it with its own parameters |
 | `lockAccountRow(driver, schema, userId)` | runs it on the driver or open transaction given |
 
+**What the mode buys, exactly.** Held on the account row, `FOR NO KEY UPDATE` lets
+through the foreign key's `FOR KEY SHARE` and an `ON CONFLICT` landing on a **child**
+row — the latter because that wait is on the child's index and has nothing to do with
+the account row's mode — and blocks `UPDATE velve.user`, `SELECT … FOR SHARE` on it,
+and `DELETE FROM velve.user`. Measured on 14.24 and on 18.3, same six answers on both.
+So what the mode disarms is the foreign key's key share and nothing else.
+
 **Why `FOR NO KEY UPDATE` and never `FOR UPDATE`.** Every user-owned table carries
 a foreign key to `velve.user`, so **every insert of a user-owned row takes
 `FOR KEY SHARE` on the account row** — a lock this library does not write, taken by
@@ -665,17 +672,26 @@ insert into a wait, and a wait is an edge in a wait-for cycle; that is what one 
 the two reproduced deadlocks was made of. `FOR UPDATE` and `FOR SHARE` are therefore
 taken nowhere in this library, and `pnpm check:lock-order` refuses both.
 
-**The one table that comes before the account row.** A redemption learns which
+**The four tables that come before the account row.** A redemption learns which
 account it is acting for by consuming a row of `one_time_token`,
 `pending_authentication`, `oauth_flow` or `webauthn_challenge`. It cannot lock the
 account row before the row that names the account, so those four come first and
-everything else comes after `velve.user`.
+everything else comes after `velve.user`. For the four redeem flows this means the
+account lock is **not** the transaction's first statement: `redeemReset`,
+`redeemMagicLink`, `redeemVerification` and `redeemChange` each consume a
+`one_time_token` row first. What keeps that safe is a second ordering — that
+`one_time_token` comes before `velve.user` everywhere, since every mint runs in a
+transaction of its own, every redemption runs first, and no transaction that takes
+the account row touches that table. Nothing checks it.
 
-**Which transactions take it.** `confirmAddress`, `replacePassword`,
-`replacePasswordOfSession`, `redeemResetWithRecoveryCode`, `replaceEveryCode` and
-`removeSignInMethod`. `redeemResetWithRecoveryCode` takes it before the code is
-consumed, because its account is already resolved when the transaction opens and a
-lock taken afterwards would be its second and the regeneration's first.
+**Which transactions take it — all eight.** `confirmAddress`, `replacePassword`,
+`replacePasswordOfSession`, `redeemResetWithRecoveryCode`, `replaceEveryCode`,
+`removeSignInMethod`, `removeCredential` (TOTP, which deletes `totp_credential` and
+then `totp_used_step`) and `linkIdentityAndReissue` (OAuth, which inserts an
+`identity` and then re-issues a `session`). `redeemResetWithRecoveryCode` takes it
+before the code is consumed, because its account is already resolved when the
+transaction opens and a lock taken afterwards would be its second and the
+regeneration's first.
 
 **What each mechanism decides.** `pnpm check:lock-order` reads properties of one
 statement — the mode, the declaration, the one file — and **decides no ordering**,
