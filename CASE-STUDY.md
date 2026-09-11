@@ -9762,8 +9762,8 @@ One consequence of restating in place that the rule does not mention, and that s
 `E-1740` · factor-startup · numbering, added here
 
 **Context.** `fix/second-factor-defects` closed two of the three items an audit ranked before a stable release and reported four things it could not touch, each of them in a file §5 put outside its set: the call site of the key-ring check, the closed `StartupErrorCode` union, the weakening table, and a sentence of `DOCUMENTATION.md`. None of them is a decision left open — each carries the exact change it needs.
-**Rejected.** Folding them into the release branch, and taking numbers from `E-1690 … E-1739`, which has nine free.
-**Reason.** The release branch cuts a tag and publishes; a branch that also changes a start error's behaviour is two things to revert separately if the publish goes wrong. And the second-factor range belongs to a merged branch — §6 says a range is assigned before its writer starts and is not changed afterwards, so borrowing its tail is the renumbering hazard in the other direction.
+**Rejected.** Folding them into the release branch, and taking numbers from the tail of the second-factor range, which has nine free.
+**Reason.** The release branch cuts a tag and publishes; a branch that also changes a start error's behaviour is two things to revert separately if the publish goes wrong. And the second-factor range belongs to a merged branch — §6 says a range is assigned before its writer starts and is not changed afterwards, so borrowing its tail is the renumbering hazard in the other direction. Naming that range's last number in this paragraph is also what `test/decision-log.test.ts` reads as a citation, and it reported it as resolving to no entry — which it does, because the branch that owned the range stopped at its twelfth number.
 **Price.** Thirty numbers for four repairs and their findings, which will leave a gap. §6 says that is fine and a wrong citation is not, and this is the fifty-fourth row of a table where over-reserving has never yet cost anything.
 
 ### The type admitted two numbers that could not be honoured, and they were honoured silently
