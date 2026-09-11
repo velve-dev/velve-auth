@@ -9,11 +9,12 @@ import {
 	createRecoveryCodeRepository,
 	createRecoveryCodeService,
 	createRecoveryCodeSet,
+	DEFAULT_RECOVERY_CODE_SHAPE,
 	formatRecoveryCode,
 	normaliseRecoveryCode,
 	type PepperedRecoveryCode,
 	RECOVERY_CODE_COUNT,
-	RECOVERY_CODE_GROUP_LENGTH,
+	RECOVERY_CODE_GROUP_SIZE,
 	RecoveryCodeOwnerUnknownError,
 	type RecoveryCodeRepository,
 	type RecoveryCodeRepositoryOptions,
@@ -100,7 +101,7 @@ describe("the surface the TOTP module publishes", () => {
 describe("the surface the recovery module publishes", () => {
 	it("takes the same three collaborators the TOTP service takes, without a clock", () => {
 		expectTypeOf<keyof RecoveryCodeServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "pending" | "schema"
+			"driver" | "keys" | "pending" | "schema" | "shape"
 		>();
 		expectTypeOf<keyof RecoveryCodeRepositoryOptions>().toEqualTypeOf<"driver" | "schema">();
 		expectTypeOf<RecoveryCodeRepository["consumeCode"]>().toBeFunction();
@@ -109,12 +110,12 @@ describe("the surface the recovery module publishes", () => {
 	});
 
 	it("puts the groups back on a canonical code", () => {
-		const [code] = createRecoveryCodeSet();
+		const [code] = createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE);
 		const canonical = normaliseRecoveryCode(code ?? "");
 
-		expect(formatRecoveryCode(canonical)).toBe(code);
-		expect(formatRecoveryCode(canonical).split("-")).toHaveLength(
-			canonical.length / RECOVERY_CODE_GROUP_LENGTH,
+		expect(formatRecoveryCode(canonical, RECOVERY_CODE_GROUP_SIZE)).toBe(code);
+		expect(formatRecoveryCode(canonical, RECOVERY_CODE_GROUP_SIZE).split("-")).toHaveLength(
+			Math.ceil(canonical.length / RECOVERY_CODE_GROUP_SIZE),
 		);
 	});
 

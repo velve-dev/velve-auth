@@ -3598,11 +3598,12 @@ authenticator app shows the code in two groups and a reader retypes the gap.
 | `keys` | `KeyProvider` | yes | Supplies the `token-pepper` key the codes are HMAC'd under. |
 | `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
 | `schema` | `string` | no | Defaults to `velve`. |
+| `shape` | `RecoveryCodeShape` | no | A.8's `{ count, groupSize }`. Defaults to `DEFAULT_RECOVERY_CODE_SHAPE`, which is ten codes in groups of five. |
 
 #### `recovery.generate({ actor })`
 
-Draws ten codes of 160 bit, deletes every code the account already has and
-writes the ten new ones — in one transaction, and after taking the row lock on
+Draws `shape.count` codes of 160 bit, deletes every code the account already has
+and writes the new ones — in one transaction, and after taking the row lock on
 `velve.user` that CLAUDE.md §7 requires of any transaction that takes one.
 Returns `{ codes }`.
 
@@ -3633,12 +3634,13 @@ stored form can answer.
 
 ### The shape of a recovery code
 
-Ten codes, 160 bit each, pairwise distinct (`S-RAND-3`). Encoded in Crockford's
-base32 — the alphabet without `I`, `L`, `O` and `U` — as thirty-two characters
-shown in four groups of eight:
+Ten codes by default, 160 bit each, pairwise distinct (`S-RAND-3`). Encoded in
+Crockford's base32 — the alphabet without `I`, `L`, `O` and `U` — as thirty-two
+characters shown in groups of `groupSize`, which is five by default. Thirty-two
+does not divide by five, so the last group of a code is two characters:
 
 ```
-K3M7QR8V-2XN4TZ9B-5PWJ0HC6-Y1DFGS7A
+K3M7Q-R8V2X-N4TZ9-B5PWJ-0HC6Y-1DFGS-7A
 ```
 
 The reader normalises before it hashes: upper-cases, drops anything that is not
@@ -3650,10 +3652,13 @@ row.
 |---|---|
 | `RECOVERY_CODE_COUNT` | `10` |
 | `RECOVERY_CODE_ENTROPY_BYTES` | `20` |
-| `RECOVERY_CODE_GROUP_LENGTH` | `8` |
+| `RECOVERY_CODE_GROUP_SIZE` | `5` |
+| `DEFAULT_RECOVERY_CODE_SHAPE` | `{ count: 10, groupSize: 5 }` |
 
-`createRecoveryCodeSet()` draws a set, `normaliseRecoveryCode(submitted)` is the
-canonical form, and `formatRecoveryCode(canonical)` puts the groups back.
+`createRecoveryCodeSet(shape)` draws a set, `normaliseRecoveryCode(submitted)` is
+the canonical form, `formatRecoveryCode(canonical, groupSize)` puts the groups
+back, and `recoveryCodeShapeOf(configured)` reads A.8's configuration, answering
+the default for either number that is not a positive whole one.
 
 ### How a recovery code is stored
 
@@ -4999,8 +5004,8 @@ compile (E-349).
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
 | `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
-| `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
-| `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
+| `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window; the tolerance reaches the code comparison |
+| `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
 | `log` | `(level, message, fields?) => void` | a sink that drops everything | where the true reason of a refusal is written |
@@ -6465,7 +6470,7 @@ Three optional fields of `VelveAuthConfig` decide what is served.
 |---|---|---|---|
 | `webauthn` | `WebAuthnConfig` | absent | Its absence removes the seven `/factor/webauthn/*` rows and both `/sign-in/passkey/*` rows. They are not refused — they do not exist, and a request to one answers 404. |
 | `totp` | `Partial<TotpConfig>` | absent | `issuer` is the name an authenticator app shows. `stepToleranceInSteps` is `0` or `1` and decides how far either side of the current step a code is accepted; default `1`. |
-| `recoveryCodes` | `RecoveryCodesConfig` | absent | Required in `identity.mode: "username"`, where a recovery code is the only way back into an account (`S-DEFAULT-4`). Its `count` and `groupSize` are declared and **not yet read**; see below. |
+| `recoveryCodes` | `RecoveryCodesConfig` | absent | Required in `identity.mode: "username"`, where a recovery code is the only way back into an account (`S-DEFAULT-4`). `count` is how many codes a set holds, default 10; `groupSize` is how wide a printed group is, default 5. |
 
 ```ts
 const auth = createVelveAuth({
@@ -6509,9 +6514,26 @@ It is the one place left where the library warns about a value it does not use �
 such a value is refused rather than applied. Reported rather than repaired here,
 because `src/core/auth/security-options.ts` is outside this change (`E-1694`).
 
-**`recoveryCodes.count` and `recoveryCodes.groupSize` do not reach the module
-behind them.** Codes are grouped in eights, where A.8's default is five, and the
-count is fixed at ten. Both are recorded in `CASE-STUDY.md` under `E-1249`.
+**`recoveryCodes.count` and `recoveryCodes.groupSize` reach the generator.**
+`count` decides how many codes `POST /factor/recovery/generate` hands back and
+therefore how many times an account can get in without its other factors;
+`SECURITY_OPTIONS` reports a count below ten as a weakening, which is now a
+weakening that happens. `groupSize` is presentation only: what is stored is the
+HMAC of the canonical form, and `normaliseRecoveryCode` strips the separators, so
+a code printed under one grouping still redeems under another.
+
+Both are typed `number` and **a value that is not a positive whole number is read
+as the default**. A `count` of zero is an account with no way back in, which is
+the lockout `S-DEFAULT-4` exists to refuse; a `groupSize` of zero is a loop that
+never ends. Neither is bounded from above: a `count` of a million is a million
+codes, slowly, and that is the operator's configuration rather than an attacker's
+input (`E-1695`).
+
+**The default grouping changed from eight to five**, which is A.8's stated
+default and what the library should have shipped. 160 bits are 32 base32 places,
+so five does not divide them evenly and the last group of a code is two
+characters. Codes printed before the change still redeem: grouping never reached
+the stored form.
 
 ### The rows
 

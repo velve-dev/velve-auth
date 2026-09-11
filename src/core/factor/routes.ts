@@ -17,7 +17,11 @@ import {
 } from "../http/route.js";
 import { object, string, unknownRecord } from "../http/validators.js";
 import { toPendingToken, verifyUnderPendingAttemptLimit } from "./pending/index.js";
-import { createRecoveryCodeService, type RecoveryCodeService } from "./recovery/index.js";
+import {
+	createRecoveryCodeService,
+	type RecoveryCodeService,
+	recoveryCodeShapeOf,
+} from "./recovery/index.js";
 import {
 	createTotpService,
 	type TotpEnrollment,
@@ -603,6 +607,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		schema: services.schema,
 		keys: services.keys,
 		pending: services.pending,
+		shape: recoveryCodeShapeOf(services.recoveryCodes),
 	});
 	const alwaysMounted = [...totpRoutes(services, totp), ...recoveryRoutes(services, recovery)];
 	if (services.webauthn === undefined) {
