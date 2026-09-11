@@ -13,10 +13,11 @@ The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
 > **Status: first prerelease.** The public interface is specified and frozen.
-> `1.0.0-next.1` is published under the `next` dist-tag, and publishing under a
-> tag leaves `latest` alone — so no version of this package carries `latest`
-> yet, `pnpm add @velve/auth` resolves nothing at all, and a `^1.0.0` range does
-> not match a prerelease either. Ask for it by tag: `@velve/auth@next`.
+> `1.0.0-next.1` is published under the `next` dist-tag — **and under `latest`
+> as well**, because npm points `latest` at the first version a package ever
+> publishes whatever `--tag` says. So a bare `pnpm add @velve/auth` resolves to
+> a prerelease until a stable version takes `latest` from it. Ask for it by tag
+> anyway: `@velve/auth@next`.
 
 ## Why it exists
 
@@ -72,15 +73,19 @@ binding, no install script, and no build step on your machine.
 pnpm add @velve/auth@next
 ```
 
-**The `@next` is not optional.** Publishing under a dist-tag leaves `latest`
-alone, and every version of this package so far has been published under `next`
-— so nothing carries `latest`, and `pnpm add @velve/auth` fails to resolve
-rather than installing something older. A `^1.0.0` range does not match a
-prerelease either. Pinning the exact version, `@velve/auth@1.0.0-next.1`, works
-and is what your lockfile will record.
+**Ask for `@next` even though a bare install currently works.** Publishing under
+a dist-tag leaves `latest` alone — except on a package's very first publish,
+where npm points `latest` at that version regardless. `1.0.0-next.1` was that
+first publish, so today `latest` and `next` name the same prerelease and
+`pnpm add @velve/auth` installs it. A `^1.0.0` range still does not match a
+prerelease. Pinning the exact version, `@velve/auth@1.0.0-next.1`, works and is
+what your lockfile will record.
 
-That changes on the day a stable version is published: it takes `latest`, and
-the bare install starts working and starts meaning "the stable line".
+That changes on the day a stable version is published: it takes `latest` from
+the prerelease, and the bare install starts meaning "the stable line". Until
+then, a bare install means "whatever prerelease happened to go first", which is
+not a promise this package intends to make — which is why the tag is written
+above and in every example here.
 
 A prerelease is a prerelease: the interface is frozen and the schema is
 versioned, but nothing here has been run by anyone outside this repository yet.

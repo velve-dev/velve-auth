@@ -5,6 +5,7 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const MANIFEST = "package.json";
 const TAG = process.argv[2] ?? process.env.GITHUB_REF_NAME ?? "";
 const DIST_TAG = process.argv[3] ?? process.env.VELVE_RELEASE_DIST_TAG ?? "";
+const REGISTRY = process.env.VELVE_REGISTRY ?? "https://registry.npmjs.org";
 
 /** https://semver.org, the published expression, anchored. */
 const SEMVER =
@@ -82,6 +83,41 @@ if (prerelease !== undefined && DIST_TAG === "latest") {
 if (findings.length > 0) {
 	for (const finding of findings) console.error(finding);
 	process.exit(1);
+}
+
+/** An unauthenticated read of a scoped package that does not exist answers 401 and not 404,
+ * because the registry will not say whether a private one is there. Both mean absent here. */
+const ABSENT = new Set([401, 404]);
+
+/** npm points `latest` at the first version a package ever publishes, whatever `--tag` says, so
+ * the clause above cannot see the one case where a prerelease takes `latest` anyway (E-1771). */
+async function packageIsAlreadyOnTheRegistry() {
+	let response;
+	try {
+		response = await fetch(`${REGISTRY}/-/package/${encodeURIComponent(name)}/dist-tags`, {
+			headers: { accept: "application/json", "cache-control": "no-cache" },
+		});
+	} catch (error) {
+		return { unreachable: String(error) };
+	}
+	if (ABSENT.has(response.status)) {
+		return { present: false };
+	}
+	if (!response.ok) {
+		return { unreachable: `${response.status} ${response.statusText}` };
+	}
+	return { present: true };
+}
+
+const onTheRegistry = await packageIsAlreadyOnTheRegistry();
+if (onTheRegistry.unreachable !== undefined) {
+	console.error(
+		`release tag: ${REGISTRY} could not be asked whether ${name} is published, so whether this is its first publish is unknown: ${onTheRegistry.unreachable}`,
+	);
+} else if (onTheRegistry.present === false && prerelease !== undefined) {
+	console.error(
+		`release tag: this is the first publish of ${name}, and npm points latest at a package's first version whatever --tag says. ${version} will therefore carry latest as well as ${DIST_TAG}, and a bare install will resolve to a prerelease until a stable version takes latest from it.`,
+	);
 }
 
 const kind = prerelease === undefined ? "a stable version" : `a prerelease (${prerelease})`;

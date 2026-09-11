@@ -681,6 +681,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1650 … E-1689 | outside the waves · `misreporting` — the three instruments that report something other than what they found. Fifty-second row of this table, counted over the fifty-one standing at b005ed3 rather than taken from the row above it; E-1622 records an ordinal here going stale the moment another branch merges a row, and nothing in the tree recomputes one |
 | E-1690 … E-1739 | outside the waves · `second-factor` — the three second-factor defects an audit ranked before a stable release. Fifty-third row of this table, counted over the fifty-two standing at f1e9654 rather than taken from the row above it, for the reason that row gives |
 | E-1740 … E-1769 | outside the waves · `factor-startup` — the four residues `second-factor` reported and could not touch, all of them in files §5 put outside its set. Fifty-fourth row of this table, counted over the fifty-three standing at 8cebfdd rather than taken from the row above it, for the reason that row gives |
+| E-1770 … E-1799 | gate and infrastructure, twelfth range — the first publish of the package, and the latest tag npm gave it anyway. Twelfth over the eleven rows of this table that named gate and infrastructure at 0a938ef; fifty-fifth row overall, counted over the fifty-four standing there rather than taken from the row above it |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -1039,7 +1040,15 @@ pnpm check:release-tag
                  dist-tag as arguments, or reads them from GITHUB_REF_NAME and
                  VELVE_RELEASE_DIST_TAG. Refuses the run if either is missing or
                  the manifest cannot be read as an object — an unchecked tag is
-                 not a matching one. release.yml runs it before the publish;
+                 not a matching one. It also asks VELVE_REGISTRY, npm's by
+                 default, whether the package is published at all: where it is
+                 not and the version is a prerelease, it reports before the
+                 publish that npm will point latest at it whatever --tag says,
+                 which is the one case the latest clause cannot see from the
+                 dist-tag alone (E-1771). That is a report and not a refusal, so
+                 a first publish stays possible; a registry it could not ask is
+                 told apart from one that said absent and reported as unknown.
+                 release.yml runs it before the publish;
                  pnpm gate does not, because an ordinary branch carries no tag
                  for it to check and it would refuse every one of them
 pnpm check:published-version
