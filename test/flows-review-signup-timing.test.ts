@@ -5,11 +5,29 @@ import { toWebHandler } from "../src/core/http/web-handler.js";
 import { createVelveAuth } from "../src/index.js";
 import { TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import {
+	CONTROL_RECOVERY_TOLERANCE,
+	cliffsDelta,
+	correlatedResolutionNs,
+	DISCARDED_WARMUP,
+	describeResolution,
+	MEASUREMENTS_PER_GROUP,
+	mean,
+	median,
+	overlapResolutionNs,
+	PLANTED_CONTROL_LEAK_NS,
+	resolutionOf,
+	sampleUntilResolved,
+	type TimingArm,
+	TRIM_FRACTION,
+	trimmed,
+	WELCH_T_LIMIT,
+	WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING,
+	welchT,
+} from "./timing-fixtures.js";
 
 // Architecture 6.1 and 6.20 decide T-TIM-1 on |t| < 4.5 and Cliff's delta < 0.147. Neither is
-// asserted below and the comment there says why; the sample size is T-TIM-1's.
-const MEASUREMENTS_PER_GROUP = 1000;
-const DISCARDED_WARMUP = 100;
+// asserted below and the comment there says why; the sample floor is T-TIM-1's.
 
 const TAKEN = "occupied.address@example.com";
 
@@ -90,54 +108,6 @@ describe("S-TIM-6, T-TIM-1b: the two branches of a sign-up issue the same calls"
 	});
 });
 
-function trimmed(samples: readonly number[], fraction: number): number[] {
-	const sorted = [...samples].sort((left, right) => left - right);
-	const cut = Math.floor(sorted.length * fraction);
-	return sorted.slice(cut, sorted.length - cut);
-}
-
-function mean(samples: readonly number[]): number {
-	return samples.reduce((total, value) => total + value, 0) / samples.length;
-}
-
-function variance(samples: readonly number[]): number {
-	const centre = mean(samples);
-	return samples.reduce((total, value) => total + (value - centre) ** 2, 0) / (samples.length - 1);
-}
-
-function welchT(left: readonly number[], right: readonly number[]): number {
-	const spread = variance(left) / left.length + variance(right) / right.length;
-	return spread === 0 ? 0 : (mean(left) - mean(right)) / Math.sqrt(spread);
-}
-
-function cliffsDelta(left: readonly number[], right: readonly number[]): number {
-	const sorted = [...right].sort((a, b) => a - b);
-	let dominance = 0;
-	for (const value of left) {
-		let low = 0;
-		let high = sorted.length;
-		while (low < high) {
-			const middle = (low + high) >> 1;
-			if ((sorted[middle] as number) < value) {
-				low = middle + 1;
-			} else {
-				high = middle;
-			}
-		}
-		let upper = low;
-		while (upper < sorted.length && sorted[upper] === value) {
-			upper += 1;
-		}
-		dominance += low - (sorted.length - upper);
-	}
-	return dominance / (left.length * sorted.length);
-}
-
-function median(samples: readonly number[]): number {
-	const sorted = [...samples].sort((left, right) => left - right);
-	return sorted[Math.floor(sorted.length / 2)] as number;
-}
-
 /**
  * One run of this on 2026-09-09, in process against a local PostgreSQL 18.3, 1000 measurements per
  * group interleaved and the first 100 of each discarded: Welch t on 10 per cent trimmed means
@@ -154,7 +124,9 @@ function median(samples: readonly number[]): number {
  * persists, which E-629 refuses.
  *
  * What is asserted is the specification's own number where there is one, and the measured residual
- * where there is not (E-933).
+ * where there is not (E-933). Those six |t| values were taken at whatever standard error the runner
+ * happened to hand out, and |t| is a difference divided by that standard error, so they are six
+ * measurements of six different things; the sampler below fixes the divisor instead (E-1538).
  */
 describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 	/**
@@ -168,42 +140,82 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 	/**
 	 * T-TIM-1's own two thresholds are 4.5 and 0.147 and are not met; E-629 says why. These bound
 	 * what was measured instead, so a separation that grows back towards the 128.87 and 0.947 the
-	 * first paragraph records fails here rather than being reported to nobody (E-933).
+	 * first paragraph records fails here rather than being reported to nobody (E-933). Neither is
+	 * moved here: what the sampler changes is that they are now read at a standard error the run had
+	 * to reach, so the same number means the same thing twice (E-1538).
 	 */
 	const WELCH_T_CEILING = 25;
 	const CLIFFS_DELTA_CEILING = 0.5;
 
+	const BLOCK_PER_GROUP = 250;
+	const MAXIMUM_PER_GROUP = 6_000;
+	const RESOLUTION_BUDGET_MS = 300_000;
+	const CASE_TIMEOUT_MS = 900_000;
+
 	it.skipIf(process.env.VELVE_NIGHTLY !== "1")(
 		"holds T-TIM-6's five milliseconds, and pins the two thresholds it does not meet",
 		async () => {
-			const taken: number[] = [];
-			const free: number[] = [];
-			for (let index = 0; index < MEASUREMENTS_PER_GROUP * 2; index += 1) {
-				const occupied = index % 2 === 0;
-				const address = occupied ? TAKEN : freeAddressNumbered(index);
-				const started = process.hrtime.bigint();
-				await post("/sign-up/passwordless", { email: address });
-				const elapsed = Number(process.hrtime.bigint() - started);
-				if (index >= DISCARDED_WARMUP * 2) {
-					(occupied ? taken : free).push(elapsed);
-				}
-			}
+			let freeAddresses = 0;
+			const samples = await sampleUntilResolved(
+				async (arm: TimingArm) => {
+					if (arm === "absent") {
+						freeAddresses += 1;
+						await post("/sign-up/passwordless", { email: freeAddressNumbered(freeAddresses) });
+						return;
+					}
+					await post("/sign-up/passwordless", { email: TAKEN });
+				},
+				{
+					minimumPerGroup: MEASUREMENTS_PER_GROUP,
+					maximumPerGroup: MAXIMUM_PER_GROUP,
+					discardedWarmup: DISCARDED_WARMUP,
+					blockPerGroup: BLOCK_PER_GROUP,
+					budgetMs: RESOLUTION_BUDGET_MS,
+				},
+			);
+
+			const taken = trimmed(samples.present, TRIM_FRACTION);
+			const free = trimmed(samples.absent, TRIM_FRACTION);
+			const resolution = resolutionOf(taken, free);
+			const reached = `${describeResolution(taken, free)}, and ${Math.round(correlatedResolutionNs(samples.present, samples.absent))} ns once the batches are allowed to be correlated`;
+			const planted = trimmed(samples.controlPlanted, TRIM_FRACTION);
+			const quiet = trimmed(samples.controlQuiet, TRIM_FRACTION);
+			const recovered = mean(planted) - mean(quiet);
 
 			const NANOSECONDS_PER_MILLISECOND = 1_000_000;
-			const medianDifference = Math.abs(median(taken) - median(free)) / NANOSECONDS_PER_MILLISECOND;
-			const welch = Math.abs(welchT(trimmed(taken, 0.1), trimmed(free, 0.1)));
-			const delta = Math.abs(cliffsDelta(taken, free));
-			const measured = `median difference ${medianDifference.toFixed(3)} ms, |t| ${welch.toFixed(1)}, Cliff's delta ${delta.toFixed(3)}`;
+			const medianDifference =
+				Math.abs(median(samples.present) - median(samples.absent)) / NANOSECONDS_PER_MILLISECOND;
+			const welch = Math.abs(welchT(taken, free));
+			const delta = Math.abs(cliffsDelta(samples.present, samples.absent));
+			const measured = `median difference ${medianDifference.toFixed(3)} ms, |t| ${welch.toFixed(1)}, Cliff's delta ${delta.toFixed(3)} separating about ${Math.round(overlapResolutionNs(samples.present, samples.absent))} ns, ${reached}`;
 
-			expect(taken).toHaveLength(MEASUREMENTS_PER_GROUP - DISCARDED_WARMUP);
+			expect(
+				samples.roundsPerGroup,
+				`the budget ran out before 6.1's own sample size was reached, after ${Math.round(samples.elapsedMs / 1000)} s`,
+			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
+			expect(
+				resolution.resolvesTheLeakThatMatters,
+				`the run could not resolve the smallest leak 5.1 (a) names, so the three numbers below bound nothing: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBe(true);
+			expect(
+				Math.abs(welchT(planted, quiet)),
+				`the run did not see a planted ${PLANTED_CONTROL_LEAK_NS} ns leak: ${reached}`,
+			).toBeGreaterThan(WELCH_T_LIMIT);
+			expect(
+				Math.abs(recovered - PLANTED_CONTROL_LEAK_NS) / PLANTED_CONTROL_LEAK_NS,
+				`the planted leak was measured as ${Math.round(recovered)} ns`,
+			).toBeLessThan(CONTROL_RECOVERY_TOLERANCE);
+
 			expect(medianDifference, `T-TIM-6: ${measured}`).toBeLessThan(MEDIAN_DIFFERENCE_LIMIT_MS);
-			expect(welch, `pinned above T-TIM-1, not meeting it: ${measured}`).toBeLessThan(
-				WELCH_T_CEILING,
-			);
-			expect(delta, `pinned above T-TIM-1, not meeting it: ${measured}`).toBeLessThan(
-				CLIFFS_DELTA_CEILING,
-			);
+			expect(
+				welch,
+				`pinned above T-TIM-1, not meeting it: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(WELCH_T_CEILING);
+			expect(
+				delta,
+				`pinned above T-TIM-1, not meeting it: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(CLIFFS_DELTA_CEILING);
 		},
-		600_000,
+		CASE_TIMEOUT_MS,
 	);
 });
