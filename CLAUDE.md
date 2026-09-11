@@ -216,7 +216,8 @@ repair anything itself.
 - `pnpm typecheck` under `strict`, no `any` in the public surface type
 - `pnpm lint` without findings, formatting applied
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
-- `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
+- `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23),
+  and a build it could not read refused in words that are not a security finding
 - `pnpm check:lock-order` — every row lock is `FOR NO KEY UPDATE`, declares
   `velve.user`, and is written in `src/core/db/lock.ts`; the order two transactions take
   their locks in is decided by `test/lock-order-race.test.ts` and not here
@@ -926,7 +927,12 @@ pnpm test:release
                  before every release; a version tag runs it
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
-                 S-FIX-2: no session owner reassigned in SQL
+                 S-FIX-2: no session owner reassigned in SQL. A finding names the
+                 file and the statement it found; an empty scan of the working
+                 tree and an absent or declaration-only dist/ are refused in
+                 their own words instead, and carry no offender and no advice
+                 line. The two used to leave by the same door, so a missing
+                 build printed the security message and named nobody (E-1651)
 pnpm check:lock-order
                  every row lock is FOR NO KEY UPDATE, declares velve.user and is
                  written in src/core/db/lock.ts. Refuses the run when it scanned

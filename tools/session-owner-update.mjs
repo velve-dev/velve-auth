@@ -171,3 +171,46 @@ export function scanTree() {
 	}
 	return { offenders, statementsScanned };
 }
+
+/** The advice is about prose that is not in a comment, which is the only thing a source offender
+ * can be: `statementsIn` drops comments before anything is matched. A built module carries no
+ * prose, so offering it there tells a reader to edit generated output. */
+function adviceFor(sourceOffenders) {
+	return sourceOffenders.length > 0
+		? ["If this is prose describing the rule, move it into a comment."]
+		: [];
+}
+
+/**
+ * What this step found, kept apart from what it could not look at. Both used to leave by the same
+ * door: with no dist/ at all the step printed the security message, named no offender and exited 1,
+ * so an absent build arrived looking like a violation of S-FIX-2 and cost a round (E-1624).
+ */
+export function reportOn(source, built) {
+	const refusals = [];
+	if (source.statementsScanned === 0) {
+		refusals.push(
+			"S-FIX-2: refusing to report. No statement was read from the working tree, so the scan could not look. This is not a finding.",
+		);
+	}
+	if (!built.built) {
+		refusals.push(
+			"S-FIX-2: refusing to report. dist/ holds no built module, so what ships was not scanned. This is not a finding — run pnpm build, which pnpm check:session-owner does for you.",
+		);
+	}
+	const offenders = [...source.offenders, ...built.offenders];
+	const findings =
+		offenders.length > 0
+			? [
+					"S-FIX-2: a session owner is reassigned in SQL. Re-issue is INSERT plus DELETE (E-23).",
+					...offenders.map((offender) => `  ${offender}`),
+					...adviceFor(source.offenders),
+				]
+			: [];
+	return {
+		refusals,
+		findings,
+		summary: `S-FIX-2: ${source.statementsScanned} source and ${built.statementsScanned} built statements scanned, no session owner reassignment`,
+		exitCode: refusals.length + findings.length > 0 ? 1 : 0,
+	};
+}
