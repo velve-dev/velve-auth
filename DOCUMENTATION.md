@@ -701,11 +701,44 @@ other request is observably waiting for a lock, reads the SQLSTATE where the ser
 raises it rather than at the HTTP boundary, and looks for any two transactions that
 take two tables in opposite orders in modes that wait for each other.
 
-**What neither of them covers.** The order is not enforced for a transaction no test
+**Where each of the eight is pinned.** The declaration audit — the statement carrying
+`/* locks: … */` must appear, and must precede the first of the account's own tables —
+reads the statements a transaction ran, so a transaction has only to be *driven*. No
+interleaving, no second connection and no deadlock are needed, which is what makes the
+audit cheap enough to point at flows that never race.
+
+| Statement | Driven by |
+|---|---|
+| `confirmAddress` | `test/lock-order-race.test.ts`, inside the first interleaving |
+| `redeemReset` | `test/lock-order-race.test.ts`, inside the first interleaving |
+| `replacePasswordOfSession` | `test/lock-order-declaration.test.ts`, `/password/change` |
+| `linkIdentityAndReissue` | `test/lock-order-declaration.test.ts`, `/identity/link/start` and the callback |
+| `removeCredential` (TOTP) | `test/lock-order-declaration.test.ts`, the repository transaction |
+| `redeemResetWithRecoveryCode` | nothing; the audit skips it |
+| `replaceEveryCode` | nothing; the audit skips it |
+| `removeSignInMethod` | nothing; the audit skips it |
+
+The last three are not an omission of the audit but a property of it: it considers only
+a transaction that writes **two or more** of the account's own tables, and on the tree as
+it stands each of those three writes fewer than two. The first two are E-1617's
+measurement — the recovery-code redemption is refused after one table on the repaired
+tree, and the regeneration touches one. The third was established by reading
+`removeSignInMethod`, which issues one `DELETE` against whichever single table the
+removal names; it has not been driven, and driving it is the stronger statement nobody
+has made. A transaction with one child table has no two tables to put in an order, so
+there is nothing for this audit to decide about it. Each case in
+`test/lock-order-declaration.test.ts` reports how many transactions it read, and a fourth
+case counts the eight statements themselves, so a ninth added anywhere reddens and has to
+be placed in this table.
+
+**What none of them covers.** The order is not enforced for a transaction no test
 drives, and no static analysis in this repository can decide it: the table name is
 built from a configured schema, the statements sit behind three module boundaries,
 and both reproduced cycles close through an acquisition no line of this library
-writes. A plugin's own SQL is outside the scan entirely.
+writes. A plugin's own SQL is outside the scan entirely. And the declaration audit is
+weaker than the interleaving it sits beside: it decides that the declared statement runs
+first, not that two transactions cannot deadlock. Only `test/lock-order-race.test.ts`
+decides the second, and it decides it for the two interleavings it chooses.
 
 ## Key management
 
