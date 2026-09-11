@@ -317,3 +317,140 @@ describe("what an unknown credential may reveal (5.3)", () => {
 		expect(await difference(unknownCredential, badSignature)).toStrictEqual([]);
 	});
 });
+
+interface HeldPendingState {
+	readonly headers: Record<string, string>;
+	readonly userId: string;
+}
+
+async function passwordSignInAwaitingTheKey(registered: Registered): Promise<HeldPendingState> {
+	const signedIn = await mounted.handler(
+		postTo("/sign-in/password", { email: registered.email, password: PASSWORD }),
+	);
+	const offered = (await signedIn.json()) as { status: string };
+	const pendingToken = cookieIn(signedIn, DEFAULT_COOKIE_NAMES.pending) ?? "";
+
+	expect(offered.status).toBe("second_factor_required");
+	const rows = await mounted.connection.query<{ id: string }>(
+		`SELECT id FROM ${mounted.schema}."user" WHERE email = $1`,
+		[registered.email],
+	);
+	expect(rows).toHaveLength(1);
+	return {
+		headers: { Cookie: `${DEFAULT_COOKIE_NAMES.pending}=${pendingToken}` },
+		userId: String(rows[0]?.id),
+	};
+}
+
+async function attemptsRecordedFor(userId: string): Promise<number | null> {
+	const rows = await mounted.connection.query<{ attempts: number }>(
+		`SELECT attempts FROM ${mounted.schema}.pending_authentication WHERE user_id = $1`,
+		[userId],
+	);
+	return rows.length === 0 ? null : Number(rows[0]?.attempts);
+}
+
+async function failOneAssertion(
+	registered: Registered,
+	held: HeldPendingState,
+): Promise<{ status: number; code: string }> {
+	const started = await mounted.handler(
+		postTo("/factor/webauthn/authenticate/start", {}, held.headers),
+	);
+	const challenge = (await started.json()) as { challengeToken?: string };
+	if (started.status !== 200 || challenge.challengeToken === undefined) {
+		const refused = challenge as unknown as { error: { code: string } };
+		return { status: started.status, code: refused.error.code };
+	}
+	const finished = await mounted.handler(
+		postTo(
+			"/factor/webauthn/authenticate/finish",
+			{
+				challengeToken: challenge.challengeToken,
+				response: await registered.authenticator.assert({
+					challenge: challenge.challengeToken,
+					signatureFault: "another-key",
+				}),
+			},
+			held.headers,
+		),
+	);
+	const body = (await finished.json()) as { error: { code: string } };
+	return { status: finished.status, code: body.error.code };
+}
+
+/**
+ * L-8 and 3.6: the five attempts belong to the intermediate state rather than to a factor, and
+ * 3.15 D.3 declares `too_many_factor_attempts` on this route beside the two WebAuthn refusals.
+ */
+describe("L-8 over the WebAuthn second factor", () => {
+	it("spends the same budget a TOTP failure spends, and takes the state with the fifth", async () => {
+		const registered = await registerACredential();
+		const held = await passwordSignInAwaitingTheKey(registered);
+
+		const answers: { status: number; code: string }[] = [];
+		for (let attempt = 1; attempt <= 5; attempt += 1) {
+			answers.push(await failOneAssertion(registered, held));
+		}
+
+		expect(answers).toStrictEqual([
+			{ status: 401, code: "webauthn_credential_rejected" },
+			{ status: 401, code: "webauthn_credential_rejected" },
+			{ status: 401, code: "webauthn_credential_rejected" },
+			{ status: 401, code: "webauthn_credential_rejected" },
+			{ status: 429, code: "too_many_factor_attempts" },
+		]);
+		expect(await attemptsRecordedFor(held.userId)).toBeNull();
+	});
+
+	it("records each failure in the row, so the count outlives the process that made it", async () => {
+		const registered = await registerACredential();
+		const held = await passwordSignInAwaitingTheKey(registered);
+
+		await failOneAssertion(registered, held);
+		expect(await attemptsRecordedFor(held.userId)).toBe(1);
+		await failOneAssertion(registered, held);
+		expect(await attemptsRecordedFor(held.userId)).toBe(2);
+	});
+
+	it("spends no attempt on an assertion that verifies", async () => {
+		const registered = await registerACredential();
+		const held = await passwordSignInAwaitingTheKey(registered);
+
+		await failOneAssertion(registered, held);
+		const started = await mounted.handler(
+			postTo("/factor/webauthn/authenticate/start", {}, held.headers),
+		);
+		const challenge = (await started.json()) as { challengeToken: string };
+		const finished = await mounted.handler(
+			postTo(
+				"/factor/webauthn/authenticate/finish",
+				{
+					challengeToken: challenge.challengeToken,
+					response: await registered.authenticator.assert({
+						challenge: challenge.challengeToken,
+					}),
+				},
+				held.headers,
+			),
+		);
+
+		expect(finished.status).toBe(200);
+		expect(await attemptsRecordedFor(held.userId)).toBeNull();
+	});
+
+	/** D.3 gives `authenticate.start` neither the account bucket nor `too_many_factor_attempts`. */
+	it("spends no attempt on the challenge the finish is made against", async () => {
+		const registered = await registerACredential();
+		const held = await passwordSignInAwaitingTheKey(registered);
+
+		for (let issued = 1; issued <= 6; issued += 1) {
+			const started = await mounted.handler(
+				postTo("/factor/webauthn/authenticate/start", {}, held.headers),
+			);
+			expect(started.status).toBe(200);
+		}
+
+		expect(await attemptsRecordedFor(held.userId)).toBe(0);
+	});
+});

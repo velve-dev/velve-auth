@@ -3683,16 +3683,24 @@ the ring read finds one version and the redemption is one statement.
 
 ### The five attempts a pending state allows
 
-`verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for both
-factors. It resolves the state, runs the verification, and on failure calls
-`registerFailedAttempt`. The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the
-pending module and is not restated here.
+`verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for every
+factor a pending state can be spent on: TOTP, a recovery code and a WebAuthn
+assertion. It lives in the pending module, beside the state whose attempts it
+counts, and is re-exported from nowhere else. It resolves the state, runs the
+verification, and on failure calls `registerFailedAttempt`. The limit itself is
+`MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not restated here.
 
-A correct code spends no attempt. Wrong codes one to four answer
-`invalid_factor_code`; the wrong code that exhausts the budget answers
-`too_many_factor_attempts` and takes the pending row with it, which is what
-makes the 429 in the route table reachable — a request made after the row is
-gone answers `invalid_pending_authentication` instead.
+A correct code — or a verifying assertion — spends no attempt. Failures one to
+four answer whatever the factor answers, `invalid_factor_code`,
+`invalid_recovery_code` or `webauthn_credential_rejected`; the failure that
+exhausts the budget answers `too_many_factor_attempts` and takes the pending row
+with it, which is what makes the 429 in the route table reachable — a request
+made after the row is gone answers `invalid_pending_authentication` instead.
+
+The five are **per state and not per factor**. Four wrong TOTP codes leave one
+WebAuthn attempt, not five; `/factor/webauthn/authenticate/start` spends none of
+them, which is why `3.15 D.3` declares `too_many_factor_attempts` on the finish
+route and not on the start route.
 
 ### `identity: "username"` requires recovery codes
 
@@ -4052,7 +4060,9 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
 - **No session.** Both sign-in paths return a verified assertion; the assembly
   issues the session (E-470).
 - **No attempt counting.** L-8's five attempts are per intermediate state and
-  are counted by the flow that owns it, not per factor (E-471).
+  are counted by the route layer that owns it, not per factor (E-471, E-1691).
+  `authenticate.finish` is wrapped in `verifyUnderPendingAttemptLimit` where the
+  route is declared; this module raises and counts nothing.
 - **No attestation.** `attestationType` is `"none"` and no attestation statement
   is evaluated. Velve Auth does not decide which authenticator models an
   application trusts.
@@ -6589,6 +6599,14 @@ Five failed attempts destroy the state and the sign-in starts again at the
 password. The fifth failure answers `too_many_factor_attempts` (429); a request
 made after the row is gone answers `invalid_pending_authentication` (401),
 which is also what an expired, a cancelled and an invented state answer.
+
+**The five belong to the state and not to a factor.** A failed assertion at
+`/factor/webauthn/authenticate/finish` and a failed code at
+`/factor/recovery/verify` spend from the same five that
+`/factor/totp/verify` spends from, so four wrong TOTP codes leave one WebAuthn
+attempt rather than five. `/factor/webauthn/authenticate/start` spends none of
+them: it issues a challenge and judges nothing, which is why `3.15 D.3` gives it
+neither the account bucket nor `too_many_factor_attempts`.
 
 **A code spent on an enrolment cannot be spent again in the same window.** TOTP
 accepts one code per account per thirty-second step, and confirming an enrolment
