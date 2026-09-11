@@ -2157,9 +2157,9 @@ only place that says so: on the sign-in path such a row fails to verify like any
 other, because a throw there would break S-TIM-1 and would partition accounts
 by when they were written (E-179).
 
-The check is exported rather than wired in, because assembling the instance is
-not this module's business. Until a caller invokes it, the operator error is
-silent.
+`migrate()` calls it, on the line before the second-factor check that reads the
+same way. The sentence here said it was exported rather than wired in, which
+stopped being true at `E-330` and stood for four waves after that (`E-1743`).
 
 ### Every exported name
 
