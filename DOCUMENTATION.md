@@ -3755,10 +3755,12 @@ under the current version, while `POST /factor/totp/remove` demands a valid code
 is a recovery code — unless `token-pepper` lost the same version, which is why
 the check reads both tables rather than only the one `E-428` named.
 
-**Nothing calls it yet.** It is exported and unwired, the state
-`assertStoredKeyVersionsAreKnown` was in until `E-330`. The call belongs beside
-that one, in `migrate()`, and `src/core/auth/instance.ts` is outside the files
-the change that added this check was allowed to touch (`E-1698`).
+**`migrate()` calls it**, on the line after `assertStoredKeyVersionsAreKnown` and
+for the reason `E-330` gives of that one: `createVelveAuth` is synchronous, and
+`migrate()` is the first point at which both tables are guaranteed to exist. It
+was exported and unwired until `E-1741`. An operator who applies the shipped SQL
+by hand and never calls `migrate()` never runs it, which is `E-330`'s own price
+carried over unchanged.
 
 ## WebAuthn
 
