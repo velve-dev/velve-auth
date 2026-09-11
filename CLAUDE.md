@@ -232,7 +232,8 @@ repair anything itself.
 - `pnpm lint` without findings, formatting applied
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23),
-  and a build it could not read refused in words that are not a security finding
+  and a tree or a build it could not read refused in words that are not a security
+  finding, a partial build included
 - `pnpm check:lock-order` — every row lock is `FOR NO KEY UPDATE`, declares
   `velve.user`, and is written in `src/core/db/lock.ts`; the order two transactions take
   their locks in is decided by `test/lock-order-race.test.ts` and not here
@@ -943,11 +944,14 @@ pnpm test:release
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL. A finding names the
-                 file and the statement it found; an empty scan of the working
-                 tree and an absent or declaration-only dist/ are refused in
-                 their own words instead, and carry no offender and no advice
-                 line. The two used to leave by the same door, so a missing
-                 build printed the security message and named nobody (E-1651)
+                 file and the statement it found. Three conditions are refused
+                 in their own words instead, carrying no offender and no advice
+                 line: a working tree that yielded no statement, a dist/ with no
+                 built module in it, and a dist/ that has modules but yielded no
+                 statement — the last being what an interrupted build leaves.
+                 Finding and refusal used to leave by the same door, so a missing
+                 build printed the security message and named nobody (E-1651,
+                 E-1662)
 pnpm check:lock-order
                  every row lock is FOR NO KEY UPDATE, declares velve.user and is
                  written in src/core/db/lock.ts. Refuses the run when it scanned

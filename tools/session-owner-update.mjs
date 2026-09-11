@@ -151,6 +151,10 @@ export function reportOn(source, built) {
 		refusals.push(
 			"S-FIX-2: refusing to report. dist/ holds no built module, so what ships was not scanned. This is not a finding — run pnpm build, which pnpm check:session-owner does for you.",
 		);
+	} else if (built.statementsScanned === 0) {
+		refusals.push(
+			"S-FIX-2: refusing to report. dist/ holds built modules but no statement was read from any of them, so what ships was not scanned. This is not a finding — run pnpm build, which pnpm check:session-owner does for you.",
+		);
 	}
 	const offenders = [...source.offenders, ...built.offenders];
 	const findings =

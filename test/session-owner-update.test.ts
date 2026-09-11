@@ -61,6 +61,30 @@ describe("what the step reports, and which of the two it is reporting", () => {
 		expect([...refusals, ...findings].join("\n")).not.toContain(ADVICE);
 	});
 
+	/** `scanBuiltPackage` calls a build present on the strength of one `.mjs`, so an interrupted
+	 * `tsdown` leaves a dist/ that is read and yields nothing. That is *could not look* wearing the
+	 * face of *found nothing*, one surface along from the gap this step was repaired for (E-1662). */
+	it("accuses nobody when dist/ holds modules but no statement was read from them", () => {
+		const { refusals, findings, exitCode } = reportOn(SCANNED_CLEANLY, {
+			offenders: [],
+			statementsScanned: 0,
+			built: true,
+		});
+
+		expect(exitCode).toBe(1);
+		expect(refusals).toHaveLength(1);
+		expect(refusals[0]).toContain(REFUSES);
+		expect(refusals[0]).toContain("dist/");
+		expect(findings).toEqual([]);
+		expect([...refusals, ...findings].join("\n")).not.toContain(ACCUSES);
+	});
+
+	/** One refusal, not two: an absent dist/ reads no statement by construction, and saying so twice
+	 * would make the louder answer the one with less behind it. */
+	it("says the build is missing once when it is missing, rather than once for each symptom", () => {
+		expect(reportOn(SCANNED_CLEANLY, NO_BUILD).refusals).toHaveLength(1);
+	});
+
 	it("accuses nobody when the working tree yielded no statement either", () => {
 		const { refusals, findings, exitCode } = reportOn(SCANNED_NOTHING, CLEAN_BUILD);
 
