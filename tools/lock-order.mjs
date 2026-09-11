@@ -61,46 +61,61 @@ export function lockOrderViolations(sql) {
 	return violations;
 }
 
+/** Where the string opened at `open` ends, with a backslash escape consuming the character after it. */
+function endOfStringAt(contents, open) {
+	const quote = contents[open];
+	let end = open + 1;
+	while (end < contents.length && contents[end] !== quote) {
+		end += contents[end] === "\\" ? 2 : 1;
+	}
+	return end;
+}
+
+/** Where the comment opened at `open` ends, for both spellings. */
+function endOfCommentAt(contents, open) {
+	if (contents[open + 1] === "/") {
+		const newline = contents.indexOf("\n", open);
+		return newline === -1 ? contents.length : newline;
+	}
+	const close = contents.indexOf("*/", open + 2);
+	return close === -1 ? contents.length : close + 2;
+}
+
+function opensAComment(contents, index) {
+	return contents[index] === "/" && (contents[index + 1] === "/" || contents[index + 1] === "*");
+}
+
+function opensAString(contents, index) {
+	const here = contents[index];
+	return here === '"' || here === "'" || here === "`";
+}
+
 /**
  * The string literals of a source file, with comments skipped. A row lock only ever appears inside
  * SQL and SQL is always a string here, so scanning whole files reads prose about a lock as a lock —
  * and a backtick span in a doc comment reads as a template literal, which is what a regular
- * expression over the whole file got wrong (E-1609). The `/* locks: … *\/` marker lives inside the
- * SQL string and survives, because by then the walk is inside a string and not looking for comments.
+ * expression over the whole file got wrong (E-1609). The locking marker lives inside the SQL string
+ * and survives, because by then the walk is inside a string and not looking for comments.
  */
-function sqlTextIn(path, contents) {
-	if (path.endsWith(".sql")) {
-		return [contents];
-	}
+function stringLiteralsIn(contents) {
 	const found = [];
 	let index = 0;
 	while (index < contents.length) {
-		const here = contents[index];
-		const next = contents[index + 1];
-		if (here === "/" && next === "/") {
-			while (index < contents.length && contents[index] !== "\n") index += 1;
-			continue;
-		}
-		if (here === "/" && next === "*") {
-			index += 2;
-			while (index < contents.length && !(contents[index] === "*" && contents[index + 1] === "/")) {
-				index += 1;
-			}
-			index += 2;
-			continue;
-		}
-		if (here === '"' || here === "'" || here === "`") {
-			let end = index + 1;
-			while (end < contents.length && contents[end] !== here) {
-				end += contents[end] === "\\" ? 2 : 1;
-			}
+		if (opensAComment(contents, index)) {
+			index = endOfCommentAt(contents, index);
+		} else if (opensAString(contents, index)) {
+			const end = endOfStringAt(contents, index);
 			found.push(contents.slice(index + 1, end));
 			index = end + 1;
-			continue;
+		} else {
+			index += 1;
 		}
-		index += 1;
 	}
 	return found;
+}
+
+function sqlTextIn(path, contents) {
+	return path.endsWith(".sql") ? [contents] : stringLiteralsIn(contents);
 }
 
 function sourceFiles() {

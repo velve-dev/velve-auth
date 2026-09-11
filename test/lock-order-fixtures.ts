@@ -40,7 +40,12 @@ export class HeldDriver implements Driver {
 		const reachedIt = new Promise<void>((resolve, reject) => {
 			reached = resolve;
 			setTimeout(
-				() => reject(new Error(`no statement matched ${String(matches)}. They were:\n${this.statements.join("\n")}`)),
+				() =>
+					reject(
+						new Error(
+							`no statement matched ${String(matches)}. They were:\n${this.statements.join("\n")}`,
+						),
+					),
 				within,
 			).unref();
 		});
@@ -168,7 +173,11 @@ export interface Acquisition {
  * one. Order inside a single statement is the order the text gives, which the planner does not
  * promise; it is used only where a statement touches two tables at once.
  */
-export function acquisitionsIn(sql: string, schema: string, owned: ReadonlySet<string>): Acquisition[] {
+export function acquisitionsIn(
+	sql: string,
+	schema: string,
+	owned: ReadonlySet<string>,
+): Acquisition[] {
 	const found: Acquisition[] = [];
 	const qualified = `${schema.replaceAll(".", "\\.")}\\.(\\w+)`;
 	const explicit = /\bFOR\s+(NO\s+KEY\s+)?UPDATE\b/i.exec(sql);
@@ -255,9 +264,7 @@ function serialisedOnTheAccountRow(
  */
 function createsTheAccount(statements: readonly string[], schema: string): boolean {
 	const insertsAnAccount = new RegExp(`INSERT\\s+INTO\\s+${schema}\\.user\\b`, "i");
-	return statements.some(
-		(sql) => insertsAnAccount.test(sql) && !/\bON\s+CONFLICT\b/i.test(sql),
-	);
+	return statements.some((sql) => insertsAnAccount.test(sql) && !/\bON\s+CONFLICT\b/i.test(sql));
 }
 
 export interface LockCycle {
@@ -265,11 +272,51 @@ export interface LockCycle {
 	readonly reported: string;
 }
 
+/** Whether `one` takes `x` then `y`, `other` takes `y` then `x`, and each of the two requests waits
+ * for what the other holds. Both halves have to conflict: one conflicting wait is a queue. */
+function opposedAndWaiting(
+	one: Map<string, HeldLock>,
+	other: Map<string, HeldLock>,
+	x: string,
+	y: string,
+): boolean {
+	const oneOnX = one.get(x);
+	const oneOnY = one.get(y);
+	const otherOnX = other.get(x);
+	const otherOnY = other.get(y);
+	if (oneOnX === undefined || oneOnY === undefined) {
+		return false;
+	}
+	if (otherOnX === undefined || otherOnY === undefined) {
+		return false;
+	}
+	if (oneOnX.at >= oneOnY.at || otherOnY.at >= otherOnX.at) {
+		return false;
+	}
+	return WAITS_FOR[oneOnY.mode].has(otherOnY.mode) && WAITS_FOR[otherOnX.mode].has(oneOnX.mode);
+}
+
+function cyclesBetween(one: Map<string, HeldLock>, other: Map<string, HeldLock>): LockCycle[] {
+	const found: LockCycle[] = [];
+	for (const x of one.keys()) {
+		for (const y of one.keys()) {
+			if (!opposedAndWaiting(one, other, x, y)) {
+				continue;
+			}
+			if (serialisedOnTheAccountRow(one, other, [x, y])) {
+				continue;
+			}
+			found.push({ tables: [x, y], reported: `${x} then ${y} against ${y} then ${x}` });
+		}
+	}
+	return found;
+}
+
 /**
  * Every pair of observed transactions that take two tables in opposite orders, in modes that wait
- * for each other, with no earlier lock in common that would have serialised them. That last clause
- * is the whole of what `velve.user` taken first buys, and leaving it out reports the repaired tree as
- * broken (E-1605).
+ * for each other, without a lock on the account row that would have serialised them. That last
+ * clause is the whole of what `velve.user` taken first buys, and leaving it out reports the repaired
+ * tree as broken (E-1605).
  */
 export function cyclesAmong(
 	transactions: readonly (readonly string[])[],
@@ -282,29 +329,9 @@ export function cyclesAmong(
 	const cycles: LockCycle[] = [];
 	for (const [index, one] of held.entries()) {
 		for (const other of held.slice(index + 1)) {
-			for (const [x, oneOnX] of one) {
-				for (const [y, oneOnY] of one) {
-					const otherOnX = other.get(x);
-					const otherOnY = other.get(y);
-					if (otherOnX === undefined || otherOnY === undefined || oneOnX.at >= oneOnY.at) {
-						continue;
-					}
-					if (otherOnY.at >= otherOnX.at) {
-						continue;
-					}
-					if (
-						!WAITS_FOR[oneOnY.mode].has(otherOnY.mode) ||
-						!WAITS_FOR[otherOnX.mode].has(oneOnX.mode)
-					) {
-						continue;
-					}
-					if (serialisedOnTheAccountRow(one, other, [x, y])) {
-						continue;
-					}
-					const reported = `${x} then ${y} against ${y} then ${x}`;
-					if (!cycles.some((cycle) => cycle.reported === reported)) {
-						cycles.push({ tables: [x, y], reported });
-					}
+			for (const cycle of cyclesBetween(one, other)) {
+				if (!cycles.some((standing) => standing.reported === cycle.reported)) {
+					cycles.push(cycle);
 				}
 			}
 		}
