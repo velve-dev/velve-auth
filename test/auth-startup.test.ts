@@ -132,6 +132,40 @@ describe("what else refuses to start", () => {
 		expect(addressesOnly.username).toBeUndefined();
 	});
 
+	/**
+	 * A.8 types both fields `number`, and E-1696 recorded the two values that type admits which
+	 * cannot be honoured falling back to the default in silence. `count: 0` in the mode that makes
+	 * the field mandatory is the lockout S-DEFAULT-4 refuses, reintroduced through the field.
+	 */
+	it.each([
+		["count", 0],
+		["count", -1],
+		["count", 1.5],
+		["groupSize", 0],
+		["groupSize", -4],
+		["groupSize", Number.NaN],
+	] as const)("refuses recoveryCodes.%s of %s rather than narrowing it", (field, configured) => {
+		expect(start({ recoveryCodes: { count: 10, groupSize: 5, [field]: configured } })).toThrow(
+			VelveStartupError,
+		);
+	});
+
+	it("names the unusable shape in a machine-readable code", () => {
+		try {
+			start({ recoveryCodes: { count: 0, groupSize: 5 } })();
+			throw new Error("the configuration was accepted");
+		} catch (failure) {
+			expect(failure).toBeInstanceOf(VelveStartupError);
+			expect((failure as VelveStartupError).code).toBe("recovery_code_shape_unusable");
+		}
+	});
+
+	it("starts on the shape A.8 declares and on an operator's own whole numbers", () => {
+		expect(start({ recoveryCodes: { count: 10, groupSize: 5 } })).not.toThrow();
+		expect(start({ recoveryCodes: { count: 16, groupSize: 8 } })).not.toThrow();
+		expect(start()).not.toThrow();
+	});
+
 	// S-DEFAULT-6: the floor is a floor; the refusal is the password module's and is reached here.
 	it("refuses argon2id parameters below the floor", () => {
 		expect(
@@ -176,6 +210,34 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 			"trustedProxies",
 		]);
 		expect(new Set(weakened.map((line) => line.fields.option)).size).toBe(weakened.length);
+	});
+
+	/**
+	 * E-1694 found the `totp` detector reading a value typed `0 | 1` and testing `> 1`, so it could
+	 * fire for no value the type admits, and for an untyped caller it reported a weakening the
+	 * library had already refused to apply. Both halves are asserted here.
+	 */
+	it.each([0, 1, 2, 10] as const)(
+		"says nothing about a step tolerance of %s, because none of them widens the window",
+		(stepToleranceInSteps) => {
+			const log = createLogSink();
+			start({
+				log: log.write,
+				totp: { stepToleranceInSteps: stepToleranceInSteps as 0 | 1 },
+			})();
+
+			const weakened = log.lines.filter(
+				(line) => line.message === "a security option is weaker than its default",
+			);
+
+			expect(weakened.map((line) => line.fields.option)).toStrictEqual([]);
+		},
+	);
+
+	it("declares of totp that nothing weakens it, because the row is what an operator reads", () => {
+		const totp = SECURITY_OPTIONS.find((option) => option.option === "totp");
+
+		expect(totp?.weakenedBy).toContain("not applied");
 	});
 
 	/** T-DEFAULT-1: a key of the option type that nobody classified fails here, not in an advisory. */

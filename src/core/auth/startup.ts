@@ -9,6 +9,7 @@ type StartupErrorCode =
 	| "origins_empty"
 	| "email_callback_missing"
 	| "recovery_codes_required"
+	| "recovery_code_shape_unusable"
 	| "oauth_provider_incomplete"
 	| "plugin_id_duplicated"
 	| "plugin_dependency_missing"
@@ -34,6 +35,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		'email.send is required in the identity modes "email" and "username_email"',
 	recovery_codes_required:
 		'identity.mode "username" requires recoveryCodes: without an address there is no other way back into an account',
+	recovery_code_shape_unusable:
+		"recoveryCodes.count and recoveryCodes.groupSize must each be a positive whole number: a count of nothing is a set with no way back in, and a group of nothing never ends",
 	oauth_provider_incomplete:
 		"a provider id that is not one of the fourteen built in needs authorizationEndpoint, tokenEndpoint and subjectClaim",
 	plugin_id_duplicated: "two plugins claim the same id, so neither owns its namespace",
@@ -128,6 +131,27 @@ function assertRecoveryCodesWhereTheyAreTheOnlyWayBack(
 	}
 }
 
+/**
+ * A.8 types both fields `number`, and the two values that type admits which cannot be honoured are
+ * refused here rather than narrowed silently where they are read (E-1696).
+ */
+function isUsableShapeField(configured: unknown): boolean {
+	return (
+		configured === undefined ||
+		(typeof configured === "number" && Number.isSafeInteger(configured) && configured > 0)
+	);
+}
+
+function assertRecoveryCodeShapeIsUsable(recoveryCodes: unknown): void {
+	if (typeof recoveryCodes !== "object" || recoveryCodes === null) {
+		return;
+	}
+	const { count, groupSize } = recoveryCodes as { count?: unknown; groupSize?: unknown };
+	if (!isUsableShapeField(count) || !isUsableShapeField(groupSize)) {
+		throw new VelveStartupError("recovery_code_shape_unusable");
+	}
+}
+
 function assertEmailCallbackWhereAddressesExist(mode: IdentityMode, email: unknown): void {
 	if (mode !== "username" && email === undefined) {
 		throw new VelveStartupError("email_callback_missing");
@@ -172,6 +196,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertKeysArePresent(config.keys);
 	assertOriginsAreNamed(config.origins);
 	assertRecoveryCodesWhereTheyAreTheOnlyWayBack(config.identity.mode, config.recoveryCodes);
+	assertRecoveryCodeShapeIsUsable(config.recoveryCodes);
 	assertEmailCallbackWhereAddressesExist(config.identity.mode, config.email);
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 }

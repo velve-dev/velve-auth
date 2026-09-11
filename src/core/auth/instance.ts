@@ -12,6 +12,7 @@ import {
 	type PendingToken,
 } from "../factor/pending/index.js";
 import { type FactorSurface, factorRoutes } from "../factor/routes.js";
+import { assertStoredFactorKeyVersionsAreKnown } from "../factor/startup.js";
 import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
 import type { Clock, HttpEnvironment } from "../http/environment.js";
@@ -394,6 +395,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			await assertKeysAnswerForEveryPurpose(config.keys);
 			// E-179: the operator's report, once, loud, and not on the sign-in path.
 			await assertStoredKeyVersionsAreKnown({ driver, keys: config.keys, schema });
+			// E-428, E-1697: the same report for `totp-enc` and `token-pepper`, which conceal it harder.
+			await assertStoredFactorKeyVersionsAreKnown({ driver, keys: config.keys, schema });
 			return applied;
 		},
 

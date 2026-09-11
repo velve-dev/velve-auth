@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
 import { createRecoveryCodeService } from "../src/core/factor/recovery/index.js";
 import {
 	assertStoredFactorKeyVersionsAreKnown,
@@ -9,7 +10,9 @@ import {
 import { createTotpService, timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
 import { toVisibleFailure } from "../src/core/http/error-map.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { createVelveAuth } from "../src/index.js";
 import { createTestClock } from "../src/testing/index.js";
+import { configFor } from "./auth-fixtures.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import {
@@ -138,6 +141,35 @@ describe("a second-factor key version that has left the ring is a start error", 
 		expect(`${recoveryFailure?.error.httpStatus} ${recoveryFailure?.error.code}`).toBe(
 			"401 invalid_recovery_code",
 		);
+	});
+
+	/**
+	 * The mechanism above is reachable from a test and from nothing else until `migrate()` calls
+	 * it, which is the state E-428 calls worth nothing and E-1698 left the check in. This drives
+	 * the public entry point rather than the module, so removing the call reddens it.
+	 */
+	it("is reached by migrate() and not only by a caller who knows it exists", async () => {
+		await accountWithBothFactorsUnderVersionOne();
+		const auth = createVelveAuth(
+			configFor({ database: connection as Driver, schema, keys: withoutVersionOne }),
+		);
+
+		const refused = await refusalFrom(auth.migrate().then(() => undefined));
+
+		expect(refused?.code).toBe("stored_key_version_unknown");
+		expect(refused?.missing.map((entry) => entry.table)).toStrictEqual([
+			"totp_credential",
+			"recovery_code",
+		]);
+	});
+
+	it("lets migrate() through while the ring still holds every stored version", async () => {
+		await accountWithBothFactorsUnderVersionOne();
+		const auth = createVelveAuth(
+			configFor({ database: connection as Driver, schema, keys: bothVersions }),
+		);
+
+		await expect(auth.migrate()).resolves.toBeDefined();
 	});
 
 	/**

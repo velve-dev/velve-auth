@@ -851,7 +851,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_table_prefix_conflict" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_table_prefix_conflict" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict";
 /**
  * T-OWNER-11 asks the start error to name both contributors to a route conflict.
  */

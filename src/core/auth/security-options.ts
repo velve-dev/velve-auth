@@ -84,7 +84,7 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	{
 		option: "totp",
 		safeDefault: "issuer required, tolerance 1 step",
-		weakenedBy: "a tolerance above one step",
+		weakenedBy: "nothing: a tolerance above one step is not applied (A.8, E-1693)",
 	},
 	{
 		option: "recoveryCodes",
@@ -112,7 +112,6 @@ export interface ChosenWeakening {
 const DEFAULT_ADDRESS_CAPACITY = 10;
 const DEFAULT_ACCOUNT_CAPACITY = 5;
 const DEFAULT_RECOVERY_CODE_COUNT = 10;
-const DEFAULT_TOTP_TOLERANCE_IN_STEPS = 1;
 
 interface FreshnessWindows {
 	readonly defaultMs: number;
@@ -154,13 +153,6 @@ const DETECTORS: readonly Detector[] = [
 		config.webauthn !== undefined && config.webauthn.userVerification !== "required"
 			? { option: "webauthn", chosen: config.webauthn.userVerification }
 			: null,
-
-	(config) => {
-		const tolerance = config.totp?.stepToleranceInSteps ?? DEFAULT_TOTP_TOLERANCE_IN_STEPS;
-		return tolerance > DEFAULT_TOTP_TOLERANCE_IN_STEPS
-			? { option: "totp", chosen: `tolerance ${tolerance} steps` }
-			: null;
-	},
 
 	(config) => {
 		const count = config.recoveryCodes?.count ?? DEFAULT_RECOVERY_CODE_COUNT;

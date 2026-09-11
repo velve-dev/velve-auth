@@ -2157,9 +2157,9 @@ only place that says so: on the sign-in path such a row fails to verify like any
 other, because a throw there would break S-TIM-1 and would partition accounts
 by when they were written (E-179).
 
-The check is exported rather than wired in, because assembling the instance is
-not this module's business. Until a caller invokes it, the operator error is
-silent.
+`migrate()` calls it, on the line before the second-factor check that reads the
+same way. The sentence here said it was exported rather than wired in, which
+stopped being true at `E-330` and stood for four waves after that (`E-1744`).
 
 ### Every exported name
 
@@ -3755,10 +3755,12 @@ under the current version, while `POST /factor/totp/remove` demands a valid code
 is a recovery code — unless `token-pepper` lost the same version, which is why
 the check reads both tables rather than only the one `E-428` named.
 
-**Nothing calls it yet.** It is exported and unwired, the state
-`assertStoredKeyVersionsAreKnown` was in until `E-330`. The call belongs beside
-that one, in `migrate()`, and `src/core/auth/instance.ts` is outside the files
-the change that added this check was allowed to touch (`E-1698`).
+**`migrate()` calls it**, on the line after `assertStoredKeyVersionsAreKnown` and
+for the reason `E-330` gives of that one: `createVelveAuth` is synchronous, and
+`migrate()` is the first point at which both tables are guaranteed to exist. It
+was exported and unwired until `E-1742`. An operator who applies the shipped SQL
+by hand and never calls `migrate()` never runs it, which is `E-330`'s own price
+carried over unchanged.
 
 ## WebAuthn
 
@@ -5062,6 +5064,7 @@ because nothing else would tell you.
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
+| `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
@@ -6538,10 +6541,14 @@ seconds at `0` and 210 at `1`.
 The field is typed `0 | 1`, and **a value outside those two is read as the
 default `1`** rather than widening the window. That case is only reachable from
 JavaScript, where the type does not hold; a TypeScript caller cannot write it.
-It is the one place left where the library warns about a value it does not use —
-`SECURITY_OPTIONS` classifies `a tolerance above one step` as a weakening, and
-such a value is refused rather than applied. Reported rather than repaired here,
-because `src/core/auth/security-options.ts` is outside this change (`E-1694`).
+
+`SECURITY_OPTIONS` therefore declares of `totp` that **nothing weakens it**. It
+classified `a tolerance above one step` as a weakening until `E-1743`, which was
+wrong twice over: the detector tested a value typed `0 | 1` for being above one,
+so no typed caller could reach it at all, and an untyped caller who reached it
+was told a security option had been weakened by a value the library had just
+refused to apply. No tolerance, in type or out of it, now writes a weakening
+line.
 
 **`recoveryCodes.count` and `recoveryCodes.groupSize` reach the generator.**
 `count` decides how many codes `POST /factor/recovery/generate` hands back and
@@ -6551,12 +6558,15 @@ weakening that happens. `groupSize` is presentation only: what is stored is the
 HMAC of the canonical form, and `normaliseRecoveryCode` strips the separators, so
 a code printed under one grouping still redeems under another.
 
-Both are typed `number` and **a value that is not a positive whole number is read
-as the default**. A `count` of zero is an account with no way back in, which is
-the lockout `S-DEFAULT-4` exists to refuse; a `groupSize` of zero is a loop that
-never ends. Neither is bounded from above: a `count` of a million is a million
-codes, slowly, and that is the operator's configuration rather than an attacker's
-input (`E-1695`).
+Both are typed `number`, and **a value that is not a positive whole number
+refuses the start** — `VelveStartupError`, code `recovery_code_shape_unusable`. A
+`count` of zero is an account with no way back in, which is the lockout
+`S-DEFAULT-4` exists to refuse; a `groupSize` of zero is a loop that never ends.
+Neither is bounded from above: a `count` of a million is a million codes, slowly,
+and that is the operator's configuration rather than an attacker's input
+(`E-1695`). `recoveryCodeShapeOf` still reads such a value as the default, which
+no configured instance now reaches; it is what a caller of the module directly
+meets (`E-1741`).
 
 **The default grouping changed from eight to five**, which is A.8's stated
 default and what the library should have shipped. 160 bits are 32 base32 places,
