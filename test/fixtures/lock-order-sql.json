@@ -2,7 +2,7 @@
 	"permitted": [
 		[
 			"the user table, declared and qualified",
-			"SELECT 1 FROM velve.user /* locks: velve.user */ WHERE id = $1 FOR UPDATE"
+			"SELECT 1 FROM velve.user /* locks: velve.user */ WHERE id = $1 FOR NO KEY UPDATE"
 		],
 		[
 			"the user table through an interpolated name",
@@ -10,23 +10,46 @@
 		],
 		[
 			"the user table, unqualified",
-			"SELECT 1 FROM \"user\" /* locks: user */ WHERE id = $1 FOR UPDATE"
+			"SELECT 1 FROM \"user\" /* locks: user */ WHERE id = $1 FOR NO KEY UPDATE"
 		],
 		["no lock at all", "SELECT 1 FROM ${schema}.session WHERE token_sha256 = $1"]
 	],
 	"forbidden": [
-		["a lock that declares nothing", "SELECT 1 FROM ${owners} WHERE id = $1 FOR UPDATE"],
+		[
+			"a lock that declares nothing",
+			"SELECT 1 FROM ${owners} WHERE id = $1 FOR NO KEY UPDATE"
+		],
 		[
 			"a lock on the session table",
-			"SELECT 1 FROM ${schema}.session /* locks: ${schema}.session */ WHERE id = $1 FOR UPDATE"
+			"SELECT 1 FROM ${schema}.session /* locks: ${schema}.session */ WHERE id = $1 FOR NO KEY UPDATE"
 		],
 		[
 			"a lock on an interpolated non-user table",
-			"SELECT 1 FROM ${table} /* locks: ${schema}.one_time_token */ WHERE h = $1 FOR UPDATE"
+			"SELECT 1 FROM ${table} /* locks: ${schema}.one_time_token */ WHERE h = $1 FOR NO KEY UPDATE"
 		],
 		[
 			"a lock on a credential row",
 			"SELECT 1 FROM velve.password_credential /* locks: velve.password_credential */ WHERE user_id = $1 FOR NO KEY UPDATE"
+		],
+		[
+			"FOR UPDATE, which a foreign key's key share waits for, even on the user row and declared",
+			"SELECT 1 FROM velve.user /* locks: velve.user */ WHERE id = $1 FOR UPDATE"
+		],
+		[
+			"FOR UPDATE OF, spelled with an alias",
+			"SELECT 1 FROM velve.user x /* locks: velve.user */ WHERE x.id = $1 FOR UPDATE OF x"
+		],
+		[
+			"FOR SHARE, which the previous scan could not see at all",
+			"SELECT 1 FROM ${schema}.session WHERE id = $1 FOR SHARE"
+		],
+		[
+			"FOR KEY SHARE, taken explicitly where a foreign key takes it implicitly",
+			"SELECT 1 FROM velve.user /* locks: velve.user */ WHERE id = $1 FOR KEY SHARE"
+		],
+		[
+			"a lock written across newlines, which a collapsed statement would hide",
+			"SELECT 1\nFROM velve.session\nWHERE id = $1\nFOR\n  UPDATE"
 		]
 	]
 }
