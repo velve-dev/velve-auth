@@ -160,7 +160,7 @@ const STRENGTH: Record<Mode, number> = { "key-share": 0, "no-key": 1, exclusive:
 
 const THE_ACCOUNT_ROW = "user";
 
-export interface Acquisition {
+interface Acquisition {
 	readonly table: string;
 	readonly mode: Mode;
 }
@@ -173,11 +173,7 @@ export interface Acquisition {
  * one. Order inside a single statement is the order the text gives, which the planner does not
  * promise; it is used only where a statement touches two tables at once.
  */
-export function acquisitionsIn(
-	sql: string,
-	schema: string,
-	owned: ReadonlySet<string>,
-): Acquisition[] {
+function acquisitionsIn(sql: string, schema: string, owned: ReadonlySet<string>): Acquisition[] {
 	const found: Acquisition[] = [];
 	const qualified = `${schema.replaceAll(".", "\\.")}\\.(\\w+)`;
 	const explicit = /\bFOR\s+(NO\s+KEY\s+)?UPDATE\b/i.exec(sql);
@@ -204,14 +200,14 @@ export function acquisitionsIn(
 	return found;
 }
 
-export interface HeldLock {
+interface HeldLock {
 	readonly at: number;
 	readonly mode: Mode;
 }
 
 /** Every lock one transaction ends up holding: where it first took it, and in the strongest mode it
  * took it in, because a row lock is held to commit and only ever strengthens. */
-export function locksHeldBy(
+function locksHeldBy(
 	statements: readonly string[],
 	schema: string,
 	owned: ReadonlySet<string>,
@@ -267,7 +263,7 @@ function createsTheAccount(statements: readonly string[], schema: string): boole
 	return statements.some((sql) => insertsAnAccount.test(sql) && !/\bON\s+CONFLICT\b/i.test(sql));
 }
 
-export interface LockCycle {
+interface LockCycle {
 	readonly tables: readonly [string, string];
 	readonly reported: string;
 }
