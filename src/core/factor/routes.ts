@@ -18,7 +18,12 @@ import {
 import { object, string, unknownRecord } from "../http/validators.js";
 import { toPendingToken, verifyUnderPendingAttemptLimit } from "./pending/index.js";
 import { createRecoveryCodeService, type RecoveryCodeService } from "./recovery/index.js";
-import { createTotpService, type TotpEnrollment, type TotpService } from "./totp/index.js";
+import {
+	createTotpService,
+	type TotpEnrollment,
+	type TotpService,
+	totpToleranceOf,
+} from "./totp/index.js";
 import type { WebAuthnCredential } from "./webauthn/credential-repository.js";
 import {
 	createWebAuthnService,
@@ -591,6 +596,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		clock: services.clock,
 		pending: services.pending,
 		issuer: totpIssuerOf(services),
+		toleranceInSteps: totpToleranceOf(services.totp?.stepToleranceInSteps),
 	});
 	const recovery: RecoveryCodeService = createRecoveryCodeService({
 		driver: services.driver,

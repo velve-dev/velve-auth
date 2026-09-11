@@ -61,7 +61,7 @@ afterAll(async () => {
 describe("the surface the TOTP module publishes", () => {
 	it("takes a clock it cannot default, and a pending service to spend attempts on", () => {
 		expectTypeOf<keyof TotpServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "pending" | "issuer" | "clock" | "schema"
+			"driver" | "keys" | "pending" | "issuer" | "clock" | "schema" | "toleranceInSteps"
 		>();
 		expectTypeOf<TotpServiceOptions["clock"]>().not.toBeUndefined();
 		expectTypeOf<keyof TotpRepositoryOptions>().toEqualTypeOf<"driver" | "schema">();

@@ -3439,7 +3439,8 @@ the instance, not declared here.
 ### `createTotpService(options)`
 
 Returns a `TotpService`. RFC 6238 with SHA-1, six digits, a thirty-second
-period and a tolerance of one step in each direction (architecture 3.6).
+period and, by default, a tolerance of one step in each direction (architecture
+3.6). `toleranceInSteps` is the one parameter of those that is configurable.
 
 | Option | Type | Required | Meaning |
 |---|---|---|---|
@@ -3448,6 +3449,7 @@ period and a tolerance of one step in each direction (architecture 3.6).
 | `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
 | `issuer` | `string` | yes | The issuer shown in the authenticator app and written into the key URI. |
 | `clock` | `Clock` | yes | The only time the module reads. There is no default: architecture 6.19 says the core reads the time through `clock` alone, and a default would be a second source. Tests pass `createTestClock()` from `@velve/auth/testing`. |
+| `toleranceInSteps` | `0 \| 1` | no | How far either side of the current step a code is still accepted. `1` is A.8's default and 3.6's `±1 Schritt`; `0` accepts the current step alone. It also sizes `totp_used_step` retention. |
 | `schema` | `string` | no | Defaults to `velve`. |
 
 #### `totp.enroll.start({ actor, accountName })`
@@ -3556,10 +3558,12 @@ fifty concurrent submissions of one code onto one winner (`S-RACE-3`).
 **The step written is the one that matched, not the one the clock is in.** With
 a tolerance of ±1 an accepted code can belong to the step before or after the
 current one; recording the current step would leave the matched one free for a
-second use.
+second use. At a tolerance of `0` the two are always the same step, and the rule
+holds unchanged.
 
-Rows are kept `TOTP_USED_STEP_RETENTION_SECONDS` — the full tolerance window
-plus two minutes — and are swept by `auth.maintenance.sweep()` (L-11).
+Rows are kept `usedStepRetentionSeconds(toleranceInSteps)` — the full tolerance
+window plus two minutes, so 210 seconds at `1` and 150 at `0` — and are swept by
+`auth.maintenance.sweep()` (L-11).
 
 ### TOTP constants
 
@@ -3568,15 +3572,20 @@ plus two minutes — and are swept by `auth.maintenance.sweep()` (L-11).
 | `TOTP_ALGORITHM` | `"SHA1"` | Architecture 3.6. Every authenticator app implements it. |
 | `TOTP_DIGITS` | `6` | Architecture 3.6. The RFC's own vectors use eight; the library generates six. |
 | `TOTP_PERIOD_SECONDS` | `30` | Architecture 3.6. |
-| `TOTP_TOLERANCE_STEPS` | `1` | One step either side, so ninety seconds are accepted at any moment. |
+| `TOTP_TOLERANCE_STEPS` | `1` | A.8's default. One step either side, so ninety seconds are accepted at any moment. |
 | `TOTP_SECRET_BYTES` | `20` | 160 bit. RFC 4226 §4 requires 128 and recommends 160. |
-| `TOTP_USED_STEP_RETENTION_SECONDS` | `210` | The widest accepted window (90 s) plus two minutes (L-11). |
 
-`timeStepAt(instant)` is the counter for an instant; `acceptedTimeSteps(instant)`
-is the three steps a submission at that instant may match;
-`totpCodeForStep(secretBytes, step)` is the code for one step; and
-`matchingTimeStep({ secretBytes, submittedCode, at })` answers with the matched
-step or `null`. It compares against every candidate without leaving early and
+`usedStepRetentionSeconds(toleranceInSteps)` is the widest accepted window plus
+two minutes (L-11): `210` at the default, `150` at `0`.
+
+`timeStepAt(instant)` is the counter for an instant;
+`acceptedTimeSteps(instant, toleranceInSteps)` is the steps a submission at that
+instant may match — three at the default, one at `0`;
+`totpCodeForStep(secretBytes, step)` is the code for one step;
+`totpToleranceOf(configured)` reads a configured value, answering the default
+for anything that is not exactly `0`; and
+`matchingTimeStep({ secretBytes, submittedCode, at, toleranceInSteps })` answers
+with the matched step or `null`. It compares against every candidate without leaving early and
 in constant time, so the position of a match inside the window is not readable
 from the duration. `normaliseTotpCode` strips spaces and hyphens, because an
 authenticator app shows the code in two groups and a reader retypes the gap.
@@ -6455,7 +6464,7 @@ Three optional fields of `VelveAuthConfig` decide what is served.
 | Field | Type | Default | What it does |
 |---|---|---|---|
 | `webauthn` | `WebAuthnConfig` | absent | Its absence removes the seven `/factor/webauthn/*` rows and both `/sign-in/passkey/*` rows. They are not refused — they do not exist, and a request to one answers 404. |
-| `totp` | `Partial<TotpConfig>` | absent | `issuer` is the name an authenticator app shows. `stepToleranceInSteps` is declared and **not yet read**; see below. |
+| `totp` | `Partial<TotpConfig>` | absent | `issuer` is the name an authenticator app shows. `stepToleranceInSteps` is `0` or `1` and decides how far either side of the current step a code is accepted; default `1`. |
 | `recoveryCodes` | `RecoveryCodesConfig` | absent | Required in `identity.mode: "username"`, where a recovery code is the only way back into an account (`S-DEFAULT-4`). Its `count` and `groupSize` are declared and **not yet read**; see below. |
 
 ```ts
@@ -6484,12 +6493,25 @@ one.** Where it is absent the issuer is the host of the first entry of `origins`
 `totp` block shows `app.example.com` in its users' authenticators. Set `issuer`
 to your product's name. Nothing warns about this at start.
 
-**Three fields do not reach the module behind them.**
-`recoveryCodes.groupSize` is ignored: codes are grouped in eights, where A.8's
-default is five. `recoveryCodes.count` is ignored too, and happens to agree —
-ten codes either way. `totp.stepToleranceInSteps` is ignored: the tolerance is
-one step in both directions and `0` cannot be expressed. All three are recorded
-in `CASE-STUDY.md` under `E-1249`; setting any of them changes nothing today.
+**`totp.stepToleranceInSteps` reaches the comparison.** `1`, the default, accepts
+the previous, the current and the next thirty-second step, which is 3.6's
+`Toleranz ±1 Schritt`. `0` accepts the current step alone — a narrower replay
+window at the cost of refusing a user whose device clock is a step out. The
+value also sizes the retention of `totp_used_step`: `L-11` keeps a claimed step
+two minutes past the widest window a code could still reach it in, which is 150
+seconds at `0` and 210 at `1`.
+
+The field is typed `0 | 1`, and **a value outside those two is read as the
+default `1`** rather than widening the window. That case is only reachable from
+JavaScript, where the type does not hold; a TypeScript caller cannot write it.
+It is the one place left where the library warns about a value it does not use —
+`SECURITY_OPTIONS` classifies `a tolerance above one step` as a weakening, and
+such a value is refused rather than applied. Reported rather than repaired here,
+because `src/core/auth/security-options.ts` is outside this change (`E-1694`).
+
+**`recoveryCodes.count` and `recoveryCodes.groupSize` do not reach the module
+behind them.** Codes are grouped in eights, where A.8's default is five, and the
+count is fixed at ten. Both are recorded in `CASE-STUDY.md` under `E-1249`.
 
 ### The rows
 

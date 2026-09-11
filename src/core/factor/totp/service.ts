@@ -9,7 +9,11 @@ import { verifyUnderPendingAttemptLimit } from "../pending/attempt-limit.js";
 import type { PendingAuthenticationService, PendingResolution } from "../pending/service.js";
 import type { PendingToken } from "../pending/token.js";
 import { matchingTimeStep } from "./code.js";
-import { TOTP_USED_STEP_RETENTION_SECONDS } from "./parameters.js";
+import {
+	TOTP_TOLERANCE_STEPS,
+	type TotpToleranceInSteps,
+	usedStepRetentionSeconds,
+} from "./parameters.js";
 import { createTotpRepository, type StoredTotpCredential } from "./repository.js";
 import { createTotpSecret, type TotpEnrollment, totpEnrollment } from "./secret.js";
 
@@ -20,6 +24,8 @@ export interface TotpServiceOptions {
 	readonly issuer: string;
 	readonly clock: Clock;
 	readonly schema?: string;
+	/** A.8: how far either side of the current step a code is still accepted. Default 1. */
+	readonly toleranceInSteps?: TotpToleranceInSteps;
 }
 
 export interface TotpService {
@@ -41,6 +47,8 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		driver: options.driver,
 		schema: options.schema ?? "velve",
 	});
+	const toleranceInSteps = options.toleranceInSteps ?? TOTP_TOLERANCE_STEPS;
+	const retentionSeconds = usedStepRetentionSeconds(toleranceInSteps);
 
 	/**
 	 * S-REST-4 and S-KEY-3: the secret is the one value here the server needs back in the clear.
@@ -74,6 +82,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 			secretBytes: await decryptSecret(input.credential),
 			submittedCode: input.code,
 			at: options.clock.now(),
+			toleranceInSteps,
 		});
 		if (step === null) {
 			throw new ConcealedError("totp_code_wrong");
@@ -86,7 +95,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		const claimed = await credentials.claimTimeStep({
 			userId,
 			timeStep,
-			retentionSeconds: TOTP_USED_STEP_RETENTION_SECONDS,
+			retentionSeconds,
 		});
 		if (!claimed) {
 			throw new ConcealedError("totp_step_replayed");
@@ -126,6 +135,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					secretBytes: await decryptSecret(credential),
 					submittedCode: code,
 					at: options.clock.now(),
+					toleranceInSteps,
 				});
 				if (step === null) {
 					throw new ConcealedError("totp_code_wrong");
