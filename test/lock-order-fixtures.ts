@@ -167,7 +167,10 @@ interface Acquisition {
 
 /**
  * What one statement locks, in the order it locks it. A `DELETE` takes the strength of `FOR UPDATE`
- * on the row it removes; an `UPDATE` that leaves every key column alone takes `FOR NO KEY UPDATE`;
+ * on the row it removes; an `UPDATE` is read as `FOR NO KEY UPDATE`, which is true of this schema
+ * rather than of SQL — `moveAddressStatement` writes `email`, a unique-index column, and stays at the
+ * weaker strength only because both unique indexes on `velve.user` are partial and a partial index
+ * cannot be a foreign key's target (E-1618, pinned by a case);
  * an `INSERT` takes a row nobody else can hold, and then the foreign key's `FOR KEY SHARE` on
  * `velve.user`. An `ON CONFLICT … DO UPDATE` can land on an existing row, so it is read as a lock on
  * one. Order inside a single statement is the order the text gives, which the planner does not
@@ -295,8 +298,9 @@ interface AccountLockTrace {
 	readonly firstChildAt: number;
 }
 
-/** The account's own tables a statement locks: not the account row, and not a table whose row named
- * the account. */
+/** The account's own tables a statement locks: a table with a foreign key to the account row, other
+ * than one whose row named the account. `velve.rate_bucket` has no owner column and is not one of
+ * them, and reading an upsert of it as one put it in this report (E-1617). */
 function childTablesLockedBy(
 	sql: string,
 	schema: string,
@@ -304,7 +308,7 @@ function childTablesLockedBy(
 ): readonly string[] {
 	return acquisitionsIn(sql, schema, owned)
 		.map(({ table }) => table)
-		.filter((table) => table !== THE_ACCOUNT_ROW && !TABLES_THAT_NAME_THE_ACCOUNT.has(table));
+		.filter((table) => owned.has(table) && !TABLES_THAT_NAME_THE_ACCOUNT.has(table));
 }
 
 function traceTheAccountLock(

@@ -247,8 +247,11 @@ describe("no interleaving of two account writes deadlocks (CLAUDE.md §7)", () =
 	 * The declared statement, not the ordering it happens to produce. Deleting `lockAccountRow` from
 	 * `confirmAddress` leaves that transaction correctly ordered anyway — its own `UPDATE velve.user`
 	 * takes the same mode on the same row — so a case reading the order stays green and the statement
-	 * is unpinned. This reads the marker's position instead, and reddens for every one of the eight
-	 * sites the file drives (E-1617).
+	 * is unpinned. This reads the marker's position instead. Its reach is what it reports: **two**
+	 * transactions of the four the file drives write two or more of the account's own tables and run to
+	 * the end — the first confirmation and the reset redemption — because the recovery-code redemption
+	 * is refused after one table and the regeneration touches one. Six of the eight sites are outside
+	 * it (E-1617).
 	 */
 	it("runs the declared account lock before the first of the account's own tables", () => {
 		const { late, considered } = accountLockAudit(
@@ -258,7 +261,7 @@ describe("no interleaving of two account writes deadlocks (CLAUDE.md §7)", () =
 		);
 
 		expect(late).toEqual([]);
-		expect(considered).toBeGreaterThanOrEqual(4);
+		expect(considered).toBeGreaterThanOrEqual(2);
 	});
 
 	/**
