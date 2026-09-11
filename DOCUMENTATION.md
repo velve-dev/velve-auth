@@ -2159,7 +2159,7 @@ by when they were written (E-179).
 
 `migrate()` calls it, on the line before the second-factor check that reads the
 same way. The sentence here said it was exported rather than wired in, which
-stopped being true at `E-330` and stood for four waves after that (`E-1743`).
+stopped being true at `E-330` and stood for four waves after that (`E-1744`).
 
 ### Every exported name
 
@@ -3758,7 +3758,7 @@ the check reads both tables rather than only the one `E-428` named.
 **`migrate()` calls it**, on the line after `assertStoredKeyVersionsAreKnown` and
 for the reason `E-330` gives of that one: `createVelveAuth` is synchronous, and
 `migrate()` is the first point at which both tables are guaranteed to exist. It
-was exported and unwired until `E-1741`. An operator who applies the shipped SQL
+was exported and unwired until `E-1742`. An operator who applies the shipped SQL
 by hand and never calls `migrate()` never runs it, which is `E-330`'s own price
 carried over unchanged.
 
@@ -5064,7 +5064,7 @@ because nothing else would tell you.
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
-| `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1740) |
+| `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
@@ -6543,7 +6543,7 @@ default `1`** rather than widening the window. That case is only reachable from
 JavaScript, where the type does not hold; a TypeScript caller cannot write it.
 
 `SECURITY_OPTIONS` therefore declares of `totp` that **nothing weakens it**. It
-classified `a tolerance above one step` as a weakening until `E-1742`, which was
+classified `a tolerance above one step` as a weakening until `E-1743`, which was
 wrong twice over: the detector tested a value typed `0 | 1` for being above one,
 so no typed caller could reach it at all, and an untyped caller who reached it
 was told a security option had been weakened by a value the library had just
@@ -6566,7 +6566,7 @@ Neither is bounded from above: a `count` of a million is a million codes, slowly
 and that is the operator's configuration rather than an attacker's input
 (`E-1695`). `recoveryCodeShapeOf` still reads such a value as the default, which
 no configured instance now reaches; it is what a caller of the module directly
-meets (`E-1740`).
+meets (`E-1741`).
 
 **The default grouping changed from eight to five**, which is A.8's stated
 default and what the library should have shipped. 160 bits are 32 base32 places,

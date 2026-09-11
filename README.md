@@ -127,7 +127,8 @@ a startup error, not a warning.
 
 **The instance**, from `@velve/auth`. `createVelveAuth` reads the configuration,
 refuses to start on one that cannot be made safe — a root key shorter than 32
-bytes, an empty origin list, a username-only mode without recovery codes, Argon2
+bytes, an empty origin list, a username-only mode without recovery codes, a
+recovery-code count or group size that is not a positive whole number, Argon2
 parameters below the floor — and returns the route table, the server methods and
 the maintenance sweep. [`DOCUMENTATION.md`](./DOCUMENTATION.md) states, chapter
 by chapter, what each area has built; **this paragraph names none of them**,
