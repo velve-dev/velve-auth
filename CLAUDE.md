@@ -217,7 +217,9 @@ repair anything itself.
 - `pnpm lint` without findings, formatting applied
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
 - `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
-- `pnpm check:lock-order` — `velve.user` is locked before any other table
+- `pnpm check:lock-order` — every row lock is `FOR NO KEY UPDATE`, declares
+  `velve.user`, and is written in `src/core/db/lock.ts`; the order two transactions take
+  their locks in is decided by `test/lock-order-race.test.ts` and not here
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
@@ -843,20 +845,45 @@ These follow from architecture section 2 and are not open for local decision:
 - PostgreSQL 14 or newer. Hand-written SQL, no query builder, no ORM. The driver
   is a parameter, never an import.
 - Keys come from a `KeyProvider`, never from `process.env` inside the core.
-- **`velve.user` is locked first, and a lock declares what it locks.** A transaction
-  that takes a row lock — `SELECT … FOR UPDATE` or `FOR NO KEY UPDATE` — takes it on
-  `velve.user` before it locks a row in any other table, and the statement says so in
-  a block comment: `/* locks: ${schema}.user */`. Every repository builds its table
-  name from the configured schema, so no scan can read the target out of the SQL; a
-  check that tried to would pass for the absence of a name rather than the presence
-  of the right one. Two features reached for a row lock
-  independently and both happened to lock the user row first; the ordering is a
-  rule so the next one does not have to guess. A cycle here surfaces as a
-  deadlock in production under load, not in a test, because it needs two specific
-  transactions interleaving on the same account. `pnpm check:lock-order` enforces
-  it. A row lock is also wider than it looks: while it is held, every write of a
-  user-owned row for that account waits, and if the transaction contains an
-  outbound call the wait is that call's timeout.
+- **`velve.user` is locked first, `FOR NO KEY UPDATE`, and a lock declares what it
+  locks.** A transaction that writes rows in more than one user-owned table takes
+  `SELECT 1 FROM ${schema}.user WHERE id = $1 FOR NO KEY UPDATE /* locks: ${schema}.user */`
+  as its first statement, and reaches it through `src/core/db/lock.ts` — the only file
+  that writes a row lock, so the mode cannot vary between call sites. Every repository
+  builds its table name from the configured schema, so no scan can read the target out
+  of the SQL; a check that tried to would pass for the absence of a name rather than the
+  presence of the right one, which is what the marker is for. Two features reached for a
+  row lock independently and both happened to lock the user row first; the ordering is a
+  rule so the next one does not have to guess.
+- **The mode is not a local choice.** `FOR NO KEY UPDATE` is the strongest strength that
+  does **not** conflict with the `FOR KEY SHARE` a foreign key takes on `velve.user` for
+  every insert of a user-owned row. `FOR UPDATE` does conflict with it, and that
+  acquisition is taken by a trigger, in a statement this library did not write, at a point
+  it does not choose: while `FOR UPDATE` is held it is an edge in a wait-for cycle that no
+  reader can find in the SQL, and a deadlock made of exactly that was reproduced against
+  PostgreSQL 14.24 and 18.3 (E-1601, E-1604). So `FOR UPDATE` and `FOR SHARE` are used
+  nowhere, and `pnpm check:lock-order` refuses both.
+- **The ordering rule reaches explicit locks only, and one exception is deliberate.** A
+  redemption learns which account it is acting for by consuming a row of
+  `one_time_token`, `pending_authentication`, `oauth_flow` or `webauthn_challenge`, so it
+  cannot lock the account row before that row. Those four come first; everything else comes
+  after `velve.user`. An implicit acquisition — a foreign key's key share, an
+  `ON CONFLICT` index wait — is ordered by nothing at all, and what makes that safe is the
+  mode restriction above and not this rule. **Do not read this bullet as a guarantee that
+  the tree holds no cycle.** Two were reproduced on `main`; one of them obeyed this rule
+  while deadlocking.
+- **Two mechanisms, doing different things.** `pnpm check:lock-order` decides the mode, the
+  declaration and the one file — properties of a single statement — and decides **no
+  ordering whatever**, which its own output says. The ordering is
+  `test/lock-order-race.test.ts`: it drives the two interleavings that deadlocked and
+  reads, from the statements the requests actually ran, whether any two transactions take
+  two tables in opposite orders in modes that wait for each other. A cycle surfaces as a
+  deadlock in production under load and not in a test, because it needs two specific
+  transactions interleaving on one account — which is why that file chooses its
+  interleaving rather than racing for it. A row lock is also wider than it looks: while it
+  is held, every **contending** write of a user-owned row for that account waits, and if
+  the transaction contains an outbound call the wait is that call's timeout. An insert's
+  foreign key is not contending, and that is what the mode buys.
 - Core dependencies are exactly these six: `@noble/hashes`, `@noble/ciphers`,
   `bcryptjs`, `otpauth`, `@simplewebauthn/server`, `jose`. Adding a seventh is a
   decision for `CASE-STUDY.md`, not a routine change.
@@ -888,7 +915,12 @@ pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL
 pnpm check:lock-order
-                 velve.user is locked before any other table
+                 every row lock is FOR NO KEY UPDATE, declares velve.user and is
+                 written in src/core/db/lock.ts. Refuses the run when it scanned
+                 no file or found no lock, because both look like a clean tree.
+                 It decides no ordering and says so in its own output; the order
+                 two transactions take their locks in is what
+                 test/lock-order-race.test.ts drives
 pnpm check:reviewable
                  no NUL byte hides a file from review
 pnpm check:sql-collapse
