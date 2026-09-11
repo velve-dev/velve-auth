@@ -68,6 +68,26 @@ The code must be readable without comments.
   standard, a non-obvious ordering constraint. Then **one sentence**, no more.
 - A reference to the specification is a legitimate comment and is encouraged
   where the code exists solely because of it: `S-OWNER-3`, `L-12`, `E-23`.
+- **A comment in `src/` is read by this repository's static scans as though it were
+  code.** Around twenty-two files under `test/` and `tools/` match a regular expression
+  against raw source text, so prose that resembles a statement, an identifier or an
+  option this library refuses can redden a case in a file nobody touched — and several
+  of those cases accuse a security requirement. **Three still redden today**, and these
+  are the ones to try: the word *caching* in a comment under `src/core/session` reddens
+  the case for `S-CACHE-1`; a comment naming a PKCE option that does not exist reddens
+  the case for `S-REPLAY-6`; a comment spelling a brand's phantom field reddens the
+  census in `test/brand-invariants.test.ts`. **Two more no longer redden anything** —
+  plain prose naming `velve.password_credential`, and a comment shaped like the
+  statement `S-FIX-2` forbids. The scans that read those two were repaired, and
+  planting both together now leaves the whole suite green; they are cited as the
+  measurement that motivated the repair and **not** as something to try (E-1653,
+  E-1661). Four test files and the `check:session-owner` step strip comments first —
+  `tools/source-text.mjs` is the one to reach for — three more strip them with a
+  string-blind regular expression, and the rest read the text raw (E-1654). The file
+  count is a proxy and not a census: two proxies answered twenty-one and twenty-two,
+  and a count of *cases* is not offered at all. Write the comment, then run `pnpm test`;
+  a hit is the scan being wrong rather than the prose, and the repair belongs at the
+  scan.
 - No `any` in the public surface. No `@ts-ignore`, no `@ts-expect-error` without
   a failing-by-design test next to it. No `console.log`. No dead code, no unused
   exports — `knip` enforces this.
@@ -216,7 +236,9 @@ repair anything itself.
 - `pnpm typecheck` under `strict`, no `any` in the public surface type
 - `pnpm lint` without findings, formatting applied
 - `pnpm check:reviewable` — no NUL byte hides a file from review or from the scan
-- `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23)
+- `pnpm check:session-owner` — no session owner reassigned in SQL (S-FIX-2, E-23),
+  and a tree or a build it could not read refused in words that are not a security
+  finding, a partial build included
 - `pnpm check:lock-order` — every row lock is `FOR NO KEY UPDATE`, declares
   `velve.user`, and is written in `src/core/db/lock.ts`; the order two transactions take
   their locks in is decided by `test/lock-order-race.test.ts` and not here
@@ -656,6 +678,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1500 … E-1529 | gate and infrastructure, eleventh range — the PostgreSQL 14 tier; eleventh over the eleven rows of this table that name gate and infrastructure, counted after the merge that brought the tenth in. This row first said the tenth was on an unmerged branch and absent from the table, which was true when it was written |
 | E-1530 … E-1569 | outside the waves · `timing-power-guard` — the power guard on the two statistical timing cases, E-1149 and E-693 |
 | E-1600 … E-1649 | outside the waves · `lock-order` — the two deadlock cycles reachable on `main`. Fifty-first row of this table, counted after merging 93fa31b, which brought in the row above it. It was the fiftieth when written, over the forty-nine standing at a9b0aec; the range that was then reserved on a branch this table could not show is that row now, and the count is of rows rather than of reservations either way |
+| E-1650 … E-1689 | outside the waves · `misreporting` — the three instruments that report something other than what they found. Fifty-second row of this table, counted over the fifty-one standing at b005ed3 rather than taken from the row above it; E-1622 records an ordinal here going stale the moment another branch merges a row, and nothing in the tree recomputes one |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -925,7 +948,15 @@ pnpm test:release
                  before every release; a version tag runs it
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
-                 S-FIX-2: no session owner reassigned in SQL
+                 S-FIX-2: no session owner reassigned in SQL. A finding names the
+                 file and the statement it found. Three conditions are refused
+                 in their own words instead, carrying no offender and no advice
+                 line: a working tree that yielded no statement, a dist/ with no
+                 built module in it, and a dist/ that has modules but yielded no
+                 statement — the last being what an interrupted build leaves.
+                 Finding and refusal used to leave by the same door, so a missing
+                 build printed the security message and named nobody (E-1651,
+                 E-1662)
 pnpm check:lock-order
                  every row lock is FOR NO KEY UPDATE, declares velve.user and is
                  written in src/core/db/lock.ts. Refuses the run when it scanned

@@ -16,11 +16,21 @@ import {
 	type OneTimeTokens,
 	toSecretToken,
 } from "../src/core/token/index.js";
+import { withoutComments } from "../tools/source-text.mjs";
 import { onOneLine, withoutSqlComments } from "../tools/sql-collapse.mjs";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
 const repositoryPath = `${coreDirectory}/db/repositories/token.ts`;
-const repositorySource = readFileSync(repositoryPath, "utf8");
+
+/** Every scan in this file reads statements, markers and raised errors. A comment carries none of
+ * those, and reading whole file text let one comment stand in for the consume statement and redden
+ * three cases about S-REPLAY-2, S-TOKEN-4 and S-RACE-2 at once (E-1653). Markers survive: the
+ * seventeen of them live inside statements, which this keeps verbatim. */
+function sourceTextOf(path: string): string {
+	return withoutComments(readFileSync(path, "utf8"));
+}
+
+const repositorySource = sourceTextOf(repositoryPath);
 
 interface Source {
 	readonly path: string;
@@ -32,19 +42,13 @@ function coreSources(): readonly Source[] {
 		.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
 		.map((entry) => `${entry.parentPath}/${entry.name}`)
 		.sort()
-		.map((path) => ({ path, text: readFileSync(path, "utf8") }));
+		.map((path) => ({ path, text: sourceTextOf(path) }));
 }
 
 const sources = coreSources();
 
-function withoutComments(text: string): string {
-	return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
-}
-
 function pathsMatching(pattern: RegExp): readonly string[] {
-	return sources
-		.filter((source) => pattern.test(withoutComments(source.text)))
-		.map((source) => source.path);
+	return sources.filter((source) => pattern.test(source.text)).map((source) => source.path);
 }
 
 const LITERAL = /`([^`]*)`/g;
@@ -54,6 +58,12 @@ function statementsIn(source: string): readonly string[] {
 	return [...source.matchAll(LITERAL)]
 		.map((match) => match[1] ?? "")
 		.filter((literal) => LOOKS_LIKE_SQL.test(literal));
+}
+
+/** S-TOKEN-1, S-TOKEN-4 and S-OWNER-2 are what these counts report on, so a count that comes out
+ * wrong says which statements it read rather than only how many. */
+function listing(found: readonly string[]): string {
+	return found.map((statement) => collapseWhitespace(statement).slice(0, 160)).join("\n");
 }
 
 function collapseWhitespace(sql: string): string {
@@ -111,7 +121,7 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 	 * and its own marker naming the requirement that permits it (E-353).
 	 */
 	it("lets the sweep reach the table on a deadline and on nothing else", () => {
-		const sweep = readFileSync(`${coreDirectory}/auth/maintenance.ts`, "utf8");
+		const sweep = sourceTextOf(`${coreDirectory}/auth/maintenance.ts`);
 		const written = statementsIn(sweep);
 
 		expect(written).toHaveLength(1);
@@ -124,14 +134,15 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		expect(written[0]).not.toContain("purpose");
 		expect(written[0]).not.toContain("user_id");
 		// The table is named where the sweep lists what it sweeps, and in no statement.
-		expect(sweep.match(/one_time_token/g)).toHaveLength(1);
+		const naming = sweep.match(/.{0,40}one_time_token.{0,40}/g) ?? [];
+		expect(naming, naming.join("\n")).toHaveLength(1);
 		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
 	it("writes three statements, two of them against the table", () => {
-		expect(statements).toHaveLength(3);
-		expect(tokenStatements).toHaveLength(2);
-		expect(ownerStatements).toHaveLength(1);
+		expect(statements, listing(statements)).toHaveLength(3);
+		expect(tokenStatements, listing(tokenStatements)).toHaveLength(2);
+		expect(ownerStatements, listing(ownerStatements)).toHaveLength(1);
 	});
 
 	it("filters on the purpose in every predicate it writes against the table", () => {
@@ -175,9 +186,22 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		// predicate could narrow any of them. The seventeenth is `updateUsername`, on the same
 		// rule the two address writes beside it carry: `velve.user` is the owned row and `id` is
 		// its owner column, so `WHERE id = $1` already is the ownership predicate (E-1246).
-		expect(markers).toHaveLength(17);
-		expect(carrying).toHaveLength(9);
-		expect(statements.filter((statement) => /no owner predicate/.test(statement))).toHaveLength(1);
+		const perFile = sources
+			.map((source) => ({
+				path: source.path,
+				count: source.text.match(/no owner predicate/g)?.length ?? 0,
+			}))
+			.filter((source) => source.count > 0)
+			.map((source) => `${source.path}: ${source.count}`)
+			.join("\n");
+		const declaring = statements.filter((statement) => /no owner predicate/.test(statement));
+
+		expect(markers, perFile).toHaveLength(17);
+		expect(
+			carrying.map((source) => source.path),
+			perFile,
+		).toHaveLength(9);
+		expect(declaring, listing(declaring)).toHaveLength(1);
 	});
 });
 

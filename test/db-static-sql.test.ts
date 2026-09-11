@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { withoutComments } from "../tools/source-text.mjs";
 
 const sourceRoot = new URL("../src/", import.meta.url);
 const migrationModules = "core/db/migrations/";
@@ -27,13 +28,23 @@ interface SqlLiteral {
 const LITERAL = /`([^`]*)`|"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
 const LOOKS_LIKE_SQL = /\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i;
 
+/** S-FIX-2 and S-OWNER-2 are what these two cases report on, so a failure says which file and
+ * which statement rather than only that the list is not empty. */
+function describing(offenders: readonly SqlLiteral[]): string {
+	return offenders
+		.map((offender) => `${offender.file}: ${offender.sql.replace(/\s+/g, " ").slice(0, 160)}`)
+		.join("\n");
+}
+
 function sqlLiterals(): SqlLiteral[] {
 	const found: SqlLiteral[] = [];
 	for (const file of sourceFiles(sourceRoot)) {
 		if (file.startsWith(migrationModules)) {
 			continue;
 		}
-		const text = readFileSync(fileURLToPath(new URL(file, sourceRoot)), "utf8");
+		// A comment is not a statement. Reading whole file text made a doc comment that names a
+		// statement an offender against S-FIX-2, in a file nobody had touched (E-1621, E-1653).
+		const text = withoutComments(readFileSync(fileURLToPath(new URL(file, sourceRoot)), "utf8"));
 		for (const match of text.matchAll(LITERAL)) {
 			const sql = match[1] ?? match[2] ?? match[3] ?? "";
 			if (LOOKS_LIKE_SQL.test(sql)) {
@@ -54,7 +65,7 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 			/\bUPDATE\b[\s\S]*\bsession\b[\s\S]*\bSET\b[\s\S]*\buser_id\b/i.test(literal.sql),
 		);
 
-		expect(offenders).toEqual([]);
+		expect(offenders, describing(offenders)).toEqual([]);
 	});
 
 	/** A statement that genuinely has no actor to filter on says so in its own text,
@@ -82,7 +93,7 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 			});
 
 		expect(changing.length).toBeGreaterThan(0);
-		expect(withoutOwner).toEqual([]);
+		expect(withoutOwner, describing(withoutOwner)).toEqual([]);
 	});
 
 	/** E-249: an asterisk inside the reason is the one input on which the two forms this

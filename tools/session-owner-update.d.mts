@@ -9,3 +9,12 @@ export declare function scanTree(): {
 	offenders: string[];
 	statementsScanned: number;
 };
+export declare function reportOn(
+	source: { offenders: string[]; statementsScanned: number },
+	built: { offenders: string[]; statementsScanned: number; built: boolean },
+): {
+	refusals: string[];
+	findings: string[];
+	summary: string;
+	exitCode: number;
+};
