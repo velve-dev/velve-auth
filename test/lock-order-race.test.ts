@@ -247,11 +247,11 @@ describe("no interleaving of two account writes deadlocks (CLAUDE.md §7)", () =
 	 * The declared statement, not the ordering it happens to produce. Deleting `lockAccountRow` from
 	 * `confirmAddress` leaves that transaction correctly ordered anyway — its own `UPDATE velve.user`
 	 * takes the same mode on the same row — so a case reading the order stays green and the statement
-	 * is unpinned. This reads the marker's position instead. Its reach is what it reports: **two**
-	 * transactions of the four the file drives write two or more of the account's own tables and run to
-	 * the end — the first confirmation and the reset redemption — because the recovery-code redemption
-	 * is refused after one table and the regeneration touches one. Six of the eight sites are outside
-	 * it (E-1617).
+	 * is unpinned. This reads the marker's position instead. Its reach is what it reports: of the
+	 * **nine** transactions this file drives, three create the account and are excluded, four more
+	 * write fewer than two of the account's own tables, and **two** are considered — the first
+	 * confirmation and the reset redemption. Six of the eight lock sites are outside it, and three of
+	 * those six can be deleted with the whole suite green (E-1617, E-1625).
 	 */
 	it("runs the declared account lock before the first of the account's own tables", () => {
 		const { late, considered } = accountLockAudit(
@@ -272,6 +272,10 @@ describe("no interleaving of two account writes deadlocks (CLAUDE.md §7)", () =
 	 * index the same update blocks a child insert. Migration `0002_identity_email.sql` adds
 	 * `CHECK (email IS NOT NULL)`, which makes the partial predicate redundant in email mode and
 	 * invites removing it — so the property is asserted here rather than assumed (E-1618).
+	 *
+	 * It fails closed on an index it cannot read: a unique index over an **expression** has no column
+	 * for the `attname` lookup, so a planted `lower(email)` index is reported as `user_lower_email on
+	 * null` — the right answer for the wrong reason, and a message a reader cannot act on.
 	 */
 	it("changes an address without blocking a child insert, and says why", async () => {
 		const indexes = await observer.query<{ name: string; columns: string; partial: boolean }>(
