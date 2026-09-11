@@ -41,9 +41,8 @@ export async function replacePasswordOfSession(
 	const owned = await services.sessions.listEveryIdOwnedBy({ resolved: input.resolved });
 
 	const issued = await services.driver.transaction(async (transaction) => {
-		// CLAUDE.md §7: the re-issue writes `velve.session` and the write below writes
-		// `velve.password_credential`, and a first address confirmation writes the two in the other
-		// order (E-1602).
+		// CLAUDE.md §7: the re-issue writes the session table and the write below writes the credential
+		// table, and a first address confirmation writes the two in the other order (E-1602).
 		await lockAccountRow(transaction, services.schema, input.resolved.userId);
 		const reissued = await services.sessions.boundTo(transaction).reissueAfterCredentialChange({
 			resolved: input.resolved,

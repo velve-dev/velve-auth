@@ -53,8 +53,8 @@ RETURNING owned.id`;
  */
 export async function confirmAddress(input: AddressConfirmation): Promise<ConfirmationOutcome> {
 	// CLAUDE.md §7: three user-owned tables are written below, so the account's row is taken first and
-	// unconditionally — the `UPDATE` after it takes the same mode but only where it matches a row, and
-	// a password replacement running beside this one has to be ordered against every path (E-1602).
+	// unconditionally — the statement after it takes the same mode but only where it matches a row,
+	// and a password replacement beside this one has to be ordered against every path (E-1602).
 	await lockAccountRow(input.transaction, input.schema, input.actor);
 	const marked = await input.transaction.query(markFirstConfirmationStatement(input.schema), [
 		input.actor,

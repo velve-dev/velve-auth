@@ -63,8 +63,12 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 	 * it is swallowed along with the newline, leaving an unqualified statement. */
 	const DECLARES_NO_ACTOR = /\/\*\s*no owner predicate:\s*S-[A-Z]+-\d+[\s\S]*?\*\//i;
 
-	/** `FOR UPDATE` locks rows; it changes none. */
-	const CHANGES_ROWS = /(?<!\bFOR\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
+	/** A row lock locks rows; it changes none. Both spellings have to be excluded, and the second is
+	 * the one the library takes: with only the first lookbehind, FOR NO KEY UPDATE read as a change
+	 * and the account lock of CLAUDE.md section 7 was reported as a statement without an owner
+	 * predicate (E-1612). */
+	const CHANGES_ROWS =
+		/(?<!\bFOR\s{1,20})(?<!\bFOR\s{1,20}NO\s{1,20}KEY\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
 
 	it("gives every row-changing statement an owner predicate", () => {
 		// Unanchored: a data-modifying CTE begins WITH, and still writes rows.

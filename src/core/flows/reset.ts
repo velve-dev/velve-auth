@@ -69,7 +69,7 @@ async function replacePassword(
 	},
 ): Promise<SetPasswordResult> {
 	const { schema, keys, sessions } = environment.services;
-	// CLAUDE.md §7: `velve.session` and `velve.password_credential` are both written below, and a first
+	// CLAUDE.md §7: the session table and the credential table are both written below, and a first
 	// address confirmation writes the same two in the other order (E-1602).
 	await lockAccountRow(input.transaction, schema, input.userId);
 	const revokedOtherSessionsCount = await createSessionRepository({

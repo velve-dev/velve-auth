@@ -3,11 +3,12 @@ import { assertSchemaName, qualifiedTableName } from "./identifier.js";
 
 /**
  * The one statement that orders two writes of one account against each other (CLAUDE.md §7). It is
- * written once so that the mode is not a per-call decision: `FOR NO KEY UPDATE` is the strongest
- * strength that does **not** conflict with the `FOR KEY SHARE` a foreign key takes on this row for
- * every insert of a user-owned row. `FOR UPDATE` does conflict with it, and that conflict is an edge
- * no reader sees in the SQL — it is what a reproduced deadlock between recovery-code regeneration and
- * recovery-code redemption was made of (E-1601, E-1604).
+ * written once so that the mode is not a per-call decision: no key update is the strongest strength
+ * that does **not** conflict with the key share a foreign key takes on this row for every insert of a
+ * user-owned row. The exclusive strength does conflict with it, and that conflict is an edge no
+ * reader sees in the SQL — it is what a reproduced deadlock between recovery-code regeneration and
+ * recovery-code redemption was made of (E-1601, E-1604). Spelled without backticks on purpose: two
+ * scans in this repository read a backtick span in a comment as an SQL literal (E-1612).
  */
 export function lockAccountRowStatement(schema: string): string {
 	return `SELECT 1 FROM ${qualifiedTableName(assertSchemaName(schema), "user")}
