@@ -9821,3 +9821,27 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Softening the claim to "should not normally carry `latest`", and leaving the *Installation* paragraph on the ground that the advice it gives — ask for the tag — is still right.
 **Reason.** The advice is right and the reason given for it was false, which is the worse half: a reader who checks finds `latest` resolving and concludes the paragraph is out of date in some unknown further way. Both passages now say what the registry says, and both say why — npm's first-publish behaviour — so the claim is checkable rather than assertable. The instruction to ask for `@next` survives, with a reason that holds: a bare install today means *whatever prerelease happened to go first*.
 **Price.** The `README.md` of a library now explains a detail of npm's tag assignment, which is a third party's behaviour and not this package's. It is written because the alternative is a sentence the registry contradicts, and it becomes wrong in the other direction on the day a stable version takes `latest` — at which point it has to be edited again. `E-1771`'s pre-publish report does not remind anyone of that.
+
+### The published package shipped the README that its own publish falsified
+`E-1773` · gate and infrastructure · a consequence nobody looked for
+
+**Context.** `E-1772` corrected two `README.md` sentences against the registry, on a branch cut after the publish. `README.md` is in `package.json`'s `files`, so what npm serves on the package page and what a consumer unpacks is the copy taken **at publish time**. Downloaded and read rather than assumed: `auth-1.0.0-next.1.tgz` carries `no version of this package carries latest yet` — a sentence contradicted by the very publish that shipped it.
+**Rejected.** (a) Leaving it until whatever release came next. (b) Republishing `1.0.0-next.1`, which npm does not allow.
+**Reason.** (a) puts a self-contradicting README on the package page for as long as the prerelease stands, and the contradiction is about installing — the one thing a reader is doing when they are on that page. (b) is not available, so a correction to shipped documentation costs a version. `1.0.0-next.2` is that version and it carries no code change at all.
+**Price.** A version number spent on prose, and `CHANGELOG`-less: nothing in the tree records that `next.2` differs from `next.1` in documentation only, so a reader comparing them has to diff. The deeper cost is the one this entry exists to name: **every document `files` ships is frozen at publish and is repaired only by a release**, and `CASE-STUDY.md` and `DOCUMENTATION.md` are in that list too. Nothing checks that any of them is true at the moment of publishing.
+
+### The check asks whether latest is this version, not whether it is a prerelease
+`E-1774` · gate and infrastructure · blind spot, reported and not repaired
+
+**Context.** `check:published-version` refuses when `PRERELEASE.test(version) && distTags.latest === version`. Publishing `1.0.0-next.2` leaves `latest` pointing at `1.0.0-next.1`, so the two are unequal and the clause says nothing — while `latest` goes on naming a prerelease, and now an **older** one than `next`.
+**Rejected.** Widening the clause to refuse whenever `latest` names any prerelease, which is the obvious repair and was offered.
+**Reason.** It was not taken, and the reason is that it was declined rather than that it is wrong: the decision on the table was whether to close this before publishing `next.2`, and the answer was to publish. Recording it as a blind spot is what that answer costs, and the entry says so plainly rather than presenting the narrower clause as intended. The widened clause would also have refused **this** release, which is the honest argument against doing it in the same breath as cutting the tag, and not the argument that was given.
+**Price.** From `1.0.0-next.2` onwards the release pipeline is green while `latest` names a prerelease that is not the one being published, which is the state `E-1771` found and is now invisible to the instrument that found it. It becomes visible again only if a future stable release forgets to take `latest`, which is the case the clause does catch. A reader of the pipeline's green would be wrong to conclude `latest` is well.
+
+### The pre-publish report's second measurement, and the one it still has not had
+`E-1775` · gate and infrastructure · the negative case, measured
+
+**Context.** `E-1771`'s report fires where the registry does not hold the package. Its first live run was against a registry that did not hold it, which is the positive case; the negative case had been exercised only against a local server answering 200.
+**Rejected.** Nothing.
+**Reason.** Run against npm with `@velve/auth` published: `release tag: v1.0.0-next.2 matches @velve/auth@1.0.0-next.2 — a prerelease (next.2) published under next`, exit 0, and **no first-publish line**. So the report is silent on a package that exists, measured against the real registry rather than a fixture.
+**Price.** The third state is still unmeasured in the workflow it runs in: no release has yet been cut where the registry could not be reached, so `E-1771`'s *"reported as unknown and proceeds"* branch has been exercised by a test against `127.0.0.1:1` and by nothing else. That is the branch whose failure mode is silence, and it is the one a test can least stand in for.

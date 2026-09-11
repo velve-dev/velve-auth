@@ -12,12 +12,12 @@ between you and them.
 The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
-> **Status: first prerelease.** The public interface is specified and frozen.
-> `1.0.0-next.1` is published under the `next` dist-tag — **and under `latest`
-> as well**, because npm points `latest` at the first version a package ever
-> publishes whatever `--tag` says. So a bare `pnpm add @velve/auth` resolves to
-> a prerelease until a stable version takes `latest` from it. Ask for it by tag
-> anyway: `@velve/auth@next`.
+> **Status: prerelease.** The public interface is specified and frozen. `next`
+> points at `1.0.0-next.2`. **`latest` points at `1.0.0-next.1`**, because npm
+> points `latest` at the first version a package ever publishes whatever `--tag`
+> says, and npm does not permit removing it — so a bare `pnpm add @velve/auth`
+> installs the *first* prerelease rather than the newest one, until a stable
+> version takes `latest`. Ask for it by tag: `@velve/auth@next`.
 
 ## Why it exists
 
@@ -73,19 +73,21 @@ binding, no install script, and no build step on your machine.
 pnpm add @velve/auth@next
 ```
 
-**Ask for `@next` even though a bare install currently works.** Publishing under
-a dist-tag leaves `latest` alone — except on a package's very first publish,
-where npm points `latest` at that version regardless. `1.0.0-next.1` was that
-first publish, so today `latest` and `next` name the same prerelease and
-`pnpm add @velve/auth` installs it. A `^1.0.0` range still does not match a
-prerelease. Pinning the exact version, `@velve/auth@1.0.0-next.1`, works and is
-what your lockfile will record.
+**The `@next` is not optional, and a bare install is worse than not resolving.**
+Publishing under a dist-tag leaves `latest` alone — except on a package's very
+first publish, where npm points `latest` at that version regardless.
+`1.0.0-next.1` was that first publish, and npm does not permit removing the tag
+it took. So `latest` is pinned to the first prerelease while `next` moves: today
+`pnpm add @velve/auth` installs `1.0.0-next.1` and `pnpm add @velve/auth@next`
+installs `1.0.0-next.2`. A `^1.0.0` range still matches neither, because it does
+not match a prerelease. Pinning the exact version, `@velve/auth@1.0.0-next.2`,
+works and is what your lockfile will record.
 
-That changes on the day a stable version is published: it takes `latest` from
-the prerelease, and the bare install starts meaning "the stable line". Until
-then, a bare install means "whatever prerelease happened to go first", which is
-not a promise this package intends to make — which is why the tag is written
-above and in every example here.
+That ends on the day a stable version is published: it takes `latest` from the
+prerelease it is stuck on, and the bare install starts meaning "the stable
+line". Until then a bare install means "whichever prerelease happened to go
+first", which is not a promise this package intends to make — which is why the
+tag is written above and in every example here.
 
 A prerelease is a prerelease: the interface is frozen and the schema is
 versioned, but nothing here has been run by anyone outside this repository yet.
@@ -94,7 +96,7 @@ taken at the version you actually installed.
 
 ## What works today
 
-Everything below is built and ships in `1.0.0-next.1`. The mounted route table
+Everything below is built and ships in `1.0.0-next.2`. The mounted route table
 serves all forty-seven addresses architecture 3.15 D.3 declares in the widest
 configuration, and a narrower configuration serves fewer because it declares
 fewer. What the library deliberately does not do has a section of its own
