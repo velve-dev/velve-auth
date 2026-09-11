@@ -2,8 +2,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { PasswordCredentialRepository } from "../src/core/password/credential.js";
+import { withoutComments } from "../tools/source-text.mjs";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
+
+/** The census below is a list of files that *reach* the table. A comment naming it is not a writer,
+ * and reading whole file text put a file on that list for a sentence of prose (E-1612, E-1653). */
+function sourceTextOf(path: string): string {
+	return withoutComments(readFileSync(path, "utf8"));
+}
 
 function coreSources(): readonly { readonly path: string; readonly text: string }[] {
 	return readdirSync(coreDirectory, { recursive: true, withFileTypes: true })
@@ -12,7 +19,7 @@ function coreSources(): readonly { readonly path: string; readonly text: string 
 		.sort()
 		.map((path) => ({
 			path: path.replace(`${coreDirectory}/`, ""),
-			text: readFileSync(path, "utf8"),
+			text: sourceTextOf(path),
 		}));
 }
 
@@ -59,7 +66,7 @@ describe("no password reaches the table without saying which session stored it (
 	});
 
 	it("writes the column on the insert and on the conflict, so an upsert cannot leave a stale one", () => {
-		const repository = readFileSync(`${coreDirectory}/password/credential.ts`, "utf8");
+		const repository = sourceTextOf(`${coreDirectory}/password/credential.ts`);
 		const upsert = statementsIn(repository).find((sql) => /\bINSERT\b/i.test(sql)) ?? "";
 
 		expect(upsert).toContain("set_by_session_id)");
@@ -96,7 +103,7 @@ describe("no password reaches the table without saying which session stored it (
 	 * sides and the two are the same; every other combination is a different session (E-609).
 	 */
 	it("deletes unless both sides name a session and the two agree", () => {
-		const provenance = readFileSync(`${coreDirectory}/flows/credential.ts`, "utf8");
+		const provenance = sourceTextOf(`${coreDirectory}/flows/credential.ts`);
 		const deletion = statementsIn(provenance).find((sql) => /^\s*DELETE\b/i.test(sql)) ?? "";
 
 		expect(deletion).toContain("$2::uuid IS NULL OR set_by_session_id IS DISTINCT FROM $2::uuid");

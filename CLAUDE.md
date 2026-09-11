@@ -68,6 +68,21 @@ The code must be readable without comments.
   standard, a non-obvious ordering constraint. Then **one sentence**, no more.
 - A reference to the specification is a legitimate comment and is encouraged
   where the code exists solely because of it: `S-OWNER-3`, `L-12`, `E-23`.
+- **A comment in `src/` is read by this repository's static scans as though it were
+  code.** Around twenty test cases match a regular expression against raw file text,
+  so prose that resembles a statement, an identifier or an option this library
+  refuses can redden a case in a file nobody touched — and several of those cases
+  accuse a security requirement. Measured: a comment naming `velve.password_credential`
+  in plain prose, one shaped like the statement `S-FIX-2` forbids, one using the word
+  *caching* in `src/core/session`, and one naming a PKCE option that does not exist,
+  each reddened a case about the requirement it was describing. Three scans and the
+  `check:session-owner` step strip comments first — `tools/source-text.mjs` is the
+  one to reach for — three more strip them with a string-blind regular expression,
+  and the rest read the text raw (E-1653, E-1654). The count is *around twenty* and
+  not a measurement: it was taken in one sweep over `test/` and `tools/`, and two of
+  the cases outside the three were confirmed by planting. Write the comment, then run
+  `pnpm test`; a hit is the scan being wrong rather than the prose, and the repair
+  belongs at the scan.
 - No `any` in the public surface. No `@ts-ignore`, no `@ts-expect-error` without
   a failing-by-design test next to it. No `console.log`. No dead code, no unused
   exports — `knip` enforces this.

@@ -39,9 +39,13 @@ function walkedFiles(): string[] {
 }
 
 /** The second counter, deliberately not the walker: one regular expression over the two comment
- * forms, taking whichever opens first so a `//` inside a block comment does not end it early. */
-function withoutTypeScriptComments(source: string): string {
-	return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+ * forms and the two quote forms, taking whichever opens first, so a `//` inside a block comment does
+ * not end it early and a backtick written inside a string is not read as one that opens a template
+ * literal. The premise was false in that third way and said so about the walker: a module whose only
+ * backtick is a quoted one carries no template literal, and was reported as a file the walker had
+ * missed (E-1655). */
+function withoutTypeScriptCommentsOrStrings(source: string): string {
+	return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, "");
 }
 
 const cases = (name: keyof typeof fixtures) =>
@@ -207,12 +211,13 @@ describe("the scan can tell that it read everything", () => {
 		expect(faults).toStrictEqual([]);
 	});
 
-	// Counted a second way, sharing nothing with the walker but the two comment forms: a backtick
-	// that no comment encloses opens a template literal, and a walker that reported none walked
-	// over one. E-155 corrected both halves of that sentence.
-	it("finds a template literal in every file that has a backtick outside a comment", () => {
+	// Counted a second way, sharing nothing with the walker but the comment and quote forms: a
+	// backtick that neither a comment nor a string encloses opens a template literal, and a walker
+	// that reported none walked over one. E-155 corrected both halves of that sentence and E-1655
+	// the premise itself, which read a quoted backtick as one that opens a literal.
+	it("finds a template literal in every file that has a backtick outside a comment and a string", () => {
 		const carriesABacktick = walkedFiles().filter((path) =>
-			withoutTypeScriptComments(readFileSync(path, "utf8")).includes("`"),
+			withoutTypeScriptCommentsOrStrings(readFileSync(path, "utf8")).includes("`"),
 		);
 		const missed = carriesABacktick.filter(
 			(path) => templateLiteralsIn(readFileSync(path, "utf8")).length === 0,
@@ -229,8 +234,18 @@ describe("the scan can tell that it read everything", () => {
 		const source = "/* the marker is written `like this` */\nexport const limit = 1;\n";
 
 		expect(source).toContain("`");
-		expect(withoutTypeScriptComments(source)).not.toContain("`");
+		expect(withoutTypeScriptCommentsOrStrings(source)).not.toContain("`");
 		expect(literalsIn(source)).toStrictEqual([]);
+	});
+
+	// The same premise, planted for the form that falsified it: a module that names the backtick as
+	// a quote character holds no template literal either, and `tools/source-text.mjs` is one (E-1655).
+	it("asks nothing of a file whose only backtick is inside a string", () => {
+		const source = 'const QUOTES = new Set(["\'", \'"\', "`"]);\n';
+
+		expect(source).toContain("`");
+		expect(withoutTypeScriptCommentsOrStrings(source)).not.toContain("`");
+		expect(templateLiteralsIn(source)).toStrictEqual([]);
 	});
 
 	it("reads the literal that follows a block comment holding a comment opener", () => {

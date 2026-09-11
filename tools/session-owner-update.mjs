@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { chunksOf } from "./source-text.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -12,69 +13,22 @@ const WRITES_ROWS = /\b(update|merge\s+into|on\s+conflict)\b/i;
 const ASSIGNMENT_LIST = /\bset\b([\s\S]*?)(?:\bwhere\b|\breturning\b|\bfrom\b|$)/i;
 const OWNER_COLUMN = /\buser_id\b/i;
 
-const QUOTES = new Set(["'", '"', "`"]);
-
-function endOfBlockComment(source, index) {
-	const close = source.indexOf("*/", index + 2);
-	return close === -1 ? source.length : close + 2;
-}
-
-function endOfLineComment(source, index) {
-	const newline = source.indexOf("\n", index);
-	return newline === -1 ? source.length : newline;
-}
-
-function endOfQuoted(source, index) {
-	const quote = source[index];
-	let cursor = index + 1;
-	while (cursor < source.length) {
-		if (source[cursor] === "\\") {
-			cursor += 2;
-			continue;
-		}
-		if (source[cursor] !== quote) {
-			cursor += 1;
-			continue;
-		}
-		if (quote === "'" && source[cursor + 1] === "'") {
-			cursor += 2;
-			continue;
-		}
-		return cursor + 1;
-	}
-	return source.length;
-}
-
-/** `--` opens a comment in SQL but is a decrement in TypeScript, and `//` the
- * reverse, so the file's language decides which one blinds the scanner. */
-function commentEndsAt(source, index, lineCommentOpener) {
-	if (source.startsWith("/*", index)) return endOfBlockComment(source, index);
-	if (source.startsWith(lineCommentOpener, index)) return endOfLineComment(source, index);
-	return null;
-}
-
 /** Comments are dropped but string bodies are kept: dynamic SQL lives inside quotes,
- * so removing them would hide exactly what this looks for. */
+ * so removing them would hide exactly what this looks for. The walker is shared with the
+ * scans that read `src/` for statements, which used to read whole file text (E-1653). */
 export function statementsIn(source, lineCommentOpener = "//") {
 	const statements = [];
 	let current = "";
-	let index = 0;
-	while (index < source.length) {
-		const commentEnd = commentEndsAt(source, index, lineCommentOpener);
-		if (commentEnd !== null) {
-			current += " ";
-			index = commentEnd;
-		} else if (QUOTES.has(source[index])) {
-			const quotedEnd = endOfQuoted(source, index);
-			current += source.slice(index, quotedEnd);
-			index = quotedEnd;
-		} else if (source[index] === ";") {
+	for (const chunk of chunksOf(source, lineCommentOpener)) {
+		if (chunk.kind !== "code") {
+			current += chunk.kind === "comment" ? " " : chunk.text;
+			continue;
+		}
+		const [first = "", ...rest] = chunk.text.split(";");
+		current += first;
+		for (const part of rest) {
 			statements.push(current);
-			current = "";
-			index += 1;
-		} else {
-			current += source[index];
-			index += 1;
+			current = part;
 		}
 	}
 	statements.push(current);
