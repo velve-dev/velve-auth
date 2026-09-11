@@ -3731,6 +3731,35 @@ predicate, for a caller that wants to ask rather than to catch.
 The check belongs at start-up and is called by the instance; this module is the
 mechanism it calls.
 
+### A second-factor key version that has left the ring
+
+`assertStoredFactorKeyVersionsAreKnown({ driver, keys, schema? })` reads
+`SELECT DISTINCT key_version` from **both** tables that carry one —
+`totp_credential`, whose version names `totp-enc` (`S-KEY-3`), and
+`recovery_code`, whose version names `token-pepper` (`L-3`) — and holds every
+value against the ring. It throws `FactorKeyRingError`, `code:
+"stored_key_version_unknown"`, whose `missing` is one entry per table with the
+purpose and the versions the ring no longer holds.
+
+This is `E-179`'s shape applied to the second factor, and it exists because the
+request path deliberately conceals the same loss. A TOTP secret the server
+cannot decrypt answers `invalid_factor_code` (`E-428`), and a recovery code
+whose pepper version is gone answers `invalid_recovery_code`; both are what a
+wrong code answers. So without this check an operator who retires a key version
+learns of it from users and from nothing else.
+
+The second factor is worse off than a password here, and in one specific way:
+a locked-out password heals itself through a reset, which writes a new credential
+under the current version, while `POST /factor/totp/remove` demands a valid code
+(`3.15 B.6`). The user can neither pass the factor nor put it down. Their way in
+is a recovery code — unless `token-pepper` lost the same version, which is why
+the check reads both tables rather than only the one `E-428` named.
+
+**Nothing calls it yet.** It is exported and unwired, the state
+`assertStoredKeyVersionsAreKnown` was in until `E-330`. The call belongs beside
+that one, in `migrate()`, and `src/core/auth/instance.ts` is outside the files
+the change that added this check was allowed to touch (`E-1698`).
+
 ## WebAuthn
 
 WebAuthn is two things here, not one. A **passkey sign-in** is a complete
