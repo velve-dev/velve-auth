@@ -6541,10 +6541,14 @@ seconds at `0` and 210 at `1`.
 The field is typed `0 | 1`, and **a value outside those two is read as the
 default `1`** rather than widening the window. That case is only reachable from
 JavaScript, where the type does not hold; a TypeScript caller cannot write it.
-It is the one place left where the library warns about a value it does not use —
-`SECURITY_OPTIONS` classifies `a tolerance above one step` as a weakening, and
-such a value is refused rather than applied. Reported rather than repaired here,
-because `src/core/auth/security-options.ts` is outside this change (`E-1694`).
+
+`SECURITY_OPTIONS` therefore declares of `totp` that **nothing weakens it**. It
+classified `a tolerance above one step` as a weakening until `E-1742`, which was
+wrong twice over: the detector tested a value typed `0 | 1` for being above one,
+so no typed caller could reach it at all, and an untyped caller who reached it
+was told a security option had been weakened by a value the library had just
+refused to apply. No tolerance, in type or out of it, now writes a weakening
+line.
 
 **`recoveryCodes.count` and `recoveryCodes.groupSize` reach the generator.**
 `count` decides how many codes `POST /factor/recovery/generate` hands back and

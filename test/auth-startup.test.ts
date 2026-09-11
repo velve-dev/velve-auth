@@ -212,6 +212,34 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 		expect(new Set(weakened.map((line) => line.fields.option)).size).toBe(weakened.length);
 	});
 
+	/**
+	 * E-1694 found the `totp` detector reading a value typed `0 | 1` and testing `> 1`, so it could
+	 * fire for no value the type admits, and for an untyped caller it reported a weakening the
+	 * library had already refused to apply. Both halves are asserted here.
+	 */
+	it.each([0, 1, 2, 10] as const)(
+		"says nothing about a step tolerance of %s, because none of them widens the window",
+		(stepToleranceInSteps) => {
+			const log = createLogSink();
+			start({
+				log: log.write,
+				totp: { stepToleranceInSteps: stepToleranceInSteps as 0 | 1 },
+			})();
+
+			const weakened = log.lines.filter(
+				(line) => line.message === "a security option is weaker than its default",
+			);
+
+			expect(weakened.map((line) => line.fields.option)).toStrictEqual([]);
+		},
+	);
+
+	it("declares of totp that nothing weakens it, because the row is what an operator reads", () => {
+		const totp = SECURITY_OPTIONS.find((option) => option.option === "totp");
+
+		expect(totp?.weakenedBy).toContain("not applied");
+	});
+
 	/** T-DEFAULT-1: a key of the option type that nobody classified fails here, not in an advisory. */
 	it("classifies every key of the option type", () => {
 		const declared = new Set(SECURITY_OPTIONS.map((option) => option.option));
