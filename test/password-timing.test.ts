@@ -11,18 +11,46 @@ import {
 import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword } from "./password-fixtures.js";
+import {
+	CLIFFS_DELTA_LIMIT,
+	CONTROL_RECOVERY_TOLERANCE,
+	cliffsDelta,
+	correlatedResolutionNs,
+	DISCARDED_WARMUP,
+	describeResolution,
+	MAD_OUTLIER_FACTOR,
+	MEASUREMENTS_PER_GROUP,
+	mean,
+	overlapResolutionNs,
+	PLANTED_CONTROL_LEAK_NS,
+	resolutionOf,
+	sampleUntilResolved,
+	type TimingArm,
+	TRIM_FRACTION,
+	trimmed,
+	WELCH_T_LIMIT,
+	WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING,
+	welchT,
+	withoutMadOutliers,
+} from "./timing-fixtures.js";
 
-// Architecture 6.1 and 6.20: 1000 measurements per group, interleaved in random order, the first
-// 100 discarded, production KDF parameters, decided on |Welch t| < 4.5 and Cliff's delta < 0.147.
-// 6.20 point 5 puts T-TIM-1 in the nightly stage rather than in the commit stage, because a shared
-// runner is the commonest cause of a false alarm; the deterministic counterpart is
-// `password-uniformity.test.ts`, which does block every commit.
-const MEASUREMENTS_PER_GROUP = 1000;
-const DISCARDED_WARMUP = 100;
-const WELCH_T_LIMIT = 4.5;
-const CLIFFS_DELTA_LIMIT = 0.147;
-const ACCOUNTS_PER_GROUP = 50;
+// Architecture 6.1 and 6.20: interleaved in random order, production KDF parameters, the first 100
+// measurements of each group discarded, decided on |Welch t| < 4.5 and Cliff's delta < 0.147.
+// 6.20 point 5 puts T-TIM-1 in the nightly stage; the deterministic counterpart is
+// `password-uniformity.test.ts`, which blocks every commit.
 const PRODUCTION_ARGON2ID = { memoryKiB: 19456, iterations: 2, parallelism: 1 } as const;
+const ACCOUNTS_PER_GROUP = 50;
+
+/**
+ * 6.20 quotes Trail of Bits on runs longer than five minutes, because more measurements raise the
+ * detection probability. The sampler spends up to this long buying the resolution the case needs
+ * and reports what it reached; the timeout below leaves room for the block it is inside when the
+ * budget expires (E-1533).
+ */
+const RESOLUTION_BUDGET_MS = 900_000;
+const BLOCK_PER_GROUP = 250;
+const MAXIMUM_PER_GROUP = 25_000;
+const CASE_TIMEOUT_MS = 1_800_000;
 
 const PASSWORD = drawTestPassword();
 const ATTEMPTED_PASSWORD = drawTestPassword();
@@ -30,71 +58,7 @@ const ATTEMPTED_PASSWORD = drawTestPassword();
 let migrated: MigratedSchema;
 let environment: PasswordEnvironment;
 let presentUserIds: string[] = [];
-
-function trimmed(samples: readonly number[], fraction: number): number[] {
-	const sorted = [...samples].sort((left, right) => left - right);
-	const cut = Math.floor(sorted.length * fraction);
-	return sorted.slice(cut, sorted.length - cut);
-}
-
-function withoutMadOutliers(samples: readonly number[], factor: number): number[] {
-	const sorted = [...samples].sort((left, right) => left - right);
-	const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-	const deviations = sorted
-		.map((value) => Math.abs(value - median))
-		.sort((left, right) => left - right);
-	const mad = deviations[Math.floor(deviations.length / 2)] ?? 0;
-	const bound = mad * factor;
-
-	return bound === 0 ? [...samples] : samples.filter((value) => Math.abs(value - median) <= bound);
-}
-
-function mean(samples: readonly number[]): number {
-	return samples.reduce((total, value) => total + value, 0) / samples.length;
-}
-
-function variance(samples: readonly number[]): number {
-	const centre = mean(samples);
-	return samples.reduce((total, value) => total + (value - centre) ** 2, 0) / (samples.length - 1);
-}
-
-function welchT(left: readonly number[], right: readonly number[]): number {
-	const spread = variance(left) / left.length + variance(right) / right.length;
-	return spread === 0 ? 0 : (mean(left) - mean(right)) / Math.sqrt(spread);
-}
-
-function cliffsDelta(left: readonly number[], right: readonly number[]): number {
-	const sorted = [...right].sort((a, b) => a - b);
-	let dominance = 0;
-
-	for (const value of left) {
-		let low = 0;
-		let high = sorted.length;
-		while (low < high) {
-			const middle = (low + high) >> 1;
-			if ((sorted[middle] as number) < value) {
-				low = middle + 1;
-			} else {
-				high = middle;
-			}
-		}
-		let upper = low;
-		while (upper < sorted.length && sorted[upper] === value) {
-			upper += 1;
-		}
-		dominance += low - (sorted.length - upper);
-	}
-
-	return dominance / (left.length * sorted.length);
-}
-
-async function measure(userId: string | null): Promise<number> {
-	const started = process.hrtime.bigint();
-	await checkPassword({ userId, plaintext: ATTEMPTED_PASSWORD }, environment).catch(
-		() => undefined,
-	);
-	return Number(process.hrtime.bigint() - started);
-}
+let presentCount = 0;
 
 beforeAll(async () => {
 	migrated = await openMigratedSchema("password_timing");
@@ -134,81 +98,87 @@ afterAll(async () => {
 	await migrated.connection.close();
 });
 
-interface Samples {
-	readonly present: number[];
-	readonly absent: number[];
-	readonly calibrationLeft: number[];
-	readonly calibrationRight: number[];
+/** Both control arms run the operation the present group runs, against one fixed account. */
+function identifierFor(arm: TimingArm): string | null {
+	if (arm === "absent") {
+		return null;
+	}
+	if (arm === "present") {
+		presentCount += 1;
+		return presentUserIds[presentCount % ACCOUNTS_PER_GROUP] as string;
+	}
+	return presentUserIds[0] as string;
 }
 
-/** Interleaved in random order, because measuring all of X then all of Y measures cache warming. */
-function interleavedOrder(): number[] {
-	const order = Array.from({ length: MEASUREMENTS_PER_GROUP * 2 }, (_, index) => index % 2);
-	for (let index = order.length - 1; index > 0; index -= 1) {
-		const swap = Math.floor(Math.random() * (index + 1));
-		[order[index], order[swap]] = [order[swap] as number, order[index] as number];
-	}
-	return order;
+async function signInAttempt(arm: TimingArm): Promise<void> {
+	await checkPassword(
+		{ userId: identifierFor(arm), plaintext: ATTEMPTED_PASSWORD },
+		environment,
+	).catch(() => undefined);
 }
 
-async function collectSamples(): Promise<Samples> {
-	const samples: Samples = { present: [], absent: [], calibrationLeft: [], calibrationRight: [] };
-	const counted = { present: 0, absent: 0 };
-
-	for (const group of interleavedOrder()) {
-		const present = group === 0;
-		const identifier = present
-			? (presentUserIds[counted.present % ACCOUNTS_PER_GROUP] as string)
-			: null;
-		const elapsed = await measure(identifier);
-		const seen = present ? counted.present : counted.absent;
-
-		if (seen >= DISCARDED_WARMUP) {
-			(present ? samples.present : samples.absent).push(elapsed);
-		}
-		if (present) {
-			counted.present += 1;
-		} else {
-			counted.absent += 1;
-		}
-
-		// The calibration pair is two runs of the same operation measured in the same loop, so that
-		// machine drift shows up in a number the test can read off (6.20). It is sampled rather than
-		// taken every round, because a full third pass would double the run.
-		if ((counted.present + counted.absent) % 5 === 0) {
-			samples.calibrationLeft.push(await measure(presentUserIds[0] as string));
-			samples.calibrationRight.push(await measure(presentUserIds[0] as string));
-		}
-	}
-
-	return samples;
+/** Two samples of one operation, drawn alternately, so a runner manufacturing a gap shows one. */
+function alternating(samples: readonly number[]): [number[], number[]] {
+	return [
+		samples.filter((_, index) => index % 2 === 0),
+		samples.filter((_, index) => index % 2 === 1),
+	];
 }
 
 describe("T-TIM-1 — the sign-in path is uniform under measurement", () => {
 	it.skipIf(process.env.VELVE_NIGHTLY !== "1")(
 		"separates a present from an absent identifier by less than the dudect threshold",
 		async () => {
-			const samples = await collectSamples();
+			const samples = await sampleUntilResolved(signInAttempt, {
+				minimumPerGroup: MEASUREMENTS_PER_GROUP,
+				maximumPerGroup: MAXIMUM_PER_GROUP,
+				discardedWarmup: DISCARDED_WARMUP,
+				blockPerGroup: BLOCK_PER_GROUP,
+				budgetMs: RESOLUTION_BUDGET_MS,
+			});
 
-			const t = welchT(trimmed(samples.present, 0.1), trimmed(samples.absent, 0.1));
-			const delta = cliffsDelta(
-				withoutMadOutliers(samples.present, 3),
-				withoutMadOutliers(samples.absent, 3),
-			);
-			const calibration = welchT(
-				trimmed(samples.calibrationLeft, 0.1),
-				trimmed(samples.calibrationRight, 0.1),
-			);
+			const present = trimmed(samples.present, TRIM_FRACTION);
+			const absent = trimmed(samples.absent, TRIM_FRACTION);
+			const resolution = resolutionOf(present, absent);
+			const reached = `${describeResolution(present, absent)}, and ${Math.round(correlatedResolutionNs(samples.present, samples.absent))} ns once the batches are allowed to be correlated`;
 
-			expect(samples.present.length).toBe(MEASUREMENTS_PER_GROUP - DISCARDED_WARMUP);
-			expect(samples.absent.length).toBe(MEASUREMENTS_PER_GROUP - DISCARDED_WARMUP);
+			const [quietLeft, quietRight] = alternating(samples.controlQuiet);
+			const planted = trimmed(samples.controlPlanted, TRIM_FRACTION);
+			const quiet = trimmed(samples.controlQuiet, TRIM_FRACTION);
+			const recovered = mean(planted) - mean(quiet);
+
 			expect(
-				Math.abs(calibration),
-				"the calibration pair itself broke the threshold: the runner is the fault, not the code",
+				samples.roundsPerGroup,
+				`the budget ran out before 6.1's own sample size was reached, after ${Math.round(samples.elapsedMs / 1000)} s`,
+			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
+			expect(
+				resolution.resolvesTheLeakThatMatters,
+				`the run could not resolve the smallest leak 5.1 (a) names, so it reports neither a leak nor its absence: ${reached}, after ${samples.roundsPerGroup} rounds and ${Math.round(samples.elapsedMs / 1000)} s. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBe(true);
+			expect(
+				Math.abs(welchT(trimmed(quietLeft, TRIM_FRACTION), trimmed(quietRight, TRIM_FRACTION))),
+				"two samples of one operation separated: the runner is the fault, not the code",
 			).toBeLessThan(WELCH_T_LIMIT);
-			expect(Math.abs(t), "Welch t on 10 per cent trimmed means").toBeLessThan(WELCH_T_LIMIT);
-			expect(Math.abs(delta), "Cliff's delta").toBeLessThan(CLIFFS_DELTA_LIMIT);
+			expect(
+				Math.abs(welchT(planted, quiet)),
+				`the run did not see a planted ${PLANTED_CONTROL_LEAK_NS} ns leak, so it cannot report that there is none: ${reached}`,
+			).toBeGreaterThan(WELCH_T_LIMIT);
+			expect(
+				Math.abs(recovered - PLANTED_CONTROL_LEAK_NS) / PLANTED_CONTROL_LEAK_NS,
+				`the planted leak was measured as ${Math.round(recovered)} ns, so the measurement is not on the scale it reports`,
+			).toBeLessThan(CONTROL_RECOVERY_TOLERANCE);
+
+			expect(
+				Math.abs(welchT(present, absent)),
+				`Welch t, ${reached}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(WELCH_T_LIMIT);
+			const overlapPresent = withoutMadOutliers(samples.present, MAD_OUTLIER_FACTOR);
+			const overlapAbsent = withoutMadOutliers(samples.absent, MAD_OUTLIER_FACTOR);
+			expect(
+				Math.abs(cliffsDelta(overlapPresent, overlapAbsent)),
+				`Cliff's delta, which no sample size sharpens and which separates about ${Math.round(overlapResolutionNs(overlapPresent, overlapAbsent))} ns here: ${reached}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
+			).toBeLessThan(CLIFFS_DELTA_LIMIT);
 		},
-		1_800_000,
+		CASE_TIMEOUT_MS,
 	);
 });
