@@ -16,9 +16,18 @@ import {
 	type ServerCallFields,
 } from "../http/route.js";
 import { object, string, unknownRecord } from "../http/validators.js";
-import { toPendingToken } from "./pending/index.js";
-import { createRecoveryCodeService, type RecoveryCodeService } from "./recovery/index.js";
-import { createTotpService, type TotpEnrollment, type TotpService } from "./totp/index.js";
+import { toPendingToken, verifyUnderPendingAttemptLimit } from "./pending/index.js";
+import {
+	createRecoveryCodeService,
+	type RecoveryCodeService,
+	recoveryCodeShapeOf,
+} from "./recovery/index.js";
+import {
+	createTotpService,
+	type TotpEnrollment,
+	type TotpService,
+	totpToleranceOf,
+} from "./totp/index.js";
 import type { WebAuthnCredential } from "./webauthn/credential-repository.js";
 import {
 	createWebAuthnService,
@@ -424,14 +433,21 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
+		/* L-8 and D.3: the five attempts are per intermediate state and not per factor, so a
+		   WebAuthn failure spends the same budget a TOTP or recovery-code failure spends (E-1691). */
 		handler: async (input, context): Promise<SignInResult> => {
 			const held = heldPendingState(context);
 			await spendAccountToken(services, context, held.resolution.userId);
-			const assertion = await webauthn.authenticate.finish({
-				pending: held.resolution,
-				challengeToken: input.challengeToken,
-				response: input.response as unknown as AuthenticationResponseJSON,
-			});
+			const assertion = await verifyUnderPendingAttemptLimit(
+				services.pending,
+				toPendingToken(held.token),
+				(resolution) =>
+					webauthn.authenticate.finish({
+						pending: resolution,
+						challengeToken: input.challengeToken,
+						response: input.response as unknown as AuthenticationResponseJSON,
+					}),
+			);
 			return signedInBySecondFactor(services, context, {
 				pendingToken: held.token,
 				factor: "webauthn",
@@ -584,12 +600,14 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		clock: services.clock,
 		pending: services.pending,
 		issuer: totpIssuerOf(services),
+		toleranceInSteps: totpToleranceOf(services.totp?.stepToleranceInSteps),
 	});
 	const recovery: RecoveryCodeService = createRecoveryCodeService({
 		driver: services.driver,
 		schema: services.schema,
 		keys: services.keys,
 		pending: services.pending,
+		shape: recoveryCodeShapeOf(services.recoveryCodes),
 	});
 	const alwaysMounted = [...totpRoutes(services, totp), ...recoveryRoutes(services, recovery)];
 	if (services.webauthn === undefined) {

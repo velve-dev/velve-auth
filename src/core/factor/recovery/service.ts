@@ -2,10 +2,14 @@ import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { ConcealedError } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
+import { verifyUnderPendingAttemptLimit } from "../pending/attempt-limit.js";
 import type { PendingAuthenticationService, PendingResolution } from "../pending/service.js";
 import type { PendingToken } from "../pending/token.js";
-import { verifyUnderPendingAttemptLimit } from "../totp/pending-attempt.js";
-import { createRecoveryCodeSet } from "./code.js";
+import {
+	createRecoveryCodeSet,
+	DEFAULT_RECOVERY_CODE_SHAPE,
+	type RecoveryCodeShape,
+} from "./code.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "./pepper.js";
 import { createRecoveryCodeRepository } from "./repository.js";
 
@@ -14,6 +18,8 @@ export interface RecoveryCodeServiceOptions {
 	readonly keys: KeyProvider;
 	readonly pending: PendingAuthenticationService;
 	readonly schema?: string;
+	/** A.8's `RecoveryCodesConfig`: how many codes a set holds and how wide a printed group is. */
+	readonly shape?: RecoveryCodeShape;
 }
 
 export interface RecoveryCodeService {
@@ -54,7 +60,7 @@ export function createRecoveryCodeService(
 	return {
 		// 3.6: a change of the method regenerates the whole set and deletes the previous one in the same transaction.
 		async generate({ actor }) {
-			const plaintext = createRecoveryCodeSet();
+			const plaintext = createRecoveryCodeSet(options.shape ?? DEFAULT_RECOVERY_CODE_SHAPE);
 			const peppered = await Promise.all(
 				plaintext.map((code) => pepperRecoveryCode(options.keys, code)),
 			);

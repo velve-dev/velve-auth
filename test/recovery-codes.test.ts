@@ -4,12 +4,14 @@ import type { PendingAuthenticationService } from "../src/core/factor/pending/in
 import {
 	createRecoveryCodeService,
 	createRecoveryCodeSet,
+	DEFAULT_RECOVERY_CODE_SHAPE,
 	normaliseRecoveryCode,
 	pepperRecoveryCode,
 	RECOVERY_CODE_COUNT,
 	RECOVERY_CODE_ENTROPY_BYTES,
-	RECOVERY_CODE_GROUP_LENGTH,
+	RECOVERY_CODE_GROUP_SIZE,
 	type RecoveryCodeService,
+	recoveryCodeShapeOf,
 } from "../src/core/factor/recovery/index.js";
 import { toVisibleFailure } from "../src/core/http/error-map.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
@@ -63,25 +65,54 @@ describe("S-RAND-3: ten codes of 160 bit, pairwise distinct, shown in groups", (
 
 	it("carries 160 bit in each, as a base32 alphabet of 32 characters over 32 places", () => {
 		expect(RECOVERY_CODE_ENTROPY_BYTES * 8).toBe(160);
-		for (const code of createRecoveryCodeSet()) {
+		for (const code of createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE)) {
 			expect(normaliseRecoveryCode(code)).toHaveLength((RECOVERY_CODE_ENTROPY_BYTES * 8) / 5);
 		}
 	});
 
-	it("shows them in groups", () => {
-		for (const code of createRecoveryCodeSet()) {
+	/** A.8 gives `groupSize` the default 5, and 32 base32 places do not divide by it evenly. */
+	it("shows them in groups of the configured width, the last one short where it has to be", () => {
+		expect(RECOVERY_CODE_GROUP_SIZE).toBe(5);
+		for (const code of createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE)) {
 			const groups = code.split("-");
-			expect(groups).toHaveLength(32 / RECOVERY_CODE_GROUP_LENGTH);
-			for (const group of groups) {
-				expect(group).toHaveLength(RECOVERY_CODE_GROUP_LENGTH);
+			expect(groups).toHaveLength(Math.ceil(32 / RECOVERY_CODE_GROUP_SIZE));
+			for (const group of groups.slice(0, -1)) {
+				expect(group).toHaveLength(RECOVERY_CODE_GROUP_SIZE);
 			}
+			expect(groups.at(-1)).toHaveLength(32 % RECOVERY_CODE_GROUP_SIZE);
 		}
+	});
+
+	it("draws the configured number of codes and groups them as configured", () => {
+		const codes = createRecoveryCodeSet({ count: 4, groupSize: 8 });
+		expect(codes).toHaveLength(4);
+		for (const code of codes) {
+			expect(code.split("-")).toHaveLength(4);
+			expect(normaliseRecoveryCode(code)).toHaveLength(32);
+		}
+	});
+
+	/** A count of nothing is an account with no way back in; a group of nothing never terminates. */
+	it.each([
+		{ count: 0, groupSize: 5 },
+		{ count: -1, groupSize: 5 },
+		{ count: 2.5, groupSize: 5 },
+		{ count: 10, groupSize: 0 },
+		{ count: 10, groupSize: -8 },
+		{ count: Number.NaN, groupSize: Number.NaN },
+	])("reads the unusable shape %j as the default", (configured) => {
+		expect(recoveryCodeShapeOf(configured)).toStrictEqual(DEFAULT_RECOVERY_CODE_SHAPE);
+	});
+
+	it("reads an absent configuration as the default", () => {
+		expect(recoveryCodeShapeOf(undefined)).toStrictEqual({ count: 10, groupSize: 5 });
+		expect(recoveryCodeShapeOf({ count: 4 })).toStrictEqual({ count: 4, groupSize: 5 });
 	});
 
 	it("is pairwise distinct within a set and across sets", () => {
 		const seen = new Set<string>();
 		for (let round = 0; round < 200; round += 1) {
-			const set = createRecoveryCodeSet();
+			const set = createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE);
 			expect(new Set(set).size).toBe(RECOVERY_CODE_COUNT);
 			for (const code of set) {
 				seen.add(code);
@@ -91,14 +122,14 @@ describe("S-RAND-3: ten codes of 160 bit, pairwise distinct, shown in groups", (
 	});
 
 	it("uses no character a reader can mistake for another", () => {
-		for (const code of createRecoveryCodeSet()) {
+		for (const code of createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE)) {
 			expect(code).toMatch(/^[0-9A-HJKMNP-TV-Z-]+$/);
 			expect(code).not.toMatch(/[ILOU]/);
 		}
 	});
 
 	it("reads a code back however it was retyped", () => {
-		const [code] = createRecoveryCodeSet();
+		const [code] = createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE);
 		const canonical = normaliseRecoveryCode(code ?? "");
 		expect(normaliseRecoveryCode(canonical.toLowerCase())).toBe(canonical);
 		expect(normaliseRecoveryCode(canonical.replace(/(.{4})/g, "$1 "))).toBe(canonical);

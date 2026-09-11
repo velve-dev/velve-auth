@@ -5,6 +5,7 @@ import {
 	TOTP_ALGORITHM,
 	TOTP_DIGITS,
 	TOTP_PERIOD_SECONDS,
+	type TotpToleranceInSteps,
 } from "./parameters.js";
 
 const utf8 = new TextEncoder();
@@ -39,11 +40,12 @@ export function matchingTimeStep(input: {
 	readonly secretBytes: Uint8Array<ArrayBuffer>;
 	readonly submittedCode: string;
 	readonly at: Date;
+	readonly toleranceInSteps: TotpToleranceInSteps;
 }): number | null {
 	const submitted = utf8.encode(normaliseTotpCode(input.submittedCode));
 	let matched: number | null = null;
 
-	for (const step of acceptedTimeSteps(input.at)) {
+	for (const step of acceptedTimeSteps(input.at, input.toleranceInSteps)) {
 		const expected = utf8.encode(totpCodeForStep(input.secretBytes, step));
 		if (equalsInConstantTime(expected, submitted) && matched === null) {
 			matched = step;

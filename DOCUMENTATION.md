@@ -3439,7 +3439,8 @@ the instance, not declared here.
 ### `createTotpService(options)`
 
 Returns a `TotpService`. RFC 6238 with SHA-1, six digits, a thirty-second
-period and a tolerance of one step in each direction (architecture 3.6).
+period and, by default, a tolerance of one step in each direction (architecture
+3.6). `toleranceInSteps` is the one parameter of those that is configurable.
 
 | Option | Type | Required | Meaning |
 |---|---|---|---|
@@ -3448,6 +3449,7 @@ period and a tolerance of one step in each direction (architecture 3.6).
 | `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
 | `issuer` | `string` | yes | The issuer shown in the authenticator app and written into the key URI. |
 | `clock` | `Clock` | yes | The only time the module reads. There is no default: architecture 6.19 says the core reads the time through `clock` alone, and a default would be a second source. Tests pass `createTestClock()` from `@velve/auth/testing`. |
+| `toleranceInSteps` | `0 \| 1` | no | How far either side of the current step a code is still accepted. `1` is A.8's default and 3.6's `±1 Schritt`; `0` accepts the current step alone. It also sizes `totp_used_step` retention. |
 | `schema` | `string` | no | Defaults to `velve`. |
 
 #### `totp.enroll.start({ actor, accountName })`
@@ -3556,10 +3558,12 @@ fifty concurrent submissions of one code onto one winner (`S-RACE-3`).
 **The step written is the one that matched, not the one the clock is in.** With
 a tolerance of ±1 an accepted code can belong to the step before or after the
 current one; recording the current step would leave the matched one free for a
-second use.
+second use. At a tolerance of `0` the two are always the same step, and the rule
+holds unchanged.
 
-Rows are kept `TOTP_USED_STEP_RETENTION_SECONDS` — the full tolerance window
-plus two minutes — and are swept by `auth.maintenance.sweep()` (L-11).
+Rows are kept `usedStepRetentionSeconds(toleranceInSteps)` — the full tolerance
+window plus two minutes, so 210 seconds at `1` and 150 at `0` — and are swept by
+`auth.maintenance.sweep()` (L-11).
 
 ### TOTP constants
 
@@ -3568,15 +3572,20 @@ plus two minutes — and are swept by `auth.maintenance.sweep()` (L-11).
 | `TOTP_ALGORITHM` | `"SHA1"` | Architecture 3.6. Every authenticator app implements it. |
 | `TOTP_DIGITS` | `6` | Architecture 3.6. The RFC's own vectors use eight; the library generates six. |
 | `TOTP_PERIOD_SECONDS` | `30` | Architecture 3.6. |
-| `TOTP_TOLERANCE_STEPS` | `1` | One step either side, so ninety seconds are accepted at any moment. |
+| `TOTP_TOLERANCE_STEPS` | `1` | A.8's default. One step either side, so ninety seconds are accepted at any moment. |
 | `TOTP_SECRET_BYTES` | `20` | 160 bit. RFC 4226 §4 requires 128 and recommends 160. |
-| `TOTP_USED_STEP_RETENTION_SECONDS` | `210` | The widest accepted window (90 s) plus two minutes (L-11). |
 
-`timeStepAt(instant)` is the counter for an instant; `acceptedTimeSteps(instant)`
-is the three steps a submission at that instant may match;
-`totpCodeForStep(secretBytes, step)` is the code for one step; and
-`matchingTimeStep({ secretBytes, submittedCode, at })` answers with the matched
-step or `null`. It compares against every candidate without leaving early and
+`usedStepRetentionSeconds(toleranceInSteps)` is the widest accepted window plus
+two minutes (L-11): `210` at the default, `150` at `0`.
+
+`timeStepAt(instant)` is the counter for an instant;
+`acceptedTimeSteps(instant, toleranceInSteps)` is the steps a submission at that
+instant may match — three at the default, one at `0`;
+`totpCodeForStep(secretBytes, step)` is the code for one step;
+`totpToleranceOf(configured)` reads a configured value, answering the default
+for anything that is not exactly `0`; and
+`matchingTimeStep({ secretBytes, submittedCode, at, toleranceInSteps })` answers
+with the matched step or `null`. It compares against every candidate without leaving early and
 in constant time, so the position of a match inside the window is not readable
 from the duration. `normaliseTotpCode` strips spaces and hyphens, because an
 authenticator app shows the code in two groups and a reader retypes the gap.
@@ -3589,11 +3598,12 @@ authenticator app shows the code in two groups and a reader retypes the gap.
 | `keys` | `KeyProvider` | yes | Supplies the `token-pepper` key the codes are HMAC'd under. |
 | `pending` | `PendingAuthenticationService` | yes | The intermediate state `verify` is spent on. |
 | `schema` | `string` | no | Defaults to `velve`. |
+| `shape` | `RecoveryCodeShape` | no | A.8's `{ count, groupSize }`. Defaults to `DEFAULT_RECOVERY_CODE_SHAPE`, which is ten codes in groups of five. |
 
 #### `recovery.generate({ actor })`
 
-Draws ten codes of 160 bit, deletes every code the account already has and
-writes the ten new ones — in one transaction, and after taking the row lock on
+Draws `shape.count` codes of 160 bit, deletes every code the account already has
+and writes the new ones — in one transaction, and after taking the row lock on
 `velve.user` that CLAUDE.md §7 requires of any transaction that takes one.
 Returns `{ codes }`.
 
@@ -3624,12 +3634,13 @@ stored form can answer.
 
 ### The shape of a recovery code
 
-Ten codes, 160 bit each, pairwise distinct (`S-RAND-3`). Encoded in Crockford's
-base32 — the alphabet without `I`, `L`, `O` and `U` — as thirty-two characters
-shown in four groups of eight:
+Ten codes by default, 160 bit each, pairwise distinct (`S-RAND-3`). Encoded in
+Crockford's base32 — the alphabet without `I`, `L`, `O` and `U` — as thirty-two
+characters shown in groups of `groupSize`, which is five by default. Thirty-two
+does not divide by five, so the last group of a code is two characters:
 
 ```
-K3M7QR8V-2XN4TZ9B-5PWJ0HC6-Y1DFGS7A
+K3M7Q-R8V2X-N4TZ9-B5PWJ-0HC6Y-1DFGS-7A
 ```
 
 The reader normalises before it hashes: upper-cases, drops anything that is not
@@ -3641,10 +3652,13 @@ row.
 |---|---|
 | `RECOVERY_CODE_COUNT` | `10` |
 | `RECOVERY_CODE_ENTROPY_BYTES` | `20` |
-| `RECOVERY_CODE_GROUP_LENGTH` | `8` |
+| `RECOVERY_CODE_GROUP_SIZE` | `5` |
+| `DEFAULT_RECOVERY_CODE_SHAPE` | `{ count: 10, groupSize: 5 }` |
 
-`createRecoveryCodeSet()` draws a set, `normaliseRecoveryCode(submitted)` is the
-canonical form, and `formatRecoveryCode(canonical)` puts the groups back.
+`createRecoveryCodeSet(shape)` draws a set, `normaliseRecoveryCode(submitted)` is
+the canonical form, `formatRecoveryCode(canonical, groupSize)` puts the groups
+back, and `recoveryCodeShapeOf(configured)` reads A.8's configuration, answering
+the default for either number that is not a positive whole one.
 
 ### How a recovery code is stored
 
@@ -3683,16 +3697,24 @@ the ring read finds one version and the redemption is one statement.
 
 ### The five attempts a pending state allows
 
-`verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for both
-factors. It resolves the state, runs the verification, and on failure calls
-`registerFailedAttempt`. The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the
-pending module and is not restated here.
+`verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for every
+factor a pending state can be spent on: TOTP, a recovery code and a WebAuthn
+assertion. It lives in the pending module, beside the state whose attempts it
+counts, and is re-exported from nowhere else. It resolves the state, runs the
+verification, and on failure calls `registerFailedAttempt`. The limit itself is
+`MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not restated here.
 
-A correct code spends no attempt. Wrong codes one to four answer
-`invalid_factor_code`; the wrong code that exhausts the budget answers
-`too_many_factor_attempts` and takes the pending row with it, which is what
-makes the 429 in the route table reachable — a request made after the row is
-gone answers `invalid_pending_authentication` instead.
+A correct code — or a verifying assertion — spends no attempt. Failures one to
+four answer whatever the factor answers, `invalid_factor_code`,
+`invalid_recovery_code` or `webauthn_credential_rejected`; the failure that
+exhausts the budget answers `too_many_factor_attempts` and takes the pending row
+with it, which is what makes the 429 in the route table reachable — a request
+made after the row is gone answers `invalid_pending_authentication` instead.
+
+The five are **per state and not per factor**. Four wrong TOTP codes leave one
+WebAuthn attempt, not five; `/factor/webauthn/authenticate/start` spends none of
+them, which is why `3.15 D.3` declares `too_many_factor_attempts` on the finish
+route and not on the start route.
 
 ### `identity: "username"` requires recovery codes
 
@@ -3708,6 +3730,35 @@ predicate, for a caller that wants to ask rather than to catch.
 
 The check belongs at start-up and is called by the instance; this module is the
 mechanism it calls.
+
+### A second-factor key version that has left the ring
+
+`assertStoredFactorKeyVersionsAreKnown({ driver, keys, schema? })` reads
+`SELECT DISTINCT key_version` from **both** tables that carry one —
+`totp_credential`, whose version names `totp-enc` (`S-KEY-3`), and
+`recovery_code`, whose version names `token-pepper` (`L-3`) — and holds every
+value against the ring. It throws `FactorKeyRingError`, `code:
+"stored_key_version_unknown"`, whose `missing` is one entry per table with the
+purpose and the versions the ring no longer holds.
+
+This is `E-179`'s shape applied to the second factor, and it exists because the
+request path deliberately conceals the same loss. A TOTP secret the server
+cannot decrypt answers `invalid_factor_code` (`E-428`), and a recovery code
+whose pepper version is gone answers `invalid_recovery_code`; both are what a
+wrong code answers. So without this check an operator who retires a key version
+learns of it from users and from nothing else.
+
+The second factor is worse off than a password here, and in one specific way:
+a locked-out password heals itself through a reset, which writes a new credential
+under the current version, while `POST /factor/totp/remove` demands a valid code
+(`3.15 B.6`). The user can neither pass the factor nor put it down. Their way in
+is a recovery code — unless `token-pepper` lost the same version, which is why
+the check reads both tables rather than only the one `E-428` named.
+
+**Nothing calls it yet.** It is exported and unwired, the state
+`assertStoredKeyVersionsAreKnown` was in until `E-330`. The call belongs beside
+that one, in `migrate()`, and `src/core/auth/instance.ts` is outside the files
+the change that added this check was allowed to touch (`E-1698`).
 
 ## WebAuthn
 
@@ -4052,7 +4103,9 @@ keeps the ones the verifier can type — which is also what is stored (E-453).
 - **No session.** Both sign-in paths return a verified assertion; the assembly
   issues the session (E-470).
 - **No attempt counting.** L-8's five attempts are per intermediate state and
-  are counted by the flow that owns it, not per factor (E-471).
+  are counted by the route layer that owns it, not per factor (E-471, E-1691).
+  `authenticate.finish` is wrapped in `verifyUnderPendingAttemptLimit` where the
+  route is declared; this module raises and counts nothing.
 - **No attestation.** `attestationType` is `"none"` and no attestation statement
   is evaluated. Velve Auth does not decide which authenticator models an
   application trusts.
@@ -4980,8 +5033,8 @@ compile (E-349).
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
 | `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
-| `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window |
-| `recoveryCodes` | `RecoveryCodesConfig` | none; **required** in `"username"` | how many codes and in what grouping |
+| `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window; the tolerance reaches the code comparison |
+| `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
 | `log` | `(level, message, fields?) => void` | a sink that drops everything | where the true reason of a refusal is written |
@@ -6445,8 +6498,8 @@ Three optional fields of `VelveAuthConfig` decide what is served.
 | Field | Type | Default | What it does |
 |---|---|---|---|
 | `webauthn` | `WebAuthnConfig` | absent | Its absence removes the seven `/factor/webauthn/*` rows and both `/sign-in/passkey/*` rows. They are not refused — they do not exist, and a request to one answers 404. |
-| `totp` | `Partial<TotpConfig>` | absent | `issuer` is the name an authenticator app shows. `stepToleranceInSteps` is declared and **not yet read**; see below. |
-| `recoveryCodes` | `RecoveryCodesConfig` | absent | Required in `identity.mode: "username"`, where a recovery code is the only way back into an account (`S-DEFAULT-4`). Its `count` and `groupSize` are declared and **not yet read**; see below. |
+| `totp` | `Partial<TotpConfig>` | absent | `issuer` is the name an authenticator app shows. `stepToleranceInSteps` is `0` or `1` and decides how far either side of the current step a code is accepted; default `1`. |
+| `recoveryCodes` | `RecoveryCodesConfig` | absent | Required in `identity.mode: "username"`, where a recovery code is the only way back into an account (`S-DEFAULT-4`). `count` is how many codes a set holds, default 10; `groupSize` is how wide a printed group is, default 5. |
 
 ```ts
 const auth = createVelveAuth({
@@ -6474,12 +6527,42 @@ one.** Where it is absent the issuer is the host of the first entry of `origins`
 `totp` block shows `app.example.com` in its users' authenticators. Set `issuer`
 to your product's name. Nothing warns about this at start.
 
-**Three fields do not reach the module behind them.**
-`recoveryCodes.groupSize` is ignored: codes are grouped in eights, where A.8's
-default is five. `recoveryCodes.count` is ignored too, and happens to agree —
-ten codes either way. `totp.stepToleranceInSteps` is ignored: the tolerance is
-one step in both directions and `0` cannot be expressed. All three are recorded
-in `CASE-STUDY.md` under `E-1249`; setting any of them changes nothing today.
+**`totp.stepToleranceInSteps` reaches the comparison.** `1`, the default, accepts
+the previous, the current and the next thirty-second step, which is 3.6's
+`Toleranz ±1 Schritt`. `0` accepts the current step alone — a narrower replay
+window at the cost of refusing a user whose device clock is a step out. The
+value also sizes the retention of `totp_used_step`: `L-11` keeps a claimed step
+two minutes past the widest window a code could still reach it in, which is 150
+seconds at `0` and 210 at `1`.
+
+The field is typed `0 | 1`, and **a value outside those two is read as the
+default `1`** rather than widening the window. That case is only reachable from
+JavaScript, where the type does not hold; a TypeScript caller cannot write it.
+It is the one place left where the library warns about a value it does not use —
+`SECURITY_OPTIONS` classifies `a tolerance above one step` as a weakening, and
+such a value is refused rather than applied. Reported rather than repaired here,
+because `src/core/auth/security-options.ts` is outside this change (`E-1694`).
+
+**`recoveryCodes.count` and `recoveryCodes.groupSize` reach the generator.**
+`count` decides how many codes `POST /factor/recovery/generate` hands back and
+therefore how many times an account can get in without its other factors;
+`SECURITY_OPTIONS` reports a count below ten as a weakening, which is now a
+weakening that happens. `groupSize` is presentation only: what is stored is the
+HMAC of the canonical form, and `normaliseRecoveryCode` strips the separators, so
+a code printed under one grouping still redeems under another.
+
+Both are typed `number` and **a value that is not a positive whole number is read
+as the default**. A `count` of zero is an account with no way back in, which is
+the lockout `S-DEFAULT-4` exists to refuse; a `groupSize` of zero is a loop that
+never ends. Neither is bounded from above: a `count` of a million is a million
+codes, slowly, and that is the operator's configuration rather than an attacker's
+input (`E-1695`).
+
+**The default grouping changed from eight to five**, which is A.8's stated
+default and what the library should have shipped. 160 bits are 32 base32 places,
+so five does not divide them evenly and the last group of a code is two
+characters. Codes printed before the change still redeem: grouping never reached
+the stored form.
 
 ### The rows
 
@@ -6589,6 +6672,14 @@ Five failed attempts destroy the state and the sign-in starts again at the
 password. The fifth failure answers `too_many_factor_attempts` (429); a request
 made after the row is gone answers `invalid_pending_authentication` (401),
 which is also what an expired, a cancelled and an invented state answer.
+
+**The five belong to the state and not to a factor.** A failed assertion at
+`/factor/webauthn/authenticate/finish` and a failed code at
+`/factor/recovery/verify` spend from the same five that
+`/factor/totp/verify` spends from, so four wrong TOTP codes leave one WebAuthn
+attempt rather than five. `/factor/webauthn/authenticate/start` spends none of
+them: it issues a challenge and judges nothing, which is why `3.15 D.3` gives it
+neither the account bucket nor `too_many_factor_attempts`.
 
 **A code spent on an enrolment cannot be spent again in the same window.** TOTP
 accepts one code per account per thirty-second step, and confirming an enrolment

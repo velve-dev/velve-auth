@@ -1,18 +1,20 @@
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
-import type {
-	PendingAuthenticationService,
-	PendingResolution,
+import {
+	type PendingAuthenticationService,
+	type PendingResolution,
+	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/pending/index.js";
 import {
 	createRecoveryCodeRepository,
 	createRecoveryCodeService,
 	createRecoveryCodeSet,
+	DEFAULT_RECOVERY_CODE_SHAPE,
 	formatRecoveryCode,
 	normaliseRecoveryCode,
 	type PepperedRecoveryCode,
 	RECOVERY_CODE_COUNT,
-	RECOVERY_CODE_GROUP_LENGTH,
+	RECOVERY_CODE_GROUP_SIZE,
 	RecoveryCodeOwnerUnknownError,
 	type RecoveryCodeRepository,
 	type RecoveryCodeRepositoryOptions,
@@ -31,7 +33,6 @@ import {
 	type TotpRepositoryOptions,
 	type TotpService,
 	type TotpServiceOptions,
-	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/totp/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -61,7 +62,7 @@ afterAll(async () => {
 describe("the surface the TOTP module publishes", () => {
 	it("takes a clock it cannot default, and a pending service to spend attempts on", () => {
 		expectTypeOf<keyof TotpServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "pending" | "issuer" | "clock" | "schema"
+			"driver" | "keys" | "pending" | "issuer" | "clock" | "schema" | "toleranceInSteps"
 		>();
 		expectTypeOf<TotpServiceOptions["clock"]>().not.toBeUndefined();
 		expectTypeOf<keyof TotpRepositoryOptions>().toEqualTypeOf<"driver" | "schema">();
@@ -100,7 +101,7 @@ describe("the surface the TOTP module publishes", () => {
 describe("the surface the recovery module publishes", () => {
 	it("takes the same three collaborators the TOTP service takes, without a clock", () => {
 		expectTypeOf<keyof RecoveryCodeServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "pending" | "schema"
+			"driver" | "keys" | "pending" | "schema" | "shape"
 		>();
 		expectTypeOf<keyof RecoveryCodeRepositoryOptions>().toEqualTypeOf<"driver" | "schema">();
 		expectTypeOf<RecoveryCodeRepository["consumeCode"]>().toBeFunction();
@@ -109,12 +110,12 @@ describe("the surface the recovery module publishes", () => {
 	});
 
 	it("puts the groups back on a canonical code", () => {
-		const [code] = createRecoveryCodeSet();
+		const [code] = createRecoveryCodeSet(DEFAULT_RECOVERY_CODE_SHAPE);
 		const canonical = normaliseRecoveryCode(code ?? "");
 
-		expect(formatRecoveryCode(canonical)).toBe(code);
-		expect(formatRecoveryCode(canonical).split("-")).toHaveLength(
-			canonical.length / RECOVERY_CODE_GROUP_LENGTH,
+		expect(formatRecoveryCode(canonical, RECOVERY_CODE_GROUP_SIZE)).toBe(code);
+		expect(formatRecoveryCode(canonical, RECOVERY_CODE_GROUP_SIZE).split("-")).toHaveLength(
+			Math.ceil(canonical.length / RECOVERY_CODE_GROUP_SIZE),
 		);
 	});
 

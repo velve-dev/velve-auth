@@ -6,10 +6,10 @@ export {
 	TOTP_PERIOD_SECONDS,
 	TOTP_SECRET_BYTES,
 	TOTP_TOLERANCE_STEPS,
-	TOTP_USED_STEP_RETENTION_SECONDS,
 	timeStepAt,
+	totpToleranceOf,
+	usedStepRetentionSeconds,
 } from "./parameters.js";
-export { verifyUnderPendingAttemptLimit } from "./pending-attempt.js";
 export type {
 	StoredTotpCredential,
 	TimeStepClaim,
