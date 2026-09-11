@@ -2,6 +2,7 @@ import type { Actor, ConsumedRecoveryCode } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { toEntityId } from "../../db/entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../../db/identifier.js";
+import { lockAccountRowStatement } from "../../db/lock.js";
 import type { PepperedRecoveryCode } from "./pepper.js";
 
 export interface RecoveryCodeRepositoryOptions {
@@ -41,9 +42,8 @@ export function createRecoveryCodeRepository(
 	/* The delete and the insert have to be one atomic replacement of the whole set (3.6), and at
 	   READ COMMITTED the delete works from the snapshot its statement began with. Serialising the
 	   two generators of one account is what makes the replacement hold, and CLAUDE.md section 7
-	   fixes which row that lock is taken on. */
-	const lockOwnerStatement = `SELECT 1 FROM ${schema}.user
-WHERE id = $1 FOR UPDATE /* locks: ${schema}.user */`;
+	   fixes both which row that lock is taken on and in which mode. */
+	const lockOwnerStatement = lockAccountRowStatement(schema);
 
 	const deleteEveryCodeStatement = `DELETE FROM ${table} WHERE user_id = $1`;
 

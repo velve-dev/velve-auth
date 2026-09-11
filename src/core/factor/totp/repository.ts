@@ -1,6 +1,7 @@
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../../db/identifier.js";
+import { lockAccountRow } from "../../db/lock.js";
 
 export interface TotpRepositoryOptions {
 	readonly driver: Driver;
@@ -114,6 +115,8 @@ RETURNING time_step`;
 
 		removeCredential({ actor }) {
 			return options.driver.transaction(async (tx) => {
+				// CLAUDE.md §7: two user-owned tables are written below, so the account's row comes first.
+				await lockAccountRow(tx, schema, actor);
 				const removed = await tx.query(removeCredentialStatement, [actor]);
 				await tx.query(removeUsedStepsStatement, [actor]);
 				return removed.length === 1;

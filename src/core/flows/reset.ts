@@ -1,6 +1,7 @@
 import type { EmailConfig } from "../auth/config.js";
 import { type Actor, actorOfConsumedRecoveryCode } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
+import { lockAccountRow } from "../db/lock.js";
 import { createSessionRepository } from "../db/repositories/session.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/pepper.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
@@ -68,6 +69,9 @@ async function replacePassword(
 	},
 ): Promise<SetPasswordResult> {
 	const { schema, keys, sessions } = environment.services;
+	// CLAUDE.md §7: the session table and the credential table are both written below, and a first
+	// address confirmation writes the same two in the other order (E-1602).
+	await lockAccountRow(input.transaction, schema, input.userId);
 	const revokedOtherSessionsCount = await createSessionRepository({
 		driver: input.transaction,
 		schema,
@@ -166,6 +170,10 @@ export async function redeemResetWithRecoveryCode(
 					.map((peppered) => peppered.codeHmac);
 
 	const result = await driver.transaction(async (transaction) => {
+		// The account is known before this transaction opens, so its row is taken before the code is
+		// consumed rather than after: taken afterwards it would be the second lock of this transaction
+		// and the first of the regeneration it races, which is the cycle itself (E-1601).
+		await lockAccountRow(transaction, schema, userId);
 		const consumed = await createRecoveryCodeRepository({
 			driver: transaction,
 			schema,

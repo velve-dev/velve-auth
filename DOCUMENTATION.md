@@ -24,6 +24,7 @@ here as well, where nothing removes it.
 - [Migrations](#migrations)
 - [The driver interface](#the-driver-interface)
 - [Repositories](#repositories)
+- [Lock order](#lock-order)
 - [Key management](#key-management)
 - [HTTP](#http)
 - [Rate limiting](#rate-limiting)
@@ -619,6 +620,92 @@ that never existed produce the same `null`, so nothing leaks the difference
 raises `UnknownColumnError` with the code `unknown_column`. The owner column is
 never updatable through this repository — changing who owns a row is not an
 update.
+
+## Lock order
+
+Two transactions that take the same two rows in opposite orders deadlock, and
+PostgreSQL resolves it by killing one of them: the caller sees an internal error
+and the work is rolled back. It needs two specific requests interleaving on one
+account, so it does not appear under a single-threaded test and does appear under
+load. Two such cycles existed and were reproduced against PostgreSQL 14.24 and
+18.3 (E-1601).
+
+**The rule.** A transaction that writes rows in more than one user-owned table
+takes the account's row first:
+
+```sql
+SELECT 1 FROM velve.user WHERE id = $1 FOR NO KEY UPDATE /* locks: velve.user */
+```
+
+It is written in exactly one place, `src/core/db/lock.ts`, and reached through
+`lockAccountRow(driver, schema, userId)` or `lockAccountRowStatement(schema)`.
+Locking an account that does not exist locks nothing and raises nothing, so a
+caller running it for an identifier that resolved to nobody runs the same statement
+as one that resolved (S-TIM-1).
+
+| Export | Does |
+|---|---|
+| `lockAccountRowStatement(schema)` | the statement, for a repository that wants to run it with its own parameters |
+| `lockAccountRow(driver, schema, userId)` | runs it on the driver or open transaction given |
+
+**What the mode buys, exactly.** Held on the account row, `FOR NO KEY UPDATE` lets
+through the foreign key's `FOR KEY SHARE` and an `ON CONFLICT` landing on a **child**
+row — the latter because that wait is on the child's index and has nothing to do with
+the account row's mode — and blocks `UPDATE velve.user`, `SELECT … FOR SHARE` on it,
+and `DELETE FROM velve.user`. Measured on 14.24 and on 18.3, same six answers on both.
+So what the mode disarms is the foreign key's key share and nothing else.
+
+**Why `FOR NO KEY UPDATE` and never `FOR UPDATE`.** Every user-owned table carries
+a foreign key to `velve.user`, so **every insert of a user-owned row takes
+`FOR KEY SHARE` on the account row** — a lock this library does not write, taken by
+a trigger, at a point it does not choose. In PostgreSQL's conflict matrix
+`FOR KEY SHARE` waits for `FOR UPDATE` and for nothing else. So:
+
+| Held on the account row | An insert of a user-owned row for that account |
+|---|---|
+| `FOR NO KEY UPDATE` | goes through — measured at 0.05 s |
+| `FOR UPDATE` | waits for the holder to commit — measured against a 1500 ms `lock_timeout`, which it hit |
+
+`FOR NO KEY UPDATE` still conflicts with itself, so it serialises the transactions
+that take it, which is the whole job. `FOR UPDATE` would additionally turn every
+insert into a wait, and a wait is an edge in a wait-for cycle; that is what one of
+the two reproduced deadlocks was made of. `FOR UPDATE` and `FOR SHARE` are therefore
+taken nowhere in this library, and `pnpm check:lock-order` refuses both.
+
+**The four tables that come before the account row.** A redemption learns which
+account it is acting for by consuming a row of `one_time_token`,
+`pending_authentication`, `oauth_flow` or `webauthn_challenge`. It cannot lock the
+account row before the row that names the account, so those four come first and
+everything else comes after `velve.user`. For the four redeem flows this means the
+account lock is **not** the transaction's first statement: `redeemReset`,
+`redeemMagicLink`, `redeemVerification` and `redeemChange` each consume a
+`one_time_token` row first. What keeps that safe is a second ordering — that
+`one_time_token` comes before `velve.user` everywhere, since every mint runs in a
+transaction of its own, every redemption runs first, and no transaction that takes
+the account row touches that table. Nothing checks it.
+
+**Which transactions take it — all eight.** `confirmAddress`, `replacePassword`,
+`replacePasswordOfSession`, `redeemResetWithRecoveryCode`, `replaceEveryCode`,
+`removeSignInMethod`, `removeCredential` (TOTP, which deletes `totp_credential` and
+then `totp_used_step`) and `linkIdentityAndReissue` (OAuth, which inserts an
+`identity` and then re-issues a `session`). `redeemResetWithRecoveryCode` takes it
+before the code is consumed, because its account is already resolved when the
+transaction opens and a lock taken afterwards would be its second and the
+regeneration's first.
+
+**What each mechanism decides.** `pnpm check:lock-order` reads properties of one
+statement — the mode, the declaration, the one file — and **decides no ordering**,
+which its own output says. The ordering is driven by
+`test/lock-order-race.test.ts`, which holds one statement of one request until the
+other request is observably waiting for a lock, reads the SQLSTATE where the server
+raises it rather than at the HTTP boundary, and looks for any two transactions that
+take two tables in opposite orders in modes that wait for each other.
+
+**What neither of them covers.** The order is not enforced for a transaction no test
+drives, and no static analysis in this repository can decide it: the table name is
+built from a configured schema, the statements sit behind three module boundaries,
+and both reproduced cycles close through an acquisition no line of this library
+writes. A plugin's own SQL is outside the scan entirely.
 
 ## Key management
 
@@ -2603,12 +2690,15 @@ belongs to somebody else is never removed and never counted.
 separated. Between a caller's check and a caller's `DELETE` there is room for a
 second removal to check, see the way in that the first is about to delete, and
 delete its own — and the account ends with none, with no error raised anywhere.
-The call therefore takes `SELECT … FOR UPDATE` on the user row, counts what
+The call therefore takes `SELECT … FOR NO KEY UPDATE` on the user row — through
+`lockAccountRow`, which is the only place that statement is written — counts what
 would remain, and deletes, in that order. The locking statement declares what it
 takes in a trailing `/* locks: … */` comment, and `pnpm check:lock-order` reads
 it. What that check guarantees is narrow: that a row-locking statement carries a
-declaration at all, and that the table the declaration names is `user`. It does
-not compare the declaration against the `FROM` clause. The schema is interpolated
+declaration at all, that the table the declaration names is `user`, that the mode
+is `FOR NO KEY UPDATE`, and that the statement lives in `src/core/db/lock.ts`. It
+does not compare the declaration against the `FROM` clause, and it decides nothing
+about the order two transactions take their locks in. The schema is interpolated
 from the same `request.schema` the table name is built from, so the two cannot
 disagree about the schema; that the declaration says `user` and the `FROM` clause
 also says `user` is a convention this call keeps, not something the check
@@ -2728,22 +2818,22 @@ library that do.
 | `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
 | `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a `StoredOneTimeToken` or `null` |
 
-`replaceOneTimeToken` runs in a transaction and takes `SELECT 1 FROM velve.user
-WHERE id = $1 FOR UPDATE` before it writes. The statement declares what it locks,
-`/* locks: <schema>.user */`, which is what `pnpm check:lock-order` reads: a
-repository builds its table name from the configured schema, so a scan cannot
-otherwise tell which table a lock takes (E-147). The replacement is one statement and
-therefore atomic, but at `READ COMMITTED` its `DELETE` works from the snapshot
-the statement began with and cannot remove a row a concurrent request inserted
-after it; without the lock, eight simultaneous requests leave up to eight live
-tokens where section 3.7 allows one.
+`replaceOneTimeToken` runs in a transaction and serialises the requests about one
+subject with `pg_advisory_xact_lock` before it writes, **not** with a row lock: the
+lock is on the subject rather than on the owner's row, because a row lock can only
+be taken where a row exists, and a request that resolved to nobody would then wait
+where one that resolved to somebody waits (E-931, section 5.3 (a)). The replacement
+is one statement and therefore atomic, but at `READ COMMITTED` its `DELETE` works
+from the snapshot the statement began with and cannot remove a row a concurrent
+request inserted after it; without the serialisation, eight simultaneous requests
+leave up to eight live tokens where section 3.7 allows one.
 
-The lock is wider than the invariant it protects. While it is held, every write
-of a user-owned row for that account waits — a concurrent session insert for the
-same user blocks — and because the transaction carries the mail send, a hanging
-provider holds the lock for its whole timeout. Repository rules section 7 requires
-`velve.user` to be locked before any other table, and `pnpm check:lock-order`
-enforces it.
+An advisory lock is narrower than a row lock in the one way that matters here: it
+conflicts with nothing PostgreSQL takes implicitly, so no insert of a user-owned row
+waits behind it. Because the transaction carries the mail send, a hanging provider
+holds it for that send's whole timeout, and that cost is unchanged. Repository rules
+section 7 fixes the mode and the ordering of the **row** lock, and
+[Lock order](#lock-order) is where both are described.
 
 Calling this inside `driver.transaction` rolls the whole issue back only if the
 driver joins the open transaction rather than opening a second. That is required
@@ -5880,9 +5970,14 @@ Each fails with the plugin id and the schema in the message. None of them
 reaches a core table, so every one is a refusal the boundary did not need; they
 are the price of a walk that refuses what it cannot classify.
 
-`SELECT … FOR UPDATE` and `FOR UPDATE OF t` are **not** refused: §7 requires a
-row lock to be written, so refusing one would have made the rule the technical
-constraints ask for unwritable.
+`SELECT … FOR NO KEY UPDATE` and `FOR NO KEY UPDATE OF t` are **not** refused: §7
+requires a row lock to be written, so refusing one would have made the rule the
+technical constraints ask for unwritable. The walk does not refuse `FOR UPDATE` or
+`FOR SHARE` either — it is a boundary around which tables a plugin may reach, not a
+lock-mode check, and the mode is `pnpm check:lock-order`'s to decide over the core
+tree. A plugin's own SQL is outside that scan, so a plugin that takes `FOR UPDATE`
+on a core table is refused for reaching the table and not for the mode, and one that
+takes it on its own table is refused by nothing (see [Lock order](#lock-order)).
 
 A core route's context carries the field, because 3.15 D.1 gives every request
 context one, and its `query` rejects: a core route owns no tables of its own.
