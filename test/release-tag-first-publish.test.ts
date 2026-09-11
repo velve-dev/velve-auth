@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,13 @@ import { afterEach, describe, expect, it } from "vitest";
 const run = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = `${repositoryRoot}tools/check-release-tag.mjs`;
+
+/** The tag has to name the version the tree carries or the manifest clause refuses first, so it
+ * is read rather than written down — a version bump is not a reason for these cases to fail. */
+const { version } = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8")) as {
+	version: string;
+};
+const PRERELEASE = String(version.split("-")[1]);
 
 let registry: Server | undefined;
 
@@ -31,7 +39,7 @@ async function registryAnswering(status: number, body: string): Promise<string> 
 }
 
 function checkAgainst(registryUrl: string): Promise<{ stdout: string; stderr: string }> {
-	return run(process.execPath, [TOOL, "v1.0.0-next.1", "next"], {
+	return run(process.execPath, [TOOL, `v${version}`, "next"], {
 		env: { ...process.env, VELVE_REGISTRY: registryUrl },
 	});
 }
@@ -50,8 +58,8 @@ describe("the first publish of a package takes latest whatever --tag says (E-177
 		const { stdout, stderr } = await checkAgainst(await registryAnswering(401, "{}"));
 
 		expect(stderr).toContain(FIRST_PUBLISH);
-		expect(stderr).toContain("1.0.0-next.1 will therefore carry latest as well as next");
-		expect(stdout).toContain("a prerelease (next.1) published under next");
+		expect(stderr).toContain(`${version} will therefore carry latest as well as next`);
+		expect(stdout).toContain(`a prerelease (${PRERELEASE}) published under next`);
 	});
 
 	it.each([404, 401])("reads HTTP %s as the package being absent", async (status) => {
@@ -71,7 +79,7 @@ describe("the first publish of a package takes latest whatever --tag says (E-177
 	/** A registry that could not be asked is not a registry that answered no: reporting the
 	 * first-publish case from an unreachable one would warn on every release run without network. */
 	it("distinguishes a registry it could not reach from one that said absent", async () => {
-		const { stderr } = await run(process.execPath, [TOOL, "v1.0.0-next.1", "next"], {
+		const { stderr } = await run(process.execPath, [TOOL, `v${version}`, "next"], {
 			env: { ...process.env, VELVE_REGISTRY: "http://127.0.0.1:1" },
 		});
 
@@ -83,6 +91,6 @@ describe("the first publish of a package takes latest whatever --tag says (E-177
 	 * of what it buys, and the entry says what it does not buy. */
 	it("exits zero in every one of the three states", async () => {
 		const absent = await checkAgainst(await registryAnswering(401, "{}"));
-		expect(absent.stdout).toContain("release tag: v1.0.0-next.1 matches");
+		expect(absent.stdout).toContain(`release tag: v${version} matches`);
 	});
 });

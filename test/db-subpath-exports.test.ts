@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Actor, ResolvedSession } from "../src/index.js";
 import {
@@ -29,6 +30,12 @@ import {
 	UnrewritableMigrationError,
 } from "../src/schema/index.js";
 
+/** The version has three homes and a literal here made this a fourth; it is read so that a
+ * release does not redden a case about subpath exports (E-1776). */
+const { version: publishedVersion } = JSON.parse(
+	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
+
 const driver: Driver = {
 	query: async () => [],
 	transaction: (fn) => fn(driver),
@@ -43,7 +50,7 @@ describe("@velve/auth", () => {
 		expect(actor).toBe("not-a-uuid");
 		expect(typeof repository.deleteOwnedRow).toBe("function");
 		expect(new UnknownColumnError("velve.session", "user_id").code).toBe("unknown_column");
-		expect(VELVE_AUTH_VERSION).toBe("1.0.0-next.1");
+		expect(VELVE_AUTH_VERSION).toBe(publishedVersion);
 	});
 
 	it("names the shape session resolution must return", () => {
