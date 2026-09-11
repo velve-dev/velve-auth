@@ -8,6 +8,7 @@ import type { RouteServices } from "../auth/routes.js";
 import { createUserRepository, type User, type UserRepository } from "../auth/user.js";
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
+import { lockAccountRow } from "../db/lock.js";
 import { PreviousSessionMissingError } from "../db/repositories/session.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
@@ -410,6 +411,8 @@ export function createOAuthService(input: {
 		const userId = input.linked.account.userId;
 		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
 		const written = await driver.transaction(async (transaction) => {
+			// CLAUDE.md §7: `velve.identity` and `velve.session` are both written below.
+			await lockAccountRow(transaction, schema, userId);
 			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
 			assertTheAccountIsEnabled(
 				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
