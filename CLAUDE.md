@@ -656,6 +656,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1500 … E-1529 | gate and infrastructure, eleventh range — the PostgreSQL 14 tier; eleventh over the eleven rows of this table that name gate and infrastructure, counted after the merge that brought the tenth in. This row first said the tenth was on an unmerged branch and absent from the table, which was true when it was written |
 | E-1530 … E-1569 | outside the waves · `timing-power-guard` — the power guard on the two statistical timing cases, E-1149 and E-693 |
 | E-1600 … E-1649 | outside the waves · `lock-order` — the two deadlock cycles reachable on `main`. Fifty-first row of this table, counted after merging 93fa31b, which brought in the row above it. It was the fiftieth when written, over the forty-nine standing at a9b0aec; the range that was then reserved on a branch this table could not show is that row now, and the count is of rows rather than of reservations either way |
+| E-1650 … E-1689 | outside the waves · `misreporting` — the three instruments that report something other than what they found. Fifty-second row of this table, counted over the fifty-one standing at b005ed3 rather than taken from the row above it; E-1622 records an ordinal here going stale the moment another branch merges a row, and nothing in the tree recomputes one |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
