@@ -5,11 +5,11 @@ import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { decryptWithPurposeKey, encryptWithPurposeKey } from "../../keys/envelope.js";
 import { KeyError } from "../../keys/errors.js";
 import type { KeyProvider } from "../../keys/provider.js";
+import { verifyUnderPendingAttemptLimit } from "../pending/attempt-limit.js";
 import type { PendingAuthenticationService, PendingResolution } from "../pending/service.js";
 import type { PendingToken } from "../pending/token.js";
 import { matchingTimeStep } from "./code.js";
 import { TOTP_USED_STEP_RETENTION_SECONDS } from "./parameters.js";
-import { verifyUnderPendingAttemptLimit } from "./pending-attempt.js";
 import { createTotpRepository, type StoredTotpCredential } from "./repository.js";
 import { createTotpSecret, type TotpEnrollment, totpEnrollment } from "./secret.js";
 

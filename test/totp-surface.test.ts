@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
-import type {
-	PendingAuthenticationService,
-	PendingResolution,
+import {
+	type PendingAuthenticationService,
+	type PendingResolution,
+	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/pending/index.js";
 import {
 	createRecoveryCodeRepository,
@@ -31,7 +32,6 @@ import {
 	type TotpRepositoryOptions,
 	type TotpService,
 	type TotpServiceOptions,
-	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/totp/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";

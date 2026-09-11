@@ -1,3 +1,4 @@
+export { verifyUnderPendingAttemptLimit } from "./attempt-limit.js";
 export {
 	createSecondFactorCompletion,
 	type SecondFactorCompletion,
