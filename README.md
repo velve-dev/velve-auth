@@ -190,18 +190,24 @@ is now finished by `POST /factor/totp/verify`, `POST /factor/recovery/verify` or
 the two `POST /factor/webauthn/authenticate/*` rows — and those four, and only
 those four, read the five-minute pending cookie. The session that comes out
 records both factors; the pending row and the session are written in one
-transaction, so a failure between them cannot leave a spent state behind.
+transaction, so a failure between them cannot leave a spent state behind. Five
+failed attempts destroy the state and the sign-in begins again at the password —
+five per state and not per factor, so a wrong TOTP code and a refused assertion
+spend from the same five.
 
 **TOTP** is enrolled from a fresh session in two steps and removed with a code,
 because whoever can remove a factor without holding it has no factor. A code is
 accepted at most once per thirty-second step, so a code spent to confirm an
-enrolment cannot immediately be spent again to sign in.
+enrolment cannot immediately be spent again to sign in. A code from the step
+before or after is accepted too; `totp.stepToleranceInSteps: 0` narrows that to
+the current step alone.
 
-**Recovery codes** are ten codes of 160 bits, handed out once in plaintext and
-stored as HMACs. `POST /factor/recovery/generate` always replaces the whole set;
-`GET /factor/recovery/remaining` answers a count and nothing else. This is the
-way back into a username-only account, which is why that mode refuses to start
-without them.
+**Recovery codes** are ten codes of 160 bits by default, handed out once in
+plaintext and stored as HMACs; `recoveryCodes` sets how many and how they are
+grouped for printing. `POST /factor/recovery/generate` always replaces the whole
+set; `GET /factor/recovery/remaining` answers a count and nothing else. This is
+the way back into a username-only account, which is why that mode refuses to
+start without them.
 
 **Passkeys** sign in with no password at all: `POST /sign-in/passkey/start`
 names no account, and which account it was is learned from the authenticator's
