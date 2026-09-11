@@ -5062,6 +5062,7 @@ because nothing else would tell you.
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
+| `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1740) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
@@ -6551,12 +6552,15 @@ weakening that happens. `groupSize` is presentation only: what is stored is the
 HMAC of the canonical form, and `normaliseRecoveryCode` strips the separators, so
 a code printed under one grouping still redeems under another.
 
-Both are typed `number` and **a value that is not a positive whole number is read
-as the default**. A `count` of zero is an account with no way back in, which is
-the lockout `S-DEFAULT-4` exists to refuse; a `groupSize` of zero is a loop that
-never ends. Neither is bounded from above: a `count` of a million is a million
-codes, slowly, and that is the operator's configuration rather than an attacker's
-input (`E-1695`).
+Both are typed `number`, and **a value that is not a positive whole number
+refuses the start** — `VelveStartupError`, code `recovery_code_shape_unusable`. A
+`count` of zero is an account with no way back in, which is the lockout
+`S-DEFAULT-4` exists to refuse; a `groupSize` of zero is a loop that never ends.
+Neither is bounded from above: a `count` of a million is a million codes, slowly,
+and that is the operator's configuration rather than an attacker's input
+(`E-1695`). `recoveryCodeShapeOf` still reads such a value as the default, which
+no configured instance now reaches; it is what a caller of the module directly
+meets (`E-1740`).
 
 **The default grouping changed from eight to five**, which is A.8's stated
 default and what the library should have shipped. 160 bits are 32 base32 places,

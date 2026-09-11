@@ -132,6 +132,40 @@ describe("what else refuses to start", () => {
 		expect(addressesOnly.username).toBeUndefined();
 	});
 
+	/**
+	 * A.8 types both fields `number`, and E-1696 recorded the two values that type admits which
+	 * cannot be honoured falling back to the default in silence. `count: 0` in the mode that makes
+	 * the field mandatory is the lockout S-DEFAULT-4 refuses, reintroduced through the field.
+	 */
+	it.each([
+		["count", 0],
+		["count", -1],
+		["count", 1.5],
+		["groupSize", 0],
+		["groupSize", -4],
+		["groupSize", Number.NaN],
+	] as const)("refuses recoveryCodes.%s of %s rather than narrowing it", (field, configured) => {
+		expect(start({ recoveryCodes: { count: 10, groupSize: 5, [field]: configured } })).toThrow(
+			VelveStartupError,
+		);
+	});
+
+	it("names the unusable shape in a machine-readable code", () => {
+		try {
+			start({ recoveryCodes: { count: 0, groupSize: 5 } })();
+			throw new Error("the configuration was accepted");
+		} catch (failure) {
+			expect(failure).toBeInstanceOf(VelveStartupError);
+			expect((failure as VelveStartupError).code).toBe("recovery_code_shape_unusable");
+		}
+	});
+
+	it("starts on the shape A.8 declares and on an operator's own whole numbers", () => {
+		expect(start({ recoveryCodes: { count: 10, groupSize: 5 } })).not.toThrow();
+		expect(start({ recoveryCodes: { count: 16, groupSize: 8 } })).not.toThrow();
+		expect(start()).not.toThrow();
+	});
+
 	// S-DEFAULT-6: the floor is a floor; the refusal is the password module's and is reached here.
 	it("refuses argon2id parameters below the floor", () => {
 		expect(
