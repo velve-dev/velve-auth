@@ -96,9 +96,11 @@ export async function createTheMigrationRole(
 	const name = `${schema}_migrator`;
 	const password = randomBytes(24).toString("hex");
 	const [database] = await owner.query<{ name: string }>("SELECT current_database() AS name", []);
-	await owner.query(`CREATE ROLE ${name} LOGIN PASSWORD '${password}'`, []);
-	await owner.query(`GRANT CONNECT, CREATE ON DATABASE "${database?.name}" TO ${name}`, []);
-	await owner.query(`GRANT CREATE ON SCHEMA public TO ${name}`, []);
+	await overTheSharedCatalogues(owner, async () => {
+		await owner.query(`CREATE ROLE ${name} LOGIN PASSWORD '${password}'`, []);
+		await owner.query(`GRANT CONNECT, CREATE ON DATABASE "${database?.name}" TO ${name}`, []);
+		await owner.query(`GRANT CREATE ON SCHEMA public TO ${name}`, []);
+	});
 	await owner.query(
 		`DO $handover$
 		DECLARE owned record;
@@ -141,11 +143,34 @@ export async function asTheMigrationRole<T>(
 	}
 }
 
+/**
+ * `CREATE ROLE` writes `pg_authid`, and the two grants write the `pg_database` row of this database
+ * and the `pg_namespace` row of `public` — three tuples the whole cluster shares, where two writers
+ * meet as `tuple concurrently updated` rather than as a deadlock. Six files create such a role, and
+ * running them four times concurrently failed five cases (E-1614). An advisory lock on one key
+ * serialises them; it is session-held, which this connection can do because it is one socket.
+ */
+const SHARED_CATALOGUE_KEY = 0x7e10_c0de;
+
+async function overTheSharedCatalogues(
+	owner: TestConnection,
+	write: () => Promise<void>,
+): Promise<void> {
+	await owner.query("SELECT pg_advisory_lock($1)", [SHARED_CATALOGUE_KEY]);
+	try {
+		await write();
+	} finally {
+		await owner.query("SELECT pg_advisory_unlock($1)", [SHARED_CATALOGUE_KEY]);
+	}
+}
+
 /** Run after the schema is dropped: the role owns what is left of it. */
 export async function dropTheMigrationRole(
 	owner: TestConnection,
 	role: MigrationRole,
 ): Promise<void> {
-	await owner.query(`DROP OWNED BY ${role.name} CASCADE`, []).catch(() => undefined);
-	await owner.query(`DROP ROLE IF EXISTS ${role.name}`, []).catch(() => undefined);
+	await overTheSharedCatalogues(owner, async () => {
+		await owner.query(`DROP OWNED BY ${role.name} CASCADE`, []).catch(() => undefined);
+		await owner.query(`DROP ROLE IF EXISTS ${role.name}`, []).catch(() => undefined);
+	});
 }

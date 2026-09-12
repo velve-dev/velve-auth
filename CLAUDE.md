@@ -242,6 +242,9 @@ repair anything itself.
 - `pnpm check:lock-order` — every row lock is `FOR NO KEY UPDATE`, declares
   `velve.user`, and is written in `src/core/db/lock.ts`; the order two transactions take
   their locks in is decided by `test/lock-order-race.test.ts` and not here
+- `pnpm check:token-after-lock` — no transaction takes the account row and then
+  reaches `velve.one_time_token`, which is the second ordering §7 states and
+  nothing decided until now (E-1616)
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
@@ -968,6 +971,16 @@ pnpm check:lock-order
                  It decides no ordering and says so in its own output; the order
                  two transactions take their locks in is what
                  test/lock-order-race.test.ts drives
+pnpm check:token-after-lock
+                 velve.one_time_token is ordered before velve.user, so no
+                 transaction takes the account row and then reaches that table —
+                 raw SQL or either repository method, comments and imports
+                 stripped first so prose about the rule and a named import are
+                 not read as reaching for it. Refuses the run when it scanned no
+                 file or found no account lock, because both look like a clean
+                 tree. It decides a textual order within a file and not a
+                 transaction boundary, so it is coarser than the invariant and
+                 coarse in the safe direction (E-1616)
 pnpm check:reviewable
                  no NUL byte hides a file from review
 pnpm check:sql-collapse

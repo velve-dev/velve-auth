@@ -102,7 +102,14 @@ function ownersDeclaredBy(row: string): string[] {
 }
 
 function everyTrackedFile(): string[] {
-	const listed = execFileSync("git", ["ls-files", "-z"], { cwd: repositoryRoot, encoding: "utf8" });
+	// `--others --exclude-standard` as well as the index: a citation in a file that is written but
+	// not yet added is a citation, and reading only the index skipped one beside four it reported
+	// (E-1659).
+	const listed = execFileSync(
+		"git",
+		["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+		{ cwd: repositoryRoot, encoding: "utf8" },
+	);
 	return listed
 		.split("\0")
 		.filter(Boolean)
