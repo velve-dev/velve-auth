@@ -38,3 +38,29 @@ jobs:
       - run: pnpm build
       - name: Nightly tier
         run: pnpm test:nightly
+
+  # E-1841: the dependency audit was a point in time, and the next advisory against any of the six
+  # would have arrived in silence. It runs here rather than in the gate deliberately: a moderate
+  # finding in a development dependency should wake somebody, not block every pull request, and
+  # `pnpm audit` reads a database that changes without this repository changing — a gate step whose
+  # answer moves on its own turns an unrelated branch red for a reason its author cannot fix.
+  #
+  # It is a separate job so that a failing audit does not hide behind a failing tier, and reads
+  # `--prod` first: a finding in what ships is a different thing from one in the toolchain, and the
+  # two are reported apart rather than as one number (E-1845).
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: What ships
+        run: pnpm audit --prod
+
+      - name: What builds and tests it
+        run: pnpm audit
