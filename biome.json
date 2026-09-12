@@ -50,7 +50,7 @@
 			}
 		},
 		{
-			"includes": ["tools/check-*.mjs"],
+			"includes": ["tools/check-*.mjs", "tools/dist-tag.mjs"],
 			"linter": {
 				"rules": {
 					"suspicious": {
