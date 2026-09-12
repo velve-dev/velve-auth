@@ -9912,3 +9912,19 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Widening the glob to `tools/*.mjs`. (b) Renaming the tool to `check-dist-tag.mjs` so that it matches.
 **Reason.** (a) would exempt the five modules as well, which currently earn the rule by not needing it, and the rule is worth keeping where it bites. (b) buys a one-character config change with a name that lies — the tool decides a value and refuses a manifest it cannot read; it checks nothing. So the file is named for what it does and listed explicitly in the override.
 **Price.** The override now enumerates rather than describes, so the next printing entry point has to be added by hand or will fail lint the way this one did. Naming the glob for entry points is the better shape and is not taken here, because it means either renaming five files or writing a pattern that reads as an exception list anyway.
+
+### Reading the version from the manifest was half a repair
+`E-1806` · gate and infrastructure · a coupling that survived being fixed
+
+**Context.** `E-1776` found six cases in `test/release-tag-first-publish.test.ts` failing on a version bump because they passed the tag as a literal, and repaired them by reading the version from `package.json`. The bump to `1.0.0` reddened three of the same six again: the clause under test fires only where the version is a **prerelease**, and reading the manifest faithfully now reads a stable version.
+**Rejected.** Guarding the three cases on the manifest carrying a prerelease, so that they pass by not running on a stable tree.
+**Reason.** The repair was aimed at the symptom `E-1776` saw — a literal that disagrees with the manifest — and it survives a bump from one prerelease to the next, which is every bump this repository had made. It does not survive a change of *kind*, and that is the bump that was coming. The cases assert a behaviour of the tool, not a fact about this package, so the tool is copied beside a manifest the test writes, exactly as `test/dist-tag.test.ts` already does. Skipping on a stable tree is worse than either: from `1.0.0` onwards the tree is stable most of the time, so three cases would be quietly unrun for as long as that lasts.
+**Price.** The fixture writes a two-field manifest, so a field the tool starts reading has to be added there or the case refuses for a reason it is not about. And the cases no longer say anything about the version this repository is publishing — `test/dist-tag.test.ts` keeps one case that does, and this file now keeps none.
+
+### A command in §9 that the gate does not run needs a reason, and a list
+`E-1807` · gate and infrastructure · the exemption list, extended
+
+**Context.** `test/gate-commands.test.ts` compares the commands §9 documents against the steps `pnpm gate` runs, and the difference has to be a declared exemption — otherwise a name in §9 is documented, exempt from the gate, and run by nothing. `pnpm dist-tag` is the seventh such name.
+**Rejected.** Running it as a gate step so that no exemption is needed.
+**Reason.** It decides which dist-tag a *release* publishes under. An ordinary branch is not being published, so the gate running it would assert nothing and would answer `latest` or `next` to no one — which is the same argument `E-1461` made for `check:release-tag` and `check:published-version`, both already on this list. The exemption is not a bare listing either: a further case reads `release.yml` and fails if a name exempted on the grounds that the release runs it does not appear there.
+**Price.** The list is now seven long and its comment enumerates the reasons one by one, which is drifting towards a paragraph. Two of the seven are tiers, two are release checks, two are run by a person, and one derives a value; that is four kinds in one array, and nothing in the test distinguishes them beyond prose.
