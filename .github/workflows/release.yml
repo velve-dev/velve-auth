@@ -45,12 +45,16 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # `pnpm run <script>` and not `pnpm <script>`: pnpm prefers its own subcommand over a package
+      # script of the same name and says nothing, so `pnpm dist-tag` ran pnpm's registry query and
+      # the tool never executed (E-1881). The script is named so it collides with nothing either.
+      #
       # The step writes $GITHUB_OUTPUT from inside the tool, so a refusal is this step's exit
       # status. `echo "value=$(pnpm dist-tag)"` would exit zero on a refusal and pass an empty
       # tag to the publish, which is the hazard CLAUDE.md section 5 names.
       - name: Decide the dist-tag from the version
         id: decide
-        run: pnpm dist-tag
+        run: pnpm run release-dist-tag
 
   # ci.yml is called rather than copied, so "the whole gate" is the same definition and not a
   # second one that drifts — and its attribution job runs at publish time, which it would not

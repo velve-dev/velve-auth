@@ -1083,11 +1083,15 @@ pnpm check:release-tag
                  release.yml runs it before the publish;
                  pnpm gate does not, because an ordinary branch carries no tag
                  for it to check and it would refuse every one of them
-pnpm dist-tag    prints the dist-tag the version in package.json is published
+pnpm run release-dist-tag
+                 prints the dist-tag the version in package.json is published
                  under: latest for a stable version, next for a prerelease.
                  release.yml runs it in a job of its own and hands the answer to
                  the three jobs that need it, so the tag is derived once rather
-                 than written down in three places (E-1777). It writes
+                 than written down in three places (E-1777). It is invoked
+                 through `pnpm run` and named so that no pnpm subcommand shadows
+                 it: `pnpm dist-tag` runs pnpm's own registry query instead and
+                 says nothing about it (E-1881). It writes
                  $GITHUB_OUTPUT itself when that variable is set, so a refusal is
                  the step's exit status; refuses a manifest it cannot read as an
                  object or a version that is not semantic

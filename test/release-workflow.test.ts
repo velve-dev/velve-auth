@@ -141,7 +141,7 @@ describe("the release workflow", () => {
 	it("runs these commands and no others", () => {
 		expect(commands(release)).toStrictEqual([
 			"pnpm install --frozen-lockfile",
-			"pnpm dist-tag",
+			"pnpm run release-dist-tag",
 			"pnpm install --frozen-lockfile",
 			"pnpm build",
 			"pnpm test:nightly",
@@ -214,6 +214,18 @@ describe("the release workflow", () => {
 		}
 	});
 
+	/**
+	 * `pnpm <name>` prefers pnpm's own subcommand over a package script of the same name and says
+	 * nothing about it: `pnpm dist-tag` ran pnpm's registry query, the tool never executed, and the
+	 * step went green with nothing written to $GITHUB_OUTPUT (E-1881). `pnpm run <name>` cannot be
+	 * shadowed, so the step that produces a value for a later job is required to use it.
+	 */
+	it("produces the dist-tag through a form no pnpm subcommand can shadow", () => {
+		const decide = commands(job("dist_tag")).filter((command) => command.includes("dist-tag"));
+
+		expect(decide).toStrictEqual(["pnpm run release-dist-tag"]);
+	});
+
 	it("names only scripts package.json declares", () => {
 		const invoked = commands(release)
 			.filter((command) => command.startsWith("pnpm "))
@@ -222,7 +234,7 @@ describe("the release workflow", () => {
 					command
 						.split(/\s+/)
 						.slice(1)
-						.find((word) => !word.startsWith("-")) ?? "",
+						.find((word) => !word.startsWith("-") && word !== "run") ?? "",
 			)
 			.filter((script) => script !== "install");
 
