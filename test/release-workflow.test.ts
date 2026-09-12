@@ -47,6 +47,12 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8"
 };
 
 /** `needs: a` and `needs: [a, b]` are the same declaration, and the chain below reads both. */
+/** A comment is prose about the file, and the comment beside the job below states the very
+ * expression it warns against — reading it as code reports the repaired file as broken. */
+function withoutYamlComments(source: string): string {
+	return source.replace(/^\s*#.*$/gm, "");
+}
+
 function needsOf(region: string): string[] {
 	const match = /^\s+needs: (.+)$/m.exec(region);
 	if (match === null) {
@@ -80,7 +86,7 @@ describe("the release workflow", () => {
 
 	it("declares exactly the jobs a release is made of", () => {
 		expect([...releaseJobs.keys()]).toStrictEqual([
-			"dist-tag",
+			"dist_tag",
 			"ci",
 			"tiers",
 			"version",
@@ -127,7 +133,7 @@ describe("the release workflow", () => {
 			expect(needsOf(job(dependent))).toContain(required);
 		}
 		expect(job("ci")).not.toContain("needs:");
-		expect(needsOf(job("dist-tag"))).toStrictEqual([]);
+		expect(needsOf(job("dist_tag"))).toStrictEqual([]);
 	});
 
 	/** An allowlist of every command the workflow runs, in order. A step that is not a `pnpm`
@@ -176,6 +182,36 @@ describe("the release workflow", () => {
 		expect(references).toStrictEqual(["secrets.NPM_TOKEN"]);
 		expect(release).toMatch(/NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
 		expect(release).not.toMatch(/^\s+(?:- )?run: .*(NODE_AUTH_TOKEN|NPM_TOKEN)/m);
+	});
+
+	/**
+	 * `${{ needs.dist-tag.outputs.value }}` is not a property access: an Actions expression parses
+	 * the hyphen as subtraction, so it evaluates to the empty string, every job stays green and
+	 * the value arrives nowhere. The release that found it published nothing only because
+	 * `check:release-tag` refuses an empty dist-tag rather than guessing one (E-1880).
+	 */
+	it.each([ci, release])("dereferences no job id that an expression cannot read", (source) => {
+		const dereferenced = [
+			...withoutYamlComments(source).matchAll(/\bneeds\.([A-Za-z0-9_-]+)\./g),
+		].map((match) => String(match[1]));
+
+		expect(dereferenced.filter((id) => id.includes("-"))).toStrictEqual([]);
+	});
+
+	/** Every job an expression reads has to be a job the file declares, and one it waits for. */
+	it("reads outputs only from jobs it declares and depends on", () => {
+		const readers = [...releaseJobs].flatMap(([name, region]) =>
+			[...withoutYamlComments(region).matchAll(/\bneeds\.([A-Za-z0-9_-]+)\./g)].map((match) => ({
+				name,
+				required: String(match[1]),
+			})),
+		);
+
+		expect(readers.length).toBeGreaterThan(0);
+		for (const { name, required } of readers) {
+			expect(releaseJobs.has(required)).toBe(true);
+			expect(needsOf(job(name))).toContain(required);
+		}
 	});
 
 	it("names only scripts package.json declares", () => {
