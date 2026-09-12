@@ -29,7 +29,11 @@ jobs:
   # have published the stable line under the prerelease tag and left `latest` on the first
   # prerelease for good (E-1777). Decided once, in one job, because three copies of one line is
   # the drift E-1429 called out.
-  dist-tag:
+  #
+  # The job id carries an underscore and not a hyphen. `needs.dist-tag.outputs.value` is not a
+  # property access in an Actions expression — it parses as `needs.dist` minus `tag` — so it
+  # evaluates to the empty string, every job stays green, and the value arrives nowhere (E-1880).
+  dist_tag:
     runs-on: ubuntu-latest
     outputs:
       value: ${{ steps.decide.outputs.value }}
@@ -94,10 +98,10 @@ jobs:
   # A tag saying one version over a tree saying another publishes the wrong artefact under the
   # right name, and nothing else in this repository reads the version at all.
   version:
-    needs: [tiers, dist-tag]
+    needs: [tiers, dist_tag]
     runs-on: ubuntu-latest
     env:
-      DIST_TAG: ${{ needs.dist-tag.outputs.value }}
+      DIST_TAG: ${{ needs.dist_tag.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -117,10 +121,10 @@ jobs:
         run: npm publish --dry-run --provenance --access public --tag "$DIST_TAG"
 
   publish:
-    needs: [version, dist-tag]
+    needs: [version, dist_tag]
     runs-on: ubuntu-latest
     env:
-      DIST_TAG: ${{ needs.dist-tag.outputs.value }}
+      DIST_TAG: ${{ needs.dist_tag.outputs.value }}
     permissions:
       contents: read
       # npm mints the provenance attestation from this token, and it is what trusted publishing
@@ -157,10 +161,10 @@ jobs:
   # The publish step exiting zero is not the version being resolvable, which is the step people
   # leave out. This asks the registry for the version, for the dist-tag and for the attestation.
   verify:
-    needs: [publish, dist-tag]
+    needs: [publish, dist_tag]
     runs-on: ubuntu-latest
     env:
-      DIST_TAG: ${{ needs.dist-tag.outputs.value }}
+      DIST_TAG: ${{ needs.dist_tag.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

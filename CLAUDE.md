@@ -690,6 +690,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1770 … E-1799 | gate and infrastructure, twelfth range — the first publish of the package, and the latest tag npm gave it anyway. Twelfth over the eleven rows of this table that named gate and infrastructure at 0a938ef; fifty-fifth row overall, counted over the fifty-four standing there rather than taken from the row above it |
 | E-1800 … E-1839 | gate and infrastructure, thirteenth range — the stable 1.0.0, and the dist-tag that had been written down rather than derived. Thirteenth over the twelve rows of this table that named gate and infrastructure at 846e72a; fifty-sixth row overall, counted over the fifty-five standing there rather than taken from the row above it |
 | E-1840 … E-1879 | outside the waves · `dependency-audit` — the six core dependencies held against the advisory database, the unmaintained test-runner major, and the egress promise nothing enforced. Fifty-seventh row overall, counted over the fifty-six standing at eb4d4ac |
+| E-1880 … E-1899 | gate and infrastructure, fourteenth range — the release expression that evaluated to nothing. Fifty-eighth row overall, counted over the fifty-seven standing at dd5c938 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
