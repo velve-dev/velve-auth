@@ -49,7 +49,7 @@ describe("nothing leaves the operator's infrastructure (E-1844)", () => {
 	 * authenticator, the single-label base `new URL(path, base)` normalises against, and loopback.
 	 */
 	it.each([
-		"const uri = `otpauth://totp/${label}`;",
+		'const uri = "otpauth://totp/Velve:jg";',
 		'const PATH_NORMALISATION_PROBE = "https://velve-auth";',
 		'const local = "http://127.0.0.1:5432";',
 	])("does not read %s as a destination", (written) => {
