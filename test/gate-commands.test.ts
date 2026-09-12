@@ -23,7 +23,7 @@ const RUN_BY_THE_RELEASE_WORKFLOW = [
 	"test:release",
 	"check:release-tag",
 	"check:published-version",
-	"dist-tag",
+	"release-dist-tag",
 ];
 const NOT_RUN_BY_THE_GATE = [...RUN_BY_A_PERSON, ...RUN_BY_THE_RELEASE_WORKFLOW];
 
@@ -82,7 +82,7 @@ function jobRegion(source: string, name: string): string {
 /** Anchored to the start of a YAML scalar, and reading the script name rather than searching
  * for it: `workflow.includes("run: pnpm test")` is satisfied by a step commented out and by
  * `run: pnpm test:release`, and both of those remove the step from CI while staying green. */
-const WORKFLOW_STEP = /^[ \t]*(?:- )?run: pnpm ([\w:-]+)/gm;
+const WORKFLOW_STEP = /^[ \t]*(?:- )?run: pnpm (?:run )?([\w:-]+)/gm;
 
 function section(heading: string): string {
 	const start = rules.indexOf(heading);
@@ -100,8 +100,8 @@ const gateSteps = invoked(manifest.scripts.gate ?? "");
 const gateList = [...section("### The main gate").matchAll(/`pnpm ([\w:-]+)`/g)].map((match) =>
 	String(match[1]),
 );
-const commandList = [...section("## 9. Commands").matchAll(/^pnpm ([\w:-]+)/gm)].map((match) =>
-	String(match[1]),
+const commandList = [...section("## 9. Commands").matchAll(/^pnpm (?:run )?([\w:-]+)/gm)].map(
+	(match) => String(match[1]),
 );
 
 const sorted = (names: string[]) => [...new Set(names)].sort();

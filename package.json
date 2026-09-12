@@ -92,7 +92,7 @@
 		"check:skill-version": "node tools/check-skill-version.mjs",
 		"check:sql-collapse": "node tools/check-sql-collapse.mjs",
 		"check:token-after-lock": "node tools/check-token-after-lock.mjs",
-		"dist-tag": "node tools/dist-tag.mjs",
+		"release-dist-tag": "node tools/dist-tag.mjs",
 		"format": "biome check --write .",
 		"gate": "pnpm build && pnpm typecheck && pnpm lint && pnpm check:reviewable && pnpm check:session-owner && pnpm check:lock-order && pnpm check:token-after-lock && pnpm check:egress && pnpm check:sql-collapse && pnpm check:log-append && pnpm check:skill-version && pnpm check:codex-skill && pnpm check:attribution && pnpm knip && pnpm test && pnpm publint && pnpm attw",
 		"knip": "knip",
