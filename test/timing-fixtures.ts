@@ -59,7 +59,7 @@ export type TimingArm = "present" | "absent" | "controlQuiet" | "controlPlanted"
  * statement about the machine — and reporting that as an unresolvable leak is what a release
  * blocked on this case then reads as a finding (E-1883).
  */
-export type SamplingStopped = "resolved" | "budget" | "maximum";
+type SamplingStopped = "resolved" | "budget" | "maximum";
 
 interface TimingSamples {
 	readonly present: number[];
