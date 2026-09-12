@@ -119,9 +119,12 @@ if (distTags !== null) {
 			`The dist-tag ${DIST_TAG} points at ${distTags[DIST_TAG] ?? "nothing"} and not at ${version}.`,
 		);
 	}
-	if (PRERELEASE.test(version) && distTags.latest === version) {
+	/** Whether `latest` names a prerelease at all, rather than whether it names this one: it asked
+	 * the narrower question until 1.0.0, and was blind to `latest` being stuck on an older
+	 * prerelease while `next` moved past it (E-1774). */
+	if (typeof distTags.latest === "string" && PRERELEASE.test(distTags.latest)) {
 		findings.push(
-			`${version} is a prerelease and latest points at it, so a bare install of ${name} resolves to it.`,
+			`latest points at ${distTags.latest}, which is a prerelease, so a bare install of ${name} resolves to one.`,
 		);
 	}
 }

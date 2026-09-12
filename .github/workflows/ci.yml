@@ -96,6 +96,9 @@ jobs:
       - name: Lock order
         run: pnpm check:lock-order
 
+      - name: The token table is ordered before the account row
+        run: pnpm check:token-after-lock
+
       - name: SQL survives normalisation
         run: pnpm check:sql-collapse
 

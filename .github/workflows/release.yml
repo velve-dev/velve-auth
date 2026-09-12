@@ -21,10 +21,33 @@ permissions:
   contents: read
 
 env:
-  DIST_TAG: next
   REGISTRY_URL: https://registry.npmjs.org
 
 jobs:
+  # The dist-tag follows from the version rather than being written down: a prerelease goes to
+  # `next` and a stable version takes `latest`. It was the literal `next` until 1.0.0, which would
+  # have published the stable line under the prerelease tag and left `latest` on the first
+  # prerelease for good (E-1777). Decided once, in one job, because three copies of one line is
+  # the drift E-1429 called out.
+  dist-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.decide.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The step writes $GITHUB_OUTPUT from inside the tool, so a refusal is this step's exit
+      # status. `echo "value=$(pnpm dist-tag)"` would exit zero on a refusal and pass an empty
+      # tag to the publish, which is the hazard CLAUDE.md section 5 names.
+      - name: Decide the dist-tag from the version
+        id: decide
+        run: pnpm dist-tag
+
   # ci.yml is called rather than copied, so "the whole gate" is the same definition and not a
   # second one that drifts — and its attribution job runs at publish time, which it would not
   # otherwise, because a tag ref matches neither of ci.yml's own triggers. A release that skips
@@ -71,8 +94,10 @@ jobs:
   # A tag saying one version over a tree saying another publishes the wrong artefact under the
   # right name, and nothing else in this repository reads the version at all.
   version:
-    needs: tiers
+    needs: [tiers, dist-tag]
     runs-on: ubuntu-latest
+    env:
+      DIST_TAG: ${{ needs.dist-tag.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -92,8 +117,10 @@ jobs:
         run: npm publish --dry-run --provenance --access public --tag "$DIST_TAG"
 
   publish:
-    needs: version
+    needs: [version, dist-tag]
     runs-on: ubuntu-latest
+    env:
+      DIST_TAG: ${{ needs.dist-tag.outputs.value }}
     permissions:
       contents: read
       # npm mints the provenance attestation from this token, and it is what trusted publishing
@@ -130,8 +157,10 @@ jobs:
   # The publish step exiting zero is not the version being resolvable, which is the step people
   # leave out. This asks the registry for the version, for the dist-tag and for the attestation.
   verify:
-    needs: publish
+    needs: [publish, dist-tag]
     runs-on: ubuntu-latest
+    env:
+      DIST_TAG: ${{ needs.dist-tag.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -242,6 +242,9 @@ repair anything itself.
 - `pnpm check:lock-order` — every row lock is `FOR NO KEY UPDATE`, declares
   `velve.user`, and is written in `src/core/db/lock.ts`; the order two transactions take
   their locks in is decided by `test/lock-order-race.test.ts` and not here
+- `pnpm check:token-after-lock` — no transaction takes the account row and then
+  reaches `velve.one_time_token`, which is the second ordering §7 states and
+  nothing decided until now (E-1616)
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
@@ -682,6 +685,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1690 … E-1739 | outside the waves · `second-factor` — the three second-factor defects an audit ranked before a stable release. Fifty-third row of this table, counted over the fifty-two standing at f1e9654 rather than taken from the row above it, for the reason that row gives |
 | E-1740 … E-1769 | outside the waves · `factor-startup` — the four residues `second-factor` reported and could not touch, all of them in files §5 put outside its set. Fifty-fourth row of this table, counted over the fifty-three standing at 8cebfdd rather than taken from the row above it, for the reason that row gives |
 | E-1770 … E-1799 | gate and infrastructure, twelfth range — the first publish of the package, and the latest tag npm gave it anyway. Twelfth over the eleven rows of this table that named gate and infrastructure at 0a938ef; fifty-fifth row overall, counted over the fifty-four standing there rather than taken from the row above it |
+| E-1800 … E-1839 | gate and infrastructure, thirteenth range — the stable 1.0.0, and the dist-tag that had been written down rather than derived. Thirteenth over the twelve rows of this table that named gate and infrastructure at 846e72a; fifty-sixth row overall, counted over the fifty-five standing there rather than taken from the row above it |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -967,6 +971,16 @@ pnpm check:lock-order
                  It decides no ordering and says so in its own output; the order
                  two transactions take their locks in is what
                  test/lock-order-race.test.ts drives
+pnpm check:token-after-lock
+                 velve.one_time_token is ordered before velve.user, so no
+                 transaction takes the account row and then reaches that table —
+                 raw SQL or either repository method, comments and imports
+                 stripped first so prose about the rule and a named import are
+                 not read as reaching for it. Refuses the run when it scanned no
+                 file or found no account lock, because both look like a clean
+                 tree. It decides a textual order within a file and not a
+                 transaction boundary, so it is coarser than the invariant and
+                 coarse in the safe direction (E-1616)
 pnpm check:reviewable
                  no NUL byte hides a file from review
 pnpm check:sql-collapse
@@ -1051,10 +1065,18 @@ pnpm check:release-tag
                  release.yml runs it before the publish;
                  pnpm gate does not, because an ordinary branch carries no tag
                  for it to check and it would refuse every one of them
+pnpm dist-tag    prints the dist-tag the version in package.json is published
+                 under: latest for a stable version, next for a prerelease.
+                 release.yml runs it in a job of its own and hands the answer to
+                 the three jobs that need it, so the tag is derived once rather
+                 than written down in three places (E-1777). It writes
+                 $GITHUB_OUTPUT itself when that variable is set, so a refusal is
+                 the step's exit status; refuses a manifest it cannot read as an
+                 object or a version that is not semantic
 pnpm check:published-version
                  the registry resolves the version package.json states, the
-                 dist-tag points at that version, and it carries a provenance
-                 attestation. Takes the dist-tag as its argument; VELVE_REGISTRY
+                 dist-tag points at that version, latest does not point at any
+                 prerelease, and it carries a provenance attestation. Takes the dist-tag as its argument; VELVE_REGISTRY
                  names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS
                  how long it polls for a publish to become readable. Tells a
                  registry saying the version is absent from one that could not be

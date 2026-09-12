@@ -46,6 +46,21 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8"
 	scripts: Record<string, string>;
 };
 
+/** `needs: a` and `needs: [a, b]` are the same declaration, and the chain below reads both. */
+function needsOf(region: string): string[] {
+	const match = /^\s+needs: (.+)$/m.exec(region);
+	if (match === null) {
+		return [];
+	}
+	const declared = String(match[1]).trim();
+	return declared.startsWith("[")
+		? declared
+				.slice(1, -1)
+				.split(",")
+				.map((name) => name.trim())
+		: [declared];
+}
+
 function job(name: string): string {
 	const region = releaseJobs.get(name);
 	if (region === undefined) {
@@ -64,7 +79,14 @@ describe("the release workflow", () => {
 	});
 
 	it("declares exactly the jobs a release is made of", () => {
-		expect([...releaseJobs.keys()]).toStrictEqual(["ci", "tiers", "version", "publish", "verify"]);
+		expect([...releaseJobs.keys()]).toStrictEqual([
+			"dist-tag",
+			"ci",
+			"tiers",
+			"version",
+			"publish",
+			"verify",
+		]);
 	});
 
 	/** The release runs everything ci.yml runs because it runs ci.yml, rather than because a
@@ -102,15 +124,18 @@ describe("the release workflow", () => {
 		];
 
 		for (const [dependent, required] of chain) {
-			expect(job(dependent)).toContain(`needs: ${required}`);
+			expect(needsOf(job(dependent))).toContain(required);
 		}
 		expect(job("ci")).not.toContain("needs:");
+		expect(needsOf(job("dist-tag"))).toStrictEqual([]);
 	});
 
 	/** An allowlist of every command the workflow runs, in order. A step that is not a `pnpm`
 	 * line is a step like any other here, which is the point: the job below it publishes. */
 	it("runs these commands and no others", () => {
 		expect(commands(release)).toStrictEqual([
+			"pnpm install --frozen-lockfile",
+			"pnpm dist-tag",
 			"pnpm install --frozen-lockfile",
 			"pnpm build",
 			"pnpm test:nightly",
@@ -134,7 +159,8 @@ describe("the release workflow", () => {
 		expect(commands(job("publish"))).toContain(
 			'npm publish --provenance --access public --tag "$DIST_TAG"',
 		);
-		expect(release).toContain("DIST_TAG: next");
+		expect(release).not.toContain("DIST_TAG: next");
+		expect(release).not.toContain("DIST_TAG: latest");
 		expect(job("publish")).toContain("id-token: write");
 	});
 
@@ -155,7 +181,13 @@ describe("the release workflow", () => {
 	it("names only scripts package.json declares", () => {
 		const invoked = commands(release)
 			.filter((command) => command.startsWith("pnpm "))
-			.map((command) => String(command.split(/\s+/)[1]))
+			.map(
+				(command) =>
+					command
+						.split(/\s+/)
+						.slice(1)
+						.find((word) => !word.startsWith("-")) ?? "",
+			)
 			.filter((script) => script !== "install");
 
 		expect(invoked.length).toBeGreaterThanOrEqual(7);

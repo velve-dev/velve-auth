@@ -9855,3 +9855,108 @@ One consequence of restating in place that the rule does not mention, and that s
 **The second run found two more, and one of them is a third home for the version.** `test/api-surface.test.ts` is the expected one — the shipped declaration carries `VELVE_AUTH_VERSION`'s literal type, so a bump is a surface change and the snapshot is re-recorded. `test/db-subpath-exports.test.ts` is not: it asserted `expect(VELVE_AUTH_VERSION).toBe("1.0.0-next.1")` in a case about subpath exports, so the version had a home in a test literal that nothing named. It reads the manifest now. The version therefore lives in **four** places — the manifest, `src/index.ts`, the committed declaration snapshot, and until now that literal — and only the first two are edited on purpose.
 
 **Price.** A release still costs two deliberate edits and one re-recording, in three files, and what makes that safe is a test rather than a mechanism — so a release cut with `pnpm test` skipped ships an entry point reporting the previous version. And the six repaired cases now assert against a value they read from the tree, which is weaker than a literal: if the manifest and the tool ever disagreed about what a version *is*, these cases would agree with both. That is the trade a fixture read from the subject always makes, taken here because the alternative had just cost seven false reds.
+
+
+### A range for the stable release
+`E-1800` · gate and infrastructure · numbering, added here
+
+**Context.** `1.0.0` takes `latest` from the prerelease it has been stuck on and freezes the public surface under semver. Getting there needs a change to the release workflow, a version bump through its homes, a rewritten `README.md`, and the clause `E-1774` reported and did not repair.
+**Rejected.** Continuing in the twelfth gate range, which has twenty-three numbers free.
+**Reason.** §6 says a range is assigned before its writer starts and is not changed afterwards. The twelfth gate range was cut for the first publish and its aftermath; this is a different piece of work that happens to share an owner, and reaching into a merged range's tail is the borrowing that rule forbids.
+**Price.** Forty numbers for one release, which will leave a gap. Fifty-sixth row of the table, thirteenth of the rows that name gate and infrastructure. *Added after the fact: this entry first named that range as a span of numbers, which `test/decision-log.test.ts` reads as a citation of its last number — the same trap `E-1770` records hitting, hit again by the hand that wrote it down. The range is named in words instead.*
+
+### The dist-tag was written down, and a stable release would have gone out under the prerelease tag
+`E-1777` · gate and infrastructure · the literal that only worked while the answer was constant
+
+**Context.** `release.yml` carried `DIST_TAG: next` as a workflow-level literal, and three jobs read it — the tag check, the publish, and the registry verification. It was right for every release so far because every release so far was a prerelease. **For `1.0.0` it is wrong in the worst available way:** the stable line would have been published under `next`, `latest` would have stayed on `1.0.0-next.1` for good, and every job would have been green, because `check:release-tag` refuses a prerelease under `latest` and has nothing to say about a stable version under `next`.
+**Rejected.** (a) Editing the literal to `latest` for this release. (b) Computing it in each of the three jobs. (c) Deriving it from the tag rather than from `package.json`.
+**Reason.** (a) moves the fault rather than removing it — the next prerelease would then publish under `latest`, which `check:release-tag` does refuse, so the failure would at least be loud; it is still a literal that has to be right by hand every time. (b) is three copies of one line, which is the drift `E-1429` called out when it made the release call `ci.yml` rather than copy it. So one job decides it, exposes it as an output, and the three consumers carry it as their own `DIST_TAG` — every `run:` line in the file is unchanged. (c) is refused because at the moment the tag is decided nothing has yet established that the tag names the version; `check:release-tag` does that, and it runs in `version`, which is downstream. The manifest is the thing being published.
+**Price.** A fourth job on the critical path of every release, for one string. The job installs dependencies to run one script, which is most of its minute. And `needs:` grew from a scalar to a list in three places, which `test/release-workflow.test.ts` read as text — the chain assertion now parses both forms, and a reader comparing the two files will find the test cleverer than it was.
+
+### The tool writes the step output, because a command substitution exits zero
+`E-1801` · gate and infrastructure · a hazard avoided rather than met
+
+**Context.** The obvious shape for the new step is `echo "value=$(pnpm dist-tag)" >> "$GITHUB_OUTPUT"`. Under the shell GitHub Actions runs, `echo` succeeds whatever the substitution did, so a refusal inside the tool becomes an empty `value=` and the publish proceeds under an empty `--tag`.
+**Rejected.** (a) The `echo` form with a `case` guard on the result in a `run: |` block. (b) Trusting the substitution.
+**Reason.** This is the *"shell condition testing a pipeline that exits zero on empty input"* that `CLAUDE.md` §5 names as one of three checks this repository has already had to repair. (a) works, and was written and then withdrawn for a reason worth recording: **`commands()` in `test/release-workflow.test.ts` captures `run: |` as the single string `|`**, so the allowlist that exists to enumerate every command the publish workflow runs would have shown `"|"` and been blind to the five lines under it. The tool appends to `$GITHUB_OUTPUT` itself instead, the step is one line, and the allowlist still sees it.
+**Price.** The tool now knows about an environment variable belonging to a CI system, which is a coupling it did not have; it is guarded on the variable being set, so the local `pnpm dist-tag` is unaffected. **And the blind spot is still there** — `run: |` in either workflow is invisible to that allowlist, and this branch avoided it rather than closing it. Closing it means expanding block scalars in `commands()`, which is ten lines nobody has written.
+
+### The clause asked whether latest is this version, and the answer stopped mattering
+`E-1802` · gate and infrastructure · `E-1774`, closed
+
+**Context.** `check:published-version` refused on `PRERELEASE.test(version) && distTags.latest === version`. `E-1774` recorded that publishing `1.0.0-next.2` while `latest` sat on `1.0.0-next.1` is green under that clause — the two are unequal — while `latest` goes on naming a prerelease, and now an older one than `next`.
+**Rejected.** Leaving it until something forced it, which is what `E-1774` chose.
+**Reason.** `E-1774` declined the widening on the ground that it would have refused the release it was found on, and that ground is gone: after this release `latest` names `1.0.0`, so the widened clause passes. It now asks whether `latest` names a prerelease at all. That subsumes the old question — if `latest` is this version and this version is a prerelease, `latest` is a prerelease — so nothing it used to catch is lost, and the plant confirms it: restoring the narrow clause reddens exactly one of four cases, the one it was blind to, predicted as one.
+**Price.** **The first publish of any package is now permanently red, and was already.** npm gives `latest` to a first version whatever `--tag` says, so a package whose first release is a prerelease fails this check and cannot be made to pass — under the narrow clause too, because on a first publish `latest` *is* this version. The widening does not create that case and does not fix it; `E-1771`'s pre-publish report is the only thing that speaks before the fact, and it reports rather than refuses.
+
+### A stable version with a frozen surface and no track record
+`E-1803` · gate and infrastructure · the claim 1.0.0 makes, and the one it does not
+
+**Context.** `1.0.0` is a semver promise about the surface: it does not change again without a major version. `README.md` said of the prereleases that *"nothing here has been run by anyone outside this repository yet"*, which is still true on the day the stable version is cut.
+**Rejected.** (a) Dropping the sentence, on the ground that a stable version should not advertise inexperience. (b) Staying on prereleases until someone outside has run it.
+**Reason.** (a) is the one that would have been dishonest, and the two claims are not the same claim: the interface is specified, frozen and tested, and that is what the version number is about; how much production traffic has crossed it is a different fact and is the reader's to weigh. The README now separates them in so many words — what `1.0.0` commits the package to, and what it does not claim. (b) was put and declined: the prerelease had no external users either, so waiting on the prereleases waits on nothing, and `latest` stays stuck on `1.0.0-next.1` for as long as it waits.
+**Price.** The surface is frozen against a design nobody outside has used, so the first outside report that the shape is wrong arrives against a promise rather than against a prerelease, and costs a major version to answer. That is the trade this entry exists to name, and it is the reason the README keeps the sentence rather than the reason it drops it.
+
+### The exit status was swallowed by a pipe, on a branch whose own notes warn about it
+`E-1804` · gate and infrastructure · a process failure, disclosed
+
+**Context.** The commit that added `tools/dist-tag.mjs` was made with `pnpm lint 2>&1|tail -2 && pnpm typecheck 2>&1|tail -2 && git add -A && git commit`. `pnpm lint` **failed** — `noConsole` on the new file, which `biome.json` exempts for `tools/check-*.mjs` and the new tool does not match — and the chain continued anyway, because the exit status of a pipeline is its last command's and `tail` succeeds. The commit was pushed red.
+**Rejected.** Amending the commit and force-pushing, so that the branch shows no failure.
+**Reason.** `CLAUDE.md` §5 names this exact shape — *"a shell condition testing a pipeline that exits zero on empty input"* — as one of three the repository has had to repair, and `E-1700` records the same hand making the same mistake with `pnpm knip 2>&1 | tail -3 && git commit` one branch earlier. Twice is not an accident and rewriting it out of the history would make it look like once. The repair is a second commit.
+**Price.** The branch carries a commit that did not pass lint, which a reader bisecting will find. The underlying habit is unrepaired — nothing stops the next `| tail` in a chain, and the gate catches it only at the end, which is where it caught it this time.
+
+### An override named for checks whose subject is entry points
+`E-1805` · gate and infrastructure · an adjacent finding, repaired narrowly
+
+**Context.** `biome.json` turns `noConsole` off for `tools/check-*.mjs`. The tools directory holds two kinds of file: entry points that talk to the operator, and modules the entry points import — `source-text.mjs`, `lock-order.mjs`, `sql-collapse.mjs`, `session-owner-update.mjs`, `codex-skill.mjs`, none of which contains a `console` call. So the glob's real subject is *an entry point that prints*, and `check-` is the prefix every such file happened to carry until now.
+**Rejected.** (a) Widening the glob to `tools/*.mjs`. (b) Renaming the tool to `check-dist-tag.mjs` so that it matches.
+**Reason.** (a) would exempt the five modules as well, which currently earn the rule by not needing it, and the rule is worth keeping where it bites. (b) buys a one-character config change with a name that lies — the tool decides a value and refuses a manifest it cannot read; it checks nothing. So the file is named for what it does and listed explicitly in the override.
+**Price.** The override now enumerates rather than describes, so the next printing entry point has to be added by hand or will fail lint the way this one did. Naming the glob for entry points is the better shape and is not taken here, because it means either renaming five files or writing a pattern that reads as an exception list anyway.
+
+### Reading the version from the manifest was half a repair
+`E-1806` · gate and infrastructure · a coupling that survived being fixed
+
+**Context.** `E-1776` found six cases in `test/release-tag-first-publish.test.ts` failing on a version bump because they passed the tag as a literal, and repaired them by reading the version from `package.json`. The bump to `1.0.0` reddened three of the same six again: the clause under test fires only where the version is a **prerelease**, and reading the manifest faithfully now reads a stable version.
+**Rejected.** Guarding the three cases on the manifest carrying a prerelease, so that they pass by not running on a stable tree.
+**Reason.** The repair was aimed at the symptom `E-1776` saw — a literal that disagrees with the manifest — and it survives a bump from one prerelease to the next, which is every bump this repository had made. It does not survive a change of *kind*, and that is the bump that was coming. The cases assert a behaviour of the tool, not a fact about this package, so the tool is copied beside a manifest the test writes, exactly as `test/dist-tag.test.ts` already does. Skipping on a stable tree is worse than either: from `1.0.0` onwards the tree is stable most of the time, so three cases would be quietly unrun for as long as that lasts.
+**Price.** The fixture writes a two-field manifest, so a field the tool starts reading has to be added there or the case refuses for a reason it is not about. And the cases no longer say anything about the version this repository is publishing — `test/dist-tag.test.ts` keeps one case that does, and this file now keeps none.
+
+### A command in §9 that the gate does not run needs a reason, and a list
+`E-1807` · gate and infrastructure · the exemption list, extended
+
+**Context.** `test/gate-commands.test.ts` compares the commands §9 documents against the steps `pnpm gate` runs, and the difference has to be a declared exemption — otherwise a name in §9 is documented, exempt from the gate, and run by nothing. `pnpm dist-tag` is the seventh such name.
+**Rejected.** Running it as a gate step so that no exemption is needed.
+**Reason.** It decides which dist-tag a *release* publishes under. An ordinary branch is not being published, so the gate running it would assert nothing and would answer `latest` or `next` to no one — which is the same argument `E-1461` made for `check:release-tag` and `check:published-version`, both already on this list. The exemption is not a bare listing either: a further case reads `release.yml` and fails if a name exempted on the grounds that the release runs it does not appear there.
+**Price.** The list is now seven long and its comment enumerates the reasons one by one, which is drifting towards a paragraph. Two of the seven are tiers, two are release checks, two are run by a person, and one derives a value; that is four kinds in one array, and nothing in the test distinguishes them beyond prose.
+
+### The ordering held by a reading now has a check
+`E-1808` · gate and infrastructure · `E-1616`, closed
+
+**Context.** §7 states a second ordering — `velve.one_time_token` before `velve.user` — and `E-1616` established it by reading every site that names the table and recording that **nothing in code decides it**. A transaction that took the account row and then wrote `one_time_token` would close a cycle with every redemption in the library and would pass `check:lock-order`, the cycle analyser (which exempts the artefact tables by name, for exactly the reason that makes this ordering necessary) and every case in the tree.
+**Rejected.** (a) A transaction-accurate check. (b) Module-level disjointness — no file that names the token table may also lock the account.
+**Reason.** (a) needs a call graph and a notion of transaction boundary that no scan in this repository has, and `E-1607` already records that no static check here can decide the general question. (b) is what the invariant looks like from `E-1616`'s own summary and it is **wrong**: four redeem flows reach both, in the safe order, so disjointness would refuse the shipped tree. What is decidable is the **order within a file**: after the first `lockAccountRow` call, no reach for the table — raw SQL naming it, or either of the two repository methods that are the only other way there. Comments are stripped with `tools/source-text.mjs`, because `src/core/db/lock.ts` states this very rule in prose naming the table, and imports are stripped, because every caller names `lockAccountRow` before calling it. Measured on the shipped tree: 11 account locks over 171 files, none followed by a reach.
+**Price.** **It is coarser than the invariant, in the safe direction.** A file could lock the account in one function and legitimately write a token in another, later, function in a different transaction, and this refuses it; none does today, and the resolution is a person reading the refusal. It is also blind to a reach through a helper it cannot name — a third module wrapping `consumeOneTimeToken` under another name would defeat it, which is the residue `E-1616`'s reading covered and a scan does not.
+
+### Two plants, two shapes of the same cycle
+`E-1809` · gate and infrastructure · the check proved against the fault
+
+**Context.** §5 trusts a check only after it has been made to fail on a planted fault. The fault has two shapes, because there are two ways to reach the table.
+**Rejected.** Planting only the raw SQL, which is the shape `E-1616` describes and the less likely one — no flow in this library writes that table directly.
+**Reason.** Baseline first: exit 0 on the committed tree with the sentence naming 11 locks over 171 files. Plant A, a `DELETE FROM velve.one_time_token` after `lockAccountRow` in `redeemReset`'s `replacePassword`: reported as `reaches one_time_token`, exit 1, predicted. Plant B, `tokens.replaceOneTimeToken(...)` in the same position: reported as `reaches replaceOneTimeToken`, exit 1, predicted. Restored, exit 0 with the same sentence. The eight unit cases cover the permitted order as well, so a check that refused everything would fail them.
+**Price.** Neither plant establishes anything about the helper-wrapping residue named above — both name the thing the scan looks for, which is what a plant of a scan can do and the limit `E-1701` states of this method generally.
+
+### The citation check could not see a file that was not added
+`E-1810` · gate and infrastructure · `E-1659`, closed
+
+**Context.** `everyTrackedFile()` in `test/decision-log.test.ts` ran `git ls-files -z` with no `--others`, so a file written and not yet added was not in the corpus. `E-1659` found it the way such things are found: the same run reported four dangling citations from tracked files and silently skipped a fifth beside them.
+**Rejected.** Nothing.
+**Reason.** `--cached --others --exclude-standard`, which is the argument list `tools/lock-order.mjs` already uses for the same reason. Proved by planting an untracked test file citing a decision number no entry carries: red with the repair, **green without it**, which is the state the check was in. Writing that number here rather than describing it would have made this entry a dangling citation of its own, which the repaired check duly reported.
+**Price.** The check now reads files `.gitignore` does not cover but git does not track either — a scratch file in the tree cites into the log and is held to it. That is the intended behaviour and it is also a way to be refused by a file nobody meant to commit.
+
+### The harness wrote three cluster-wide catalogue rows without serialising
+`E-1811` · gate and infrastructure · `E-1614`, closed in the harness
+
+**Context.** `createTheMigrationRole` runs `CREATE ROLE`, `GRANT … ON DATABASE` and `GRANT CREATE ON SCHEMA public`, which write `pg_authid`, this database's `pg_database` row and the `pg_namespace` row of `public` — three tuples the whole cluster shares. Six test files create such a role. `E-1614` ran them four times concurrently at load 20 and five cases failed with `tuple concurrently updated`; it declined the repair as a property of the harness rather than of the library.
+**Rejected.** Repairing it in the library, which has nothing to do with it, and giving each file its own database.
+**Reason.** Two writers of a shared catalogue tuple meet as `tuple concurrently updated` rather than as a deadlock, so the answer is a mutex and not an ordering. One session-held advisory lock on a fixed key wraps the three writes and the two that give them back; the test connection is a single socket, so a session lock is held across the statements rather than released with a transaction. It is in the fixture because the fixture is what races.
+**Price.** Role creation is now serialised across every file that does it, so a suite that spent time there spends it in sequence — small, because it is three statements. And the finding was never reproduced *after* the repair: `E-1614`'s measurement was four concurrent runs at load 20, and that run is not repeated here, so what is claimed is that the race is removed by construction and **not** that the failure was observed to stop.
