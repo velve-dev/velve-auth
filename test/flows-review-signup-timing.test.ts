@@ -149,7 +149,15 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 
 	const BLOCK_PER_GROUP = 250;
 	const MAXIMUM_PER_GROUP = 6_000;
-	const RESOLUTION_BUDGET_MS = 300_000;
+	/**
+	 * Large enough for `MAXIMUM_PER_GROUP` to be reachable. At 300_000 it was not: a shared CI
+	 * runner took 4720 rounds in that time — about 64 ms each — so the sampler stopped on the
+	 * budget at 79 % of the sample size the case declares, and the case then reported the
+	 * resolution it had as one that could not be reached (E-1883). A maximum a budget cannot reach
+	 * is not a maximum. 6000 rounds at that rate need about 382 s; this leaves room above it and
+	 * stays well inside `CASE_TIMEOUT_MS`.
+	 */
+	const RESOLUTION_BUDGET_MS = 600_000;
 	const CASE_TIMEOUT_MS = 900_000;
 
 	it.skipIf(process.env.VELVE_NIGHTLY !== "1")(
@@ -193,6 +201,13 @@ describe("T-TIM-1's method on the row that has no KDF to hide behind", () => {
 				samples.roundsPerGroup,
 				`the budget ran out before 6.1's own sample size was reached, after ${Math.round(samples.elapsedMs / 1000)} s`,
 			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
+			// A run that stopped on its time budget has not been given the sample size it was
+			// permitted, so it measured nothing about the code and the resolution below bounds
+			// nothing either. Reported as what it is before anything is read off it (E-1883).
+			expect(
+				samples.stoppedBecause,
+				`the budget ran out at ${samples.roundsPerGroup} of ${MAXIMUM_PER_GROUP} permitted rounds after ${Math.round(samples.elapsedMs / 1000)} s, so this run says nothing about the code — the machine was too slow to take the measurements the case declares, and the numbers it did take bound nothing`,
+			).not.toBe("budget");
 			expect(
 				resolution.resolvesTheLeakThatMatters,
 				`the run could not resolve the smallest leak 5.1 (a) names, so the three numbers below bound nothing: ${measured}. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,

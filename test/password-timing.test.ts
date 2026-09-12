@@ -151,6 +151,13 @@ describe("T-TIM-1 — the sign-in path is uniform under measurement", () => {
 				samples.roundsPerGroup,
 				`the budget ran out before 6.1's own sample size was reached, after ${Math.round(samples.elapsedMs / 1000)} s`,
 			).toBeGreaterThanOrEqual(MEASUREMENTS_PER_GROUP);
+			// A run that stopped on its time budget has not been given the sample size it was
+			// permitted, so it measured nothing about the code and the resolution below bounds
+			// nothing either. Reported as what it is before anything is read off it (E-1883).
+			expect(
+				samples.stoppedBecause,
+				`the budget ran out at ${samples.roundsPerGroup} of ${MAXIMUM_PER_GROUP} permitted rounds after ${Math.round(samples.elapsedMs / 1000)} s, so this run says nothing about the code — the machine was too slow to take the measurements the case declares, and the numbers it did take bound nothing`,
+			).not.toBe("budget");
 			expect(
 				resolution.resolvesTheLeakThatMatters,
 				`the run could not resolve the smallest leak 5.1 (a) names, so it reports neither a leak nor its absence: ${reached}, after ${samples.roundsPerGroup} rounds and ${Math.round(samples.elapsedMs / 1000)} s. ${WHAT_TO_TRY_BEFORE_LOOSENING_ANYTHING}`,
