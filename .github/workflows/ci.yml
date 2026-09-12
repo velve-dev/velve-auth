@@ -99,6 +99,9 @@ jobs:
       - name: The token table is ordered before the account row
         run: pnpm check:token-after-lock
 
+      - name: Nothing leaves the operator's infrastructure
+        run: pnpm check:egress
+
       - name: SQL survives normalisation
         run: pnpm check:sql-collapse
 

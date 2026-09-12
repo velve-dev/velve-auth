@@ -245,6 +245,9 @@ repair anything itself.
 - `pnpm check:token-after-lock` — no transaction takes the account row and then
   reaches `velve.one_time_token`, which is the second ordering §7 states and
   nothing decided until now (E-1616)
+- `pnpm check:egress` — nothing in `src/` reaches the network or names an
+  external host outside the one provider seam and the one file that enumerates
+  the providers, which is what `README.md` has always promised (E-1844)
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
@@ -686,6 +689,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1740 … E-1769 | outside the waves · `factor-startup` — the four residues `second-factor` reported and could not touch, all of them in files §5 put outside its set. Fifty-fourth row of this table, counted over the fifty-three standing at 8cebfdd rather than taken from the row above it, for the reason that row gives |
 | E-1770 … E-1799 | gate and infrastructure, twelfth range — the first publish of the package, and the latest tag npm gave it anyway. Twelfth over the eleven rows of this table that named gate and infrastructure at 0a938ef; fifty-fifth row overall, counted over the fifty-four standing there rather than taken from the row above it |
 | E-1800 … E-1839 | gate and infrastructure, thirteenth range — the stable 1.0.0, and the dist-tag that had been written down rather than derived. Thirteenth over the twelve rows of this table that named gate and infrastructure at 846e72a; fifty-sixth row overall, counted over the fifty-five standing there rather than taken from the row above it |
+| E-1840 … E-1879 | outside the waves · `dependency-audit` — the six core dependencies held against the advisory database, the unmaintained test-runner major, and the egress promise nothing enforced. Fifty-seventh row overall, counted over the fifty-six standing at eb4d4ac |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -981,6 +985,19 @@ pnpm check:token-after-lock
                  tree. It decides a textual order within a file and not a
                  transaction boundary, so it is coarser than the invariant and
                  coarse in the safe direction (E-1616)
+pnpm check:egress
+                 only src/core/oauth/outbound.ts calls out, through the fetch
+                 config.fetch injects, and only src/core/oauth/providers.ts names
+                 a provider host; src/client/transport.ts calls the application's
+                 own routes and is not egress from the operator. fetch,
+                 XMLHttpRequest, WebSocket and sendBeacon are all refused
+                 elsewhere, and so is a bare host string with no call beside it.
+                 A destination is http/https/ws/wss with a dotted host, so an
+                 otpauth: URI and a single-label parsing base are not
+                 destinations — and neither is an internal single-label host,
+                 which is the limit this scan states rather than hides. Refuses
+                 the run when it read no file or when the seam itself calls
+                 nothing (E-1844)
 pnpm check:reviewable
                  no NUL byte hides a file from review
 pnpm check:sql-collapse
