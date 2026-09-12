@@ -2,7 +2,13 @@
 
 # @velve/auth
 
+[![npm](https://img.shields.io/npm/v/@velve/auth?label=npm&color=0b7285)](https://www.npmjs.com/package/@velve/auth)
+[![licence](https://img.shields.io/npm/l/@velve/auth?color=0b7285)](./LICENSE)
+
 **The European authentication library for TypeScript and PostgreSQL.**
+
+**Version 1.0.0 is published.** `pnpm add @velve/auth` — that is the whole
+install, and the interface below does not change again without a major version.
 
 It answers exactly one question — **who is signed in** — and it answers it
 completely. The library runs inside your application's process and your users
