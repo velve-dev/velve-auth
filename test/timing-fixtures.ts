@@ -53,6 +53,14 @@ export const CONTROL_RECOVERY_TOLERANCE = 0.5;
 
 export type TimingArm = "present" | "absent" | "controlQuiet" | "controlPlanted";
 
+/**
+ * Why the sampler stopped, which the numbers alone do not say. A run that ran out of time before
+ * it reached the sample size it was permitted has not measured anything about the code — it is a
+ * statement about the machine — and reporting that as an unresolvable leak is what a release
+ * blocked on this case then reads as a finding (E-1883).
+ */
+export type SamplingStopped = "resolved" | "budget" | "maximum";
+
 interface TimingSamples {
 	readonly present: number[];
 	readonly absent: number[];
@@ -60,6 +68,7 @@ interface TimingSamples {
 	readonly controlPlanted: number[];
 	readonly roundsPerGroup: number;
 	readonly elapsedMs: number;
+	readonly stoppedBecause: SamplingStopped;
 }
 
 interface TimingPlan {
@@ -286,6 +295,7 @@ export async function sampleUntilResolved(
 		seenAbsent: 0,
 	};
 	const startedAt = Date.now();
+	let stoppedBecause: SamplingStopped = "maximum";
 
 	while (collected.seenPresent < plan.maximumPerGroup) {
 		await collectBlock(run, collected, plan);
@@ -295,9 +305,11 @@ export async function sampleUntilResolved(
 			trimmed(collected.absent, TRIM_FRACTION),
 		).resolvesTheLeakThatMatters;
 		if (collected.seenPresent >= plan.minimumPerGroup && resolved) {
+			stoppedBecause = "resolved";
 			break;
 		}
 		if (Date.now() - startedAt >= plan.budgetMs) {
+			stoppedBecause = "budget";
 			break;
 		}
 	}
@@ -309,5 +321,6 @@ export async function sampleUntilResolved(
 		controlPlanted: collected.controlPlanted,
 		roundsPerGroup: collected.seenPresent,
 		elapsedMs: Date.now() - startedAt,
+		stoppedBecause,
 	};
 }
