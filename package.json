@@ -1,6 +1,6 @@
 {
 	"name": "@velve/auth",
-	"version": "1.0.0-next.2",
+	"version": "1.0.0",
 	"description": "The European authentication library for TypeScript and PostgreSQL. Answers exactly one question: who is signed in.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -90,6 +90,7 @@
 		"check:session-owner": "node tools/check-session-owner-update.mjs",
 		"check:skill-version": "node tools/check-skill-version.mjs",
 		"check:sql-collapse": "node tools/check-sql-collapse.mjs",
+		"dist-tag": "node tools/dist-tag.mjs",
 		"format": "biome check --write .",
 		"gate": "pnpm build && pnpm typecheck && pnpm lint && pnpm check:reviewable && pnpm check:session-owner && pnpm check:lock-order && pnpm check:sql-collapse && pnpm check:log-append && pnpm check:skill-version && pnpm check:codex-skill && pnpm check:attribution && pnpm knip && pnpm test && pnpm publint && pnpm attw",
 		"knip": "knip",

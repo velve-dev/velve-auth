@@ -12,12 +12,11 @@ between you and them.
 The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
-> **Status: prerelease.** The public interface is specified and frozen. `next`
-> points at `1.0.0-next.2`. **`latest` points at `1.0.0-next.1`**, because npm
-> points `latest` at the first version a package ever publishes whatever `--tag`
-> says, and npm does not permit removing it — so a bare `pnpm add @velve/auth`
-> installs the *first* prerelease rather than the newest one, until a stable
-> version takes `latest`. Ask for it by tag: `@velve/auth@next`.
+> **Status: 1.0.0.** The public interface is specified and frozen, and `latest`
+> now points at `1.0.0` — so `pnpm add @velve/auth` installs the stable line and
+> `^1.0.0` resolves. Under semver the surface below is a promise: it does not
+> change again without a major version. `next` keeps pointing at the last
+> prerelease, `1.0.0-next.2`, and nothing needs it.
 
 ## Why it exists
 
@@ -70,33 +69,30 @@ binding, no install script, and no build step on your machine.
 ## Installation
 
 ```sh
-pnpm add @velve/auth@next
+pnpm add @velve/auth
 ```
 
-**The `@next` is not optional, and a bare install is worse than not resolving.**
-Publishing under a dist-tag leaves `latest` alone — except on a package's very
-first publish, where npm points `latest` at that version regardless.
-`1.0.0-next.1` was that first publish, and npm does not permit removing the tag
-it took. So `latest` is pinned to the first prerelease while `next` moves: today
-`pnpm add @velve/auth` installs `1.0.0-next.1` and `pnpm add @velve/auth@next`
-installs `1.0.0-next.2`. A `^1.0.0` range still matches neither, because it does
-not match a prerelease. Pinning the exact version, `@velve/auth@1.0.0-next.2`,
-works and is what your lockfile will record.
+That is the whole install: no tag to remember, no `postinstall`, no native
+binding, no build step. `latest` points at `1.0.0` and `^1.0.0` resolves to it.
 
-That ends on the day a stable version is published: it takes `latest` from the
-prerelease it is stuck on, and the bare install starts meaning "the stable
-line". Until then a bare install means "whichever prerelease happened to go
-first", which is not a promise this package intends to make — which is why the
-tag is written above and in every example here.
+Two earlier prereleases are still on the registry and are **not** what you want:
+`1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
+does not allow a version to be withdrawn once anyone might depend on it, and
+because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
+points `latest` at a package's very first publish whatever `--tag` says, so it
+sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
+of them, because a range does not match a prerelease.
 
-A prerelease is a prerelease: the interface is frozen and the schema is
-versioned, but nothing here has been run by anyone outside this repository yet.
-Read `CASE-STUDY.md`, which ships inside the package, for why each decision was
-taken at the version you actually installed.
+**What 1.0.0 commits this package to** is the surface `DOCUMENTATION.md`
+describes: it does not change again without a major version. What it does not
+claim is a track record — the interface is specified and frozen and the schema is
+versioned, but this library is newly published and has not yet been run in
+anger by anyone outside this repository. Read `CASE-STUDY.md`, which ships inside
+the package, for why each decision was taken.
 
 ## What works today
 
-Everything below is built and ships in `1.0.0-next.2`. The mounted route table
+Everything below is built and ships in `1.0.0`. The mounted route table
 serves all forty-seven addresses architecture 3.15 D.3 declares in the widest
 configuration, and a narrower configuration serves fewer because it declares
 fewer. What the library deliberately does not do has a section of its own
