@@ -144,6 +144,7 @@ describe("the release workflow", () => {
 			"pnpm run release-dist-tag",
 			"pnpm install --frozen-lockfile",
 			"pnpm build",
+			"./tools/start-dex.sh",
 			"pnpm test:nightly",
 			"pnpm test:release",
 			"pnpm install --frozen-lockfile",
@@ -224,6 +225,21 @@ describe("the release workflow", () => {
 		const decide = commands(job("dist_tag")).filter((command) => command.includes("dist-tag"));
 
 		expect(decide).toStrictEqual(["pnpm run release-dist-tag"]);
+	});
+
+	/**
+	 * The acceptance case fails rather than skips without a provider, so every workflow that runs
+	 * the suite has to start one. It was in the gate and not in the release tiers, and the tag
+	 * found it: `tiers` failed and nothing was published (E-1906). One script, called by both,
+	 * because two copies of the block are the drift E-1429 argued against.
+	 */
+	it("starts the provider in every workflow that runs the suite", () => {
+		const runsTheSuite = [ci, release].map((source) => commands(source));
+
+		for (const source of runsTheSuite) {
+			expect(source.filter((command) => command.includes("start-dex"))).not.toStrictEqual([]);
+		}
+		expect(commands(job("tiers"))).toContain("./tools/start-dex.sh");
 	});
 
 	it("names only scripts package.json declares", () => {

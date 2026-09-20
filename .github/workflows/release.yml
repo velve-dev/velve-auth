@@ -94,6 +94,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # The tiers run the whole suite, the acceptance case included, so the provider has to be
+      # here as well as in the gate — it was in one and not the other, and the release found it
+      # (E-1906).
+      - name: Start the provider the acceptance case signs in through
+        run: ./tools/start-dex.sh
+
       - name: Nightly tier
         run: pnpm test:nightly
       - name: Release tier
