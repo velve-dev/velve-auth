@@ -286,7 +286,17 @@ export function createOAuthService(input: {
 		provider: ResolvedProvider,
 		account: ProviderAccount,
 	): Promise<User> {
-		const columns = identityColumns(services.identity, { email: account.email });
+		// The application names what a provider cannot: in `username_email` a new account needs a
+		// username, no claim is one, and the library invents nothing (E-1900). Asked before the
+		// identifiers are normalised, so what comes back meets the same policy as a typed username.
+		const contributed = await services.oauth?.identifiersForNewAccount?.({
+			provider: provider.id,
+			account,
+		});
+		const columns = identityColumns(services.identity, {
+			email: account.email,
+			...(contributed?.username === undefined ? {} : { username: contributed.username }),
+		});
 		if (!columns.accepted) {
 			// S-LINK-5: no address and no username is invented, so the account is not created (E-559).
 			throw new VelveError(

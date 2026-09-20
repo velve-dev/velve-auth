@@ -246,6 +246,13 @@ in and any other is a set of endpoints and a subject claim in your
 configuration; no discovery document is ever fetched, so an endpoint the library
 calls is one you wrote down.
 
+In `identity.mode: "username_email"` a new account needs a username and no
+provider claim is one, so `oauth.identifiersForNewAccount` is where your
+application supplies it — the library will not derive one from an address,
+because that is a decision about your namespace and your collisions. Omit it and
+a first sign-in through a provider is refused; linking a provider to an account
+that already exists never needed it.
+
 `auth.signIn.oauth.start` hands you an authorisation URL and the cookie
 instruction that belongs to it; the callback answers 302 to a path you chose,
 and that redirect is the only `Location` this library emits. In an existing
