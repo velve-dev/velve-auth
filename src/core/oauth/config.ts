@@ -1,3 +1,4 @@
+import type { ProviderAccount } from "./claims.js";
 /** Architecture 3.15 A.8. The fourteen providers 3.10 names at launch; everything else is generic. */
 export type KnownProvider =
 	| "google"
@@ -84,4 +85,31 @@ export interface OAuthConfig {
 	readonly trustedProviders: readonly string[];
 	/** 3.10 makes `false` the default, so omitting it stores no provider token. */
 	readonly storeTokens?: boolean;
+	/**
+	 * Supplies the identifiers a provider cannot, for an account that does not exist yet. In
+	 * `identity.mode: "username_email"` a new account needs a username, no provider claim is one,
+	 * and the library will not invent it — so without this a person who has never signed in cannot
+	 * be created through a provider at all (E-1900).
+	 *
+	 * Called before the identifiers are normalised, so whatever it returns is held to the same
+	 * username policy as a username typed into a form. Returning nothing leaves the refusal exactly
+	 * as it was: the library still invents nothing.
+	 *
+	 * The address is deliberately not among them. A provider's claim is what verifies an address
+	 * under `S-LINK-2`, and an application supplying one here would be asserting a verification
+	 * nobody performed.
+	 */
+	readonly identifiersForNewAccount?: (
+		input: NewAccountInput,
+	) => Promise<NewAccountIdentifiers> | NewAccountIdentifiers;
+}
+
+/** What the application is told about the person it is being asked to name. */
+export interface NewAccountInput {
+	readonly provider: string;
+	readonly account: ProviderAccount;
+}
+
+export interface NewAccountIdentifiers {
+	readonly username?: string;
 }

@@ -1,0 +1,24 @@
+# A real OIDC provider for the acceptance case, not a stub: it signs its own id tokens, serves its
+# own JWKS and runs its own authorization-code flow with PKCE (E-1903).
+issuer: https://127.0.0.1:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  # The approval screen is a human's click and nothing this library is involved in; skipping it
+  # leaves the parts that are — the code exchange, the id token, the JWKS — entirely real.
+  skipApprovalScreen: true
+staticClients:
+  - id: velve-test-client
+    secret: velve-test-secret
+    name: Velve
+    redirectURIs:
+      - https://127.0.0.1:9099/sign-in/oauth/callback/dex
+enablePasswordDB: true
+staticPasswords:
+  # bcrypt of "password"; a fixture credential for a container that exists for one test run.
+  - email: newcomer@example.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: newcomer
+    userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"

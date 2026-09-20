@@ -2311,7 +2311,27 @@ export {
 	rootKeyProvider,
 };
 
+## core/oauth/claims.d.mts
+
+//#region src/core/oauth/claims.d.ts
+/**
+ * What one provider says about one account. `emailVerified` is the provider's claim and nothing
+ * more — it is the first of S-LINK-2's three conditions and never a link on its own.
+ */
+interface ProviderAccount {
+  readonly claims: Record<string, unknown>;
+  readonly email: string | null;
+  readonly emailVerified: boolean;
+  readonly subject: string;
+}
+//#endregion
+export {
+	ProviderAccount,
+};
+
 ## core/oauth/config.d.mts
+
+import { ProviderAccount } from "./claims.mjs";
 
 //#region src/core/oauth/config.d.ts
 /** Architecture 3.15 A.8. The fourteen providers 3.10 names at launch; everything else is generic. */
@@ -2360,10 +2380,33 @@ interface OAuthConfig {
    * the library never derives it from a request header (S-REDIR-6, E-540).
    */
   readonly callbackBaseUrl: string;
+  /**
+   * Supplies the identifiers a provider cannot, for an account that does not exist yet. In
+   * `identity.mode: "username_email"` a new account needs a username, no provider claim is one,
+   * and the library will not invent it — so without this a person who has never signed in cannot
+   * be created through a provider at all (E-1900).
+   *
+   * Called before the identifiers are normalised, so whatever it returns is held to the same
+   * username policy as a username typed into a form. Returning nothing leaves the refusal exactly
+   * as it was: the library still invents nothing.
+   *
+   * The address is deliberately not among them. A provider's claim is what verifies an address
+   * under `S-LINK-2`, and an application supplying one here would be asserting a verification
+   * nobody performed.
+   */
+  readonly identifiersForNewAccount?: (input: NewAccountInput) => Promise<NewAccountIdentifiers> | NewAccountIdentifiers;
   /** 3.10 makes `false` the default, so omitting it stores no provider token. */
   readonly storeTokens?: boolean;
   /** The third of the three conditions S-LINK-2 puts on an automatic link. */
   readonly trustedProviders: readonly string[];
+}
+/** What the application is told about the person it is being asked to name. */
+interface NewAccountInput {
+  readonly account: ProviderAccount;
+  readonly provider: string;
+}
+interface NewAccountIdentifiers {
+  readonly username?: string;
 }
 //#endregion
 export {
@@ -3051,7 +3094,7 @@ import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, crea
 //#region src/index.d.ts
 
 declare function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M>;
-declare const VELVE_AUTH_VERSION = "1.0.0";
+declare const VELVE_AUTH_VERSION = "1.1.0";
 //#endregion
 export {
 	type Actor,

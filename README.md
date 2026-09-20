@@ -7,7 +7,7 @@
 
 **The European authentication library for TypeScript and PostgreSQL.**
 
-**Version 1.0.0 is published.** `pnpm add @velve/auth` — that is the whole
+**Version 1.1.0 is published.** `pnpm add @velve/auth` — that is the whole
 install, and the interface below does not change again without a major version.
 
 It answers exactly one question — **who is signed in** — and it answers it
@@ -18,11 +18,11 @@ between you and them.
 The only traffic that leaves your infrastructure goes to the OAuth providers you
 choose to enable, and if you enable none, none does.
 
-> **Status: 1.0.0.** The public interface is specified and frozen, and `latest`
-> now points at `1.0.0` — so `pnpm add @velve/auth` installs the stable line and
-> `^1.0.0` resolves. Under semver the surface below is a promise: it does not
-> change again without a major version. `next` keeps pointing at the last
-> prerelease, `1.0.0-next.2`, and nothing needs it.
+> **Status: 1.1.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
+> stable line and `^1.0.0` resolves. Under semver what is here is a promise:
+> nothing below changes shape without a major version. `1.1.0` added an option
+> and moved nothing. `next` keeps pointing at the last prerelease,
+> `1.0.0-next.2`, and nothing needs it.
 
 ## Why it exists
 
@@ -79,7 +79,7 @@ pnpm add @velve/auth
 ```
 
 That is the whole install: no tag to remember, no `postinstall`, no native
-binding, no build step. `latest` points at `1.0.0` and `^1.0.0` resolves to it.
+binding, no build step. `latest` points at `1.1.0` and `^1.0.0` resolves to it.
 
 Two earlier prereleases are still on the registry and are **not** what you want:
 `1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
@@ -89,16 +89,17 @@ points `latest` at a package's very first publish whatever `--tag` says, so it
 sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
 of them, because a range does not match a prerelease.
 
-**What 1.0.0 commits this package to** is the surface `DOCUMENTATION.md`
-describes: it does not change again without a major version. What it does not
-claim is a track record — the interface is specified and frozen and the schema is
-versioned, but this library is newly published and has not yet been run in
-anger by anyone outside this repository. Read `CASE-STUDY.md`, which ships inside
+**What the `1.x` line commits this package to** is the surface
+`DOCUMENTATION.md` describes: it may gain something in a minor version, and
+nothing in it changes shape without a major one. What it does not claim is a
+track record — the interface is specified and the schema is versioned, but this
+library is newly published and has not yet been run in anger by anyone outside
+this repository. Read `CASE-STUDY.md`, which ships inside
 the package, for why each decision was taken.
 
 ## What works today
 
-Everything below is built and ships in `1.0.0`. The mounted route table
+Everything below is built and ships in `1.1.0`. The mounted route table
 serves all forty-seven addresses architecture 3.15 D.3 declares in the widest
 configuration, and a narrower configuration serves fewer because it declares
 fewer. What the library deliberately does not do has a section of its own
@@ -245,6 +246,13 @@ asymmetric algorithms that does not contain `none`. Fourteen providers are built
 in and any other is a set of endpoints and a subject claim in your
 configuration; no discovery document is ever fetched, so an endpoint the library
 calls is one you wrote down.
+
+In `identity.mode: "username_email"` a new account needs a username and no
+provider claim is one, so `oauth.identifiersForNewAccount` is where your
+application supplies it — the library will not derive one from an address,
+because that is a decision about your namespace and your collisions. Omit it and
+a first sign-in through a provider is refused; linking a provider to an account
+that already exists never needed it.
 
 `auth.signIn.oauth.start` hands you an authorisation URL and the cookie
 instruction that belongs to it; the callback answers 302 to a path you chose,

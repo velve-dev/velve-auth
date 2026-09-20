@@ -4583,6 +4583,48 @@ const auth = createVelveAuth({
 | `providers` | object | — required | One entry per provider, keyed by its id. |
 | `trustedProviders` | `readonly string[]` | — required | The providers whose `email_verified` claim you accept as proof of address ownership. It is the third of the three conditions an automatic link needs. An empty list switches automatic linking off entirely. |
 | `storeTokens` | `boolean` | `false` | Whether the provider's tokens are stored, encrypted, on the identity row. |
+| `identifiersForNewAccount` | `(input) => NewAccountIdentifiers \| Promise<…>` | absent | Supplies the identifiers a provider cannot, for an account that does not exist yet. See below. |
+
+#### `identifiersForNewAccount({ provider, account })`
+
+**Required in `identity.mode: "username_email"` if people are to sign up through a
+provider at all.** That mode needs a username on every account, no provider claim
+is one, and the library invents nothing — so without this the first sign-in of a
+person who does not yet exist is refused with `oauth_flow_invalid`, while linking
+a provider to an account that already exists keeps working (`E-1900`).
+
+It is handed the provider's id and the whole `ProviderAccount`, `claims` included,
+and returns `{ username? }`. It may be asynchronous, because naming an account
+usually means asking your own tables whether the name is free.
+
+```ts
+oauth: {
+  providers: { dex: { /* … */ } },
+  callbackBaseUrl: "https://app.example.com/sign-in/oauth/callback",
+  trustedProviders: ["dex"],
+  identifiersForNewAccount: async ({ provider, account }) => ({
+    username: await yourNamespace.free(account.claims.name, provider),
+  }),
+}
+```
+
+Three things it is not:
+
+- **Not a bypass.** What it returns goes through the same normalisation and the
+  same `identity.username` policy as a username typed into a form. A value the
+  policy refuses refuses the sign-in.
+- **Not a place to supply the address.** A provider's claim is what verifies an
+  address under `S-LINK-2`; an application asserting one here would be claiming a
+  verification nobody performed. Only `username` is accepted.
+- **Not a default.** Return nothing and the refusal is exactly what it was before
+  this seam existed. The library does not derive a username from an address —
+  that is a decision about your namespace, your collisions and what your users
+  see, and it belongs to you.
+
+**Which claim carries the name is the provider's business and differs between
+them.** Dex puts it in `name`, others in `preferred_username`, some in neither.
+That is why this is a callback rather than the name of a claim in configuration:
+only the application can decide, and only the application can resolve a collision.
 
 Every provider entry takes the same fields; a built-in provider needs only the
 first two.
