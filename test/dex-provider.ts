@@ -18,10 +18,10 @@ const DEX_ON_THE_WIRE = "http://127.0.0.1:5556";
 export const DEX_CALLBACK_BASE = "https://127.0.0.1:9099/sign-in/oauth/callback";
 export const DEX_CLIENT_ID = "velve-test-client";
 export const DEX_CLIENT_SECRET = "velve-test-secret";
-export const DEX_LOGIN = "newcomer@example.com";
-export const DEX_PASSWORD = "password";
+const DEX_LOGIN = "newcomer@example.com";
+const DEX_PASSWORD = "password";
 
-export class DexUnreachableError extends Error {
+class DexUnreachableError extends Error {
 	constructor(cause: string) {
 		super(
 			`Dex is not answering at ${DEX_ISSUER}. The acceptance case needs a real provider and refuses to pass without one — start it with\n  docker run -d --name velve-dex -p 5556:5556 -v "$PWD/test/dex/config.yaml:/etc/dex/config.yaml" dexidp/dex:v2.44.0 dex serve /etc/dex/config.yaml\n${cause}`,
@@ -43,7 +43,7 @@ export async function assertDexIsUp(): Promise<void> {
 }
 
 /** The one origin the harness rewrites, and nothing else. */
-export function onTheWire(url: string): string {
+function onTheWire(url: string): string {
 	return url.startsWith(DEX_ISSUER.slice(0, -4))
 		? url.replace("https://127.0.0.1:5556", DEX_ON_THE_WIRE)
 		: url;
