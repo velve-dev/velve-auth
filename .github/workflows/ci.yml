@@ -117,21 +117,8 @@ jobs:
       - name: Dead code
         run: pnpm knip
 
-      # The acceptance case for provider sign-up runs against a real OIDC provider rather than a
-      # stub (E-1903). It is started here and not as a service, because a service container starts
-      # before the checkout and so cannot mount a configuration file out of the repository.
       - name: Start the provider the acceptance case signs in through
-        run: |
-          docker run -d --name velve-dex -p 5556:5556 \
-            -v "$PWD/test/dex/config.yaml:/etc/dex/config.yaml" \
-            dexidp/dex:v2.44.0 dex serve /etc/dex/config.yaml
-          for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:5556/dex/.well-known/openid-configuration >/dev/null && exit 0
-            sleep 1
-          done
-          echo "Dex did not come up" >&2
-          docker logs velve-dex >&2
-          exit 1
+        run: ./tools/start-dex.sh
 
       - name: Test
         run: pnpm test
