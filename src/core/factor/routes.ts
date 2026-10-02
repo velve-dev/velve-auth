@@ -99,11 +99,7 @@ export type FactorSurface = {
 	readonly signIn: { readonly passkey: SignInPasskeyNamespace };
 };
 
-/**
- * A.8 gives `issuer` no default and A.2 makes `totp` itself optional, while D.3 counts the four
- * TOTP rows in every configuration — so they have to mount without one. What names the application
- * in every configuration is `origins`, and its host is what an authenticator then shows (E-1243).
- */
+//totp routes mount in every configuration so the issuer falls back to the origin host (E-1243)
 function totpIssuerOf(services: RouteServices): string {
 	const configured = services.totp?.issuer;
 	if (configured !== undefined && configured !== "") {
@@ -117,7 +113,7 @@ function totpIssuerOf(services: RouteServices): string {
 	}
 }
 
-/** S-OWNER-7: the actor is the resolution the pipeline produced, never a value out of the request. */
+//the actor is the pipeline's resolution, never a value out of the request (S-OWNER-7)
 function actorOf(services: RouteServices, session: Session | null): Actor {
 	if (session === null) {
 		throw new ConcealedError("cookie_absent");
@@ -141,7 +137,6 @@ function heldPendingState(context: RequestContext): HeldPendingState {
 	return { resolution: context.pending, token: context.pendingToken };
 }
 
-/** The label an authenticator shows for the account, which is whichever identifier the mode gives it. */
 async function accountNameOf(services: RouteServices, actor: Actor): Promise<string> {
 	const user = await services.users.findUserById(actor);
 	return user?.email ?? user?.username ?? actor;
@@ -157,7 +152,7 @@ const SESSION_ERRORS = [
 
 const FRESH_SESSION_ERRORS = [...SESSION_ERRORS, "freshness_required"] as const;
 
-/** A GET declaring no field cannot fail its validator, so it declares no `invalid_input` either. */
+//a get without fields cannot fail validation so it declares no invalid input
 const READING_SESSION_ERRORS = [
 	"session_required",
 	"account_disabled",
@@ -173,10 +168,7 @@ const PENDING_ERRORS = [
 	"origin_not_allowed",
 ] as const;
 
-/**
- * S-FIX-1: what the intermediate state becomes is a session written in the transaction that removes
- * the pending row, and the cookie the browser still holds for that state goes in the same answer.
- */
+//the session is written in the transaction that removes the pending row (S-FIX-1)
 async function signedInBySecondFactor(
 	services: RouteServices,
 	context: RequestContext,
@@ -208,11 +200,7 @@ async function signedInBySecondFactor(
 	};
 }
 
-/**
- * S-RATE-7 on a route whose caller is a cookie rather than an identifier: the bucket is keyed by
- * the account's own comparison form and is spent before the code is judged, so the cheapest
- * possible attempt is not the one that costs nothing (E-1196).
- */
+//the account bucket is spent before the code is judged so no attempt is free (E-1196)
 async function spendAccountToken(
 	services: RouteServices,
 	context: RequestContext,
@@ -232,7 +220,7 @@ function totpRoutes(services: RouteServices, totp: TotpService) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// 3.6: the row is written with `confirmed_at = NULL`, so an abandoned attempt guards nothing.
+		//an unconfirmed row guards nothing so an abandoned enrolment is harmless
 		handler: async (_input, context): Promise<TotpEnrollment> => {
 			const actor = actorOf(services, context.session);
 			return totp.enroll.start({ actor, accountName: await accountNameOf(services, actor) });
@@ -292,7 +280,7 @@ function totpRoutes(services: RouteServices, totp: TotpService) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
-		// B.6: whoever can remove the factor without holding it has no factor.
+		//removing the factor must require holding it
 		handler: async (input, context): Promise<void> => {
 			const actor = actorOf(services, context.session);
 			await spendAccountToken(services, context, actor);
@@ -314,7 +302,7 @@ function recoveryRoutes(services: RouteServices, recovery: RecoveryCodeService) 
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** B.6: the whole set is drawn and the previous one deleted in one transaction, and the plaintext leaves the process here and once. */
+		//the old set is replaced in one transaction and the plaintext leaves only once
 		handler: async (_input, context): Promise<{ codes: readonly string[] }> =>
 			recovery.generate({ actor: actorOf(services, context.session) }),
 	});
@@ -350,7 +338,7 @@ function recoveryRoutes(services: RouteServices, recovery: RecoveryCodeService) 
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** B.6: a count and nothing else — what is stored is the HMAC of each code. */
+		//only a count is returned as only the hmac of each code is stored
 		handler: async (_input, context): Promise<{ remainingCount: number }> =>
 			recovery.remaining({ actor: actorOf(services, context.session) }),
 	});
@@ -389,7 +377,7 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// B.6: `label` is required — three entries all called "Security key" is not a list anyone can act on.
+		//a label is required so several credentials stay distinguishable
 		handler: async (input, context): Promise<{ credential: WebAuthnCredential }> =>
 			webauthn.register.finish({
 				actor: actorOf(services, context.session),
@@ -433,8 +421,7 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
-		/* L-8 and D.3: the five attempts are per intermediate state and not per factor, so a
-		   WebAuthn failure spends the same budget a TOTP or recovery-code failure spends (E-1691). */
+		//the five attempts per pending state are shared by every factor (E-1691)
 		handler: async (input, context): Promise<SignInResult> => {
 			const held = heldPendingState(context);
 			await spendAccountToken(services, context, held.resolution.userId);
@@ -498,8 +485,7 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// S-OWNER-3 and L-13: a credential of another account and an invented one answer alike, and
-		// the account's last remaining way in is refused rather than removed.
+		//another account's credential and an invented one must answer alike (S-OWNER-3)
 		handler: async (input, context): Promise<void> =>
 			webauthn.remove({
 				actor: actorOf(services, context.session),
@@ -529,7 +515,7 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** 3.6: nothing names an account — the authenticator offers a discoverable credential and the account is learned from the answer. */
+		//nothing names an account as it is learned from the discoverable credential
 		handler: async (): Promise<WebAuthnAuthenticationChallenge> => webauthn.passkey.start(),
 	});
 
@@ -549,14 +535,14 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** B.1 and 3.6: a way in of its own, so the session records `webauthn` alone and no intermediate state took part. */
+		//a passkey is a way in of its own so the session records webauthn alone
 		handler: async (input, context): Promise<SignInResult> => {
 			const assertion = await webauthn.passkey.finish({
 				challengeToken: input.challengeToken,
 				response: input.response as unknown as AuthenticationResponseJSON,
 			});
 			const user = await services.users.findUserById(assertion.userId);
-			// L-4: a disabled account answers a valid assertion as an invalid one, and never with its own code.
+			//a disabled account answers a valid assertion as an invalid one
 			if (user === null || user.disabledAt !== null) {
 				throw new ConcealedError("user_disabled_on_webauthn_assertion");
 			}
@@ -587,11 +573,7 @@ export type FactorRouteTable = readonly [
 	...ReturnType<typeof passkeyRoutes>,
 ];
 
-/**
- * The fourteen `factor/*` rows of 3.15 D.3 and the two `sign-in/passkey/*` ones. D.3 counts the
- * TOTP and recovery rows in every configuration and says of the other nine that without `webauthn`
- * they do not exist — so the narrowing below is the configuration and nothing else (E-1242).
- */
+//without webauthn configured its routes do not exist (E-1242)
 export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 	const totp: TotpService = createTotpService({
 		driver: services.driver,
