@@ -43,7 +43,7 @@ export type OneTimeTokenErrorCode =
 	| "one_time_token_purpose_unknown"
 	| "one_time_token_not_written";
 
-//messages are fixed per code so nothing the caller passed reaches an error string (E-265)
+//messages are fixed per code so nothing the caller passed reaches an error string (E-263)
 const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
 	one_time_token_owner_unknown: "The account the token would belong to does not exist.",
 	one_time_token_purpose_unknown: "The purpose is not one of the four one-time token purposes.",
