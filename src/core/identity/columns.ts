@@ -10,14 +10,14 @@ import {
 
 export type IdentifierKind = "email" | "username";
 
-/** The runtime half of the `user_identity_mode` CHECK that migration 2 installs (E-15). */
+//this must agree with the user_identity_mode CHECK in the schema (E-195)
 export const REQUIRED_IDENTIFIERS: Readonly<Record<IdentityMode, readonly IdentifierKind[]>> = {
 	email: ["email"],
 	username: ["username"],
 	username_email: ["email", "username"],
 };
 
-/** Mirrors the `user_username_pairing` CHECK: the two username columns move together. */
+//both username columns are set or neither as the pairing CHECK demands
 export type IdentityColumns = { readonly email: string | null } & (
 	| { readonly username: string; readonly usernameKey: string }
 	| { readonly username: null; readonly usernameKey: null }
@@ -41,8 +41,7 @@ function resolveEmailColumn(
 	configuration: IdentityConfiguration,
 	provided: string | null | undefined,
 ): Normalisation<string | null, IdentifierRejection> {
-	// Nothing is invented for an address nobody reported: the column stays NULL where the
-	// configuration allows it and the call is refused where it does not (E-16, S-LINK-5).
+	//an address nobody reported is never invented (E-16)
 	if (provided === null || provided === undefined) {
 		return isRequired(configuration, "email")
 			? { accepted: false, rejection: { identifier: "email", rejection: "required" } }
