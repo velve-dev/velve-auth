@@ -3,7 +3,7 @@ import type { OneTimeTokenRepository } from "../db/repositories/token.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose, OneTimeTokenSubject } from "./purpose.js";
 import { createSecretToken, hashSecretToken, type SecretToken } from "./secret-token.js";
 
-/** `userId: null` asks for the cover artefact an address that names no account is answered with (E-597). */
+/** a `userId` of null asks for the cover artefact an address naming no account is answered with */
 export type OneTimeTokenRequest = {
 	readonly purpose: OneTimeTokenPurpose;
 	readonly payload?: OneTimeTokenPayload;
@@ -14,10 +14,7 @@ export interface IssuedOneTimeToken {
 	readonly expiresAt: Date;
 }
 
-/**
- * E-234: the removal is what proved the owner, so the redemption carries that provenance rather
- * than a bare string, and `actorOfRedeemedOneTimeToken` is reachable from it without a cast.
- */
+/** a redeemed token carrying the proof of ownership its removal produced */
 export type OneTimeTokenRedemption = RedeemedOneTimeToken & {
 	readonly purpose: OneTimeTokenPurpose;
 	readonly payload: OneTimeTokenPayload | null;

@@ -2,11 +2,7 @@ import type { VelveErrorCode } from "../core/http/error-map.js";
 import type { AnyRoute, Nest, Route, UnionToIntersection } from "../core/http/route.js";
 import type { VelveResult } from "./result.js";
 
-/**
- * The mirror of `ServerMethodOf` from the same declaration: no call envelope, because the browser
- * sends the cookies, and the result object of 3.15 E instead of a throw. `[Code]` keeps the
- * conditional from distributing, so a route's whole error list stays one union.
- */
+/** a server method as the browser calls it, with no envelope and a result instead of a throw */
 export type ClientMethodOf<Declared> =
 	Declared extends Route<string, string, infer Input, infer Output, infer Code>
 		? [Code] extends [VelveErrorCode]

@@ -53,10 +53,6 @@ export function createServerMethod<
 		callRoute(route, environment, input as ServerCallFields & Record<string, unknown>);
 }
 
-/**
- * The same method for a route whose input and output types are not in view — the table read at run
- * time, from which 3.15 D.2 builds the object path out of the dotted `name`.
- */
 export function createServerMethodOfAnyRoute(
 	route: AnyRoute,
 	environment: HttpEnvironment,

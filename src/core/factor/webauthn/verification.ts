@@ -10,8 +10,7 @@ const FLAGS_OFFSET = RP_ID_HASH_LENGTH;
 const SHORTEST_AUTHENTICATOR_DATA = 37;
 const USER_VERIFIED_FLAG = 0b0000_0100;
 
-/** `JSON.parse` writes own properties only, so reading through the prototype would answer with
- * whatever a polluted `Object.prototype` carries when the field is absent. */
+//an absent field must not be read through a polluted prototype
 function ownField(source: Record<string, unknown>, key: string): unknown {
 	return Object.hasOwn(source, key) ? source[key] : undefined;
 }
@@ -50,11 +49,7 @@ export function userWasVerified(authenticatorData: string): boolean {
 	return ((bytes[FLAGS_OFFSET] ?? 0) & USER_VERIFIED_FLAG) !== 0;
 }
 
-/**
- * The verifier reports its cause as English prose, and matching on prose is a dependency on a
- * string that moves without a major version. These three causes are decided here so the server
- * log names them; the verifier still decides acceptance (E-457).
- */
+//prose from the verifier is never matched so these causes are decided here (E-457)
 export function assertOriginIsExpected(clientDataJSON: string, origins: readonly string[]): void {
 	const origin = clientDataOrigin(clientDataJSON);
 	if (origin === null || !origins.includes(origin)) {

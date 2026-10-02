@@ -11,17 +11,13 @@ import {
 } from "./repository.js";
 import { createPendingToken, hashPendingToken, type PendingToken } from "./token.js";
 
-/** 3.6 and S-COOKIE-3: the same five minutes the `__Host-velve_pending` cookie is given. */
+//the pending state lives exactly as long as its cookie (S-COOKIE-3)
 export const PENDING_LIFETIME_IN_SECONDS = 300;
 
-/** L-8: five tries, then the row goes and the attempt starts again at the password. */
+//the five attempts are counted per pending flow and not per factor (E-471)
 export const MAXIMUM_PENDING_ATTEMPTS = 5;
 
-/**
- * S-CACHE-4 and 3.6: the four routes that read `__Host-velve_pending`. The names are fixed here
- * rather than in each factor module so that the count is one list a test can read, and so that a
- * fifth route cannot be added without changing the list that says there are four.
- */
+//the routes reading the pending cookie are one list so a fifth cannot slip in (S-CACHE-4)
 export const PENDING_CALLER_ROUTES = [
 	"factor.totp.verify",
 	"factor.webauthn.authenticate.start",
@@ -36,10 +32,7 @@ export interface IssuedPendingAuthentication {
 	readonly pending: PendingAuthentication;
 }
 
-/**
- * S-FIX-4: what resolution yields is deliberately not a `ResolvedSession` and mints no `Actor`, so
- * the intermediate state has no path into a repository method that reaches rows through an owner.
- */
+/** the resolved intermediate state, which is not a session and mints no `Actor` */
 export type PendingResolution = ResolvedPendingAuthentication;
 
 export interface ConsumedPendingAuthentication {
@@ -80,7 +73,7 @@ export function createPendingAuthenticationService(
 	});
 
 	return {
-		/** 3.15 C.1, E-735: which factors are on offer is the account's state, so the write reads it rather than the caller supplying it. */
+		//the factors on offer are the account's state so the write reads them itself (E-735)
 		async begin({ userId, factorsCompleted }) {
 			const token = createPendingToken();
 			const stored = await repository.insertPendingAuthentication({
@@ -100,11 +93,7 @@ export function createPendingAuthenticationService(
 			};
 		},
 
-		/**
-		 * A disabled account answers as an unknown state, and the code L-4 reserves for a disabled
-		 * account is not raised here: L-4 puts it on the resolution of an existing session, and this
-		 * is a sign-in still in progress.
-		 */
+		//a disabled account answers as an unknown pending state, not with the disabled code
 		async resolve(token) {
 			const found = await repository.findPendingAuthenticationByTokenHash(hashPendingToken(token));
 			if (found === null || found.userDisabledAt !== null) {
@@ -122,7 +111,7 @@ export function createPendingAuthenticationService(
 			};
 		},
 
-		// S-RACE-1: the removal is the check, so two requests carrying the same token cannot both pass.
+		//the removal is the check so two requests with one token cannot both pass
 		async consume(token) {
 			const removed = await repository.deletePendingAuthenticationByTokenHash(
 				hashPendingToken(token),

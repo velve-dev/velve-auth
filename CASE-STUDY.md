@@ -10112,3 +10112,35 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Copying the block into the second workflow. (b) Making the case skip when no provider answers.
 **Reason.** (a) is two copies of one procedure, which is the drift `E-1429` argued against when it made the release *call* `ci.yml` rather than restate it — and this omission is that argument proving itself within a day of the block being written. It is one script, `tools/start-dex.sh`, called by both, with a case asserting that every workflow running the suite calls it. (b) undoes the property `E-1903` chose on purpose: the failure here was loud, named the missing provider and blocked the publish, which is exactly what it was built to do.
 **Price.** **Nothing was published and nothing was harmed, and that is the whole of the good news** — the cost was a tag cut against a pipeline that could not run, and a release round spent on a step that was written and half-installed. The guard is textual: it reads `start-dex` out of both workflows' `run:` lines, so a third workflow that runs the suite would be invisible to it until somebody adds it to the list.
+
+### Shipped doc comments stay as they were, and one internal block with them
+`E-1940` · reviewable-source · the declaration snapshot, held
+
+**Context.** The rewrite asks two things that cannot both hold: that a doc comment on an exported symbol becomes one plain sentence without an identifier, and that `pnpm api` passes against the declaration snapshot without re-recording it. 141 of the 562 doc comment blocks in `src/` are emitted into `dist/**/*.d.mts`, and the snapshot records every one of them, architecture section references included. A second collision turned up in `src/index.ts`: rewriting the E-1255 block and the E-744 block there removes one blank line from `dist/index.d.mts`, measured over three builds each, while rewriting either one alone leaves the file byte-identical.
+**Rejected.** (a) Rewriting the 141 blocks and re-recording the snapshot. (b) Rewriting them and leaving `pnpm api` red.
+**Reason.** The unchanged snapshot is half of the evidence that nothing but comment text moved, and a re-recorded one proves only that it was re-recorded. So the 141 blocks stay byte-for-byte, and of the two blocks in `src/index.ts` the E-1255 one stays in its old form because keeping either one restores the blank line.
+**Price.** 142 comments in `src/` are still in the old form, several of them carrying the architecture references the new form forbids, so a first reader sees two styles. Rewriting them is a change to the published declarations and belongs in a release that says so. Concerns `src/index.ts` and every module that emits a `.d.mts`.
+
+### The comparison that proves code untouched was blind on one line
+`E-1941` · reviewable-source · a second instrument, the first left as it was
+
+**Context.** Code was to be proved unchanged by stripping comments with `tools/source-text.mjs` at `main` and on the branch and comparing. Its `chunksOf` reads the `//` inside the regular expression literal `/^https?:\/\//i` in `src/core/factor/webauthn/config.ts` as the start of a line comment, so the rest of that line is invisible to the comparison, and to every scan that strips comments with the same function.
+**Rejected.** (a) Repairing `chunksOf`. (b) Trusting the stripped comparison alone.
+**Reason.** (a) is a change to an existing tool, which this branch does not make. (b) leaves exactly one line of the tree unproved. A second comparison emits all 174 files through the TypeScript printer with comments removed, at the base and on the branch: 0 changed. It was shown to report a changed regular expression and a changed string, and to report nothing for a change to comments alone.
+**Price.** The blind spot in `chunksOf` stays and is reported rather than fixed, so every scan that relies on `withoutComments` still loses the rest of that one line. Concerns `tools/source-text.mjs`, `chunksOf`.
+
+### A requirement is found where it is defined, not in a heading
+`E-1942` · reviewable-source · how check:decision-refs reads its sources
+
+**Context.** The new scan was asked to fail when a cited identifier does not occur as a heading in the specification or the decision log. Neither document puts identifiers in headings: a requirement is a list item `- **S-FIX-6:**` in `VELVE-AUTH-ARCHITECTURE.md`, and a decision is either a bold `**E-nn — …**` line or the backticked line under a `###` title, which is the only heading content `test/decision-log.test.ts` allows.
+**Rejected.** Matching headings literally, which would have refused every citation in the tree.
+**Reason.** What a heading would have given is the place where an identifier is defined rather than cited. The list item and the two entry forms are those places, so the scan reads them; a table row or a citation in prose does not define anything and is not read.
+**Price.** The scan depends on two formats holding. It refuses the run when either source yields no definition at all, so a reworded format fails loudly; a format that changed for some entries only would leave those citations reported as dead, which is the safe direction. Concerns `tools/check-decision-refs.mjs`.
+
+### The shipped doc comments follow the new form after all
+`E-1943` · reviewable-source · reverses E-1940
+
+**Context.** E-1940 left 141 doc comments and one internal block in their old form so that the declaration snapshot would hold unchanged. The owner of the repository rejected the result on reading it: a first reader opening `src/` was meant to see one style, and two styles defeated the point of the rewrite.
+**Rejected.** Keeping E-1940's split, with the old blocks listed in the pull request instead.
+**Reason.** The snapshot was the evidence that only comments moved, not the goal. The same evidence survives a re-recording if the re-recorded diff itself contains nothing but comment lines, and it does: 141 lines added and 413 removed in `test/__snapshots__/api-surface.md`, every one of them a doc comment line, holding over four fresh builds. The published doc comments became one sentence without an identifier, still doc comments, because they are what a user sees on hover.
+**Price.** The published declarations change in their comments, so the next release ships different hover text for every exported symbol, and several blocks lost detail a caller might have used. That detail is in `DOCUMENTATION.md` and the pull request lists the cases. E-1940 stays as written, because its reason was true when it was taken. Concerns every module that emits a `.d.mts` and `test/__snapshots__/api-surface.md`.

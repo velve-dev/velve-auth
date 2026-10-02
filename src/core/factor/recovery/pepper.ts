@@ -13,7 +13,7 @@ async function hmacUnder(key: CryptoKey, code: string): Promise<Uint8Array<Array
 	return new Uint8Array(signature);
 }
 
-// S-REST-3: a recovery code is stored as HMAC-SHA256 under `token-pepper`, so a database dump alone yields nothing and display is impossible.
+//a database dump alone must reveal no recovery code (S-REST-3)
 export async function pepperRecoveryCode(
 	keys: KeyProvider,
 	code: string,
@@ -22,7 +22,7 @@ export async function pepperRecoveryCode(
 	return { keyVersion: version, codeHmac: await hmacUnder(key, code) };
 }
 
-/** L-3: the version travels in `recovery_code.key_version`, so a rotation of `token-pepper` does not void the codes written under the previous one. */
+//the key version travels with the code so a pepper rotation does not void old codes (S-REST-3)
 export async function pepperRecoveryCodeUnder(
 	keys: KeyProvider,
 	keyVersion: number,

@@ -22,21 +22,17 @@ interface AddressedRoute {
 	readonly rest: Readonly<Record<string, unknown>>;
 }
 
-/** A single-label host, so the probe cannot name a domain and cannot read as an invented address (E-16, S-LINK-5). */
+//the probe host must name no domain and never read as an invented address (S-LINK-5)
 const PATH_NORMALISATION_PROBE = "https://velve-auth";
 
-/**
- * 3.15 E has each leaf send the path of its own row, and percent-encoding does not make that true
- * on its own: `.` and `..` come through `encodeURIComponent` unchanged and are then removed by the
- * URL parser before the request is made, so a value can consume a segment it was meant to fill.
- */
+//a dot segment in a path value must not consume the segment it was meant to fill
 function assertPathIsStillTheRoutes(route: ClientRoute, path: string): void {
 	if (new URL(path, PATH_NORMALISATION_PROBE).pathname !== path) {
 		throw new TypeError(`Route ${route.name} was given a path parameter that changes its path`);
 	}
 }
 
-/** A field that names a path segment is spent there and not repeated in the query or the body, so exactly one place carries it. */
+//a path field must be carried in exactly one place and not repeated in query or body
 function addressOf(route: ClientRoute, input: unknown): AddressedRoute {
 	const fields = isRecord(input) ? { ...input } : {};
 	const segments = route.path.split("/").map((segment) => {
@@ -71,13 +67,13 @@ function queryOf(fields: Readonly<Record<string, unknown>>): string {
 
 function requestInitOf(route: ClientRoute, addressed: AddressedRoute): RequestInit {
 	const envelope = {
-		// S-CSRF-4: the method is the row's, so nothing that changes state can be reached with a GET.
+		//the method must be the row's so no state change is reachable with a get (S-CSRF-4)
 		method: route.method,
-		// The session cookie has to ride along, and the `Origin` header S-CSRF-1 compares is written by the browser and not here.
+		//the session cookie must ride along and the origin header is left to the browser
 		credentials: "include",
-		// S-CACHE-1: the answer carries `no-store`, and asking for it as well keeps a cache from answering before that header is read.
+		//a cache must not answer before the no store header of the answer is read (S-CACHE-1)
 		cache: "no-store",
-		// S-REDIR-3: the one redirect the library writes belongs to a browser navigation, so a call never follows one.
+		//a call must never follow a redirect as the only one belongs to a navigation (S-REDIR-3)
 		redirect: "manual",
 	} as const;
 	return route.method === "GET"
@@ -122,7 +118,7 @@ function parsedAnswer(route: ClientRoute, text: string): unknown {
 	}
 }
 
-/** The wire carries the code the declaration has already narrowed, so this is where an untyped answer becomes the declared one. */
+//the wire carries a code the route declaration has already narrowed
 function failureIn(body: unknown): VelveFailure<VelveErrorCode> | null {
 	if (!isRecord(body) || !isRecord(body.error)) {
 		return null;

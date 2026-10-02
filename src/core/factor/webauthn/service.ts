@@ -39,14 +39,13 @@ import {
 	assertUserWasVerified,
 } from "./verification.js";
 
-/** Architecture 3.15 C. */
+/** the options and challenge token a browser needs to register a credential */
 export interface WebAuthnRegistrationChallenge {
 	readonly publicKeyOptions: PublicKeyCredentialCreationOptionsJSON;
 	readonly challengeToken: string;
 }
 
-/** Architecture 3.15 C names the passkey form separately; the two ceremonies differ in
- * precondition and in outcome, not in shape. */
+/** the options and challenge token to sign in with a credential, as a second factor or a passkey */
 export interface WebAuthnAuthenticationChallenge {
 	readonly publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;
 	readonly challengeToken: string;
@@ -55,7 +54,7 @@ export interface WebAuthnAuthenticationChallenge {
 export interface VerifiedWebAuthnAssertion {
 	readonly userId: string;
 	readonly credential: WebAuthnCredential;
-	/** L-9: reported, never a rejection — a synchronised passkey does not keep the counter. */
+	/** reported and never a rejection, as a synchronised passkey does not keep the counter */
 	readonly signCountRegressed: boolean;
 }
 
@@ -74,8 +73,7 @@ export interface WebAuthnService {
 			label: string;
 		}): Promise<{ credential: WebAuthnCredential }>;
 	};
-	/** Architecture 3.6: the second factor after a password. Its subject is the intermediate
-	 * state, which is not a session and mints no `Actor`. */
+	/** the second factor after a password, acting on the intermediate state and not a session */
 	authenticate: {
 		start(input: { pending: PendingResolution }): Promise<WebAuthnAuthenticationChallenge>;
 		finish(input: {
@@ -110,8 +108,7 @@ const DEFAULT_SCHEMA = "velve";
 const CEREMONY_TIMEOUT_MS = WEBAUTHN_CHALLENGE_LIFETIME_SECONDS * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** All zeros is what an authenticator says when it declines to name its model, and the column
- * holds null rather than a uuid meaning "unknown". */
+//an all zero aaguid means the model is undisclosed so the column holds null
 const UNNAMED_AAGUID = "00000000-0000-0000-0000-000000000000";
 
 interface CredentialDescriptor {
@@ -119,8 +116,7 @@ interface CredentialDescriptor {
 	readonly transports?: AuthenticatorTransportFuture[];
 }
 
-/** Read as an own property, so a hint the browser did not send cannot arrive from a polluted
- * prototype and be written to the row (E-481). */
+//read as an own property so a polluted prototype cannot reach the row (E-481)
 function transportsSentWith(response: RegistrationResponseJSON): readonly string[] {
 	return Object.hasOwn(response.response, "transports") ? (response.response.transports ?? []) : [];
 }
@@ -143,18 +139,12 @@ function descriptorOf(credential: StoredWebAuthnCredential): CredentialDescripto
 	return transports.length === 0 ? { id } : { id, transports };
 }
 
-/** WebAuthn Level 3 §7.2 lets the authenticator keep no counter at all, and then every
- * assertion reports zero; only a counter that was running and has fallen back is a regression. */
+//an authenticator may keep no counter so only a counter that falls back has regressed
 function countHasRegressed(stored: number, reported: number): boolean {
 	return stored > 0 && reported <= stored;
 }
 
-/**
- * Whatever the verifier throws, the outside learns one thing. The cause is never inspected: it
- * reaches this library as English prose, and what a caller is allowed to see is decided in
- * `error-map.ts` and nowhere else (E-457). Only the verifier's own call is wrapped, so the
- * checks around it keep the reasons they name.
- */
+//the verifier's cause is never inspected and the outside learns one thing (E-457)
 async function verifiedOrRejected<T>(verify: () => Promise<T>): Promise<T> {
 	try {
 		return await verify();
@@ -197,8 +187,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			rpID: settings.relyingPartyId,
 			challenge: challengeBytes,
 			timeout: CEREMONY_TIMEOUT_MS,
-			/* Architecture 3.6 and 3.15 A.8: fixed at both verification points, and there is no
-			   configuration that lowers it. A second factor without user verification is not one. */
+			//no configuration lowers user verification as a second factor without it is not one
 			userVerification: "required",
 			...(allowCredentials === undefined ? {} : { allowCredentials }),
 		});
@@ -235,8 +224,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				credential: {
 					id: encodeBase64Url(input.stored.credentialId),
 					publicKey: input.stored.publicKey,
-					/* L-9: the verifier raises on a counter that has fallen back, so it is told none
-					   and the comparison is made below, where a regression is a field (E-458). */
+					//the verifier is told no counter so a regression becomes a field (E-458)
 					counter: 0,
 				},
 			}),
@@ -283,9 +271,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					attestationType: "none",
 					excludeCredentials: enrolled.map(descriptorOf),
 					authenticatorSelection: {
-						/* Architecture 1 D37, fixed and not an option: this is the only ceremony that
-						   enrols a credential, so it is the passkey path's registration whatever else
-						   it also serves, and "preferred" means in practice "mostly not" (E-483). */
+						//this is the only enrolment ceremony so it must require a resident key (E-483)
 						residentKey: "required",
 						userVerification: settings.registrationUserVerification,
 					},
@@ -359,8 +345,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		},
 
 		passkey: {
-			/** Architecture 3.6: nothing names an account — the authenticator offers whatever
-			 * discoverable credential it holds, and the account is learned from the answer. */
+			//nothing names an account as it is learned from the discoverable credential
 			start: () => issueAuthenticationChallenge(null, undefined),
 
 			async finish({ challengeToken, response }) {
@@ -382,8 +367,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		list: ({ actor }) => credentials.listCredentialsOwnedBy({ actor }),
 
 		async rename({ actor, credentialId, label }) {
-			// S-OWNER-8: a credential of another account, one that never existed and a spelling
-			// that names no row at all are one answer.
+			//another account's credential, a missing one and a bad spelling are one answer (S-OWNER-8)
 			if (!UUID.test(credentialId)) {
 				throw new VelveError("invalid_input");
 			}
@@ -395,12 +379,11 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		},
 
 		async remove({ actor, credentialId }) {
-			/* S-OWNER-3: the deletion runs through the one path that counts what is left first
-			   (L-13), and a spelling that cannot name a row takes the same exit as a row that is
-			   not the caller's — the route declares no 400. */
+			//a spelling that names no row exits like a row that is not the caller's (S-OWNER-3)
 			if (!UUID.test(credentialId)) {
 				return;
 			}
+			//deletion goes through the one path that counts what is left first (E-460)
 			await removeSignInMethod({
 				driver: options.driver,
 				schema,

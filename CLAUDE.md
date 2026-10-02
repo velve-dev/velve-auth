@@ -248,6 +248,8 @@ repair anything itself.
 - `pnpm check:egress` — nothing in `src/` reaches the network or names an
   external host outside the one provider seam and the one file that enumerates
   the providers, which is what `README.md` has always promised (E-1844)
+- `pnpm check:decision-refs` — every `S-…` and `E-…` a comment in `src/`
+  cites is defined in the specification or the decision log
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
   base, and the branch has added at least one (§6, E-538)
@@ -692,6 +694,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1840 … E-1879 | outside the waves · `dependency-audit` — the six core dependencies held against the advisory database, the unmaintained test-runner major, and the egress promise nothing enforced. Fifty-seventh row overall, counted over the fifty-six standing at eb4d4ac |
 | E-1880 … E-1899 | gate and infrastructure, fourteenth range — the release expression that evaluated to nothing. Fifty-eighth row overall, counted over the fifty-seven standing at dd5c938 |
 | E-1900 … E-1939 | outside the waves · `oauth-signup` — the identifier a provider cannot supply, and the acceptance against a real provider. Fifty-ninth row overall, counted over the fifty-eight standing at f4dae39. The start is counted past the fourteenth gate range rather than continued from the highest entry written: E-1885 was reserved first and overlapped it, which `test/decision-log.test.ts` refused |
+| E-1940 … E-1969 | outside the waves · `reviewable-source` — the comments in `src/` rewritten as one plain sentence ending in at most one cited identifier. Sixtieth row overall, counted over the fifty-nine standing at 0b50fb0 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -1000,6 +1003,18 @@ pnpm check:egress
                  which is the limit this scan states rather than hides. Refuses
                  the run when it read no file or when the seam itself calls
                  nothing (E-1844)
+pnpm check:decision-refs
+                 every S- and E- identifier in a comment in src/ is defined: an
+                 S- requirement as a list item of VELVE-AUTH-ARCHITECTURE.md, an
+                 E- decision as an entry of CASE-STUDY.md or
+                 docs/decisions/log.md. Reads comments only, so a string is not a
+                 citation, and fails on a bracket shaped like a citation that is
+                 not an identifier, such as (S-Tim-1). It inherits the blind
+                 spots of tools/source-text.mjs, which can lose a comment after
+                 a regular expression literal holding // or a quote (E-1941).
+                 Refuses the run when it read no
+                 file, found no definition in either source, or found no
+                 citation, because each looks like a clean tree
 pnpm check:reviewable
                  no NUL byte hides a file from review
 pnpm check:sql-collapse

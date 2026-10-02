@@ -27,12 +27,7 @@ export interface StoredKeyVersionCheckOptions {
 	readonly schema?: string;
 }
 
-/**
- * L-2 makes the key ring a precondition for every stored password, so a version that has left the
- * ring locks out everyone whose row was written under it. Reported here — once, at assembly, to
- * the operator — rather than per sign-in to a user, where it would also partition accounts into
- * those written before a rotation and those written after (E-179).
- */
+//an unknown key version is reported once to the operator and never per sign-in (E-179)
 export async function assertStoredKeyVersionsAreKnown(
 	options: StoredKeyVersionCheckOptions,
 ): Promise<void> {

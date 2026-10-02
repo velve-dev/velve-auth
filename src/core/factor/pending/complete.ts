@@ -25,16 +25,7 @@ export interface SecondFactorCompletion {
 	}): Promise<IssuedSession>;
 }
 
-/**
- * S-FIX-1 for every path that finishes at a second factor. The row that carried the trust level so
- * far is the pending row, not a session, and it has to be gone in the same transaction that inserts
- * the session — otherwise a failure between the two leaves an intermediate state that has already
- * been spent, or a session whose pending row can be spent again.
- *
- * It lives beside the pending module rather than in the assembly because it is the composition the
- * factor features call, and neither of them can write it: it needs the pending service and the
- * session service bound to the same transaction, and each feature owns only one half of that.
- */
+//the pending row must go in the same transaction that inserts the session (S-FIX-1)
 export function createSecondFactorCompletion(
 	options: SecondFactorCompletionOptions,
 ): SecondFactorCompletion {

@@ -5,11 +5,7 @@ import type { AnyRoute, HttpMethod } from "../core/http/route.js";
 import type { oauthRoutes } from "../core/oauth/routes.js";
 import type { passwordRoutes } from "../core/password/routes.js";
 
-/**
- * Every row the library declares, in the order `assembleVelveAuth` puts them in. A mode or a
- * configuration that leaves one out narrows the table it serves and never this one, which 3.15 E's
- * client states as a promise about the library rather than about an instance (E-673).
- */
+/** every route the library declares, whatever one instance's mode or configuration serves */
 export type VelveRouteTable = readonly [
 	...ReturnType<typeof sessionRoutes>,
 	...ReturnType<typeof usernameRoutes>,
@@ -20,7 +16,7 @@ export type VelveRouteTable = readonly [
 	...FactorRouteTable,
 ];
 
-/** What a call needs from its own row and nothing else, so no handler is reachable from it (3.15 E). */
+/** what a call needs from its own route row, with no handler reachable from it */
 export interface ClientRoute {
 	readonly name: string;
 	readonly method: HttpMethod;
@@ -38,11 +34,7 @@ type ClientRoutesOf<Routes extends readonly AnyRoute[]> = {
 	readonly [Index in keyof Routes]: ClientRouteOf<Routes[Index]>;
 };
 
-/**
- * The route table as a value, carrying no import of the module that declares the row it mirrors:
- * `satisfies` is what holds the two in step, so a row added, renamed, repathed or dropped fails
- * here at compile time rather than at the first call (E-672).
- */
+/** the route table as a value, carrying no import of the module that declares the server routes */
 export const VELVE_CLIENT_ROUTES = [
 	{ name: "signOut", method: "POST", path: "/sign-out" },
 	{ name: "session.read", method: "GET", path: "/session" },

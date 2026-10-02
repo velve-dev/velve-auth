@@ -47,7 +47,7 @@ function excludedIdentityId(removal: SignInMethodRemoval | undefined): string | 
 	return removal?.method === "linked_identity" ? removal.identityId : null;
 }
 
-/** A confirmed address and recovery codes are absent by decision: neither is a sign-in name (L-13). */
+//a confirmed address and recovery codes are no sign-in names
 export async function countSignInMethods(query: SignInMethodQuery): Promise<SignInMethodCount> {
 	const password = qualifiedTableName(query.schema, "password_credential");
 	const webauthn = qualifiedTableName(query.schema, "webauthn_credential");
@@ -109,7 +109,7 @@ async function removeUnderALockThatHolds(
 	driver: Driver,
 	request: SignInMethodRemovalRequest,
 ): Promise<boolean> {
-	// The user row is taken before any other table this call reads or writes (E-143).
+	//the user row is locked before any other table this call touches (E-143)
 	await lockAccountRow(driver, request.schema, request.actor);
 	const remaining = await countSignInMethods({
 		driver,
@@ -120,8 +120,7 @@ async function removeUnderALockThatHolds(
 	if (totalSignInMethods(remaining) === 0) {
 		throw new VelveError("last_sign_in_method");
 	}
-	// Any assigned transaction id proves a transaction block is open, and the lock taken above
-	// is therefore still held; an id assigned by an earlier statement proves it just as well.
+	//an assigned transaction id proves the lock taken above is still held
 	const [open] = await driver.query<{ readonly inside_a_transaction_block: boolean }>(
 		`SELECT pg_current_xact_id_if_assigned() IS NOT NULL AS inside_a_transaction_block`,
 		[],
@@ -134,7 +133,7 @@ async function removeUnderALockThatHolds(
 	return true;
 }
 
-/** Throws `last_sign_in_method` and removes nothing when this is the account's last way in (L-13). */
+//the last way into an account is never removed
 export async function removeSignInMethod(request: SignInMethodRemovalRequest): Promise<void> {
 	if (await removeUnderALockThatHolds(request.driver, request)) {
 		return;

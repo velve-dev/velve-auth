@@ -18,11 +18,7 @@ export function rateLimitConfigOf(config: Partial<RateLimitConfig> = {}): RateLi
 
 const SECONDS_IN_A_MINUTE = 60;
 
-/**
- * 3.15 A.6 states the global counter as a threshold per minute; `core/limit` takes a bucket rule
- * (E-380). A threshold of N a minute is a bucket of N refilling at N/60 a second, which is the same
- * statement in the other module's vocabulary.
- */
+//a threshold of N a minute is the same as a bucket of N refilling at N/60 a second (E-356)
 export function routeFloodWatchOf(config: RateLimitConfig): RouteFloodWatch {
 	const rule: BucketRule = {
 		capacity: config.globalPerRoute.alertThresholdPerMinute,
@@ -30,8 +26,7 @@ export function routeFloodWatchOf(config: RateLimitConfig): RouteFloodWatch {
 	};
 	return {
 		rule,
-		// `addressChecksObserved` counts the checks that drained a bucket which refills at exactly
-		// the declared threshold per minute, so it is that figure to within one refill (E-356).
+		//the observed count matches the threshold per minute to within one refill (E-356)
 		onAlert: (alert) =>
 			config.globalPerRoute.onAlert({
 				routeName: alert.routeName,

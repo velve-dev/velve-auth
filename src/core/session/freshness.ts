@@ -6,10 +6,7 @@ export interface FreshnessWindow {
 	readonly now: Date;
 }
 
-/**
- * Architecture 3.5: freshness is the time since the sign-in, so it is measured against
- * `created_at` and never against `last_used_at`. Only a new session restores it.
- */
+//freshness is measured from the sign-in and never from the last use
 export function isSessionFresh(session: Session, window: FreshnessWindow): boolean {
 	return window.now.getTime() - session.createdAt.getTime() < window.freshnessWindowMs;
 }

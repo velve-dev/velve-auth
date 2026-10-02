@@ -10,10 +10,7 @@ import type { VelvePlugin } from "../plugin/config.js";
 import type { SessionConfig } from "../session/config.js";
 import type { SessionMetadataMode } from "../session/metadata.js";
 
-/**
- * Architecture 3.15 A.1: lookup tables rather than conditional types spread over the surface, so
- * that a reader sees one row per mode and never an `infer`.
- */
+/** the identity fields each identity mode carries, one row per mode */
 export interface IdentityFieldsByMode {
 	email: { email: string };
 	username: { username: string };
@@ -36,7 +33,7 @@ export type ModeHasUsername<M extends IdentityMode> = M extends "username" | "us
 	? true
 	: false;
 
-/** A.1, design B: a namespace the mode does not offer is removed, so the error names the mode. */
+//a namespace the mode does not offer is removed, so the error names the mode
 export type PresentKeys<Surface> = {
 	[Key in keyof Surface]-?: [Surface[Key]] extends [never] ? never : Key;
 }[keyof Surface];
@@ -60,7 +57,7 @@ export interface WebAuthnConfig {
 	readonly userVerification: "required" | "preferred";
 }
 
-/** A.7: four kinds answer the four one-time-token purposes; the last two are the enumeration cover. */
+/** four kinds answer the four one-time-token purposes and the last two are the enumeration cover */
 export type EmailMessage =
 	| { kind: "email_verification"; to: string; userId: string; token: string; expiresAt: Date }
 	| { kind: "password_reset"; to: string; userId: string; token: string; expiresAt: Date }
@@ -95,24 +92,12 @@ export interface RateLimitConfig {
 	};
 }
 
-/**
- * `mode` stands alone as `{ readonly mode: M }` because that is the only shape `M` can be inferred
- * from. Written as one conditional type — which is what it was — the whole type is a non-inferrable
- * position, `M` falls back to the union, `RecoveryCodesRequirement` distributes and its optional
- * branch swallows every configuration. The username rules come from `IdentityConfigurationInput`,
- * the lookup table `core/identity` already keeps, so the constraint that only a username mode
- * carries them has one definition rather than a second one here (E-349).
- */
+/** the identity options for mode `M`, where only a username mode carries the username rules */
 export type IdentityConfig<M extends IdentityMode> = IdentityConfigurationInput & {
 	readonly mode: M;
 };
 
-/**
- * S-DEFAULT-4 and E-207: 3.4 asks for a start error, and this makes it a compile error as well.
- * The condition is a statement about the instance options — it ties `identity.mode` to
- * `recoveryCodes` — which is why it could not be built in `core/identity`, where only the mode is
- * in view.
- */
+/** a username mode without recovery codes is a compile error as well as a start error */
 export type RecoveryCodesRequirement<M extends IdentityMode> = M extends "username"
 	? { recoveryCodes: RecoveryCodesConfig }
 	: { recoveryCodes?: RecoveryCodesConfig };
@@ -129,7 +114,7 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly rateLimit?: Partial<RateLimitConfig>;
 	readonly email?: EmailConfig;
 	readonly oauth?: OAuthConfig;
-	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
+	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */
 	readonly fetch?: typeof globalThis.fetch;
 	readonly plugins?: readonly VelvePlugin[];
 	readonly webauthn?: WebAuthnConfig;

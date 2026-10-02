@@ -72,11 +72,7 @@ export {
 	UnknownColumnError,
 } from "./core/db/repositories/owned-row-repository.js";
 export type { PendingToken } from "./core/factor/pending/index.js";
-/**
- * 3.15 B.6 and C: the return types of the `factor.*` and `signIn.passkey.*` methods, and the four
- * namespaces they fold into. Without them a caller can hold what the methods answer and cannot
- * write its type down (E-1255).
- */
+/** the return types of the `factor.*` and `signIn.passkey.*` methods and their four namespaces */
 export type {
 	AuthenticatorResponse,
 	RecoveryNamespace,
@@ -90,17 +86,14 @@ export type {
 	WebAuthnAuthenticationChallenge,
 	WebAuthnRegistrationChallenge,
 } from "./core/factor/webauthn/service.js";
-/**
- * The three lines below are the whole of what wave 5's features add to this barrel: each owns one
- * module and adds names there, so three writers never meet in this file (E-744).
- */
+//three writers each own one line here and never meet in this file (E-744)
 export type * from "./core/flows/index.js";
 export type {
 	AuthenticationFactor,
 	PendingAuthentication,
 	Session,
 } from "./core/http/caller.js";
-/** 3.15 C declares it in the same block as `OAuthRedirect`, whose `stateCookie` an application is handed (E-753). */
+//an application handed a state cookie must be able to name its type (E-753)
 export type { CookieAttributes, CookieInstruction } from "./core/http/cookies.js";
 export type { Clock } from "./core/http/environment.js";
 export {
@@ -119,7 +112,7 @@ export type * from "./core/oauth/index.js";
 export type * from "./core/plugin/index.js";
 export type { SessionToken } from "./core/session/token.js";
 
-/** E-231: the one place in the package where a clock is read, and the layer above the core. */
+//this is the one place in the package where a clock is read (E-231)
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
 
 export function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M> {

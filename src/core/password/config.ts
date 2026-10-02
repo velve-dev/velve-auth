@@ -7,7 +7,7 @@ export interface Argon2idParameters {
 	readonly parallelism: number;
 }
 
-/** OWASP's minimum recommendation (3.3). Configurable upwards only (S-DEFAULT-6). */
+//the Argon2id parameters may only be raised above this floor (S-DEFAULT-6)
 export const ARGON2ID_FLOOR: Argon2idParameters = {
 	memoryKiB: 19456,
 	iterations: 2,
@@ -18,7 +18,7 @@ export const ARGON2ID_SALT_BYTES = 16;
 export const ARGON2ID_HASH_BYTES = 32;
 export const ARGON2ID_VERSION = 0x13;
 
-/** NIST SP 800-63B, adopted as L-7: eight characters, 4096 bytes, no composition rules. */
+//length limits follow NIST SP 800-63B with no composition rules
 export const MINIMUM_LENGTH_FLOOR = 8;
 export const MAXIMUM_LENGTH_CEILING_IN_BYTES = 4096;
 
@@ -35,7 +35,7 @@ export interface PasswordConfig {
 	readonly minimumLength?: number;
 	readonly maximumLengthInBytes?: number;
 	readonly concurrentHashLimit?: number;
-	/** L-7: runs when a password is set and when it is changed, never at sign-in. */
+	/** runs on the NFKC form when a password is set or changed, never at sign-in */
 	readonly validate?: (plaintext: string) => Promise<void>;
 }
 
@@ -71,8 +71,7 @@ export function resolvePasswordConfig(config: PasswordConfig = {}): ResolvedPass
 		throw new PasswordConfigurationError("maximum_length_below_minimum_length");
 	}
 
-	// S-DOS-3 names `min(4, cpus)` as the bound of the library, not as a starting point, so the
-	// option lowers it and nothing raises it (E-188).
+	//the option may lower the semaphore bound of the library but never raise it (E-188)
 	if (
 		!Number.isInteger(concurrentHashLimit) ||
 		concurrentHashLimit < 1 ||
@@ -97,10 +96,7 @@ export function resolvePasswordConfig(config: PasswordConfig = {}): ResolvedPass
 	};
 }
 
-// S-DOS-3 sizes the semaphore at `min(4, cpus)`, so a runtime that reports no core count may not
-// be answered with the ceiling: on a one-core container that overshoots the requirement itself.
-// `navigator.hardwareConcurrency` is the only reading available to a Web-standards core, and one
-// is the answer when it is missing — Node 20 has to set `concurrentHashLimit` (E-183).
+//a runtime that reports no core count gets a limit of one and never the ceiling (E-183)
 function defaultConcurrentHashLimit(): number {
 	const reported = globalThis.navigator?.hardwareConcurrency;
 

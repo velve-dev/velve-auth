@@ -60,12 +60,7 @@ function usernamePredicateValue(
 	return normalised.accepted ? normalised.value.usernameKey : null;
 }
 
-/**
- * One statement, always executed, whatever the identifier turns out to be — an identifier
- * the allowlist rejects costs the same round trip as one that names an account (S-ENUM-1, E-46).
- * An allowlist wide enough to admit `@` can let one identifier match two accounts, so the
- * address wins over the username and the older row over the newer, rather than the planner.
- */
+//one statement always runs so a rejected identifier costs the same round trip (S-ENUM-1)
 export async function findUserByIdentifier(
 	lookup: UserLookup,
 ): Promise<ResolvedUserIdentity | null> {
@@ -97,10 +92,7 @@ export async function findUserByIdentifier(
 	};
 }
 
-/**
- * Usernames are enumerable by construction and this endpoint says so (S-ENUM-8); the rate
- * limit that keeps it usable rather than harmless belongs to the route, not to this function.
- */
+//usernames are enumerable by design and the rate limit belongs to the route (S-ENUM-8)
 export async function usernameAvailability(lookup: UsernameLookup): Promise<UsernameAvailability> {
 	const normalised = normaliseUsername(lookup.candidate, lookup.rules);
 	if (!normalised.accepted) {

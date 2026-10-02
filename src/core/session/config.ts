@@ -40,7 +40,7 @@ export interface SessionSettings {
 
 const COOKIE_NAME = /^__Host-[A-Za-z0-9_-]+$/;
 
-/** The end of the range a `Date` holds, which is nearer than `Number.MAX_SAFE_INTEGER` and is the limit that binds a deadline this library reads back (E-1584). */
+//a deadline is read back as a Date, whose range ends nearer than the largest safe integer (E-1584)
 const LONGEST_DEADLINE_IN_MILLISECONDS = 8_640_000_000_000_000;
 
 function millisecondsOf(option: string, duration: Duration): number {
@@ -50,7 +50,7 @@ function millisecondsOf(option: string, duration: Duration): number {
 			`session.${option} must be a whole number of s, m, h or d above zero, not "${duration}"`,
 		);
 	}
-	// Refused at startup rather than at the first insert, which is where the database would refuse it (E-1573, E-1584).
+	//an unusable duration must fail at startup and not at the first insert (E-1573)
 	if (!Number.isSafeInteger(milliseconds) || milliseconds > LONGEST_DEADLINE_IN_MILLISECONDS) {
 		throw new InvalidSessionConfigError(
 			`session.${option} must be at most ${LONGEST_DEADLINE_IN_MILLISECONDS} in milliseconds, where the Date this library hands back ends, not "${duration}"`,
@@ -76,7 +76,7 @@ function assertCookieName(cookieName: HostPrefixedCookieName): HostPrefixedCooki
 	return cookieName;
 }
 
-/** The startup reading of `session` (3.15 A.5); every deadline is decided here and nowhere else. */
+//every session deadline is decided here and nowhere else
 export function sessionSettingsOf(config: Partial<SessionConfig> = {}): SessionSettings {
 	const complete: SessionConfig = { ...DEFAULT_SESSION_CONFIG, ...config };
 	const idleTimeoutMs = millisecondsOf("idleTimeout", complete.idleTimeout);
@@ -94,7 +94,7 @@ export function sessionSettingsOf(config: Partial<SessionConfig> = {}): SessionS
 		idleWriteIntervalMs,
 		freshnessWindowMs,
 		cookieName: assertCookieName(complete.cookieName),
-		// The cookie cannot outlive the deadline that no use extends.
+		//the cookie must not outlive the deadline that no use extends
 		cookieMaximumAgeInSeconds: Math.ceil(absoluteTimeoutMs / 1000),
 		sameSite: complete.cookie.sameSite,
 	};

@@ -20,7 +20,7 @@ function addressOnly(services: RouteServices): RateLimitRule {
 	return { perIpAddress: services.rateLimit.perIpAddress, perAccount: "none" };
 }
 
-/** S-OWNER-7: the actor comes from the resolution the pipeline produced, never from the request. */
+//the actor must come from the resolved session and never from the request (S-OWNER-7)
 function actorOf(services: RouteServices, session: Session | null): Actor {
 	if (session === null) {
 		throw new ConcealedError("cookie_absent");
@@ -32,10 +32,7 @@ function actorOf(services: RouteServices, session: Session | null): Actor {
 	return actorOfResolvedSession(resolved);
 }
 
-/**
- * 3.15 B.7 fixes the account here, server-side; S-FIX-1 needs the session that will be replaced, and
- * the callback cannot read it from a cookie it is not sent (E-588).
- */
+//the callback is not sent the session cookie, so the session to replace is fixed here (E-588)
 function linkStartOf(services: RouteServices, session: Session | null): OAuthLinkStart {
 	if (session === null) {
 		throw new ConcealedError("cookie_absent");
@@ -43,7 +40,6 @@ function linkStartOf(services: RouteServices, session: Session | null): OAuthLin
 	return { userId: actorOf(services, session), sessionId: session.id };
 }
 
-/** 3.15 C: the pointer reaches the browser as a cookie and the caller as a `CookieInstruction`. */
 function answerWithStatePointer(context: RequestContext, started: StartedFlow): OAuthRedirect {
 	if (started.delivery === "form_post") {
 		context.cookies.setCrossSiteOAuthState(started.pointer);
@@ -68,12 +64,7 @@ const CALLBACK_ERRORS = [
 	"rate_limited",
 ] as const;
 
-/**
- * The rows of 3.15 D.3 that begin `/sign-in/oauth/` and `/identity/`, declared by the feature that
- * owns third-party sign-in. The table is composed here so that adding them is a change to this
- * file and never to the assembly — and the tuple return type is what carries the names into
- * `VelveAuth`, so `signIn.oauth.*` appears on the instance without `instance.ts` being edited.
- */
+/** the third-party sign-in and identity routes, typed so their names reach the instance */
 export function oauthRoutes(services: RouteServices) {
 	const providers = resolveProviderTable(services.oauth);
 	const oauth: OAuthService = createOAuthService({ services, providers });
@@ -119,11 +110,7 @@ export function oauthRoutes(services: RouteServices) {
 			),
 	});
 
-	/**
-	 * S-CSRF-1: the one route of the specification without an origin check — the provider redirects
-	 * a browser here by GET and no `Origin` header exists to check. What secures it is the
-	 * server-side state, the pointer cookie and PKCE (3.10, S-CSRF-5).
-	 */
+	//a provider redirect carries no Origin, so this route has no origin check (S-CSRF-1)
 	const callback = defineRoute({
 		name: "signIn.oauth.callback",
 		method: "GET",
@@ -138,11 +125,7 @@ export function oauthRoutes(services: RouteServices) {
 		handler: completeFlow,
 	});
 
-	/**
-	 * The second exempt route, and the reason T-CSRF-1's threshold is two: `responseMode: form_post`
-	 * is what Apple requires once the e-mail scope is asked for (section 1, C50 and C70), and a
-	 * provider posting a form carries no `Origin` the library may compare either (E-541).
-	 */
+	//a provider posting a form carries no Origin either, so this route is exempt too (E-541)
 	const callbackFormPost = defineRoute({
 		name: "signIn.oauth.callbackFormPost",
 		method: "POST",
@@ -168,7 +151,7 @@ export function oauthRoutes(services: RouteServices) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** C89: the provider, the subject, the address and the scopes — never a token. */
+		//a listed identity must never carry a token
 		handler: async (_input, context): Promise<Identity[]> =>
 			oauth.listIdentities({ actor: actorOf(services, context.session) }),
 	});
@@ -220,7 +203,7 @@ export function oauthRoutes(services: RouteServices) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// S-OWNER-5, S-OWNER-8: an identity of another account and one that never existed both change nothing.
+		//a foreign or missing identity must change nothing and answer the same (S-OWNER-8)
 		handler: async (input, context): Promise<void> => {
 			await oauth.unlinkIdentity({
 				actor: actorOf(services, context.session),
@@ -232,11 +215,7 @@ export function oauthRoutes(services: RouteServices) {
 	return [start, callback, callbackFormPost, list, linkStart, unlink] as const;
 }
 
-/**
- * What this feature contributes to `VelveAuth<M>`. It is declared here rather than in the assembly
- * so that adding a namespace is a change to this file; `M` is a parameter because a namespace may
- * exist in one identity mode and not another (E-776).
- */
+/** the OAuth namespaces this feature adds to the instance, per identity mode */
 export type OAuthSurface<M extends IdentityMode> = M extends IdentityMode
 	? ServerSurface<ReturnType<typeof oauthRoutes>>
 	: never;

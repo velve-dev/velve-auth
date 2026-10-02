@@ -19,7 +19,6 @@ interface SignUpAttempt {
 
 interface SignUpFlow {
 	readonly environment: FlowEnvironment;
-	/** Absent in mode `username`, where 3.4 says there is no address and therefore no message. */
 	readonly email: EmailConfig | undefined;
 }
 
@@ -29,12 +28,7 @@ interface Registration {
 	readonly userId: string;
 }
 
-/**
- * The registration that ran and was thrown away. It carries its own result, because a transaction is
- * undone by raising and the answer S-ENUM-3 needs was produced inside it. It does not extend `Error`
- * on purpose: capturing a stack for a control-flow signal is work the committing branch does not do,
- * and the whole point of the branch is to do the same work (E-627, E-629).
- */
+//the discard signal must not capture a stack the committing branch never captures (E-629)
 class DiscardedRegistration {
 	readonly registration: Registration;
 
@@ -43,7 +37,7 @@ class DiscardedRegistration {
 	}
 }
 
-/** 3.15 B.9 lists `username_invalid` for sign-up; a malformed address is ordinary bad input. */
+//only a malformed name has its own code and a malformed address is ordinary bad input
 function refuse(rejection: IdentifierRejection): never {
 	throw new VelveError(rejection.identifier === "email" ? "invalid_input" : "username_invalid");
 }
@@ -56,12 +50,7 @@ function columnsOf(environment: FlowEnvironment, attempt: SignUpAttempt): Identi
 	return resolved.value;
 }
 
-/**
- * Whether an address is taken, as one row of one column either way. `findUserByEmail` answers with a
- * row on the taken branch and with none on the free one, and a row that has to be decoded is work
- * the other branch does not do — which at this endpoint is the whole measurable difference, because
- * there is no KDF to drown it in (E-629).
- */
+//both branches must read one row of one column with nothing extra to decode (E-629)
 function addressOwnerStatement(schema: string): string {
 	return `SELECT (SELECT owner.id FROM ${qualifiedTableName(schema, "user")} owner
 	WHERE owner.email = $1) AS taken_by`;
@@ -69,7 +58,7 @@ function addressOwnerStatement(schema: string): string {
 
 const HEXADECIMAL = "0123456789abcdef";
 
-/** Sixty-four bits is the floor at which a local part drawn at random cannot be one already taken. */
+//a local part drawn below sixty-four bits could collide with one already taken (E-939)
 const UNTAKEN_LOCAL_PART_LENGTH = 16;
 
 function randomLocalPart(length: number): string {
@@ -77,14 +66,7 @@ function randomLocalPart(length: number): string {
 	return Array.from(drawn, (byte) => HEXADECIMAL[byte % HEXADECIMAL.length]).join("");
 }
 
-/**
- * The address the cover registration is written under. It cannot be the one the caller sent — that
- * one is taken, and inserting it would raise where the free path inserts — so the domain the caller
- * sent is kept and the local part is drawn. Nothing is invented: no domain is made up and no literal
- * address appears here, which is what S-LINK-5's scan is about. The drawn part is the caller's own
- * length or the sixty-four-bit floor, whichever is longer, so a local part under sixteen characters
- * gets a cover longer than the address the caller sent (E-628, E-931).
- */
+//the cover address keeps the caller's domain and draws only the local part (E-628)
 function coverColumns(columns: IdentityColumns): IdentityColumns {
 	if (columns.email === null) {
 		return columns;
@@ -96,16 +78,7 @@ function coverColumns(columns: IdentityColumns): IdentityColumns {
 	};
 }
 
-/**
- * S-ENUM-3 and 3.13: a taken address answers as a free one does. It does so by **being** a
- * registration — the same statements in the same order, against a cover address — which is then
- * rolled back. Nothing is fabricated, so nothing can disagree with what a success answers: the
- * instants come from the database's clock, the session metadata from the mode the instance runs
- * under, and `isCurrent` from the row the repository built (E-627).
- *
- * What the rollback cannot hide is the caller's next request: the session token names no row. That
- * residual is E-602's and it is unchanged.
- */
+//a taken address must answer by running a registration that is then rolled back (E-627)
 async function register(
 	flow: SignUpFlow,
 	context: RequestContext,
@@ -140,7 +113,7 @@ async function register(
 						subject: { userId: created.id },
 					});
 		return {
-			// The answer names what the caller sent, never the cover address the row carries.
+			//the answer must name the address the caller sent and never the cover (S-ENUM-3)
 			result: {
 				user: { ...created, email: columns.email, hasPassword: derived !== null },
 				sessionToken: issued.token,
@@ -177,11 +150,7 @@ function confirmationOf(user: User, address: string, artefact: MintedArtefact): 
 	};
 }
 
-/**
- * A.7: the fifth kind deliberately carries no token. The library builds no URL on any path — a
- * confirmation link is the application's too — so a sign-in link is a link to the application's
- * sign-in page and needs no artefact minting for a requester who has proved nothing (E-619).
- */
+//the notice carries no token as a requester who proved nothing gets no artefact (E-619)
 function noticeOf(existingUserId: string, address: string): EmailMessage {
 	return { kind: "sign_up_attempt_on_existing_account", to: address, userId: existingUserId };
 }
@@ -193,11 +162,7 @@ async function removeTheAccountNobodyWasToldAbout(flow: SignUpFlow, userId: stri
 		.catch(() => undefined);
 }
 
-/**
- * What the address turned out to be. A lost insert race leaves `taken` with no owner: the unique
- * index says the address is held, and the account holding it was gone again by the time it was
- * looked for, so there is nobody to write to (E-930).
- */
+//a lost insert race may leave the address taken with no owner left to write to (E-930)
 type AddressOccupancy =
 	| { readonly kind: "free" }
 	| { readonly kind: "taken"; readonly owner: string | null };
@@ -207,20 +172,14 @@ interface Attempt {
 	readonly occupancy: AddressOccupancy;
 }
 
-/**
- * The one message either branch sends, after the transaction has committed and everything it held
- * has gone (E-630, E-931). A `send` that throws undoes what stands: the artefact on the free branch
- * and the account with it. The cover branch has nothing committed to undo, and a race whose winner
- * has since been deleted has nobody to write to.
- */
+//the one message must be sent only after the transaction has committed (E-630)
 async function announce(
 	flow: SignUpFlow,
 	registration: Registration,
 	address: string | null,
 	occupancy: AddressOccupancy,
 ): Promise<void> {
-	// An address means an artefact: `register` mints one whenever it writes a row carrying an
-	// address, and the cover writes one too — which is what makes the two branches the same length.
+	//the cover mints an artefact too and keeps both branches the same length (E-627)
 	const minted = registration.artefact;
 	if (flow.email === undefined || address === null || minted === null) {
 		return;
@@ -257,8 +216,7 @@ async function addressOwner(
 
 const UNIQUE_VIOLATION = "23505";
 
-/** `pg` and `postgres.js` name it `code`, the test connection names it `sqlState`; both carry the
- * five characters PostgreSQL sent. */
+//drivers disagree on the name of the sqlstate field and both names must be read
 function isUniqueViolation(cause: unknown): boolean {
 	if (typeof cause !== "object" || cause === null) {
 		return false;
@@ -267,12 +225,7 @@ function isUniqueViolation(cause: unknown): boolean {
 	return fields.code === UNIQUE_VIOLATION || fields.sqlState === UNIQUE_VIOLATION;
 }
 
-/**
- * Which unique index a lost race hit is not in the error every driver hands over, so it is asked
- * for. A registration can meet exactly two: the name and the address. A name that is now taken is
- * told so (3.4), and so is a violation on a row that carries no address, because then the name is
- * the only index there was. Returning means the address was the one (E-930, E-947).
- */
+//a lost race on the name index must be told as a taken name (E-947)
 async function refuseTheNameIfItWasTheName(
 	environment: FlowEnvironment,
 	columns: IdentityColumns,
@@ -286,15 +239,10 @@ async function refuseTheNameIfItWasTheName(
 	}
 }
 
-/** A second draw at sixty-four bits; a third would be arguing with the arithmetic (E-947). */
+//a third draw at sixty-four bits would be arguing with the arithmetic (E-947)
 const COVER_DRAWS = 2;
 
-/**
- * The cover registration races too. `coverColumns` draws a new local part and keeps the name, so in
- * mode `username_email` the cover insert meets the same name index the caller's would have, and a
- * name taken by then is answered as the guard before the transaction would have answered it. A
- * cover address that collided is drawn again (E-947).
- */
+//a cover insert that collided must be drawn again or told as a taken name (E-947)
 async function cover(
 	flow: SignUpFlow,
 	context: RequestContext,
@@ -317,13 +265,7 @@ async function cover(
 	throw collided;
 }
 
-/**
- * 3.13 fixes what a taken address is answered with, and occupancy is read before the transaction
- * that inserts — so a concurrent registration can take the address in between and the unique index
- * is the only thing that says so. A caller that loses that race is a caller registering a taken
- * address, and gets what one gets: S-ENUM-3 wants the two answers identical to the byte, and a
- * failure where the other branch answers 200 is the widest difference there is (E-930, E-955).
- */
+//a caller that loses the insert race must get the answer of a taken address (E-930)
 async function registerOrCover(
 	flow: SignUpFlow,
 	context: RequestContext,
@@ -360,8 +302,7 @@ export async function signUp(
 	const columns = columnsOf(environment, attempt);
 	await context.enforceAccountRateLimit(columns.email ?? columns.usernameKey ?? "");
 
-	// S-TIM-6: the KDF runs before anything is looked up, so a taken address cannot be told from a
-	// free one by the absence of the most expensive step on the path.
+	//the kdf must run before any lookup or a taken address would skip the costliest step (S-TIM-6)
 	const derived =
 		attempt.password === null
 			? null
@@ -371,8 +312,7 @@ export async function signUp(
 					environment.semaphore,
 				);
 
-	// 3.4 and S-ENUM-8: a name is enumerable by construction and is told so; an address is not, and
-	// answers as a free one does.
+	//a taken username may be told as usernames are declared enumerable (S-ENUM-8)
 	if (columns.usernameKey !== null) {
 		const named = await environment.services.users.findUserByUsernameKey(columns.usernameKey);
 		if (named !== null) {

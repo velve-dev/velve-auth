@@ -1,8 +1,4 @@
-/**
- * Lowercasing a whole string applies the Final_Sigma rule, so `ΟΔΟΣ` becomes `οδος` where
- * PostgreSQL's `lower()` gives `οδοσ`; per code point there is no context for that rule to
- * read. Every comparison form in this module comes from here, so no two of them can disagree.
- */
+//folding per code point skips Final_Sigma and matches PostgreSQL lower (E-202)
 export function caseFolded(value: string): string {
 	return [...value].map((character) => character.toLowerCase()).join("");
 }

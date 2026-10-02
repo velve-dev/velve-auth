@@ -14,7 +14,7 @@ type OptionalKeys<Shape> = {
 	[Key in keyof Shape]: undefined extends Parsed<Shape[Key]> ? Key : never;
 }[keyof Shape];
 
-/** `exactOptionalPropertyTypes` is on, so an absent field has to be an absent key rather than a key holding undefined. */
+//with exactOptionalPropertyTypes an absent field must be an absent key, not undefined
 type ParsedObject<Shape> = {
 	[Key in Exclude<keyof Shape, OptionalKeys<Shape>>]: Parsed<Shape[Key]>;
 } & {
@@ -25,7 +25,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** An inherited property and an array hole are both absent, and a direct server call can pass either. */
+//an inherited property and an array hole both count as absent, and a direct call can pass either
 function ownValue(source: object, key: string | number): unknown {
 	return Object.hasOwn(source, key) ? (source as Record<string | number, unknown>)[key] : undefined;
 }
@@ -41,7 +41,7 @@ export function string(): Validator<string> {
 	};
 }
 
-/** A caller reaching a server method directly passes JavaScript values, so NaN and Infinity arrive where JSON could not carry them. */
+//a direct server call passes JavaScript values, so NaN and Infinity can arrive here
 export function number(): Validator<number> {
 	return {
 		parse: (raw) => {
@@ -80,7 +80,7 @@ export function arrayOf<T>(inner: Validator<T>): Validator<T[]> {
 	};
 }
 
-/** The WebAuthn extension outputs are open-ended and the library reads none of them (1 D36), so the shape is checked and the contents are not. */
+//the library reads no WebAuthn extension output, so only the shape is checked
 export function unknownRecord(): Validator<Record<string, unknown>> {
 	return {
 		parse: (raw) => {

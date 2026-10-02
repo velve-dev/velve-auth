@@ -3,7 +3,7 @@ import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 
-/** The three columns S-REST-4 names, written only when `storeTokens` says so (S-REST-6). */
+//the token columns are written only when storeTokens says so (S-REST-6)
 export interface EncryptedProviderTokens {
 	readonly accessTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly refreshTokenEnc: Uint8Array<ArrayBuffer> | null;
@@ -35,14 +35,14 @@ export interface OwnedIdentity {
 }
 
 export interface OAuthIdentityRepository {
-	/** S-LINK-1: `(provider, subject)` is the whole predicate, and no other query reaches an identity by address. */
+	//provider and subject are the whole predicate, no query finds an identity by address (S-LINK-1)
 	findIdentityBySubject(input: {
 		readonly provider: string;
 		readonly subject: string;
 	}): Promise<OwnedIdentity | null>;
-	/** Null means the pair is already linked — to this account or to another (E-989). */
+	//null means the pair is already linked, to this account or to another (E-989)
 	insertIdentity(input: { readonly userId: string } & IdentityFacts): Promise<Identity | null>;
-	/** S-LINK-6: the provider's verification state is written per identity on every sign-in. */
+	//the provider's verification state is written per identity on every sign-in (S-LINK-6)
 	refreshIdentity(input: IdentityFacts): Promise<Identity>;
 	listIdentitiesOwnedBy(input: { readonly actor: Actor }): Promise<Identity[]>;
 }
@@ -71,7 +71,7 @@ function toOptionalDate(value: unknown): Date | null {
 	return value === null || value === undefined ? null : toDate(value);
 }
 
-/** A driver hands `jsonb` back decoded or as the text PostgreSQL sent, and both arrive here. */
+//a driver hands jsonb back decoded or as the text PostgreSQL sent
 function readProfile(value: unknown): unknown {
 	if (typeof value !== "string") {
 		return value ?? null;
@@ -122,8 +122,7 @@ export function createOAuthIdentityRepository(options: {
 	const schema = assertSchemaName(options.schema);
 	const identities = qualifiedTableName(schema, "identity");
 
-	/* 3.15 C.2: the three token columns and the key version never leave the database, so no
-	   statement here selects them. */
+	//the token columns and the key version must never leave the database
 	const RETURNED_COLUMNS = `id, user_id, provider, subject, provider_email, provider_email_verified,
 profile, array_to_string(scopes, ' ') AS scopes, token_expires_at, created_at`;
 

@@ -33,20 +33,10 @@ export interface ResolvedSessionView {
 	readonly user: User;
 }
 
-/**
- * The pipeline hands the handler a `Session`; minting an actor needs the whole `SessionResolution`,
- * and asking the database a second time would make T-CACHE-1's ratio two. The resolver puts the
- * resolution it just produced here, keyed by the very object it produced with it — a memo for one
- * request, not a cache: the key is a new object every time, so nothing survives the response.
- */
+/** a memo for one request from each resolved session to its resolution, never a cache */
 export type ResolutionMemo = WeakMap<Session, SessionResolution>;
 
-/**
- * What every route source takes, and the whole of what it takes. The fields are declared here
- * rather than by whichever feature reaches for one first (E-719); the count is deliberately not
- * stated, because a number in a sentence is checked by nobody and went stale the moment this
- * interface grew (E-1262).
- */
+/** what every route source takes, and the whole of what it takes */
 export interface RouteServices {
 	readonly sessions: SessionService;
 	readonly pending: PendingAuthenticationService;
@@ -60,24 +50,21 @@ export interface RouteServices {
 	readonly keys: KeyProvider;
 	readonly clock: Clock;
 	readonly oneTimeTokens: OneTimeTokens;
-	/**
-	 * S-DOS-3 bounds concurrent key derivation for the whole process, so the bound is one object
-	 * every route source shares rather than one each of them makes (E-1195).
-	 */
+	/** the one bound on concurrent key derivation every route source in the process shares */
 	readonly kdfSemaphore: KdfSemaphore;
 	readonly oauth?: OAuthConfig;
 	readonly email?: EmailConfig;
-	/** 3.15 A.2: absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones. */
+	/** absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones */
 	readonly webauthn?: WebAuthnConfig;
 	readonly totp?: Partial<TotpConfig>;
 	readonly recoveryCodes?: RecoveryCodesConfig;
-	/** The allowed origins of 3.15 A.2, which is also the only name of the application the configuration always carries. */
+	/** the allowed origins, the only name of the application the configuration always carries */
 	readonly origins: readonly string[];
-	/** S-FIX-1: the pending row and the session it becomes are one transaction, and it is built once (E-410). */
+	/** turns a pending row into its session in one transaction, built once */
 	readonly completeSecondFactor: SecondFactorCompletion;
-	/** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */
+	/** the plugins, ordered and frozen, with their routes, contexts and seven hook points */
 	readonly pluginRuntime: PluginRuntime;
-	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
+	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */
 	readonly fetch?: typeof globalThis.fetch;
 }
 
@@ -92,11 +79,7 @@ export function addressAndAccount(services: RouteServices): RateLimitRule {
 	};
 }
 
-/**
- * S-RATE-7: a route that names no identifier still has to key its account bucket by one, and it is
- * the same comparison form the account is resolved through — two forms that disagree are two
- * buckets for one account, which is a limit that can be walked around by spelling (E-1194).
- */
+//the account bucket must use the comparison form the account is resolved by (E-1194)
 export async function accountRateLimitKeyOf(
 	services: RouteServices,
 	userId: string,
@@ -107,7 +90,7 @@ export async function accountRateLimitKeyOf(
 
 const UNLIMITED: RateLimitRule = { perIpAddress: "none", perAccount: "none" };
 
-/** S-ENUM-8: `GET /username/available` carries its own tight bucket, ten requests a minute. */
+//username availability carries its own tight bucket of ten requests a minute (S-ENUM-8)
 const USERNAME_AVAILABILITY_LIMIT: RateLimitRule = {
 	perIpAddress: { capacity: 10, refillPerSecond: 10 / 60 },
 	perAccount: "none",
@@ -128,11 +111,7 @@ function requireSession(services: RouteServices, session: Session | null): Sessi
 	return resolutionOfContext(services, session);
 }
 
-/**
- * 3.11: the hook may refuse by throwing, so every event is announced before the rows go and the
- * refusal leaves them standing. Listing first costs a statement, which is why it is skipped
- * entirely where no plugin listens (E-758).
- */
+//every event is announced before the rows go, so a refusing hook leaves them standing (E-758)
 async function announceRevocationOf(
 	services: RouteServices,
 	resolved: SessionResolution,
@@ -171,7 +150,7 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// 3.15 B.1: exactly one session row goes, and an unknown token is not an error.
+		//signing out must end only this session and must succeed for a token that names none
 		handler: async (_input, context): Promise<void> => {
 			if (context.sessionToken !== null) {
 				if (context.session !== null) {
@@ -197,7 +176,7 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: UNLIMITED,
-		/** B.9: this runs on every request of the application, so a counter on it is a self-block. */
+		//this runs on every request, so a counter on it would block the application itself
 		handler: async (_input, context): Promise<ResolvedSessionView | null> => {
 			if (context.sessionToken === null) {
 				return null;
@@ -244,7 +223,7 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		// S-OWNER-4, S-OWNER-8: a session of another user and one that never existed answer alike.
+		//a foreign or missing session must answer alike (S-OWNER-8)
 		handler: async (input, context): Promise<void> => {
 			const resolved = requireSession(services, context.session);
 			await announceRevocationOf(
@@ -318,7 +297,7 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		/** B.2: this forces the idle write and nothing else — never the absolute deadline, never a new token. */
+		//refresh only extends the idle timeout, never the absolute deadline or the token
 		handler: async (_input, context): Promise<ResolvedSessionView | null> => {
 			if (context.sessionToken === null) {
 				throw new ConcealedError("cookie_absent");
@@ -331,11 +310,7 @@ export function sessionRoutes(services: RouteServices) {
 	return [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] as const;
 }
 
-/**
- * 3.15 D.3 rows `GET /pending` and `POST /pending/cancel`. Neither is authorised by the
- * intermediate state — reading it and cancelling it are what a caller does when it has one —
- * so both declare `pendingCookie: "readable"` rather than `caller: "pending"` (E-335, E-516).
- */
+/** the two pending routes, which read the pending cookie but are not authorised by it */
 export function pendingRoutes(services: RouteServices) {
 	const read = defineRoute({
 		name: "pending.read",
@@ -348,7 +323,7 @@ export function pendingRoutes(services: RouteServices) {
 		originCheck: "checked",
 		rateLimit: UNLIMITED,
 		pendingCookie: "readable",
-		/** B.7: the state names the factors still open and never any user data. */
+		//the pending state names the factors still open and never any user data
 		handler: async (_input, context): Promise<PendingAuthentication | null> => {
 			if (context.pendingToken === null) {
 				return null;
@@ -369,7 +344,7 @@ export function pendingRoutes(services: RouteServices) {
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
 		pendingCookie: "readable",
-		// The cookie goes whether or not a row was there, so a cancelled attempt cannot be replayed.
+		//the cookie goes whether or not a row was there, so a cancelled attempt cannot be replayed
 		handler: async (_input, context): Promise<void> => {
 			if (context.pendingToken !== null) {
 				await services.pending.cancel({ token: toPendingToken(context.pendingToken) });
@@ -388,7 +363,7 @@ export interface UsernameAvailabilityAnswer {
 
 const UNIQUE_VIOLATION = "23505";
 
-/** `pg` and `postgres.js` name it `code`, the test connection names it `sqlState`; both carry the five characters PostgreSQL sent. */
+//drivers name the SQLSTATE field differently but all carry the five characters sent
 function isUniqueViolation(cause: unknown): boolean {
 	if (typeof cause !== "object" || cause === null) {
 		return false;
@@ -397,10 +372,7 @@ function isUniqueViolation(cause: unknown): boolean {
 	return fields.code === UNIQUE_VIOLATION || fields.sqlState === UNIQUE_VIOLATION;
 }
 
-/**
- * S-ENUM-8: the one place the enumeration protection ends, and 3.4 decided to offer it, bound it
- * hard and say so. It exists only where usernames do.
- */
+/** the one place the enumeration protection ends, bounded hard and offered only with usernames */
 export function usernameRoutes(services: RouteServices, rules: UsernameRules) {
 	const isAvailable = defineRoute({
 		name: "username.isAvailable",
@@ -440,10 +412,7 @@ export function usernameRoutes(services: RouteServices, rules: UsernameRules) {
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
-		/**
-		 * 3.15 B.5. The name is normalised by `core/identity` and never here, so the form that is
-		 * written and the form the account is later resolved through are the one form (E-1246).
-		 */
+		//only core identity normalises the name, so written and resolved forms are one (E-1246)
 		handler: async (input, context): Promise<{ readonly user: User }> => {
 			const resolved = requireSession(services, context.session);
 			await context.enforceAccountRateLimit(await accountRateLimitKeyOf(services, resolved.userId));
@@ -451,8 +420,7 @@ export function usernameRoutes(services: RouteServices, rules: UsernameRules) {
 			if (!normalised.accepted) {
 				throw new VelveError("username_invalid");
 			}
-			// The unique index is what decides, so the race between the two statements loses here
-			// rather than writing a name the index would have refused.
+			//the unique index decides, so the race between the two statements loses here
 			const changed = await services.users
 				.updateUsername({
 					actor: actorOfResolvedSession(resolved),

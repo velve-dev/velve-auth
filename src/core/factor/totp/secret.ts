@@ -7,7 +7,7 @@ import {
 	TOTP_SECRET_BYTES,
 } from "./parameters.js";
 
-// S-RAND-1 and S-RAND-5: the secret is drawn where every other secret of the library is drawn.
+//the secret is drawn where every other secret of the library is drawn (S-RAND-1)
 export function createTotpSecret(): Uint8Array<ArrayBuffer> {
 	return randomBytes(TOTP_SECRET_BYTES);
 }
@@ -21,10 +21,7 @@ export interface TotpEnrollment {
 	readonly otpauthUri: string;
 }
 
-/**
- * The key URI format is Google's, not a standard, and the parameters are written out even where
- * they equal its defaults so that an authenticator which changed a default cannot silently disagree.
- */
+//every parameter is written out so an authenticator with other defaults cannot disagree
 export function totpEnrollment(input: {
 	readonly secretBytes: Uint8Array<ArrayBuffer>;
 	readonly issuer: string;

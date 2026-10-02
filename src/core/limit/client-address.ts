@@ -37,8 +37,7 @@ function trustedRange(entry: string): TrustedRange | null {
 	return network === null ? null : { prefixLengths, network };
 }
 
-/** An entry that does not parse matches nothing, so a mistyped proxy list falls back to the
- * connection address rather than trusting a header it cannot check (S-RATE-3). */
+//a proxy entry that does not parse must match nothing (S-RATE-3)
 function isTrustedProxy(address: string, trustedProxies: readonly string[]): boolean {
 	return trustedProxies.some((entry) => {
 		const range = trustedRange(entry);
@@ -53,12 +52,7 @@ function claimedAddresses(forwardedFor: string | null): readonly string[] {
 		.filter((claimed) => claimed !== "");
 }
 
-/**
- * S-RATE-3: `X-Forwarded-For` is read only where `trustedProxies` says who may write it. With an
- * empty list, or a connection from an address the list does not cover, the header cannot move the
- * bucket. Where the connection is from a trusted proxy, the answer is the rightmost claimed
- * address that is not itself a trusted proxy — the last hop no trusted party vouched for.
- */
+//the forwarded header may move the bucket only for a connection from a trusted proxy (S-RATE-3)
 export function resolveClientAddress(
 	connectionAddress: string | null,
 	forwardedFor: string | null,

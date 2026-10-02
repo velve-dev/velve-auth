@@ -19,7 +19,7 @@ export function rootKeyProvider(input: RootKeyProviderInput): KeyProvider {
 		throw new KeyError("key_version_out_of_range");
 	}
 
-	// S-KEY-6: a missing or too short root key stops construction, not the first request.
+	//a missing or short root key stops construction and not the first request (S-KEY-6)
 	const currentRootKey = rootKeysByVersion.get(input.currentVersion);
 	if (currentRootKey === undefined) {
 		throw new KeyError("root_key_missing");
@@ -84,7 +84,7 @@ function decodeRootKeys(
 	return rootKeysByVersion;
 }
 
-// `Number` would also read "0x10" and "1e2", which no `integer` column can round-trip back.
+//parsing with Number would also accept 0x10 and 1e2 which no integer column round trips
 function parseKeyVersion(text: string): number | null {
 	if (!DECIMAL_INTEGER.test(text)) {
 		return null;
@@ -94,14 +94,13 @@ function parseKeyVersion(text: string): number | null {
 	return isStorableKeyVersion(version) ? version : null;
 }
 
-// S-KEY-2: signing purposes become HMAC keys and encryption purposes AES-GCM keys, so Web Crypto
-// itself rejects a value taken from the wrong purpose.
+//each purpose kind gets its own key type so Web Crypto rejects a key from the wrong one (S-KEY-2)
 function importPurposeKey(
 	purpose: KeyPurpose,
 	keyBytes: Uint8Array<ArrayBuffer>,
 ): Promise<CryptoKey> {
 	if (isEncryptionPurpose(purpose)) {
-		// Extractable because the `@noble/ciphers` fallback needs the raw bytes (E-60).
+		//the key is extractable as the noble ciphers fallback needs the raw bytes (E-60)
 		return crypto.subtle.importKey("raw", keyBytes, "AES-GCM", true, ["encrypt", "decrypt"]);
 	}
 

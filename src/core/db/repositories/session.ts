@@ -43,7 +43,7 @@ export interface SessionWithOwner {
 	readonly session: Session;
 	readonly userId: string;
 	readonly userDisabledAt: Date | null;
-	/** The database's clock at the moment it answered, so no caller has to compare its own clock with the row. */
+	//callers use the db clock and never compare their own clock with the row (E-238)
 	readonly observedAt: Date;
 }
 
@@ -71,13 +71,13 @@ export interface SessionRepository {
 		readonly actor: Actor;
 		readonly currentSessionId: string;
 	}): Promise<Session[]>;
-	/** 3.15 G: the reading half of `FrozenRepositories`, which names an account and holds no proof of owning it. */
+	//reading needs no proof of ownership so this takes a plain user id
 	listSessionsOfUser(input: { readonly userId: string }): Promise<Session[]>;
-	/** The rows a revocation will remove, deadlines included, so what a hook is told matches what goes (E-765). */
+	//deadlines are ignored so a hook is told exactly the rows a revocation removes (E-765)
 	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
-	/** 3.15 G: `revokeSession` is given a session id and no owner, so the id is the whole predicate. */
+	//the session id is the whole predicate as revoking a session is given no owner
 	deleteSessionById(input: { readonly sessionId: string }): Promise<RemovedSession | null>;
-	/** The owner a `SessionRevokeEvent` names, read before the row goes so the hook can still refuse (E-640). */
+	//the owner is read before the row goes so the revoke hook can still refuse (E-640)
 	findUserIdOfSession(input: { readonly sessionId: string }): Promise<string | null>;
 	deleteSessionOwnedBy(input: {
 		readonly sessionId: string;
@@ -96,13 +96,7 @@ export interface SessionRepository {
 		readonly actor: Actor;
 		readonly insert: SessionInsert;
 	}): Promise<Session>;
-	/**
-	 * The replacement a caller reaches with a session id rather than a token. The delete must match
-	 * exactly one **live** row of an **enabled** account: a caller whose authority *is* the previous
-	 * row has none left once that row is gone, past either deadline, or owned by a disabled account,
-	 * so zero rows raises `PreviousSessionMissingError` and the insert rolls back with it
-	 * (E-971, E-976).
-	 */
+	//only a live row of an enabled account can authorise its own replacement (E-971)
 	replaceSessionOwnedBy(input: {
 		readonly actor: Actor;
 		readonly previousSessionId: string;
@@ -130,7 +124,7 @@ interface OwnedRowShape extends SessionRowShape {
 const SELECTED_COLUMNS = `id, user_id, created_at, last_used_at, idle_expires_at,
 	absolute_expires_at, array_to_string(factors, ',') AS factors, ip, user_agent`;
 
-/** Decoding a PostgreSQL type is the driver's work, not the repository's (E-227); an Invalid Date is a `Date`, so a deadline past the range a `Date` holds arrives here looking decoded (E-1584). */
+//an invalid date is still a date so an out of range deadline must be caught here (E-1584)
 function toDate(value: unknown): Date {
 	if (value instanceof Date && !Number.isNaN(value.getTime())) {
 		return value;
@@ -159,7 +153,7 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 	return names.filter(isAuthenticationFactor);
 }
 
-/** The literal is built from a closed set, so no value from a request can reach it. */
+//the array literal is built from a closed set so no request value can reach it
 function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	for (const factor of factors) {
 		if (!isAuthenticationFactor(factor)) {
@@ -169,12 +163,11 @@ function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	return `{${[...new Set(factors)].join(",")}}`;
 }
 
-/** Every deadline below is `make_interval`, never an interval literal: PostgreSQL 14 caps the literal's millisecond and second fields at a signed 32-bit value, and the default absolute timeout is past it (E-1571, E-1581). */
+//deadlines use make interval as postgresql 14 overflows the interval literal (E-1571)
 function secondsOf(milliseconds: number): number {
 	return Math.round(milliseconds) / 1000;
 }
 
-/** 3.15 C: `isCurrent` is set in `session.list` and nowhere else, so everywhere else it is false. */
 const NOT_LISTED = false;
 
 function toSession(row: SessionRowShape, isCurrent: boolean): Session {
@@ -200,10 +193,7 @@ function insertStatement(table: string): string {
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
-/**
- * S-CACHE-2: one query, joined on the user, filtered on the token hash and both deadlines, and
- * `disabled_at` read in the same statement so a disabled account cannot pass as signed in (L-4).
- */
+//one joined query reads disabled at so a disabled account cannot pass as signed in (S-CACHE-2)
 function resolveStatement(table: string, users: string): string {
 	return `SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 		s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
@@ -213,7 +203,7 @@ function resolveStatement(table: string, users: string): string {
 	WHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`;
 }
 
-/** The write interval is a condition of the statement, so two concurrent requests cannot both write. */
+//the write interval sits in the statement so two concurrent requests cannot both write
 function extendIdleDeadlineStatement(table: string): string {
 	return `UPDATE ${table}
 	SET last_used_at = now(), idle_expires_at = now() + make_interval(secs => $3::double precision)
@@ -241,12 +231,7 @@ function deleteOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE id = $1 AND user_id = $2 RETURNING id`;
 }
 
-/**
- * The statement above has no deadline predicate, because revoking a session the sweep has not yet
- * removed must still remove it (E-765, E-766). A replacement asks a different question — whether the
- * row still authorises anything — and neither an expired row nor a row of a disabled account does,
- * so this one is its own and joins `user` for the same reason the resolution does (L-4, E-971, E-976).
- */
+//a replacement removes only a row that still authorises something (E-976)
 function deleteLiveOwnedStatement(table: string, users: string): string {
 	return `DELETE FROM ${table} s
 	USING ${users} u
@@ -391,11 +376,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			return rows.length;
 		},
 
-		// S-FIX-1, E-23: the new row and the removal of the old one are one transaction, never an update.
+		//the new row and the removal of the old one are one transaction, never an update (S-FIX-1)
 		replaceSession({ previousTokenHash, insert }) {
 			return options.driver.transaction(async (tx) => {
 				const removed = await deleteSessionByTokenHash(tx, previousTokenHash);
-				// E-239: the removal is what makes this a replacement; without it the caller ends up with two live sessions.
+				//without the removal the caller would end up with two live sessions (E-239)
 				if (removed === null) {
 					throw new PreviousSessionMissingError();
 				}
@@ -406,14 +391,14 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			});
 		},
 
-		// S-FIX-1: the named row and the new row are one transaction, exactly as the token form above.
+		//the named row and the new row are one transaction (S-FIX-1)
 		async replaceSessionOwnedBy({ actor, previousSessionId, insert }) {
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();
 			}
 			return options.driver.transaction(async (tx) => {
 				const removed = await tx.query(deleteLiveOwnedSql, [previousSessionId, actor]);
-				// E-961: the count is read here and not returned, because only here can the insert still be undone.
+				//the count is checked here as only here can the insert still be undone (E-961)
 				if (removed.length === 0) {
 					throw new PreviousSessionMissingError();
 				}
@@ -421,7 +406,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			});
 		},
 
-		// S-FIX-6: every other session of the user goes, and there is no parameter that keeps one.
+		//every other session of the user goes and no parameter keeps one (S-FIX-6)
 		async replaceEverySessionOfUser({ actor, insert }) {
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();

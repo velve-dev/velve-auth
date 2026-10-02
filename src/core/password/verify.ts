@@ -17,19 +17,12 @@ import { CREATED_SCHEME, type PasswordScheme } from "./scheme.js";
 import type { KdfSemaphore } from "./semaphore.js";
 import { verifyAgainstScheme } from "./verify-switch.js";
 
-/**
- * No user has this identifier, and every request whose identifier resolved to nobody looks it up,
- * so the absent-user path issues the same query as the present-user path (S-TIM-1, E-174).
- */
+//an absent user is looked up under this id so both paths issue the same query (E-174)
 export const ABSENT_USER_ID = "00000000-0000-0000-0000-000000000000";
 
-/**
- * The credential the switch reads when no user was resolved. It is a real Argon2id hash with the
- * configured parameters, sealed like any other, so the absent-user path performs the same
- * decryption and calls the same verifier — not the creation function (S-TIM-2).
- */
+//the absent user path verifies a real Argon2id dummy with the configured parameters (S-TIM-2)
 export interface DummyCredential extends PasswordCredentialRow {
-	/** Held open so that a decryption which fails still costs exactly one attempt (E-179). */
+	//held open so a failed decryption still costs exactly one attempt (E-179)
 	readonly openedPhc: string;
 }
 
@@ -45,15 +38,11 @@ export type PasswordCheck =
 	| {
 			readonly outcome: "verified";
 			readonly userId: string;
-			/**
-			 * Present when the credential is behind the current policy or the current key version.
-			 * The caller runs it **after** it has sent its answer, so the rehash never lengthens the
-			 * measured sign-in (S-TIM-5, 3.3 step 6).
-			 */
+			//the caller runs the rehash after answering so it never lengthens the sign-in (S-TIM-5)
 			readonly rehash?: () => Promise<boolean>;
 	  }
 	| { readonly outcome: "refused"; readonly reason: ConcealedReason }
-	/** The length policy refused; this depends on the input alone and on nothing else (S-DOS-2). */
+	//a length refusal depends on the input alone and on nothing else (S-DOS-2)
 	| { readonly outcome: "unacceptable" };
 
 export async function createDummyCredential(
@@ -75,12 +64,7 @@ export async function createDummyCredential(
 	};
 }
 
-/**
- * Steps 1 to 5 of the sequence in 3.3. After the length check — which depends on the input alone —
- * there is no `return` until the outcome is decided: one credential query, one decryption, one
- * verifier call with identical parameters, and the failure accumulated in a local variable
- * (S-TIM-1, L-1).
- */
+//after the length check nothing returns early before the outcome is decided (S-TIM-1)
 export async function checkPassword(
 	input: { readonly userId: string | null; readonly plaintext: string },
 	environment: PasswordEnvironment,
@@ -116,12 +100,11 @@ export async function checkPassword(
 	};
 }
 
-/** The setting and changing path: the `validate` hook runs, then Argon2id under the semaphore. */
 export async function setPassword(
 	input: {
 		readonly userId: string;
 		readonly plaintext: string;
-		/** L-12: the session storing the password, or `null` where the caller has none (E-626). */
+		//the session may be null where the caller has none but is never left out (E-626)
 		readonly setBySessionId: string | null;
 	},
 	environment: PasswordEnvironment,
@@ -140,14 +123,13 @@ export async function setPassword(
 	});
 }
 
-// 3.3 step 6: silent, without user interaction, and harmless when it loses the race — the next
-// sign-in tries again (E-11).
+//a rehash that loses the race is harmless as the next sign-in tries again (E-11)
 async function rewriteCredential(
 	password: Uint8Array<ArrayBuffer>,
 	row: PasswordCredentialRow,
 	environment: PasswordEnvironment,
 ): Promise<boolean> {
-	// S-DOS-6: the same semaphore as the check, so a rehash wave cannot displace live sign-ins.
+	//the rehash shares the semaphore so a rehash wave cannot displace sign-ins (S-DOS-6)
 	const phc = await environment.semaphore.run(() =>
 		createArgon2idHash(password, environment.config.argon2id),
 	);
@@ -160,11 +142,7 @@ async function rewriteCredential(
 	});
 }
 
-/**
- * S-TIM-1: a key version that has left the ring must not become a throw between step 2 and step 4.
- * The loud report is `assertStoredKeyVersionsAreKnown`, once at assembly and addressed to the
- * operator; here the row simply fails to verify like any other (E-179).
- */
+//a key version that left the ring fails verification instead of throwing (S-TIM-1)
 async function openCredential(
 	environment: PasswordEnvironment,
 	row: PasswordCredentialRow,

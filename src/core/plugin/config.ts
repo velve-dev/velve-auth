@@ -56,7 +56,7 @@ export interface PluginActor {
 	readonly reason: string;
 }
 
-/** 3.11: no writing method on `velve.user`, `password_credential`, `totp_credential` or `recovery_code`. */
+/** no writing method on `user`, `password_credential`, `totp_credential` or `recovery_code` */
 export interface FrozenRepositories {
 	findUserById(input: { userId: string; actor: PluginActor }): Promise<User | null>;
 	listSessionsForUser(input: { userId: string; actor: PluginActor }): Promise<Session[]>;
@@ -82,11 +82,7 @@ export interface FrozenContext {
 	): void;
 }
 
-/**
- * Seven hook points, exactly those of 3.11. `Promise<void>` everywhere is what "a listener with a
- * veto" is written as: a hook refuses by throwing and observes by doing nothing, and it cannot
- * replace the response because it cannot return one.
- */
+/** the seven hook points, where a hook refuses by throwing and cannot replace the response */
 export interface PluginHooks {
 	beforeSignIn?: (event: SignInEvent, context: FrozenContext) => Promise<void>;
 	afterSignIn?: (event: SignInCompletedEvent, context: FrozenContext) => Promise<void>;
@@ -104,24 +100,10 @@ export interface PluginMigration<Id extends string> {
 	readonly createsTables: readonly `${Id}_${string}`[];
 }
 
-/**
- * 3.6 names the four routes that accept `__Host-velve_pending` and says every other route ignores
- * it completely; S-CSRF-5 says the same of the state pointer. A plugin route is one of the others,
- * so neither the caller requirement that resolves the pending state nor either cookie field is
- * reachable from a plugin's declaration (E-764).
- */
+/** who may call a plugin route, which never sees the pending or the OAuth state cookie */
 export type PluginCallerRequirement = "anonymous" | "session" | "server_only";
 
-/**
- * 3.15 G writes the input and output as `any`; `AnyRoute` already sets `unknown` as the form. The
- * error type admits the plugin's own namespaced codes beside the core ones, which `error-map.ts`
- * resolves rather than the core union absorbing them (E-720). `originCheck` is narrowed to the one
- * value S-CSRF-1 allows a route that is not the OAuth callback: exempting a route of its own is how
- * a plugin bypasses the origin check without replacing anything (S-CSRF-6, E-639). `requestBody` is
- * omitted so the type says what the runtime already does — the reading copies ten named fields and
- * carries no eleventh — rather than letting a plugin write a field that compiles and is dropped
- * (E-924).
- */
+/** a route a plugin declares, with its own error codes and no exemption from the origin check */
 export type PluginRoute<Id extends string> = Omit<
 	RouteDeclaration<
 		`${Id}.${string}`,
@@ -133,11 +115,7 @@ export type PluginRoute<Id extends string> = Omit<
 	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie" | "requestBody"
 > & { readonly caller: PluginCallerRequirement; readonly originCheck: "checked" };
 
-/**
- * The namespace constraint is a type, not a runtime check: a plugin that wants to overwrite a core
- * route cannot satisfy the declaration type. The start error stays for plugins written in
- * JavaScript, where a name collision is a start error and not a warning (3.11).
- */
+/** a plugin, whose declaration type cannot overwrite a core route */
 export interface VelvePlugin<Id extends string = string> {
 	readonly id: Id;
 	readonly dependsOn?: readonly string[];

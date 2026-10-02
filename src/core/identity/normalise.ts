@@ -14,7 +14,7 @@ export interface NormalisedUsername {
 	readonly usernameKey: string;
 }
 
-/** RFC 5321 section 4.5.3.1.3 caps a reverse-path at 256 octets including the angle brackets. */
+//an email path is capped at 256 octets by RFC 5321 including the angle brackets
 const MAXIMUM_EMAIL_BYTES = 254;
 
 const INVISIBLE_OR_SEPARATING = /[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]/u;
@@ -53,13 +53,12 @@ export function normaliseUsername(
 	rules: UsernameRules,
 ): Normalisation<NormalisedUsername, UsernameRejection> {
 	const username = candidate.trim().normalize("NFKC");
-	// The caller's own pattern runs on this input, so its length is settled before it does.
+	//the length is settled before the caller's own pattern runs on the input (E-206)
 	if (codePointCount(username) > rules.maximumLength) {
 		return reject("too_long");
 	}
 	const usernameKey = caseFolded(username);
-	// Judged on the comparison form so that case alone never decides acceptance; whether a
-	// homoglyph gets through is the caller's pattern to answer, not this line's (E-17).
+	//the comparison form is judged so case alone never decides acceptance (E-191)
 	if (!rules.allowedCharacters.test(usernameKey)) {
 		return reject("invalid_characters");
 	}

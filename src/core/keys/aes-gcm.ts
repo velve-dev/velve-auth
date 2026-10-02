@@ -51,8 +51,7 @@ export const nobleAesGcm: AesGcmEngine = {
 
 let engineSelection: Promise<AesGcmEngine> | undefined;
 
-// E-03: `crypto.subtle` is the primary path; `@noble/ciphers` covers runtimes with an incomplete
-// Web Crypto implementation.
+//noble ciphers covers runtimes whose Web Crypto lacks AES-GCM (E-03)
 export function selectAesGcmEngine(): Promise<AesGcmEngine> {
 	engineSelection ??= subtleSupportsAesGcm().then((supported) =>
 		supported ? subtleAesGcm : nobleAesGcm,

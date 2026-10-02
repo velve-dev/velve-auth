@@ -17,10 +17,10 @@ const utf8 = new TextEncoder();
 
 export interface PasswordCredentialRow {
 	readonly userId: string;
-	/** AES-256-GCM over the canonical PHC string, never the string itself (L-2, S-REST-5). */
+	//the column holds the encrypted PHC string and never the string itself (S-REST-5)
 	readonly phc: Uint8Array<ArrayBuffer>;
 	readonly keyVersion: number;
-	/** Cleartext, so the estate can be surveyed without a key (L-2). */
+	//the scheme stays cleartext for a PHC estate to be surveyed without a key
 	readonly scheme: PasswordScheme;
 }
 
@@ -29,7 +29,7 @@ export interface SealedPhc {
 	readonly ciphertext: Uint8Array<ArrayBuffer>;
 }
 
-/** The one place a PHC string turns into what the column holds; there is no other write path. */
+//this is the only place a PHC string becomes a column value
 export function sealPhc(keys: KeyProvider, phc: string): Promise<SealedPhc> {
 	return encryptWithPurposeKey(keys, PASSWORD_ENC_PURPOSE, utf8.encode(phc));
 }
@@ -42,11 +42,7 @@ export async function openPhc(keys: KeyProvider, row: PasswordCredentialRow): Pr
 
 export interface PasswordCredentialRepository {
 	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
-	/**
-	 * `setBySessionId` is required and never defaulted: L-12 reads an unrecorded provenance as a
-	 * different session, so a caller that omitted it would lose its user's password at the account's
-	 * next first confirmation. Answering `null` is allowed; not answering is not (E-626).
-	 */
+	//setBySessionId is never defaulted or a later first confirmation drops the password (E-626)
 	write(input: {
 		userId: string;
 		phc: string;
@@ -109,8 +105,7 @@ export function createPasswordCredentialRepository(
 			assertSchemeMatchesCredential(phc, scheme);
 			const sealed = await sealPhc(options.keys, phc);
 
-			// S-OWNER-2: the conflict target is the owner column, and the predicate says so in the
-			// statement rather than leaving it to be inferred from the primary key (E-185).
+			//the conflict is on the owner column and the predicate says so explicitly (S-OWNER-2)
 			const written = await options.driver.query(
 				`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
 				 VALUES ($1, $2, $3, $4, $5)
@@ -123,15 +118,13 @@ export function createPasswordCredentialRepository(
 				[userId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
 			);
 
-			// A conflict predicate that is false does not raise, it updates nothing; without this
-			// the caller is told the password was stored when it was not (E-185).
+			//a false conflict predicate writes nothing and must not be reported as stored (E-185)
 			if (written.length !== 1) {
 				throw new CredentialWriteError("credential_not_written");
 			}
 		},
 
-		// 3.3 step 6: compare and swap on the stored ciphertext, so a password the user changed
-		// while the rehash was running is never overwritten by it (E-11).
+		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)
 		async replaceIfUnchanged({ userId, previous, phc, scheme }) {
 			assertSchemeMatchesCredential(phc, scheme);
 			const sealed = await sealPhc(options.keys, phc);

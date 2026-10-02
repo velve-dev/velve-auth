@@ -33,10 +33,6 @@ export interface FactorKeyVersionCheckOptions {
 	readonly schema?: string;
 }
 
-/**
- * The two second-factor tables that carry a key version: `totp_credential.key_version` names
- * `totp-enc` (S-KEY-3) and `recovery_code.key_version` names `token-pepper` (L-3).
- */
 const KEY_VERSION_COLUMNS: readonly { table: string; purpose: KeyPurpose }[] = [
 	{ table: "totp_credential", purpose: "totp-enc" },
 	{ table: "recovery_code", purpose: "token-pepper" },
@@ -56,11 +52,7 @@ async function versionsMissingFromTheRing(
 	return missing;
 }
 
-/**
- * E-179's shape for the second factor: a key version that has left the ring is reported once, at
- * assembly, to the operator. On the sign-in path the same loss is indistinguishable from a wrong
- * code by design (E-428, E-1697), so without this the only signal is users who cannot get in.
- */
+//a lost key version must reach the operator as sign-in cannot tell it from a wrong code (E-1697)
 export async function assertStoredFactorKeyVersionsAreKnown(
 	options: FactorKeyVersionCheckOptions,
 ): Promise<void> {

@@ -18,14 +18,13 @@ export interface RecoveryCodeServiceOptions {
 	readonly keys: KeyProvider;
 	readonly pending: PendingAuthenticationService;
 	readonly schema?: string;
-	/** A.8's `RecoveryCodesConfig`: how many codes a set holds and how wide a printed group is. */
 	readonly shape?: RecoveryCodeShape;
 }
 
 export interface RecoveryCodeService {
-	/** The plaintext codes leave the process here, once; what is stored is their HMAC (B.6). */
+	/** returns the plaintext codes exactly once, and only their HMAC is stored */
 	generate(input: { readonly actor: Actor }): Promise<{ readonly codes: readonly string[] }>;
-	/** As with TOTP, the resolution is returned and not consumed; the session and the removal of the pending row are one transaction elsewhere (E-410). */
+	/** returns the resolution and does not consume the pending state */
 	verify(input: {
 		readonly pendingToken: PendingToken;
 		readonly code: string;
@@ -41,7 +40,7 @@ export function createRecoveryCodeService(
 		schema: options.schema ?? "velve",
 	});
 
-	/** L-3: a code written under a retired pepper version cannot be recomputed, and that is the one case the lookup has to tell from a wrong code. */
+	//a retired pepper version is the one case the lookup must tell from a wrong code
 	async function candidateHmacsFor(
 		userId: string,
 		code: string,
@@ -58,7 +57,7 @@ export function createRecoveryCodeService(
 	}
 
 	return {
-		// 3.6: a change of the method regenerates the whole set and deletes the previous one in the same transaction.
+		//a new set must retire the old one in the same transaction or both would be valid
 		async generate({ actor }) {
 			const plaintext = createRecoveryCodeSet(options.shape ?? DEFAULT_RECOVERY_CODE_SHAPE);
 			const peppered = await Promise.all(

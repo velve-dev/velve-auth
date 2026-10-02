@@ -28,7 +28,7 @@ const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
 export class KeyError extends Error {
 	readonly code: KeyErrorCode;
 
-	// The message is fixed per code so that no key material can reach an error string.
+	//the message is fixed per code so no key material can reach an error string
 	constructor(code: KeyErrorCode) {
 		super(KEY_ERROR_MESSAGES[code]);
 		this.name = "KeyError";

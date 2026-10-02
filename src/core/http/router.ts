@@ -5,7 +5,7 @@ export interface RouteMatch {
 	readonly pathParameters: Readonly<Record<string, string>>;
 }
 
-/** ASCII only: Unicode case folding maps U+212A to "k", which would make /lin%E2%84%AA resolve to /link. */
+//unicode case folding maps U+212A to k and would make /lin%E2%84%AA resolve to /link
 function foldCase(segment: string): string {
 	return segment.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
@@ -77,7 +77,7 @@ function segmentsOverlap(first: readonly string[], second: readonly string[]): b
 	});
 }
 
-/** 3.11: a conflict in the route table is a start error — two paths that fold together, and a literal path a parameter path would swallow. */
+//a conflict in the route table must be a start error (E-126)
 export function assertRouteTableIsUnambiguous(routes: readonly AnyRoute[]): void {
 	const names = new Set<string>();
 	const routable: { readonly route: AnyRoute; readonly segments: readonly string[] }[] = [];

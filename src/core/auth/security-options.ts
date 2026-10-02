@@ -2,29 +2,21 @@ import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { DEFAULT_SESSION_METADATA_MODE } from "../session/metadata.js";
 import type { BaseConfig, VelveAuthConfig } from "./config.js";
 
-/** Every key of the option type; T-DEFAULT-1 reads it against SECURITY_OPTIONS. */
+/** every key of the option type */
 type OptionKey = keyof VelveAuthConfig<IdentityMode>;
 
 export interface SecurityOption {
 	readonly option: OptionKey;
-	/** What the library uses when the option is absent, as the fixture reads it. */
+	/** what the library uses when the option is absent */
 	readonly safeDefault: string;
-	/** What a caller has to write to make it weaker, or the sentence saying nothing does. */
+	/** what a caller has to write to make it weaker, or the sentence saying nothing does */
 	readonly weakenedBy: string;
 }
 
 const NOTHING_WEAKENS_IT = "nothing weakens it";
 const REQUIRED = "no default: the option is required";
 
-/**
- * S-DEFAULT-1 and T-DEFAULT-1. Every key of the option type stands here with its safe default, so
- * that a new option cannot be added without being classified — `test/auth-defaults.test.ts` reads
- * the type's keys against this list and fails on a key that is missing from it.
- *
- * A weakening is not forbidden here; it is made visible. What must not be weakened at all is
- * refused at start instead: argon2id below the floor (S-DEFAULT-6), an empty origin list, a
- * `username` mode without recovery codes (S-DEFAULT-4).
- */
+/** every option with its safe default and what a caller has to write to weaken it */
 export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	{ option: "database", safeDefault: REQUIRED, weakenedBy: NOTHING_WEAKENS_IT },
 	{ option: "identity", safeDefault: REQUIRED, weakenedBy: NOTHING_WEAKENS_IT },
@@ -124,7 +116,7 @@ type ObservedConfig = BaseConfig<IdentityMode> & {
 
 type Detector = (config: ObservedConfig, freshness: FreshnessWindows) => ChosenWeakening | null;
 
-/** One detector per option, so that adding an option means adding a row rather than a branch. */
+//one detector per option, so a new option adds a row rather than a branch
 const DETECTORS: readonly Detector[] = [
 	(_config, freshness) =>
 		freshness.chosenMs > freshness.defaultMs
@@ -183,11 +175,7 @@ const DETECTORS: readonly Detector[] = [
 		config.clock === undefined ? null : { option: "clock", chosen: "a clock the caller supplied" },
 ];
 
-/**
- * One entry per weakened option and never two for the same one, because the operator reads this
- * list to learn what this installation gave up (S-DEFAULT-1). What the caller left alone says
- * nothing.
- */
+//each weakened option appears once, as the operator reads what was given up (S-DEFAULT-1)
 export function weakeningsIn<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: { readonly count: number } },
 	defaultFreshnessWindowMs: number,

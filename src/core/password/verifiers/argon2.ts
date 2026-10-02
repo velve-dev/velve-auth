@@ -4,7 +4,7 @@ import { integerParameter, type PhcString } from "../phc.js";
 import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
 
-/** The Argon2 reference decoder reads a missing `v=` field as version 1.0, and so does this one. */
+//a missing v field means version 1.0 as in the Argon2 reference decoder (E-173)
 const VERSION_WITHOUT_FIELD = 0x10;
 
 const VARIANTS: readonly Argon2Variant[] = ["argon2id", "argon2i", "argon2d"];

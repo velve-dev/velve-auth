@@ -8,11 +8,7 @@ import type {
 	ProviderCredentials,
 } from "./config.js";
 
-/**
- * What the library knows about a provider before an operator configures anything. Endpoints live
- * here and in the configuration, and nowhere else: no discovery document and no response body ever
- * becomes a URL the server calls (S-REDIR-6).
- */
+//no discovery document and no response body ever becomes a URL the server calls (S-REDIR-6)
 interface ProviderDescriptor {
 	readonly authorizationEndpoint: string;
 	readonly tokenEndpoint: string;
@@ -27,12 +23,7 @@ interface ProviderDescriptor {
 	readonly responseMode?: OAuthResponseMode;
 }
 
-/**
- * A provider without `jwksUri` reads its claims from `userInfoEndpoint`, and a configured one with
- * neither answers `oauth_provider_error` at the callback rather than refusing the start, because
- * 3.15 A.8 makes both optional (E-557). `microsoft` carries no `issuer` because the value is the
- * tenant's and a fixed one would refuse every real token (E-556).
- */
+//microsoft has no fixed issuer as the value is the tenant's and would refuse real tokens (E-556)
 const DESCRIPTORS: Readonly<Record<KnownProvider, ProviderDescriptor>> = {
 	google: {
 		authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -190,7 +181,7 @@ export interface ResolvedProvider {
 	readonly redirectUri: string;
 	readonly prompt: OAuthPrompt | null;
 	readonly responseMode: OAuthResponseMode;
-	/** The third condition of S-LINK-2, read once at start so no handler re-reads the list. */
+	//the trust list is read once at start and no handler re-reads it (S-LINK-2)
 	readonly trustedForAutomaticLinking: boolean;
 }
 
@@ -200,7 +191,7 @@ function isKnownProvider(id: string): id is KnownProvider {
 	return Object.hasOwn(DESCRIPTORS, id);
 }
 
-/** S-REDIR-6: an endpoint the server calls itself is an absolute `https` URL or the start fails. */
+//an endpoint the server calls must be an absolute https URL or the start fails (S-REDIR-6)
 function assertCallableEndpoint(url: string): string {
 	let parsed: URL;
 	try {
@@ -269,7 +260,7 @@ function resolveProvider(
 	};
 }
 
-/** Every configured provider, resolved once while the instance is built (E-543). */
+//every configured provider is resolved once while the instance is built (E-543)
 export function resolveProviderTable(oauth: OAuthConfig | undefined): ProviderTable {
 	const table = new Map<string, ResolvedProvider>();
 	for (const [id, configured] of Object.entries(oauth?.providers ?? {})) {

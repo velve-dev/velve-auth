@@ -81,7 +81,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	internal_error: "The request could not be completed.",
 };
 
-/** 3.11: a plugin contributes error codes, and each one begins with its own id. */
+/** an error code a plugin contributes, which begins with that plugin's id */
 export type PluginErrorCode = `${string}.${string}`;
 export type AnyErrorCode = VelveErrorCode | PluginErrorCode;
 
@@ -94,18 +94,12 @@ const PLUGIN_ERRORS = new Map<PluginErrorCode, PluginErrorDefinition>();
 const PLUGIN_ERROR_STATUS_FLOOR = 400;
 const PLUGIN_ERROR_STATUS_CEILING = 599;
 
-/** `Object.hasOwn` and not `in`: `in` walks the prototype, so `toString` read as a core code (E-663). */
+//in walks the prototype and would read toString as a core code (E-663)
 function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
 	return !Object.hasOwn(MESSAGE_BY_ERROR_CODE, code);
 }
 
-/**
- * §3 keeps this file the only place that decides what a caller learns, which is why a plugin
- * registers here rather than widening the core union: the union stays a closed literal and the
- * resolver below answers for both kinds. The registry is process-wide, so a second instance
- * registering the same code with a different answer is refused rather than silently winning
- * (E-720).
- */
+/** registers a plugin's error codes, refusing a code already registered with another answer */
 export function registerPluginErrorCodes(
 	definitions: Readonly<Record<PluginErrorCode, PluginErrorDefinition>>,
 ): void {
@@ -133,13 +127,7 @@ export function registerPluginErrorCodes(
 	}
 }
 
-/**
- * 3.15 G gives a plugin a bare list of code strings and 3.15 F needs a status and a message for
- * every code; a declared code answers with the library's own pair, which says the request was
- * refused and nothing about the plugin. The declaration is held apart from the registrations
- * above, so that a start never blocks the richer answer an application registers for the same
- * code — in either order, the explicit one wins (E-646).
- */
+//an explicit registration must win over a bare plugin declaration in either order (E-646)
 const DECLARED_PLUGIN_ERROR: PluginErrorDefinition = {
 	httpStatus: 400,
 	message: "The request was refused.",
@@ -153,7 +141,7 @@ export function registerDeclaredPluginErrorCodes(codes: readonly PluginErrorCode
 	}
 }
 
-/** Not exported from the package: the registry is process-wide, so a public reset is a way for one caller to erase another's codes. */
+//a public reset would let one caller erase another's codes in the process-wide registry
 export function forgetPluginErrorCodes(): void {
 	PLUGIN_ERRORS.clear();
 	DECLARED_PLUGIN_CODES.clear();
@@ -168,7 +156,7 @@ const UNREGISTERED: PluginErrorDefinition = {
 	message: MESSAGE_BY_ERROR_CODE.internal_error,
 };
 
-/** The one resolver: a core code reads the two tables, a namespaced one reads the registry. */
+/** answers any error code, a core one from the core tables and a plugin one from the registry */
 export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 	if (!isPluginErrorCode(code)) {
 		return {
@@ -182,7 +170,7 @@ export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 	return PLUGIN_ERRORS.get(code) ?? UNREGISTERED;
 }
 
-/** The one enumeration of the union, so `instance.ts` keeps no second copy of the 25 codes. */
+//the codes are listed only here so a second copy cannot fall out of step
 export const VELVE_ERROR_CODES: readonly VelveErrorCode[] = Object.keys(
 	MESSAGE_BY_ERROR_CODE,
 ) as VelveErrorCode[];
@@ -336,7 +324,7 @@ interface ErrorBody {
 
 const RETRY_AFTER_LIMIT_IN_SECONDS = 86_400;
 
-/** A wait the caller cannot act on is not a wait, and it reaches neither the body nor the Retry-After header. */
+//a wait the caller cannot act on must reach neither the body nor the Retry-After header
 export function writableWaitInSeconds(retryAfterSeconds: number | undefined): number | null {
 	if (retryAfterSeconds === undefined) {
 		return null;
@@ -347,10 +335,7 @@ export function writableWaitInSeconds(retryAfterSeconds: number | undefined): nu
 		: null;
 }
 
-/**
- * A namespaced code nobody declared is not part of any published interface, so the body carries
- * `internal_error` rather than a string the caller cannot look up (E-647).
- */
+//an undeclared namespaced code is in no published interface and must not reach the body (E-647)
 function visibleCodeOf(code: AnyErrorCode): AnyErrorCode {
 	return !isPluginErrorCode(code) || isKnownPluginErrorCode(code) ? code : "internal_error";
 }

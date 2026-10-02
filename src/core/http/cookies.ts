@@ -4,18 +4,12 @@ export type HostPrefixedCookieName = `__Host-${string}`;
 
 export type CookieSameSite = "lax" | "strict";
 
-/**
- * The only attribute sets the library can express: no Domain, and no way to drop HttpOnly or
- * Secure, which is what S-COOKIE-2 asks of the session cookie. The third set is not S-COOKIE-2's
- * doing — section 1 H18 marks `SameSite=None` **Weglassen** — and it reaches exactly one cookie for
- * the reason set out below (E-582).
- */
+/** the only cookie attribute sets, never with a Domain and never without HttpOnly or Secure */
 export type CookieAttributes =
 	| "HttpOnly; Secure; SameSite=Lax; Path=/"
 	| "HttpOnly; Secure; SameSite=Strict; Path=/"
 	| "HttpOnly; Secure; SameSite=None; Path=/";
 
-/** How a provider hands the authorization code back: in the query of a redirect, or in a posted form. */
 export type OAuthResponseDelivery = "query" | "form_post";
 
 export interface CookieNames {
@@ -24,7 +18,7 @@ export interface CookieNames {
 	readonly oauthState: HostPrefixedCookieName;
 }
 
-/** S-COOKIE-6: the complete set of cookies the library ever sets. */
+//this must stay the complete set of cookies the library ever sets (S-COOKIE-6)
 export const DEFAULT_COOKIE_NAMES: CookieNames = {
 	session: "__Host-velve_session",
 	pending: "__Host-velve_pending",
@@ -33,11 +27,7 @@ export const DEFAULT_COOKIE_NAMES: CookieNames = {
 
 const PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS = 300;
 
-/**
- * 3.10: the row in `velve.oauth_flow` is the authority and this cookie only points at it, so the
- * cookie must outlive the row rather than the other way round — a pointer that expires first turns
- * a working callback into `oauth_flow_invalid`.
- */
+//the state cookie must outlive the flow row it points at, never the other way round
 const OAUTH_STATE_COOKIE_MAXIMUM_AGE_IN_SECONDS = 600;
 
 export interface CookieInstruction {
@@ -48,7 +38,7 @@ export interface CookieInstruction {
 }
 
 export interface CookiePolicy {
-	/** The names read from the request; the names written come from DEFAULT_COOKIE_NAMES (S-COOKIE-6). */
+	//only reading may use other names, the names written stay the defaults (S-COOKIE-6)
 	readonly names: CookieNames;
 	readonly sameSite: CookieSameSite;
 	readonly sessionMaximumAgeInSeconds: number;
@@ -60,7 +50,7 @@ export interface CookieWriter {
 	setPending(token: string): void;
 	clearPending(): void;
 	setOAuthState(pointer: string): void;
-	/** The `form_post` flow of section 1 C50, whose callback the browser reaches by a cross-site POST. */
+	/** sets the state cookie for a `form_post` callback the browser reaches by a cross-site POST */
 	setCrossSiteOAuthState(pointer: string): void;
 	clearOAuthState(): void;
 }
@@ -82,18 +72,7 @@ const WRITABLE_ATTRIBUTES = new Set<string>([
 	CROSS_SITE_ATTRIBUTES,
 ]);
 
-/**
- * 5.9 (a): the provider returns through a top-level cross-site GET, and a `SameSite=Strict` cookie
- * is not sent on one — the pointer would be missing exactly where the callback needs it. What
- * secures the callback is the server-side `state` and PKCE (3.10), not this attribute, so the
- * state cookie keeps `Lax` whatever the session cookie is configured to.
- *
- * A provider answering with `form_post` returns through a cross-site **POST**, which not even
- * `Lax` is sent on, so that flow's pointer is the one cookie of the library that carries
- * `SameSite=None`. Section 1 H18 rules that attribute out — *"mit `__Host-` und der Origin-Prüfung
- * nicht vorgesehen"* — and this is a deviation from it, argued and bounded in E-582: it reaches no
- * cookie that authenticates anything, and the route it reaches has no origin check to lose.
- */
+//a cross-site return carries no Strict cookie, and a form_post not even a Lax one (E-582)
 const OAUTH_STATE_ATTRIBUTES: Readonly<Record<OAuthResponseDelivery, CookieAttributes>> = {
 	query: LAX_ATTRIBUTES,
 	form_post: CROSS_SITE_ATTRIBUTES,
@@ -123,7 +102,7 @@ function isWritableAge(maximumAgeInSeconds: number): boolean {
 	);
 }
 
-// S-COOKIE-2: every part is read once and then checked, so a property that answers differently on the second read cannot pass.
+//each part is read once, so a getter cannot answer differently after the check (S-COOKIE-2)
 export function serializeCookie(instruction: CookieInstruction): string {
 	const { name, value, maximumAgeInSeconds, attributes } = instruction;
 	if (
@@ -217,7 +196,7 @@ export function readCookies(header: string | null, names: CookieNames): CookieVa
 		if (!enumerated.has(name)) {
 			continue;
 		}
-		// S-COOKIE-5: a second cookie of the same name is rejected, never disambiguated.
+		//a second cookie of the same name must be rejected, never disambiguated (S-COOKIE-5)
 		if (values.has(name)) {
 			throw new VelveError("invalid_input");
 		}

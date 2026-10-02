@@ -25,12 +25,10 @@ export interface RateLimiterOptions {
 
 const SHORTEST_BUCKET_LIFETIME_IN_SECONDS = 60;
 
-/** A bucket that would take longer than this to refill is a lockout wearing a rate limit's
- * clothes, and S-RATE-7 rules one out (E-385). */
+//a bucket that takes longer than a day to refill would be a lockout (E-385)
 const LONGEST_BUCKET_LIFETIME_IN_SECONDS = 86_400;
 
-/** A row swept before its bucket has refilled hands the tokens back early, so a bucket outlives
- * the time it needs to fill from empty. */
+//a bucket row must outlive the time its bucket needs to refill from empty (E-385)
 function bucketLifetimeInSeconds(rule: BucketRule): number {
 	const untilFull = rule.capacity / rule.refillPerSecond;
 	if (!Number.isFinite(untilFull) || untilFull > LONGEST_BUCKET_LIFETIME_IN_SECONDS) {
@@ -39,8 +37,7 @@ function bucketLifetimeInSeconds(rule: BucketRule): number {
 	return Math.max(SHORTEST_BUCKET_LIFETIME_IN_SECONDS, Math.ceil(untilFull));
 }
 
-/** E-166: the KDF semaphore already refuses with `rate_limited` and no `Retry-After`, so a
- * caller cannot read the header's absence as anything but absent. */
+//a refusal without a retry hint is already an answer a caller must handle (E-166)
 function secondsUntilNextToken(tokens: number, refillPerSecond: number): number | null {
 	if (!Number.isFinite(refillPerSecond) || refillPerSecond <= 0) {
 		return null;
@@ -56,11 +53,6 @@ function decisionFor(tokens: number, rule: BucketRule): RateLimitDecision {
 	return retryAfterSeconds === null ? { allowed: false } : { allowed: false, retryAfterSeconds };
 }
 
-/**
- * The token bucket of 3.9 behind the `RateLimiter` seam the HTTP layer declares: one statement
- * per check, an address counter keyed by prefix, an account counter keyed by a digest of the
- * identifier, and a per-route counter that only ever raises an alarm.
- */
 export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
 	const store = createTokenBucketStore({ driver: options.driver, schema: options.schema });
 	const watch = options.config?.routeFlood;

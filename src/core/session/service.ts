@@ -17,13 +17,10 @@ import {
 } from "./metadata.js";
 import { createSessionToken, type SessionToken, sessionTokenHash } from "./token.js";
 
-/**
- * The only value the library accepts as proof that a session was resolved (E-93, S-OWNER-7).
- * It is produced in `resolve` and nowhere else, so an actor cannot be built from a request.
- */
+/** the only proof of a resolved session the library accepts, produced by `resolve` alone */
 export type SessionResolution = ResolvedSession & {
 	readonly session: Session;
-	/** The database's clock at the moment it answered, and therefore the only clock freshness is decided by (E-238). */
+	/** the database clock when it answered, the only clock freshness is decided by */
 	readonly observedAt: Date;
 };
 
@@ -46,11 +43,7 @@ export interface SessionServiceOptions {
 
 export interface SessionService {
 	readonly settings: SessionSettings;
-	/**
-	 * The same service over another driver. A caller that must write a session inside a transaction
-	 * it already owns needs one carrying the configured deadlines and metadata mode, and no seam
-	 * hands those on beside the service itself (E-969).
-	 */
+	/** the same service over another driver, for a session written in a caller's own transaction */
 	boundTo(driver: Driver): SessionService;
 	issue(input: {
 		readonly userId: string;
@@ -68,12 +61,7 @@ export interface SessionService {
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
-	/**
-	 * S-FIX-1 where the proof of ownership is a consumed row and not a session cookie: the caller
-	 * names the one session to replace, and every other session of the account is left alone. A
-	 * named row that is no longer there raises `PreviousSessionMissingError` unmapped, because what
-	 * the outside is told about it depends on which artefact named the row (E-961).
-	 */
+	/** replaces the one named session and leaves every other session of the account alone */
 	reissueSessionOfUser(input: {
 		readonly actor: Actor;
 		readonly previousSessionId: string;
@@ -93,13 +81,13 @@ export interface SessionService {
 	}): Promise<{ revokedCount: number }>;
 	revokeEvery(input: { readonly resolved: SessionResolution }): Promise<{ revokedCount: number }>;
 	revokeEverySessionOfUser(input: { readonly actor: Actor }): Promise<{ revokedCount: number }>;
-	/** The ids a revocation is about to remove, so a hook is told about exactly those rows (E-765). */
+	/** the ids a revocation is about to remove, for telling a hook about exactly those rows */
 	listEveryIdOwnedBy(input: { readonly resolved: SessionResolution }): Promise<string[]>;
 }
 
 const WRITE_NOW = 0;
 
-/** A session that vanished between its resolution and its replacement is a session the caller no longer has. */
+//a session that vanished before its replacement is one the caller no longer has
 function replacedSessionFailure(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {
 		throw new ConcealedError("session_not_found");
@@ -107,7 +95,7 @@ function replacedSessionFailure(cause: unknown): never {
 	throw cause;
 }
 
-/** E-93, S-OWNER-7: the brand of a resolved session is asserted here and nowhere else. */
+//the brand of a resolved session is asserted here and nowhere else (S-OWNER-7)
 function resolutionOf(userId: string, session: Session, observedAt: Date): SessionResolution {
 	return { userId, session, observedAt } as SessionResolution;
 }
@@ -140,7 +128,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		};
 	}
 
-	// E-233, E-238: the freshness check sits where the actor is minted, and it reads the clock created_at came from.
+	//freshness is checked where the actor is minted, on the clock created_at came from (E-233)
 	function actorOfFreshSession(resolved: SessionResolution): Actor {
 		assertSessionIsFresh(resolved.session, {
 			freshnessWindowMs: settings.freshnessWindowMs,
@@ -157,7 +145,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		if (found === null) {
 			return null;
 		}
-		// L-4: the one place in the library where a disabled account is named, and the caller has proved the account is theirs.
+		//a disabled account is named only here, once the caller has proved the account is theirs
 		if (found.userDisabledAt !== null) {
 			throw new VelveError("account_disabled");
 		}
@@ -190,7 +178,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return { token: issued.token, session };
 		},
 
-		// S-FIX-1: every change of the trust level ends the previous session and begins a new one.
+		//every change of the trust level must end the old session and begin a new one (S-FIX-1)
 		async reissue({ previousToken, userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions
@@ -202,7 +190,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return { token: issued.token, session };
 		},
 
-		// S-FIX-6: a credential change takes every other session with it, and nothing turns that off.
+		//a credential change must end every other session and nothing turns that off (S-FIX-6)
 		async reissueAfterCredentialChange({ resolved, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
@@ -224,7 +212,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 		resolve: (token) => resolveAndExtend(token, settings.idleWriteIntervalMs),
 
-		// 3.15 B.2: refresh forces exactly this write and nothing else — never the absolute deadline, never a new token.
+		//refresh only extends the idle timeout, never the absolute deadline or the token
 		refresh: (token) => resolveAndExtend(token, WRITE_NOW),
 
 		async signOut({ token }) {
@@ -242,7 +230,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return sessions.listEverySessionIdOwnedBy({ actor: actorOfFreshSession(resolved) });
 		},
 
-		// S-OWNER-4: a session of another user and one that never existed both change nothing and answer the same.
+		//revoking a foreign or missing session changes nothing and answers the same (S-OWNER-4)
 		async revoke({ resolved, targetSessionId }) {
 			await sessions.deleteSessionOwnedBy({
 				sessionId: targetSessionId,
@@ -267,7 +255,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			};
 		},
 
-		// S-FIX-6: the password reset has no surviving session to resolve, so the caller brings the actor its redeemed token produced.
+		//a reset has no session to resolve, so the actor comes from its redeemed token (E-234)
 		async revokeEverySessionOfUser({ actor }) {
 			return { revokedCount: await sessions.deleteEverySessionOwnedBy({ actor }) };
 		},

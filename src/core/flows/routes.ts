@@ -22,10 +22,7 @@ import type {
 } from "./results.js";
 import { signUp } from "./sign-up.js";
 
-/**
- * The identity fields of 3.15 A.1 as a validator. The mode decides which of the two are read, so
- * `/sign-up` in mode `email` refuses a `username` field rather than ignoring it.
- */
+//a field the mode does not read must be refused rather than ignored
 function identityFieldsOf(identity: IdentityConfiguration) {
 	return identity.mode === "email"
 		? { email: string() }
@@ -34,7 +31,6 @@ function identityFieldsOf(identity: IdentityConfiguration) {
 			: { email: string(), username: string() };
 }
 
-/** 3.15 A.1: one lookup field in every mode, and in `username_email` it is resolved by format. */
 function signInLookupOf(identity: IdentityConfiguration) {
 	return identity.mode === "email"
 		? { email: string() }
@@ -90,7 +86,7 @@ function requireSessionOwner(context: RequestContext): string {
 	return context.session.userId;
 }
 
-/** The rows of 3.15 D.3 that exist in every identity mode. */
+/** the email flow routes that exist in every identity mode */
 function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | undefined) {
 	const { services } = environment;
 	const flow = { environment, email };
@@ -167,7 +163,7 @@ function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | un
 	return [withPassword, withoutPassword, withRecoveryCode] as const;
 }
 
-/** The eight rows of 3.15 D.3 that carry an address, and therefore are absent in mode `username`. */
+/** the eight email flow routes that carry an address, absent in mode `username` */
 function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfig) {
 	const { services } = environment;
 
@@ -181,7 +177,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
-		// 3.15 B.1: `void`, not `{ sent: boolean }` — a boolean would be the enumeration answer.
+		//the request answers void as a sent flag would be the enumeration answer
 		handler: async (input, context): Promise<void> =>
 			requestMagicLink(environment, email, context, input),
 	});
@@ -302,40 +298,26 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 	] as const;
 }
 
-/**
- * Every row this file can contribute, in the order the address-bearing modes assemble them; the
- * value below narrows to the mode, so a caller that needs the whole set as a type — 3.15 E's client
- * is the one — reads it here rather than from the widened return (E-671).
- */
+/** every route the email flows can contribute, in the order they are assembled */
 export type EmailFlowRouteTable = readonly [
 	...ReturnType<typeof routesInEveryMode>,
 	...ReturnType<typeof routesThatNeedAnAddress>,
 ];
 
-/**
- * The rows of 3.15 D.3 that carry an e-mailed one-time artefact — sign-up, magic link, password
- * reset, address verification and address change. Composed here so that adding them is a change to
- * this file and never to the assembly; the tuple return type carries `signIn.magicLink.*` onto the
- * instance without any other file naming it.
- */
+//adding a mailed route must change this file and never the assembly
 export function emailFlowRoutes(services: RouteServices): readonly AnyRoute[] {
 	const environment: FlowEnvironment = {
 		services,
 		semaphore: services.kdfSemaphore,
 	};
 	const email = services.email;
-	// 3.15 D.3: a route the mode does not have is not refused, it does not exist. `email.send` is a
-	// start error in the two modes that have addresses (A.7), so the narrowing below is the mode.
+	//a route the mode does not have must not exist rather than be refused
 	return email === undefined || services.identity.mode === "username"
 		? routesInEveryMode(environment, email)
 		: [...routesInEveryMode(environment, email), ...routesThatNeedAnAddress(environment, email)];
 }
 
-/**
- * What this feature contributes to `VelveAuth<M>`. `M` is a parameter because the `/email/*` routes
- * exist in `email` and `username_email` and not in `username`, so the namespaces this feature adds
- * are conditional on the mode and the condition is written here (E-776).
- */
+/** the namespaces the email flows add to `VelveAuth<M>`, absent in mode `username` */
 export type EmailFlowSurface<M extends IdentityMode> = {
 	readonly signUp: SignUpNamespace<M>;
 	readonly password: RecoveryPasswordNamespace<M>;

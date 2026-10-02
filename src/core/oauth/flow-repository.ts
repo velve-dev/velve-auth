@@ -3,7 +3,7 @@ import type { Driver } from "../db/driver.js";
 import { toEntityId } from "../db/entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 
-/** 3.10: the flow row is what secures the callback, and ten minutes is longer than any consent screen. */
+//ten minutes is longer than any consent screen
 const OAUTH_FLOW_LIFETIME_IN_SECONDS = 600;
 
 interface OAuthFlowInsert {
@@ -16,7 +16,7 @@ interface OAuthFlowInsert {
 	readonly linkTo: OAuthLinkStart | null;
 }
 
-/** 3.15 B.7 fixes the account server-side at the start; S-FIX-1 needs the row that will be replaced. */
+//a link must replace the session it started in, which this row carries (S-FIX-1)
 export interface OAuthLinkStart {
 	readonly userId: string;
 	readonly sessionId: string;
@@ -28,15 +28,15 @@ export interface ConsumedOAuthFlowRow {
 	readonly keyVersion: number;
 	readonly nonce: string | null;
 	readonly redirectPath: string | null;
-	/** E-234's second provenance: the account a link flow names, proved by this row's removal. */
+	//the account a link flow names is proved by the removal of this row (E-234)
 	readonly linkTo: ConsumedOAuthFlow | null;
-	/** The session `identity.link.start` ran in, which is the row S-FIX-1 replaces (E-588). */
+	//the link must replace the session it began in (E-588)
 	readonly linkFromSessionId: string | null;
 }
 
 interface OAuthFlowRepository {
 	insertFlow(input: OAuthFlowInsert): Promise<void>;
-	/** S-REPLAY: the removal is the check, so a state cannot be spent twice. */
+	//the removal is the check, so a state cannot be spent twice (S-REPLAY-6)
 	consumeFlow(input: { readonly stateSha256: Uint8Array }): Promise<ConsumedOAuthFlowRow | null>;
 }
 
@@ -50,7 +50,7 @@ interface FlowRow {
 	readonly link_from_session_id: string | null;
 }
 
-/** E-93: the brand is asserted where the row was removed, and in no other place. */
+//the brand is asserted where the row was removed and nowhere else
 function linkTargetOf(userId: string | null): ConsumedOAuthFlow | null {
 	return userId === null ? null : ({ userId: toEntityId<"user">(userId) } as ConsumedOAuthFlow);
 }

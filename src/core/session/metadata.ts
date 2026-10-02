@@ -3,7 +3,7 @@ import { boundedUserAgent, truncatedUserAgent } from "./user-agent.js";
 
 export type SessionMetadataMode = "truncated" | "full" | "none";
 
-/** L-10: data minimisation under Art. 5 (1) (c) GDPR is the default, not a configuration task. */
+//data minimisation under the GDPR is the default and not a configuration task
 export const DEFAULT_SESSION_METADATA_MODE: SessionMetadataMode = "truncated";
 
 export interface SessionMetadata {
@@ -27,7 +27,7 @@ function truncatedMetadata(observed: SessionMetadata): SessionMetadata {
 	};
 }
 
-/** L-10: the truncation runs before the value leaves the process, so the full address is not in the statement either. */
+//the address is truncated in the process so the full address never reaches the statement (E-222)
 export function sessionMetadataFor(
 	mode: SessionMetadataMode,
 	observed: SessionMetadata,

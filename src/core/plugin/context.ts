@@ -37,11 +37,7 @@ export interface FrozenContextServices {
 	readonly log: LogSink;
 }
 
-/**
- * What a revocation performed through `FrozenRepositories` announces. The silent one is what a
- * `beforeSessionRevoke` hook is given, and it is the re-entry guard E-766 asked for: a hook that
- * revokes while being told about a revocation cannot be told about its own (E-641).
- */
+//a hook told about a revocation must not be told about its own (E-641)
 export interface RevocationAnnouncement {
 	announce(event: SessionRevokeEvent): Promise<void>;
 	readonly listened: boolean;
@@ -64,7 +60,7 @@ function assertActorIsNamed(actor: PluginActor): PluginActor {
 	return actor;
 }
 
-/** 3.15 G, E-737: both fields are mandatory and both are logged; neither authorises anything. */
+//both actor fields are mandatory and logged and neither authorises anything (E-737)
 function recorded(
 	log: LogSink,
 	method: string,
@@ -83,11 +79,7 @@ function recorded(
 	}
 }
 
-/**
- * 3.15 G: no writing method on `velve.user`, `password_credential`, `totp_credential` or
- * `recovery_code`, and the absence is the requirement — a plugin that could write a password or a
- * factor would be a co-owner of the core rather than a listener with a veto.
- */
+//a plugin must not be able to write an account, a password or a factor
 function createFrozenRepositories(
 	services: FrozenContextServices,
 	revocation: RevocationAnnouncement,
@@ -109,7 +101,7 @@ function createFrozenRepositories(
 			actor: PluginActor;
 		}): Promise<void> => {
 			recorded(services.log, "revokeSession", assertActorIsNamed(input.actor), input.reason);
-			// 3.11: the announcement is before the row goes, so a hook that throws leaves it standing.
+			//a revoke hook that throws must leave the session standing
 			if (revocation.listened) {
 				const userId = await services.sessions.findUserIdOfSession({
 					sessionId: input.sessionId,
@@ -143,11 +135,7 @@ function freezeContext(
 	});
 }
 
-/**
- * `Object.freeze` refuses the change at run time and `readonly` refuses it at compile time; 3.15 G
- * asks for both because the first is what a JavaScript caller meets and the second is what a
- * TypeScript caller meets.
- */
+//the context must refuse a change at run time and at compile time alike
 export function createPluginContext(
 	services: FrozenContextServices,
 	pluginId: string,
@@ -160,7 +148,6 @@ export function createPluginContext(
 	);
 }
 
-/** 3.15 D.1: every route carries a context, and a core route's has no tables of its own behind it. */
 export function createCoreContext(
 	services: FrozenContextServices,
 	revocation: RevocationAnnouncement,

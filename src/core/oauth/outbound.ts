@@ -1,6 +1,6 @@
 import { VelveError } from "../http/error-map.js";
 
-/** A provider that has not answered in ten seconds is an outage, and the caller is waiting. */
+//a provider that has not answered in ten seconds is an outage and the caller is waiting
 const OUTBOUND_TIMEOUT_IN_MILLISECONDS = 10_000;
 
 export type OutboundFetch = typeof globalThis.fetch;
@@ -14,10 +14,7 @@ interface OutboundRequest {
 const REDIRECT_STATUS_FLOOR = 300;
 const REDIRECT_STATUS_CEILING = 399;
 
-/**
- * Section 1, C61: a 3xx from a provider endpoint is refused rather than followed, so a compromised
- * or misconfigured provider cannot steer the server at a host of its choosing (SSRF).
- */
+//a redirect from a provider must not steer the server at a host of its choosing (S-REDIR-6)
 function assertNotARedirect(response: Response): Response {
 	if (response.status >= REDIRECT_STATUS_FLOOR && response.status <= REDIRECT_STATUS_CEILING) {
 		throw new VelveError("oauth_provider_error");
@@ -62,7 +59,7 @@ async function call(
 	}
 }
 
-/** Every provider call the library makes goes through here, and every URL it takes comes from the configuration (S-REDIR-6). */
+//every provider call goes through here and takes its URL from the configuration (S-REDIR-6)
 export async function fetchJsonFromProvider(
 	fetchImplementation: OutboundFetch,
 	request: OutboundRequest,

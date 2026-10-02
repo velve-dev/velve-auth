@@ -3,11 +3,7 @@ import { normaliseEmail } from "../identity/normalise.js";
 import type { ProviderAccount } from "./claims.js";
 import type { ResolvedProvider } from "./providers.js";
 
-/**
- * The three conditions of S-LINK-2, each named and each required. Better Auth read the second one
- * never (CVE-2026-53516, CVSS 8.3) and, after the fix, made it switchable; here there is no
- * parameter that removes one of the three and no order in which two of them suffice.
- */
+//no parameter removes one of the three conditions and no two of them suffice (S-LINK-2)
 interface AutomaticLinkConditions {
 	readonly providerReportsTheAddressVerified: boolean;
 	readonly localAccountHasEmailVerifiedAt: boolean;
@@ -22,12 +18,7 @@ export function automaticLinkIsAllowed(conditions: AutomaticLinkConditions): boo
 	);
 }
 
-/**
- * S-LINK-1: the address is an attribute, so the lookup by address happens only after the two
- * conditions that do not need it already hold, and its result is accepted only if the third does.
- * A caller that reaches this function with an unverified address or an untrusted provider gets
- * `null` before any query runs.
- */
+//the address is an attribute and is looked up only once the other two conditions hold (S-LINK-1)
 export async function accountAnAutomaticLinkMayJoin(input: {
 	readonly users: UserRepository;
 	readonly account: ProviderAccount;

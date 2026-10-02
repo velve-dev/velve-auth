@@ -13,13 +13,13 @@ export type LogLevel = "info" | "warn" | "error";
 export interface HttpEnvironment {
 	readonly routes: readonly AnyRoute[];
 	readonly origins: readonly string[];
-	/** A.2: the CIDR ranges whose `X-Forwarded-For` counts; empty means the connection address does. */
+	/** CIDR ranges whose `X-Forwarded-For` counts, and when empty the connection address does */
 	readonly trustedProxies: readonly string[];
 	readonly cookieSameSite: CookieSameSite;
 	readonly sessionCookieMaximumAgeInSeconds: number;
 	readonly freshnessWindowInSeconds: number;
 	readonly callers: CallerResolver;
-	/** Which frozen context a route's handler is given; a route the assembly did not register gets the core one. */
+	/** the frozen context a route's handler gets, the core one for a route nobody registered */
 	readonly pluginContextOf: (route: RouteMetadata) => FrozenContext;
 	readonly rateLimiter: RateLimiter;
 	readonly clock: Clock;

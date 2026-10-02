@@ -10,7 +10,7 @@ import {
 
 const utf8 = new TextEncoder();
 
-/** An authenticator app shows the code in two groups, and a reader retypes the space with it. */
+//a reader retypes the space an authenticator shows between the two groups
 const SEPARATORS = /[\s -]/g;
 
 export function normaliseTotpCode(submitted: string): string {
@@ -31,11 +31,7 @@ export function totpCodeForStep(secretBytes: Uint8Array<ArrayBuffer>, timeStep: 
 	});
 }
 
-/**
- * S-REPLAY-4: the answer is the step that matched, not the step the clock is in, because that
- * step is what the replay guard has to record. Every candidate is compared, so the position of
- * the match inside the tolerance window is not readable from the duration.
- */
+//the matched step is returned as that is what the replay guard records (S-REPLAY-4)
 export function matchingTimeStep(input: {
 	readonly secretBytes: Uint8Array<ArrayBuffer>;
 	readonly submittedCode: string;

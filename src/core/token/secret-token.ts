@@ -5,18 +5,17 @@ import { randomBytes } from "./random.js";
 
 declare const secretTokenBrand: unique symbol;
 
-// S-RAND-6: a database key is not a secret, so an account identifier cannot arrive where a token
-// is expected without a conversion someone has to write.
+//an account id must not be usable as a token without an explicit conversion (S-RAND-6)
 export type SecretToken = string & { readonly [secretTokenBrand]: "one-time token" };
 
-// S-RAND-4: 256 bit, from the same source and in the same encoding as the session token (3.5).
+//a token needs 256 bit from the same source as the session token (S-RAND-4)
 const SECRET_TOKEN_BYTES = 32;
 
 export function createSecretToken(): SecretToken {
 	return encodeBase64Url(randomBytes(SECRET_TOKEN_BYTES)) as SecretToken;
 }
 
-/** Deliberately unchecked: a rejected shape would be a second answer beside "no row" (S-REPLAY-3). */
+//rejecting a malformed token would be a second answer beside no row (S-REPLAY-3)
 export function toSecretToken(value: string): SecretToken {
 	return value as SecretToken;
 }

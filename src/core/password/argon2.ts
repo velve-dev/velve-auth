@@ -45,12 +45,10 @@ interface Accelerator {
 	argon2d: AcceleratorFunction;
 }
 
-// 2.7 fixes the tick for the pure path; it is what returns control to the host every 10 ms during
-// a 90 ms derivation, so a timer that comes due meanwhile still fires.
+//pure Argon2 yields to the host every 10 ms so a due timer still fires during a derivation (E-186)
 const ASYNC_TICK_IN_MILLISECONDS = 10;
 
-// A `Map` for the same reason the switch uses one: no lookup in this module reads a name off
-// `Object.prototype` (E-178).
+//a Map keeps every lookup in this module off Object.prototype (E-178)
 const NOBLE_BY_VARIANT = new Map<Argon2Variant, typeof argon2idAsync>([
 	["argon2id", argon2idAsync],
 	["argon2i", argon2iAsync],
@@ -76,15 +74,7 @@ export const nobleArgon2: Argon2Engine = {
 	},
 };
 
-/**
- * The accelerator computes in one synchronous WebAssembly call and settles in a microtask, so a
- * chain of derivations never reaches the timer phase and S-DOS-4's wait limit never fires — the
- * flood is served in full and no timer in the process runs meanwhile. One `setTimeout` turn per
- * derivation restores the property the pure path gets from `asyncTick`, and it is the primitive
- * the wait limit itself uses, so the yield and the deadline sit in one queue and cannot outrun
- * each other. `scheduler.yield` reaches the timer phase just as well, but only through
- * `node:timers/promises`, which the core may not import (E-186).
- */
+//one timer turn per derivation lets the wait limit fire while the accelerator runs (E-186)
 function yieldToTimerPhase(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -116,12 +106,7 @@ function acceleratedArgon2(accelerator: Accelerator): Argon2Engine {
 
 let acceleratorLoad: Promise<Argon2Engine | null> | undefined;
 
-/**
- * `hash-wasm` is an optional peer dependency and an accelerator only (repository rules §7). Its
- * output is byte-identical to `@noble/hashes` at version 0x13, so its presence or absence changes
- * nothing but the running time (S-DEFAULT-7) — except at version 0x10, which it silently computes
- * as 0x13; that version therefore stays on the pure path (E-168).
- */
+//hash-wasm computes version 0x10 as 0x13 and must never be used for it (E-168)
 export async function selectArgon2Engine(version: number): Promise<Argon2Engine> {
 	if (version !== ARGON2ID_VERSION) {
 		return nobleArgon2;
@@ -136,7 +121,7 @@ export async function deriveArgon2(request: Argon2Request): Promise<DerivedKey> 
 	return engine.derive(request);
 }
 
-/** S-REST-7: what the library creates carries exactly the configured parameters. */
+//a created hash carries exactly the configured parameters (S-REST-7)
 export async function createArgon2idHash(
 	password: Uint8Array<ArrayBuffer>,
 	parameters: Argon2idParameters,
@@ -168,8 +153,7 @@ export async function createArgon2idHash(
 
 async function loadAccelerator(): Promise<Argon2Engine | null> {
 	try {
-		// A literal, so a dependency audit can see that an advisory against this package reaches
-		// this line; the dead-code check exempts it by name instead (E-180).
+		//the specifier stays a literal for a dependency audit to find it (E-180)
 		const loaded: unknown = await import("hash-wasm");
 		return isAccelerator(loaded) ? acceleratedArgon2(loaded) : null;
 	} catch {
@@ -182,8 +166,7 @@ function isAccelerator(loaded: unknown): loaded is Accelerator {
 		return false;
 	}
 
-	// `Object.hasOwn` before reading, so a name answered by the prototype never passes for one the
-	// accelerator actually exports (E-178).
+	//a name answered by the prototype never counts as an export of the accelerator (E-178)
 	const candidate = loaded as Record<string, unknown>;
 	return (["argon2id", "argon2i", "argon2d"] as const).every(
 		(name) => Object.hasOwn(candidate, name) && typeof candidate[name] === "function",

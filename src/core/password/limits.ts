@@ -1,18 +1,9 @@
-/**
- * S-DOS-3 bounds the memory of the process at semaphore size × the memory parameter, but the
- * parameter of an imported credential is per record and an import decides it. Without a ceiling
- * the real bound is the largest value any import ever wrote, so these are the ceilings the
- * verification path applies to a stored credential (E-182).
- *
- * They are fixed rather than configurable: raising a denial-of-service ceiling is a weakening, and
- * every documented source sits far below them — Better Auth's scrypt at 32 MiB, Firebase at
- * 16 MiB, Django's PBKDF2 at 1.2 million iterations.
- */
+//an import decides the cost of a stored credential so verification caps it (E-182)
 export const MAXIMUM_STORED_MEMORY_KIB = 65536;
 export const MAXIMUM_STORED_ARGON2_ITERATIONS = 64;
 export const MAXIMUM_STORED_PARALLELISM = 64;
 export const MAXIMUM_STORED_PBKDF2_ITERATIONS = 2_000_000;
-/** bcrypt's cost is an exponent: 14 is about a second, 31 about thirty years on one place. */
+//bcrypt cost is an exponent and 31 would take about thirty years (E-182)
 export const MAXIMUM_STORED_BCRYPT_COST = 14;
 
 export function argon2CostIsAcceptable(
@@ -29,8 +20,7 @@ export function argon2CostIsAcceptable(
 	);
 }
 
-/** scrypt holds 128 · N · r bytes, and N is two to the cost exponent, which overflows to Infinity
- * for an exponent an import can write in ten digits — the comparison catches that too. */
+//a huge scrypt cost exponent overflows to Infinity and must still be refused (E-182)
 export function scryptCostIsAcceptable(
 	costExponent: number,
 	blockSize: number,

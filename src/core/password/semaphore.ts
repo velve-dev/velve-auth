@@ -1,7 +1,6 @@
 import { VelveError } from "../http/error-map.js";
 
-/** L-1: a resource limit, not a timing equalisation — it refuses on load, and identically for an
- * identifier that resolved to an account and one that resolved to nobody. */
+//the wait limit is a resource limit and not a timing equalisation (E-14)
 export const DEFAULT_WAIT_LIMIT_IN_MILLISECONDS = 5000;
 
 export interface KdfSemaphoreOptions {
@@ -22,11 +21,7 @@ interface Waiter {
 	timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-/**
- * Bounds how many key derivations run at once, so that a sign-in flood is refused instead of
- * multiplying 19 MiB per request until the process dies (S-DOS-3). Verification and the background
- * rehash share one instance, which is what keeps a rehash wave from displacing sign-ins (S-DOS-6).
- */
+//a sign-in flood is refused rather than exhausting memory one Argon2 hash at a time (S-DOS-3)
 export function createKdfSemaphore(options: KdfSemaphoreOptions): KdfSemaphore {
 	const waitLimitInMilliseconds =
 		options.waitLimitInMilliseconds ?? DEFAULT_WAIT_LIMIT_IN_MILLISECONDS;
@@ -64,7 +59,7 @@ export function createKdfSemaphore(options: KdfSemaphoreOptions): KdfSemaphore {
 				if (queued !== -1) {
 					waiting.splice(queued, 1);
 				}
-				// S-DOS-4: waiting past the limit is a refusal, never a memory error.
+				//waiting past the limit is a refusal and never a memory error (S-DOS-4)
 				waiter.refuse(new VelveError("rate_limited"));
 			}, waitLimitInMilliseconds);
 

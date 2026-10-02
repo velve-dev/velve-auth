@@ -67,15 +67,13 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
 };
 
-/**
- * T-OWNER-11 asks the start error to name both contributors to a route conflict.
- */
+/** the two contributors a route conflict names in its start error */
 export interface RouteConflict {
 	readonly claimed: string;
 	readonly contributors: readonly [string, string];
 }
 
-/** A conflict has two contributors even where one of them is the library, so the library has a name (E-1342). */
+/** the name the library goes by as one of the two contributors to a route conflict */
 export const THE_CORE = "the core";
 
 function namesBothContributors(conflict: RouteConflict): string {
@@ -85,7 +83,7 @@ function namesBothContributors(conflict: RouteConflict): string {
 
 export class VelveStartupError extends Error {
 	readonly code: StartupErrorCode;
-	/** Present where the code is a conflict between two contributors, and absent otherwise. */
+	/** present where the code is a conflict between two contributors, and absent otherwise */
 	readonly conflict?: RouteConflict;
 
 	constructor(code: StartupErrorCode, conflict?: RouteConflict) {
@@ -108,7 +106,7 @@ function looksLikeKeyProvider(keys: unknown): keys is KeyProvider {
 	);
 }
 
-/** S-KEY-6: a missing `keys` field refuses the start, exactly as a root key below 32 bytes does. */
+//a missing keys field must refuse the start like a root key below 32 bytes (S-KEY-6)
 function assertKeysArePresent(keys: unknown): asserts keys is KeyProvider {
 	if (!looksLikeKeyProvider(keys)) {
 		throw new VelveStartupError("keys_missing");
@@ -121,7 +119,7 @@ function assertOriginsAreNamed(origins: readonly string[] | undefined): void {
 	}
 }
 
-/** S-DEFAULT-4, E-207: the runtime half of `RecoveryCodesRequirement`, for callers from JavaScript. */
+//callers from JavaScript bypass the type, so it is checked at runtime too (S-DEFAULT-4)
 function assertRecoveryCodesWhereTheyAreTheOnlyWayBack(
 	mode: IdentityMode,
 	recoveryCodes: unknown,
@@ -131,10 +129,7 @@ function assertRecoveryCodesWhereTheyAreTheOnlyWayBack(
 	}
 }
 
-/**
- * A.8 types both fields `number`, and the two values that type admits which cannot be honoured are
- * refused here rather than narrowed silently where they are read (E-1696).
- */
+//numbers the type admits but nobody can honour are refused, not narrowed silently (E-1696)
 function isUsableShapeField(configured: unknown): boolean {
 	return (
 		configured === undefined ||
@@ -158,10 +153,7 @@ function assertEmailCallbackWhereAddressesExist(mode: IdentityMode, email: unkno
 	}
 }
 
-/**
- * The type admits credentials alone for every id so that a known provider needs no endpoints; only
- * an id the library has no endpoints for has to carry its own, and 3.11 makes that a start error.
- */
+//an id the library has no endpoints for must carry its own or the start fails
 function assertEveryUnknownProviderCarriesItsEndpoints(oauth: unknown): void {
 	if (typeof oauth !== "object" || oauth === null) {
 		return;
@@ -185,11 +177,7 @@ function assertEveryUnknownProviderCarriesItsEndpoints(oauth: unknown): void {
 	}
 }
 
-/**
- * The synchronous half of the start, run while `createVelveAuth` builds the instance. What needs
- * the database — the stored key versions of E-179 — cannot run here, because the interface of 3.15
- * B is synchronous; `migrate` carries it.
- */
+//checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
 ): void {
@@ -201,7 +189,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 }
 
-/** S-KEY-6, second half: a provider that answers for no purpose protects nothing. */
+//a key provider that answers for no purpose protects nothing and must refuse the start
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);

@@ -9,11 +9,7 @@ import { acceptNewPassword } from "../password/policy.js";
 import { CREATED_SCHEME } from "../password/scheme.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
 
-/**
- * A password the caller may store: the length policy and the `validate` hook of L-7 have run and
- * Argon2id has produced the string. It is derived before any transaction opens, because a KDF call
- * is two orders of magnitude longer than the statements around it.
- */
+//a password is derived before any transaction opens as the kdf outlasts every statement
 export interface DerivedPassword {
 	readonly phc: string;
 }
@@ -33,11 +29,7 @@ interface CredentialWriter {
 	readonly schema: string;
 }
 
-/**
- * L-12: the session that stores the password is written with it, in the same statement, so there is
- * no window in which a credential exists without its provenance and no second call to forget
- * (E-626). The repository requires the field; this passes on what the caller has just issued.
- */
+//the storing session must be written in the same statement as the password (E-626)
 export async function writePassword(
 	writer: CredentialWriter,
 	input: {
@@ -58,12 +50,7 @@ export async function writePassword(
 	});
 }
 
-/**
- * The statement S-LINK-4 turns on. `password_credential.set_by_session_id` is the column L-12 needs
- * and 3.2 does not have; every flow that stores a password names the session it was stored in, and
- * a credential whose provenance was never recorded is NULL, which is read as a different session
- * (E-595, E-609).
- */
+//a credential with no recorded session must count as set in a different session (E-609)
 interface PasswordProvenance {
 	deleteUnlessSetInSession(input: {
 		readonly actor: Actor;
@@ -77,9 +64,7 @@ export function createPasswordProvenance(options: {
 }): PasswordProvenance {
 	const table = qualifiedTableName(options.schema, "password_credential");
 
-	/* S-LINK-4: the credential survives only when a session is named on both sides and the two are
-	   the same. A confirming request without a session and a credential whose provenance was never
-	   recorded are both unknown, and unknown is a different session (L-12). */
+	//the credential survives only when both sides name the same session (S-LINK-4)
 	const deleteStatement = `DELETE FROM ${table}
 WHERE user_id = $1
   AND ($2::uuid IS NULL OR set_by_session_id IS DISTINCT FROM $2::uuid)
