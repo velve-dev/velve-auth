@@ -31,10 +31,7 @@ import {
 	SILENT_REVOCATION,
 } from "./context.js";
 
-/**
- * 3.11: a hook may refuse by throwing and observe by returning, and it cannot replace the answer
- * because it cannot return one. Each of the seven runs every plugin in dependency order.
- */
+/** runs each hook point over every plugin in dependency order, a hook refusing by throwing */
 export interface PluginHookDispatcher {
 	beforeSignIn(event: SignInEvent): Promise<void>;
 	afterSignIn(event: SignInCompletedEvent): Promise<void>;
@@ -46,22 +43,18 @@ export interface PluginHookDispatcher {
 }
 
 export interface PluginRuntime {
-	/** The configured plugins in dependency order, which is the order every hook point runs them in. */
+	/** the configured plugins in dependency order, the order every hook point runs them in */
 	readonly plugins: readonly VelvePlugin[];
 	readonly routes: readonly AnyRoute[];
-	/** 3.11: the same versioned runner, in the same dependency order, each under its own id (E-635). */
+	/** each plugin's migrations, run in dependency order under its own id */
 	readonly migrations: readonly OwnedMigration[];
-	/**
-	 * The codes every configured plugin declares. They are published to the process-wide registry by
-	 * the assembly and not here, because a start that refuses after this returns must leave nothing
-	 * behind (E-665).
-	 */
+	/** the error codes every configured plugin declares */
 	readonly declaredErrorCodes: readonly PluginErrorCode[];
 	readonly hooks: PluginHookDispatcher;
 	contextOf(route: RouteMetadata): FrozenContext;
-	/** Which plugin contributed a route, so a start error can name it as a contributor (T-OWNER-11). */
+	/** which plugin contributed a route */
 	ownerOf(route: RouteMetadata): string;
-	/** Whether any plugin listens at a point, so a caller can skip the work an event costs to build. */
+	/** whether any plugin listens at a point, to skip building an event nobody hears */
 	listensTo(point: keyof PluginHooks): boolean;
 }
 

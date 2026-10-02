@@ -7,11 +7,7 @@ export function pluginRoutes(services: RouteServices): readonly AnyRoute[] {
 	return services.pluginRuntime.routes;
 }
 
-/**
- * A plugin's routes are configuration and are not known when the type is written, so this feature
- * contributes nothing to `VelveAuth<M>` — `auth.<pluginId>.<method>` exists on the object and not
- * in the type. The alias is declared for symmetry with the other two seams (E-776).
- */
+/** adds nothing to `VelveAuth<M>`, as a plugin's routes exist only on the object */
 export type PluginSurface<M extends IdentityMode> = M extends IdentityMode
 	? Record<never, never>
 	: never;
