@@ -4,12 +4,7 @@ export type HostPrefixedCookieName = `__Host-${string}`;
 
 export type CookieSameSite = "lax" | "strict";
 
-/**
- * The only attribute sets the library can express: no Domain, and no way to drop HttpOnly or
- * Secure, which is what S-COOKIE-2 asks of the session cookie. The third set is not S-COOKIE-2's
- * doing — section 1 H18 marks `SameSite=None` **Weglassen** — and it reaches exactly one cookie for
- * the reason set out below (E-582).
- */
+/** the only cookie attribute sets, never with a Domain and never without HttpOnly or Secure */
 export type CookieAttributes =
 	| "HttpOnly; Secure; SameSite=Lax; Path=/"
 	| "HttpOnly; Secure; SameSite=Strict; Path=/"
@@ -55,7 +50,7 @@ export interface CookieWriter {
 	setPending(token: string): void;
 	clearPending(): void;
 	setOAuthState(pointer: string): void;
-	/** The `form_post` flow of section 1 C50, whose callback the browser reaches by a cross-site POST. */
+	/** sets the state cookie for a `form_post` callback the browser reaches by a cross-site POST */
 	setCrossSiteOAuthState(pointer: string): void;
 	clearOAuthState(): void;
 }

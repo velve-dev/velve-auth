@@ -1,6 +1,6 @@
 export type AuthenticationFactor = "password" | "totp" | "webauthn" | "recovery" | "oauth";
 
-/** Architecture 3.15 C. */
+/** one signed-in session of an account, as the API presents it */
 export interface Session {
 	readonly id: string;
 	readonly userId: string;
@@ -14,7 +14,7 @@ export interface Session {
 	readonly isCurrent: boolean;
 }
 
-/** Architecture 3.15 C. */
+/** a sign-in that has passed its first factor and still awaits a second */
 export interface PendingAuthentication {
 	readonly factorsCompleted: readonly AuthenticationFactor[];
 	readonly availableFactors: readonly ("totp" | "webauthn" | "recovery")[];
@@ -22,14 +22,11 @@ export interface PendingAuthentication {
 	readonly expiresAt: Date;
 }
 
-/**
- * E-405 and E-472: a `caller: "pending"` route is authorised by the intermediate state and has to
- * act on the account it belongs to, which the presentation above deliberately withholds.
- */
+/** the pending state together with the account it belongs to, which the presentation withholds */
 export interface ResolvedPendingAuthentication {
 	readonly userId: string;
 	readonly pending: PendingAuthentication;
-	/** The database's clock at the moment it answered. */
+	/** the database's clock at the moment it answered */
 	readonly observedAt: Date;
 }
 

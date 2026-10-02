@@ -10,24 +10,13 @@ export type CallerRequirement = "anonymous" | "session" | "pending" | "server_on
 export type FreshnessRequirement = "not_required" | "required";
 export type OriginRequirement = "checked" | "exempt";
 
-/**
- * E-335: reading `__Host-velve_pending` and being authorised by it are two questions, and
- * `caller: "pending"` answered both. A route that reports or cancels the intermediate state needs
- * the value without the authority.
- */
+/** whether a route may read the pending cookie without being authorised by it */
 export type PendingCookieAccess = "hidden" | "readable";
 
-/**
- * The same question for `__Host-velve_oauth_state`, and a separate answer: no `CallerRequirement`
- * implies it, because the pointer authorises nothing on its own — 5.9 (c) S-CSRF-5 makes it one
- * half of a check whose other half is the row in `velve.oauth_flow` (E-736).
- */
+/** whether a route may read the OAuth state cookie, which authorises nothing on its own */
 export type OAuthStateCookieAccess = "hidden" | "readable";
 
-/**
- * How the body of a POST arrives. `form` exists for the one route a provider posts to itself —
- * Apple's `form_post` callback of section 1 C50 — and nothing else in the library reads a form.
- */
+/** how a POST body arrives, where `form` serves only a provider's `form_post` callback */
 export type RequestBodyFormat = "json" | "form";
 
 export interface RequestContext {
@@ -39,7 +28,7 @@ export interface RequestContext {
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly cookies: CookieWriter;
-	/** 3.15 D.1: part G's context, frozen; for a core route it carries no tables of its own. */
+	/** the frozen plugin context, which for a core route carries no tables of its own */
 	readonly plugin: FrozenContext;
 	enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
 }
@@ -60,11 +49,11 @@ export interface RouteDeclaration<
 	readonly freshness: FreshnessRequirement;
 	readonly originCheck: OriginRequirement;
 	readonly rateLimit: RateLimitRule;
-	/** Absent means hidden; `caller: "pending"` implies readable and may not say otherwise. */
+	/** absent means hidden, and a pending caller implies readable and may not say otherwise */
 	readonly pendingCookie?: PendingCookieAccess;
-	/** Absent means hidden; no caller requirement implies it, so the route that reads the pointer says so. */
+	/** absent means hidden, and no caller requirement implies it, so a route reading it says so */
 	readonly oauthStateCookie?: OAuthStateCookieAccess;
-	/** Absent means JSON, which is what every route the application itself calls sends. */
+	/** absent means JSON, which every route the application itself calls sends */
 	readonly requestBody?: RequestBodyFormat;
 	readonly handler: (input: Input, context: RequestContext) => Promise<Output>;
 }
@@ -90,7 +79,7 @@ type RouteInvocation<Output> = (
 
 declare const routeOutput: unique symbol;
 
-/** 3.11: the output type is carried by a phantom property, so the route object holds no member that runs it and none that Reflect.ownKeys can find. */
+/** a route typed by a phantom property, with no member that runs it even under `Reflect.ownKeys` */
 export interface RunnableRoute<Output> extends RouteMetadata {
 	readonly [routeOutput]?: Output;
 }
@@ -104,11 +93,11 @@ export function invocationOf<Output>(route: RunnableRoute<Output>): RouteInvocat
 	if (invocation === undefined) {
 		throw new Error(`Route ${route.name} was not built by defineRoute`);
 	}
-	//defineRoute is the only writer and stores the invocation of exactly this route
+	//the cast is sound only while defineRoute stays the one writer of this map
 	return invocation as RouteInvocation<Output>;
 }
 
-/** The declaration carries the handler; the route built from it does not, so no caller holding a route can reach past the checks. */
+/** a built route, which carries no handler, so no caller holding it can reach past the checks */
 export interface Route<
 	Name extends string,
 	Path extends string,

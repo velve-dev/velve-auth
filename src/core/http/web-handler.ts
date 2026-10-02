@@ -15,7 +15,7 @@ import { isRecord } from "./validators.js";
 
 export interface WebHandlerOptions {
 	readonly basePath?: string;
-	/** The address the connection came from; a `Request` does not carry one, so the adapter says. */
+	/** the address the connection came from, which the adapter supplies as a `Request` lacks it */
 	readonly connectionAddress?: (request: Request) => string | null;
 }
 

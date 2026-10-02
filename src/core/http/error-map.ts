@@ -81,7 +81,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	internal_error: "The request could not be completed.",
 };
 
-/** 3.11: a plugin contributes error codes, and each one begins with its own id. */
+/** an error code a plugin contributes, which begins with that plugin's id */
 export type PluginErrorCode = `${string}.${string}`;
 export type AnyErrorCode = VelveErrorCode | PluginErrorCode;
 
@@ -99,13 +99,7 @@ function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
 	return !Object.hasOwn(MESSAGE_BY_ERROR_CODE, code);
 }
 
-/**
- * §3 keeps this file the only place that decides what a caller learns, which is why a plugin
- * registers here rather than widening the core union: the union stays a closed literal and the
- * resolver below answers for both kinds. The registry is process-wide, so a second instance
- * registering the same code with a different answer is refused rather than silently winning
- * (E-720).
- */
+/** registers a plugin's error codes, refusing a code already registered with another answer */
 export function registerPluginErrorCodes(
 	definitions: Readonly<Record<PluginErrorCode, PluginErrorDefinition>>,
 ): void {
@@ -162,7 +156,7 @@ const UNREGISTERED: PluginErrorDefinition = {
 	message: MESSAGE_BY_ERROR_CODE.internal_error,
 };
 
-/** The one resolver: a core code reads the two tables, a namespaced one reads the registry. */
+/** answers any error code, a core one from the core tables and a plugin one from the registry */
 export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 	if (!isPluginErrorCode(code)) {
 		return {
@@ -176,7 +170,7 @@ export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 	return PLUGIN_ERRORS.get(code) ?? UNREGISTERED;
 }
 
-//the one enumeration of the union, so no other file keeps a second copy of the codes
+//the codes are listed only here so a second copy cannot fall out of step
 export const VELVE_ERROR_CODES: readonly VelveErrorCode[] = Object.keys(
 	MESSAGE_BY_ERROR_CODE,
 ) as VelveErrorCode[];
