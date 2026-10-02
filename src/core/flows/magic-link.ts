@@ -13,11 +13,7 @@ import {
 	sessionIdOfCaller,
 } from "./environment.js";
 
-/**
- * S-TIM-6 and L-1: the two branches run the same statements and call `send` exactly once. What
- * makes that possible is the cover artefact of E-597 — an address naming no account still mints a
- * row, one that names no owner and that S-TOKEN-4 answers exactly as it answers no row.
- */
+//both branches must run the same statements and call send exactly once (S-TIM-6)
 export async function requestMagicLink(
 	environment: FlowEnvironment,
 	email: EmailConfig,
@@ -25,8 +21,7 @@ export async function requestMagicLink(
 	input: { readonly email: string },
 ): Promise<void> {
 	const normalised = normaliseEmail(input.email);
-	// An address the allowlist rejects is looked up all the same, so a malformed one costs the same
-	// round trip as a well-formed one that names nobody (S-ENUM-1's reasoning, E-46).
+	//a malformed address must cost the same lookup as one that names nobody (E-46)
 	const address = normalised.accepted ? normalised.value : "";
 	await context.enforceAccountRateLimit(address);
 
@@ -53,11 +48,7 @@ export async function requestMagicLink(
 	);
 }
 
-/**
- * S-LINK-4: redeeming a magic link is a confirmation of the address, so a password set in any other
- * session goes and every session with it — the pre-registered account of GHSA-qq9h-g4jm-xgf3 keeps
- * nothing. A magic link links no provider identity; nothing here writes `velve.identity`.
- */
+//redeeming a magic link confirms the address and removes a foreign password (S-LINK-4)
 export async function redeemMagicLink(
 	environment: FlowEnvironment,
 	context: RequestContext,
@@ -82,9 +73,7 @@ export async function redeemMagicLink(
 		return resolved;
 	});
 
-	// 3.6: the second factor is not skipped because the first one was a link. Which factors the
-	// account offers is read where the row is written (E-735), so the state is begun and then
-	// completed at once when it turns out to offer none.
+	//a link as the first factor must not skip the second factor (E-735)
 	const begun = await pending.begin({ userId: account.user.id, factorsCompleted: [] });
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);

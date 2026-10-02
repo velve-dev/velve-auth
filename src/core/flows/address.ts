@@ -14,7 +14,7 @@ import {
 } from "./environment.js";
 import type { ChangedUser } from "./results.js";
 
-/** The address a change token carries. It is normalised when the token is minted, not when it is redeemed. */
+//the address in a change token is normalised when minted and not when redeemed
 const CHANGED_ADDRESS = "email";
 
 function addressIn(payload: Readonly<Record<string, unknown>> | null): string {
@@ -25,10 +25,7 @@ function addressIn(payload: Readonly<Record<string, unknown>> | null): string {
 	return address;
 }
 
-/**
- * 3.15 B.5: no address is passed in. The one that gets confirmed is the one on the account, because
- * an address as a parameter would be an enumeration interface with a session in front of it.
- */
+//an address parameter here would be an enumeration interface behind a session
 export async function requestVerification(
 	environment: FlowEnvironment,
 	email: EmailConfig,
@@ -68,7 +65,7 @@ export async function redeemVerification(
 			purpose: "email_verify",
 		});
 		const account = await accountOfRedemption(environment, transaction, redeemed);
-		// S-LINK-4: the confirmation link is the second of the two ways an address is first confirmed.
+		//the confirmation link is one of the two ways an address is first confirmed (S-LINK-4)
 		await confirmAddress({
 			transaction,
 			schema,
@@ -82,12 +79,7 @@ export async function redeemVerification(
 	return { user: await readUserOrRefuse(environment, driver, userId) };
 }
 
-/**
- * S-ENUM-5: a target address that belongs to another account is not looked up here. The request
- * mints and mails exactly as it does for a free address, and the collision is found an hour later
- * where the token is redeemed — which is the only place it can be found without answering the
- * question the caller is asking.
- */
+//a taken target address must only be detected when the token is redeemed (E-606)
 export async function requestChange(
 	environment: FlowEnvironment,
 	email: EmailConfig,
@@ -136,8 +128,7 @@ export async function redeemChange(
 			purpose: "email_change",
 		});
 		const account = await accountOfRedemption(environment, transaction, redeemed);
-		// 3.15 B.5: redeeming proves the new address, so it is confirmed in the same statement that
-		// moves it — and a collision leaves both undone, which is what T-ENUM-5 counts.
+		//redeeming proves the new address and a collision must leave both changes undone
 		await confirmAddress({
 			transaction,
 			schema,

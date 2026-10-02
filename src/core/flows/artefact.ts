@@ -18,11 +18,7 @@ export interface MintedArtefact extends IssuedOneTimeToken {
 	readonly purpose: OneTimeTokenPurpose;
 }
 
-/**
- * Writes the row inside the caller's transaction. An address that names no account mints one too:
- * the row names no owner, S-TOKEN-4 answers it exactly as it answers no row, and the two branches
- * therefore cost the same statements (S-TIM-6, E-597).
- */
+//an address that names no account must mint a row too and cost the same statements (E-597)
 export async function mintArtefact(
 	transaction: Driver,
 	schema: string,
@@ -42,10 +38,7 @@ export async function mintArtefact(
 	return { ...issued, purpose: request.purpose };
 }
 
-/**
- * 3.13's two request rows resolve an address the caller sent, and one of the two branches finds no
- * account. Both say what the request is about, so both wait where the other waits (E-931).
- */
+//a request for an unknown address must wait where a request for an account waits (E-931)
 export function subjectOfAddress(
 	owner: { readonly id: string } | null,
 	address: string,
@@ -59,13 +52,7 @@ export interface ArtefactMailer {
 	readonly email: EmailConfig;
 }
 
-/**
- * A.7: a `send` that throws fails the operation and takes the artefact with it, because a reset
- * token whose message never arrived is of use to nobody but an attacker. The callback runs **after**
- * the transaction has committed and the row lock on `velve.user` has gone, and a throw is answered
- * by spending the token through the one statement that spends tokens — a compensation rather than a
- * rollback, which is the trade E-630 records.
- */
+//a token whose message never arrived must be spent after the transaction has committed (E-630)
 export async function sendOrUndo(
 	mailer: ArtefactMailer,
 	minted: MintedArtefact | null,
@@ -85,10 +72,7 @@ export async function sendOrUndo(
 	}
 }
 
-/**
- * S-REPLAY-2 and S-RACE-1: the removal is the whole check, and an empty result is the only signal
- * of invalidity — expired, spent and never issued are one answer (S-REPLAY-3, S-TOKEN-2).
- */
+//the removal is the whole check and an empty result the only sign of invalidity (S-REPLAY-2)
 export async function redeemOrRefuse(
 	transaction: Driver,
 	schema: string,

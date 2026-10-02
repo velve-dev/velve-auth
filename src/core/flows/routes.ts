@@ -22,10 +22,7 @@ import type {
 } from "./results.js";
 import { signUp } from "./sign-up.js";
 
-/**
- * The identity fields of 3.15 A.1 as a validator. The mode decides which of the two are read, so
- * `/sign-up` in mode `email` refuses a `username` field rather than ignoring it.
- */
+//a field the mode does not read must be refused rather than ignored
 function identityFieldsOf(identity: IdentityConfiguration) {
 	return identity.mode === "email"
 		? { email: string() }
@@ -34,7 +31,6 @@ function identityFieldsOf(identity: IdentityConfiguration) {
 			: { email: string(), username: string() };
 }
 
-/** 3.15 A.1: one lookup field in every mode, and in `username_email` it is resolved by format. */
 function signInLookupOf(identity: IdentityConfiguration) {
 	return identity.mode === "email"
 		? { email: string() }
@@ -181,7 +177,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressAndAccount(services),
-		// 3.15 B.1: `void`, not `{ sent: boolean }` — a boolean would be the enumeration answer.
+		//the request answers void as a sent flag would be the enumeration answer
 		handler: async (input, context): Promise<void> =>
 			requestMagicLink(environment, email, context, input),
 	});
@@ -312,20 +308,14 @@ export type EmailFlowRouteTable = readonly [
 	...ReturnType<typeof routesThatNeedAnAddress>,
 ];
 
-/**
- * The rows of 3.15 D.3 that carry an e-mailed one-time artefact — sign-up, magic link, password
- * reset, address verification and address change. Composed here so that adding them is a change to
- * this file and never to the assembly; the tuple return type carries `signIn.magicLink.*` onto the
- * instance without any other file naming it.
- */
+//adding a mailed route must change this file and never the assembly
 export function emailFlowRoutes(services: RouteServices): readonly AnyRoute[] {
 	const environment: FlowEnvironment = {
 		services,
 		semaphore: services.kdfSemaphore,
 	};
 	const email = services.email;
-	// 3.15 D.3: a route the mode does not have is not refused, it does not exist. `email.send` is a
-	// start error in the two modes that have addresses (A.7), so the narrowing below is the mode.
+	//a route the mode does not have must not exist rather than be refused
 	return email === undefined || services.identity.mode === "username"
 		? routesInEveryMode(environment, email)
 		: [...routesInEveryMode(environment, email), ...routesThatNeedAnAddress(environment, email)];
