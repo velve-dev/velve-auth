@@ -102,6 +102,9 @@ jobs:
       - name: Nothing leaves the operator's infrastructure
         run: pnpm check:egress
 
+      - name: Every cited requirement and decision exists
+        run: pnpm check:decision-refs
+
       - name: SQL survives normalisation
         run: pnpm check:sql-collapse
 
