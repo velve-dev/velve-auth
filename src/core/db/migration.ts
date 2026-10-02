@@ -7,11 +7,7 @@ export interface Migration {
 	readonly sql: string;
 }
 
-/**
- * 3.11 puts a plugin's migrations in the same versioned runner. `owner` is what makes the version
- * space the plugin's own, so 3.15 G.1's example numbering its first migration `1` no longer
- * collides with the core's first (E-635).
- */
+/** a migration whose version counts only within its owner, so a plugin may number from 1 */
 export interface OwnedMigration extends Migration {
 	readonly owner: string;
 	readonly createsTables: readonly string[];
