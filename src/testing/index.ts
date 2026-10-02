@@ -1,10 +1,6 @@
 import type { Clock } from "../core/http/environment.js";
 
-/**
- * Architecture 6.19: every expiry, window and TOTP test needs a deterministic time, and the core
- * reads the time only through `clock` and through `now()` in the database. This is the `clock` a
- * test hands to the configuration.
- */
+/** the deterministic `clock` a test hands to the configuration */
 export interface TestClock extends Clock {
 	set(instant: Date): void;
 	advanceBy(milliseconds: number): void;
