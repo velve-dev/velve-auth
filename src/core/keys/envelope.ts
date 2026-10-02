@@ -17,7 +17,6 @@ export interface PurposeCiphertext {
 	ciphertext: Uint8Array<ArrayBuffer>;
 }
 
-// S-KEY-3, column form.
 export async function encryptWithPurposeKey(
 	keys: KeyProvider,
 	purpose: EncryptionKeyPurpose,
@@ -49,7 +48,7 @@ export async function decryptWithPurposeKey(
 		throw new KeyError("ciphertext_malformed");
 	}
 
-	// S-KEY-4: a version that has left the ring is a named error, not a crash.
+	//a version that left the ring is a named error and never a crash (S-KEY-4)
 	const key = await keys.byVersion(purpose, keyVersion);
 	if (key === null) {
 		throw new KeyError("key_version_unknown");
@@ -65,15 +64,12 @@ export async function decryptWithPurposeKey(
 			ciphertext.subarray(NONCE_BYTES),
 		);
 	} catch (failure) {
-		// A tag mismatch is the failure a caller most has to handle, so it carries a code of its own
-		// instead of the runtime's exception type (E-71); an engine KeyError already has one.
+		//a tag mismatch carries its own code instead of the runtime exception type (E-71)
 		throw failure instanceof KeyError ? failure : new KeyError("authentication_failed");
 	}
 }
 
-// S-KEY-3, envelope form. The algorithm label comes first so that a later cipher change leaves
-// stored data readable (section 2.4); the header is also the additional data of every AES-GCM
-// operation, so neither the label nor the version can be rewritten without failing the tag (E-65).
+//the header is the additional data so neither label nor version can be rewritten (E-65)
 export async function sealEnvelope(
 	keys: KeyProvider,
 	purpose: EncryptionKeyPurpose,
@@ -92,8 +88,7 @@ export async function openEnvelope(
 	return decryptWithPurposeKey(keys, purpose, keyVersion, ciphertext);
 }
 
-// The parameter type already forbids it; this is the same refusal for a caller without types,
-// with a code of its own instead of Web Crypto's uncoded DOMException (repository rules section 3).
+//a caller without types gets a coded refusal instead of an uncoded DOMException (E-66)
 function refuseSigningPurpose(purpose: KeyPurpose): void {
 	if (!isEncryptionPurpose(purpose)) {
 		throw new KeyError("purpose_cannot_encrypt");

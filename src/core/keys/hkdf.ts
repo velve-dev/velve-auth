@@ -5,7 +5,7 @@ const utf8 = new TextEncoder();
 const HKDF_SALT = utf8.encode("velve-auth/hkdf-sha256/v1");
 const PURPOSE_KEY_BYTES = 32;
 
-// S-KEY-1: one derivation context per purpose, so no two purposes can ever share a key.
+//each purpose gets its own derivation context so no two purposes share a key (S-KEY-1)
 function derivationContext(purpose: KeyPurpose): Uint8Array<ArrayBuffer> {
 	return utf8.encode(`velve-auth/key/${purpose}`);
 }
