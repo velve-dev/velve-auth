@@ -248,7 +248,7 @@ repair anything itself.
 - `pnpm check:egress` — nothing in `src/` reaches the network or names an
   external host outside the one provider seam and the one file that enumerates
   the providers, which is what `README.md` has always promised (E-1844)
-- `pnpm check:decision-refs` — every `(S-…)` and `(E-…)` a comment in `src/`
+- `pnpm check:decision-refs` — every `S-…` and `E-…` a comment in `src/`
   cites is defined in the specification or the decision log
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
@@ -1004,11 +1004,15 @@ pnpm check:egress
                  the run when it read no file or when the seam itself calls
                  nothing (E-1844)
 pnpm check:decision-refs
-                 every S- and E- identifier inside parentheses in a comment in
-                 src/ is defined: an S- requirement as a list item of
-                 VELVE-AUTH-ARCHITECTURE.md, an E- decision as an entry of
-                 CASE-STUDY.md or docs/decisions/log.md. Reads comments only, so
-                 a string is not a citation. Refuses the run when it read no
+                 every S- and E- identifier in a comment in src/ is defined: an
+                 S- requirement as a list item of VELVE-AUTH-ARCHITECTURE.md, an
+                 E- decision as an entry of CASE-STUDY.md or
+                 docs/decisions/log.md. Reads comments only, so a string is not a
+                 citation, and fails on a bracket shaped like a citation that is
+                 not an identifier, such as (S-Tim-1). It inherits the blind
+                 spots of tools/source-text.mjs, which can lose a comment after
+                 a regular expression literal holding // or a quote (E-1941).
+                 Refuses the run when it read no
                  file, found no definition in either source, or found no
                  citation, because each looks like a clean tree
 pnpm check:reviewable

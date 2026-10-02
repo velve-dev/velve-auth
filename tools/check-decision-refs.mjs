@@ -9,8 +9,11 @@ const REQUIREMENTS = "VELVE-AUTH-ARCHITECTURE.md";
 /** The curated case study and the complete log it is drawn from; the second may not exist yet. */
 const DECISION_LOGS = ["CASE-STUDY.md", "docs/decisions/log.md"];
 
-const PARENTHESISED = /\(([^()\n]*)\)/g;
+/** Every identifier anywhere in a comment is checked, so nesting and line breaks hide none. */
 const IDENTIFIER = /\b(S-[A-Z]+-\d+|E-\d+)\b/g;
+/** A bracket that opens like a citation and holds nothing this scan can resolve. */
+const BRACKETED_CANDIDATE = /\(([SE]-[^()\s]*)\)/g;
+const WHOLE_IDENTIFIER = /^(?:S-[A-Z]+-\d+|E-\d+)$/;
 
 /** A requirement is defined by the list item that states it, not by the tables that cite it. */
 const REQUIREMENT_DEFINITION = /^- \*\*(S-[A-Z]+-\d+):\*\*/gm;
@@ -21,13 +24,16 @@ function read(path) {
 	return readFileSync(`${repositoryRoot}/${path}`, "utf8");
 }
 
-/** E-01 and E-1 name the same decision, so numbers are compared and not spellings. */
+/** E-01 and E-1 name the same decision, and S-TIM-01 and S-TIM-1 the same requirement, so numbers
+ * are compared and not spellings. */
 function canonical(identifier) {
-	return identifier.startsWith("E-") ? `E-${Number(identifier.slice(2))}` : identifier;
+	return identifier.replace(/\d+$/, (number) => String(Number(number)));
 }
 
 function definedRequirements() {
-	return new Set([...read(REQUIREMENTS).matchAll(REQUIREMENT_DEFINITION)].map((m) => m[1]));
+	return new Set(
+		[...read(REQUIREMENTS).matchAll(REQUIREMENT_DEFINITION)].map((m) => canonical(m[1])),
+	);
 }
 
 function definedDecisions() {
@@ -53,24 +59,31 @@ function sourceFiles() {
 		.filter((path) => existsSync(`${repositoryRoot}/${path}`));
 }
 
+function lineAt(source, offset) {
+	return source.slice(0, offset).split("\n").length;
+}
+
 /** Only comment text is read, so an identifier inside a string or an error message is not a citation. */
-function citationsIn(path) {
+function referencesIn(path) {
 	const source = read(path);
 	const citations = [];
+	const malformed = [];
 	let offset = 0;
 	for (const chunk of chunksOf(source)) {
 		if (chunk.kind === "comment") {
-			for (const group of chunk.text.matchAll(PARENTHESISED)) {
-				for (const identifier of group[1].matchAll(IDENTIFIER)) {
-					const at = offset + chunk.text.indexOf(group[0]);
-					const line = source.slice(0, at).split("\n").length;
-					citations.push({ path, line, identifier: identifier[1] });
+			for (const match of chunk.text.matchAll(IDENTIFIER)) {
+				const line = lineAt(source, offset + match.index);
+				citations.push({ path, line, identifier: match[1] });
+			}
+			for (const match of chunk.text.matchAll(BRACKETED_CANDIDATE)) {
+				if (!WHOLE_IDENTIFIER.test(match[1])) {
+					malformed.push({ path, line: lineAt(source, offset + match.index), text: match[0] });
 				}
 			}
 		}
 		offset += chunk.text.length;
 	}
-	return citations;
+	return { citations, malformed };
 }
 
 const files = sourceFiles();
@@ -96,7 +109,9 @@ if (decisions.size === 0) {
 	process.exit(1);
 }
 
-const citations = files.flatMap(citationsIn);
+const references = files.map(referencesIn);
+const citations = references.flatMap((found) => found.citations);
+const malformed = references.flatMap((found) => found.malformed);
 if (citations.length === 0) {
 	console.error("Decision references cannot be checked: no comment in src/ cites anything.");
 	process.exit(1);
@@ -106,6 +121,13 @@ const dead = citations.filter(({ identifier }) => {
 	const known = identifier.startsWith("S-") ? requirements : decisions;
 	return !known.has(canonical(identifier));
 });
+
+if (malformed.length > 0) {
+	console.error("A comment brackets something shaped like a citation that is not an identifier:");
+	for (const { path, line, text } of malformed) console.error(`  ${path}:${line} — ${text}`);
+	console.error("A citation is one S-CLASS-n requirement or one E-n decision in parentheses.");
+	process.exit(1);
+}
 
 if (dead.length > 0) {
 	console.error("A comment cites an identifier that no document defines:");
