@@ -108,7 +108,7 @@ function looksLikeKeyProvider(keys: unknown): keys is KeyProvider {
 	);
 }
 
-/** S-KEY-6: a missing `keys` field refuses the start, exactly as a root key below 32 bytes does. */
+//a missing keys field must refuse the start like a root key below 32 bytes (S-KEY-6)
 function assertKeysArePresent(keys: unknown): asserts keys is KeyProvider {
 	if (!looksLikeKeyProvider(keys)) {
 		throw new VelveStartupError("keys_missing");
@@ -121,7 +121,7 @@ function assertOriginsAreNamed(origins: readonly string[] | undefined): void {
 	}
 }
 
-/** S-DEFAULT-4, E-207: the runtime half of `RecoveryCodesRequirement`, for callers from JavaScript. */
+//callers from JavaScript bypass the type, so it is checked at runtime too (S-DEFAULT-4)
 function assertRecoveryCodesWhereTheyAreTheOnlyWayBack(
 	mode: IdentityMode,
 	recoveryCodes: unknown,
@@ -131,10 +131,7 @@ function assertRecoveryCodesWhereTheyAreTheOnlyWayBack(
 	}
 }
 
-/**
- * A.8 types both fields `number`, and the two values that type admits which cannot be honoured are
- * refused here rather than narrowed silently where they are read (E-1696).
- */
+//numbers the type admits but nobody can honour are refused, not narrowed silently (E-1696)
 function isUsableShapeField(configured: unknown): boolean {
 	return (
 		configured === undefined ||
@@ -158,10 +155,7 @@ function assertEmailCallbackWhereAddressesExist(mode: IdentityMode, email: unkno
 	}
 }
 
-/**
- * The type admits credentials alone for every id so that a known provider needs no endpoints; only
- * an id the library has no endpoints for has to carry its own, and 3.11 makes that a start error.
- */
+//an id the library has no endpoints for must carry its own or the start fails
 function assertEveryUnknownProviderCarriesItsEndpoints(oauth: unknown): void {
 	if (typeof oauth !== "object" || oauth === null) {
 		return;
@@ -185,11 +179,7 @@ function assertEveryUnknownProviderCarriesItsEndpoints(oauth: unknown): void {
 	}
 }
 
-/**
- * The synchronous half of the start, run while `createVelveAuth` builds the instance. What needs
- * the database — the stored key versions of E-179 — cannot run here, because the interface of 3.15
- * B is synchronous; `migrate` carries it.
- */
+//checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
 ): void {
@@ -201,7 +191,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 }
 
-/** S-KEY-6, second half: a provider that answers for no purpose protects nothing. */
+//a key provider that answers for no purpose protects nothing (S-KEY-6)
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);

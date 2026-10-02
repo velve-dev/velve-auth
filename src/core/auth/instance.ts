@@ -148,7 +148,7 @@ function callerResolver(
 			return resolved.session;
 		},
 
-		// S-CACHE-4: this runs for the four routes with caller "pending" and for no other.
+		//only the four routes with caller pending may resolve a pending token (S-CACHE-4)
 		async resolvePending(pendingToken) {
 			const resolved = await pending.resolve(pendingToken as PendingToken);
 			if (resolved === null) {
@@ -159,12 +159,7 @@ function callerResolver(
 	};
 }
 
-/**
- * The eighteen namespaces 3.15 B gives the instance — eleven of `AuthSurface`, six of
- * `AuthInternals` and `http`. It is a statement of the specification and not of the build: a
- * namespace whose routes wave 5 has not written yet is still the core's, and reading the built
- * surface instead released five of them (E-779).
- */
+//this states the specification and not the build, so an unbuilt namespace stays core (E-779)
 export const SURFACE_NAMESPACES: readonly string[] = [
 	"signUp",
 	"signIn",
@@ -186,10 +181,7 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 	"http",
 ];
 
-/**
- * 3.11: a name collision with a core route is a start error. The surface is keyed by the first
- * segment of a route's `name`, so that is what is tested, and the plugin's `id` beside it (E-780).
- */
+//a plugin taking a core namespace must be a start error, keyed by the route's name (E-780)
 function assertNoPluginTakesACoreNamespace(
 	plugins: readonly VelvePlugin[],
 	contributed: readonly AnyRoute[],
@@ -228,11 +220,7 @@ function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakenin
 	}
 }
 
-/**
- * `exactOptionalPropertyTypes` is on, so an option nobody configured has to reach `RouteServices`
- * as an absent key rather than as a key holding `undefined`. Gathered here rather than written
- * into the object literal, where six of them are six branches of one function (E-1258).
- */
+//an option nobody configured must reach RouteServices as an absent key (E-1258)
 function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
 		...(config.oauth === undefined ? {} : { oauth: config.oauth }),
@@ -244,7 +232,7 @@ function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig
 	};
 }
 
-/** The session settings the completion needs, in the same absent-key shape and for the same reason. */
+//the completion's session settings need the same absent-key shape
 function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
 		...(config.session === undefined ? {} : { session: config.session }),
@@ -252,10 +240,7 @@ function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	};
 }
 
-/**
- * E-231: the core reads no clock of its own, so the caller brings the one the configuration falls
- * back to. `src/index.ts` is that caller, and it is where `new Date()` is allowed.
- */
+//the core reads no clock of its own, so the caller brings the fallback one (E-231)
 export function assembleVelveAuth<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	defaultClock: Clock,
@@ -267,7 +252,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const clock = config.clock ?? defaultClock;
 	const log = config.log ?? NO_SINK;
 	const identity = resolveIdentityConfiguration<M>(config.identity);
-	// S-DEFAULT-6: parameters below the floor are refused here, at the start, and not at the first hash.
+	//parameters below the floor must be refused at the start, not at the first hash (S-DEFAULT-6)
 	const password = resolvePasswordConfig(config.password);
 	const sessionSettings = sessionSettingsOf(config.session);
 	const rateLimit = rateLimitConfigOf(config.rateLimit);
@@ -288,8 +273,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		driver,
 		log,
 	};
-	// S-CSRF-6: the registry is built here and holds no route of its own; every hook it runs is
-	// reached from a handler, and a handler runs after the origin check and the rate limiter.
+	//every plugin hook runs from a handler, which runs after the origin check (S-CSRF-6)
 	const pluginRuntime = createPluginRuntime({
 		plugins: config.plugins ?? [],
 		services: frozenContextServices,
@@ -353,7 +337,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		trustedProxies: config.trustedProxies ?? [],
 		cookieSameSite: sessionSettings.sameSite,
 		sessionCookieMaximumAgeInSeconds: sessionSettings.cookieMaximumAgeInSeconds,
-		// E-233: one window, read from the session settings, so the pipeline and the actor agree.
+		//one freshness window keeps the pipeline and the actor in agreement (E-233)
 		freshnessWindowInSeconds: Math.ceil(
 			sessionSettings.freshnessWindowMs / MILLISECONDS_IN_A_SECOND,
 		),
@@ -374,7 +358,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const readSession = createServerMethod(read, environment);
 
-	/** The namespaces the route sources contribute, folded out of their dotted names. */
 	const derivedSurface = nestServerMethods(seamRoutes, environment);
 
 	const statedSurface = {
@@ -389,18 +372,18 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			const applied = await runMigrations({
 				driver,
 				schema,
-				// E-776: the plugin seam contributes here, so no feature edits this file to be run.
+				//the plugin seam contributes here, so no feature edits this file to be run (E-776)
 				migrations: [...coreMigrations(identity.mode), ...pluginMigrations(services)],
 			});
 			await assertKeysAnswerForEveryPurpose(config.keys);
-			// E-179: the operator's report, once, loud, and not on the sign-in path.
+			//a dead key version is reported once at startup and not on the sign-in path (E-179)
 			await assertStoredKeyVersionsAreKnown({ driver, keys: config.keys, schema });
-			// E-428, E-1697: the same report for `totp-enc` and `token-pepper`, which conceal it harder.
+			//totp-enc and token-pepper hide a dead key version harder and need the same report (E-428)
 			await assertStoredFactorKeyVersionsAreKnown({ driver, keys: config.keys, schema });
 			return applied;
 		},
 
-		/** The connection came from the application and goes back to it; the library never opened one. */
+		//the connection belongs to the application and the library never opened one
 		close: () => Promise.resolve(),
 
 		signOut: createServerMethod(signOut, environment),
@@ -422,7 +405,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		user: {
 			findById: ({ userId }) => users.findUserById(userId),
 			findByEmail: ({ email }) => users.findUserByEmail(email),
-			// B.3: `reason` is logged and never stored — 3.14 rules out an audit log.
+			//the reason is logged and never stored, as the library keeps no audit log (E-37)
 			disable: async ({ userId, reason }) => {
 				log("warn", "account disabled", { userId, reason });
 				await users.setDisabledAt({ userId, disabled: true });
@@ -441,13 +424,12 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				}),
 	};
 
-	// E-1192: what this file states after the fold would otherwise replace a derived namespace whole.
+	//a stated name must not replace a derived namespace whole (E-1192)
 	assertNoStatedNameShadowsADerivedOne(derivedSurface, statedSurface);
 	const coreSurface = { ...derivedSurface, ...statedSurface };
 
 	const surface = { ...nestServerMethods(contributedRoutes, environment), ...coreSurface };
-	// E-665: the last statement of the start, because the registry it writes to is process-wide and
-	// a refusal above it must leave nothing of a plugin behind.
+	//this must stay last, as a refusal above must leave nothing of a plugin behind (E-665)
 	registerDeclaredPluginErrorCodes(pluginRuntime.declaredErrorCodes);
 	return surface as VelveAuth<M>;
 }

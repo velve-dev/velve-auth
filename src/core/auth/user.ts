@@ -95,7 +95,7 @@ function toImportSource(value: string | null): ImportSource | null {
 	return value as ImportSource;
 }
 
-/** `hasPassword` is derived from the row's existence, which is why 3.15 C has no `password.isSet`. */
+//hasPassword is derived from the row's existence and needs no flag of its own
 function selection(users: string, credentials: string, predicate: string): string {
 	return `SELECT u.id, u.created_at, u.updated_at, u.email, u.email_verified_at, u.username,
 		u.disabled_at, u.imported_from,
@@ -173,7 +173,7 @@ export function createUserRepository(options: {
 			);
 		},
 
-		/** 3.15 B.5: the row is returned so the answer is the account as it now stands, and a `RETURNING` that names no row is the account having gone. */
+		//a RETURNING that names no row means the account has gone
 		async updateUsername({ actor, username, usernameKey }) {
 			const [row] = await options.driver.query<UserRowShape>(
 				`WITH updated AS (
@@ -190,11 +190,7 @@ export function createUserRepository(options: {
 			return row === undefined ? null : toUser(row);
 		},
 
-		/**
-		 * L-4: the sessions stay; each of them ends at its next resolution. There is no owner
-		 * predicate because the caller is the application in its own process, after its own
-		 * authorization decision (B.3) — no route reaches this.
-		 */
+		//the sessions stay and each of them ends at its next resolution
 		async setDisabledAt({ userId, disabled }) {
 			await options.driver.query(
 				`UPDATE ${users} /* no owner predicate: S-OWNER-7, the caller is the application itself (B.3) */

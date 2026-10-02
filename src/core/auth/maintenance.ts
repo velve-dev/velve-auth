@@ -5,10 +5,7 @@ export interface SweepReport {
 	readonly deletedRowsByTable: Readonly<Record<string, number>>;
 }
 
-/**
- * L-11: the seven tables that carry a `*_sweep_idx`, each with the column that index is on. There
- * is no HTTP route for this; `@velve/auth/schema` ships the same statements for `pg_cron`.
- */
+//every table with a sweep index must be listed here with its deadline column
 const SWEPT_TABLES: readonly (readonly [table: string, deadlineColumn: string])[] = [
 	["session", "absolute_expires_at"],
 	["one_time_token", "expires_at"],

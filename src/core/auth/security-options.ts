@@ -124,7 +124,7 @@ type ObservedConfig = BaseConfig<IdentityMode> & {
 
 type Detector = (config: ObservedConfig, freshness: FreshnessWindows) => ChosenWeakening | null;
 
-/** One detector per option, so that adding an option means adding a row rather than a branch. */
+//one detector per option, so a new option adds a row rather than a branch
 const DETECTORS: readonly Detector[] = [
 	(_config, freshness) =>
 		freshness.chosenMs > freshness.defaultMs
@@ -183,11 +183,7 @@ const DETECTORS: readonly Detector[] = [
 		config.clock === undefined ? null : { option: "clock", chosen: "a clock the caller supplied" },
 ];
 
-/**
- * One entry per weakened option and never two for the same one, because the operator reads this
- * list to learn what this installation gave up (S-DEFAULT-1). What the caller left alone says
- * nothing.
- */
+//each weakened option appears once, as the operator reads what was given up (S-DEFAULT-1)
 export function weakeningsIn<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: { readonly count: number } },
 	defaultFreshnessWindowMs: number,

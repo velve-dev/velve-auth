@@ -36,7 +36,7 @@ export type ModeHasUsername<M extends IdentityMode> = M extends "username" | "us
 	? true
 	: false;
 
-/** A.1, design B: a namespace the mode does not offer is removed, so the error names the mode. */
+//a namespace the mode does not offer is removed, so the error names the mode
 export type PresentKeys<Surface> = {
 	[Key in keyof Surface]-?: [Surface[Key]] extends [never] ? never : Key;
 }[keyof Surface];
