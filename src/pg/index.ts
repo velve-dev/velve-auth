@@ -14,8 +14,7 @@ export interface NodePostgresClient {
 	release(): void;
 }
 
-// A real `Pool` satisfies this because method syntax compares bivariantly; written as a
-// property with an arrow type, node-postgres' overloaded `query` would no longer be assignable.
+//method syntax keeps the overloaded pg query assignable to this interface
 export interface NodePostgresPool {
 	query(config: NodePostgresQueryConfig): Promise<NodePostgresResult>;
 	connect(): Promise<NodePostgresClient>;
@@ -37,7 +36,7 @@ async function rollbackQuietly(client: NodePostgresClient): Promise<void> {
 	try {
 		await client.query({ text: "ROLLBACK", values: [] });
 	} catch {
-		// The rollback failure is never the cause the caller needs; the original error is rethrown.
+		//a rollback failure is never the cause the caller needs
 	}
 }
 
