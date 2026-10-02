@@ -14,11 +14,7 @@ export { type ClientRoute, VELVE_CLIENT_ROUTES, type VelveRouteTable } from "./r
 export type { ClientMethodOf, ClientSurface } from "./surface.js";
 export type { VelveClientOptions } from "./transport.js";
 
-/**
- * 3.15 E derives the surface from `Auth["routes"]`, which is a preserved tuple only where the table
- * is declared `as const`; `VelveAuth` widens it, so a widened one is read as the library's own table
- * rather than as an unusable surface (E-676).
- */
+/** the route table an instance declares, read as the library's own table where it was widened */
 type RouteTableOf<Auth extends { readonly routes: readonly AnyRoute[] }> =
 	number extends Auth["routes"]["length"] ? VelveRouteTable : Auth["routes"];
 
@@ -37,11 +33,7 @@ function nestRouteCalls(routes: readonly ClientRoute[], call: RouteCall): Record
 	return root;
 }
 
-/**
- * The table is iterated once, here, and every leaf reads its `method` and its `path` from the row it
- * was built from — 3.15 E rules out a proxy, a path assembled from property names and a method
- * guessed from the presence of a body.
- */
+/** builds a client whose every call takes its method and path from its own route row */
 export function createVelveClient<
 	Auth extends { readonly routes: readonly AnyRoute[] } = { readonly routes: VelveRouteTable },
 >(options: VelveClientOptions): ClientSurface<RouteTableOf<Auth>> {

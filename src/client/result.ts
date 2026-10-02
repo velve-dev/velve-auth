@@ -3,19 +3,16 @@ import { VelveError, type VelveErrorCode } from "../core/http/error-map.js";
 export interface VelveFailure<Code extends VelveErrorCode> {
 	readonly code: Code;
 	readonly message: string;
-	/** 3.15 E: only `rate_limited` carries one, so every other code leaves the key absent. */
+	/** present only on `rate_limited` and absent for every other code */
 	readonly retryAfterSeconds?: number;
 }
 
-/**
- * 3.15 E's draft B: the compiler makes `ok` checkable before `value` is readable, and `code` is
- * narrowed to the codes of that one route so a `switch` over it is checked exhaustively.
- */
+/** a result whose `ok` is checked before `value` is readable, with `code` narrowed to the route */
 export type VelveResult<Value, Code extends VelveErrorCode> =
 	| { readonly ok: true; readonly value: Value }
 	| { readonly ok: false; readonly error: VelveFailure<Code> };
 
-/** 3.15 E: the two failures that can carry no code — the server did not answer, or answered with something that is not a Velve response. */
+/** a failure with no code, where the server did not answer or gave no Velve response */
 export class VelveTransportError extends Error {
 	override readonly cause: unknown;
 
@@ -26,7 +23,7 @@ export class VelveTransportError extends Error {
 	}
 }
 
-/** 3.15 E: the way back to the server's symmetry, for a caller that would rather catch than check. */
+/** returns the value or throws, for a caller that would rather catch than check */
 export function unwrap<Value, Code extends VelveErrorCode>(
 	result: VelveResult<Value, Code>,
 ): Value {
