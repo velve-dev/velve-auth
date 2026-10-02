@@ -94,7 +94,7 @@ const PLUGIN_ERRORS = new Map<PluginErrorCode, PluginErrorDefinition>();
 const PLUGIN_ERROR_STATUS_FLOOR = 400;
 const PLUGIN_ERROR_STATUS_CEILING = 599;
 
-/** `Object.hasOwn` and not `in`: `in` walks the prototype, so `toString` read as a core code (E-663). */
+//in walks the prototype and would read toString as a core code (E-663)
 function isPluginErrorCode(code: AnyErrorCode): code is PluginErrorCode {
 	return !Object.hasOwn(MESSAGE_BY_ERROR_CODE, code);
 }
@@ -133,13 +133,7 @@ export function registerPluginErrorCodes(
 	}
 }
 
-/**
- * 3.15 G gives a plugin a bare list of code strings and 3.15 F needs a status and a message for
- * every code; a declared code answers with the library's own pair, which says the request was
- * refused and nothing about the plugin. The declaration is held apart from the registrations
- * above, so that a start never blocks the richer answer an application registers for the same
- * code — in either order, the explicit one wins (E-646).
- */
+//an explicit registration must win over a bare plugin declaration in either order (E-646)
 const DECLARED_PLUGIN_ERROR: PluginErrorDefinition = {
 	httpStatus: 400,
 	message: "The request was refused.",
@@ -153,7 +147,7 @@ export function registerDeclaredPluginErrorCodes(codes: readonly PluginErrorCode
 	}
 }
 
-/** Not exported from the package: the registry is process-wide, so a public reset is a way for one caller to erase another's codes. */
+//a public reset would let one caller erase another's codes in the process-wide registry
 export function forgetPluginErrorCodes(): void {
 	PLUGIN_ERRORS.clear();
 	DECLARED_PLUGIN_CODES.clear();
@@ -182,7 +176,7 @@ export function resolveErrorCode(code: AnyErrorCode): PluginErrorDefinition {
 	return PLUGIN_ERRORS.get(code) ?? UNREGISTERED;
 }
 
-/** The one enumeration of the union, so `instance.ts` keeps no second copy of the 25 codes. */
+//the one enumeration of the union, so no other file keeps a second copy of the codes
 export const VELVE_ERROR_CODES: readonly VelveErrorCode[] = Object.keys(
 	MESSAGE_BY_ERROR_CODE,
 ) as VelveErrorCode[];
@@ -336,7 +330,7 @@ interface ErrorBody {
 
 const RETRY_AFTER_LIMIT_IN_SECONDS = 86_400;
 
-/** A wait the caller cannot act on is not a wait, and it reaches neither the body nor the Retry-After header. */
+//a wait the caller cannot act on must reach neither the body nor the Retry-After header
 export function writableWaitInSeconds(retryAfterSeconds: number | undefined): number | null {
 	if (retryAfterSeconds === undefined) {
 		return null;
@@ -347,10 +341,7 @@ export function writableWaitInSeconds(retryAfterSeconds: number | undefined): nu
 		: null;
 }
 
-/**
- * A namespaced code nobody declared is not part of any published interface, so the body carries
- * `internal_error` rather than a string the caller cannot look up (E-647).
- */
+//an undeclared namespaced code is in no published interface and must not reach the body (E-647)
 function visibleCodeOf(code: AnyErrorCode): AnyErrorCode {
 	return !isPluginErrorCode(code) || isKnownPluginErrorCode(code) ? code : "internal_error";
 }

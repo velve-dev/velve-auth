@@ -3,7 +3,7 @@ import { toErrorBody, type VelveError, writableWaitInSeconds } from "./error-map
 
 function headersWith(cookies: readonly CookieInstruction[], contentType: string | null): Headers {
 	const headers = new Headers();
-	// L-6: an upstream cache the library knows nothing about is the normal case.
+	//an upstream cache the library knows nothing about is the normal case
 	headers.set("Cache-Control", "no-store");
 	headers.set("Vary", "Cookie");
 	if (contentType !== null) {
@@ -30,7 +30,7 @@ export function bodilessResponse(status: number, cookies: readonly CookieInstruc
 	return new Response(null, { status, headers: headersWith(cookies, null) });
 }
 
-// H13: the wait is a header per RFC 9110 as well as a body field, so an intermediary can act on it.
+//the wait is a header as well as a body field, so an intermediary can act on it (E-130)
 export function errorResponse(error: VelveError, cookies: readonly CookieInstruction[]): Response {
 	const response = jsonResponse(error.httpStatus, toErrorBody(error), cookies);
 	const wait = writableWaitInSeconds(error.retryAfterSeconds);

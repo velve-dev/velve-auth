@@ -79,7 +79,7 @@ interface AccountBucket {
 	wasConsumed(): boolean;
 }
 
-/** L-5: the key is the normalised identifier, formed before the user is resolved. */
+//the account key is the normalised identifier, formed before the user is resolved (E-116)
 function createAccountBucket(route: RouteMetadata, environment: HttpEnvironment): AccountBucket {
 	let consumed = false;
 	return {
@@ -117,7 +117,7 @@ async function createRequestContext(
 	accountBucket: AccountBucket,
 ): Promise<RequestContext> {
 	const tokens = call.readCallerTokens();
-	// S-CACHE-4: a route that does not declare the cookie readable is answered as if it were absent.
+	//a route that does not declare the cookie readable must see it as absent (S-CACHE-4)
 	const pendingToken = readsPendingCookie(route) ? tokens.pendingToken : null;
 	const oauthStateToken = readsOAuthStateCookie(route) ? tokens.oauthStateToken : null;
 	const session =
@@ -156,7 +156,7 @@ async function enforceIpAddressRateLimit(
 	}
 }
 
-/** A logger that throws must not cost the caller its answer. */
+//a logger that throws must not cost the caller its answer
 function write(
 	environment: HttpEnvironment,
 	level: LogLevel,
@@ -212,7 +212,7 @@ export async function runRoute<Output>(
 		const output = await invocationOf(route)(await call.readInput(), resolveContext);
 		return { output, cookies: cookies.collect() };
 	} finally {
-		// The account bucket bounds failed attempts above all, so the check runs after a throw as well.
+		//the account bucket bounds failed attempts, so it is checked after a throw as well
 		if (handlerReached) {
 			warnOnUnconsumedAccountBucket(route, accountBucket, environment);
 		}

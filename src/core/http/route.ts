@@ -104,7 +104,7 @@ export function invocationOf<Output>(route: RunnableRoute<Output>): RouteInvocat
 	if (invocation === undefined) {
 		throw new Error(`Route ${route.name} was not built by defineRoute`);
 	}
-	// defineRoute is the only writer, and it stores the invocation of exactly this route.
+	//defineRoute is the only writer and stores the invocation of exactly this route
 	return invocation as RouteInvocation<Output>;
 }
 
@@ -131,7 +131,7 @@ function assertPathIsRoutable(path: string): void {
 	}
 }
 
-/** A GET route reads its input from the query string, and a posted form from a provider carries the same problem: parameters no declaration can enumerate. */
+//query strings and provider forms carry parameters no declaration can enumerate
 function declaredFieldsOnly(rawInput: unknown, fields: readonly string[]): unknown {
 	if (!isRecord(rawInput)) {
 		return rawInput;
@@ -154,7 +154,7 @@ const SERVER_CALL_FIELDS = new Set<string>([
 	"userAgent",
 ]);
 
-/** The direct server call carries these six fields beside the input, so an input field of the same name would be stripped there and kept over HTTP. */
+//an input field named like the call envelope would be stripped directly but kept over HTTP
 function assertInputLeavesTheCallEnvelopeAlone(name: string, fields: readonly string[]): void {
 	for (const field of fields) {
 		if (SERVER_CALL_FIELDS.has(field)) {
@@ -196,12 +196,12 @@ function pendingCookieAccessOf(
 	return "readable";
 }
 
-/** S-CACHE-4: the one predicate that says whether a route may see `__Host-velve_pending`. */
+//the one predicate that decides whether a route may see the pending cookie (S-CACHE-4)
 export function readsPendingCookie(route: RouteMetadata): boolean {
 	return route.pendingCookie === "readable";
 }
 
-/** S-CSRF-5: the one predicate that says whether a route may see `__Host-velve_oauth_state`. */
+//the one predicate that decides whether a route may see the state cookie (S-CSRF-5)
 export function readsOAuthStateCookie(route: RouteMetadata): boolean {
 	return route.oauthStateCookie === "readable";
 }
@@ -241,7 +241,7 @@ export function defineRoute<
 		requestBody: declaration.requestBody ?? "json",
 	};
 
-	// 3.15 D.2 fixes the order: the input is parsed before the caller is resolved.
+	//the input must be parsed before the caller is resolved
 	invocations.set(route, async (rawInput, resolveContext) => {
 		const input = declaration.input.parse(
 			declaration.method === "GET" || route.requestBody === "form"

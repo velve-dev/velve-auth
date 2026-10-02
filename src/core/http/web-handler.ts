@@ -19,7 +19,7 @@ export interface WebHandlerOptions {
 	readonly connectionAddress?: (request: Request) => string | null;
 }
 
-/** The same rule as S-COOKIE-5: a repeated name is rejected rather than one of its values chosen. A prototypeless object so that "__proto__" is an own property like any other name. */
+//a repeated query name must be rejected rather than one of its values chosen
 function readQuery(url: URL): Record<string, string> {
 	const query: Record<string, string> = Object.create(null);
 	for (const [name, value] of url.searchParams) {
@@ -39,7 +39,7 @@ function requestUrl(request: Request): URL | null {
 	}
 }
 
-/** The same rule as `readQuery`: a repeated name is refused rather than one of its values chosen. */
+//a repeated form name must be refused rather than one of its values chosen
 function readForm(text: string): Record<string, string> {
 	const fields: Record<string, string> = Object.create(null);
 	for (const [name, value] of new URLSearchParams(text)) {
@@ -56,7 +56,7 @@ async function readInput(request: Request, url: URL, match: RouteMatch): Promise
 		return { ...readQuery(url), ...match.pathParameters };
 	}
 	const text = await request.text();
-	// Section 1 C50: the `form_post` callback is posted by the provider, not by the application.
+	//the form_post callback is posted by the provider, not by the application
 	if (match.route.requestBody === "form") {
 		return { ...readForm(text), ...match.pathParameters };
 	}
@@ -88,7 +88,7 @@ function readRouteCall(
 		userAgent: request.headers.get("user-agent"),
 		readCallerTokens: () => {
 			const cookies = readCookies(request.headers.get("cookie"), cookiePolicyOf(environment).names);
-			// Which route may see the pending cookie or the state pointer is decided in `route.ts` and nowhere else (E-335).
+			//which route may see which cookie is decided in route.ts and nowhere else (E-335)
 			return {
 				sessionToken: cookies.session,
 				pendingToken: cookies.pending,
@@ -104,7 +104,7 @@ interface ResponseParts {
 	readonly cookies: readonly CookieInstruction[];
 }
 
-/** 3.5: the plaintext token leaves the process in the cookie and never in the response body. */
+//the plaintext token leaves the process in the cookie and never in the response body
 function moveTokensIntoCookies(output: unknown, environment: HttpEnvironment): ResponseParts {
 	if (!isRecord(output)) {
 		return { body: output, cookies: [] };
@@ -152,7 +152,7 @@ export function toWebHandler(
 	assertRouteTableIsUnambiguous(environment.routes);
 	const basePath = options.basePath ?? "";
 	const readConnectionAddress = options.connectionAddress ?? (() => null);
-	// S-RATE-3: the header counts only where `trustedProxies` names who may write it.
+	//the forwarded header counts only where trustedProxies names who may write it (S-RATE-3)
 	const readClientAddress = (request: Request): string | null =>
 		resolveClientAddress(
 			readConnectionAddress(request),
