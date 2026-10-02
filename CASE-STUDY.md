@@ -1,6 +1,6 @@
 # Velve Auth — Case Study
 
-Velve Auth is an authentication library for TypeScript and PostgreSQL that answers exactly one question: who is signed in. It runs inside the application's own process and keeps its users in the application's own database, so no third-party authentication service sits between an application and the people who use it. It exists because most authentication libraries also answer what a user may do and which organisation they belong to, and those answers belong to the application, because only the application knows what its permissions mean. What is left once those questions are refused is small enough to be read end to end, and the parts that matter are the ones that are usually wrong: the upgrade path for imported password hashes, resistance to account enumeration, secrets at rest and second factors. This document is the case study of how it was built. Every decision was written down while it was being taken, with what was rejected, the reason and the price, and where a decision was taken for a bad reason, the bad reason is what was kept. The complete record has more than twelve hundred entries and lives in [`docs/decisions/log.md`](./docs/decisions/log.md). What follows is a selection: the 46 decisions the specification started from, and thirteen entries from the build that each carry a measurement, a fault that was found, or an assumption that turned out to be wrong. Every entry keeps its number, so E-186 here is E-186 in the log and in the code comment that cites it. The specification's decisions are quoted from its English translation, and the one build entry first written in German is translated word for word, with the original kept in the log.
+Velve Auth is an authentication library for TypeScript and PostgreSQL that answers exactly one question: who is signed in. It runs inside the application's own process and keeps its users in the application's own database, so no third-party authentication service sits between an application and the people who use it. It exists because most authentication libraries also answer what a user may do and which organisation they belong to, and those answers belong to the application, because only the application knows what its permissions mean. What is left once those questions are refused is small enough to be read end to end, and the parts that matter are the ones that are usually wrong: the upgrade path for imported password hashes, resistance to account enumeration, secrets at rest and second factors. This document is the case study of how it was built. Every decision was written down while it was being taken, with what was rejected, the reason and the price, and where a decision was taken for a bad reason, the bad reason is what was kept. The complete record has more than twelve hundred entries and lives in [`docs/decisions/log.md`](./docs/decisions/log.md). What follows is a selection: the 46 decisions the specification started from, and thirteen entries from the build that each carry a measurement, a fault that was found, or an assumption that turned out to be wrong. Every entry keeps its number, so E-186 here is E-186 in the log and in the code comment that cites it, and an entry about code ends with the file and the function it concerns. The specification's decisions are quoted from its English translation, and the one build entry first written in German is translated word for word, with the original kept in the log.
 
 ---
 
@@ -23,6 +23,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Wiring the compute engine fixedly into the core.
 *Reason:* Measurement shows: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce byte-identical hashes and verify each other. That makes the choice reversible without a single stored hash being touched. Decision E-01 therefore costs no future.
 *Price:* One additional abstraction layer of about thirty lines.
+*Where:* [`src/core/password/argon2.ts`](./src/core/password/argon2.ts) `selectArgon2Engine`
 
 <a id="e-03"></a>
 
@@ -31,6 +32,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Running everything through `@noble/*` for the sake of uniformity.
 *Reason:* PBKDF2 with 600,000 iterations: 269 ms via `crypto.subtle`, 926 ms in JavaScript, **2161 ms via WASM**. SHA-2 on large blocks almost three times as fast. AES-GCM hardware-accelerated. It is non-JavaScript without native bindings — exactly what was sought.
 *Price:* Two paths instead of one. `@noble/ciphers` remains as a fallback for incomplete Web Crypto implementations.
+*Where:* [`src/core/keys/aes-gcm.ts`](./src/core/keys/aes-gcm.ts) `selectAesGcmEngine`
 
 <a id="e-04"></a>
 
@@ -57,6 +59,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* (a) Adapters for MySQL and SQLite. (b) ORM adapters for Prisma, Drizzle, Kysely.
 *Reason:* Better Auth's abstraction pays for portability with the lowest common denominator: `supportsArrays: false` even for PostgreSQL, no partial indexes, no `ON CONFLICT`, no `citext`, one transformation pass per row in JavaScript. The rate limiter there emulates an upsert with up to four round trips that is one statement here. An adapter nobody operates is not reach but an unproven claim.
 *Price:* No MySQL, no SQLite, no ORM integration. Whoever needs that takes Better Auth — and that is an honest answer.
+*Where:* [`src/core/db/driver.ts`](./src/core/db/driver.ts) `Driver`
 
 <a id="e-07"></a>
 
@@ -65,6 +68,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Tables with a prefix in the `public` schema.
 *Reason:* `user` is a reserved word in SQL; a schema of its own solves the quoting problem and the collision with the application's `users` table in one go. Privilege assignment and backup can be pinned to the schema.
 *Price:* The `search_path` has to be right; all queries qualify fully.
+*Where:* [`src/core/db/schema-rewrite.ts`](./src/core/db/schema-rewrite.ts) `applySchemaName`
 
 <a id="e-08"></a>
 
@@ -73,6 +77,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Schema derivation at runtime from the configuration, the way Better Auth operates it.
 *Reason:* There, `migrate` is only additive, not transactional, knows no version history, cannot rename, drop or retype, does not retrofit indexes on existing columns and works only with Kysely. That is not a migration system but a schema aligner. Delivered SQL can moreover be read, checked and applied with the operator's own tooling.
 *Price:* Manual work on every schema change.
+*Where:* [`src/core/db/migration-runner.ts`](./src/core/db/migration-runner.ts) `runMigrations`
 
 ### Passwords
 
@@ -83,6 +88,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* An exchangeable `hash`/`verify` pair as in Better Auth.
 *Reason:* There the hook replaces **both** directions. Whoever wants to verify bcrypt necessarily also produces bcrypt — for all users, permanently. That is exactly what the migration guides there recommend verbatim (`docs/.../supabase-migration-guide.mdx:971`, identically in `clerk-migration-guide.mdx:47` and `auth0-migration-guide.mdx:595`), and nobody says alongside it that the target system is thereby permanently fixed to bcrypt(10). Verifying and producing must be separate decisions.
 *Price:* Four verifiers in the core that are maintained permanently.
+*Where:* [`src/core/password/scheme.ts`](./src/core/password/scheme.ts) `LEGACY_SCHEMES`
 
 <a id="e-10"></a>
 
@@ -91,6 +97,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Storing foreign formats and carrying an origin column along.
 *Reason:* Better Auth's `salt_hex:hash_hex` carries neither algorithm nor parameters. The consequence is that the scrypt parameters can never be raised without locking out all users — the estate is frozen. A self-describing string makes a parameter change a non-event. For Firebase hashes, GoTrue's existing `$fbscrypt$` format is deliberately adopted instead of one of our own, so that Supabase estates pass through unchanged.
 *Price:* The import has to rewrite every source format, not pass it through.
+*Where:* [`src/core/password/phc.ts`](./src/core/password/phc.ts) `parsePhc`
 
 <a id="e-11"></a>
 
@@ -99,6 +106,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* (a) Rehash synchronously before the response. (b) Rehash in a maintenance run.
 *Reason:* Synchronously doubles the sign-in latency to over half a second. A maintenance run is impossible, because the plaintext password only exists at the moment of the sign-in. The write operation `WHERE user_id = $1 AND phc = $alt` is safe against simultaneous sign-ins, and a lost rehash is inconsequential — the next attempt catches it up.
 *Price:* A background task whose failure is logged and not reported.
+*Where:* [`src/core/password/credential.ts`](./src/core/password/credential.ts) `replaceIfUnchanged`
 
 <a id="e-12"></a>
 
@@ -107,6 +115,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* A classic pepper in the derivation.
 *Reason:* A pepper in the derivation breaks every imported hash, because that one was produced without it. Envelope encryption of the column achieves the same effect — a database dump alone is of no use — and works equally for produced and imported hashes. It is moreover rotatable, which a pepper practically is not.
 *Price:* Loss of the key means loss of the passwords. Stands in first place in the operations documentation.
+*Where:* [`src/core/password/credential.ts`](./src/core/password/credential.ts) `sealPhc`
 
 <a id="e-13"></a>
 
@@ -115,6 +124,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* No limit, as in Better Auth.
 *Reason:* Argon2id with 19 MiB and a hundred simultaneous sign-ins is 1.9 GB. Without a limit the sign-in is itself the attack vector. Better Auth does not even check the input length at `/sign-in/email` before the KDF call and hashes even for an unknown address (`api/routes/sign-in.ts:526-539`); `/change-password` even hashes the new password **before** verifying the old one (`api/routes/update-user.ts:276-277`). The length check before the KDF follows L-7: at least 8 characters, at most 4096 bytes, no composition rules; a comparison against leak corpora hangs on `password.validate` and never runs at sign-in.
 *Price:* Under load the sign-in waits instead of failing — up to the wait limit of 5 seconds (L-1).
+*Where:* [`src/core/password/semaphore.ts`](./src/core/password/semaphore.ts) `createKdfSemaphore`
 
 <a id="e-14"></a>
 
@@ -123,6 +133,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* A fixed minimum duration per endpoint, as Better Auth applies it with 500 ms at `send-verification-email`.
 *Reason:* A deadline conceals non-uniformity instead of preventing it, and leaks again above the threshold. The rule "one code path, the same work independent of the result" is stronger and provable in the test.
 *Price:* The proof is a statistical test that has to be maintained in CI. Separate from that remains the semaphore's wait limit of 5 seconds — a resource limit, not a timing equalisation (L-1).
+*Where:* [`src/core/password/semaphore.ts`](./src/core/password/semaphore.ts) `DEFAULT_WAIT_LIMIT_IN_MILLISECONDS`
 
 ### Identity
 
@@ -133,6 +144,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Making all fields always optional and checking at runtime.
 *Reason:* If the configuration determines the type, `auth.username.changeUsername` does not exist in the configuration `email` — the error occurs at compile time, not at the user. The constraint ensures that even a direct database access does not break the invariant.
 *Price:* A change of the configuration after the introduction is a real migration.
+*Where:* [`src/core/db/migrations/identity-mode.ts`](./src/core/db/migrations/identity-mode.ts) `user_identity_mode`
 
 <a id="e-16"></a>
 
@@ -141,6 +153,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Better Auth's way: `email NOT NULL UNIQUE` plus placeholder addresses.
 *Reason:* There this is not a documentation recommendation but built-in production code — `createPlaceholderEmail` is called by Roblox, TikTok, WeChat, Reddit, Twitter, SIWE, Anonymous and the Entra helper and produces addresses like `<id>@<ns>.placeholder.invalid` that no plugin can ever send anything to. Issue #9124 is open on it, the documentation admits it (`concepts/oauth.mdx:409`). An invalid address in the database is worse than none at all, because downstream systems take it for real.
 *Price:* Every code path has to withstand `email IS NULL`.
+*Where:* [`src/core/identity/columns.ts`](./src/core/identity/columns.ts) `resolveEmailColumn`
 
 <a id="e-17"></a>
 
@@ -149,6 +162,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Only one column, lowercased.
 *Reason:* An allowlist is the most effective homoglyph protection, because it does not let the problem arise in the first place; skeleton formation according to Unicode confusables would be the more laborious and more error-prone alternative. The separate display form preserves the spelling the user chose.
 *Price:* Non-Latin usernames are excluded by default. The allowlist is configurable, with a documented warning.
+*Where:* [`src/core/identity/fold.ts`](./src/core/identity/fold.ts) `comparisonFormOf`
 
 <a id="e-18"></a>
 
@@ -157,6 +171,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* — There is no second channel the library could invent.
 *Reason:* Without a mailbox there is no channel outside the password. That cannot be configured away, only named honestly. The library refuses to start instead of leaving the gap open.
 *Price:* A mandatory option that has to be explained.
+*Where:* [`src/core/factor/recovery/startup.ts`](./src/core/factor/recovery/startup.ts) `assertRecoveryCodesAreConfigured`
 
 <a id="e-19"></a>
 
@@ -165,6 +180,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Not offering the check.
 *Reason:* Whoever offers an availability check reveals the existence — no wording changes that. Not offering it makes registration forms unusable. So: offer it, limit it hard, document it. Email enumeration stays completely closed.
 *Price:* A limitation in the data sheet instead of a silent gap.
+*Where:* [`src/core/identity/resolution.ts`](./src/core/identity/resolution.ts) `usernameAvailability`
 
 ### Sessions
 
@@ -175,6 +191,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* (a) JWT with refresh rotation. (b) Plaintext token in the database, as Better Auth does it.
 *Reason:* Immediate revocation is the property at stake; JWT cannot deliver it in principle, and the reuse detection for it is a class of fault of its own — Better Auth's own OAuth server got it wrong twice (GHSA-7w99-5wm4-3g79, GHSA-392p-2q2v-4372). The plaintext token there is an unnecessary disclosure: the server only compares, so the hash suffices. It is remarkable that the same code base does know a hashing option for `verification.identifier`.
 *Price:* One indexed database hit per request. With a unique index on 32 bytes that is the cheapest query in the system. The row keeps `ip` and `user_agent` truncated by default — `/24` resp. `/64`, browser and system family (L-10); whoever needs the full value switches it on.
+*Where:* [`src/core/session/token.ts`](./src/core/session/token.ts) `createSessionToken`
 
 <a id="e-21"></a>
 
@@ -191,6 +208,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* A sliding window as at Better Auth and NextAuth.
 *Reason:* A purely sliding window never expires as long as somebody is using it — an attacker too. The absolute deadline limits the damage of a stolen token without anyone's involvement.
 *Price:* Users sign in again at fixed intervals.
+*Where:* [`src/core/session/config.ts`](./src/core/session/config.ts) `DEFAULT_SESSION_CONFIG`
 
 <a id="e-23"></a>
 
@@ -199,6 +217,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Rewriting the existing row by `UPDATE`.
 *Reason:* `UPDATE session SET user_id` does not exist and is prevented by a lint rule **and** a database trigger. Two locks against the same class of fault are appropriate here, because its occurrence goes unnoticed.
 *Price:* Somewhat more write load at sign-in.
+*Where:* [`src/core/db/migrations/initial-schema.ts`](./src/core/db/migrations/initial-schema.ts) `session_user_id_immutable`
 
 <a id="e-24"></a>
 
@@ -207,6 +226,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* An option with a safe default value.
 *Reason:* In Better Auth, `revokeSessionsOnPasswordReset` is an option without a default value (`api/routes/password.ts:328-330`). A reset that leaves the attacker's sessions standing does not fulfil its purpose — and the evaluation of the 33 advisories shows: almost every critical rating hung on a default setting, not on a bug.
 *Price:* None that would be worth it.
+*Where:* [`src/core/session/service.ts`](./src/core/session/service.ts) `reissueAfterCredentialChange`
 
 ### Second factor
 
@@ -217,6 +237,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* A session with the marking "second factor pending".
 *Reason:* Here Better Auth got it right — a cookie of its own plus a verification row instead of a session — and that is expressly adopted. The addition is the restriction to exactly the four routes with `caller: "pending"`: otherwise the intermediate state is half an identity card that is somewhere read as a whole one. After five failed attempts the row is deleted and the process starts again at the password; no account lockout (L-8).
 *Price:* One more table.
+*Where:* [`src/core/auth/routes.ts`](./src/core/auth/routes.ts) `pendingRoutes`
 
 <a id="e-26"></a>
 
@@ -225,6 +246,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* WebAuthn only as a second factor; discarding the flags.
 *Reason:* The flags `backupEligible` and `backupState` arrive in the authenticator data anyway; not storing them would be a loss of information without a counter-value. They are stored and passed on — a policy on top of that is the application's business, not the library's. By the same logic a regressing `sign_count` is reported as the field `signCountRegressed`, not rejected: synchronised passkeys do not keep the counter reliably (L-9). And because WebAuthn is a sign-in path of its own, it counts among the paths whose last one may not be removed — the attempt fails with `last_sign_in_method` (L-13).
 *Price:* Two columns and a pair of terms in the documentation that needs explaining.
+*Where:* [`src/core/factor/webauthn/credential-repository.ts`](./src/core/factor/webauthn/credential-repository.ts) `backup_state`
 
 <a id="e-27"></a>
 
@@ -233,6 +255,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Argon2id on every code.
 *Reason:* At 160 bit of entropy from a CSPRNG a memory-hard derivation brings nothing — there is no dictionary. It would however force ten KDF calls per verification if the codes are iterated over. The HMAC allows the direct index hit. Every row carries `key_version`, so that a rotation of `token-pepper` does not devalue the codes (L-3).
 *Price:* The rationale has to be in the documentation, otherwise it reads like negligence.
+*Where:* [`src/core/factor/recovery/pepper.ts`](./src/core/factor/recovery/pepper.ts) `pepperRecoveryCode`
 
 <a id="e-28"></a>
 
@@ -241,6 +264,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Reading and inserting as two statements.
 *Reason:* The insert attempt **is** the check. That is race-free without a lock and without an additional query.
 *Price:* A table that has to be cleaned up — via `auth.maintenance.sweep()` or the SQL delivered with it, not via a timer in the core (L-11).
+*Where:* [`src/core/db/migrations/initial-schema.ts`](./src/core/db/migrations/initial-schema.ts) `totp_used_step`
 
 ### Third parties
 
@@ -251,6 +275,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Linking via email equality, even with a verified provider address.
 *Reason:* This is the most frequent grave class of fault of all: CVE-2026-53516 (CVSS 8.3), GHSA-qq9h-g4jm-xgf3 (8.3), GHSA-fmh4-wcc4-5jm3 (7.7) — three times the same cause in one code base. Automatic linking happens only if the provider reports the address as verified **and** the local account is verified **and** the provider is configured as trusted. Three conditions, all three necessary. The same rule applies inwards: if an address is confirmed for the first time and the existing password comes from a different session than the one now confirming, the password sign-in is deleted and every session revoked (L-12) — otherwise an attacker's advance access stays valid, exactly the fault from GHSA-qq9h-g4jm-xgf3.
 *Price:* More explicit linking in the user flow.
+*Where:* [`src/core/oauth/linking.ts`](./src/core/oauth/linking.ts) `automaticLinkIsAllowed`
 
 <a id="e-30"></a>
 
@@ -259,6 +284,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Drawing level with Better Auth's provider list.
 *Reason:* The interface is the value, not the number. Providers are the part that can be caught up on most cheaply later — and every single one is a maintenance load when its OAuth behaviour changes. Better Auth's provider abstraction is, by the way, the cleanest corner of its code base and serves as the model here.
 *Price:* A shorter list on the product page.
+*Where:* [`src/core/oauth/providers.ts`](./src/core/oauth/providers.ts) `DESCRIPTORS`
 
 <a id="e-31"></a>
 
@@ -267,6 +293,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Storing as the default, encrypted.
 *Reason:* What is not stored cannot leak. Most applications do not need a provider token after the sign-in; whoever needs it switches it on and gets it encrypted.
 *Price:* An option that some overlook and then go looking for.
+*Where:* [`src/core/oauth/config.ts`](./src/core/oauth/config.ts) `storeTokens`
 
 ### Extensibility
 
@@ -277,6 +304,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Better Auth's model, in which a plugin can override core endpoints, mutate the context by `Object.assign`, replace `password.hash` and write the options of foreign plugins.
 *Reason:* There this is not a theoretical possibility: the Stripe plugin actually writes into the options of the Organization plugin (`packages/stripe/src/index.ts:256`) and thereby produces an invisible order dependency. Collisions are only logged, `init` runs without `try/catch`, and `plugin.migrations` as well as `plugin.adapter` are dead code. A plugin is a listener with a right of veto, not a co-owner.
 *Price:* Many a plugin that would be possible there is impossible here. That is intended.
+*Where:* [`src/core/plugin/registry.ts`](./src/core/plugin/registry.ts) `HOOK_POINTS`
 
 <a id="e-33"></a>
 
@@ -285,6 +313,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* A warning in the log, as Better Auth does it.
 *Reason:* A warning in the log is not read in operation. An error at start is read.
 *Price:* Less leniency at the introduction.
+*Where:* [`src/core/plugin/registry.ts`](./src/core/plugin/registry.ts) `assertNoCoreRouteIsOverwritten`
 
 <a id="e-34"></a>
 
@@ -293,6 +322,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Better Auth's runtime proxy over path segments with the heuristic "body present, so POST".
 *Reason:* There is no runtime contract between client and server there; the types arise purely statically from `Auth["api"]`, which leads to the known inference problems (issues #1252, #4654 with TS2742, #5159). Derived from one declaration, a call that does not exist cannot compile.
 *Price:* A declaration layer that has to be maintained.
+*Where:* [`src/core/http/route.ts`](./src/core/http/route.ts) `defineRoute`
 
 ### Scope
 
@@ -337,6 +367,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* One-time verification with an immediate rehash.
 *Reason:* That would create permanent legacy surface in the core for hashes that are effectively plaintext — and the one-time character could not be enforced. The rule is: no procedure that neither iterates nor is memory-hard; it also hits `sha256`, `sha512` and `ldap` at Auth0 as well as ten of the nineteen Clerk procedures. Those affected get the reset path (E-41).
 *Price:* In an Auth0 migration with an old estate these users have to set their password anew.
+*Where:* [`src/core/password/scheme.ts`](./src/core/password/scheme.ts) `LEGACY_SCHEMES`
 
 <a id="e-40"></a>
 
@@ -353,6 +384,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* A placeholder value in `password_credential.phc`.
 *Reason:* A sentinel value would have forced a further prefix line in the switch and thereby extended the verification path by a special case that is not a hash. The response at sign-in stays byte-for-byte identical; the hint moves into the email.
 *Price:* A table and an additional query in the error branch.
+*Where:* [`src/core/db/migrations/initial-schema.ts`](./src/core/db/migrations/initial-schema.ts) `password_reset_required`
 
 ### Security by default
 
@@ -363,6 +395,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Convenient defaults with security options to switch on.
 *Reason:* The evaluation of the 33 advisories yields: the most frequent cause is not a crypto weakness but a missing owner check (10 cases), and almost every critical rating hung on a default setting. A weakening must be explicit, logged and visible at start.
 *Price:* Less convenience at the introduction.
+*Where:* [`src/core/auth/security-options.ts`](./src/core/auth/security-options.ts) `SECURITY_OPTIONS`
 
 <a id="e-43"></a>
 
@@ -371,6 +404,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Owner checking in the handler, enforced by review.
 *Reason:* The ten advisories of the class "missing owner binding" have the same shape: a missing line `AND user_id = :actor`. If the signature forces the caller to name the acting party, it cannot be forgotten — it can only be given wrongly, and that is a visible error instead of an invisible one.
 *Price:* Somewhat more typing in the core.
+*Where:* [`src/core/db/repositories/owned-row-repository.ts`](./src/core/db/repositories/owned-row-repository.ts) `createOwnedRowRepository`
 
 <a id="e-44"></a>
 
@@ -379,6 +413,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* One secret for everything, as Better Auth does it.
 *Reason:* There `ctx.secret` signs cookies, email JWTs and the cache HMAC; rotation is implemented only for encryption, signatures do not rotate, and a change of secret devalues all sessions and all open links at the same time. Here every rotation survives all sessions, because sessions are opaque database rows and are connected to no key. Where no envelope exists, the version stands as a column: `password_credential.key_version` for `password-enc` (L-2) and `recovery_code.key_version` for `token-pepper` (L-3).
 *Price:* A key ring that wants managing.
+*Where:* [`src/core/keys/envelope.ts`](./src/core/keys/envelope.ts) `sealEnvelope`
 
 <a id="e-45"></a>
 
@@ -387,6 +422,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* `__Secure-` with a configurable `Domain`.
 *Reason:* The prefix makes the browser enforce `Secure` and `Path=/` and forbid `Domain` — cookie tossing from a taken-over subdomain is thereby ruled out. Better Auth defines the prefix (`cookies/cookie-utils.ts:35`) but never sets it — `cookies/index.ts:75` only chooses between `__Secure-` and no prefix.
 *Price:* No `Domain` scope, so cross-subdomain needs a token exchange instead of a shared cookie.
+*Where:* [`src/core/http/cookies.ts`](./src/core/http/cookies.ts) `DEFAULT_COOKIE_NAMES`
 
 <a id="e-46"></a>
 
@@ -395,6 +431,7 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 *Rejected:* Protection per endpoint, retrofittable.
 *Reason:* In Better Auth it was reported afterwards four times individually (#7972, #7944, #5017, #8096), does not take effect in the standard setup even in 1.7.3, and `/sign-up/email` logs the address in plaintext while returning 422. Retrofitted protection is patchy protection. Two consequences follow from that: "account disabled" is invisible at sign-in and appears only on the resolution of an existing session (L-4); and the account-related counter is formed on the identifier, not on the account ID, so that it takes effect before the user resolution and treats existing and non-existent accounts alike — exceeding it rejects instead of delaying, because a delay would be a timing channel (L-5). For the same reason there is no `requireEmailVerification`: a sign-in block for unconfirmed accounts would be an enumeration channel and at the same time a dead end, because `email.requestVerification` demands a session. Sign-in and registration always deliver a session, `User.emailVerifiedAt` carries the state, the application decides (section 1, A5; S-TIM-7).
 *Price:* Error messages are less convenient for developers. The true reason is in the server log.
+*Where:* [`src/core/identity/resolution.ts`](./src/core/identity/resolution.ts) `findUserByIdentifier`
 
 ---
 
@@ -414,6 +451,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 
 *(b) The reach.* The title of the first version spoke of two invisible files. Only one was ever binary. The NUL in `test/db-postgres-connection.ts` stood at byte 13735 and so beyond the 8000-byte window in which Git checks for binary data; this file was readable throughout and was checked throughout. The commit that fixes both claims the same too broadly in its body — it is pushed and will not be rewritten, and this line is the correction to it.
 
+*Where:* [`tools/check-reviewable-text.mjs`](./tools/check-reviewable-text.mjs) `trackedTextFiles()` · [`test/db-identifier-injection.test.ts`](./test/db-identifier-injection.test.ts) `String.fromCharCode(0)`
+
 <a id="e-186"></a>
 
 ### Yield to the timer phase, not the microtask queue
@@ -425,6 +464,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Price.** One timer round per derivation, so about one millisecond in twenty — roughly five per cent of what the accelerator buys. And the library now yields differently in two places depending on the engine; whoever changes one has to remember the other. The test plan records it: the case runs against the engine the runtime actually chooses, and fails if that engine starves the timer phase.
 **Addendum.** The reason first written down here for rejecting (c) was false, and it is left standing above the correction rather than quietly swapped: it said `scheduler.yield()` "returns to a continuation queue, and what has to run here is the timer phase". That is true of the browser Prioritized Task Scheduling API and false of Node, where the implementation is `setImmediate`-based and reaches the timer phase perfectly well. Measured on this repository's runtime — Node 26.8.1, 30 accelerated derivations against a 10 ms interval, three runs, identical every time: no yield → 0 timer firings, `setTimeout(…, 0)` → 29, `setImmediate` → 29, `scheduler.yield()` → 29, `queueMicrotask` → 0. The shipped decision is unchanged and the two reasons that do carry it are now in the entry. The lesson is the cheaper one: a rejection that names a mechanism is a claim about behaviour, and this one was never run.
 
+**Where.** [`src/core/password/argon2.ts`](./src/core/password/argon2.ts) `yieldToTimerPhase()`
+
 <a id="e-188"></a>
 
 ### `concurrentHashLimit` lowers the bound and never raises it
@@ -434,6 +475,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Rejected.** (a) Weakening the promise in the reference instead of binding the code. (b) Deriving the ceiling for `concurrentHashLimit` from the reported core count, so that a 64-core machine gets more.
 **Reason.** (a) would have saved the statement and given up the requirement. S-DOS-3 names `min(4, cpus)` as **the** bound of the library, not as a starting value, and T-DOS-3 measures exactly that — an installation with a higher value does not meet the requirement, however large the machine. (b) would have moved the same problem into a formula. The option now lowers and never raises; whoever needs more concurrent derivations runs more processes. For bcrypt the cost number is the only available bolt, and 14 is four steps above what GoTrue, Auth0 and Clerk write.
 **Price.** Two values a configuration used to accept are now startup errors, and an estate with bcrypt cost above 14 is no longer verifiable and goes down the reset path. The second price is more honestly named: both gaps stood in the reference as a promise before they stood in the code — the documentation ran ahead of the code, and that is the order in which a promise becomes false.
+
+**Where.** [`src/core/password/limits.ts`](./src/core/password/limits.ts) `bcryptCostIsAcceptable()` · [`src/core/password/config.ts`](./src/core/password/config.ts) `CONCURRENT_HASH_LIMIT_CEILING`
 
 <a id="e-223"></a>
 
@@ -445,6 +488,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Reason.** `::ffff:0:0/96` is exactly one `/64`. Every IPv4 client behind such a proxy would land in the same prefix row — the metadata would be worthless, and the same confusion in rate limiting would be a shared bucket for half the internet. The mapping is a notation, not a family.
 **Price.** The truncation now hangs on pattern recognition in the address space. Anyone who deliberately wants `::ffff:...` treated as an IPv6 address does not get that — and `2002::/16` (6to4) is the same case, but is not recognised, because it no longer occurs in practice.
 
+**Where.** [`src/core/net/ip-address.ts`](./src/core/net/ip-address.ts) `unmappedIpv4Bytes()`
+
 <a id="e-249"></a>
 
 ### Two branches wrote the same rule into the same gate file, and only a planted input told them apart
@@ -455,6 +500,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Reason.** (a) is merge order deciding a rule, which is not a review; the reason it was rejected is that the difference had not been read yet, not that `main`'s form was known to be worse. Reading it settled it: `[^*]*` cannot cross an asterisk, so a marker whose reason contains one — `/* no owner predicate: S-TOKEN-4 (see the 5*3 rule) */` — is not recognised as a marker at all, and the statement is then reported as having no declaration whatsoever. That is the failure mode §5 of the repository rules names: the check can no longer tell "no marker" from "a marker it cannot parse", and the author is sent to fix something that is not wrong. (b) is worse than either single form, because a union of two patterns is a rule nobody can state in one sentence.
 **Price.** The kept form is not the better one everywhere, and calling it a gain was wrong. `[\s\S]*?` stops at the first `*/` in the statement, so a marker that was opened and never closed is read as a complete declaration the moment any later comment supplies a closing marker — `/* no owner predicate: S-OWNER-2` followed further down by `/* anything */` counts as declared. PostgreSQL reads that same text as one comment running to the end, so the predicate the statement was exempted for is the predicate that got commented out. `main`'s `[^*]*` refused it, because it refuses every asterisk. Neither this check nor `check:sql-collapse` notices the result: the collapse check strips an unterminated comment the same way whichever order it works in, so the statement passes it too. The trade is therefore one blind spot for another, and the one taken on is the more dangerous of the two — it grants an exemption where the other only withheld one. It is left standing rather than patched a third time, because a third form of this expression needs its own argument and its own owner, and this branch has no claim to the file. The difference that decided the choice cannot be observed anywhere in the current tree — no marker in this repository contains an asterisk — so the resolution rests on a planted input and on nothing else, and it is only worth what that input is worth. The planted case is therefore now a test case in the same file, next to the two faults it must keep rejecting. The collision itself is not repaired by any of this: the file is still shared, nothing stopped either writer from opening it, and the next pair will meet in it the same way. Counting this branch alone, four crossings happened, not one — `test/decision-log.test.ts` for the English format, and `test/identity-sign-in-methods.test.ts`, `test/identity-last-method-race.test.ts` and their thirteen call sites once the narrowed `actorOfResolvedSession` met identity at the merge. All were reported rather than quietly taken; that is the whole of the safeguard, and it is a habit, not a mechanism. **Addendum:** one of the four was undone rather than kept. `test/decision-log.test.ts` is `main`'s again, taken whole when the central language pass landed; the version written here is gone, and nothing of it was merged back in.
 
+**Where.** [`test/db-static-sql.test.ts`](./test/db-static-sql.test.ts) `DECLARES_NO_ACTOR`
+
 <a id="e-657"></a>
 
 ### A plugin route name folds through `__proto__` and lands on it
@@ -464,6 +511,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Rejected.** Reporting it as wave 4's rather than this feature's, on the ground that `surface.ts` is untouched by this branch.
 **Reason.** Every core route name in this repository is written here and none of them contains `__proto__`; a plugin's is written by whoever wrote the plugin. The rule held over the core table and does not hold over the table that ships with plugins, which is the shape this review was told to hunt, and the code being inherited does not change where it is reachable from. `test/plugin-review-route-name.test.ts` holds the failing case and, beside it, the same name as a **last** segment, which is refused today because `"__proto__" in node` is true — so the gap is positional and the passing case proves the file's mechanism sees this family of names at all.
 **Price.** Building the namespaces with `Object.create(null)` was planted and makes both cases pass, and it is offered as evidence that the test measures the defect and not as the repair: it also makes `audit.__proto__` a legal namespace name rather than a refused one, and whether that should be refused is the writer's decision and not the reviewer's.
+
+**Where.** [`src/core/auth/surface.ts`](./src/core/auth/surface.ts) `nestServerMethods()`
 
 <a id="e-930"></a>
 
@@ -478,6 +527,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 
 **Price.** Three. A loser now runs the KDF once and two transactions, and nothing bounds how often that happens beyond the two rate limiters. `taken` used to carry two facts at once — whether the registration was discarded, and who owns the address — and the race is what separates them, so the announcement has a third case: the address was held at the insert and the account holding it was gone by the time it was looked for, and no message goes out because there is nobody to write to. That case needs a registration and a deletion to interleave inside one request, so it is not an enumeration channel, but it is a third observable where there were two. And a unique violation this code cannot attribute to either index is re-raised as it arrived: in mode `username_email`, a username taken during the **cover** insert is still a 500.
 
+**Where.** [`src/core/flows/sign-up.ts`](./src/core/flows/sign-up.ts) `registerOrCover()`
+
 <a id="e-1502"></a>
 
 ### The library does not work on PostgreSQL 14, and one line is why
@@ -487,6 +538,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Rejected.** Repairing it on this branch. `src/core/db/repositories/session.ts` is the `session` feature's file and §5 binds a feature to the files it was given; the brief that opened this branch frames a genuine incompatibility as a finding with two owners' decisions behind it — raise the stated minimum, or fix the library — and neither is a CI branch's to take. `E-1446` is the standing precedent and it went the same way: four unblocked hand-offs, none of them built in the branch that found them. Also rejected: reporting 228 failures as 228 findings.
 **Reason.** They are **one** root cause, and that was established by patching rather than by reading. `toInterval` at `src/core/db/repositories/session.ts:172` renders a deadline as `` `${Math.round(milliseconds)} milliseconds` `` and the statements bind it as `$3::interval`. PostgreSQL caps the `milliseconds` field of an interval literal at a signed 32-bit value **before 15**: measured on 14.24, `INTERVAL '2147483647 milliseconds'` is accepted and `INTERVAL '2147483648 milliseconds'` is `interval field value out of range`; both are accepted on 18.3. `DEFAULT_SESSION_CONFIG.absoluteTimeout` is `"30d"`, which is 2,592,000,000 ms, so **every session this library inserts fails on a default configuration**, and the sign-in, sign-up, OAuth and email flows answer 500 above it. 104 of the 228 name the interval in so many words; the rest are that 500 seen from a route. A scratch patch rendering the same value in seconds took the run to **1 failed, 2253 passed, 13 skipped** — the remaining one is `E-1503` and is not this. `idleTimeout` at `"7d"` is 604,800,000 ms and stays under the wall, so the defect reaches the absolute deadline first.
 **Price.** The leg this branch adds is **red on `main` until that line is repaired**, and merging it before the repair blocks every branch — which is stated here rather than left for the merge to discover. Two repairs were measured against both servers and neither was applied: rendering seconds instead of milliseconds moves the wall from 24.8 days to about 68 years and does not remove it, since `Duration` can express `"99999d"` and 14 still refuses at 2,147,483,648 seconds where 18.3 accepts; `make_interval(secs => …)` answers identically on 14.24 and 18.3 at 2,147,483,648 and at 8,640,000,000 seconds and removes the wall, at the cost of changing two statements rather than one function. **The whole suite was run only against the first of those**, so the second is a measured SQL expression and not a measured tree, and saying otherwise would be the error `E-1390` catalogues.
+
+**Where.** [`src/core/db/repositories/session.ts`](./src/core/db/repositories/session.ts) `secondsOf()`
 
 <a id="e-1532"></a>
 
@@ -498,6 +551,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Reason.** A claim about an instrument is worth what the plant behind it is worth, and `E-1390` catalogues four negatives on one branch asserted from the wrong surface. The plant here is in the source path the case measures, not in the samples afterwards, so what it establishes is a property of the case and not of arithmetic.
 **Price.** Four runs is not a distribution, and the load figures are a one-minute average of a machine shared with other work rather than a controlled variable. What this entry establishes is that the passing case exists and was produced twice over on ordinary load; it does not establish a pass rate, and the number of runs is too small to offer one.
 
+**Where.** [`test/timing-fixtures.ts`](./test/timing-fixtures.ts) `welchT()` · [`test/timing-fixtures.ts`](./test/timing-fixtures.ts) `cliffsDelta()`
+
 <a id="e-1601"></a>
 
 ### Two deadlock cycles, driven against two servers rather than read out of the source
@@ -507,6 +562,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Rejected.** Repairing from the description. A cycle is a claim about two transactions interleaving on one server; a repair argued from source reading would have been argued against the wrong thing, and the mode restriction below was not visible until the server named the lock it was waiting for.
 **Reason.** Both were reproduced twice, with two instruments, on **PostgreSQL 18.3** and on **PostgreSQL 14.24** — four `40P01` reports. Once through the library's own repositories over the hand-written wire client in `test/db-postgres-connection.ts`, and once through two `psql` sessions against schemas built by the library's own migrations, which is where the server's `CONTEXT` line is readable. **Cycle B**: `replaceEveryCode` holds the account row and waits for the account's recovery codes; a recovery-code redemption holds one of those codes and waits for the account row — and the second wait is the foreign key's, `CONTEXT: while locking tuple (0,7) in relation "user"` / `SQL statement "SELECT 1 FROM ONLY … FOR KEY SHARE OF x"`, taken by the `INSERT` of the new session and named nowhere in the library's SQL. **Cycle A**: a first address confirmation locks `password_credential` and then `session`; a password replacement locks `session` and then `password_credential`, `CONTEXT: while inserting index tuple (0,4) in relation "password_credential"` — and **no explicit row lock appears in either**. The two locks on the account row that could have ordered them, `FOR NO KEY UPDATE` from the confirmation's `UPDATE` and `FOR KEY SHARE` from the replacement's foreign key, do not conflict; that was measured too, and is E-1604.
 **Price.** Both reproductions arrange their interleaving, so each shows that *an* interleaving deadlocks and neither says how likely it is. Nothing here counts the interleavings that do not deadlock, and no claim is made about cycles other than these two: what is repaired below is two cycles and one class, not the tree.
+
+**Where.** [`src/core/db/lock.ts`](./src/core/db/lock.ts) `lockAccountRow()`
 
 <a id="e-1691"></a>
 
@@ -518,6 +575,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Reason.** The wrap goes where the route is declared, which is the layer `E-471` handed it to, and it reuses the function the other two factors use rather than a second copy of the five. The file moved from `core/factor/totp` to `core/factor/pending` in the commit before, for the reason `E-471` gives — the count belongs to whoever owns the state. Every failure of `authenticate.finish` spends an attempt, including `webauthn_challenge_invalid`, because that is what TOTP already does with a replayed step and a second rule here would be a second answer to one question.
 **Price.** A client that submits a consumed challenge twice now burns budget for it, and nothing distinguishes that from a guess. And the wrap resolves the pending state a second time — the pipeline already resolved it to fill `context.pending` — so the route costs one extra `SELECT` on the failing and the succeeding path alike. That was preferred to a second entry point that takes the resolution, because two ways of entering the one counter is how the count drifts.
 
+**Where.** [`src/core/factor/routes.ts`](./src/core/factor/routes.ts) `webAuthnRoutes()` · [`src/core/factor/pending/attempt-limit.ts`](./src/core/factor/pending/attempt-limit.ts) `verifyUnderPendingAttemptLimit()`
+
 <a id="e-1771"></a>
 
 ### The check reasoned about the tag that was asked for, and npm ignored it
@@ -527,6 +586,8 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Rejected.** (a) Removing the `latest` tag, which npm does not permit. (b) Publishing `1.0.0` stable immediately so that a stable version takes `latest`. (c) Making the new pre-publish clause a refusal rather than a report.
 **Reason.** (a) is not available, so the state stands until a stable version takes `latest` from it. (b) would put `E-1741`'s start error into a stable line hours after it was written and end the prerelease cycle to fix a tag, which is the larger cost by far. (c) would make the **first** publish of any package impossible without an override, and the condition it reports cannot be avoided — only known about. So `check:release-tag` asks the registry whether the package is there, and where it is not and the version is a prerelease it says, before the publish, that `latest` is about to be taken as well.
 **Price.** The tool now reaches the network, which it did not. Three states are distinguished and the third is the one that costs: a registry that **could not be asked** reports that the first-publish question is unknown and proceeds, because refusing there would refuse every release run without network — so a release cut behind a proxy gets no warning and no refusal, and the condition returns in silence. And a report is not a refusal: the sentence is printed in the same job that publishes a minute later, so **it is read after the fact unless someone is watching**. That is weaker than it looks and is stated rather than dressed up; a refusal with a named opt-in is the stronger shape and is left as a hand-off rather than taken, because it was not what this repair was asked for.
+
+**Where.** [`tools/check-release-tag.mjs`](./tools/check-release-tag.mjs) `packageIsAlreadyOnTheRegistry()`
 
 <a id="e-1900"></a>
 
@@ -538,3 +599,4 @@ Velve Auth is an authentication library for TypeScript and PostgreSQL that answe
 **Reason.** The failure is not that the operator configured nothing; it is that the mode requires an identifier no provider carries and no seam supplies. Linking works because linking has an account already.
 **Price.** The case reproducing it asserts on a status and a row count, not on an error code, because a refused contribution and an absent one are the same `oauth_flow_invalid` from outside — which is the limit `E-1902` had to work around.
 
+**Where.** [`src/core/oauth/service.ts`](./src/core/oauth/service.ts) `createAccountFor()`
