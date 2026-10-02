@@ -31,12 +31,12 @@ export type ConsumedOAuthFlow = { readonly userId: UserId } & {
 	readonly [consumedOAuthFlowBrand]: "produced by oauth flow consumption";
 };
 
-// S-OWNER-7: an actor comes from a proof of ownership, so a user id read from a request cannot become one.
+//an actor comes only from a proof of ownership, never from a user id in a request (S-OWNER-7)
 export function actorOfResolvedSession(session: ResolvedSession): Actor {
 	return session.userId as Actor;
 }
 
-// A `UserId` and an `Actor` are two brands over the same string, and neither widens into the other.
+//a user id and an actor are separate brands and neither widens into the other (E-93)
 export function actorOfRedeemedOneTimeToken(redeemed: RedeemedOneTimeToken): Actor {
 	return redeemed.userId as string as Actor;
 }
@@ -45,11 +45,7 @@ export function actorOfConsumedOAuthFlow(flow: ConsumedOAuthFlow): Actor {
 	return flow.userId as string as Actor;
 }
 
-/**
- * E-234, third provenance: a row of `velve.recovery_code` that a redemption removed. 3.15 B.4's
- * `password.redeemResetWithRecoveryCode` has no session and no one-time token, and the removal of
- * the code is what proved the account is the caller's (E-612).
- */
+//in a reset without session only the removal of the code proves the account is the caller's (E-612)
 export type ConsumedRecoveryCode = { readonly userId: UserId } & {
 	readonly [consumedRecoveryCodeBrand]: "produced by recovery code consumption";
 };

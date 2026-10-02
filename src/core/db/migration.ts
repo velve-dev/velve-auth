@@ -19,18 +19,14 @@ export interface OwnedMigration extends Migration {
 
 export type RunnableMigration = Migration | OwnedMigration;
 
-/** `Object.hasOwn` and not `in`, so no prototype decides which ledger a migration is recorded in (E-663). */
+//an own property check so no prototype decides which ledger records a migration (E-663)
 export function isOwnedMigration(migration: RunnableMigration): migration is OwnedMigration {
 	return Object.hasOwn(migration, "owner");
 }
 
-/** The core's ledger, created before the runner can read it, and named by migration 1 as well. */
 export const CORE_LEDGER_TABLE = "schema_migration";
 
-/**
- * The plugins' ledger, keyed on the plugin and its own version. It is created only where a plugin
- * migration runs, so a schema without plugins is the one the shipped SQL describes (E-636).
- */
+//a schema without plugins must match the shipped sql exactly (E-636)
 export const PLUGIN_LEDGER_TABLE = "plugin_schema_migration";
 
 export interface AppliedMigration {

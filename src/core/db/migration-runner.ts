@@ -24,10 +24,7 @@ import {
 const DEFAULT_SCHEMA = "velve";
 const ADVISORY_LOCK_NAMESPACE = 0x76656c76;
 
-/**
- * Every relation of the configured schema, of every kind — a view, an index and a sequence are
- * relations too, and reading only tables left `DROP INDEX velve.user_email_key` invisible (E-903).
- */
+//views, indexes and sequences are relations too and must not escape the check (E-903)
 const RELATIONS_OF_THE_SCHEMA = `
 SELECT child.oid AS object_id, child.relname AS table_name, child.relkind::text AS kind,
        pg_describe_object('pg_class'::regclass, child.oid, 0) AS described
@@ -35,11 +32,7 @@ FROM pg_class child
 JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
 WHERE namespace_.nspname = $1 AND child.relkind <> 't'`;
 
-/**
- * Every table this transaction created or altered, in any schema, read out of the catalogue rows it
- * wrote rather than out of a before-and-after picture of the database — a picture of every schema
- * is a picture of other people's work, and it moves while a migration runs (E-664).
- */
+//touched tables come from this transaction's catalogue rows, not from a schema snapshot (E-664)
 const TABLES_THIS_TRANSACTION_TOUCHED = `
 SELECT namespace_.nspname AS schema_name, child.relname AS table_name,
        child.relkind::text AS kind, child.oid AS object_id,
@@ -54,11 +47,7 @@ WHERE child.relkind <> 't'
                   WHERE column_.attrelid = child.oid
                     AND column_.xmin = pg_current_xact_id()::xid))`;
 
-/**
- * The code this transaction left behind. A function, a trigger and a rewrite rule are none of them
- * relations, so the catalogue above cannot see them, and a trigger on `velve.user` is executable
- * code on every write to a core table (E-903).
- */
+//functions, triggers and rules are not relations and need a catalogue read of their own (E-903)
 const CODE_THIS_TRANSACTION_LEFT = `
 SELECT 'a function' AS kind, namespace_.nspname AS schema_name, routine.proname AS name
 FROM pg_proc routine
@@ -78,32 +67,17 @@ JOIN pg_class target ON target.oid = rule_.ev_class
 JOIN pg_namespace namespace_ ON namespace_.oid = target.relnamespace
 WHERE rule_.xmin = pg_current_xact_id()::xid AND rule_.rulename <> '_RETURN'`;
 
-/**
- * The rows written into each user table, as the backend has them so far. A catalogue row cannot
- * show a row of data, so it cannot show a migration that disables every account in one statement —
- * writing a core table is the thing 3.11 forbids in so many words (E-664). It is read twice and
- * differenced: the counters carry whatever the backend has not yet reported, which reaches back
- * before this transaction began. The statement this sentence may not quote is E-768's rule, met a
- * second time (E-664).
- */
+//only these counters can show rows a migration wrote into a core table (E-664)
 const ROWS_WRITTEN_SO_FAR = `
 SELECT schemaname AS schema_name, relname AS table_name,
        n_tup_ins + n_tup_upd + n_tup_del AS written,
        coalesce(seq_scan, 0) + coalesce(idx_scan, 0) AS scanned
 FROM pg_stat_xact_user_tables`;
 
-/** The counters above are kept only while `track_counts` is on, and a check that cannot run is not a pass. */
+//the counters exist only while track counts is on and a check that cannot run is no pass
 const COUNTERS_ARE_KEPT = "SELECT current_setting('track_counts') AS enabled";
 
-/**
- * The two role attributes that reach past everything measured here: a superuser turns the row half
- * off and on again around its own statements without either reading of the guard seeing it, and
- * creating a role needs no counters at all (E-920). Every role the connection can reach is read, not
- * the one it is currently wearing: `SET ROLE` changes `current_user` and `RESET ROLE` changes it
- * back, so a guard that read that alone was one statement from being undone (E-929). The third
- * column reports whether this server records parameter grants at all, which is what decides whether
- * the statement below can be sent (E-1006).
- */
+//every role the connection can reach is read, not only the one it currently wears (E-929)
 const PRIVILEGES_OF_THE_CONNECTED_ROLE = `
 SELECT coalesce(bool_or(role_.rolsuper), false) AS is_superuser,
        coalesce(bool_or(role_.rolcreaterole), false) AS creates_roles,
@@ -113,16 +87,7 @@ FROM pg_roles role_
 WHERE pg_has_role(session_user, role_.oid, 'MEMBER')
    OR pg_has_role(current_user, role_.oid, 'MEMBER')`;
 
-/**
- * `GRANT SET ON PARAMETER track_counts` reaches the same capability as `rolsuper` and moves neither
- * role attribute, so a guard reading the two above alone accepted a connection that could switch the
- * row half off (E-1006). It quantifies over the same reachable roles as the statement above rather
- * than over the two current identities: a `NOINHERIT` member does not hold what it may `SET ROLE`
- * to, which is the gap E-929 closed for the attributes and E-1011 for this half. It is a second
- * statement rather than a fourth column because `has_parameter_privilege` does not exist before
- * PostgreSQL 15, and every name a statement mentions is resolved before any branch inside it is
- * taken.
- */
+//a parameter grant reaches the superuser capability without moving either attribute (E-1006)
 const MAY_SET_THE_COUNTER_PARAMETER = `
 SELECT EXISTS (
   SELECT 1 FROM pg_roles role_
@@ -131,12 +96,7 @@ SELECT EXISTS (
     AND has_parameter_privilege(role_.rolname, 'track_counts', 'SET')
 ) AS may_switch_the_counters`;
 
-/**
- * Every object that belongs to the schema, of every catalogue there is, walked from the schema
- * itself along the dependency edges rather than looked up in a list of names. Core migrations run
- * before any plugin migration, so what this answers before a plugin's transaction is the core — by
- * construction, with nothing to fall behind when a table, an index or a trigger is added (E-918).
- */
+//the core is found by walking the schema's dependency edges, never by a list of names (E-918)
 const OBJECTS_BELONGING_TO_THE_SCHEMA = `
 WITH RECURSIVE belonging(classid, objid) AS (
   SELECT depend.classid, depend.objid
@@ -152,11 +112,7 @@ SELECT classid::regclass::text AS catalogue, objid AS object_id,
        pg_describe_object(classid, objid, 0) AS described
 FROM belonging`;
 
-/**
- * The same walk from the tables the plugin declared, which is what it may alter and drop. The set
- * comes from `createsTables` rather than from the plugin's id, so it is not widened by choosing a
- * name (E-918).
- */
+//the plugin's set comes from its declared tables so choosing a name cannot widen it (E-918)
 const OBJECTS_OF_THE_DECLARED_TABLES = `
 WITH RECURSIVE belonging(classid, objid) AS (
   SELECT 'pg_class'::regclass, child.oid
@@ -171,13 +127,7 @@ WITH RECURSIVE belonging(classid, objid) AS (
 )
 SELECT classid::regclass::text AS catalogue, objid AS object_id FROM belonging`;
 
-/**
- * Every object this transaction created, of every catalogue there is, beside the object each one was
- * recorded as depending on. A migration that creates something PostgreSQL files nowhere this runner
- * has heard of still writes its dependency on the schema, and `pg_describe_object` names it in the
- * refusal — which is what makes the boundary a positive one rather than a list of catalogues to
- * lengthen after each release (E-909).
- */
+//every created object is checked by its dependency so unknown object kinds are refused too (E-909)
 const OBJECTS_THIS_TRANSACTION_CREATED = `
 SELECT depend.classid::regclass::text AS catalogue, depend.objid AS object_id,
        depend.refclassid::regclass::text AS referenced_catalogue,
@@ -216,7 +166,6 @@ interface ConnectedRoleRow {
 	readonly parameter_grants_are_recorded: boolean;
 }
 
-/** Named in the refusal, so a reader is told which of the three catalogue answers refused them. */
 async function capabilityThatOutrunsTheMeasurement(driver: Driver): Promise<string | undefined> {
 	const [role] = await driver.query<ConnectedRoleRow>(PRIVILEGES_OF_THE_CONNECTED_ROLE, []);
 	if (role === undefined) {
@@ -247,16 +196,7 @@ async function capabilityThatOutrunsTheMeasurement(driver: Driver): Promise<stri
 	return grant.may_switch_the_counters ? "holds SET on the parameter track_counts" : undefined;
 }
 
-/**
- * The library cannot check that a restricted migration role was provisioned — a role that does not
- * exist is indistinguishable from one that was never needed — but it can refuse a role too powerful
- * for anything measured here to bind. A missing provision is then a refusal and not a silent pass,
- * which is the property the role form was declined for lacking in E-909. Only plugin migrations are
- * refused; the core's own run on whatever connection the application supplies (E-920). What this
- * reads is three catalogue answers and not the capability itself, so a mechanism that delegates the
- * same capability by some other route is outside its reach and is named as residue rather than
- * denied (E-1006).
- */
+//a role too powerful for the measurement to bind is refused rather than trusted (E-920)
 async function assertTheRoleCannotOutrunTheMeasurement(
 	driver: Driver,
 	schema: string,
@@ -305,7 +245,6 @@ interface DependencyRow {
 	readonly described: string;
 }
 
-/** What a relation is, as the catalogue answers it: its kind, its identity and its readable name. */
 interface RelationFact {
 	readonly kind: string;
 	readonly objectId: number;
@@ -323,10 +262,9 @@ interface TableCounters {
 	readonly scanned: number;
 }
 
-/** What each table had written into it and read out of it, keyed `schema.table`, when it was read. */
 type WriteCounters = ReadonlyMap<string, TableCounters>;
 
-/** A relation of the plugin's own: a table, an index, a sequence, and nothing that carries a query. */
+//a view is excluded as a query of its own reads whatever it likes (E-903)
 const KINDS_A_TABLE_BRINGS_WITH_IT = new Set(["r", "p", "i", "I", "S"]);
 const TABLE_KINDS = new Set(["r", "p"]);
 
@@ -357,7 +295,6 @@ function inVersionOrder<T extends Migration>(
 	return [...migrations].sort((left, right) => left.version - right.version);
 }
 
-/** Each plugin's migrations run together, in the dependency order the registry handed them over in. */
 function byOwnerInDependencyOrder(
 	migrations: readonly OwnedMigration[],
 ): readonly OwnedMigration[] {
@@ -504,24 +441,12 @@ function localNameOf(qualified: string): string {
 	return qualified.slice(qualified.indexOf(".") + 1);
 }
 
-/**
- * 3.11: a plugin's own tables are the ones it **declared**, not the ones whose names begin like its
- * id. No list of names decides anything here any more — a core table's name and a core index's name
- * are both simply names the plugin did not declare (E-918). The registry still requires every
- * declared name to carry the prefix and to be no core table's, so this set is the narrower of the
- * two boundaries and `ownTables.query` remains the wider.
- */
+//a plugin owns the tables it declared, not the ones whose names start with its id (E-918)
 function isOwnedTable(qualified: string, declared: ReadonlySet<string>): boolean {
 	return declared.has(qualified);
 }
 
-/**
- * Not a permission — a **diagnosis**. A relation carrying the prefix is one the plugin plainly meant
- * to make, so it is reported by the rule it actually broke: an undeclared table as undeclared, a
- * view by its kind, an index of its own by the census that finds no table of its own behind it. A
- * relation that carries no prefix was never plausibly its own and is reported as foreign. Permission
- * is decided by the declared set and by the snapshot, neither of which reads this (E-918).
- */
+//the prefix only picks the diagnosis and never decides permission (E-918)
 function carriesThePluginsPrefix(
 	qualified: string,
 	migration: OwnedMigration,
@@ -533,7 +458,6 @@ function carriesThePluginsPrefix(
 	);
 }
 
-/** A relation the plugin does not own, in the schema or out of it, and however it got there. */
 function refuseTheForeignRelation(
 	migration: OwnedMigration,
 	schema: string,
@@ -557,14 +481,7 @@ function refuseTheForeignRelation(
 	);
 }
 
-/**
- * What a migration did is measured rather than read out of its SQL, so a statement the runner
- * cannot parse cannot get past the declaration either (E-637). Outside the plugin's own relations
- * nothing may be created, altered or removed; inside them the plugin may do as it likes, which is
- * what lets a later migration alter a table an earlier one created (E-664). A relation of its own
- * that is not a table, or one of the objects a table brings with it, is refused whatever it is
- * called: a view carries a query, and a query of its own reads what it likes (E-903).
- */
+//a migration is judged by what it did, never by parsing its sql (E-637)
 function assertEveryRelationItTouchedIsItsOwn(
 	migration: OwnedMigration,
 	schema: string,
@@ -585,12 +502,6 @@ function assertEveryRelationItTouchedIsItsOwn(
 	}
 }
 
-/**
- * The objects that belong to the plugin's own tables, grown from those tables along the dependency
- * edges this transaction wrote. A table's row type, its array type, its indexes, its constraints,
- * its column defaults, its toast table and the internal triggers a foreign key installs all lead
- * back to it; a type, an extension or a function of its own leads to the schema and stops there.
- */
 function objectsBelongingToTheOwnTables(
 	created: readonly DependencyRow[],
 	ownedRelations: ReadonlySet<string>,
@@ -610,12 +521,7 @@ function objectsBelongingToTheOwnTables(
 	return belonging;
 }
 
-/**
- * The half of the boundary that is stated positively: whatever a migration created has to belong to
- * one of the plugin's own tables. The three catalogues read above are a list of the things a
- * migration may not leave behind, and PostgreSQL adds object kinds faster than such a list is
- * extended — an enumerated type and a composite type were both accepted by it (E-909).
- */
+//anything created must belong to an own table as a deny list falls behind new kinds (E-909)
 function assertEveryObjectItCreatedBelongsToItsOwnTables(
 	migration: OwnedMigration,
 	created: readonly DependencyRow[],
@@ -633,12 +539,7 @@ function assertEveryObjectItCreatedBelongsToItsOwnTables(
 	}
 }
 
-/**
- * A name in `createsTables` may not already be a relation of somebody else's. The subtraction that
- * decides this is over **relations** and is read from the schema itself rather than from a list of
- * table names — `velve.user_email_key` is a core index, so a list of core tables never reached it,
- * and declaring it was enough to have the snapshot exempt it (E-928).
- */
+//a declared name may not already be somebody else's relation, an index included (E-928)
 function assertNoDeclaredNameIsAlreadySomebodyElses(
 	migration: OwnedMigration,
 	schema: string,
@@ -657,13 +558,7 @@ function assertNoDeclaredNameIsAlreadySomebodyElses(
 	}
 }
 
-/**
- * Everything that was in the schema before the plugin's transaction and is not the plugin's own has
- * to be there afterwards, under the same name. It replaces a walk over relations that could not see
- * a dropped trigger or a dropped function at all — S-FIX-2 puts half its enforcement in one of each
- * — and it needs no list of what the core owns, because before a plugin migration runs everything
- * present is the core's (E-918).
- */
+//everything not the plugin's own must still exist afterwards under the same name (E-918)
 function assertItLeftEveryOtherObjectAsItFoundIt(
 	migration: OwnedMigration,
 	before: SchemaObjects,
@@ -707,11 +602,7 @@ function assertTheTablesThatAppearedAreTheDeclaredOnes(
 	}
 }
 
-/**
- * A function, a trigger and a rule are not relations and the catalogue of relations cannot see
- * them. None of the three is a table, so a migration that leaves one behind is refused whatever it
- * is attached to — the one on a core table would run on every write to it (E-903).
- */
+//a function, trigger or rule left behind is refused whatever it is attached to (E-903)
 function assertNoCodeWasLeftBehind(migration: OwnedMigration, left: readonly CodeRow[]): void {
 	for (const object of left) {
 		refuseOwned(
@@ -722,15 +613,7 @@ function assertNoCodeWasLeftBehind(migration: OwnedMigration, left: readonly Cod
 	}
 }
 
-/**
- * The row-level half, as the difference between two readings, because the counters are the
- * backend's pending totals rather than this transaction's alone (E-664). A read is measured beside
- * a write: a plugin that may not write a core table may not copy one into a table of its own
- * either, and a view was one way of doing that (E-903). Its own tables and nothing else — the
- * allowance for the tables a foreign key of its own points at was granted for the sake of the
- * constraint check and bought a complete copy of the table instead, and no counter here separates
- * the two (E-908).
- */
+//the counters are differenced as they also hold totals from before this transaction (E-664)
 function assertNoForeignTableWasReachedByARow(
 	migration: OwnedMigration,
 	before: WriteCounters,
@@ -805,7 +688,7 @@ async function applyOwnedMigration(
 	const declaredThrough = [...declaredBefore, ...migration.createsTables];
 	const ledger = qualifiedTableName(schema, PLUGIN_LEDGER_TABLE);
 	assertNoSchemaNameInsideDollarQuoting(migration.sql, schema);
-	// Read again for every migration: one plugin's `RESET ROLE` must not unbind the next plugin's.
+	//read again per migration so one plugin's reset role cannot unbind the next one's
 	await assertTheRoleCannotOutrunTheMeasurement(driver, schema);
 	await driver.transaction(async (tx) => {
 		await lockSchema(tx, schema);
@@ -822,13 +705,11 @@ async function applyOwnedMigration(
 		const writtenBefore = await readWriteCounters(tx, migration);
 		const before = await readRelations(tx, schema);
 		const objectsBefore = await readSchemaObjects(tx, schema);
-		// Only what earlier migrations of this plugin declared: a declaration exempts nothing before
-		// the migration that makes it has run, so a later version cannot reach back over this one.
+		//a declaration exempts nothing before the migration that makes it has run (E-928)
 		const ownBefore = await readObjectsOfTheDeclaredTables(tx, schema, declaredBefore);
 		assertNoDeclaredNameIsAlreadySomebodyElses(migration, schema, before, ownBefore);
 		await applyStatements(tx, schema, migration);
-		// The ownership of what it touched is read first, so a relation it should not have made is
-		// refused for what it is rather than for the scan that making it recorded.
+		//ownership is read first so a forbidden relation is refused for what it is
 		const after = await readRelations(tx, schema);
 		const own = await readObjectsOfTheDeclaredTables(tx, schema, declaredThrough);
 		assertEveryRelationItTouchedIsItsOwn(migration, schema, before, await readRelationsTouched(tx));
@@ -885,9 +766,7 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 		}
 	}
 
-	// The core schema is what a plugin's tables reference, so every core migration is applied first.
-	// What each plugin has declared so far grows as its migrations run, in version order, so a
-	// migration is exempted by what earlier ones of its own declared and never by a later one (E-928).
+	//a migration is exempted by its own earlier declarations, never by a later one (E-928)
 	const declaredSoFar = new Map<string, string[]>();
 	for (const migration of owned) {
 		const declared = declaredSoFar.get(migration.owner) ?? [];
