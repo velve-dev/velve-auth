@@ -8,14 +8,12 @@ import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
 
 const ASYNC_TICK_IN_MILLISECONDS = 10;
 
-// A `Map`, because the key is the identifier of the stored credential and an import decides what
-// that says; on an object literal `constructor` resolves to a function (E-178).
+//a Map keeps an imported digest id off Object.prototype (E-178)
 const DIGEST_BY_ID = new Map<string, { subtle: "SHA-256" | "SHA-512"; noble: CHash }>([
 	["pbkdf2-sha256", { subtle: "SHA-256", noble: sha256 }],
 	["pbkdf2-sha512", { subtle: "SHA-512", noble: sha512 }],
 ]);
 
-/** `$pbkdf2-sha256$i=<iterations>$<salt>$<hash>` — the form the Clerk and Auth0 imports write. */
 export async function verifyPbkdf2(
 	password: AcceptedPassword,
 	stored: PhcString,
@@ -50,8 +48,7 @@ export async function verifyPbkdf2(
 	return derivedKeysAreEqual(asDerivedKey(derived), asDerivedKey(stored.hash));
 }
 
-// 2.7 names `crypto.subtle.deriveBits` first and `@noble/hashes/pbkdf2` as the fallback; WASM is
-// 2.3 times slower here and is deliberately not used.
+//no WASM is used for PBKDF2 as it measured 2.3 times slower here
 async function subtlePbkdf2(
 	hash: "SHA-256" | "SHA-512",
 	password: Uint8Array<ArrayBuffer>,

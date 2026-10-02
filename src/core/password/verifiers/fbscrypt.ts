@@ -9,11 +9,7 @@ const DERIVED_BYTES = 64;
 const AES_KEY_BYTES = 32;
 const COUNTER_BYTES = 16;
 
-/**
- * Firebase's modified scrypt, in the spelling GoTrue writes, so that a Supabase estate carrying
- * `$fbscrypt$` transfers unchanged (4.4 d). `n` is the exponent of `N`, `r` is scrypt's block size:
- * the pair is easy to swap, and a swapped pair produces no error, only hashes that never match.
- */
+//the scrypt n and r are easy to swap and a swapped pair never matches without an error
 export async function verifyFirebaseScrypt(
 	password: AcceptedPassword,
 	stored: PhcString,
@@ -46,7 +42,7 @@ export async function verifyFirebaseScrypt(
 		hashBytes: DERIVED_BYTES,
 	});
 
-	// The signer key is encrypted under the scrypt output, not hashed with it (4.4 d, step 4).
+	//the signer key is encrypted under the scrypt output and not hashed with it
 	const encrypted = await encryptAesCtr(derived.subarray(0, AES_KEY_BYTES), signerKey);
 
 	return derivedKeysAreEqual(asDerivedKey(encrypted), asDerivedKey(stored.hash));

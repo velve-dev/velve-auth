@@ -23,7 +23,6 @@ export async function deriveScrypt(input: {
 	});
 }
 
-/** `$scrypt$ln=<exponent>,r=<blockSize>,p=<parallelism>$<salt>$<hash>` — the form an import writes. */
 export async function verifyScrypt(
 	password: AcceptedPassword,
 	stored: PhcString,
