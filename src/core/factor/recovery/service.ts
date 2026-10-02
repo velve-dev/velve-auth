@@ -18,7 +18,6 @@ export interface RecoveryCodeServiceOptions {
 	readonly keys: KeyProvider;
 	readonly pending: PendingAuthenticationService;
 	readonly schema?: string;
-	/** A.8's `RecoveryCodesConfig`: how many codes a set holds and how wide a printed group is. */
 	readonly shape?: RecoveryCodeShape;
 }
 
@@ -41,7 +40,7 @@ export function createRecoveryCodeService(
 		schema: options.schema ?? "velve",
 	});
 
-	/** L-3: a code written under a retired pepper version cannot be recomputed, and that is the one case the lookup has to tell from a wrong code. */
+	//a retired pepper version is the one case the lookup must tell from a wrong code
 	async function candidateHmacsFor(
 		userId: string,
 		code: string,
@@ -58,7 +57,7 @@ export function createRecoveryCodeService(
 	}
 
 	return {
-		// 3.6: a change of the method regenerates the whole set and deletes the previous one in the same transaction.
+		//a regeneration replaces the whole set in one transaction
 		async generate({ actor }) {
 			const plaintext = createRecoveryCodeSet(options.shape ?? DEFAULT_RECOVERY_CODE_SHAPE);
 			const peppered = await Promise.all(

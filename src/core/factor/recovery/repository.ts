@@ -16,7 +16,7 @@ export interface RecoveryCodeRepository {
 		readonly codes: readonly PepperedRecoveryCode[];
 	}): Promise<number>;
 	pepperVersionsOf(input: { readonly userId: string }): Promise<readonly number[]>;
-	/** E-234, E-612: the removal is what proved the owner, so it hands back that proof rather than a flag. */
+	//the removal proved the owner so it hands back that proof rather than a flag (E-612)
 	consumeCode(input: {
 		readonly userId: string;
 		readonly candidateHmacs: readonly Uint8Array<ArrayBuffer>[];
@@ -39,10 +39,7 @@ export function createRecoveryCodeRepository(
 	const schema = assertSchemaName(options.schema);
 	const table = qualifiedTableName(schema, "recovery_code");
 
-	/* The delete and the insert have to be one atomic replacement of the whole set (3.6), and at
-	   READ COMMITTED the delete works from the snapshot its statement began with. Serialising the
-	   two generators of one account is what makes the replacement hold, and CLAUDE.md section 7
-	   fixes both which row that lock is taken on and in which mode. */
+	//two generators of one account are serialised so the set is replaced atomically
 	const lockOwnerStatement = lockAccountRowStatement(schema);
 
 	const deleteEveryCodeStatement = `DELETE FROM ${table} WHERE user_id = $1`;
@@ -50,13 +47,10 @@ export function createRecoveryCodeRepository(
 	const insertCodeStatement = `INSERT INTO ${table} (user_id, code_hmac, key_version)
 VALUES ($1, $2, $3)`;
 
-	/** Only the version numbers, never a stored value: what decides validity stays in the statement that removes the row (S-RACE-2). */
+	//validity is decided only by the statement that removes the row (S-RACE-2)
 	const pepperVersionsStatement = `SELECT DISTINCT key_version FROM ${table} WHERE user_id = $1`;
 
-	/* S-RACE-4 and S-REST-3: consumption is the single statement that removes the row, and the
-	   primary key (user_id, code_hmac) serialises fifty writers onto one of them. A `bytea[]`
-	   parameter would have to be spelled as an array literal, which every driver quotes
-	   differently; one candidate per statement keeps the parameter a plain `bytea`. */
+	//consumption is the one statement that removes the row (S-RACE-4)
 	const consumeStatement = `DELETE FROM ${table}
 WHERE user_id = $1 AND code_hmac = $2
 RETURNING key_version`;
@@ -89,7 +83,7 @@ RETURNING key_version`;
 			for (const candidateHmac of candidateHmacs) {
 				const rows = await options.driver.query(consumeStatement, [userId, candidateHmac]);
 				if (rows.length === 1) {
-					// E-234: the brand is asserted where the row was removed and nowhere else.
+					//the brand is asserted where the row was removed and nowhere else (E-234)
 					return { userId: toEntityId<"user">(userId) } as ConsumedRecoveryCode;
 				}
 			}

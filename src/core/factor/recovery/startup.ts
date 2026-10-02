@@ -11,7 +11,7 @@ export class RecoveryCodesRequiredError extends Error {
 	}
 }
 
-/** S-DEFAULT-4: the mode with no e-mail on the account has no other way back in, so leaving the codes off is a start error and not a warning. */
+//username mode without recovery codes has no way back in (S-DEFAULT-4)
 export function recoveryCodesAreMandatoryFor(identityMode: IdentityMode): boolean {
 	return identityMode === "username";
 }

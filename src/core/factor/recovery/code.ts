@@ -1,11 +1,10 @@
 import { randomBytes } from "../../token/random.js";
 
-// S-RAND-3 and A.8: ten codes of 160 bit each, shown in groups of five.
+//a set holds ten codes of 160 bit each (S-RAND-3)
 export const RECOVERY_CODE_COUNT = 10;
 export const RECOVERY_CODE_ENTROPY_BYTES = 20;
 export const RECOVERY_CODE_GROUP_SIZE = 5;
 
-/** A.8's `RecoveryCodesConfig`, as the two numbers this module actually uses. */
 export interface RecoveryCodeShape {
 	readonly count: number;
 	readonly groupSize: number;
@@ -16,7 +15,7 @@ export const DEFAULT_RECOVERY_CODE_SHAPE: RecoveryCodeShape = {
 	groupSize: RECOVERY_CODE_GROUP_SIZE,
 };
 
-/** A count of nothing is a configuration with no way back in, and a group of nothing never ends. */
+//a count of zero leaves no way back in and a group of zero never ends
 function positiveWholeOr(configured: number | undefined, fallback: number): number {
 	return configured !== undefined && Number.isSafeInteger(configured) && configured > 0
 		? configured
@@ -32,7 +31,7 @@ export function recoveryCodeShapeOf(
 	};
 }
 
-/** Crockford's base32: no I, L, O or U, so no character can be read as another one over the phone. */
+//no character of the alphabet can be misread as another one over the phone
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const GROUP_SEPARATOR = "-";
 const AMBIGUOUS_TO_CANONICAL: Readonly<Record<string, string>> = { I: "1", L: "1", O: "0" };
@@ -61,7 +60,7 @@ function inGroups(encoded: string, groupSize: number): string {
 	return groups.join(GROUP_SEPARATOR);
 }
 
-/** What is hashed is the canonical form, so a code retyped without its groups, in lower case or with a transcribed O still finds its row. */
+//the canonical form is hashed so a code retyped without groups or in lower case still matches
 export function normaliseRecoveryCode(submitted: string): string {
 	const bare = submitted.toUpperCase().replace(NOT_A_CODE_CHARACTER, "");
 	let canonical = "";
@@ -75,7 +74,7 @@ export function formatRecoveryCode(canonical: string, groupSize: number): string
 	return inGroups(canonical, groupSize);
 }
 
-// S-RAND-1 and S-RAND-5: the entropy comes from the module every other secret comes from.
+//the entropy comes from the same module as every other secret (S-RAND-1)
 export function createRecoveryCodeSet(shape: RecoveryCodeShape): readonly string[] {
 	const canonical = new Set<string>();
 	while (canonical.size < shape.count) {
