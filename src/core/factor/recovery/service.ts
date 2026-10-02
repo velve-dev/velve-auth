@@ -22,9 +22,9 @@ export interface RecoveryCodeServiceOptions {
 }
 
 export interface RecoveryCodeService {
-	/** The plaintext codes leave the process here, once; what is stored is their HMAC (B.6). */
+	/** returns the plaintext codes exactly once, and only their HMAC is stored */
 	generate(input: { readonly actor: Actor }): Promise<{ readonly codes: readonly string[] }>;
-	/** As with TOTP, the resolution is returned and not consumed; the session and the removal of the pending row are one transaction elsewhere (E-410). */
+	/** returns the resolution and does not consume the pending state */
 	verify(input: {
 		readonly pendingToken: PendingToken;
 		readonly code: string;
@@ -57,7 +57,7 @@ export function createRecoveryCodeService(
 	}
 
 	return {
-		//a regeneration replaces the whole set in one transaction
+		//a new set must retire the old one in the same transaction or both would be valid
 		async generate({ actor }) {
 			const plaintext = createRecoveryCodeSet(options.shape ?? DEFAULT_RECOVERY_CODE_SHAPE);
 			const peppered = await Promise.all(
