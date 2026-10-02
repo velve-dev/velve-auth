@@ -32,9 +32,16 @@ The code must be readable without comments.
 
 - Every function is named so that its purpose follows from reading it. If a name needs a comment to be understood, the name is wrong — rename it.
 - **A comment that explains _what_ the code does is a defect.** It is reported by the reviewer and fixed by renaming or by splitting the function.
-- Comments are permitted only where the reason for the code cannot be expressed in code: a specification clause being satisfied, a deliberate deviation from a standard, a non-obvious ordering constraint. Then **one sentence**, no more.
-- A reference to the specification is a legitimate comment and is encouraged where the code exists solely because of it: `S-OWNER-3`, `L-12`, `E-23`.
-- **A comment in `src/` is read by this repository's static scans as though it were code.** Around twenty-two files under `test/` and `tools/` match a regular expression against raw source text, so prose that resembles a statement, an identifier or an option this library refuses can redden a case in a file nobody touched — and several of those cases accuse a security requirement. **Three still redden today**, and these are the ones to try: the word *caching* in a comment under `src/core/session` reddens the case for `S-CACHE-1`; a comment naming a PKCE option that does not exist reddens the case for `S-REPLAY-6`; a comment spelling a brand's phantom field reddens the census in `test/brand-invariants.test.ts`. **Two more no longer redden anything** — plain prose naming `velve.password_credential`, and a comment shaped like the statement `S-FIX-2` forbids. The scans that read those two were repaired, and planting both together now leaves the whole suite green; they are cited as the measurement that motivated the repair and **not** as something to try (E-1653, E-1661). Four test files and the `check:session-owner` step strip comments first — `tools/source-text.mjs` is the one to reach for — three more strip them with a string-blind regular expression, and the rest read the text raw (E-1654). The file count is a proxy and not a census: two proxies answered twenty-one and twenty-two, and a count of *cases* is not offered at all. Write the comment, then run `pnpm test`; a hit is the scan being wrong rather than the prose, and the repair belongs at the scan.
+- A comment is `//` with no space, lower case, one sentence in plain words, no full stop. The sentence says what must hold and is understandable without the bracket. At the end, in parentheses, comes exactly one identifier, `S-` for a security requirement or `E-` for a decision, and only where the code is the way it is because of it. No dash, no colon, no "because", no "so that". A sentence longer than one line is a log entry, not a comment.
+
+  ```
+  //changing a password needs to make all sessions invalid (S-FIX-6)
+  //revoking a session that isnt yours must look the same as a missing one (E-233)
+  //freshness check uses the db time not the server time (E-238)
+  //refresh only extends the idle timeout
+  ```
+
+- Doc comments on exported symbols stay doc comments of one plain sentence without an identifier, because a user reads them in the editor (E-1943). `pnpm check:decision-refs` fails on an identifier no document defines.
 - No `any` in the public surface. No `@ts-ignore`, no `@ts-expect-error` without a failing-by-design test next to it. No `console.log`. No dead code, no unused exports — `knip` enforces this.
 - The public interface must be usable without reading the documentation. If a parameter needs prose to be understood, the parameter is shaped wrong.
 - No default export. Named exports only.

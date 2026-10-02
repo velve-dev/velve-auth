@@ -14,6 +14,12 @@ How a translation must read is fixed in §6, and it is the one place where the n
 
 The package is a public Apache-2.0 library on npm; its readers are not assumed to read German.
 
+## From §3 — the comment rule as it stood before the plain-sentence form
+
+- Comments are permitted only where the reason for the code cannot be expressed in code: a specification clause being satisfied, a deliberate deviation from a standard, a non-obvious ordering constraint. Then **one sentence**, no more.
+- A reference to the specification is a legitimate comment and is encouraged where the code exists solely because of it: `S-OWNER-3`, `L-12`, `E-23`.
+- **A comment in `src/` is read by this repository's static scans as though it were code.** Around twenty-two files under `test/` and `tools/` match a regular expression against raw source text, so prose that resembles a statement, an identifier or an option this library refuses can redden a case in a file nobody touched — and several of those cases accuse a security requirement. **Three still redden today**, and these are the ones to try: the word *caching* in a comment under `src/core/session` reddens the case for `S-CACHE-1`; a comment naming a PKCE option that does not exist reddens the case for `S-REPLAY-6`; a comment spelling a brand's phantom field reddens the census in `test/brand-invariants.test.ts`. **Two more no longer redden anything** — plain prose naming `velve.password_credential`, and a comment shaped like the statement `S-FIX-2` forbids. The scans that read those two were repaired, and planting both together now leaves the whole suite green; they are cited as the measurement that motivated the repair and **not** as something to try (E-1653, E-1661). Four test files and the `check:session-owner` step strip comments first — `tools/source-text.mjs` is the one to reach for — three more strip them with a string-blind regular expression, and the rest read the text raw (E-1654). The file count is a proxy and not a census: two proxies answered twenty-one and twenty-two, and a count of *cases* is not offered at all. Write the comment, then run `pnpm test`; a hit is the scan being wrong rather than the prose, and the repair belongs at the scan.
+
 ## From §4 — the attribution check
 
 The tree scan cannot see text a later commit removed; the diff scan cannot see text that predates the branch. Both run.
