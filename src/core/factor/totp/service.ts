@@ -24,7 +24,6 @@ export interface TotpServiceOptions {
 	readonly issuer: string;
 	readonly clock: Clock;
 	readonly schema?: string;
-	/** A.8: how far either side of the current step a code is still accepted. Default 1. */
 	readonly toleranceInSteps?: TotpToleranceInSteps;
 }
 
@@ -50,13 +49,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 	const toleranceInSteps = options.toleranceInSteps ?? TOTP_TOLERANCE_STEPS;
 	const retentionSeconds = usedStepRetentionSeconds(toleranceInSteps);
 
-	/**
-	 * S-REST-4 and S-KEY-3: the secret is the one value here the server needs back in the clear.
-	 * A `KeyError` is neither a `VelveError` nor a `ConcealedError`, so letting it out answers 500 on
-	 * three routes that declare no such status, and makes an account whose secret predates a rotation
-	 * distinguishable from every other one. A secret the server cannot read is a factor nobody can
-	 * hold, which is the class `totp_not_confirmed` already names (E-428).
-	 */
+	//an unreadable secret answers as a factor nobody can hold (E-428)
 	async function decryptSecret(credential: StoredTotpCredential): Promise<Uint8Array<ArrayBuffer>> {
 		try {
 			return await decryptWithPurposeKey(
@@ -70,7 +63,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		}
 	}
 
-	/** A factor that is absent and one that is not held answer alike, because the route that verifies is reached with a pending state and not with a session. */
+	//an absent factor and one not held answer alike
 	async function matchConfirmedCode(input: {
 		readonly credential: StoredTotpCredential | null;
 		readonly code: string;
@@ -90,7 +83,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		return step;
 	}
 
-	/** S-REPLAY-4: the step that matched is what the guard records, so a code from the tolerance window cannot be replayed under the current step's key. */
+	//the matched step is recorded so a window code cannot be replayed (S-REPLAY-4)
 	async function claimOrReject(userId: string, timeStep: number): Promise<void> {
 		const claimed = await credentials.claimTimeStep({
 			userId,
@@ -122,7 +115,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				return totpEnrollment({ secretBytes, issuer: options.issuer, accountName });
 			},
 
-			// The code proves the app holds the secret before the factor starts guarding the account.
+			//the code proves the app holds the secret before the factor guards the account
 			async finish({ actor, code }) {
 				const credential = await credentials.findCredential({ actor });
 				if (credential === null) {
@@ -158,7 +151,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 			});
 		},
 
-		// B.6: whoever can remove the factor without holding it has no factor.
+		//removing the factor must require holding it
 		async remove({ actor, code }) {
 			const credential = await credentials.findCredential({ actor });
 			if (credential === null || credential.confirmedAt === null) {
