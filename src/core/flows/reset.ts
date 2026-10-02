@@ -14,7 +14,7 @@ import { type DerivedPassword, derivePassword, writePassword } from "./credentia
 import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
 import type { SetPasswordResult } from "./results.js";
 
-//an unknown identifier must run the statements a resolved account runs (S-TIM-1)
+//an unknown identifier must run the statements a resolved account runs (S-TIM-6)
 const AN_ACCOUNT_THAT_CANNOT_EXIST = "00000000-0000-0000-0000-000000000000";
 
 export async function requestReset(
@@ -51,7 +51,7 @@ export async function requestReset(
 	);
 }
 
-//the revocation comes first as a partial failure must only leave the safe order (E-610)
+//revocation, new session and credential are one transaction and the revocation comes first (E-610)
 async function replacePassword(
 	environment: FlowEnvironment,
 	context: RequestContext,
@@ -91,7 +91,7 @@ export async function redeemReset(
 	context: RequestContext,
 	input: { readonly token: string; readonly newPassword: string },
 ): Promise<SetPasswordResult> {
-	//the kdf is too long to hold a transaction open and runs before the token is spent
+	//the policy, validate and the kdf need only the input and run before the token is spent (S-DOS-2)
 	const derived = await derivePassword(
 		input.newPassword,
 		environment.services.password,
@@ -145,7 +145,7 @@ export async function redeemResetWithRecoveryCode(
 
 	const codes = createRecoveryCodeRepository({ driver, schema });
 	const versions = await codes.pepperVersionsOf({ userId });
-	//an account with no codes must still cost one hmac (S-TIM-1)
+	//an account with no codes must still cost one hmac (S-TIM-6)
 	const candidates =
 		versions.length === 0
 			? [(await pepperRecoveryCode(keys, input.recoveryCode)).codeHmac]

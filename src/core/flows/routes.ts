@@ -86,7 +86,7 @@ function requireSessionOwner(context: RequestContext): string {
 	return context.session.userId;
 }
 
-/** The rows of 3.15 D.3 that exist in every identity mode. */
+/** the email flow routes that exist in every identity mode */
 function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | undefined) {
 	const { services } = environment;
 	const flow = { environment, email };
@@ -163,7 +163,7 @@ function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | un
 	return [withPassword, withoutPassword, withRecoveryCode] as const;
 }
 
-/** The eight rows of 3.15 D.3 that carry an address, and therefore are absent in mode `username`. */
+/** the eight email flow routes that carry an address, absent in mode `username` */
 function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfig) {
 	const { services } = environment;
 
@@ -298,11 +298,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 	] as const;
 }
 
-/**
- * Every row this file can contribute, in the order the address-bearing modes assemble them; the
- * value below narrows to the mode, so a caller that needs the whole set as a type — 3.15 E's client
- * is the one — reads it here rather than from the widened return (E-671).
- */
+/** every route the email flows can contribute, in the order they are assembled */
 export type EmailFlowRouteTable = readonly [
 	...ReturnType<typeof routesInEveryMode>,
 	...ReturnType<typeof routesThatNeedAnAddress>,
@@ -321,11 +317,7 @@ export function emailFlowRoutes(services: RouteServices): readonly AnyRoute[] {
 		: [...routesInEveryMode(environment, email), ...routesThatNeedAnAddress(environment, email)];
 }
 
-/**
- * What this feature contributes to `VelveAuth<M>`. `M` is a parameter because the `/email/*` routes
- * exist in `email` and `username_email` and not in `username`, so the namespaces this feature adds
- * are conditional on the mode and the condition is written here (E-776).
- */
+/** the namespaces the email flows add to `VelveAuth<M>`, absent in mode `username` */
 export type EmailFlowSurface<M extends IdentityMode> = {
 	readonly signUp: SignUpNamespace<M>;
 	readonly password: RecoveryPasswordNamespace<M>;

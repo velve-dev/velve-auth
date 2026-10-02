@@ -312,7 +312,7 @@ export async function signUp(
 					environment.semaphore,
 				);
 
-	//a taken name is told while a taken address must answer as a free one (S-ENUM-3)
+	//a taken username may be told as usernames are declared enumerable (S-ENUM-8)
 	if (columns.usernameKey !== null) {
 		const named = await environment.services.users.findUserByUsernameKey(columns.usernameKey);
 		if (named !== null) {

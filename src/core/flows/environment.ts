@@ -12,7 +12,7 @@ import type { ArtefactMailer } from "./artefact.js";
 
 export interface FlowEnvironment {
 	readonly services: RouteServices;
-	/** S-DOS-3: the same bound the sign-in path is under, so a sign-up wave cannot displace it. */
+	/** the key derivation bound sign-in is under, which a sign-up wave cannot displace */
 	readonly semaphore: KdfSemaphore;
 }
 

@@ -6,22 +6,15 @@ import type { Session } from "../http/caller.js";
 import type { ServerCallFields } from "../http/route.js";
 import type { SessionToken } from "../session/token.js";
 
-/**
- * 3.15 B.4. It is declared here because the two routes that produce it today are the two mailed
- * resets; `password.set` and `password.change` produce the same type and are not written yet, so
- * the declaration moves to a password module when they are (E-604).
- */
+/** the result of writing a password */
 export interface SetPasswordResult {
 	readonly sessionToken: SessionToken;
 	readonly session: Session;
-	/**
-	 * Every session the account had when the password was written. A reset has no calling session
-	 * to keep, so nothing is subtracted from the count (E-611).
-	 */
+	/** how many sessions were revoked, which for a reset is every session the account had */
 	readonly revokedOtherSessionsCount: number;
 }
 
-/** 3.15 D.3: the two redeeming `/email/*` rows answer with the account and nothing else. */
+/** what the two redeeming `/email/*` routes answer with, the account and nothing else */
 export interface ChangedUser {
 	readonly user: User;
 }
@@ -45,7 +38,7 @@ export interface EmailNamespace {
 	redeemChange(input: { token: string } & ServerCallFields): Promise<ChangedUser>;
 }
 
-/** The half of 3.15 B.4 that needs an address, and therefore does not exist in mode `username`. */
+/** the password routes that need an address, absent in mode `username` */
 export interface MailedPasswordNamespace {
 	requestReset(input: { email: string } & ServerCallFields): Promise<void>;
 	redeemReset(
@@ -53,7 +46,7 @@ export interface MailedPasswordNamespace {
 	): Promise<SetPasswordResult>;
 }
 
-/** 3.4: the way back into an account that has no address, and therefore present in every mode. */
+/** the way back into an account that has no address, present in every mode */
 export interface RecoveryPasswordNamespace<M extends IdentityMode> {
 	redeemResetWithRecoveryCode(
 		input: SignInLookup<M> & { recoveryCode: string; newPassword: string } & ServerCallFields,
