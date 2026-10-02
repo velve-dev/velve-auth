@@ -65,7 +65,7 @@ function ipv6Bytes(text: string): number[] | null {
 	return elided < 2 ? null : [...leading, ...Array.from({ length: elided }, () => 0), ...trailing];
 }
 
-/** An address a proxy wrote as ::ffff:a.b.c.d is an IPv4 address, and truncating it to /64 would put every IPv4 client in one prefix. */
+//a mapped IPv4 address truncated to /64 would put every IPv4 client in one prefix
 function unmappedIpv4Bytes(bytes: readonly number[]): number[] | null {
 	const prefix = bytes.slice(0, 12);
 	const mapped =
@@ -117,7 +117,7 @@ function longestZeroRun(groups: readonly number[]): ZeroRun {
 	return longest.length > 1 ? longest : { start: -1, length: 0 };
 }
 
-/** RFC 5952, so the text the library computes is the text `inet` gives back. */
+//the RFC 5952 form keeps the computed text equal to what inet gives back
 function ipv6Text(bytes: readonly number[]): string {
 	const groups: number[] = [];
 	for (let index = 0; index < bytes.length; index += 2) {
