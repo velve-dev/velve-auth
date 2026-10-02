@@ -27,8 +27,7 @@ export class RateBucketUnwritten extends Error {
 	}
 }
 
-/** A driver may hand a `real` column back decoded or as the text PostgreSQL sent; both arrive
- * here, and a bucket that reads as nothing at all must not read as a full one. */
+//a bucket that reads as nothing must not read as a full one
 function tokensOf(value: unknown): number {
 	const tokens = Number(value);
 	if (value === null || value === undefined || Number.isNaN(tokens)) {
@@ -37,14 +36,7 @@ function tokensOf(value: unknown): number {
 	return tokens;
 }
 
-/**
- * S-RATE-6: one statement, so *n* concurrent draws against a capacity of *L* leave at most *L*
- * of them non-negative. The refilled level is floored at zero before the draw, which bounds a
- * refused bucket at −1 — without it a flood drives the level arbitrarily negative and locks the
- * rightful owner out for as long as it takes to climb back, which is the lockout S-RATE-7
- * forbids. Elapsed time is floored against a clock that moved backwards, which it can because the
- * instant is the process's rather than the database's (E-380, E-381).
- */
+//the level is floored at zero before the draw or a flood locks the owner out (E-380)
 export function createTokenBucketStore(options: TokenBucketStoreOptions): TokenBucketStore {
 	const table = qualifiedTableName(options.schema, "rate_bucket");
 

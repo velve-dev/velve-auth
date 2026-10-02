@@ -26,8 +26,7 @@ function elapsedSeconds(from: Date, to: Date): number {
 	return Math.max(0, (to.getTime() - from.getTime()) / 1000);
 }
 
-/** An alert sink that throws must not cost the caller its answer, as a logger that throws
- * does not (3.11). */
+//an alert sink that throws must not cost the caller its answer
 function alertQuietly(watch: RouteFloodWatch, alert: RouteFloodAlert): void {
 	try {
 		watch.onAlert(alert);
@@ -36,11 +35,7 @@ function alertQuietly(watch: RouteFloodWatch, alert: RouteFloodAlert): void {
 	}
 }
 
-/**
- * S-RATE-8: the per-route counter of one instance raises the alarm and refuses nothing. It is
- * refilled from the clock on each observation rather than reset by a timer, because a process
- * saturated by the very flood this exists to notice does not run its timers (E-186).
- */
+//the route counter refills from the clock as a flooded process runs no timers (S-RATE-8)
 export function createRouteFloodCounter(watch: RouteFloodWatch): RouteFloodCounter {
 	const stateByRoute = new Map<string, RouteState>();
 
