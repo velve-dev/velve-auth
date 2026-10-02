@@ -98,7 +98,7 @@ RETURNING time_step`;
 			return readCredential(row);
 		},
 
-		//the pending state is the ownership proof here so there is no actor to take (E-242)
+		//the pending state is the ownership proof here so there is no actor to take
 		async findCredentialOf({ userId }) {
 			const [row] = await options.driver.query<CredentialRow>(findStatement, [userId]);
 			return readCredential(row);

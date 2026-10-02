@@ -32,7 +32,7 @@ export interface TotpService {
 		start(input: { readonly actor: Actor; readonly accountName: string }): Promise<TotpEnrollment>;
 		finish(input: { readonly actor: Actor; readonly code: string }): Promise<void>;
 	};
-	/** The resolution is returned rather than consumed: S-FIX-1 wants the pending row removed in the same transaction that inserts the session, and that transaction belongs to whoever issues the session (E-410). */
+	/** returns the resolution and does not consume the pending state */
 	verify(input: {
 		readonly pendingToken: PendingToken;
 		readonly code: string;
