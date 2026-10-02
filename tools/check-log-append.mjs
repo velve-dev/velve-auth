@@ -2,7 +2,9 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
-const LOG = "CASE-STUDY.md";
+const LOG = "docs/decisions/log.md";
+/** Where the log lived at a merge base older than its move; its lines are what this branch may not delete. */
+const LOG_BEFORE_THE_MOVE = "CASE-STUDY.md";
 const BASE = process.env.VELVE_LOG_BASE ?? "origin/main";
 
 /** CLAUDE.md §6: an entry that existed at the merge base is never edited. Zero deleted lines
@@ -58,7 +60,26 @@ try {
 	refuse(`${LOG} is not in the tree at HEAD`, "the log is the file this rule is about");
 }
 
-const numstat = git(["diff", `${BASE}...HEAD`, "--numstat", "--", LOG]).trim();
+function existsAt(revision, path) {
+	try {
+		execFileSync("git", ["cat-file", "-e", `${revision}:${path}`], {
+			cwd: repositoryRoot,
+			stdio: "ignore",
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+const logAtBase = [LOG, LOG_BEFORE_THE_MOVE].find((path) => existsAt(mergeBase, path));
+if (logAtBase === undefined) {
+	refuse(`neither ${LOG} nor ${LOG_BEFORE_THE_MOVE} is in the tree at the merge base`);
+}
+
+/** Blob against blob, so a branch that moves the log is held to every line the old path had. */
+const compared = [`${mergeBase}:${logAtBase}`, `HEAD:${LOG}`];
+const numstat = git(["diff", "--numstat", ...compared]).trim();
 const rows = numstat.split("\n").filter(Boolean);
 if (rows.length > 1) {
 	refuse(`the diff of ${LOG} reports ${rows.length} paths`, numstat.replace(/\n/g, " | "));
@@ -74,11 +95,11 @@ const deletions = Number(deleted);
 const commits = Number(git(["rev-list", "--count", `${mergeBase}..HEAD`]).trim());
 
 if (deletions > 0) {
-	const removed = git(["diff", `${BASE}...HEAD`, "--", LOG])
+	const removed = git(["diff", ...compared])
 		.split("\n")
 		.filter((line) => line.startsWith("-") && !line.startsWith("---"));
 	console.error(
-		`${LOG} loses ${deletions} line${deletions === 1 ? "" : "s"} that existed at the merge base ${mergeBase.slice(0, 7)}.`,
+		`${LOG} loses ${deletions} line${deletions === 1 ? "" : "s"} that ${logAtBase} had at the merge base ${mergeBase.slice(0, 7)}.`,
 	);
 	console.error("CLAUDE.md §6: an entry that existed at the merge base is never edited.");
 	for (const line of removed) console.error(`  ${line}`);
