@@ -15,10 +15,7 @@ export interface OneTimeTokenRepositoryOptions {
 	readonly schema: string;
 }
 
-/**
- * `userId: null` writes the cover row S-TIM-6 needs: an address that names no account must cost the
- * same statements as one that does, and S-TOKEN-4 already answers such a row as no row (E-597).
- */
+//an address without an account must cost the same statements as one with an account (S-TIM-6)
 export type OneTimeTokenReplacement = {
 	readonly tokenSha256: Uint8Array;
 	readonly purpose: OneTimeTokenPurpose;
@@ -30,14 +27,14 @@ export interface OneTimeTokenLookup {
 	readonly purpose: OneTimeTokenPurpose;
 }
 
-/** E-234: the removal proved the owner, so what comes back is the second lawful provenance of an `Actor`. */
+//the removal proved the owner so this is a lawful provenance of an actor (E-234)
 export type StoredOneTimeToken = RedeemedOneTimeToken & {
 	readonly payload: OneTimeTokenPayload | null;
 };
 
 export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
-	/** S-TOKEN-4: a row that names no account is answered exactly as no row is. */
+	//a row that names no account is answered exactly as no row is (S-TOKEN-4)
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
 }
 
@@ -46,7 +43,7 @@ export type OneTimeTokenErrorCode =
 	| "one_time_token_purpose_unknown"
 	| "one_time_token_not_written";
 
-// Fixed per code, so nothing the caller passed can reach an error string.
+//messages are fixed per code so nothing the caller passed reaches an error string (E-265)
 const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
 	one_time_token_owner_unknown: "The account the token would belong to does not exist.",
 	one_time_token_purpose_unknown: "The purpose is not one of the four one-time token purposes.",
@@ -56,8 +53,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
 export class OneTimeTokenError extends Error {
 	readonly code: OneTimeTokenErrorCode;
 
-	/** E-265: what the failure was about travels in its own field, never spliced into the
-	 * message. It is null for the one code that fires because the purpose is not a purpose. */
+	//the purpose travels in its own field and is never spliced into the message (E-265)
 	readonly purpose: OneTimeTokenPurpose | null;
 
 	constructor(code: OneTimeTokenErrorCode, purpose: OneTimeTokenPurpose | null) {
@@ -68,20 +64,14 @@ export class OneTimeTokenError extends Error {
 	}
 }
 
-/**
- * The cover row of E-597 is written by the statements a named owner is written by, so it needs an
- * account identifier for the supersession that no account can answer to. Drawn afresh each time
- * rather than fixed, because a fixed one names a row an import could create — which is why it
- * cannot also be what the request serialises on (E-931).
- */
+//drawn afresh each time as a fixed id could name a row an import creates (E-931)
 function anAccountThatCannotExist(): string {
 	return crypto.randomUUID();
 }
 
 const FOREIGN_KEY_VIOLATION = "23503";
 
-/** `pg` and `postgres.js` name it `code`, the test connection names it `sqlState`; both carry the
- * five characters PostgreSQL sent. */
+//drivers name the sql state either code or sql state so both are read
 function isForeignKeyViolation(cause: unknown): boolean {
 	if (typeof cause !== "object" || cause === null) {
 		return false;
@@ -90,12 +80,7 @@ function isForeignKeyViolation(cause: unknown): boolean {
 	return fields.code === FOREIGN_KEY_VIOLATION || fields.sqlState === FOREIGN_KEY_VIOLATION;
 }
 
-/**
- * E-253 returned this as an ISO-8601 string so that no return type depended on the driver. A.7
- * declares `EmailMessage.expiresAt` a `Date` and the core may not call `new Date(`, so the only
- * source of one is the driver — the same bet every other repository here already makes, and the
- * same guard polices it (E-598).
- */
+//only the driver may produce a date as the core may not construct one (E-598)
 function toDate(value: unknown): Date {
 	if (value instanceof Date) {
 		return value;
@@ -103,12 +88,12 @@ function toDate(value: unknown): Date {
 	throw new TypeError("the driver must decode timestamptz into a Date");
 }
 
-// E-93: the one place in this repository where the redemption becomes evidence of an owner.
+//this is the only place where a redemption becomes evidence of an owner (E-93)
 function redeemedBy(userId: string, payload: OneTimeTokenPayload | null): StoredOneTimeToken {
 	return { userId: toEntityId<"user">(userId), payload } as StoredOneTimeToken;
 }
 
-/** A driver may hand back `jsonb` decoded or as the text PostgreSQL sent; both arrive here. */
+//a driver may return jsonb decoded or as text so both are accepted
 function readPayload(value: unknown): OneTimeTokenPayload | null {
 	if (value === null || value === undefined) {
 		return null;
@@ -125,12 +110,7 @@ export function createOneTimeTokenRepository(
 	const schema = assertSchemaName(options.schema);
 	const table = qualifiedTableName(schema, "one_time_token");
 
-	/* S-TOKEN-3: the statement below is atomic, but at READ COMMITTED its DELETE works from the
-	   snapshot the statement began with and therefore cannot remove a row a concurrent request
-	   inserted after it, so the requests about one subject have to run one after another. The lock
-	   is on the subject and not on the owner's row, because a row lock can only be taken where a row
-	   exists — and a request that resolved to nobody would then wait where one that resolved to
-	   somebody waits, which 5.3 (a) counts as an oracle (E-931). */
+	//requests about one subject run in turn as the delete cannot see newer rows (S-TOKEN-3)
 	const serialiseAndReadOwnerStatement = `SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised,
 	(SELECT 1 FROM ${schema}.user owner WHERE owner.id = $1) AS owner_exists`;
 
@@ -141,7 +121,7 @@ INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
 VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision))
 RETURNING expires_at`;
 
-	// Section 3.7 word for word apart from the marker E-142 requires: the only way a token is read.
+	//the consume statement must stay the specified one apart from its marker (E-142)
 	const consumeStatement = `DELETE FROM ${table}
 /* no owner predicate: S-TOKEN-4 */
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
@@ -150,9 +130,7 @@ RETURNING user_id, payload`;
 	return {
 		async replaceOneTimeToken(replacement) {
 			const { tokenSha256, purpose, userId, payload } = replacement;
-			// Without this guard the not-null constraint on expires_at raises instead, and a
-			// driver's error names the table and the constraint (E-263). The type rules the case
-			// out; a caller that is not type-checked does not.
+			//an unknown purpose must not reach the constraint whose error names the table (E-263)
 			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
 				throw new OneTimeTokenError("one_time_token_purpose_unknown", null);
 			}
@@ -166,9 +144,7 @@ RETURNING user_id, payload`;
 				if (userId !== null && (read?.owner_exists ?? null) === null) {
 					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}
-				// The account can be deleted between the read above and this insert, and without a
-				// lock on its row nothing prevents that; the foreign key reports it and the code
-				// E-263 wanted is put back on it here.
+				//an account deleted since the read must still fail with its own code (E-263)
 				const [row] = await tx
 					.query<{ expires_at: unknown }>(replaceStatement, [
 						lookupId,
