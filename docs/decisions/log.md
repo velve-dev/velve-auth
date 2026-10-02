@@ -12572,3 +12572,33 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping E-1940's split, with the old blocks listed in the pull request instead.
 **Reason.** The snapshot was the evidence that only comments moved, not the goal. The same evidence survives a re-recording if the re-recorded diff itself contains nothing but comment lines, and it does: 141 lines added and 413 removed in `test/__snapshots__/api-surface.md`, every one of them a doc comment line, holding over four fresh builds. The published doc comments became one sentence without an identifier, still doc comments, because they are what a user sees on hover.
 **Price.** The published declarations change in their comments, so the next release ships different hover text for every exported symbol, and several blocks lost detail a caller might have used. That detail is in `DOCUMENTATION.md` and the pull request lists the cases. E-1940 stays as written, because its reason was true when it was taken. Concerns every module that emits a `.d.mts` and `test/__snapshots__/api-surface.md`.
+
+<a id="e-1970"></a>
+
+### The specification's decisions are quoted from its translation, not translated again
+`E-1970` · case-study-curated · the curated copy of E-01 to E-46
+
+**Context.** The curated case study was to carry its entries in English, translated word for word. E-01 to E-46 already exist in English: section 7 of `VELVE-AUTH-ARCHITECTURE.md` is the translation of exactly those 46 entries, and E-01, E-23 and E-46 were compared with the German part by part, number by number and identifier by identifier, with no difference beyond a decimal comma.
+**Rejected.** Translating the 46 entries a second time for the case study.
+**Reason.** A second translation of the same text is a second chance for the two to disagree, and the first one is already compared with the German by `test/architecture-translation.test.ts`.
+**Price.** The curated file now holds a copy of section 7, and nothing compares the copy with its source. A correction to the translation reaches the case study only if someone copies it across. Concerns `CASE-STUDY.md`.
+
+<a id="e-1971"></a>
+
+### The log's checks followed it to its new path rather than being loosened for the move
+`E-1971` · case-study-curated · check:log-append across a rename
+
+**Context.** `check:log-append` and `test/decision-log.test.ts` read `CASE-STUDY.md`, which is now a selection. Moving the log made the branch's own diff of the old path a deletion of ten thousand lines, and a diff of the new path an addition of a file that did not exist at the merge base, which no deletion can be found in.
+**Rejected.** (a) Guarding the curated file instead. (b) Accepting the move as a new file and checking nothing across it.
+**Reason.** The rule is that no line the log had at the merge base is deleted, and the log is the complete file. So the check compares the blob at the merge base, under whichever of the two paths it had there, with the blob at `HEAD` under the new one. Planted on a scratch branch, a deleted line and a line edited in place both failed, and the move with its anchors passed at `+2428 -0`.
+**Price.** The old path stays named in the tool for as long as a branch can have a merge base from before the move. The curated file has no guard at all, by design, so a curated entry can drift from its source in the log without anything noticing. Concerns `tools/check-log-append.mjs` and `test/decision-log.test.ts`.
+
+<a id="e-1972"></a>
+
+### Five requested entries are four, and one of the four argues against a fault nobody hit
+`E-1972` · case-study-curated · what the selection holds
+
+**Context.** The selection was asked to include the hash-wasm microtask finding, the regular expression two branches wrote differently, the `::ffff:` detection, the bcrypt cost cap, and the wrong `scheduler.yield()` reason with its correction. A search for every mention of `scheduler` and `yield` in the log found no separate correcting entry: the correction is the addendum inside E-186, written in the same pull request, and the wrong reason still stands above it in E-186's own **Reason.**. E-223, the `::ffff:` entry, records a decision against a fault that was foreseen rather than one found in a run.
+**Rejected.** Replacing E-223 with E-502, which measures the same parser against twenty-two vectors.
+**Reason.** E-223 was named, and it stands on its own where E-502 needs E-223 to make sense. Nine more entries were added from the same class, spread across passwords, sessions, flows, plugins, second factors, the gate and the releases, for thirteen build entries and fifty-nine in all.
+**Price.** The selection is a judgement and no check holds it to its criteria. Fifty entries name the file and function they concern; seven specification decisions are about scope, packaging or something deliberately absent, and E-38 and E-40 concern an importer that is not built. Concerns `CASE-STUDY.md`.
