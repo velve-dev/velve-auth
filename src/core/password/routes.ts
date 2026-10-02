@@ -35,7 +35,6 @@ export type PasswordSurface<M extends IdentityMode> = {
 	readonly password: SetPasswordNamespace;
 };
 
-/** 3.15 A.1: one lookup field in every mode, and in `username_email` it is resolved by format. */
 function signInLookupOf(identity: IdentityConfiguration) {
 	return identity.mode === "email"
 		? { email: string() }
@@ -54,10 +53,7 @@ function lookupIn(input: SubmittedLookup): string {
 	return input.emailOrUsername ?? input.email ?? input.username ?? "";
 }
 
-/**
- * S-RATE-7: the counter is keyed by the same comparison form the account is resolved through, so
- * two spellings of one identifier cannot advance two rows (E-1194).
- */
+//the counter uses the comparison form so two spellings cannot advance two rows (E-1194)
 async function accountKeyOfSession(services: RouteServices, userId: string): Promise<string> {
 	const user = await services.users.findUserById(userId);
 	return comparisonFormOf(user?.email ?? user?.username ?? userId);
@@ -89,15 +85,14 @@ async function verifiedAccount(
 	input: { readonly userId: string | null; readonly plaintext: string },
 ): Promise<string> {
 	const check = await checkPassword(input, environment);
-	// S-ENUM-6: the true reason is what is raised, and `error-map` is the one place that decides
-	// how little of it the caller is told.
+	//the true reason is raised and only error-map decides what the caller learns (S-ENUM-6)
 	if (check.outcome === "refused") {
 		throw new ConcealedError(check.reason);
 	}
 	if (check.outcome !== "verified") {
 		throw new ConcealedError("password_mismatch");
 	}
-	// S-TIM-5: the rewrite is not awaited, so it cannot lengthen the answer that triggered it.
+	//the rewrite is not awaited so it never lengthens the answer (S-TIM-5)
 	void check.rehash?.().catch(() => undefined);
 	return check.userId;
 }
@@ -107,7 +102,7 @@ async function signedIn(
 	context: RequestContext,
 	userId: string,
 ): Promise<SignInResult> {
-	// 3.6: a correct password is not a session while the account still offers a second factor.
+	//a correct password is no session while the account still offers a second factor (S-FIX-4)
 	const begun = await services.pending.begin({ userId, factorsCompleted: ["password"] });
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);
@@ -147,12 +142,10 @@ export function passwordRoutes(services: RouteServices) {
 		rateLimit: addressAndAccount(services),
 		handler: async (input, context): Promise<SignInResult> => {
 			const identifier = lookupIn(input);
-			// S-RATE-7 and E-1196: the token is spent before the password's shape is judged, so the
-			// cheapest possible attempt is not the one that costs nothing.
+			//the rate limit token is spent first so even the cheapest attempt costs something (E-1196)
 			await context.enforceAccountRateLimit(comparisonFormOf(identifier));
 
-			// S-DOS-2: the length check depends only on the input, so an unusable password resolves no
-			// account and runs no KDF whether or not the identifier names one.
+			//an unusable password resolves no account and runs no KDF either way (S-DOS-2)
 			if (acceptSubmittedPassword(input.password, services.password) === null) {
 				throw new ConcealedError("password_mismatch");
 			}
@@ -168,8 +161,7 @@ export function passwordRoutes(services: RouteServices) {
 				userId: found === null ? null : found.id,
 				plaintext: input.password,
 			});
-			// S-ENUM-2: a disabled account answers a correct password as a wrong one does, and
-			// `account_disabled` reaches no sign-in (L-4).
+			//a disabled account answers a correct password like a wrong one (S-ENUM-2)
 			if (found?.disabled) {
 				throw new ConcealedError("user_disabled_on_sign_in");
 			}

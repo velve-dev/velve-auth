@@ -22,8 +22,7 @@ const MESSAGES: Record<PasswordConfigurationErrorCode, string> = {
 	legacy_scheme_unknown: "password.acceptLegacy names a scheme the switch does not know",
 };
 
-// S-DEFAULT-6: a weaker parameter is a start error, so this is thrown while the instance is being
-// built and never while a request is being answered.
+//a weaker parameter fails while the instance is built and never during a request (S-DEFAULT-6)
 export class PasswordConfigurationError extends Error {
 	readonly code: PasswordConfigurationErrorCode;
 
@@ -44,10 +43,7 @@ const CREDENTIAL_WRITE_MESSAGES: Record<CredentialWriteErrorCode, string> = {
 	credential_not_written: "the credential write changed no row",
 };
 
-// E-177 holds the column and the credential to the same function at verification time; this is the
-// same agreement as a precondition for writing, so a row that could never verify is never stored.
-// `credential_not_written` is the other half: a conflict predicate that is false does not raise,
-// it silently changes nothing (E-187).
+//a row whose scheme column disagrees with its credential is never stored (E-187)
 export class CredentialWriteError extends Error {
 	readonly code: CredentialWriteErrorCode;
 

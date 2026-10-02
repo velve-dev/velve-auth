@@ -6,11 +6,7 @@ import { CREATED_SCHEME } from "./scheme.js";
 const REQUIRED_SALT_BYTES = 16;
 const REQUIRED_HASH_BYTES = 32;
 
-/**
- * 3.3 step 5: true when the scheme is not the one the library creates, or when any parameter is
- * below the current policy. An unreadable string also counts, because a credential the library
- * cannot describe is one it should replace at the first opportunity.
- */
+//an unreadable PHC string needs a rehash as the library cannot describe it
 export function needsRehash(phc: string, config: ResolvedPasswordConfig): boolean {
 	const parsed = parsePhc(phc);
 	if (parsed === null || parsed.id !== CREATED_SCHEME || parsed.version !== ARGON2ID_VERSION) {
@@ -33,10 +29,7 @@ export function needsRehash(phc: string, config: ResolvedPasswordConfig): boolea
 	);
 }
 
-/**
- * The same path carries key rotation: a row still written under an older `password-enc` version is
- * rewritten on the next successful sign-in, silently and by compare and swap (L-2).
- */
+//a row under an older key version is rewritten at the next successful sign-in (E-12)
 export function needsRewrite(
 	row: PasswordCredentialRow,
 	phc: string,

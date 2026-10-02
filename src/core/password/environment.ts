@@ -4,11 +4,7 @@ import { createDummyCredential, type PasswordEnvironment } from "./verify.js";
 
 export type PasswordEnvironmentReader = () => Promise<PasswordEnvironment>;
 
-/**
- * S-TIM-2 wants the absent-account branch to verify against a dummy carrying the configured
- * parameters, and deriving one costs a full Argon2id hash — so it is started when the routes are
- * built and merely awaited on the path the requirement measures (E-1183).
- */
+//the dummy Argon2 hash is started early and only awaited on the measured path (E-1183)
 export function createPasswordEnvironmentReader(
 	services: RouteServices,
 ): PasswordEnvironmentReader {
@@ -18,8 +14,7 @@ export function createPasswordEnvironmentReader(
 		schema: services.schema,
 	});
 	const dummy = createDummyCredential(services.keys, services.password);
-	// E-1183: the rejection is delivered to whichever check first awaits it, and this keeps the
-	// eager start from being an unhandled rejection until one does.
+	//the eager start must not become an unhandled rejection before a check awaits it (E-1183)
 	dummy.catch(() => undefined);
 
 	return async () => ({

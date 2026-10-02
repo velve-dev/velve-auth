@@ -15,18 +15,13 @@ export async function refuseIfCredentialExists(
 	environment: PasswordEnvironment,
 	userId: string,
 ): Promise<void> {
-	// 3.15 B.9 gives `password.set` the code `factor_already_enrolled`; B.4 makes overwriting an
-	// existing credential without the current one the gap `set` and `change` exist to keep shut.
+	//set never replaces a stored PHC credential without the current password
 	if ((await environment.credentials.findByUserId(userId)) !== null) {
 		throw new VelveError("factor_already_enrolled");
 	}
 }
 
-/**
- * S-FIX-6 and B.4: the calling session is re-issued and every other session of the account goes,
- * with no option to keep them. S-RACE-5 puts the re-issue and the write in one transaction, and the
- * hash is derived before it opens so no KDF runs while a row lock is held (E-1185).
- */
+//the hash is derived before the transaction so no KDF runs under a row lock (E-1185)
 export async function replacePasswordOfSession(
 	services: RouteServices,
 	environment: PasswordEnvironment,
@@ -41,8 +36,7 @@ export async function replacePasswordOfSession(
 	const owned = await services.sessions.listEveryIdOwnedBy({ resolved: input.resolved });
 
 	const issued = await services.driver.transaction(async (transaction) => {
-		// CLAUDE.md §7: the re-issue writes the session table and the write below writes the credential
-		// table, and a first address confirmation writes the two in the other order (E-1602).
+		//the account row comes first as a first confirmation writes these tables in reverse (E-1602)
 		await lockAccountRow(transaction, services.schema, input.resolved.userId);
 		const reissued = await services.sessions.boundTo(transaction).reissueAfterCredentialChange({
 			resolved: input.resolved,
@@ -56,7 +50,7 @@ export async function replacePasswordOfSession(
 		}).write({
 			userId: input.resolved.userId,
 			phc,
-			// L-12: the session that stored the password is the one this change just issued.
+			//the password is recorded as set by the session this change just issued (E-626)
 			setBySessionId: reissued.session.id,
 			scheme: CREATED_SCHEME,
 		});
@@ -67,7 +61,7 @@ export async function replacePasswordOfSession(
 	return {
 		sessionToken: issued.token,
 		session: issued.session,
-		// E-611 subtracts the calling session only where there is one, and here there is.
+		//the calling session is subtracted from the count only where one exists (E-611)
 		revokedOtherSessionsCount: Math.max(owned.length - 1, 0),
 	};
 }

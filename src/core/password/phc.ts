@@ -11,8 +11,7 @@ export interface PhcString {
 const FUNCTION_ID = /^[a-z0-9-]{1,32}$/;
 const VERSION_FIELD = /^v=(0|[1-9][0-9]{0,9})$/;
 const PARAMETER_NAME = /^[a-z0-9-]{1,32}$/;
-/** A value may end in base64 padding but may not begin with it, which is what keeps a padded salt
- * from reading as a parameter list (E-160). */
+//a value may not begin with padding or a padded salt reads as a parameter list (E-160)
 const PARAMETER_VALUE = /^(|[A-Za-z0-9+/._-][A-Za-z0-9+/=._-]*)$/;
 const DECIMAL = /^(0|[1-9][0-9]{0,9})$/;
 const MAXIMUM_FIELDS = 5;
@@ -121,8 +120,7 @@ function takeParameters(fields: string[]): ReadonlyMap<string, string> | null {
 	return parameters;
 }
 
-// A salt field may carry base64 padding, so `aac=` reads as well as a parameter with an empty
-// value and as a salt; requiring one non-empty value settles it for every scheme in 3.3 (E-160).
+//a parameter list needs one non-empty value or a padded salt reads as one (E-160)
 function isParameterList(field: string): boolean {
 	const pairs = field.split(",").map((pair) => {
 		const separator = pair.indexOf("=");

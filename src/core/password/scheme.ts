@@ -10,7 +10,7 @@ export const LEGACY_SCHEMES = [
 
 export type LegacyScheme = (typeof LEGACY_SCHEMES)[number];
 
-/** Argon2id is the only scheme the library creates; the other seven it only verifies (3.3). */
+//only Argon2id is ever created and the seven legacy schemes are only verified (E-09)
 export type PasswordScheme = "argon2id" | LegacyScheme;
 
 export const CREATED_SCHEME = "argon2id";

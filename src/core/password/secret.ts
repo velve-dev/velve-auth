@@ -2,10 +2,7 @@ import { equalsInConstantTime } from "../keys/index.js";
 
 declare const SECRET_BRAND: unique symbol;
 
-/**
- * Key material that must never reach `===`, `startsWith`, `includes` or `localeCompare`; the brand
- * is what makes that statically checkable (S-TIM-3).
- */
+//the brand makes any plain comparison of key material statically checkable (S-TIM-3)
 export type Secret<Name extends string> = Uint8Array<ArrayBuffer> & {
 	readonly [SECRET_BRAND]: Name;
 };
@@ -16,7 +13,7 @@ export function asDerivedKey(bytes: Uint8Array<ArrayBuffer>): DerivedKey {
 	return bytes as DerivedKey;
 }
 
-/** S-TIM-3: the only comparison the module makes on a derived key, over equal-length buffers. */
+//a derived key is compared only here and only in constant time (S-TIM-3)
 export function derivedKeysAreEqual(left: DerivedKey, right: DerivedKey): boolean {
 	return equalsInConstantTime(left, right);
 }

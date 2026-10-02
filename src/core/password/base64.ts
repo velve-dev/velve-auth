@@ -4,9 +4,7 @@ const VALUE_OF = new Map<string, number>(
 	[...STANDARD_ALPHABET].map((character, value) => [character, value]),
 );
 
-// The PHC specification writes salt and hash in the standard alphabet without padding, while an
-// imported Firebase parameter arrives padded; decoding accepts both spellings and encoding emits
-// only the unpadded one (E-161).
+//decoding accepts padded Firebase parameters as well as unpadded PHC strings (E-161)
 export function decodeStandardBase64(text: string): Uint8Array<ArrayBuffer> | null {
 	const unpadded = withoutPadding(text);
 	if (unpadded === null || unpadded.length % 4 === 1) {

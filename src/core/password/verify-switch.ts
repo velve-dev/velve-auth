@@ -10,11 +10,7 @@ import { verifyScrypt } from "./verifiers/scrypt.js";
 type SchemeVerifier = (password: AcceptedPassword, stored: string) => Promise<boolean>;
 type PhcVerifier = (password: AcceptedPassword, stored: PhcString) => Promise<boolean>;
 
-/**
- * `acceptLegacy` is applied to the cleartext `scheme` column, so the column has to name the same
- * function the credential does. Without this, a row filed as `argon2id` that decrypts to an
- * `$argon2i$` string is verified as Argon2i however the configuration is set (E-177).
- */
+//the scheme column must name the same function as the credential it files (E-177)
 function overPhc(identifier: PasswordScheme, verify: PhcVerifier): SchemeVerifier {
 	return async (password, stored) => {
 		const parsed = parsePhc(stored);
@@ -22,9 +18,7 @@ function overPhc(identifier: PasswordScheme, verify: PhcVerifier): SchemeVerifie
 	};
 }
 
-// A `Map` rather than an object literal: the scheme reaches this lookup from a database column, and
-// on a literal a name inherited from `Object.prototype` resolves to a function whose result the
-// caller reads as a match (E-178).
+//a Map keeps a scheme read from the database off Object.prototype (E-178)
 const VERIFIER_BY_SCHEME = new Map<PasswordScheme, SchemeVerifier>([
 	["argon2id", overPhc("argon2id", verifyArgon2)],
 	["argon2i", overPhc("argon2i", verifyArgon2)],
@@ -36,15 +30,7 @@ const VERIFIER_BY_SCHEME = new Map<PasswordScheme, SchemeVerifier>([
 	["fbscrypt", overPhc("fbscrypt", verifyFirebaseScrypt)],
 ]);
 
-/**
- * The switch of 3.3, and the reason creating a hash and verifying one are separate decisions:
- * the scheme lives per record in the stored string, so an import never changes what the library
- * creates for everyone else (E-09).
- *
- * A malformed stored value, an unreadable parameter, a scheme this table does not name, or a
- * derivation that refuses its own inputs all answer `false` — there is no throw between step 2 and
- * step 4 of the sequence (S-TIM-1).
- */
+//every failure answers false and nothing throws in the middle of verification (S-TIM-1)
 export async function verifyAgainstScheme(
 	scheme: PasswordScheme,
 	password: AcceptedPassword,
