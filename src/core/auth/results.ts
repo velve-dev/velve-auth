@@ -4,10 +4,7 @@ import type { CookieInstruction } from "../http/cookies.js";
 import type { SessionToken } from "../session/token.js";
 import type { User } from "./user.js";
 
-/**
- * Architecture 3.15 C. `profile` is `unknown` because the library does not read these claims and
- * may not promise a shape the provider changes tomorrow.
- */
+/** a linked provider identity whose `profile` the library neither reads nor promises a shape for */
 export interface Identity {
 	readonly id: string;
 	readonly provider: string;
@@ -20,25 +17,21 @@ export interface Identity {
 	readonly tokenExpiresAt: Date | null;
 }
 
-/** 3.15 B.1: both ways in create a user and a session, and they differ in the `factors` they record. */
+/** both ways in create a user and a session and differ in the `factors` they record */
 export interface SignUpResult {
 	readonly user: User;
 	readonly sessionToken: SessionToken;
 	readonly session: Session;
 }
 
-/**
- * 3.15 C.1: in the `second_factor_required` branch there is no `Session` and no `sessionToken` —
- * not as `null`, not as an optional field, but as an absent property, so that reading
- * `result.sessionToken` without checking `result.status` does not compile.
- */
+/** the `second_factor_required` branch has no session and no `sessionToken` property at all */
 export type SignInResult =
 	| {
 			readonly status: "signed_in";
 			readonly sessionToken: SessionToken;
 			readonly session: Session;
 			readonly user: User;
-			/** Only on the WebAuthn paths; `undefined` means "not applicable", never "no" (L-9). */
+			/** set only on the WebAuthn paths, and `undefined` means "not applicable", never "no" */
 			readonly signCountRegressed?: boolean;
 	  }
 	| {
@@ -47,13 +40,13 @@ export type SignInResult =
 			readonly pending: PendingAuthentication;
 	  };
 
-/** 3.15 C: the one place a server method mentions a cookie, because the pointer has to reach the browser. */
+/** the one server result that mentions a cookie, the pointer that has to reach the browser */
 export interface OAuthRedirect {
 	readonly authorizationUrl: string;
 	readonly stateCookie: CookieInstruction;
 }
 
-/** 3.15 C.1: linking re-issues the session, because a new identity changes the trust level. */
+/** linking re-issues the session, as a new identity changes the trust level */
 export type OAuthCallbackResult =
 	| SignInResult
 	| {

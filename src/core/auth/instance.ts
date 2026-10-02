@@ -78,13 +78,13 @@ export interface SessionNamespace {
 	refresh(input: ServerCallFields): Promise<ResolvedSessionView | null>;
 }
 
-/** B.7: the intermediate state names the factors still open and never any user data. */
+/** the intermediate state names the factors still open and never any user data */
 export interface PendingNamespace {
 	resolve(token: PendingToken): Promise<PendingAuthentication | null>;
 	cancel(input: { pendingToken: PendingToken }): Promise<void>;
 }
 
-/** B.3: the surface the application calls in its own process, after its own authorization decision. */
+/** what the application calls in its own process after its own authorization decision */
 export interface UserNamespace {
 	findById(input: { userId: string }): Promise<User | null>;
 	findByEmail(input: { email: string }): Promise<User | null>;
@@ -103,20 +103,14 @@ export interface AuthInternals {
 	readonly identityMode: IdentityMode;
 	readonly errorCodes: readonly VelveErrorCode[];
 	readonly maintenance: { sweep(): Promise<SweepReport> };
-	/** The one asynchronous start step, and therefore where E-179's key-ring report runs. */
+	/** the one asynchronous start step, and where the key ring report runs */
 	migrate(): Promise<MigrationReport>;
 	close(): Promise<void>;
-	/** What `toWebHandler` reads; 3.15 D.1 hands the handler the instance, not the environment. */
+	/** the HTTP environment `toWebHandler` reads from the instance */
 	readonly http: HttpEnvironment;
 }
 
-/**
- * 3.15 B.1 puts `signIn.oauth.*` and `signIn.magicLink.*` in one `signIn` namespace, and two
- * features own them. Neither writes this file: each declares what it contributes in its own seam
- * module, and this line intersects the three. A seam that is still empty contributes `unknown`,
- * which intersects away, and each carries `M` so a mode-conditional namespace needs no change
- * here either (E-776).
- */
+/** what each feature's own seam module contributes to the surface, joined into one type */
 type SeamSurface<M extends IdentityMode> = OAuthSurface<M> &
 	EmailFlowSurface<M> &
 	PasswordSurface<M> &
@@ -232,7 +226,7 @@ function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig
 	};
 }
 
-//the completion's session settings need the same absent-key shape
+//session options nobody configured must also reach the completion as absent keys (E-1258)
 function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
 		...(config.session === undefined ? {} : { session: config.session }),

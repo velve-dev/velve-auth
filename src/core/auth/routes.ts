@@ -33,20 +33,10 @@ export interface ResolvedSessionView {
 	readonly user: User;
 }
 
-/**
- * The pipeline hands the handler a `Session`; minting an actor needs the whole `SessionResolution`,
- * and asking the database a second time would make T-CACHE-1's ratio two. The resolver puts the
- * resolution it just produced here, keyed by the very object it produced with it — a memo for one
- * request, not a cache: the key is a new object every time, so nothing survives the response.
- */
+/** a memo for one request from each resolved session to its resolution, never a cache */
 export type ResolutionMemo = WeakMap<Session, SessionResolution>;
 
-/**
- * What every route source takes, and the whole of what it takes. The fields are declared here
- * rather than by whichever feature reaches for one first (E-719); the count is deliberately not
- * stated, because a number in a sentence is checked by nobody and went stale the moment this
- * interface grew (E-1262).
- */
+/** what every route source takes, and the whole of what it takes */
 export interface RouteServices {
 	readonly sessions: SessionService;
 	readonly pending: PendingAuthenticationService;
@@ -60,24 +50,21 @@ export interface RouteServices {
 	readonly keys: KeyProvider;
 	readonly clock: Clock;
 	readonly oneTimeTokens: OneTimeTokens;
-	/**
-	 * S-DOS-3 bounds concurrent key derivation for the whole process, so the bound is one object
-	 * every route source shares rather than one each of them makes (E-1195).
-	 */
+	/** the one bound on concurrent key derivation every route source in the process shares */
 	readonly kdfSemaphore: KdfSemaphore;
 	readonly oauth?: OAuthConfig;
 	readonly email?: EmailConfig;
-	/** 3.15 A.2: absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones. */
+	/** absent removes the seven `factor.webauthn.*` rows and the two `signIn.passkey.*` ones */
 	readonly webauthn?: WebAuthnConfig;
 	readonly totp?: Partial<TotpConfig>;
 	readonly recoveryCodes?: RecoveryCodesConfig;
-	/** The allowed origins of 3.15 A.2, which is also the only name of the application the configuration always carries. */
+	/** the allowed origins, the only name of the application the configuration always carries */
 	readonly origins: readonly string[];
-	/** S-FIX-1: the pending row and the session it becomes are one transaction, and it is built once (E-410). */
+	/** turns a pending row into its session in one transaction, built once */
 	readonly completeSecondFactor: SecondFactorCompletion;
-	/** The configured plugins, ordered and frozen: their routes, their contexts and the seven hook points. */
+	/** the plugins, ordered and frozen, with their routes, contexts and seven hook points */
 	readonly pluginRuntime: PluginRuntime;
-	/** 3.10's outbound calls; absent means `globalThis.fetch`. */
+	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */
 	readonly fetch?: typeof globalThis.fetch;
 }
 
@@ -163,7 +150,7 @@ export function sessionRoutes(services: RouteServices) {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		//sign-out removes exactly one session row and an unknown token is not an error
+		//signing out must end only this session and must succeed for a token that names none
 		handler: async (_input, context): Promise<void> => {
 			if (context.sessionToken !== null) {
 				if (context.session !== null) {
@@ -323,11 +310,7 @@ export function sessionRoutes(services: RouteServices) {
 	return [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] as const;
 }
 
-/**
- * 3.15 D.3 rows `GET /pending` and `POST /pending/cancel`. Neither is authorised by the
- * intermediate state — reading it and cancelling it are what a caller does when it has one —
- * so both declare `pendingCookie: "readable"` rather than `caller: "pending"` (E-335, E-516).
- */
+/** the two pending routes, which read the pending cookie but are not authorised by it */
 export function pendingRoutes(services: RouteServices) {
 	const read = defineRoute({
 		name: "pending.read",
@@ -389,10 +372,7 @@ function isUniqueViolation(cause: unknown): boolean {
 	return fields.code === UNIQUE_VIOLATION || fields.sqlState === UNIQUE_VIOLATION;
 }
 
-/**
- * S-ENUM-8: the one place the enumeration protection ends, and 3.4 decided to offer it, bound it
- * hard and say so. It exists only where usernames do.
- */
+/** the one place the enumeration protection ends, bounded hard and offered only with usernames */
 export function usernameRoutes(services: RouteServices, rules: UsernameRules) {
 	const isAvailable = defineRoute({
 		name: "username.isAvailable",

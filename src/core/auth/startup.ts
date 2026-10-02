@@ -67,15 +67,13 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
 };
 
-/**
- * T-OWNER-11 asks the start error to name both contributors to a route conflict.
- */
+/** the two contributors a route conflict names in its start error */
 export interface RouteConflict {
 	readonly claimed: string;
 	readonly contributors: readonly [string, string];
 }
 
-/** A conflict has two contributors even where one of them is the library, so the library has a name (E-1342). */
+/** the name the library goes by as one of the two contributors to a route conflict */
 export const THE_CORE = "the core";
 
 function namesBothContributors(conflict: RouteConflict): string {
@@ -85,7 +83,7 @@ function namesBothContributors(conflict: RouteConflict): string {
 
 export class VelveStartupError extends Error {
 	readonly code: StartupErrorCode;
-	/** Present where the code is a conflict between two contributors, and absent otherwise. */
+	/** present where the code is a conflict between two contributors, and absent otherwise */
 	readonly conflict?: RouteConflict;
 
 	constructor(code: StartupErrorCode, conflict?: RouteConflict) {
@@ -191,7 +189,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 }
 
-//a key provider that answers for no purpose protects nothing (S-KEY-6)
+//a key provider that answers for no purpose protects nothing and must refuse the start
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);

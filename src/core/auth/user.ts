@@ -2,7 +2,7 @@ import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 
-/** Architecture 3.15 C. `username_key` is absent by design: it is the comparison form. */
+/** a user as the caller sees it, without the `username_key` comparison form */
 export interface User {
 	readonly id: string;
 	readonly createdAt: Date;
@@ -28,16 +28,12 @@ const IMPORT_SOURCES: readonly ImportSource[] = [
 export interface NewUser {
 	readonly email: string | null;
 	readonly username: string | null;
-	/** The comparison form, normalised by `core/identity`; this repository does not derive it. */
+	/** the comparison form, normalised by `core/identity` and never derived here */
 	readonly usernameKey: string | null;
 	readonly emailVerifiedAt: Date | null;
 }
 
-/**
- * S-OWNER-7: the two address writes are reached from a route, so each takes the `Actor` a proof of
- * ownership produced rather than a user id a request could carry. `createUser` takes none because
- * there is no owner yet to prove (E-730).
- */
+/** the user writes, where each address write takes the `Actor` a proof of ownership produced */
 export interface UserRepository {
 	findUserById(userId: string): Promise<User | null>;
 	findUserByEmail(email: string): Promise<User | null>;
@@ -52,7 +48,7 @@ export interface UserRepository {
 		readonly email: string;
 		readonly emailVerifiedAt: Date | null;
 	}): Promise<void>;
-	/** The comparison form is normalised by `core/identity` and passed in, exactly as `createUser` takes it. */
+	/** takes the comparison form already normalised, exactly as `createUser` does */
 	updateUsername(input: {
 		readonly actor: Actor;
 		readonly username: string;
@@ -95,7 +91,7 @@ function toImportSource(value: string | null): ImportSource | null {
 	return value as ImportSource;
 }
 
-//hasPassword is derived from the row's existence and needs no flag of its own
+//hasPassword must follow the credential row so no separate flag can drift from it
 function selection(users: string, credentials: string, predicate: string): string {
 	return `SELECT u.id, u.created_at, u.updated_at, u.email, u.email_verified_at, u.username,
 		u.disabled_at, u.imported_from,
@@ -173,7 +169,7 @@ export function createUserRepository(options: {
 			);
 		},
 
-		//a RETURNING that names no row means the account has gone
+		//the answer must be the account as it now stands and none once it has been deleted
 		async updateUsername({ actor, username, usernameKey }) {
 			const [row] = await options.driver.query<UserRowShape>(
 				`WITH updated AS (
@@ -190,7 +186,7 @@ export function createUserRepository(options: {
 			return row === undefined ? null : toUser(row);
 		},
 
-		//the sessions stay and each of them ends at its next resolution
+		//sessions are not deleted here as resolution must refuse them once the account is disabled
 		async setDisabledAt({ userId, disabled }) {
 			await options.driver.query(
 				`UPDATE ${users} /* no owner predicate: S-OWNER-7, the caller is the application itself (B.3) */
