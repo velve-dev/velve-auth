@@ -53,6 +53,7 @@ The code must be readable without comments.
 - One feature, one branch, one worktree: branch `feature/<feature>`, worktree `../velve-auth-wt-<feature>`.
 - **Push the branch immediately after creating it**, before the first content change, so that progress is visible from the outside. Push again after every completed building block — not only at the end.
 - Conventional Commits, English subject line, imperative mood: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`, `perf:`, `security:`, `revert:`.
+- Commit subjects are Conventional Commits with a scope — `fix(oauth): …`, `refactor(session): …` — and the sentence that used to be the subject goes in the body; history is not rewritten.
 - Commit every self-contained change separately. Do not batch unrelated work.
 - A commit message says **what changed and why**, and cites the specification where the change follows from it.
 
