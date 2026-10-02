@@ -36,7 +36,7 @@ import {
 	type WebAuthnService,
 } from "./webauthn/service.js";
 
-/** What the authenticator hands back, checked for shape by `unknownRecord` and judged by the verifier. */
+/** what the authenticator hands back, checked for shape and judged by the verifier */
 export type AuthenticatorResponse = Record<string, unknown>;
 
 export interface TotpNamespace {
@@ -85,11 +85,7 @@ export interface SignInPasskeyNamespace {
 	): Promise<SignInResult>;
 }
 
-/**
- * 3.15 B declares `factor.webauthn` beside the other two without a condition, and A.2 makes the
- * absence of `webauthn` remove its routes rather than its type — so the namespace is declared here
- * unconditionally and is absent at run time wherever nothing configured it (E-1244).
- */
+/** the `factor` namespaces, with `factor.webauthn` absent at run time unless configured */
 export type FactorSurface = {
 	readonly factor: {
 		readonly totp: TotpNamespace;
@@ -302,7 +298,7 @@ function recoveryRoutes(services: RouteServices, recovery: RecoveryCodeService) 
 		freshness: "required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		//the old set is replaced in one transaction and the plaintext leaves only once
+		//the plaintext codes must leave the process here and never again
 		handler: async (_input, context): Promise<{ codes: readonly string[] }> =>
 			recovery.generate({ actor: actorOf(services, context.session) }),
 	});
@@ -565,7 +561,7 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 	return [start, finish] as const;
 }
 
-/** Every row this file can contribute, in the order it assembles them (E-671's reason, for 3.15 E). */
+/** every second factor route, in the order they are assembled */
 export type FactorRouteTable = readonly [
 	...ReturnType<typeof totpRoutes>,
 	...ReturnType<typeof recoveryRoutes>,
