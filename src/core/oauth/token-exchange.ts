@@ -29,11 +29,7 @@ function readLifetime(body: Record<string, unknown>): number | null {
 	return Number.isNaN(parsed) ? null : parsed;
 }
 
-/**
- * RFC 6749 §4.1.3 with the PKCE verifier of RFC 7636. The credentials travel in the body rather
- * than in an `Authorization` header because Apple's client secret is a JWT and every provider of
- * 3.10 accepts `client_secret_post`.
- */
+//credentials go in the body since every shipped provider accepts client_secret_post
 export async function exchangeAuthorizationCode(input: {
 	readonly fetch: OutboundFetch;
 	readonly provider: ResolvedProvider;

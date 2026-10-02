@@ -59,11 +59,7 @@ export interface OAuthFlowStart {
 	readonly linkTo: OAuthLinkStart | null;
 }
 
-/**
- * The callback reads no session cookie: a `form_post` provider posts cross-site and a browser sends
- * no `SameSite=Lax` cookie there, and neither does a `strict` installation on the redirect. Which
- * session the link replaces is decided by the flow row instead (E-588).
- */
+//the callback reads no session cookie, so the flow row decides which session is replaced (E-588)
 export interface OAuthCallbackArrival {
 	readonly providerId: string;
 	readonly code: string;
@@ -73,7 +69,7 @@ export interface OAuthCallbackArrival {
 	readonly observed: ObservedRequest;
 }
 
-/** The pointer travels beside the answer so that the route sets the cookie the flow needs (E-541). */
+//the pointer travels beside the answer so the route can set the cookie the flow needs (E-541)
 export interface StartedFlow {
 	readonly redirect: OAuthRedirect;
 	readonly pointer: string;
@@ -92,20 +88,12 @@ interface ResolvedAccount {
 	readonly identity: Identity;
 }
 
-/** The account a link flow named and the session it began in, which the two columns carry together. */
 interface LinkedSession {
 	readonly account: ConsumedOAuthFlow;
 	readonly previousSessionId: string;
 }
 
-/**
- * A34: a revocation that leaves an attacker's session standing is no revocation, and a flow row is a
- * ten-minute artefact that would otherwise outlive the session that authorised it. The flow's
- * authority is the session it was started from, so a flow whose session was revoked, signed out,
- * replaced by a credential change or expired has none left to spend (E-961). The last of those holds
- * only because the delete carries a deadline predicate: an expired row lives until the sweep removes
- * it, and matching it would make the answer depend on when garbage collection ran (E-971).
- */
+//a flow whose session is gone has no authority left to spend (E-961)
 function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {
 		throw new ConcealedError("link_session_gone");
@@ -113,7 +101,7 @@ function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 	throw cause;
 }
 
-/** A link flow writes both columns at the start, so a row carrying one alone is not one this library wrote. */
+//a link flow writes both columns, so a row carrying one alone was not written by this library
 function linkedSessionOf(flow: ConsumedOAuthFlowRow): LinkedSession | null {
 	if (flow.linkTo === null) {
 		return null;
@@ -136,7 +124,7 @@ function configuredProvider(providers: ProviderTable, id: string): ResolvedProvi
 	return provider;
 }
 
-/** A callback naming a provider this instance does not run is answered exactly as an unknown state. */
+//an unknown provider must be answered exactly as an unknown state
 function providerOfCallback(providers: ProviderTable, id: string): ResolvedProvider {
 	const provider = providers.get(id);
 	if (provider === undefined) {
@@ -145,19 +133,14 @@ function providerOfCallback(providers: ProviderTable, id: string): ResolvedProvi
 	return provider;
 }
 
-/** RFC 9207, the case a configured issuer settles before anything is exchanged. */
+//a configured issuer is settled per RFC 9207 before anything is exchanged
 function assertIssuerMatches(provider: ResolvedProvider, iss: string | null): void {
 	if (iss !== null && provider.issuer !== null && iss !== provider.issuer) {
 		throw new ConcealedError("issuer_mismatch");
 	}
 }
 
-/**
- * A provider whose issuer is the tenant's — `microsoft` is the one this library ships — has no
- * configured value to compare, so the ID token answers for the parameter instead: the callback's
- * `iss` must be the `iss` the signed token carries. Where no signed token was read, nothing can
- * answer and the flow is refused rather than passed over (E-585).
- */
+//a tenant issuer has no configured value, so the signed token must answer for it (E-585)
 function assertClaimsAnswerForTheIssuer(input: {
 	readonly provider: ResolvedProvider;
 	readonly iss: string | null;
@@ -172,12 +155,7 @@ function assertClaimsAnswerForTheIssuer(input: {
 	}
 }
 
-/**
- * L-4 puts its own code on the resolution of an existing session, and `session/service.ts` is the
- * one place that raises it; a flow still in progress answers as an invalid flow instead, which is
- * what `factor/pending/service.ts` does for the pending row. It is asked here because this is the one replacement whose authority is a stored artefact
- * rather than a resolution performed in the same request (E-976).
- */
+//a link authorised by a stored flow must check the account is still enabled (E-976)
 function assertTheAccountIsEnabled(user: User | null): void {
 	if (user === null || user.disabledAt !== null) {
 		throw new ConcealedError("user_disabled_on_oauth_flow");
@@ -222,7 +200,7 @@ export function createOAuthService(input: {
 		const versions = new Set(
 			sealed.filter((written) => written !== null).map((written) => written.keyVersion),
 		);
-		// One column carries the version of three ciphertexts, so a rotation between them is refused.
+		//one column carries the version of three ciphertexts, so a rotation between them is refused
 		if (versions.size > 1) {
 			throw new VelveError("internal_error");
 		}
@@ -267,7 +245,7 @@ export function createOAuthService(input: {
 				fromIdToken: true,
 			};
 		}
-		// A minted nonce that no ID token answered cannot be compared, and an uncompared nonce fails closed.
+		//a minted nonce that no ID token answered must fail closed
 		if (nonce !== null) {
 			throw new ConcealedError("nonce_mismatch");
 		}
@@ -286,9 +264,7 @@ export function createOAuthService(input: {
 		provider: ResolvedProvider,
 		account: ProviderAccount,
 	): Promise<User> {
-		// The application names what a provider cannot: in `username_email` a new account needs a
-		// username, no claim is one, and the library invents nothing (E-1900). Asked before the
-		// identifiers are normalised, so what comes back meets the same policy as a typed username.
+		//the application names the username a provider cannot, and nothing is invented (E-1900)
 		const contributed = await services.oauth?.identifiersForNewAccount?.({
 			provider: provider.id,
 			account,
@@ -298,14 +274,13 @@ export function createOAuthService(input: {
 			...(contributed?.username === undefined ? {} : { username: contributed.username }),
 		});
 		if (!columns.accepted) {
-			// S-LINK-5: no address and no username is invented, so the account is not created (E-559).
+			//no address and no username is invented, so the account is not created (S-LINK-5)
 			throw new VelveError(
 				columns.rejection.identifier === "email" ? "oauth_provider_error" : "oauth_flow_invalid",
 			);
 		}
 		const users = createUserRepository({ driver: transaction, schema });
-		// The address the automatic link was refused over stays another account's, so the flow ends
-		// here rather than in a unique-index violation, and it links nothing on the way (E-560).
+		//an address that belongs to another account must end the flow before the insert (E-560)
 		if (
 			columns.value.email !== null &&
 			(await users.findUserByEmail(columns.value.email)) !== null
@@ -318,7 +293,7 @@ export function createOAuthService(input: {
 		});
 		const created = await users.createUser({
 			...columns.value,
-			// A provider's claim verifies an address only where the operator trusts that provider (S-LINK-2).
+			//a provider claim verifies an address only where the operator trusts it (S-LINK-2)
 			emailVerifiedAt:
 				account.emailVerified && provider.trustedForAutomaticLinking ? services.clock.now() : null,
 		});
@@ -375,11 +350,7 @@ export function createOAuthService(input: {
 		return { issued, user };
 	}
 
-	/**
-	 * 3.6: an account with a second factor reaches a pending state rather than a session, and which
-	 * factors it may offer is read where the pending row is written — so the row is written first
-	 * and withdrawn again when it names none (E-563).
-	 */
+	//the pending row is written first and withdrawn again when it names no factor (E-563)
 	async function signInOrAskForTheSecondFactor(
 		userId: string,
 		observed: ObservedRequest,
@@ -400,18 +371,7 @@ export function createOAuthService(input: {
 		return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 	}
 
-	/**
-	 * S-LINK-7 and S-FIX-1: a new identity changes the trust level, so the session the link began in
-	 * ends and a new one begins in the same transaction. S-FIX-6 is the two credential changes and
-	 * not this one, so no other session of the account is touched (E-588).
-	 *
-	 * The identity is written in that same transaction, because a linked identity is a sign-in method
-	 * under L-13: a link refused its session must not leave a credential behind (E-969). Both outbound
-	 * calls are finished before it opens, so nothing here waits on a third party.
-	 *
-	 * A re-completion for an identity the account already holds inserts nothing and re-issues nothing:
-	 * S-FIX-1 is „jede Verknüpfung einer neuen Identität" and no trust level has changed (E-979).
-	 */
+	//a new identity must end the session the link began in and begin a new one (S-LINK-7)
 	async function linkIdentityAndReissue(input: {
 		readonly linked: LinkedSession;
 		readonly account: ProviderAccount;
@@ -421,14 +381,13 @@ export function createOAuthService(input: {
 		const userId = input.linked.account.userId;
 		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
 		const written = await driver.transaction(async (transaction) => {
-			// CLAUDE.md §7: `velve.identity` and `velve.session` are both written below.
+			//identity and session are both written below, so the account row is locked first
 			await lockAccountRow(transaction, schema, userId);
 			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
 			assertTheAccountIsEnabled(
 				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
 			);
-			// S-LINK-7 is „einer weiteren Identität": a link only ever inserts, and the unique pair
-			// refuses every identity that already exists — this account's included (E-979).
+			//a link only ever inserts and the unique pair refuses every existing identity (E-979)
 			const identity = await insertOrRefuse(owned, userId, input.facts);
 			const issued = await services.sessions
 				.boundTo(transaction)
@@ -494,7 +453,7 @@ export function createOAuthService(input: {
 
 		async completeFlow(arrival) {
 			const provider = providerOfCallback(providers, arrival.providerId);
-			// S-CSRF-5: the pointer is one half of the check and the row the other, and both must hold.
+			//the pointer is one half of the check and the row the other, and both must hold (S-CSRF-5)
 			if (arrival.pointer === null || !pointerBelongsToState(arrival.pointer, arrival.state)) {
 				throw new ConcealedError("state_not_found");
 			}
@@ -527,7 +486,7 @@ export function createOAuthService(input: {
 			const facts = await factsOf(provider, account, tokens);
 			const redirectToPath = acceptedRedirectPath(flow.redirectPath ?? DEFAULT_REDIRECT_PATH);
 
-			// Whether this flow links is the flow row's own statement, and not the callback's to make.
+			//whether a flow links is the flow row's statement and not the callback's to make
 			if (linked !== null) {
 				const { identity, issued } = await linkIdentityAndReissue({
 					linked,
@@ -561,7 +520,7 @@ export function createOAuthService(input: {
 
 		listIdentities: ({ actor }) => identities.listIdentitiesOwnedBy({ actor }),
 
-		// L-13: the count that refuses to remove the last way in lives in `core/identity` and is shared.
+		//the count that refuses to remove the last way in is shared with core identity (E-460)
 		unlinkIdentity: ({ actor, identityId }) =>
 			removeSignInMethod({
 				driver,

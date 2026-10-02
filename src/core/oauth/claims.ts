@@ -16,7 +16,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** A dot walks into a nested claim, which is how a provider that answers `bot.owner.user.id` is read. */
+//a provider may answer the subject in a nested claim like bot.owner.user.id
 function readClaimPath(claims: Record<string, unknown>, path: string): unknown {
 	let current: unknown = claims;
 	for (const segment of path.split(".")) {
@@ -28,7 +28,7 @@ function readClaimPath(claims: Record<string, unknown>, path: string): unknown {
 	return current;
 }
 
-/** S-LINK-3: the subject is the provider's stable id, whatever its type on the wire — never the address. */
+//the subject is the provider's stable id whatever its wire type, never the address (S-LINK-3)
 function subjectOf(claims: Record<string, unknown>, provider: ResolvedProvider): string {
 	const value = readClaimPath(claims, provider.subjectClaim);
 	if (typeof value === "string" && value !== "") {
@@ -48,11 +48,7 @@ function emailOf(claims: Record<string, unknown>, provider: ResolvedProvider): s
 	return typeof value === "string" && value !== "" ? value : null;
 }
 
-/**
- * The boolean and nothing else: `"true"` and `1` were accepted from memory of what providers send,
- * with no clause of the specification behind them, and this is the first of S-LINK-2's three
- * conditions — a claim shape read too widely is the condition read too widely (E-579).
- */
+//only a real boolean counts, as a claim read too widely reads the link condition widely (E-579)
 function emailVerifiedOf(claims: Record<string, unknown>, provider: ResolvedProvider): boolean {
 	if (provider.emailVerifiedClaim === null) {
 		return false;

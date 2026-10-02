@@ -4,11 +4,7 @@ import { equalsInConstantTime } from "../keys/index.js";
 import { fetchJsonFromProvider, type OutboundFetch } from "./outbound.js";
 import type { ResolvedProvider } from "./providers.js";
 
-/**
- * S-KEY-7: the enumerated list an ID token's `alg` has to be in. It holds asymmetric algorithms
- * only, so `none` and every HMAC family are refused by not appearing — the discovery document of
- * GHSA-9h47-pqcx-hjr4 advertised `none` and was believed.
- */
+//only asymmetric algorithms are listed, so none and every HMAC family are refused (S-KEY-7)
 export const ID_TOKEN_SIGNATURE_ALGORITHMS: readonly string[] = [
 	"RS256",
 	"RS384",
@@ -58,11 +54,7 @@ function assertNonceMatches(claims: Record<string, unknown>, expected: string | 
 	}
 }
 
-/**
- * 3.10: the signature is checked against the provider's JWKS, the audience against the client id,
- * the issuer where the provider declares one, and the nonce against the flow row. A failure of any
- * of them is `oauth_flow_invalid` to the caller and its own reason in the log.
- */
+//any failed check must answer oauth_flow_invalid to the caller and log its own reason
 export async function claimsOfIdToken(input: {
 	readonly fetch: OutboundFetch;
 	readonly provider: ResolvedProvider;
