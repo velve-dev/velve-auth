@@ -1,10 +1,7 @@
 import { VelveError } from "../http/error-map.js";
 import type { ResolvedProvider } from "./providers.js";
 
-/**
- * What one provider says about one account. `emailVerified` is the provider's claim and nothing
- * more — it is the first of S-LINK-2's three conditions and never a link on its own.
- */
+/** what one provider says about one account, where `emailVerified` never links on its own */
 export interface ProviderAccount {
 	readonly subject: string;
 	readonly email: string | null;

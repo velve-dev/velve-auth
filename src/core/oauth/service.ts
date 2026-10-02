@@ -48,7 +48,7 @@ import { acceptedRedirectPath, DEFAULT_REDIRECT_PATH } from "./redirect-path.js"
 import { exchangeAuthorizationCode, type ProviderTokens } from "./token-exchange.js";
 import { claimsFromUserInfo } from "./user-info.js";
 
-/** 3.15 C.1 plus the path the 302 carries, which is the only `Location` the library emits (S-REDIR-3). */
+/** a callback result plus the path its redirect carries, the only `Location` the library emits */
 export type OAuthCallbackOutcome = OAuthCallbackResult & {
 	readonly redirectToPath: RedirectPath;
 };
@@ -93,7 +93,7 @@ interface LinkedSession {
 	readonly previousSessionId: string;
 }
 
-//a flow whose session is gone has no authority left to spend (E-961)
+//a flow whose session is gone or expired has no authority left to spend (E-961)
 function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {
 		throw new ConcealedError("link_session_gone");
@@ -274,7 +274,7 @@ export function createOAuthService(input: {
 			...(contributed?.username === undefined ? {} : { username: contributed.username }),
 		});
 		if (!columns.accepted) {
-			//no address and no username is invented, so the account is not created (S-LINK-5)
+			//no address and no username is invented, so the account is not created (E-559)
 			throw new VelveError(
 				columns.rejection.identifier === "email" ? "oauth_provider_error" : "oauth_flow_invalid",
 			);
@@ -293,7 +293,7 @@ export function createOAuthService(input: {
 		});
 		const created = await users.createUser({
 			...columns.value,
-			//a provider claim verifies an address only where the operator trusts it (S-LINK-2)
+			//a provider claim verifies an address only where the operator trusts it (E-558)
 			emailVerifiedAt:
 				account.emailVerified && provider.trustedForAutomaticLinking ? services.clock.now() : null,
 		});
@@ -371,7 +371,7 @@ export function createOAuthService(input: {
 		return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 	}
 
-	//a new identity must end the session the link began in and begin a new one (S-LINK-7)
+	//a new identity replaces the session the link began in and no other session (E-588)
 	async function linkIdentityAndReissue(input: {
 		readonly linked: LinkedSession;
 		readonly account: ProviderAccount;

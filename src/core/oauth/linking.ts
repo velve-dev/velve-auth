@@ -18,7 +18,7 @@ export function automaticLinkIsAllowed(conditions: AutomaticLinkConditions): boo
 	);
 }
 
-//the address is looked up only once the two conditions that do not need it hold (S-LINK-1)
+//the address is an attribute and is looked up only once the other two conditions hold (S-LINK-1)
 export async function accountAnAutomaticLinkMayJoin(input: {
 	readonly users: UserRepository;
 	readonly account: ProviderAccount;
