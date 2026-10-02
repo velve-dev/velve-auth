@@ -17,12 +17,12 @@ export function createPendingToken(): PendingToken {
 	return encodeBase64Url(randomBytes(PENDING_TOKEN_BYTES)) as PendingToken;
 }
 
-/** Deliberately unchecked, for the reason E-260 gives: a rejected shape is a second answer beside "no row". */
+//the shape is unchecked as a rejected shape would be a second answer beside no row (E-260)
 export function toPendingToken(value: string): PendingToken {
 	return value as PendingToken;
 }
 
-/** S-TIM-4, S-REST-2: the database sees the hash and never the token. */
+//the database sees the hash and never the token (S-REST-2)
 export function hashPendingToken(token: PendingToken): Uint8Array {
 	return sha256(utf8ToBytes(token));
 }

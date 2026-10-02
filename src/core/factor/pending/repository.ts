@@ -22,7 +22,7 @@ export interface PendingAuthenticationInsert {
 export interface StoredPendingAuthentication {
 	readonly userId: string;
 	readonly factorsCompleted: readonly AuthenticationFactor[];
-	/** Read from the account's own rows, so no caller decides which factors it may be offered. */
+	//factors come from the account's own rows so no caller decides what it is offered (E-735)
 	readonly availableFactors: readonly SecondFactor[];
 	readonly attempts: number;
 	readonly createdAt: Date;
@@ -31,7 +31,7 @@ export interface StoredPendingAuthentication {
 
 export interface PendingAuthenticationWithOwner extends StoredPendingAuthentication {
 	readonly userDisabledAt: Date | null;
-	/** The database's clock at the moment it answered, so no caller compares its own clock with the row. */
+	//callers use the db clock and never compare their own clock with the row
 	readonly observedAt: Date;
 }
 
@@ -50,11 +50,7 @@ export interface PendingAuthenticationRepositoryOptions {
 	readonly schema: string;
 }
 
-/**
- * Not one method takes an `actor`, and E-242 is the reason: every row here is addressed through
- * `token_sha256`, and whoever presents the token has already proved more than `user_id = $2` could
- * check. `insertPendingAuthentication` precedes any session there could be an actor from.
- */
+//every row is addressed by its token hash so no method needs an actor (E-242)
 export interface PendingAuthenticationRepository {
 	insertPendingAuthentication(
 		input: PendingAuthenticationInsert,
@@ -92,7 +88,7 @@ interface OwnedPendingRowShape extends InsertedPendingRowShape {
 	readonly observed_at: unknown;
 }
 
-/** An Invalid Date is a `Date`, so a deadline past the range a `Date` holds arrives here looking decoded (E-1584). */
+//an invalid date is still a date so an out of range deadline must be caught here (E-1584)
 function toDate(value: unknown): Date {
 	if (value instanceof Date && !Number.isNaN(value.getTime())) {
 		return value;
@@ -121,7 +117,7 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 	return names.filter(isAuthenticationFactor);
 }
 
-/** The literal is built from a closed set, so no value from a request can reach it. */
+//the array literal is built from a closed set so no request value can reach it
 function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	for (const factor of factors) {
 		if (!isAuthenticationFactor(factor)) {
@@ -156,7 +152,7 @@ function toStored(row: InsertedPendingRowShape): StoredPendingAuthentication {
 	};
 }
 
-/** The enrolments are read in the statement that writes the row, so the caller cannot name a factor the account does not have (3.6, 3.15 C.1). */
+//enrolments are read in the writing statement so a caller cannot name a missing factor (E-735)
 function insertStatement(table: string, totp: string, webauthn: string, recovery: string): string {
 	return `WITH inserted AS (
 		INSERT INTO ${table} (token_sha256, user_id, factors_completed, expires_at)
@@ -175,11 +171,7 @@ function enrolmentColumns(totp: string, webauthn: string, recovery: string, owne
 		EXISTS (SELECT 1 FROM ${recovery} r WHERE r.user_id = ${owner}) AS has_recovery`;
 }
 
-/**
- * One query, the way S-CACHE-2 answers the same question for a session: the deadline is a
- * predicate rather than a comparison the caller makes, `disabled_at` travels with the row, and the
- * factors still open are counted here so that no second round trip decides what the caller may try.
- */
+//one query decides deadline, disabled flag and open factors so no second trip decides them
 function resolveStatement(
 	table: string,
 	users: string,
@@ -264,7 +256,7 @@ export function createPendingAuthenticationRepository(
 			};
 		},
 
-		/** L-8: the count and the removal that follows it are one transaction, so a fifth failure cannot leave the row behind. */
+		//the count and the removal are one transaction so a fifth failure cannot leave the row
 		countFailedAttempt({ tokenHash, maximumAttempts }) {
 			return options.driver.transaction(async (tx) => {
 				const [row] = await tx.query<{ attempts: number }>(countAttemptSql, [tokenHash]);

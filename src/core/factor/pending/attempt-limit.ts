@@ -2,14 +2,7 @@ import { ConcealedError, VelveError } from "../../http/error-map.js";
 import type { PendingAuthenticationService, PendingResolution } from "./service.js";
 import type { PendingToken } from "./token.js";
 
-/**
- * L-8, shared by every factor a pending state can be spent on, and kept beside the state rather
- * than beside any one of them (E-471). The limit is `MAXIMUM_PENDING_ATTEMPTS` below and is not
- * restated here; the failure that
- * exhausts it answers `too_many_factor_attempts` and takes the state with it, which is what makes
- * the 429 in the route table reachable — a request made after the row is gone answers
- * `invalid_pending_authentication` instead.
- */
+//the attempt limit is shared by every factor a pending state can be spent on (E-471)
 export async function verifyUnderPendingAttemptLimit<Result>(
 	pending: PendingAuthenticationService,
 	token: PendingToken,
