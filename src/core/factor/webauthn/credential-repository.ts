@@ -10,8 +10,7 @@ function ownerIdOf(owner: CredentialOwner): string {
 	return typeof owner === "string" ? owner : owner.userId;
 }
 
-/** Architecture 3.15 C. `credential_id`, `public_key` and `sign_count` are absent by decision
- * (3.15 C.2); the identifier a caller names a credential by is the row's own uuid. */
+/** a registered credential named by its row uuid, without its credential id, key or counter */
 export interface WebAuthnCredential {
 	readonly id: string;
 	readonly label: string;
@@ -71,7 +70,7 @@ export interface WebAuthnCredentialRepository {
 		actor: Actor;
 		label: string;
 	}): Promise<WebAuthnCredential | null>;
-	//it writes back only the row it was handed after verifying it (E-242)
+	//the caller must have read and verified the row before this method writes it back
 	recordAssertion(input: WebAuthnAssertionRecord): Promise<WebAuthnCredential | null>;
 }
 

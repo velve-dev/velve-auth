@@ -1,5 +1,4 @@
-/** Architecture 3.15 A.8. `"discouraged"` is absent because a second factor without user
- * verification is not one, and the discoverable passkey path always demands `"required"`. */
+/** the user verification a registration may ask for, where `"discouraged"` is never an option */
 export type RegistrationUserVerification = "required" | "preferred";
 
 export interface WebAuthnConfig {

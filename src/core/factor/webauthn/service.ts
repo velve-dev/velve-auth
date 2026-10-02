@@ -39,14 +39,13 @@ import {
 	assertUserWasVerified,
 } from "./verification.js";
 
-/** Architecture 3.15 C. */
+/** the options and challenge token a browser needs to register a credential */
 export interface WebAuthnRegistrationChallenge {
 	readonly publicKeyOptions: PublicKeyCredentialCreationOptionsJSON;
 	readonly challengeToken: string;
 }
 
-/** Architecture 3.15 C names the passkey form separately; the two ceremonies differ in
- * precondition and in outcome, not in shape. */
+/** the options and challenge token to sign in with a credential, as a second factor or a passkey */
 export interface WebAuthnAuthenticationChallenge {
 	readonly publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;
 	readonly challengeToken: string;
@@ -55,7 +54,7 @@ export interface WebAuthnAuthenticationChallenge {
 export interface VerifiedWebAuthnAssertion {
 	readonly userId: string;
 	readonly credential: WebAuthnCredential;
-	/** L-9: reported, never a rejection — a synchronised passkey does not keep the counter. */
+	/** reported and never a rejection, as a synchronised passkey does not keep the counter */
 	readonly signCountRegressed: boolean;
 }
 
@@ -74,8 +73,7 @@ export interface WebAuthnService {
 			label: string;
 		}): Promise<{ credential: WebAuthnCredential }>;
 	};
-	/** Architecture 3.6: the second factor after a password. Its subject is the intermediate
-	 * state, which is not a session and mints no `Actor`. */
+	/** the second factor after a password, acting on the intermediate state and not a session */
 	authenticate: {
 		start(input: { pending: PendingResolution }): Promise<WebAuthnAuthenticationChallenge>;
 		finish(input: {
@@ -189,7 +187,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			rpID: settings.relyingPartyId,
 			challenge: challengeBytes,
 			timeout: CEREMONY_TIMEOUT_MS,
-			//a second factor without user verification is not one
+			//no configuration lowers user verification as a second factor without it is not one
 			userVerification: "required",
 			...(allowCredentials === undefined ? {} : { allowCredentials }),
 		});
@@ -385,6 +383,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			if (!UUID.test(credentialId)) {
 				return;
 			}
+			//deletion goes through the one path that counts what is left first (E-460)
 			await removeSignInMethod({
 				driver: options.driver,
 				schema,
