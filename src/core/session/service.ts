@@ -17,13 +17,10 @@ import {
 } from "./metadata.js";
 import { createSessionToken, type SessionToken, sessionTokenHash } from "./token.js";
 
-/**
- * The only value the library accepts as proof that a session was resolved (E-93, S-OWNER-7).
- * It is produced in `resolve` and nowhere else, so an actor cannot be built from a request.
- */
+/** the only proof of a resolved session the library accepts, produced by `resolve` alone */
 export type SessionResolution = ResolvedSession & {
 	readonly session: Session;
-	/** The database's clock at the moment it answered, and therefore the only clock freshness is decided by (E-238). */
+	/** the database clock when it answered, the only clock freshness is decided by */
 	readonly observedAt: Date;
 };
 
@@ -46,11 +43,7 @@ export interface SessionServiceOptions {
 
 export interface SessionService {
 	readonly settings: SessionSettings;
-	/**
-	 * The same service over another driver. A caller that must write a session inside a transaction
-	 * it already owns needs one carrying the configured deadlines and metadata mode, and no seam
-	 * hands those on beside the service itself (E-969).
-	 */
+	/** the same service over another driver, for a session written in a caller's own transaction */
 	boundTo(driver: Driver): SessionService;
 	issue(input: {
 		readonly userId: string;
@@ -68,12 +61,7 @@ export interface SessionService {
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
-	/**
-	 * S-FIX-1 where the proof of ownership is a consumed row and not a session cookie: the caller
-	 * names the one session to replace, and every other session of the account is left alone. A
-	 * named row that is no longer there raises `PreviousSessionMissingError` unmapped, because what
-	 * the outside is told about it depends on which artefact named the row (E-961).
-	 */
+	/** replaces the one named session and leaves every other session of the account alone */
 	reissueSessionOfUser(input: {
 		readonly actor: Actor;
 		readonly previousSessionId: string;
@@ -93,7 +81,7 @@ export interface SessionService {
 	}): Promise<{ revokedCount: number }>;
 	revokeEvery(input: { readonly resolved: SessionResolution }): Promise<{ revokedCount: number }>;
 	revokeEverySessionOfUser(input: { readonly actor: Actor }): Promise<{ revokedCount: number }>;
-	/** The ids a revocation is about to remove, so a hook is told about exactly those rows (E-765). */
+	/** the ids a revocation is about to remove, for telling a hook about exactly those rows */
 	listEveryIdOwnedBy(input: { readonly resolved: SessionResolution }): Promise<string[]>;
 }
 
@@ -267,7 +255,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			};
 		},
 
-		//a reset has no session to resolve, so the actor comes from its redeemed token (S-FIX-6)
+		//a reset has no session to resolve, so the actor comes from its redeemed token (E-234)
 		async revokeEverySessionOfUser({ actor }) {
 			return { revokedCount: await sessions.deleteEverySessionOwnedBy({ actor }) };
 		},

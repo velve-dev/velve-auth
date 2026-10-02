@@ -11,7 +11,7 @@ export interface IssuedSessionToken {
 	readonly tokenHash: Uint8Array;
 }
 
-//the 256 bits must come from the one CSPRNG module (S-RAND-1)
+//the plaintext exists only here and in the cookie and its 256 bits come from the CSPRNG (S-RAND-1)
 export function createSessionToken(): IssuedSessionToken {
 	const token = encodeBase64Url(randomBytes(SESSION_TOKEN_BYTES)) as SessionToken;
 	return { token, tokenHash: sessionTokenHash(token) };

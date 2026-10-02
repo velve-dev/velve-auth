@@ -27,7 +27,7 @@ function truncatedMetadata(observed: SessionMetadata): SessionMetadata {
 	};
 }
 
-//the address is truncated before it leaves the process, never inside the statement (E-222)
+//the address is truncated in the process so the full address never reaches the statement (E-222)
 export function sessionMetadataFor(
 	mode: SessionMetadataMode,
 	observed: SessionMetadata,
