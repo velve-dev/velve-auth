@@ -35,7 +35,7 @@ export interface PasswordConfig {
 	readonly minimumLength?: number;
 	readonly maximumLengthInBytes?: number;
 	readonly concurrentHashLimit?: number;
-	/** L-7: runs when a password is set and when it is changed, never at sign-in. */
+	/** runs on the NFKC form when a password is set or changed, never at sign-in */
 	readonly validate?: (plaintext: string) => Promise<void>;
 }
 

@@ -1,6 +1,6 @@
 import { VelveError } from "../http/error-map.js";
 
-//the wait limit is a resource limit and refuses alike for a real and an absent account (E-14)
+//the wait limit is a resource limit and not a timing equalisation (E-14)
 export const DEFAULT_WAIT_LIMIT_IN_MILLISECONDS = 5000;
 
 export interface KdfSemaphoreOptions {

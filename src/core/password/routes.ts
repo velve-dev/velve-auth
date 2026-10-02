@@ -22,7 +22,7 @@ export interface SignInPasswordNamespace<M extends IdentityMode> {
 	password(input: SignInLookup<M> & { password: string } & ServerCallFields): Promise<SignInResult>;
 }
 
-/** The half of 3.15 B.4 that a session carries out on its own account. */
+/** setting and changing the PHC credential of the signed-in account */
 export interface SetPasswordNamespace {
 	set(input: { newPassword: string } & ServerCallFields): Promise<SetPasswordResult>;
 	change(
@@ -123,10 +123,7 @@ async function signedIn(
 	return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 }
 
-/**
- * The three rows of 3.15 D.3 that a password reaches: the way in, and the two ways a session
- * writes one. The mailed resets are `flows`, and `redeemResetWithRecoveryCode` with them (E-1181).
- */
+/** the password routes, signing in and the two ways a session writes its PHC credential */
 export function passwordRoutes(services: RouteServices) {
 	const readEnvironment: PasswordEnvironmentReader = createPasswordEnvironmentReader(services);
 
