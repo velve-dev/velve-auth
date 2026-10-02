@@ -3,12 +3,7 @@ import type { Driver } from "../../db/driver.js";
 import { qualifiedTableName } from "../../db/identifier.js";
 import type { PendingResolution } from "../pending/index.js";
 
-/**
- * Who a credential belongs to, proved in one of the two ways this library recognises: a resolved
- * session, or the intermediate state a correct password produced. A `PendingResolution` mints no
- * `Actor` on purpose (3.15 B.7, S-FIX-4), and a second factor still has to reach the account's
- * own rows — so the owner predicate takes either proof and never a bare string (E-459).
- */
+//the owner predicate takes either proof and never a bare string (E-459)
 export type CredentialOwner = Actor | PendingResolution;
 
 function ownerIdOf(owner: CredentialOwner): string {
@@ -63,8 +58,7 @@ export interface WebAuthnCredentialRepository {
 	insertCredential(input: WebAuthnCredentialInsert): Promise<WebAuthnCredential>;
 	listCredentialsOwnedBy(input: { actor: Actor }): Promise<WebAuthnCredential[]>;
 	listDescriptorsOwnedBy(input: { owner: CredentialOwner }): Promise<StoredWebAuthnCredential[]>;
-	/** S-OWNER-1 exception, on E-242's rule: the caller reaches this row through a signature it
-	 * has not yet checked and has no actor to offer, because discoverable sign-in names no user. */
+	//discoverable sign-in names no user so this lookup has no actor to offer (E-242)
 	findCredentialByCredentialId(input: {
 		credentialId: Uint8Array<ArrayBuffer>;
 	}): Promise<StoredWebAuthnCredential | null>;
@@ -77,7 +71,7 @@ export interface WebAuthnCredentialRepository {
 		actor: Actor;
 		label: string;
 	}): Promise<WebAuthnCredential | null>;
-	/** The same exception: the row it writes is the row it was handed, already read and verified. */
+	//it writes back only the row it was handed after verifying it (E-242)
 	recordAssertion(input: WebAuthnAssertionRecord): Promise<WebAuthnCredential | null>;
 }
 
@@ -108,8 +102,7 @@ interface CredentialRow {
 	readonly last_used_at: unknown;
 }
 
-/** A transport is whatever the browser called it (E-453), so it may not travel through a
- * delimiter: `["a,b"]` and `["a","b"]` would arrive as the same two entries. */
+//a transport is browser text so it may not travel through a delimiter (E-453)
 function readTransports(value: string | null): readonly string[] {
 	if (value === null) {
 		return [];
@@ -143,8 +136,7 @@ function readCount(value: unknown): number {
 	return typeof value === "number" ? value : Number(value);
 }
 
-/** An imported credential carries no label (architecture 4.1 e), and the surface promises a
- * string; the empty one is what "the import knew no name" looks like. */
+//an imported credential has no label so the empty string stands for no name
 function presentedCredential(row: CredentialRow): WebAuthnCredential {
 	return {
 		id: row.id,
@@ -171,8 +163,7 @@ function storedCredential(row: CredentialRow): StoredWebAuthnCredential {
 	};
 }
 
-/** `pg` and `postgres.js` name it `code`, the test connection names it `sqlState`; both are the
- * five characters PostgreSQL sent. */
+//drivers name the sql state either code or sql state so both are read
 function isUniqueViolation(cause: unknown): boolean {
 	if (typeof cause !== "object" || cause === null) {
 		return false;
@@ -199,8 +190,7 @@ VALUES ($1, $2, $3, $4, ARRAY(SELECT jsonb_array_elements_text($5::jsonb)), $6::
 	$7, $8, $9, $10)
 RETURNING ${SELECTED_COLUMNS}`;
 
-	/* S-OWNER-2: the owner stands in the predicate, so a row belonging to somebody else is not a
-	   row these statements can reach. */
+	//the owner sits in the predicate so another account's row is out of reach (S-OWNER-2)
 	const listStatement = `SELECT ${SELECTED_COLUMNS} FROM ${table}
 WHERE user_id = $1 ORDER BY created_at, id`;
 
@@ -214,8 +204,7 @@ WHERE credential_id = $1 AND user_id = $2`;
 WHERE id = $1::uuid AND user_id = $2
 RETURNING ${SELECTED_COLUMNS}`;
 
-	/* Architecture 3.6: the backup flags come from the authenticator on every sign-in, so a
-	   passkey that has since been synchronised stops reading as device-bound. */
+	//backup flags are refreshed on every sign-in so a synced passkey stops reading as device bound
 	const recordAssertionStatement = `UPDATE ${table}
 SET sign_count = $3, backup_eligible = $4, backup_state = $5, last_used_at = now()
 WHERE id = $1::uuid AND user_id = $2

@@ -57,8 +57,7 @@ function assertRelyingPartyId(relyingPartyId: string): string {
 	return relyingPartyId;
 }
 
-/** A native application's origin is not a URL (`android:apk-key-hash:…`), so only the web
- * spellings are held to a shape (E-452). */
+//a native app origin is not a url so only web origins are held to a shape (E-452)
 function assertOrigin(origin: string): string {
 	if (origin === "") {
 		throw new InvalidWebAuthnConfigError("origin_empty");

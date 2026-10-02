@@ -20,11 +20,10 @@ interface Validator<T> {
 	parse(raw: unknown): T;
 }
 
-/** Every key of the WebAuthn shape has to be declared, so a field the specification adds fails
- * the build instead of being dropped in silence (E-454). */
+//every key must be declared so a new specification field fails the build (E-454)
 type DeclaresEveryFieldOf<Shape> = Record<keyof Shape, unknown>;
 
-/** An inherited property is not a property the caller sent. */
+//an inherited property is not a property the caller sent (E-456)
 function declaredFieldsOnly(raw: unknown, fields: readonly string[]): unknown {
 	if (!isRecord(raw)) {
 		return raw;
@@ -38,22 +37,13 @@ function declaredFieldsOnly(raw: unknown, fields: readonly string[]): unknown {
 	return declared;
 }
 
-/**
- * The credential JSON is written by the browser against a living specification, not by the
- * caller, so a field it grows and nothing here reads is ignored rather than answered with
- * `invalid_input` (E-455). The route's own input stays strict.
- */
-/**
- * A value the browser wrote inherits nothing (E-456). `object()` builds its result on `{}`, and
- * so does object rest destructuring and every object literal — so this is applied to what leaves
- * this module, not only to what enters it: a consumer reads a field through the chain, and the
- * prototype of the value it holds is the only thing that decides the answer (E-481).
- */
+//what leaves this module must not inherit anything either (E-481)
 function withoutInheritance<T extends object>(value: T): T {
 	Object.setPrototypeOf(value, null);
 	return value;
 }
 
+//unknown fields the browser adds are ignored, not answered with invalid input (E-455)
 function openObject<Shape extends Record<string, Validator<unknown>>>(shape: Shape) {
 	const strict = object(shape);
 	return {
@@ -62,8 +52,7 @@ function openObject<Shape extends Record<string, Validator<unknown>>>(shape: Sha
 	};
 }
 
-/** Both directions at once: a name the verifier does not know cannot be listed here, and a name
- * the verifier adds leaves a key missing. */
+//a transport missing here or unknown to the verifier fails the build
 const IS_A_KNOWN_TRANSPORT: Readonly<Record<AuthenticatorTransportFuture, true>> = {
 	ble: true,
 	cable: true,
@@ -115,11 +104,7 @@ const authenticationShape = {
 const registrationValidator = openObject(registrationShape);
 const authenticationValidator = openObject(authenticationShape);
 
-/**
- * `transports` and `authenticatorAttachment` are hints neither verifier reads for acceptance, so
- * a value shipping in a browser ahead of the verifier's type is dropped here rather than
- * rejecting the ceremony over a field that decides nothing (E-453).
- */
+//transport hints decide nothing so an unknown value is dropped, not rejected (E-453)
 export function registrationResponse(): Validator<RegistrationResponseJSON> {
 	return {
 		parse: (raw) => {
