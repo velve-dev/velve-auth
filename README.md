@@ -482,6 +482,14 @@ plainly is more useful than a plugin that half-implements them.
   translation of it. Faithful, and not binding: where the two differ, the German
   is right and the translation has a bug.
 
+## Reading the code
+
+A comment in `src/` is one sentence saying what must hold, sometimes ending in one identifier.
+`(S-FIX-6)` is a security requirement, stated as a list item in section 5 of
+[`VELVE-AUTH-ARCHITECTURE.md`](./VELVE-AUTH-ARCHITECTURE.md).
+`(E-233)` is a design decision, an entry in [`CASE-STUDY.md`](./CASE-STUDY.md) with its context,
+what was rejected, the reason and the price. `pnpm check:decision-refs` fails if one points nowhere.
+
 ## Using it with an AI coding agent
 
 There is a skill that turns a coding agent into someone who actually knows this
