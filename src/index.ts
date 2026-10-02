@@ -72,11 +72,7 @@ export {
 	UnknownColumnError,
 } from "./core/db/repositories/owned-row-repository.js";
 export type { PendingToken } from "./core/factor/pending/index.js";
-/**
- * 3.15 B.6 and C: the return types of the `factor.*` and `signIn.passkey.*` methods, and the four
- * namespaces they fold into. Without them a caller can hold what the methods answer and cannot
- * write its type down (E-1255).
- */
+/** the return types of the `factor.*` and `signIn.passkey.*` methods and their four namespaces */
 export type {
 	AuthenticatorResponse,
 	RecoveryNamespace,
