@@ -99,7 +99,7 @@ export interface SessionService {
 
 const WRITE_NOW = 0;
 
-/** A session that vanished between its resolution and its replacement is a session the caller no longer has. */
+//a session that vanished before its replacement is one the caller no longer has
 function replacedSessionFailure(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {
 		throw new ConcealedError("session_not_found");
@@ -107,7 +107,7 @@ function replacedSessionFailure(cause: unknown): never {
 	throw cause;
 }
 
-/** E-93, S-OWNER-7: the brand of a resolved session is asserted here and nowhere else. */
+//the brand of a resolved session is asserted here and nowhere else (S-OWNER-7)
 function resolutionOf(userId: string, session: Session, observedAt: Date): SessionResolution {
 	return { userId, session, observedAt } as SessionResolution;
 }
@@ -140,7 +140,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		};
 	}
 
-	// E-233, E-238: the freshness check sits where the actor is minted, and it reads the clock created_at came from.
+	//freshness is checked where the actor is minted, on the clock created_at came from (E-233)
 	function actorOfFreshSession(resolved: SessionResolution): Actor {
 		assertSessionIsFresh(resolved.session, {
 			freshnessWindowMs: settings.freshnessWindowMs,
@@ -157,7 +157,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		if (found === null) {
 			return null;
 		}
-		// L-4: the one place in the library where a disabled account is named, and the caller has proved the account is theirs.
+		//a disabled account is named only here, once the caller has proved the account is theirs
 		if (found.userDisabledAt !== null) {
 			throw new VelveError("account_disabled");
 		}
@@ -190,7 +190,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return { token: issued.token, session };
 		},
 
-		// S-FIX-1: every change of the trust level ends the previous session and begins a new one.
+		//every change of the trust level must end the old session and begin a new one (S-FIX-1)
 		async reissue({ previousToken, userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions
@@ -202,7 +202,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return { token: issued.token, session };
 		},
 
-		// S-FIX-6: a credential change takes every other session with it, and nothing turns that off.
+		//a credential change must end every other session and nothing turns that off (S-FIX-6)
 		async reissueAfterCredentialChange({ resolved, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
@@ -224,7 +224,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 		resolve: (token) => resolveAndExtend(token, settings.idleWriteIntervalMs),
 
-		// 3.15 B.2: refresh forces exactly this write and nothing else — never the absolute deadline, never a new token.
+		//refresh only extends the idle timeout, never the absolute deadline or the token
 		refresh: (token) => resolveAndExtend(token, WRITE_NOW),
 
 		async signOut({ token }) {
@@ -242,7 +242,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return sessions.listEverySessionIdOwnedBy({ actor: actorOfFreshSession(resolved) });
 		},
 
-		// S-OWNER-4: a session of another user and one that never existed both change nothing and answer the same.
+		//revoking a foreign or missing session changes nothing and answers the same (S-OWNER-4)
 		async revoke({ resolved, targetSessionId }) {
 			await sessions.deleteSessionOwnedBy({
 				sessionId: targetSessionId,
@@ -267,7 +267,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			};
 		},
 
-		// S-FIX-6: the password reset has no surviving session to resolve, so the caller brings the actor its redeemed token produced.
+		//a reset has no session to resolve, so the actor comes from its redeemed token (S-FIX-6)
 		async revokeEverySessionOfUser({ actor }) {
 			return { revokedCount: await sessions.deleteEverySessionOwnedBy({ actor }) };
 		},

@@ -9,7 +9,7 @@ const MILLISECONDS_PER_UNIT: Readonly<Record<string, number>> = {
 
 const WHOLE_UNITS = /^(\d+)([smhd])$/;
 
-/** Null for anything the template literal type admits but a deadline cannot use: "1.5h", "-7d", "7". */
+//the template literal type admits strings like "1.5h" that no deadline can use
 export function durationInMilliseconds(duration: string): number | null {
 	const parsed = WHOLE_UNITS.exec(duration);
 	if (parsed === null) {

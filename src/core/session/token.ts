@@ -11,13 +11,13 @@ export interface IssuedSessionToken {
 	readonly tokenHash: Uint8Array;
 }
 
-/** S-RAND-1: the 256 bits come from the one CSPRNG module, and the plaintext exists only here and in the cookie. */
+//the 256 bits must come from the one CSPRNG module (S-RAND-1)
 export function createSessionToken(): IssuedSessionToken {
 	const token = encodeBase64Url(randomBytes(SESSION_TOKEN_BYTES)) as SessionToken;
 	return { token, tokenHash: sessionTokenHash(token) };
 }
 
-/** S-TIM-4: the database only ever sees this, so no lookup time depends on the plaintext token. */
+//the database only ever sees the hash, so lookup time cannot depend on the token (S-TIM-4)
 export function sessionTokenHash(token: string): Uint8Array {
 	return sha256(new TextEncoder().encode(token));
 }

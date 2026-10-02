@@ -1,6 +1,6 @@
 const MAXIMUM_STORED_LENGTH = 512;
 
-/** Ordered: a marker that appears inside another product's string comes first. */
+//a marker that appears inside another product's string must come first
 const BROWSER_FAMILIES: readonly (readonly [string, string])[] = [
 	["Edge", "Edg/"],
 	["Edge", "EdgA/"],
@@ -40,7 +40,7 @@ function familyOf(
 	return null;
 }
 
-/** L-10: browser and system family only — everything that identifies the single device is dropped. */
+//only browser and system family are kept, nothing that identifies the single device
 export function truncatedUserAgent(userAgent: string): string | null {
 	const browser = familyOf(userAgent, BROWSER_FAMILIES);
 	const system = familyOf(userAgent, SYSTEM_FAMILIES);
@@ -50,7 +50,7 @@ export function truncatedUserAgent(userAgent: string): string | null {
 	return browser ?? system;
 }
 
-/** A client chooses this header's length, and `text` has no limit of its own. */
+//the client chooses this header's length and a text column has no limit of its own
 export function boundedUserAgent(userAgent: string): string | null {
 	const trimmed = userAgent.trim();
 	return trimmed === "" ? null : trimmed.slice(0, MAXIMUM_STORED_LENGTH);
