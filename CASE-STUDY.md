@@ -10136,3 +10136,11 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Matching headings literally, which would have refused every citation in the tree.
 **Reason.** What a heading would have given is the place where an identifier is defined rather than cited. The list item and the two entry forms are those places, so the scan reads them; a table row or a citation in prose does not define anything and is not read.
 **Price.** The scan depends on two formats holding. It refuses the run when either source yields no definition at all, so a reworded format fails loudly; a format that changed for some entries only would leave those citations reported as dead, which is the safe direction. Concerns `tools/check-decision-refs.mjs`.
+
+### The shipped doc comments follow the new form after all
+`E-1943` · reviewable-source · reverses E-1940
+
+**Context.** E-1940 left 141 doc comments and one internal block in their old form so that the declaration snapshot would hold unchanged. The owner of the repository rejected the result on reading it: a first reader opening `src/` was meant to see one style, and two styles defeated the point of the rewrite.
+**Rejected.** Keeping E-1940's split, with the old blocks listed in the pull request instead.
+**Reason.** The snapshot was the evidence that only comments moved, not the goal. The same evidence survives a re-recording if the re-recorded diff itself contains nothing but comment lines, and it does: 141 lines added and 413 removed in `test/__snapshots__/api-surface.md`, every one of them a doc comment line, holding over four fresh builds. The published doc comments became one sentence without an identifier, still doc comments, because they are what a user sees on hover.
+**Price.** The published declarations change in their comments, so the next release ships different hover text for every exported symbol, and several blocks lost detail a caller might have used. That detail is in `DOCUMENTATION.md` and the pull request lists the cases. E-1940 stays as written, because its reason was true when it was taken. Concerns every module that emits a `.d.mts` and `test/__snapshots__/api-surface.md`.
