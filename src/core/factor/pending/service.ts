@@ -14,7 +14,7 @@ import { createPendingToken, hashPendingToken, type PendingToken } from "./token
 //the pending state lives exactly as long as its cookie (S-COOKIE-3)
 export const PENDING_LIFETIME_IN_SECONDS = 300;
 
-//after five failures the row goes and sign-in starts again at the password (E-471)
+//the five attempts are counted per pending flow and not per factor (E-471)
 export const MAXIMUM_PENDING_ATTEMPTS = 5;
 
 //the routes reading the pending cookie are one list so a fifth cannot slip in (S-CACHE-4)
@@ -32,10 +32,7 @@ export interface IssuedPendingAuthentication {
 	readonly pending: PendingAuthentication;
 }
 
-/**
- * S-FIX-4: what resolution yields is deliberately not a `ResolvedSession` and mints no `Actor`, so
- * the intermediate state has no path into a repository method that reaches rows through an owner.
- */
+/** the resolved intermediate state, which is not a session and mints no `Actor` */
 export type PendingResolution = ResolvedPendingAuthentication;
 
 export interface ConsumedPendingAuthentication {
@@ -114,7 +111,7 @@ export function createPendingAuthenticationService(
 			};
 		},
 
-		//the removal is the check so two requests with one token cannot both pass (S-RACE-1)
+		//the removal is the check so two requests with one token cannot both pass
 		async consume(token) {
 			const removed = await repository.deletePendingAuthenticationByTokenHash(
 				hashPendingToken(token),

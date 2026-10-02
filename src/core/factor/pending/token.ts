@@ -5,10 +5,7 @@ import { randomBytes } from "../../token/random.js";
 
 declare const pendingTokenBrand: unique symbol;
 
-/**
- * S-RAND-6, S-FIX-4: the intermediate state carries a token of its own, and its type is not the
- * session token's type, so neither can be handed to a function expecting the other.
- */
+/** the intermediate state's own token, never interchangeable with a session token */
 export type PendingToken = string & { readonly [pendingTokenBrand]: "pending authentication" };
 
 const PENDING_TOKEN_BYTES = 32;
