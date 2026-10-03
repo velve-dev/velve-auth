@@ -11,7 +11,11 @@ const BASE = process.env.VELVE_LOG_BASE ?? "origin/main";
  * is that rule in a form a script can read. The three-dot form is required — two-dot counts
  * deletions `main`'s own commits made as though this branch had made them (E-538). */
 function git(argv) {
-	return execFileSync("git", argv, { cwd: repositoryRoot, encoding: "utf8" });
+	return execFileSync("git", argv, {
+		cwd: repositoryRoot,
+		encoding: "utf8",
+		maxBuffer: 256 * 1024 * 1024,
+	});
 }
 
 function refuse(reason, detail) {
@@ -95,7 +99,7 @@ const deletions = Number(deleted);
 const commits = Number(git(["rev-list", "--count", `${mergeBase}..HEAD`]).trim());
 
 if (deletions > 0) {
-	const removed = git(["diff", ...compared])
+	const removed = git(["diff", "--unified=0", ...compared])
 		.split("\n")
 		.filter((line) => line.startsWith("-") && !line.startsWith("---"));
 	console.error(
