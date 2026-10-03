@@ -23,7 +23,7 @@ jobs:
     # a failure that needed a pair of them: E-1197 is a server difference alone, and the node
     # floor is a runtime one, so a cross product buys coverage of an interaction with no instance
     # behind it at three times the cost. What each leg is for: 16 on both node versions is the
-    # surface every measurement in DOCUMENTATION.md and CASE-STUDY.md was taken against and is
+    # surface every measurement in DOCUMENTATION.md and docs/decisions/log.md was taken against and is
     # kept whole; the third leg is §7's stated minimum server under the stated minimum runtime,
     # which is the promise nothing checked. Both dimensions stay separately covered, so a failure
     # on the third leg alone localises to the server by elimination (E-1501).
