@@ -2203,6 +2203,7 @@ Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprün
 **Rejected.** (a) Leave §5 as it stood, on the ground that E-149 already says all of this. (b) Write the index check — that the `##` headings and the `## Contents` links are the same list in the same order — and leave the rule silent.
 **Reason.** (a) puts the caveat where the audience is not; the log is not the writers' brief and §5 is. The bullet now names the reviewer as the enforcement in the same position where the `CASE-STUDY.md` bullet names `test/decision-log.test.ts`, so the asymmetry is visible at the point of reading rather than inferable from a document nobody opens. (b) is the cheapest of the three instruments this branch has named, and it still lives in `test/`, which this branch may not touch while `ci/gate-defects` is live there. What goes in instead is structural rather than a check: a chapter and its index line are created together in the pre-wave stub cut, and that is the only moment either changes. No feature ever needs a line in the index, so no feature has to stop and ask, and the index can only fall behind if the pre-wave pass itself skips a chapter.
 **Price.** The structural fix removes the need for the check without removing the failure the check would catch: a pre-wave pass that adds a chapter and forgets its line still leaves a stale index, and nothing notices. The target is smaller — one pass per wave instead of every feature, by one person, against a file already open for that reason — but it is the same target, and this branch is exactly the kind of pass that would miss it. The check should still be written by whoever next owns `test/`. That makes three instruments handed off from this branch, and the honest summary of it is that a branch about drifting lists closed one drift by hand, made a second structurally harder, and built none of the three things that would have caught either.
+
 <a id="e-500"></a>
 
 ### The address parser leaves `session` for a module that belongs to no feature
@@ -3154,6 +3155,7 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 **Rejected.** Treating the existing "spends the code that was used and leaves the other nine" as the third leg.
 **Reason.** That test counts rows, and a count is not a redemption: a set could hold nine rows none of which can be spent, and it would pass. The third leg is now its own case — accepted, `invalid_recovery_code`, accepted, with eight left. A planted fault that makes a partly-spent set unreadable turns it red at exactly that assertion.
 **Price.** The gap came from writing the tests around the storage rule rather than around the threshold's three words, and nothing but reading the threshold catches that.
+
 <a id="e-450"></a>
 
 ### The challenge is the token
@@ -5206,6 +5208,7 @@ Its Reason is also a little wider than it needs to be. *"Any entry stating one i
 **Price.** Three entries now describe one recurring miscount, and `E-898`'s Price is the one a reader meets first. Three edits went in beside this entry that correct no reason and get no entry of their own, and are recorded here instead. `E-889`'s bare `version 4` is restated to seven, which the distinction above permits — and which leaves `E-894`'s Price wrong where it calls leaving that number the standing cost of the no-rewrite rule, because the rule does not reach a bare number. `E-894`'s own heading read `Six, not four`: a number in the one place §6 says carries a title and nothing else, left standing when its body was restated, and false in both halves by the time anyone read it. And four entries in this range tagged themselves `corrected` where three tagged themselves `correction`; they are one word now, the one the rest of the log mostly uses.
 
 One consequence of restating in place that the rule does not mention, and that shows up here for the first time: the Contexts of `E-894` and `E-898` both describe what `E-889` used to say, so two entries now narrate a sentence the file no longer contains. They are accurate as history and they read as misquotation, and that is what every in-place restatement leaves behind once another entry has already cited the number.
+
 <a id="e-540"></a>
 
 ### The callback URL the specification never declares
@@ -6805,6 +6808,7 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Editing the chapter, still, for the reason §5 gives and E-622 endorses.
 **Reason.** Recounted against the tree rather than against the hand-off, and there is a sixth plainly false statement E-622's list does not name: the field table of `OneTimeTokenRedemption` gives `userId` as `string`, and E-598 made the redemption carry `RedeemedOneTimeToken`, whose `userId` is `UserId`. The closing paragraph of the chapter — "`userId` is `string` in `OneTimeTokenRedemption` and `string | null` in `StoredOneTimeToken`" — is wrong in its first half for the same reason, and was already wrong in its second half before this branch, so it is reported as needing a read rather than counted as this branch's damage.
 **Price.** Six plainly false statements and two narrowed ones, in a chapter nobody on this wave may edit, and the count has now been taken three times by three readers and come out differently each time. That is the cost of a partition that has no check behind it: §5 says as much about `DOCUMENTATION.md`, and this is what it looks like from the inside.
+
 <a id="e-930"></a>
 
 ### A registration that loses the insert race is answered as a taken address
@@ -7525,6 +7529,7 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** It is measured and handed on. **Four full nightly runs of this branch's tree produced one failure; two full nightly runs of `main` at the merge base `2d54bdb` produced none; ten runs of the file in isolation — five on each tree — produced none.** So it needs the rest of the suite running beside it, which is the condition its own comment says it corrects for. The mechanism is visible in the test: it retries the measurement until an attempt's **control** separation is tight and then asserts the **case** separation once and returns, so the first attempt with a quiet control is the only one measured, and the case carries the same noise the control does. The failing run's per-round medians span 94.5 ms to 3360.3 ms, a thirty-five-fold spread.
 
 **Price.** This is the second instance in one session of the class E-1109 repairs one row above — a statistical threshold that goes red with nothing wrong — in a different file, by a different mechanism, and found by running the tier rather than by reading anything. One failure in four is far too coarse a rate to act on, and this entry offers an observation rather than a rate deliberately: E-1109's own standard is a million trials, and nothing here comes near it. What it costs meanwhile is that a green nightly on this file is weak evidence, and every branch that trips it will spend what this one spent establishing it was not theirs.
+
 <a id="e-1130"></a>
 
 ### The rules file stated a rule and a false reason for it, and the reason was the part that got quoted
@@ -11530,6 +11535,7 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Adding the timing cases to the 14 leg to close it. They take between two and fifteen minutes each and 6.20 point 5 puts them in the nightly stage deliberately; hanging them off a per-push leg is the opposite of what that decision says, and the leg exists to catch SQL the oldest supported server refuses — which is what `#51` and `#53` found and what a statistical case cannot contribute to. Also rejected: extending `nightly.yml` to a matrix. That is `nightly.yml`'s owner's decision and this branch does not touch the file.
 **Reason.** Stated because the inference is so easy and so wrong: three legs go green, one of them names the oldest server the library promises, and a reader concludes the suite is covered there. The measurements make it worse rather than better — every figure on this branch was taken on **18.3** (`E-1551`), and the local runs against 14.24 skip these cases for the same reason CI's leg does. **The server the cases actually run on in CI is one no measurement on this branch used.**
 **Price.** What that leaves unmeasured is bounded but real. The guard's accept condition is a leak size out of 5.1 (a) and not a dispersion, so it needs no per-server calibration and a slower server can only make the case refuse. But the **runtime** and therefore the refusal rate depend on the server's own latency and jitter, and on 16 both are unknown here — the fifteen-minute budget and the 25 000 ceiling were cut against 18.3 on one machine. If the nightly begins refusing where it used to pass, the server is the first thing to look at and this entry is where a reader learns that nobody measured it.
+
 <a id="e-1600"></a>
 
 ### Fifty rows, counted rather than continued
@@ -12602,3 +12608,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Replacing E-223 with E-502, which measures the same parser against twenty-two vectors.
 **Reason.** E-223 was named, and it stands on its own where E-502 needs E-223 to make sense. Nine more entries were added from the same class, spread across passwords, sessions, flows, plugins, second factors, the gate and the releases, for thirteen build entries and fifty-nine in all.
 **Price.** The selection is a judgement and no check holds it to its criteria. Fifty entries name the file and function they concern; seven specification decisions are about scope, packaging or something deliberately absent, and E-38 and E-40 concern an importer that is not built. Concerns `CASE-STUDY.md`.
+
+<a id="e-1973"></a>
+
+### The specification named the case study as the log, and that one sentence was changed
+`E-1973` · case-study-curated · specification, section 7
+
+**Context.** Section 7 of the specification says, in German and in English, that the log is taken over into the repository as `CASE-STUDY.md` and continued there. Once the case study became a selection, that sentence described a file that no longer holds the log, and `CLAUDE.md` says the specification wins wherever the two disagree. The review of this branch named it as the first thing to fix before merging.
+**Rejected.** (a) Shipping the new layout with the sentence left as it was. (b) Keeping the complete log at `CASE-STUDY.md` and giving the selection another name.
+**Reason.** (a) leaves the binding text wrong on the day it merges. (b) would put the long file back where a first reader clicks, which is what the curation was for. So the file name in that one sentence changed in both languages and nothing else did, and the owner of the repository approved the change in advance.
+**Price.** The specification was edited by a branch whose subject is documentation, which is a precedent. The German and the English still say the same, which `test/architecture-translation.test.ts` confirms. Concerns `VELVE-AUTH-ARCHITEKTUR.md` and `VELVE-AUTH-ARCHITECTURE.md`, section 7.
