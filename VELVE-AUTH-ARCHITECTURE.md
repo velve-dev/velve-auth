@@ -4717,7 +4717,7 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 
 ## 7. Decision log
 
-This log is taken over into the repository as `CASE-STUDY.md` and continued there during the build. It is the starting stock, not the result. Every entry records what was decided, what was rejected and why — so that in the end the case study contains the actual reasons and not the ones that tell well afterwards.
+This log is taken over into the repository as `docs/decisions/log.md` and continued there during the build. It is the starting stock, not the result. Every entry records what was decided, what was rejected and why — so that in the end the case study contains the actual reasons and not the ones that tell well afterwards.
 
 Format: **E-nn — Decision.** Context · Rejected · Reason · Price.
 
