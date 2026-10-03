@@ -474,8 +474,9 @@ plainly is more useful than a plugin that half-implements them.
 
 - [`DOCUMENTATION.md`](./DOCUMENTATION.md) — the reference: every function,
   parameter, configuration option and table.
-- [`CASE-STUDY.md`](./CASE-STUDY.md) — why it is built this way, in a selection
-  of the decisions that carry a measurement, a found fault or a discarded assumption.
+- [`CASE-STUDY.md`](./CASE-STUDY.md) — why it is built this way, in a selection:
+  the decisions the specification started from, and the build entries that carry a
+  measurement, a found fault or a discarded assumption.
 - [`docs/decisions/log.md`](./docs/decisions/log.md) — the complete log. Every design
   decision, every rejected alternative, written during the build rather than
   after it.
