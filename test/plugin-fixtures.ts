@@ -210,7 +210,9 @@ export interface PluginLoginRole {
  * The role plugin SQL logs in as under `pluginDatabase`, created the way the operator creates it: a
  * login with a password generated here and never written down, no rights of its own, and no
  * membership in the library's role. `memberOf` grants one membership anyway, which is the
- * misconfiguration the start check refuses.
+ * misconfiguration the start check refuses. `CREATE` on `public` is revoked from `PUBLIC` first, as
+ * PostgreSQL 15 already ships it and as the operator does on 14, because the check refuses a login
+ * that may create objects in a schema the core's statements search.
  */
 export async function createAPluginLoginRole(
 	owner: TestConnection,
@@ -220,6 +222,8 @@ export async function createAPluginLoginRole(
 	const password = randomBytes(24).toString("hex");
 	const [database] = await owner.query<{ name: string }>("SELECT current_database() AS name", []);
 	await overTheSharedCatalogues(owner, async () => {
+		//postgresql 14 still grants create on public to every role, which the start check refuses
+		await owner.query("REVOKE CREATE ON SCHEMA public FROM PUBLIC", []);
 		await owner.query(`CREATE ROLE ${name} LOGIN PASSWORD '${password}'`, []);
 		await owner.query(`GRANT CONNECT ON DATABASE "${database?.name}" TO ${name}`, []);
 		if (options.memberOf !== undefined) {

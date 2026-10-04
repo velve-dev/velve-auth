@@ -238,6 +238,87 @@ describe("a plugin connection that is or can become the library's role refuses t
 	});
 });
 
+describe("a plugin login that can create objects or roles refuses the start (E-2646)", () => {
+	async function refusedWith(grant: string, revoke: string): Promise<string | undefined> {
+		const login = await createAPluginLoginRole(owner, `${schema}_creator`);
+		const driver = await openTestConnection(login.url);
+		await owner.query(grant.replaceAll("<login>", login.name), []);
+		try {
+			return await codeOf(start({ pluginDatabase: driver }).migrate());
+		} finally {
+			await owner.query(revoke.replaceAll("<login>", login.name), []);
+			await driver.close();
+			await dropAPluginLoginRole(owner, login.name);
+		}
+	}
+
+	it("refuses a login that may create objects in the core schema", async () => {
+		expect(
+			await refusedWith(
+				`GRANT CREATE ON SCHEMA ${schema} TO <login>`,
+				`REVOKE CREATE ON SCHEMA ${schema} FROM <login>`,
+			),
+		).toBe(REACHES_THE_CORE);
+	});
+
+	it("refuses a login that may create objects in the schema public", async () => {
+		expect(
+			await refusedWith(
+				"GRANT CREATE ON SCHEMA public TO <login>",
+				"REVOKE CREATE ON SCHEMA public FROM <login>",
+			),
+		).toBe(REACHES_THE_CORE);
+	});
+});
+
+describe("a pass is measured against the core tables and does not last forever (E-2646, E-2647)", () => {
+	it("refuses plugin SQL until the core tables exist, rather than passing a check that found none", async () => {
+		const empty = uniqueSchemaName("pluginloginempty");
+		await owner.query(`CREATE SCHEMA ${empty}`, []);
+		try {
+			const ownTables = contextOfThePlugin(
+				createVelveAuth(
+					configFor({
+						database: asTheLibrary as Driver,
+						schema: empty,
+						plugins: [demoPlugin()],
+						pluginDatabase: asThePlugin,
+					}),
+				),
+			).ownTables;
+
+			expect(await codeOf(ownTables.query(`SELECT note FROM ${empty}.demo_entry`, []))).toBe(
+				"plugin_database_unchecked",
+			);
+		} finally {
+			await dropSchema(owner, empty);
+		}
+	});
+
+	it("asks again once the remembered pass is five minutes old, and sees a grant made since", async () => {
+		let now = Date.parse("2026-10-04T12:00:00Z");
+		const ownTables = contextOfThePlugin(
+			start({ pluginDatabase: asThePlugin, clock: { now: () => new Date(now) } }),
+		).ownTables;
+		const read = (): Promise<string | undefined> =>
+			codeOf(ownTables.query(`SELECT note FROM ${schema}.demo_entry`, []));
+
+		expect(await read()).toBeUndefined();
+		await owner.query(`GRANT SELECT ON ${schema}.session TO ${pluginLogin.name}`, []);
+		try {
+			now += 4 * 60 * 1000;
+			const withinTheInterval = await read();
+			now += 60 * 1000;
+			const afterTheInterval = await read();
+
+			expect(withinTheInterval).toBeUndefined();
+			expect(afterTheInterval).toBe(REACHES_THE_CORE);
+		} finally {
+			await owner.query(`REVOKE SELECT ON ${schema}.session FROM ${pluginLogin.name}`, []);
+		}
+	});
+});
+
 describe("pluginDatabase and pluginDatabaseRole together", () => {
 	it("refuses the start, because only one of them can say where plugin SQL runs", () => {
 		expect(() =>
