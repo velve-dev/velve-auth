@@ -2722,6 +2722,12 @@ that names an account, and no branch is taken before the answer is in. That is
 what keeps normalisation from becoming the enumeration oracle the rest of the
 library avoids (S-ENUM-1, E-46).
 
+A column the mode configures is always bound to a string. An identifier its
+normaliser refuses is bound as the empty string, which no stored address or
+username key can equal, rather than as `NULL`, so the parameters differ in value
+and never in kind; a column the mode does not configure is bound as `NULL` for
+every identifier alike (S-TIM-1, E-2270).
+
 The statement orders its results rather than leaving the choice to the planner.
 Under the default allowlist no identifier can match both columns, because `@` is
 not a username character; under an allowlist wide enough to admit it, one

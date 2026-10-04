@@ -131,8 +131,8 @@ describe("identifier resolution", () => {
 			identifier: "alice@example.test",
 		});
 		expect(log.map((entry) => entry.params)).toEqual([
-			[null, null],
-			[null, null],
+			["", null],
+			[null, ""],
 		]);
 	});
 });
