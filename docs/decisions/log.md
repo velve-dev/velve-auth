@@ -13528,7 +13528,7 @@ One consequence of restating in place that the rule does not mention, and that s
 ### The audit's follow-ups get their ranges before any of them starts
 `E-2092` · open-points · ranges cut before a wave
 
-**Context.** After the requirement audit merged, four follow-ups remain that the owner decided on: honouring `session.cookieName`, calling `beforeSessionRevoke` on every revocation that has a reason, stating the KDF memory bound against the import ceiling, and running plugin SQL over its own login connection.
+**Context.** After the requirement audit merged, five follow-ups remain that the owner decided on: honouring `session.cookieName`, calling `beforeSessionRevoke` on every revocation that has a reason, stating the KDF memory bound against the import ceiling, running plugin SQL over its own login connection, and new rate-limit defaults with weakenings and route alarms that are visible without a log sink.
 **Rejected.** Letting each branch add its own row when it starts.
 **Reason.** Every row lands on the same line of the table, as E-2091 records, so the ranges are cut together first.
 **Price.** A range that turns out larger than its work leaves a gap, which §6 accepts. Concerns `CLAUDE.md` §6.

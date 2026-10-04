@@ -497,6 +497,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2580 … E-2609 | outside the waves · `revoke-hook` — beforeSessionRevoke called on every revocation the specification names a reason for. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 | E-2610 … E-2639 | outside the waves · `dos-memory-bound` — the KDF memory bound stated against the import ceiling. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 | E-2640 … E-2669 | outside the waves · `plugin-login` — plugin SQL over a connection that logs in as the plugin role. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
+| E-2670 … E-2699 | outside the waves · `rate-defaults` — the new rate-limit defaults, the recommended presets, and weakenings and route alarms made visible without a log sink. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
