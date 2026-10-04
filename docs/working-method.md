@@ -247,7 +247,7 @@ unset READY \
   && READY="v$VERSION"
 ```
 
-`pnpm check:release-tier` exits 1 when the tier has no successful run on the commit — it has not finished yet, or it failed — and 2 when GitHub could not be asked; neither is a reason to go on. The tag is created before the publish so that a machine without a signing key refuses here, while nothing is published yet, rather than after a publish that then has no tag (E-2765).
+`pnpm check:release-tier` exits 1 when the tier has no successful run on the commit — it has not finished yet, or it failed — and 2 when GitHub could not be asked; neither is a reason to go on. Node's `fetch` does not read `HTTPS_PROXY` by itself, so on a machine that reaches the network only through an HTTP proxy the check exits 2 unless Node is started with `NODE_USE_ENV_PROXY=1`, as in `NODE_USE_ENV_PROXY=1 pnpm check:release-tier "$(git rev-parse HEAD)"` (E-2763). The tag is created before the publish so that a machine without a signing key refuses here, while nothing is published yet, rather than after a publish that then has no tag (E-2765).
 
 The second block publishes, in the same shell so that `READY`, `VERSION` and `DIST_TAG` are still set, and does nothing unless the first block got to its end for this version. npm asks for the second factor interactively. The tag is pushed only after the publish succeeded, and its push starts the Release workflow, which runs the gate and both release tiers over the tagged commit and holds the tag against the manifest. It rehearses no publish, because npm refuses a dry run over a version already published (E-2762). The registry check polls until the new version is readable and its dist-tag points at it.
 
