@@ -22,7 +22,12 @@ import {
 	VELVE_ERROR_CODES,
 	type VelveErrorCode,
 } from "../http/error-map.js";
-import type { AnyRoute, RouteMetadata, ServerCallFields } from "../http/route.js";
+import {
+	type AnyRoute,
+	classifyCoreReadingRoutes,
+	type RouteMetadata,
+	type ServerCallFields,
+} from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
 import { createRateLimiter } from "../limit/index.js";
@@ -320,6 +325,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...pendingTable,
 		...seamRoutes,
 	];
+	classifyCoreReadingRoutes(coreRoutes);
 	const contributedRoutes = pluginRoutes(services);
 	const ownerOfRoute = (route: RouteMetadata): string => pluginRuntime.ownerOf(route);
 	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, ownerOfRoute);

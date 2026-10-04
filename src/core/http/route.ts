@@ -195,6 +195,22 @@ export function readsOAuthStateCookie(route: RouteMetadata): boolean {
 	return route.oauthStateCookie === "readable";
 }
 
+const readingRoutes = new WeakSet<RouteMetadata>();
+
+//a core get route is reading and a plugin get route is not known to be (S-CSRF-4)
+export function classifyCoreReadingRoutes(coreRoutes: readonly RouteMetadata[]): void {
+	for (const route of coreRoutes) {
+		if (route.method === "GET" && route.originCheck === "checked") {
+			readingRoutes.add(route);
+		}
+	}
+}
+
+//the one predicate that decides whether a route is reading, held against the route object (E-740)
+export function isReadingRoute(route: RouteMetadata): boolean {
+	return readingRoutes.has(route);
+}
+
 export function defineRoute<
 	Name extends string,
 	Path extends string,
