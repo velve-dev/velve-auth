@@ -7,6 +7,7 @@ import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
+import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
@@ -133,7 +134,7 @@ export async function redeemResetWithRecoveryCode(
 		environment.semaphore,
 	);
 	const { driver, schema, identity, keys } = environment.services;
-	await context.enforceAccountRateLimit(input.identifier);
+	await context.enforceAccountRateLimit(comparisonFormOf(input.identifier));
 
 	const found = await findUserByIdentifier({
 		driver,
