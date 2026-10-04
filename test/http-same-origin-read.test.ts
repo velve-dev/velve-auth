@@ -160,7 +160,11 @@ describe("every reading GET of the widest mount", () => {
 	);
 
 	function pathOf(route: AnyRoute): string {
-		return `${route.path}${QUERY_BY_ROUTE[route.name] ?? ""}`;
+		const filled = route.path
+			.split("/")
+			.map((segment) => (segment.startsWith(":") ? "placeholder" : segment))
+			.join("/");
+		return `${filled}${QUERY_BY_ROUTE[route.name] ?? ""}`;
 	}
 
 	it("is exactly the seven reading routes S-CSRF-4 names", () => {
@@ -181,9 +185,31 @@ describe("every reading GET of the widest mount", () => {
 		}
 	});
 
-	it("refuses the cross-site form on every one of them", async () => {
+	it("refuses every other Sec-Fetch-Site form, and its absence, on every one of them", async () => {
 		for (const route of reading) {
-			const answer = await widest(readFrom(pathOf(route), { "Sec-Fetch-Site": "cross-site" }));
+			for (const site of ["cross-site", "same-site", "none", null]) {
+				const answer = await widest(
+					readFrom(pathOf(route), site === null ? {} : { "Sec-Fetch-Site": site }),
+				);
+				expect([route.name, site, await serialised(answer)]).toStrictEqual([
+					route.name,
+					site,
+					ORIGIN_REJECTION,
+				]);
+			}
+		}
+	});
+
+	it("refuses the same-origin form without an Origin on every other checked route", async () => {
+		const others = auth.routes.filter(
+			(route) => route.originCheck === "checked" && !reading.includes(route),
+		);
+
+		expect(others.length).toBeGreaterThan(0);
+		for (const route of others) {
+			const answer = await widest(
+				readFrom(pathOf(route), { "Sec-Fetch-Site": "same-origin" }, route.method),
+			);
 			expect([route.name, await serialised(answer)]).toStrictEqual([route.name, ORIGIN_REJECTION]);
 		}
 	});
