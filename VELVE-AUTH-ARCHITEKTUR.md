@@ -939,6 +939,8 @@ Keine Fähigkeit, aber eine Haltung, die zu den 36 Zeilen gehört: Die Grenzen s
 
 Anteile: Übernehmen 17,8 % · Anders lösen 25,4 % · Weglassen 52,3 % · Übertreffen 4,5 %.
 
+E-36 nennt mit 322 und 268 den Stand vor der Umstufung von H29 (E-2931).
+
 **Getrennte Zählung — Plugin-Entscheidungen (G.2):** 38 Pakete (26 im Hauptpaket, 12 extern) —
 Übernehmen 2, Anders lösen 7, Weglassen 29. Diese Zeilen sind Entscheidungen über Pakete; die
 Funktionen der Plugins selbst stecken bereits in den 618.

@@ -941,6 +941,8 @@ Not a capability, but a stance that belongs to the 36 rows: the limits stand in 
 
 Shares: Adopt 17.8 % · Solve differently 25.4 % · Omit 52.3 % · Surpass 4.5 %.
 
+E-36 gives 322 and 268, the state before H29 was reclassified (E-2931).
+
 **Separate count — plugin decisions (G.2):** 38 packages (26 in the main package, 12 external) —
 Adopt 2, Solve differently 7, Omit 29. These rows are decisions about packages; the
 features of the plugins themselves are already contained in the 618.

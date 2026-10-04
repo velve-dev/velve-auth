@@ -14602,3 +14602,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the rows, the table and E-2931's own text agree on 16 and 21, and the line was the one place left behind.
 **Reason.** A tally line that disagrees with the rows directly above it is a counting error, not a position, and E-2931 had already decided the count.
 **Price.** E-2931's Context still says what it changed without naming the line it missed; this entry is where the omission is recorded. The three statements of each section's count are still kept in step by hand, and the test is what notices when they are not.
+
+<a id="e-2938"></a>
+
+### 2.N says that E-36 counts the state before H29 moved
+`E-2938` · specfix · specification, corrected — 2.N against section 7's E-36
+
+**Context.** E-2931 recorded that section 7's E-36 is titled *322 von 618 Funktionen werden weggelassen* while 2.N now counts 323, and left the two unreconciled in its Price. It did not notice that E-36's Reason states a second number the move changed: *Übernommen oder anders gelöst werden 268*, where 2.N now gives 110 adopted and 157 solved differently, 267. Neither number is edited in section 7, which is the architecture's own decision log and is quoted by `CASE-STUDY.md`. `test/feature-comparison-tallies.test.ts` requires either that E-36's omitted count equals 2.N's sum or that 2.N names E-36, and it failed. 2.N gains one sentence after the shares, *E-36 nennt mit 322 und 268 den Stand vor der Umstufung von H29 (E-2931).* in the German and *E-36 gives 322 and 268, the state before H29 was reclassified (E-2931).* in the English.
+**Rejected.** (a) Editing E-36's title and Reason to 323 and 267, which rewrites a decision after the fact and puts section 7 out of step with the case study that quotes it. (b) A note inside section 7 beside E-36, which is the same edit of the architecture's log by another route.
+**Reason.** A decision states the count it was taken on, and a reader who meets 322 in section 7 and 323 in 2.N needs to be told which is current and why, in the place that holds the current count.
+**Price.** The reconciliation is one sentence in 2.N and nothing in section 7 or in the case study points back to it, so a reader of E-36 alone still meets 322 and 268 without the explanation. The test only holds the omitted count; a third number of E-36 that drifts is not caught.
