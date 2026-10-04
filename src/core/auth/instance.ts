@@ -36,10 +36,10 @@ import type { FrozenContextServices } from "../plugin/context.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
-import { sessionSettingsOf } from "../session/config.js";
+import { type SessionSettings, sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
-import type { ModeHasUsername, VelveAuthConfig } from "./config.js";
+import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
 import {
@@ -199,9 +199,12 @@ function assertNoPluginTakesACoreNamespace(
 
 function reportedWeakenings<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
-	chosenFreshnessWindowMs: number,
+	chosen: { readonly session: SessionSettings; readonly rateLimit: RateLimitConfig },
 ): readonly ChosenWeakening[] {
-	return weakeningsIn(config, sessionSettingsOf().freshnessWindowMs, chosenFreshnessWindowMs);
+	return weakeningsIn(config, {
+		session: { defaults: sessionSettingsOf(), chosen: chosen.session },
+		rateLimit: { defaults: rateLimitConfigOf(), chosen: chosen.rateLimit },
+	});
 }
 
 function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakening[]): void {
@@ -348,7 +351,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		log,
 	};
 
-	report(log, reportedWeakenings(config, sessionSettings.freshnessWindowMs));
+	report(log, reportedWeakenings(config, { session: sessionSettings, rateLimit }));
 
 	const readSession = createServerMethod(read, environment);
 

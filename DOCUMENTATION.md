@@ -5264,7 +5264,12 @@ compile (E-349).
 There is no option that disables the origin check, the rate limiter, PKCE or the
 state check, and none that keeps the other sessions alive across a password
 change (S-DEFAULT-2, S-DEFAULT-3). Those names are absent from the type, and a
-test reads the list of them from a constant and searches the assembly for each.
+test reads the list of them from a constant and searches for each — and for the
+variants a pattern catches, `skipOriginCheck` or `no_rate_limit` — in every file
+the option type reaches by import from `core/auth/config.ts`: the password,
+OAuth, plugin, session and identity options and the route a plugin declares, not
+only the assembly. A plugin route cannot declare itself free of the address
+bucket either; that is a start error, listed under Plugins.
 
 **`log` has no default sink.** The core may not write to `console`, so a library
 that ships one would have to break its own rule; the default therefore drops
@@ -5286,6 +5291,7 @@ because nothing else would tell you.
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `rate_limit_bucket_unusable` | `rateLimit.perIpAddress` or `rateLimit.perAccount` is given and is not a bucket whose `capacity` and `refillPerSecond` are finite numbers of at least zero — `"none"` from a JavaScript configuration included, which would take every core route out of that bucket (S-DEFAULT-3, E-2215) |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
@@ -5353,7 +5359,40 @@ than surfacing in an advisory (S-DEFAULT-1, T-DEFAULT-1).
 
 At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
-can be counted. An option left at its default produces nothing.
+can be counted. An option left at its default produces nothing, and so does one
+written out at exactly its default or set stricter than it.
+
+What counts as weaker, option by option:
+
+| Option | Logged when |
+|---|---|
+| `session` | `idleTimeout`, `absoluteTimeout` or `freshnessWindow` is longer than its default; the line lists each one that is, in milliseconds |
+| `sessionMetadata` | anything but `"truncated"` |
+| `trustedProxies` | any entry |
+| `rateLimit` | `capacity` or `refillPerSecond` of `perIpAddress` or of `perAccount` is above its default |
+| `oauth` | an entry in `trustedProviders`, or `storeTokens: true` |
+| `fetch` | any `fetch` the caller supplies |
+| `plugins` | any plugin |
+| `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
+| `recoveryCodes` | `count` below ten |
+| `clock` | any clock the caller supplies |
+
+The other rows say nothing weakens them: `password` and a username mode without
+recovery codes are refused instead, and a TOTP tolerance above one step is not
+applied.
+
+**A raised rate limit is reported, not refused.** `refillPerSecond: 1e9` limits
+nothing, and it starts with one `rateLimit` line rather than a start error. A.6
+fixes the defaults and states no ceiling, so no ceiling is invented here; the
+line is how an operator learns that one is gone (E-2211). A bucket written as
+`"none"` is not a raised limit but no limit, and refuses the start with
+`rate_limit_bucket_unusable` (E-2215).
+
+The `safeDefault` strings are built from the constants the code resolves an
+absent option with — `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`,
+`ARGON2ID_FLOOR`, the recovery-code shape and the TOTP tolerance — and a test
+holds those constants to the defaults A.4, A.5, A.6 and A.8 state, so the row an
+operator reads cannot drift from the value the library uses.
 
 A default configuration writes no line at all. The counters live in
 `velve.rate_bucket`, through `createRateLimiter` from `core/limit`; the assembly
@@ -5721,7 +5760,7 @@ migration, and removing a plugin leaves its tables where they are.
 
 ### Start errors
 
-Fourteen configurations refuse the start with a `VelveStartupError` — twelve
+Fifteen configurations refuse the start with a `VelveStartupError` — thirteen
 codes only a plugin can trip, and two more a plugin can trip and so can a core
 route. None of them is a warning, because each leaves a question with no answer:
 
@@ -5735,6 +5774,7 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
+| `plugin_route_without_address_rate_limit` | A plugin route's rule — after `rateLimitRules` has replaced it — has no usable `perIpAddress` bucket: `"none"`, no rule at all, or a `capacity` or `refillPerSecond` that is not a finite number of at least zero (S-DEFAULT-3). `perAccount: "none"` is allowed. |
 | `plugin_migration_table_not_prefixed` | A migration's `createsTables` names a table outside `<id>_`. |
 | `plugin_error_code_not_namespaced` | An `errorCodes` entry does not begin `<id>.` (S-DEFAULT-5). |
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
@@ -6098,6 +6138,25 @@ keeps a plugin's rule off a core route's bucket: `"session.revoke"` in the map
 of a plugin that does not contribute `session.revoke` refuses the start rather
 than limiting nothing, and there is no key it could write that reaches a route
 it does not own.
+
+The rule that wins must carry an address bucket. The pipeline skips the address
+bucket of a route whose `perIpAddress` is `"none"`, so a declaration or a map
+entry that writes `"none"` there is refused with
+`plugin_route_without_address_rate_limit`, exactly as an `originCheck` other than
+`"checked"` is. The account bucket stays optional, because only a route that
+takes an account identifier can consume it.
+
+This refusal is a strict reading of S-DEFAULT-3 — no option deactivates the rate
+limiting — and not something the architecture states for plugin routes: 3.11
+fixes the order in which the origin check and the rate limit run, not that every
+plugin route declares a bucket. The core keeps its two unlimited reads,
+`GET /session` and `GET /pending`, because 3.15 D.3 gives them no limit; a plugin
+route has no such row (E-2212, E-2214).
+
+**Upgrading from 1.1.0.** A plugin that started on 1.1.0 with
+`perIpAddress: "none"` on a route, or with a `rateLimitRules` entry writing it,
+refuses to start from 1.2.0 on. Declare an address bucket for that route —
+`{ capacity, refillPerSecond }` — instead (E-2214).
 
 ### One reading of the declaration
 
