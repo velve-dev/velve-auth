@@ -2891,7 +2891,7 @@ export function signInLogPlugin(): VelvePlugin<"sign_in_log"> {
       },
     },
     routes: [
-      defineRoute({
+      {
         name: "sign_in_log.listOwn",
         path: "/x/sign_in_log/list-own",
         method: "GET",
@@ -2908,7 +2908,7 @@ export function signInLogPlugin(): VelvePlugin<"sign_in_log"> {
                ORDER BY occurred_at DESC LIMIT 50`,
             [requestContext.session.userId],
           ),
-      }),
+      },
     ],
   }
 }

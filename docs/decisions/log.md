@@ -14512,3 +14512,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Making the service not raise it on a repeated confirmation, which E-1259 already weighed: the caller would meet some other answer for a factor that is in fact enrolled, and the client's exhaustive handling would lose a code the server can truthfully send.
 **Reason.** A second confirmation of a confirmed factor is a real state, `enroll.start` already names the same code for it in its own row, and E-1259's argument that a code the server sends belongs in the declaration a client narrows to applies to the row the declaration is written from.
 **Price.** B.9 has one row more, and the two TOTP rows that were one now have to be kept in step by hand.
+
+<a id="e-2936"></a>
+
+### G.1's example declares its route without defineRoute
+`E-2936` · specfix · specification, corrected — 3.15 G.1 example
+
+**Context.** E-741 reported that `PluginRoute<Id>` is a route declaration, the object with the handler, which the registry passes through `defineRoute` itself, while 3.15 G.1's worked example writes `routes: [defineRoute({ … })]`, and `defineRoute` in the tree returns a `Route` that carries no handler, so the example does not compile and the error names a missing `handler`. Re-verified: `PluginRoute` in `src/core/plugin/config.ts` is still an `Omit` of `RouteDeclaration`. The example now writes the route as an object literal in both languages. Measured by compiling the example against the tree with the strict configuration: with the wrapper gone the `handler` error is gone, and one error remains, `requestContext.session` is possibly `null`, because `RequestContext.session` is `Session | null` in the tree and in D.1 alike. Compiling it also needs `object` from `src/core/http/validators.ts`, and no entry point of the package exports it, which D.1 states on purpose.
+**Rejected.** Making the registry accept both shapes, which E-741 rejected for the reason that two shapes for one thing is what 3.15's rules exist to prevent. Repairing the two remaining faults here: the first needs a decision on how G.1 should show that a `session` route's handler has a session, and the second on whether a plugin author is to get the validators from a public entry point, and neither is a transcription.
+**Reason.** The object literal satisfies `PluginRoute` as G's own type block defines it, a `RouteDefinition` with its handler, and as the tree defines it, so the example now agrees with both on the point E-741 found.
+**Price.** The example still does not compile as written, for the two reasons above, and they are reported rather than repaired. A plugin author who copies it gets a nullability error and an import they cannot satisfy from the package.
