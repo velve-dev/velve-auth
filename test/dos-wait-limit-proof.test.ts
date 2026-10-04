@@ -9,7 +9,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const SLOWED_DERIVATION_MS = 50;
 
-const waits = vi.hoisted(() => ({ granted: [] as number[], refused: [] as number[] }));
+const waits = vi.hoisted(() => ({
+	granted: [] as number[],
+	refused: [] as number[],
+	settled: [] as number[],
+}));
 
 vi.mock("../src/core/password/semaphore.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../src/core/password/semaphore.js")>();
@@ -41,6 +45,9 @@ vi.mock("../src/core/password/semaphore.js", async (importOriginal) => {
 								waits.refused.push(performance.now() - entered);
 							}
 							throw failure;
+						})
+						.finally(() => {
+							waits.settled.push(performance.now() - entered);
 						});
 				},
 			};
@@ -97,6 +104,8 @@ type Pool = Awaited<ReturnType<typeof openConnectionPool>>;
 const NIGHTLY = process.env.VELVE_NIGHTLY === "1";
 const SIMULTANEOUS_SIGN_INS = 500;
 const RESPONSE_TOLERANCE_MS = 500;
+//the grant is read when the work starts and that is a few microtasks after the semaphore granted it (E-2363)
+const GRANT_OBSERVATION_SKEW_MS = 5;
 const POOL_SIZE = 12;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 
@@ -161,8 +170,13 @@ describe("T-DOS-4 — a sign-in that waits past the limit is refused, not queued
 			const recordUnhandled = (reason: unknown) => unhandled.push(reason);
 			process.on("unhandledRejection", recordUnhandled);
 			try {
+				expect(
+					(await handler(postTo("/sign-in/password", { email: EMAIL, password: PASSWORD }))).status,
+					"the warm-up sign-in",
+				).toBe(200);
 				waits.granted.length = 0;
 				waits.refused.length = 0;
+				waits.settled.length = 0;
 				const startedAt = process.hrtime.bigint();
 				const answers = await Promise.all(
 					Array.from({ length: SIMULTANEOUS_SIGN_INS }, (_, index) =>
@@ -178,15 +192,18 @@ describe("T-DOS-4 — a sign-in that waits past the limit is refused, not queued
 					answers.filter((answer) => ![200, 401, 429].includes(answer.status)),
 					"a status other than signed in, refused or rate limited",
 				).toStrictEqual([]);
+				expect(waits.settled, "a semaphore run per sign-in").toHaveLength(SIMULTANEOUS_SIGN_INS);
 				expect(
-					Math.max(...answers.map((answer) => answer.elapsedMs)),
-					"the slowest answer",
+					Math.max(...waits.settled),
+					"the slowest run from its own arrival at the semaphore",
 				).toBeLessThanOrEqual(DEFAULT_WAIT_LIMIT_IN_MILLISECONDS + RESPONSE_TOLERANCE_MS);
 				expect(waits.refused, "a semaphore place refused per rate-limited answer").toHaveLength(
 					refused.length,
 				);
 				expect(
-					waits.granted.filter((waited) => waited > DEFAULT_WAIT_LIMIT_IN_MILLISECONDS),
+					waits.granted.filter(
+						(waited) => waited > DEFAULT_WAIT_LIMIT_IN_MILLISECONDS + GRANT_OBSERVATION_SKEW_MS,
+					),
 					"a place granted after waiting out the limit",
 				).toStrictEqual([]);
 				expect(
