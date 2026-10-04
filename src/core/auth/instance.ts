@@ -220,13 +220,12 @@ function reportedWeakenings<M extends IdentityMode>(
 	return Object.freeze(weakenings.map((weakening) => Object.freeze({ ...weakening })));
 }
 
+//a sink that throws on one weakening must not cost the others their line nor the start (E-2676)
 function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakening[]): void {
 	for (const weakening of weakenings) {
 		try {
 			log("warn", "a security option is weaker than its default", { ...weakening });
-		} catch {
-			return;
-		}
+		} catch {}
 	}
 }
 

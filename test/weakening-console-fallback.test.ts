@@ -89,3 +89,36 @@ describe("the instance states the weakenings it reported (S-DEFAULT-1, E-2671)",
 		expect(auth.weakenings.every((weakening) => Object.isFrozen(weakening))).toBe(true);
 	});
 });
+
+describe("a sink that throws costs neither a weakening nor the start (S-DEFAULT-1, E-2676)", () => {
+	it("reports every weakening although the sink throws on the first", () => {
+		const reported: unknown[] = [];
+		const throwingFirst: VelveAuthConfig<"email">["log"] = (_level, message, fields) => {
+			if (message !== WEAKENED_LINE) {
+				return;
+			}
+			reported.push(fields?.option);
+			if (reported.length === 1) {
+				throw new Error("the sink is down");
+			}
+		};
+
+		const auth = startWithLog(throwingFirst, {
+			trustedProxies: ["10.0.0.0/8"],
+			sessionMetadata: "full",
+		});
+
+		expect(reported).toStrictEqual(["sessionMetadata", "trustedProxies"]);
+		expect(auth.weakenings).toHaveLength(2);
+	});
+
+	it("starts although the sink throws on every line", () => {
+		const alwaysThrowing: VelveAuthConfig<"email">["log"] = () => {
+			throw new Error("the sink is down");
+		};
+
+		expect(() =>
+			startWithLog(alwaysThrowing, { trustedProxies: ["10.0.0.0/8"], sessionMetadata: "full" }),
+		).not.toThrow();
+	});
+});

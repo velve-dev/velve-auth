@@ -13592,3 +13592,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Printing the refill per minute or per hour, which reads well for the account bucket and badly for a refill of a billion a second. Keeping the exact number beside the readable one, which makes the line longer for every reader to serve none.
 **Reason.** The line exists to be read by an operator, and `1 per 300 s` is the number E-2670 reasoned in. Four significant figures cannot hide a weakening, because the comparison that decides whether there is one runs on the configured numbers and not on the text.
 **Price.** The printed value is no longer the exact configured number when it is rounded, so two refills that differ past the fourth figure print the same. The tolerance means a refill within 1e-9 of a whole inverse prints as that whole inverse.
+
+<a id="e-2676"></a>
+
+### A sink that throws on one weakening does not silence the others
+`E-2676` · rate-defaults · defect repaired, settled
+
+**Context.** `report` in `src/core/auth/instance.ts` wrote one line per weakening inside a `try` whose `catch` returned. A sink that threw on the first line therefore cost every later weakening its line, while the start went on as if all had been reported. The review asked for the catch to be per line. It now catches each line and moves to the next, and the start never sees the error. `test/weakening-console-fallback.test.ts` has two cases: a sink that throws on the first of two weakenings still receives the second, which failed before the change with only `sessionMetadata` received, and a sink that throws on every line does not stop the start, which already held before. `auth.weakenings` is built before the lines are written and holds every weakening whatever the sink did.
+**Rejected.** Letting the error reach the caller of `createVelveAuth`, which would turn a broken log sink into a refused start, the opposite of what the swallow was for (E-333's note that a sink that is down must not cost the caller anything). Falling back to the console for a line the configured sink refused, which writes to the console in an installation that chose a sink.
+**Reason.** Each weakening is a separate fact for the operator, and a failure to record one says nothing about the next.
+**Price.** A sink that throws on every line still records nothing, and nothing says so; `auth.weakenings` is then the only place the weakenings can be read.
