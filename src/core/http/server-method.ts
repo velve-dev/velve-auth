@@ -22,6 +22,8 @@ async function callRoute<Output>(
 			route,
 			{
 				origin,
+				//a server call is never a same-origin read and always compares its origin (E-2390)
+				fetchSite: null,
 				ipAddress: ipAddress ?? null,
 				userAgent: userAgent ?? null,
 				readCallerTokens: () => ({

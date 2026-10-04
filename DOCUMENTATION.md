@@ -1026,7 +1026,7 @@ handler and not by the application (L-6). A response with a body carries
 | Situation | Answer |
 |---|---|
 | Handler returned a value | `200` with that value as JSON |
-| Handler returned `redirectTo(…)` | `302` with `Location: <path>` and no body |
+| One of the two OAuth callback routes returned `redirectTo(…)` | `302` with `Location: <path>` and no body — on any other route the same output is an ordinary `200` JSON value |
 | Handler returned nothing | `204` with no body |
 | Method and path match no route | `404` with no body — the 25 error codes have no code for "no such route" |
 | Anything threw | The status of the mapped error code, with the error envelope below |
@@ -1115,12 +1115,36 @@ class were `startsWith` on a URL string. A missing `Origin` header, an opaque
 `null` origin and an unparseable value are all rejected with
 `origin_not_allowed`, and every rejection is byte-identical (S-CSRF-3).
 
+There is one exception to the missing-header rule, because browsers send no
+`Origin` on a same-origin `fetch` GET. A request with no `Origin` header is
+accepted when all three of these hold:
+
+- the route is one of the seven reading `GET` routes of S-CSRF-4: `/session`,
+  `/session/list`, `/username/available`, `/factor/webauthn/list`,
+  `/factor/recovery/remaining`, `/identity/list` and `/pending`;
+- the request came through the web handler;
+- it carries `Sec-Fetch-Site: same-origin`, exactly. A page script cannot set
+  this header, and the browser sends that value only when the calling page's
+  origin is the target's own.
+
+So `fetch("/api/auth/session")` from your own pages works without any header
+of yours. `Sec-Fetch-Site` values `same-site`, `cross-site` and `none`, a
+missing `Sec-Fetch-Site`, every `POST` route and every plugin route still answer
+`origin_not_allowed`, byte-identical to any other rejection. A plugin's `GET`
+route is not in the list, because nothing proves it changes no state. An
+`Origin` header that is present is always compared, whatever `Sec-Fetch-Site`
+says. A browser that sends no fetch metadata (Safari before 16.4) gets 403 on a
+same-origin read, as every browser did before (E-2390, E-2391).
+
 `SameSite=Lax` is not the defence. It leaves state-changing `GET` open, it is
 "same-site" rather than "same-origin" so any controlled subdomain passes it, and
 it does nothing against login CSRF.
 
 The check runs on the direct server method as well, which is why that method
-takes an `origin` field (S-CSRF-1).
+takes an `origin` field (S-CSRF-1). The same-origin exception does not apply
+there: server code has no browser metadata to show, so it passes the origin it
+reads for. That is your configured origin when you render a page on the server,
+because a page navigation carries no `Origin` header to forward (E-2392).
 
 ### `defineRoute(declaration)`
 
@@ -1197,6 +1221,15 @@ percent-decoding each segment once:
   `invalid_input` rather than one of its values being chosen — the same rule as
   S-COOKIE-5 for cookies, and it matters on the OAuth callback, where `state`
   and `code` decide the outcome.
+- A `POST` route takes its input from the body plus the captured path
+  parameters, and never from the query string.
+- A name may come from one source only (S-OWNER-6). When the same name arrives
+  in two of the path, the query string and the body — on either method — the
+  request is rejected with `400 invalid_input` and neither value is used. This
+  holds even when the two values agree, so
+  `GET /sign-in/oauth/callback/github?provider=github` is refused as well
+  (E-2240). On a `POST`, a query parameter whose name the body or the path does
+  not also carry is still ignored.
 
 ### Input validators
 
@@ -1304,7 +1337,7 @@ six fields, and only these six:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`; there is no way to omit the field and skip the check. |
+| `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`, on the reading routes too, which accept a missing header only over HTTP; there is no way to omit the field and skip the check. |
 | `sessionToken` | `string?` | What `__Host-velve_session` would have carried; used where the route declares `caller: "session"`. |
 | `pendingToken` | `string?` | What `__Host-velve_pending` would have carried; used where the route declares `caller: "pending"`. |
 | `oauthStateToken` | `string?` | What `__Host-velve_oauth_state` would have carried; used where the route declares `oauthStateCookie: "readable"`. |
@@ -1399,6 +1432,15 @@ from a request, not to this layer, which never accepts one.
 
 `redirectTo(…)` combines with a session token in the same output; the token
 still goes into the cookie and never into the `Location` value (S-REDIR-4).
+
+Only the two OAuth callback routes, `signIn.oauth.callback` and
+`signIn.oauth.callbackFormPost`, can answer with a redirect (S-REDIR-3). They
+are marked with `answerWithRedirect(route)` where the OAuth routes are built,
+and the handler reads `redirectToPath` from no other route's output. A plugin
+route — or any other route — that returns `{ redirectToPath: "/somewhere" }`
+answers `200` with that object as JSON and sets no `Location`; it is not
+refused at start, because what a handler returns is only known when it runs
+(E-2241).
 
 ### CORS
 
@@ -2780,6 +2822,13 @@ its identifier rather than by subtracting one, so it never makes the count too
 low; the delete then matches nothing and the call returns. A caller that needs
 to tell "removed" from "there was nothing to remove" reads the row first.
 
+An identifier that is not spelled as a `uuid` — `"not-a-uuid"`, `""` — is
+treated as one that names no row: it is passed to the statements as `NULL`,
+which excludes nothing from the count and deletes nothing, so it takes the same
+path and gets the same answer as an invented `uuid`, `last_sign_in_method`
+included. It used to reach the `::uuid` cast, fail it, and answer `500
+internal_error` (S-OWNER-8, E-2242).
+
 ```ts
 await removeSignInMethod({
   driver,
@@ -2839,6 +2888,15 @@ that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
 | Parameter | Type | Meaning |
 |---|---|---|
 | `length` | `number` | how many bytes to draw |
+
+### `randomUuid()`
+
+`string`. A version 4 `uuid` from `crypto.randomUUID`, beside `randomBytes` in
+the same module. The one-time token repository draws one for each request that
+names no account, as an identifier no row may carry. No other module calls
+`getRandomValues`, `randomUUID` or `subtle.generateKey`, and
+`test/token-review-randomness.test.ts` scans all of `src/` for the three
+(S-RAND-5, E-2243). It is internal: no package entry exports it.
 
 ### `encodeBase64Url(bytes)`
 
@@ -3420,7 +3478,7 @@ a session the caller could not use is not a device that is still signed in.
 | Method | Freshness | Effect |
 |---|---|---|
 | `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
-| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way |
+| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way, and also for a `targetSessionId` that is not spelled as a `uuid`, which names no session (E-2242) |
 | `revokeEveryOther({ resolved })` | required | removes all but the calling session |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
@@ -4075,7 +4133,10 @@ Both take the owner from the resolved session and put it in the SQL predicate,
 never in a branch (S-OWNER-2). A credential belonging to another account, one
 that never existed, and an identifier that is not a `uuid` at all are one answer
 in each direction: `rename` answers `invalid_input` to all three, `remove`
-answers 204 to all three and changes nothing (S-OWNER-3, S-OWNER-8).
+answers the same to all three and changes nothing — 204, or
+`last_sign_in_method` on an account that has no other way in, which an
+identifier that is not a `uuid` now gets too rather than a 204 of its own
+(S-OWNER-3, S-OWNER-8, E-2242).
 
 `remove` fails with `last_sign_in_method` when the credential is the account's
 last way in. Counted are a password credential, every WebAuthn credential and
@@ -4868,7 +4929,7 @@ practice.
 | POST | `/sign-in/oauth/callback/:provider` | `auth.signIn.oauth.callbackFormPost` | form `{ code, state, iss? }` | 302, or `OAuthCallbackOutcome` |
 | GET | `/identity/list` | `auth.identity.list` | — | `Identity[]` |
 | POST | `/identity/link/start` | `auth.identity.link.start` | `{ provider, redirectPath? }` | `OAuthRedirect` |
-| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204) |
+| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204); a foreign, an invented and a non-`uuid` `identityId` answer alike (E-2242) |
 
 `signIn.oauth.start` and `identity.link.start` return
 
@@ -5270,7 +5331,12 @@ compile (E-349).
 There is no option that disables the origin check, the rate limiter, PKCE or the
 state check, and none that keeps the other sessions alive across a password
 change (S-DEFAULT-2, S-DEFAULT-3). Those names are absent from the type, and a
-test reads the list of them from a constant and searches the assembly for each.
+test reads the list of them from a constant and searches for each — and for the
+variants a pattern catches, `skipOriginCheck` or `no_rate_limit` — in every file
+the option type reaches by import from `core/auth/config.ts`: the password,
+OAuth, plugin, session and identity options and the route a plugin declares, not
+only the assembly. A plugin route cannot declare itself free of the address
+bucket either; that is a start error, listed under Plugins.
 
 **`log` has no default sink.** The core may not write to `console`, so a library
 that ships one would have to break its own rule; the default therefore drops
@@ -5292,6 +5358,7 @@ because nothing else would tell you.
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `rate_limit_bucket_unusable` | `rateLimit.perIpAddress` or `rateLimit.perAccount` is given and is not a bucket whose `capacity` and `refillPerSecond` are finite numbers of at least zero — `"none"` from a JavaScript configuration included, which would take every core route out of that bucket (S-DEFAULT-3, E-2215) |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
@@ -5359,7 +5426,40 @@ than surfacing in an advisory (S-DEFAULT-1, T-DEFAULT-1).
 
 At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
-can be counted. An option left at its default produces nothing.
+can be counted. An option left at its default produces nothing, and so does one
+written out at exactly its default or set stricter than it.
+
+What counts as weaker, option by option:
+
+| Option | Logged when |
+|---|---|
+| `session` | `idleTimeout`, `absoluteTimeout` or `freshnessWindow` is longer than its default; the line lists each one that is, in milliseconds |
+| `sessionMetadata` | anything but `"truncated"` |
+| `trustedProxies` | any entry |
+| `rateLimit` | `capacity` or `refillPerSecond` of `perIpAddress` or of `perAccount` is above its default |
+| `oauth` | an entry in `trustedProviders`, or `storeTokens: true` |
+| `fetch` | any `fetch` the caller supplies |
+| `plugins` | any plugin |
+| `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
+| `recoveryCodes` | `count` below ten |
+| `clock` | any clock the caller supplies |
+
+The other rows say nothing weakens them: `password` and a username mode without
+recovery codes are refused instead, and a TOTP tolerance above one step is not
+applied.
+
+**A raised rate limit is reported, not refused.** `refillPerSecond: 1e9` limits
+nothing, and it starts with one `rateLimit` line rather than a start error. A.6
+fixes the defaults and states no ceiling, so no ceiling is invented here; the
+line is how an operator learns that one is gone (E-2211). A bucket written as
+`"none"` is not a raised limit but no limit, and refuses the start with
+`rate_limit_bucket_unusable` (E-2215).
+
+The `safeDefault` strings are built from the constants the code resolves an
+absent option with — `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`,
+`ARGON2ID_FLOOR`, the recovery-code shape and the TOTP tolerance — and a test
+holds those constants to the defaults A.4, A.5, A.6 and A.8 state, so the row an
+operator reads cannot drift from the value the library uses.
 
 A default configuration writes no line at all. The counters live in
 `velve.rate_bucket`, through `createRateLimiter` from `core/limit`; the assembly
@@ -5727,7 +5827,7 @@ migration, and removing a plugin leaves its tables where they are.
 
 ### Start errors
 
-Fourteen configurations refuse the start with a `VelveStartupError` — twelve
+Fifteen configurations refuse the start with a `VelveStartupError` — thirteen
 codes only a plugin can trip, and two more a plugin can trip and so can a core
 route. None of them is a warning, because each leaves a question with no answer:
 
@@ -5741,6 +5841,7 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
+| `plugin_route_without_address_rate_limit` | A plugin route's rule — after `rateLimitRules` has replaced it — has no usable `perIpAddress` bucket: `"none"`, no rule at all, or a `capacity` or `refillPerSecond` that is not a finite number of at least zero (S-DEFAULT-3). `perAccount: "none"` is allowed. |
 | `plugin_migration_table_not_prefixed` | A migration's `createsTables` names a table outside `<id>_`. |
 | `plugin_error_code_not_namespaced` | An `errorCodes` entry does not begin `<id>.` (S-DEFAULT-5). |
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
@@ -6104,6 +6205,25 @@ keeps a plugin's rule off a core route's bucket: `"session.revoke"` in the map
 of a plugin that does not contribute `session.revoke` refuses the start rather
 than limiting nothing, and there is no key it could write that reaches a route
 it does not own.
+
+The rule that wins must carry an address bucket. The pipeline skips the address
+bucket of a route whose `perIpAddress` is `"none"`, so a declaration or a map
+entry that writes `"none"` there is refused with
+`plugin_route_without_address_rate_limit`, exactly as an `originCheck` other than
+`"checked"` is. The account bucket stays optional, because only a route that
+takes an account identifier can consume it.
+
+This refusal is a strict reading of S-DEFAULT-3 — no option deactivates the rate
+limiting — and not something the architecture states for plugin routes: 3.11
+fixes the order in which the origin check and the rate limit run, not that every
+plugin route declares a bucket. The core keeps its two unlimited reads,
+`GET /session` and `GET /pending`, because 3.15 D.3 gives them no limit; a plugin
+route has no such row (E-2212, E-2214).
+
+**Upgrading from 1.1.0.** A plugin that started on 1.1.0 with
+`perIpAddress: "none"` on a route, or with a `rateLimitRules` entry writing it,
+refuses to start from 1.2.0 on. Declare an address bucket for that route —
+`{ capacity, refillPerSecond }` — instead (E-2214).
 
 ### One reading of the declaration
 

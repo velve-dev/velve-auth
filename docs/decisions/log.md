@@ -12809,6 +12809,171 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A third group signs in exactly like the current group and then spends 5 ms on the clock before its time is taken. The case first requires the difference between that group's median and the current group's to come back within half of 5 ms, and only then reads the stale group against the current group. Between measurements the case waits until the stale credential shows the current key version, so the next measurement starts on a quiet loop and the database part of T-TIM-5 is checked on every account. Measured on this branch: 24.21 ms with a rehash due against 23.89 ms without, the plant recovered as 5.14 ms. Against the pipeline and password routes of the merge base the same case gave 43.41 ms against 23.33 ms and failed.
 **Price.** The guard shows the medians can see 5 ms, not that they can see anything much smaller, and a band of half the plant is wide. The waiting between measurements means the case does not measure what a rehash already running does to the next sign-in; S-DOS-6 and T-DOS-6 are where that belongs.
 
+<a id="e-2210"></a>
+
+### The weakening detectors read the defaults the code uses
+`E-2210` · weakening-report · S-DEFAULT-1, closed
+
+**Context.** An audit started instances with each weakening `SECURITY_OPTIONS` documents and counted the start lines. Three logged nothing: a caller-supplied `fetch` had a row and no detector, `session.idleTimeout` and `session.absoluteTimeout` were not compared at all (only the freshness window was), and the rate-limit detector read `capacity` and never `refillPerSecond`. The detectors also compared against their own copies of the defaults (`DEFAULT_ADDRESS_CAPACITY`, `DEFAULT_ACCOUNT_CAPACITY`, `DEFAULT_RECOVERY_CODE_COUNT`), and the `safeDefault` strings were literals, so nothing tied either to the values `sessionSettingsOf()` and `rateLimitConfigOf()` resolve an absent option with.
+**Rejected.** Adding the three missing comparisons beside the copied constants. It fixes the three cases the audit found and leaves the next drift between a copy and the code as invisible as these were.
+**Reason.** The detectors now receive the session settings and the rate-limit configuration resolved from the configuration beside the ones resolved from nothing, and compare those; the `safeDefault` strings are built from `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`, `ARGON2ID_FLOOR`, `DEFAULT_RECOVERY_CODE_SHAPE` and `TOTP_TOLERANCE_STEPS`. A test holds those constants to the defaults A.4, A.5, A.6 and A.8 state, starts one instance per documented weakening and requires exactly one line naming the option, and requires a case for every row whose `weakenedBy` does not say nothing weakens it.
+**Price.** `security-options.ts` now imports from five feature modules it did not reach before. The `sessionMetadata` detector still reports `"none"`, which stores less than the default, as a weakening; the row names only `"full"`, and the two were left disagreeing because neither requirement here is about it. Concerns `src/core/auth/security-options.ts` and `src/core/auth/instance.ts`.
+
+<a id="e-2211"></a>
+
+### A raised rate limit is reported at start and not refused
+`E-2211` · weakening-report · S-DEFAULT-1 and S-DEFAULT-3, revisit if the architecture states a ceiling
+
+**Context.** `rateLimit.perIpAddress.refillPerSecond: 1e9` refills a billion tokens a second, which limits nothing, and started without a word. The brief asked for a ceiling above which the value is refused, or at least reported, and for refusal only if the specification allows it.
+**Rejected.** (a) Refusing a refill rate or capacity above a ceiling at start, for example the 100 a second the default `globalPerRoute.alertThresholdPerMinute` of 6000 amounts to. (b) Reporting only above such a ceiling.
+**Reason.** A.6 states the defaults and no bound, and S-DEFAULT-1 is the requirement that covers a weakening: it is permitted when written explicitly and logged at start. S-DEFAULT-6 shows what the architecture writes when it wants a floor enforced, and it wrote none for the rate limit; a ceiling picked here would be a number nobody specified. So the ceiling for reporting is the default itself: any `capacity` or `refillPerSecond` above it, per address or per account, writes the one `rateLimit` line. It was also seen while deciding that thirty-three test configurations set `capacity` and `refillPerSecond` to `100_000` to switch the limiter off for a test, and refusal would have meant rewriting all of them; that was a consideration, not the reason, and it is written down because it pulled in the same direction.
+**Price.** S-DEFAULT-3 says no option deactivates the rate limiting, and a refill of a billion a second deactivates it in effect while starting. It is announced rather than prevented. Whether a value that limits nothing is an option that disables the limiter is a question for the architecture, and this entry does not answer it. Concerns `src/core/auth/security-options.ts`.
+
+<a id="e-2212"></a>
+
+### A plugin route without an address bucket is a start error
+`E-2212` · weakening-report · S-DEFAULT-3, closed
+
+**Context.** `RateLimitRule` allows `perIpAddress: "none"`, the pipeline skips the address bucket for such a route, and `bucketRuleOf` in the plugin registry kept `"none"` as declared. A plugin route could declare both buckets `"none"`, and a `rateLimitRules` entry could replace a declared address bucket with `"none"`. The equivalent exemption from the origin check, `originCheck: "exempt"`, has been a start error since E-639.
+**Rejected.** (a) Narrowing `PluginRoute`'s `rateLimit.perIpAddress` to `BucketRule` in the type, as `originCheck` was narrowed to `"checked"`. (b) Refusing `"none"` in either bucket.
+**Reason.** 3.11 says the origin check and the rate limit always come first, also for plugin routes, so a plugin route with no address bucket is the rate-limit half of what `plugin_route_exempts_the_origin_check` refuses. The check runs on the rule that wins after `rateLimitRules`, and also refuses a missing rule and a bucket whose numbers are not finite and at least zero, because a JavaScript plugin can write either and the pipeline would hand them to the limiter. (a) was left because it changes the published declarations and 3.15 G types a plugin route as the full `RouteDefinition`; the runtime check holds for a plugin written in JavaScript either way. (b) was rejected because the account bucket can only be consumed by a handler that knows an account identifier, and the core's own address-only routes declare `perAccount: "none"` too.
+**Price.** A new start error code joins the public union, and every plugin that declared `"none"` for convenience, the fixtures of thirteen test files among them, has to declare a bucket. The core's `GET /session` and `GET /pending` remain unlimited, as 3.15 D.3 states, and a plugin has no way to declare such a read. Concerns `src/core/plugin/registry.ts` and `src/core/auth/startup.ts`.
+
+<a id="e-2213"></a>
+
+### The forbidden-switch scan follows the option type's imports
+`E-2213` · weakening-report · T-DEFAULT-3, closed
+
+**Context.** The test for S-DEFAULT-2 and S-DEFAULT-3 searched `src/core/auth` for `disablePkce` and its siblings. `PasswordConfig`, `OAuthConfig`, `VelvePlugin`, `SessionConfig` and a plugin route's declaration are each typed in their own module, so a switch added to any of them passed. T-DEFAULT-3 also says "and variants", which a fixed list of names covers only for the variants someone wrote down.
+**Rejected.** Listing the feature directories by hand. The list is a second copy of what the type imports, and it falls behind the first time a type moves.
+**Reason.** The scan now walks every relative import starting at `core/auth/config.ts`, asserts the walk reaches the password, OAuth, plugin, session, identity and route types, and adds a pattern for variants: `disable`, `skip`, `bypass`, `without`, `no`, `ignore`, `unsafe` or `allowInsecure`, followed by PKCE, state, origin, rate limit or CSRF. A planted name is shown to be found by both halves, so a clean run is a scan that looked and found nothing.
+**Price.** The walk follows value imports as well as type imports and reaches most of `src/core`, so a comment anywhere there that names one of these switches in prose fails the test and has to be reworded. The pattern still misses a switch spelled as a positive boolean, `pkce: false` for instance. Concerns `test/auth-startup.test.ts`.
+
+<a id="e-2214"></a>
+
+### The plugin address-bucket refusal rests on a strict reading of S-DEFAULT-3, and it breaks plugins that started on 1.1.0
+`E-2214` · weakening-report · correction of E-2212's basis, release 1.2.0
+
+**Context.** E-2212 gave section 3.11 as the reason a plugin route without an address bucket is a start error, saying 3.11 puts the rate limit in front of every plugin route. The independent review found that 3.11 says something narrower: a plugin may not run before the security middleware, and the origin check and the rate limiting always come first, also on direct server calls. That sentence is about the order in which they run. It does not say every plugin route must declare an address bucket, and nothing else in the architecture says so either. E-2212's reason stands as it was written; this entry records what the refusal actually rests on.
+**Rejected.** (a) Withdrawing the refusal, because the architecture does not state it. (b) Leaving E-2212 as the only record, so that a reader takes the refusal as something 3.11 demands.
+**Reason.** The basis is S-DEFAULT-3 read strictly: the library contains no option that deactivates the rate limiting, and a plugin route's `rateLimit` declaration, together with an entry in `rateLimitRules`, is an option that deactivated it for that route. The reading is stricter than the text, and it is not the only possible one. 3.15 D.3 gives two core reads no limit, `GET /session` and `GET /pending`, and those stay without a bucket, so the library does not hold its own routes to the rule it now holds plugin routes to. The difference is that those two rows are written in the architecture and a plugin route has no row. The owner decided to keep the refusal.
+**Price.** It is a breaking change for plugins in the field. A plugin that starts on 1.1.0 with `perIpAddress: "none"` on any route, or with a `rateLimitRules` entry that writes it, refuses to start on the next release with `plugin_route_without_address_rate_limit`. The owner decided that the next release is 1.2.0, released as a security fix rather than a major version, and that its release notes must name this refusal, together with `rate_limit_bucket_unusable` from E-2215, as the change that can stop an existing installation from starting. Writing those notes is outside this branch's files and is handed to whoever cuts the release. Concerns `src/core/plugin/registry.ts` and the 1.2.0 release notes.
+
+<a id="e-2215"></a>
+
+### A rate-limit bucket of none in the application's configuration is a start error
+`E-2215` · weakening-report · S-DEFAULT-3, closed
+
+**Context.** The review showed the same hole one level up from E-2212. `RateLimitConfig` types `perIpAddress` and `perAccount` as `BucketRule`, but a configuration written in JavaScript, or passed through a cast, can carry the `"none"` that `RateLimitRule` allows. `rateLimitConfigOf()` handed it to every core route that takes the configured bucket, the pipeline skipped the bucket on all of them at once, and the detector from E-2210 compared `"none".capacity` with the default and reported nothing. This branch had refused the plugin case and missed the case that reaches every core route.
+**Rejected.** Reporting `"none"` as a weakening and starting. A bucket that is not there is not a raised limit, which E-2211 reports, but the limit switched off, which S-DEFAULT-3 says no option may do.
+**Reason.** `assertConfigurationIsStartable` refuses either bucket, when it is given, with `rate_limit_bucket_unusable` unless it is a real rule whose capacity and refill rate are finite numbers of at least zero. The test is the one E-2212 applies to a plugin route's address bucket, moved to `core/http/rate-limit.ts` as `isUsableBucketRule` so both refusals share one definition and cannot drift apart.
+**Price.** A JavaScript installation that wrote `"none"` there started on 1.1.0 and refuses on 1.2.0, the breaking change E-2214 records for the release notes. The account bucket is refused as well, although only routes that take an account identifier consume it, because the type promises a bucket and the core reaches it on every one of those routes. `globalPerRoute` is not checked here, since it only raises an alarm and limits nothing. Concerns `src/core/auth/startup.ts`, `src/core/http/rate-limit.ts` and `src/core/plugin/registry.ts`.
+
+<a id="e-2390"></a>
+
+### A reading route answers a same-origin GET that carries no Origin
+`E-2390` · same-origin · changes how S-CSRF-1 holds for reading routes
+
+**Context.** A browser's same-origin `fetch` GET sends no `Origin` header. Checked in a real Chromium: `fetch('/probe')` from the page's own origin sent `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Mode: cors` and no `Origin`, and the same call as a POST sent `Origin`. `isOriginAllowed` answers false for a missing header, and `runRoute` runs it on every checked route, so an application reading `GET /session` from its own pages — the documented Next.js mount under `basePath: "/api/auth"` among them — got `403 origin_not_allowed` on every one of the seven reading routes. The client round-trip tests set `Origin` on every request, which is why nothing failed. `test/http-same-origin-read.test.ts` showed it before the change: `GET /session` with a valid session cookie, no `Origin` and `Sec-Fetch-Site: same-origin` answered 403 where 200 was asked.
+**Rejected.** (a) Treating a missing `Origin` as allowed on every GET. A plugin's GET may change state, which S-CSRF-4 cannot rule out and `test/plugin-review-shipped-table.test.ts` says outright. (b) Falling back to `Referer`. It can be stripped by a referrer policy and would put a second parser of URLs beside the origin comparison. (c) Accepting `same-site` as well. A sibling subdomain is not the application, and S-CSRF-2 compares origins, not sites. (d) Telling operators to set `Origin` themselves from the client. A browser forbids a page from setting it. (e) Admitting a present `Origin: null` with `Sec-Fetch-Site: same-origin`, which the comparison table's H29 row says to adopt. The task was the missing header, and T-CSRF-3 lists `null` among the variants a state-changing route rejects.
+**Reason.** `Sec-Fetch-Site` is a forbidden header name, so no page script can set it, and a browser sends `same-origin` only when the initiating origin is the target's own. A GET on a reading route changes nothing (S-CSRF-4), so what a forged same-origin read could gain is the answer, which a cross-origin page cannot read anyway without CORS. So a missing `Origin` is accepted only when all three hold: the route is one of the core's reading GET routes, the request came through the web handler, and it carries `Sec-Fetch-Site: same-origin` exactly. Every other combination keeps the rejection it had, byte for byte, and a present `Origin` is still compared under S-CSRF-2.
+**Price.** S-CSRF-1 no longer means "an `Origin` is always compared" on seven routes. It now means "an `Origin` is compared, or the browser has stated the request is same-origin". A non-browser client that sends neither header is still refused, which is the behaviour before this change. A browser too old to send fetch metadata (Safari before 16.4) still gets 403 on a same-origin read. The specification's S-CSRF-1 and T-CSRF-1 are amended to say this, in both languages.
+
+<a id="e-2391"></a>
+
+### The reading routes are recorded by object when the core table is assembled
+`E-2391` · same-origin · classification, reaches plugins
+
+**Context.** E-2390 needs the pipeline to tell a reading route from any other. S-CSRF-4 names the seven by path, `test/auth-route-table.test.ts` holds them by name, and `src/` held no classification at all.
+**Rejected.** (a) A set of seven names in `src/`. E-740 decided a route's standing is recorded against the route object rather than read back out of its name. (b) A third `originCheck` value or a declaration field. `OriginRequirement` is exported and T-CSRF-1 fixes its two values, and a field a declaration carries is a field a plugin can carry too. (c) A field on `HttpEnvironment`, which is in the shipped declarations.
+**Reason.** `assembleVelveAuth` hands the core routes to `classifyCoreReadingRoutes` before any plugin route exists, and that records each core GET route behind the origin check in a `WeakSet`. `isReadingRoute` is the one predicate that reads it. A plugin route never passes through that call, so it cannot be classified as reading, whatever it declares. A core GET that is not reading is already refused by T-CSRF-4's test, so the rule "core, GET and checked" is that classification and not a second one.
+**Price.** The set is module state written by assembly, so a route built with `defineRoute` and run through a hand-made `HttpEnvironment`, as the HTTP test harness does, is never reading and keeps the strict check. That is the safe side, but it means the harness cannot exercise this path. Only a mount made by `createVelveAuth` can.
+
+<a id="e-2392"></a>
+
+### The direct server method keeps comparing the origin it is given
+`E-2392` · same-origin · server path unchanged
+
+**Context.** The brief asked whether `createServerMethod` has the same defect. Its caller is the application's own server code, which passes `origin` explicitly. No browser stands between them, and there is no fetch metadata to read.
+**Rejected.** Adding a `fetchSite` field to `ServerCallFields`. Server code would have to make a claim about a browser it may not have, and the shipped declarations would change.
+**Reason.** The server method sets `fetchSite: null`, so a server call is never a same-origin read and `origin: null` stays refused on every checked route, as `test/auth-route-table.test.ts` and the new test both assert. An application that renders a page on the server and reads the session there passes its own configured origin. It is the origin the read is made for.
+**Price.** A server component that forwards the incoming request's `Origin` header as it stands still gets `origin_not_allowed` on a page navigation, which carries no `Origin`. That was so before this change, and `DOCUMENTATION.md` tells the reader to pass the configured origin there.
+
+<a id="e-2393"></a>
+
+### H29 still says the null origin is reconstructed, and nothing does that
+`E-2393` · same-origin · hand-off, specification
+
+**Context.** Section 1's comparison table, row H29, says the `Origin: null` special case, reconstructing the origin when `Sec-Fetch-Site: same-origin`, is adopted unchanged. The tree has never done that: `parseOrigin` refuses an opaque origin, and T-CSRF-3 makes `null` a variant every state-changing route must reject.
+**Rejected.** Reconciling H29 on this branch.
+**Reason.** E-2390 covers a missing header on reading routes. H29 is about a present `null` on any route, and changing it would contradict T-CSRF-3, which is a different decision with its own owner.
+**Price.** The specification holds a row that the code and T-CSRF-3 contradict until someone decides it. Handed off. Concerns section 1, row H29, in both language versions.
+
+<a id="e-2240"></a>
+
+### A name carried by two sources of one request is refused
+`E-2240` · input-and-redirect · request input, decided
+
+**Context.** S-OWNER-6 asks for a request carrying one parameter with contradictory values in two sources to be rejected rather than one value chosen. `readInput` in `src/core/http/web-handler.ts` read the query alone on a `GET` and the body alone on a `POST`, then spread the path parameters over either. So `GET /sign-in/oauth/callback/stubby?provider=other` took the path's value, a form-posted callback with a `provider` field took the path's value, and `POST /session/revoke?targetSessionId=X` with `{ "targetSessionId": "Y" }` acted on `Y`. Nothing was rejected. Two tests pinned that: `test/auth-route-table.test.ts` asserted the contradicting query was ignored, under the reading that a source never read cannot be chosen, and `test/oauth-callback-surface.test.ts` asserted the callback completed for the path's provider. Both now assert the refusal. The new generated case, `test/http-input-sources.test.ts`, walked 35 field-and-source pairs over the mounted route table and found 32 of them answered something other than `400 invalid_input` before the change.
+
+**Rejected.** Refusing only contradicting values and letting two equal ones through. It is the literal reading of the requirement, and it needs a comparison between a JSON value and a query string, which have different types for the same intent; any rule for that comparison is a second parser. Also rejected: reading the query on a `POST` as a further input source. A query parameter the declaration does not name would then reject every `POST` with a cache-busting suffix, and a parameter would have two places it could be read from, which is what the requirement forbids.
+
+**Reason.** The sources are merged by name and a name seen twice is `invalid_input`, whatever the values — one rule, no comparison, and the conservative side of the requirement. On a `POST` the query is still not read, but a query name the body or the path also carries is refused. A query name nothing else carries stays ignored, as before.
+
+**Price.** A request that repeats a value in two places for convenience, such as a client appending `?provider=github` to the callback path for its own logging, now fails where it used to work. The merged input is a prototype-less object, like the query reader's, so a body field named `__proto__` is a field and not a setter.
+
+<a id="e-2241"></a>
+
+### Only the two OAuth callbacks can answer with a Location
+`E-2241` · input-and-redirect · response shape, decided
+
+**Context.** S-REDIR-3 says the only `Location` the library emits is the OAuth callback's 302. `toResponse` in `src/core/http/web-handler.ts` passed every route's output to `readRedirectPath`, which turned any record with a string `redirectToPath` into a 302. A plugin route returning `{ redirectToPath: "/somewhere" }` was answered `302 Location: /somewhere`, and one returning `{ redirectToPath: "//evil.example" }` was answered 500 because the path check threw. `test/http-redirect-routes.test.ts` showed both, and its sweep over the mounted route table found three routes setting `Location` where two are allowed. The existing sweep in `test/oauth-redirect-corpus.test.ts` covers the OAuth feature's six routes and so could not see a plugin.
+
+**Rejected.** Refusing at start a plugin route whose output declares `redirectToPath`. A plugin's handler is typed `unknown` in its output and is a JavaScript function, so nothing at start can see what it will return; the refusal would have had to happen per response, as a 500, which turns a field name into an outage. Also rejected: finding the callbacks by name or path in the handler, which a plugin cannot imitate today only because `assertRouteTableIsUnambiguous` refuses a second route on that path, and which would break silently on a rename.
+
+**Reason.** The callback routes are marked where `src/core/oauth/routes.ts` builds them, with `answerWithRedirect(route)`, which records the built route object in a `WeakSet` beside `toRedirectPath`. `readRedirectPath` now takes the route and returns `null` for any route not in the set, so the output is answered as ordinary JSON. The marker is not exported from any package entry, so a plugin cannot mark its own route, and it is keyed on the object rather than on a name a plugin could also declare.
+
+**Price.** `readRedirectPath`'s signature changed, and `test/http-redirect.test.ts`, which proved the 302 mechanics with a synthetic route, now marks that route itself. A field called `redirectToPath` in a plugin's output reaches the browser as data, so an application that relied on a plugin redirecting has to do the redirect in its own client.
+
+<a id="e-2242"></a>
+
+### An identifier no uuid column can hold names no row
+`E-2242` · input-and-redirect · object identifiers, decided
+
+**Context.** S-OWNER-8 asks that "does not exist" and "belongs to another user" answer alike, and a malformed identifier is the third case of the same question. `POST /session/revoke` and `POST /identity/unlink` handed the submitted string to a `::uuid` cast, PostgreSQL refused it with 22P02, and the route answered `500 internal_error` where an invented `uuid` answered 204. `factor.webauthn.rename` already guarded its input and answered alike. `factor.webauthn.remove` guarded too, but returned early, so on an account with no other sign-in method a malformed identifier answered 204 where an invented one answered `409 last_sign_in_method`. `test/http-malformed-identifiers.test.ts` compared status, headers and body of four malformed spellings against an invented `uuid` on the four routes, for an account with a password and one without, and five of the eight cases differed. `test/session-review-ownership.test.ts` asserted the 22P02 itself as the proof that the target reached SQL as a parameter; it now asserts the call returns.
+
+**Rejected.** A `uuid()` validator in the route declarations, which the brief for this work proposed. It refuses with `400 invalid_input`, and three of the four routes answer an invented identifier with something else, so it would have replaced one difference with another; making it answer like the route would mean a validator that knows each route's answer. Also rejected: a fixed identifier such as the nil `uuid` in place of the malformed one, which names a row the moment an import writes one.
+
+**Reason.** `src/core/db/row-identifier.ts` holds the one spelling check. Where the identifier goes through `removeSignInMethod`, a malformed one is passed as `NULL`, which the count's `IS NULL` branch reads as excluding nothing and the `DELETE`'s `id = $2` matches nothing, so it runs the same lock, the same count and the same statements as an invented `uuid` and gets the same answer. `SessionService.revoke` answers `void` for every target, so there a malformed one returns before the statement. The webauthn early return is removed and `rename` uses the shared check.
+
+**Price.** The check accepts only the hyphenated form, in either case. PostgreSQL also accepts braces and the unhyphenated form, so `{…}` or 32 bare hex digits that used to reach a real row are now treated as naming none. A malformed `targetSessionId` skips one `DELETE` an invented one runs, which a timer could see; the caller already knows what it sent, so it learns nothing it did not have.
+
+<a id="e-2243"></a>
+
+### The uuid a cover request locks on is drawn in the randomness module
+`E-2243` · input-and-redirect · randomness, decided
+
+**Context.** S-RAND-5 puts every call to the CSPRNG in one module. `anAccountThatCannotExist` in `src/core/db/repositories/token.ts` called `crypto.randomUUID()` directly. Neither scan saw it: `test/token-static-scan.test.ts` and `test/token-review-randomness.test.ts` both searched for `getRandomValues` alone, which is one of the generator's three entry points. The extended scan in `test/token-review-randomness.test.ts` found that one file outside `core/token/random.ts`.
+
+**Rejected.** Replacing the draw with a fixed identifier. Its own comment cites E-931 for drawing afresh, because a fixed identifier could name a row an import creates, and nothing found here argues against that.
+
+**Reason.** `core/token/random.ts` gains `randomUuid()` and the repository calls it, so the draw stays as it was and moves to the module the requirement names. The scan now searches all of `src/` for `getRandomValues`, `randomUUID` and `subtle.generateKey`, comments stripped, and is shown to report each of the three when one is planted in another file.
+
+**Price.** `random.ts` now holds something that is not a secret, so its comment ("every secret of the library must be drawn here") describes less than the file does. The scan reads source text rather than an AST, as T-RAND-5 asks for, so a call spelled through a computed property, such as `crypto["random" + "UUID"]`, would pass it.
+
+<a id="e-2244"></a>
+
+### The session token parameters stay plain strings for now
+`E-2244` · input-and-redirect · S-RAND-6, left open
+
+**Context.** S-RAND-6 asks that a value of type `EntityId` not be usable as a token without an explicit conversion. `SessionToken` is a branded string, but `CookieWriter.setSession` and `setPending` take `string`, and so do `SessionService.resolve`, `refresh` and `signOut({ token })`. A `SessionId` therefore passes into all five without conversion, because a branded string is still a `string`. This branch was asked to fix it only if the change stayed internal.
+
+**Rejected.** Narrowing the five parameters to `SessionToken` and `PendingToken` here. Both interfaces are in the shipped declarations, `test/__snapshots__/api-surface.md` records `setSession(token: string)` and `resolve(token: string)`, so the change is a public type change, and it would touch the web handler's `moveTokensIntoCookies`, which reads the token out of an `unknown` route output and would need a cast to brand it.
+
+**Reason.** The rule for this branch was to keep the public API shape, and the narrowing is a change to it that deserves its own decision about what a plugin's `context.cookies.setSession(...)` should accept. Nothing was changed.
+
+**Price.** S-RAND-6's type half stays unmet for these five parameters: a `SessionId` can still be handed to `setSession` and would be written into the session cookie. `test/brand-invariants.test.ts` checks that each brand still brands, not what these parameters accept, so nothing fails on it.
+
 <a id="e-2270"></a>
 
 ### A refused identifier is looked up with an empty string, not with NULL

@@ -72,7 +72,7 @@ const MOUNTED_PLUGIN: VelvePlugin<"demo"> = {
 			caller: "anonymous",
 			freshness: "not_required",
 			originCheck: "checked",
-			rateLimit: { perIpAddress: "none", perAccount: "none" },
+			rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 			handler: () => Promise.resolve(null),
 		} as PluginRoute<"demo">,
 	],
@@ -190,7 +190,7 @@ describe("a plugin route cannot become a reader of either core cookie (3.6, S-CS
 			caller: "anonymous",
 			freshness: "not_required",
 			originCheck: "checked",
-			rateLimit: { perIpAddress: "none", perAccount: "none" },
+			rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 			handler: () => Promise.resolve(null),
 			...extra,
 		};
