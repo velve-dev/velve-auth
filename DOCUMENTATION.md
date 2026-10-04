@@ -71,6 +71,20 @@ import { VELVE_AUTH_VERSION } from "@velve/auth";
 
 `string` — the version of the package, as published.
 
+### Published versions
+
+Two earlier prereleases are still on the registry and are **not** what you want:
+`1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
+does not allow a version to be withdrawn once anyone might depend on it, and
+because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
+points `latest` at a package's very first publish whatever `--tag` says, so it
+sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
+of them, because a range does not match a prerelease.
+
+### PostgreSQL versions
+
+CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and 18 are exercised by no leg and are stated from the features the library uses; 18 is what development runs against, which is one machine and not a tier.
+
 ## Schema
 
 Everything lives in its own PostgreSQL schema, `velve` by default, so nothing

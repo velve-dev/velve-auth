@@ -57,9 +57,7 @@ further down.
 - Node 20.19 or newer
 - PostgreSQL 14 or newer. CI runs the whole test suite against 14 and against 16
   on every push, so the oldest version this list promises is exercised rather
-  than inferred. 15, 17 and 18 are exercised by no leg and are stated from the
-  features the library uses; 18 is what development runs against, which is one
-  machine and not a tier.
+  than inferred.
 - A PostgreSQL driver, which you supply
 
 The library assumes Web standards only — `globalThis.crypto` with `subtle` and
@@ -137,8 +135,8 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 ## Status
 
 > **Status: 1.1.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
-> stable line and `^1.0.0` resolves. Under semver what is here is a promise:
-> nothing here changes shape without a major version. `1.1.0` added an option
+> stable line and `^1.0.0` resolves. Under semver the documented surface is a promise:
+> nothing in it changes shape without a major version. `1.1.0` added an option
 > and moved nothing. `next` keeps pointing at the last prerelease,
 > `1.0.0-next.2`, and nothing needs it.
 
@@ -150,14 +148,6 @@ library is newly published and has not yet been run in anger by anyone outside
 this repository. Read `CASE-STUDY.md`, which ships inside
 the package, for why the decisions that shaped it were taken, and
 [`docs/decisions/log.md`](./docs/decisions/log.md) for every one of them.
-
-Two earlier prereleases are still on the registry and are **not** what you want:
-`1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
-does not allow a version to be withdrawn once anyone might depend on it, and
-because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
-points `latest` at a package's very first publish whatever `--tag` says, so it
-sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
-of them, because a range does not match a prerelease.
 
 ## Documentation
 
