@@ -38,7 +38,7 @@ function linkStartOf(services: RouteServices, session: Session | null): OAuthLin
 	if (session === null) {
 		throw new ConcealedError("cookie_absent");
 	}
-	return { userId: actorOf(services, session), sessionId: session.id };
+	return { actor: actorOf(services, session), sessionId: session.id };
 }
 
 function answerWithStatePointer(context: RequestContext, started: StartedFlow): OAuthRedirect {
