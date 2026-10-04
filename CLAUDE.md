@@ -34,8 +34,8 @@ exception, and no entry written from now on may be German.
 That pass rewrites the file's own header too.
 
 The decision log continues architecture section 7, and section 7 is German. A
-continued entry is **translated, not quoted**: the case study no longer
-reproduces section 7's German verbatim.
+continued entry is **translated, not quoted**, and `CASE-STUDY.md` quotes
+section 7 from its English translation (E-1970).
 
 The rule that is decided once and does not get revisited is this one — English
 everywhere, `docs/decisions/log.md` included.
@@ -155,7 +155,7 @@ At most **four agents run at the same time**. This is a hard limit.
 Features in the same wave run in parallel; waves run one after another. **No two
 writers share a file.**
 
-There are exactly three sanctioned exceptions, and all of them are safe for the
+There are exactly two sanctioned exceptions, and both of them are safe for the
 same reason: the file is **partitioned before the wave starts**, and a feature
 writes only inside the partition it was given. The exception is never "this file
 is shared" — it is "this file has disjoint parts, and one of them is yours".
@@ -169,13 +169,10 @@ is shared" — it is "this file has disjoint parts, and one of them is yours".
   wave — and appends nowhere else in the file.** The chapter, its position and
   its `## Contents` line are created as empty stubs before the wave starts, so
   no writer inserts a heading and no two writers ever touch the same region.
-- **`README.md`** — item 4 of the definition of done points every feature at it
-  whenever the outside picture changes, and wave 4 changes that picture three
-  times. The partition is the `###` region under **What works today** named for
-  what the feature builds, cut before the wave like a chapter. A feature rewrites
-  its own region and nothing else in the file; the sentence above the regions
-  that says what works end to end belongs to no feature, so a change to it is
-  reported rather than made.
+
+`README.md` is not partitioned. It describes the library as a whole, so a
+feature that changes the outside picture reports the README change rather than
+making it (E-2090).
 
 A feature that needs a change in another feature's chapter, or in a chapter no
 feature owns, stops and reports it — exactly as it would for any other file it
@@ -239,7 +236,8 @@ repair anything itself.
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
 - `pnpm attw` — the types resolve under every module mode the package claims
-- `README.md`, `DOCUMENTATION.md` and `docs/decisions/log.md` extended for the feature
+- `DOCUMENTATION.md` and `docs/decisions/log.md` extended for the feature, and
+  `README.md` where the outside picture changed
 - no AI attribution anywhere in the diff or the branch's commit history
 - the shipped type declarations have not changed unrecorded —
   `test/api-surface.test.ts` compares every `dist/**/*.d.mts` against a
@@ -480,6 +478,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2000 … E-2029 | outside the waves · `rules-only` — the rules file cut to rules, with its explanations moved to docs/working-method.md. Sixty-second row overall, counted over the sixty-one standing at ebada0d |
 | E-2030 … E-2059 | outside the waves · `readme` — the README cut to what a first reader needs, the rest moved to DOCUMENTATION.md. Counted over the rows standing at ebada0d |
 | E-2060 … E-2089 | outside the waves · `first-look` — the repository read as a stranger meets it on GitHub, and what that reading found. Counted over the rows standing at 14fb00b |
+| E-2090 … E-2119 | outside the waves · `open-points` — the rules and the README brought into step with the cut documents, and the hand-offs the clean-up left. Counted over the rows standing at 4a00087 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -528,7 +527,8 @@ These follow from architecture section 2 and are not open for local decision:
   `webauthn_challenge`, so it cannot lock the account row before that row. Those
   four come first; everything else comes after `velve.user`. **Do not read this
   section as a guarantee that the tree holds no cycle.**
-- **A second ordering holds and nothing checks it.** Four redeem flows consume a
+- **A second ordering holds, and `pnpm check:token-after-lock` checks it within a
+  file (E-1616).** Four redeem flows consume a
   `one_time_token` row *before* they reach `lockAccountRow`, so for them the
   account lock is not the transaction's first statement — `velve.one_time_token`
   is written first. What keeps that safe is that `one_time_token` is ordered

@@ -224,3 +224,17 @@ release.yml runs it in a job of its own and hands the answer to the three jobs t
 ### `pnpm check:published-version`
 
 Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS how long it polls for a publish to become readable. Tells a registry saying the version is absent from one that could not be asked, and refuses only on the second. release.yml runs it after the publish; pnpm gate does not, because a version nobody has published has nothing to resolve
+
+## From §5 — the README partition, before the README was cut
+
+The README was partitioned between the features of a wave until it was cut to
+what a first reader needs and the region it named no longer existed (E-2033,
+E-2090). The rule read:
+
+- **`README.md`** — item 4 of the definition of done points every feature at it
+  whenever the outside picture changes, and wave 4 changes that picture three
+  times. The partition is the `###` region under **What works today** named for
+  what the feature builds, cut before the wave like a chapter. A feature rewrites
+  its own region and nothing else in the file; the sentence above the regions
+  that says what works end to end belongs to no feature, so a change to it is
+  reported rather than made.
