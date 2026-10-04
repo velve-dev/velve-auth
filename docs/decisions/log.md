@@ -13523,6 +13523,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Attribution by object address puts every catalogue row under the same rule, whatever statement wrote it. A `pg_description` row of a core table is as much the core's as its `pg_class` row is. The list is of catalogues, not of statements, so a new `ALTER` form that writes a listed catalogue is seen without anything being added. The legitimate migrations the review ran still pass in `test/plugin-declared-table-names.test.ts`: adding serial, identity, foreign key, check and default columns, indexes, detaching and attaching a partition, `INHERIT` and `NO INHERIT` between own tables, dropping own columns, constraints and indexes, renaming an own index, restarting an own sequence, commenting on an own table and column, and dropping own tables. Removing the row-count half lets the comment deletion through. Without the whole check the three extra comment cases pass. One existing test changed meaning: `test/plugin-review-migration-role.test.ts` pinned `CREATE SCHEMA p_outside` as accepted, a documented residue of the role restriction. The new `pg_namespace` row belongs to no plugin table, so it is now refused, and the test says so.
 **Price.** Each plugin migration now reads about forty catalogues three more times inside its transaction. That is proportional to the size of the database's catalogue, not to the plugin. The list is a list of catalogues, so one that a later PostgreSQL adds, or one left out here, is not attributed. The shared catalogues are left out on purpose: `pg_db_role_setting`, which `ALTER ROLE … SET` writes, so that statement is still accepted, `pg_shdescription` and `pg_authid`. So are `pg_statistic`, which `ANALYZE` writes and which holds no definition, and the two catalogues a migration role cannot read. `pg_publication_namespace` exists only from PostgreSQL 15 and is not listed, because the library supports 14. A publication of a whole schema still writes a `pg_publication` row and is refused there.
 
+<a id="e-2092"></a>
+
+### The audit's follow-ups get their ranges before any of them starts
+`E-2092` · open-points · ranges cut before a wave
+
+**Context.** After the requirement audit merged, five follow-ups remain that the owner decided on: honouring `session.cookieName`, calling `beforeSessionRevoke` on every revocation that has a reason, stating the KDF memory bound against the import ceiling, running plugin SQL over its own login connection, and new rate-limit defaults with weakenings and route alarms that are visible without a log sink.
+**Rejected.** Letting each branch add its own row when it starts.
+**Reason.** Every row lands on the same line of the table, as E-2091 records, so the ranges are cut together first.
+**Price.** A range that turns out larger than its work leaves a gap, which §6 accepts. Concerns `CLAUDE.md` §6.
+
 <a id="e-2610"></a>
 
 ### S-DOS-3 bounds derivation memory by the import ceiling, and imports stay unrestricted
