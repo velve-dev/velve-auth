@@ -128,13 +128,14 @@ export async function redeemResetWithRecoveryCode(
 		readonly newPassword: string;
 	},
 ): Promise<SetPasswordResult> {
+	//an attempt the account bucket refuses must derive nothing (S-RATE-7)
+	await context.enforceAccountRateLimit(comparisonFormOf(input.identifier));
 	const derived = await derivePassword(
 		input.newPassword,
 		environment.services.password,
 		environment.semaphore,
 	);
 	const { driver, schema, identity, keys } = environment.services;
-	await context.enforceAccountRateLimit(comparisonFormOf(input.identifier));
 
 	const found = await findUserByIdentifier({
 		driver,
