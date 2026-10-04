@@ -1,7 +1,11 @@
 import type { Driver } from "../db/driver.js";
 import { assertIdentifier, assertSchemaName } from "../db/identifier.js";
 import { coreTableNameSet, namesTableOfPlugin } from "../db/migrations/index.js";
-import { runAsThePluginRole, runAsThePluginRoleInsideATransaction } from "./database-role.js";
+import {
+	runAsThePluginRole,
+	runAsThePluginRoleInsideATransaction,
+	runInsideASavepoint,
+} from "./database-role.js";
 
 class ForeignTableError extends Error {
 	readonly code = "plugin_table_not_its_own";
@@ -315,7 +319,9 @@ export function createOwnTables(options: {
 			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema, coreTables);
 			//without a role the statement check is the only bound (E-2450)
 			if (options.databaseRole === undefined) {
-				return options.driver.query<Row>(sql, [...params]);
+				return options.insideATransaction === true
+					? runInsideASavepoint(options.driver, () => options.driver.query<Row>(sql, [...params]))
+					: options.driver.query<Row>(sql, [...params]);
 			}
 			return options.insideATransaction === true
 				? runAsThePluginRoleInsideATransaction<Row>(

@@ -34,6 +34,23 @@ export function runAsThePluginRole<Row>(
 
 const PLUGIN_STATEMENT_SAVEPOINT = "velve_plugin_statement";
 
+//a plugin statement that fails must not abort the transaction it borrowed (E-2586)
+export async function runInsideASavepoint<Row>(
+	transaction: Driver,
+	statement: () => Promise<Row[]>,
+): Promise<Row[]> {
+	await transaction.query(`SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
+	try {
+		const rows = await statement();
+		await transaction.query(`RELEASE SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
+		return rows;
+	} catch (error) {
+		await transaction.query(`ROLLBACK TO SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
+		await transaction.query(`RELEASE SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
+		throw error;
+	}
+}
+
 //the role a borrowed transaction had must be back before the next core statement runs (E-2584)
 export async function runAsThePluginRoleInsideATransaction<Row>(
 	transaction: Driver,
@@ -45,18 +62,12 @@ export async function runAsThePluginRoleInsideATransaction<Row>(
 		"SELECT current_setting('role') AS role",
 		[],
 	);
-	await transaction.query(`SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
-	try {
+	return runInsideASavepoint(transaction, async () => {
 		await transaction.query(`SET LOCAL ROLE ${role}`, []);
 		const rows = await transaction.query<Row>(sql, [...params]);
 		await transaction.query("SELECT set_config('role', $1, true)", [held?.role ?? "none"]);
-		await transaction.query(`RELEASE SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
 		return rows;
-	} catch (error) {
-		await transaction.query(`ROLLBACK TO SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
-		await transaction.query(`RELEASE SAVEPOINT ${PLUGIN_STATEMENT_SAVEPOINT}`, []);
-		throw error;
-	}
+	});
 }
 
 const SEQUENCES_OF_THE_TABLES = `
