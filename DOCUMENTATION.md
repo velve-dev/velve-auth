@@ -4886,6 +4886,11 @@ The last row of the table is the one to hold on to when reading the code: an
 account that reaches its first confirmation with no password loses no session,
 because nothing was taken away from it.
 
+A `beforeSessionRevoke` hook that throws on the `email_verified` announcement
+makes all three confirming routes answer `500 internal_error` and leaves
+everything unchanged: the token unspent, the password in place, every session
+standing and the address unconfirmed (E-2730, E-2733).
+
 ### `auth.email.requestVerification(input)`
 
 Takes no address. The one it confirms is the one on the account, read from the
@@ -6750,7 +6755,7 @@ that revokes under a named reason announces:
 | `password_changed` | `password.change`, `password.set` | every session of the account, the caller's included | before the transaction opens |
 | `password_reset` | `password.redeemReset`, `password.redeemResetWithRecoveryCode` | every session of the account | inside the transaction, after the account row is locked |
 | `identity_linked` | the OAuth callback finishing a link | the one session the link began in, if the account still owns it | before the transaction opens |
-| `email_verified` | `signIn.magicLink.redeem`, `email.redeemVerification`, `email.redeemChange`, when it is the address's first confirmation and removes a password set in another session (S-LINK-4) | every session of the account | inside the transaction, after the account row is locked |
+| `email_verified` | `signIn.magicLink.redeem`, `email.redeemVerification`, `email.redeemChange`, when it is the address's first confirmation and removes a password set in another session (S-LINK-4) | every session of the account | inside the transaction, after the account row is locked and before any of those sessions is deleted; the token is already redeemed, the password row deleted and the address confirmed, so the hook sees the account in that state |
 
 **A refusal on a credential change refuses the change.** A hook that throws on
 `password_changed` stops the change before its transaction opens: the password,

@@ -12,7 +12,9 @@ import { postTo } from "./flows-fixtures.js";
  * called with a foreign `Origin` on both paths, with no origin on the direct server method, and
  * without an `Origin` header on the HTTP path in every `Sec-Fetch-Site` form. Every call carries a
  * live session, so a handler the check let through would have something to change, and every
- * table of the schema is compared by content before and after the refused calls (E-2731).
+ * table of the schema but `rate_bucket` is compared by content before and after the refused calls
+ * (E-2731). The admitted same-origin reads are not among those calls, and a rate limiter may write
+ * its buckets before the origin check, which 3.11 does not forbid (E-2732).
  */
 
 const FOREIGN_ORIGIN = "https://evil.example.com";
@@ -140,10 +142,14 @@ async function codeOfHttpCall(answer: Response): Promise<string> {
 	}
 }
 
-/** Every table of the schema by content, so an update shows up as well as an insert or a delete. */
+/**
+ * Every table of the schema but `rate_bucket` by content, so an update shows up as well as an
+ * insert or a delete.
+ */
 async function everyTableByContent(): Promise<Record<string, string>> {
 	const tables = await mounted.connection.query<{ name: string }>(
-		"SELECT table_name AS name FROM information_schema.tables WHERE table_schema = $1 ORDER BY 1",
+		`SELECT table_name AS name FROM information_schema.tables
+		  WHERE table_schema = $1 AND table_name <> 'rate_bucket' ORDER BY 1`,
 		[mounted.schema],
 	);
 	const digests: Record<string, string> = {};
@@ -195,6 +201,7 @@ describe("T-CSRF-1 over every row of 3.15 D.3, on both paths", () => {
 		const before = await everyTableByContent();
 		expect(Object.keys(before).length).toBeGreaterThan(10);
 		expect(before.session).not.toBe("");
+		expect(Object.keys(before)).not.toContain("rate_bucket");
 
 		const refusedOtherwise: string[] = [];
 		for (const route of checked) {
