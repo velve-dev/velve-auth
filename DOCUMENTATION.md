@@ -1103,12 +1103,13 @@ answers byte for byte the same, whatever produced it.
 ### Cookies
 
 The library sets exactly three cookies, and the set is enumerated in
-`src/core/http/cookies.ts` (S-COOKIE-6). A response that would set anything else
-fails with `internal_error` rather than being sent.
+`src/core/http/cookies.ts` (S-COOKIE-6), with the session cookie's name taken
+from `session.cookieName` when one is configured. A response that would set
+anything else fails with `internal_error` rather than being sent.
 
 | Cookie | Lifetime | Attributes |
 |---|---|---|
-| `__Host-velve_session` | the configured session lifetime | `HttpOnly; Secure; SameSite=Lax; Path=/` |
+| `__Host-velve_session`, or `session.cookieName` | the configured session lifetime | `HttpOnly; Secure; SameSite=Lax; Path=/` |
 | `__Host-velve_pending` | 300 seconds | `HttpOnly; Secure; SameSite=Lax; Path=/` |
 | `__Host-velve_oauth_state` | 600 seconds | `HttpOnly; Secure; SameSite=Lax; Path=/` |
 
@@ -1129,18 +1130,27 @@ server-side `state` row in `velve.oauth_flow` and PKCE (3.10), not this
 attribute. Its 600 seconds are chosen so the pointer outlives the row it points
 at; a pointer that expires first turns a working callback into a refusal.
 
-**The three names are not configurable.** They come from the enumeration in
-`src/core/http/cookies.ts`, which is also what a response is checked against
-before it is sent. Both the name and the value are checked against a token
+**Only the session cookie's name is configurable.** `session.cookieName`
+replaces `__Host-velve_session` everywhere the session cookie is named: it is
+the name written on sign-in, cleared on sign-out, read on every request and
+enumerated when a response is checked, and a cookie still carrying the default
+name is then ignored like any application cookie. The pending and the OAuth
+state cookie keep their names, because the configuration offers no option for
+them, and a `cookieName` equal to either of them is refused at startup, since
+one cookie would otherwise be read as two. The names come from the enumeration
+in `src/core/http/cookies.ts` — `cookieNamesWithSession` puts the configured
+session name into it — which is also what a response is checked against before
+it is sent. Before 1.2.0 the option was validated at startup and then ignored,
+and the session cookie was always `__Host-velve_session` (E-2550). Both the name and the value are checked against a token
 charset first, so no name and no value can end a `Set-Cookie` field early and
 append an attribute of its own.
 
 The types behind them, for anyone reading `core/http/cookies.ts`:
-`DEFAULT_COOKIE_NAMES` is the enumeration itself; `CookieInstruction` is one
+`DEFAULT_COOKIE_NAMES` is the enumeration with no name configured; `CookieInstruction` is one
 cookie about to be written (`name`, `value`, `maximumAgeInSeconds`,
 `attributes`), and every one of those four parts is checked before it is
 interpolated into the header; `CookiePolicy` is what the writer is built from —
-the names a request is read with, the `sameSite` choice and the session cookie's
+the names written and read, the `sameSite` choice and the session cookie's
 `Max-Age`; and `CookieWriter` is what a handler sees on its context, six
 methods named after roles rather than names — `setSession`, `clearSession`,
 `setPending`, `clearPending`, `setOAuthState`, `clearOAuthState`.
@@ -1364,6 +1374,7 @@ Freshness is measured against `createdAt`, never against `lastUsedAt` (3.5).
 | `routes` | `readonly AnyRoute[]` | The route table, already filtered by identity mode and configuration. |
 | `origins` | `readonly string[]` | The allowed origins. An empty list rejects every checked route. |
 | `trustedProxies` | `readonly string[]` | The CIDR ranges whose `X-Forwarded-For` counts. Empty — the default — means the connection address counts and no header can move a bucket (S-RATE-3). |
+| `sessionCookieName` | `` `__Host-${string}` `` | The session cookie's name: `session.cookieName`, or `__Host-velve_session` when none is configured. |
 | `cookieSameSite` | `"lax" \| "strict"` | Which of the two writable attribute sets the cookies carry. There is no third value. |
 | `sessionCookieMaximumAgeInSeconds` | `number` | `Max-Age` of the session cookie: a whole number of seconds, at most 400 days. |
 | `freshnessWindowInSeconds` | `number` | Measured against `session.createdAt`. |
@@ -3378,7 +3389,7 @@ interface SessionConfig {
 | `absoluteTimeout` | `"30d"` | how long a session may live at all; **never** extended |
 | `idleWriteInterval` | `"1h"` | how often at most the idle deadline is written back |
 | `freshnessWindow` | `"15m"` | how long after sign-in an operation on credentials is allowed |
-| `cookieName` | `"__Host-velve_session"` | the session cookie's name |
+| `cookieName` | `"__Host-velve_session"` | the session cookie's name, written and read by the handler |
 | `cookie.sameSite` | `"lax"` | the only cookie attribute that is a choice |
 
 `Duration` is a whole number followed by `s`, `m`, `h` or `d`. `"1.5h"`,
@@ -3389,7 +3400,10 @@ some of them; write `"90m"` instead of `"1.5h"`.
 forces `Secure` and `Path=/` and forbids `Domain`, which is what rules out
 cookie tossing from a subdomain; `sameSite: "none"` is absent for the same
 reason. A `cookieName` without the prefix is a type error and, if forced
-through, a startup error.
+through, a startup error. A configured `cookieName` replaces the default
+everywhere the session cookie is named, and the default name is then not read
+at all; the pending and the OAuth state cookie keep their fixed names (see
+[Cookies](#cookies)).
 
 Reading the block also refuses combinations that cannot hold, each with the
 name of the option it refused:
@@ -3400,7 +3414,8 @@ name of the option it refused:
   given back,
 - `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
 - `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
-- `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh.
+- `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh,
+- `cookieName` equal to `__Host-velve_pending` or `__Host-velve_oauth_state` — one cookie would be read as two.
 
 The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
 outlive the one deadline nothing extends. **`absoluteTimeout` above 400 days is

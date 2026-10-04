@@ -1,6 +1,11 @@
 import type { FrozenContext } from "../plugin/config.js";
 import type { CallerResolver } from "./caller.js";
-import { type CookiePolicy, type CookieSameSite, DEFAULT_COOKIE_NAMES } from "./cookies.js";
+import {
+	type CookiePolicy,
+	type CookieSameSite,
+	cookieNamesWithSession,
+	type HostPrefixedCookieName,
+} from "./cookies.js";
 import type { RateLimiter } from "./rate-limit.js";
 import type { AnyRoute, RouteMetadata } from "./route.js";
 
@@ -15,6 +20,7 @@ export interface HttpEnvironment {
 	readonly origins: readonly string[];
 	/** CIDR ranges whose `X-Forwarded-For` counts, and when empty the connection address does */
 	readonly trustedProxies: readonly string[];
+	readonly sessionCookieName: HostPrefixedCookieName;
 	readonly cookieSameSite: CookieSameSite;
 	readonly sessionCookieMaximumAgeInSeconds: number;
 	readonly freshnessWindowInSeconds: number;
@@ -36,7 +42,7 @@ export interface WebHandlerTarget {
 
 export function cookiePolicyOf(environment: HttpEnvironment): CookiePolicy {
 	return {
-		names: DEFAULT_COOKIE_NAMES,
+		names: cookieNamesWithSession(environment.sessionCookieName),
 		sameSite: environment.cookieSameSite,
 		sessionMaximumAgeInSeconds: environment.sessionCookieMaximumAgeInSeconds,
 	};
