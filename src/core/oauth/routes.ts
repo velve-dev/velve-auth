@@ -5,6 +5,7 @@ import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import type { Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
+import { answerWithRedirect } from "../http/redirect.js";
 import { defineRoute, type RequestContext, type ServerSurface } from "../http/route.js";
 import { object, optional, string } from "../http/validators.js";
 import type { OAuthLinkStart } from "./flow-repository.js";
@@ -140,6 +141,10 @@ export function oauthRoutes(services: RouteServices) {
 		requestBody: "form",
 		handler: completeFlow,
 	});
+
+	//the two callbacks are the only routes whose output becomes a Location (S-REDIR-3)
+	answerWithRedirect(callback);
+	answerWithRedirect(callbackFormPost);
 
 	const list = defineRoute({
 		name: "identity.list",

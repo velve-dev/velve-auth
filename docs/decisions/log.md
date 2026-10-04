@@ -12731,3 +12731,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The sources are merged by name and a name seen twice is `invalid_input`, whatever the values — one rule, no comparison, and the conservative side of the requirement. On a `POST` the query is still not read, but a query name the body or the path also carries is refused. A query name nothing else carries stays ignored, as before.
 
 **Price.** A request that repeats a value in two places for convenience, such as a client appending `?provider=github` to the callback path for its own logging, now fails where it used to work. The merged input is a prototype-less object, like the query reader's, so a body field named `__proto__` is a field and not a setter.
+
+<a id="e-2241"></a>
+
+### Only the two OAuth callbacks can answer with a Location
+`E-2241` · input-and-redirect · response shape, decided
+
+**Context.** S-REDIR-3 says the only `Location` the library emits is the OAuth callback's 302. `toResponse` in `src/core/http/web-handler.ts` passed every route's output to `readRedirectPath`, which turned any record with a string `redirectToPath` into a 302. A plugin route returning `{ redirectToPath: "/somewhere" }` was answered `302 Location: /somewhere`, and one returning `{ redirectToPath: "//evil.example" }` was answered 500 because the path check threw. `test/http-redirect-routes.test.ts` showed both, and its sweep over the mounted route table found three routes setting `Location` where two are allowed. The existing sweep in `test/oauth-redirect-corpus.test.ts` covers the OAuth feature's six routes and so could not see a plugin.
+
+**Rejected.** Refusing at start a plugin route whose output declares `redirectToPath`. A plugin's handler is typed `unknown` in its output and is a JavaScript function, so nothing at start can see what it will return; the refusal would have had to happen per response, as a 500, which turns a field name into an outage. Also rejected: finding the callbacks by name or path in the handler, which a plugin cannot imitate today only because `assertRouteTableIsUnambiguous` refuses a second route on that path, and which would break silently on a rename.
+
+**Reason.** The callback routes are marked where `src/core/oauth/routes.ts` builds them, with `answerWithRedirect(route)`, which records the built route object in a `WeakSet` beside `toRedirectPath`. `readRedirectPath` now takes the route and returns `null` for any route not in the set, so the output is answered as ordinary JSON. The marker is not exported from any package entry, so a plugin cannot mark its own route, and it is keyed on the object rather than on a name a plugin could also declare.
+
+**Price.** `readRedirectPath`'s signature changed, and `test/http-redirect.test.ts`, which proved the 302 mechanics with a synthetic route, now marks that route itself. A field called `redirectToPath` in a plugin's output reaches the browser as data, so an application that relied on a plugin redirecting has to do the redirect in its own client.

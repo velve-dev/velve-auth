@@ -1,4 +1,5 @@
 import { VelveError } from "./error-map.js";
+import type { RouteMetadata } from "./route.js";
 import { isRecord } from "./validators.js";
 
 export type RedirectPath = string & { readonly __brand: "RedirectPath" };
@@ -25,8 +26,20 @@ export function redirectTo(path: RedirectPath): Redirect {
 	return { redirectToPath: path };
 }
 
-export function readRedirectPath(output: unknown): RedirectPath | null {
-	if (!isRecord(output) || typeof output.redirectToPath !== "string") {
+const redirectingRoutes = new WeakSet<RouteMetadata>();
+
+/** marks a built route as one whose output may become a 302, which only the OAuth callback is */
+export function answerWithRedirect(route: RouteMetadata): void {
+	redirectingRoutes.add(route);
+}
+
+//a route not marked here answers its output as JSON whatever fields it carries (S-REDIR-3)
+export function readRedirectPath(route: RouteMetadata, output: unknown): RedirectPath | null {
+	if (
+		!redirectingRoutes.has(route) ||
+		!isRecord(output) ||
+		typeof output.redirectToPath !== "string"
+	) {
 		return null;
 	}
 	return toRedirectPath(output.redirectToPath);

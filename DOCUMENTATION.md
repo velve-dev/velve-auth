@@ -1026,7 +1026,7 @@ handler and not by the application (L-6). A response with a body carries
 | Situation | Answer |
 |---|---|
 | Handler returned a value | `200` with that value as JSON |
-| Handler returned `redirectTo(…)` | `302` with `Location: <path>` and no body |
+| One of the two OAuth callback routes returned `redirectTo(…)` | `302` with `Location: <path>` and no body — on any other route the same output is an ordinary `200` JSON value |
 | Handler returned nothing | `204` with no body |
 | Method and path match no route | `404` with no body — the 25 error codes have no code for "no such route" |
 | Anything threw | The status of the mapped error code, with the error envelope below |
@@ -1408,6 +1408,15 @@ from a request, not to this layer, which never accepts one.
 
 `redirectTo(…)` combines with a session token in the same output; the token
 still goes into the cookie and never into the `Location` value (S-REDIR-4).
+
+Only the two OAuth callback routes, `signIn.oauth.callback` and
+`signIn.oauth.callbackFormPost`, can answer with a redirect (S-REDIR-3). They
+are marked with `answerWithRedirect(route)` where the OAuth routes are built,
+and the handler reads `redirectToPath` from no other route's output. A plugin
+route — or any other route — that returns `{ redirectToPath: "/somewhere" }`
+answers `200` with that object as JSON and sets no `Location`; it is not
+refused at start, because what a handler returns is only known when it runs
+(E-2241).
 
 ### CORS
 

@@ -10,6 +10,7 @@ import { VelveError } from "./error-map.js";
 import { type RouteCall, type RouteOutcome, runRoute, toLoggedFailure } from "./pipeline.js";
 import { readRedirectPath } from "./redirect.js";
 import { bodilessResponse, errorResponse, jsonResponse, redirectResponse } from "./response.js";
+import type { RouteMetadata } from "./route.js";
 import { assertRouteTableIsUnambiguous, matchRoute, type RouteMatch } from "./router.js";
 import { isRecord } from "./validators.js";
 
@@ -161,11 +162,15 @@ function lastInstructionPerCookie(
 	return [...byName.values()];
 }
 
-function toResponse(outcome: RouteOutcome<unknown>, environment: HttpEnvironment): Response {
+function toResponse(
+	route: RouteMetadata,
+	outcome: RouteOutcome<unknown>,
+	environment: HttpEnvironment,
+): Response {
 	const parts = moveTokensIntoCookies(outcome.output, environment);
 	const cookies = lastInstructionPerCookie(parts.cookies, outcome.cookies);
 	assertCookieNamesAreEnumerated(cookies);
-	const redirectPath = readRedirectPath(parts.body);
+	const redirectPath = readRedirectPath(route, parts.body);
 
 	if (redirectPath !== null) {
 		return redirectResponse(redirectPath, cookies);
@@ -200,7 +205,7 @@ export function toWebHandler(
 		}
 		try {
 			const call = readRouteCall(request, url, match, environment, readClientAddress);
-			return toResponse(await runRoute(match.route, call, environment), environment);
+			return toResponse(match.route, await runRoute(match.route, call, environment), environment);
 		} catch (cause) {
 			return errorResponse(toLoggedFailure(cause, match.route.name, environment), []);
 		}
