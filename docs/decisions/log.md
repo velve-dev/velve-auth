@@ -12719,6 +12719,156 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Every one of those rows lands on the same line of `CLAUDE.md`, so every merge after the first would conflict there. Reserving all fourteen ranges in one change before the first branch starts is the partition rule in §5 applied to the table itself.
 **Price.** Ranges reserved for work that may turn out smaller stay as gaps in the numbering, which §6 accepts. Concerns `CLAUDE.md` §6.
 
+<a id="e-2180"></a>
+
+### The recovery-code reset keys its account bucket the way sign-in does
+`E-2180` · recovery-reset-rate · fixes S-RATE-7, closed
+
+**Context.** `redeemResetWithRecoveryCode` passed the identifier to `enforceAccountRateLimit` as it was submitted. Every other caller passes a normalised form: sign-in through `comparisonFormOf`, the mailed flows through `normaliseEmail`, the session routes through the stored address. With `perAccount` at capacity 2, twelve attempts across six spellings of one address were all answered `invalid_recovery_code` and wrote six account buckets, while `/sign-in/password` answered 429 on the third spelling. The test added here showed the same on the mounted instance with three spellings: case, surrounding space and fullwidth forms.
+**Rejected.** (a) `normaliseEmail` in modes `email` and `email_or_username` and the username key in mode `username`, choosing by the mode the way `findUserByIdentifier` does. (b) Resolving the account first and keying by its stored address.
+**Reason.** (a) gives the same string as `comparisonFormOf` for every identifier it accepts and needs a fallback for those it refuses, so it is two code paths for one value. `comparisonFormOf` is what sign-in already uses for the identical lookup fields, so the two anonymous password routes now key alike. (b) is what S-RATE-7 forbids: the key is formed before the user is resolved, so an existing and a missing account advance the same row.
+**Price.** A malformed identifier still gets a bucket of its own per distinct comparison form, as it does on sign-in; such an identifier names no account, so the ceiling it lifts belongs to nobody. Concerns `src/core/flows/reset.ts`.
+
+<a id="e-2181"></a>
+
+### The recovery-code reset asks the account bucket before the KDF
+`E-2181` · recovery-reset-rate · fixes S-RATE-7, closed
+
+**Context.** The same function derived the new password with Argon2id before it asked the account bucket, so a refused attempt had already held a semaphore place and paid for a derivation. T-RATE-7 requires the rejected responses to run no KDF. The test counts `argon2idAsync` calls per request and saw one for the refused third attempt once the key alone had been fixed.
+**Rejected.** Leaving the derivation first on the ground that `redeemReset` derives before it spends its token (S-DOS-2).
+**Reason.** That ordering in `redeemReset` is about the one-time token, not the rate bucket, and `redeemReset` declares no account bucket a derivation could precede. Sign-in spends its account token before anything else for the reason E-1196 gives, and the recovery-code reset is the same anonymous password attempt. The order is the same for an existing and a missing account, so the statements an unknown identifier runs still match a resolved one's (S-TIM-6), and the derivation still runs before the code is consumed.
+**Price.** A new password the policy refuses now spends an account token before it is refused with `password_unacceptable`, where it used to be refused for free. The test commit cited S-DOS-5 for the KDF assertion; S-DOS-5 is the per-address limiter before the semaphore, and the requirement the assertion proves is S-RATE-7 through T-RATE-7. Concerns `src/core/flows/reset.ts`.
+
+<a id="e-2120"></a>
+
+### A sign-in removes the session the browser presented, whoever owns it
+`E-2120` · signin-replaces-session · session lifecycle, frozen
+
+**Context.** The requirement audit found that S-FIX-1 and S-FIX-3 held for three of the eight `TRUST_LEVEL_EVENTS` and not for the other five. Password change, password reset and identity linking already removed the previous row. Password sign-in, passkey sign-in and the three second-factor completions only inserted, and so did the magic link and the provider sign-in, which S-FIX-1 covers as sign-ins although the constant does not name them. A browser that signed in while it still carried a cookie T1 got T2 and kept T1's row: one row for `sha256(T1)` and `GET /session` with T1 answered 200 with the session. `SessionService.reissue({ previousToken })` existed and no route called it. The documentation said a sign-in calls `issue` because "there is no session yet", which is true only for a browser without a cookie. `test/signin-replaces-session.test.ts` was written first and failed on those five events, on both extra sign-ins and on both foreign-cookie cases, each time with one row still standing for T1.
+**Rejected.** (a) Calling the existing `reissue` from the sign-in routes. It refuses when the previous row is missing (E-239) and when it belongs to another user (`SessionOwnerMismatchError`), and a sign-in has to succeed with a stale cookie, an expired one or one of another account. (b) Deleting the presented row in a statement of its own before or after the insert. S-FIX-1 asks for one transaction, and two statements leave a moment with two live rows or with none. (c) Keeping a presented row of another account standing. The answer writes T2 into the same cookie, so that browser loses T1 either way, and a row nobody holds any more stays valid until its deadlines run out. (d) Doing the same for identity linking when the callback carries a cookie other than the session the link began in. Linking already replaces that session by its id (E-588) and passes T-FIX-1 and T-FIX-3. Adding a second removal there was outside what the audit found.
+**Reason.** A new repository method, `replacePresentedSession`, deletes the presented row by its token hash, if a token was presented, and inserts the new row in one transaction. `SessionService.issueReplacingPresented` hashes `RequestContext.sessionToken` and calls it. Every sign-in route now goes through it: password, passkey, magic link, provider sign-in, the second-factor completion (through a new `presentedSessionToken` on `SecondFactorCompletion.complete`) and password reset. Removing the row whatever account owns it is the decision this entry exists to record. The `DELETE` is the owner-free one signing out already uses, whose predicate is the secret itself (S-OWNER-2), so holding the cookie is the same authority to end it as signing out is. The transaction writes one user-owned table only, so no account lock is taken (CLAUDE.md §7). In a reset and a second-factor completion it runs inside a transaction that already has its lock or its consumed row first, and nothing in it comes before those.
+**Price.** `SessionService` and `SecondFactorCompletion` both gain a member, and the shipped declarations were re-recorded. The provider callback sees a session cookie only when the browser sends one. A provider answering by `form_post` arrives as a cross-site POST, which a `lax` cookie does not travel with, so there the presented row stays standing as it did before this change. Identity linking with a callback cookie different from the link's own session leaves that other row standing, per (d).
+
+<a id="e-2121"></a>
+
+### A sign-up does not remove the session the browser presented
+`E-2121` · signin-replaces-session · sign-up, deliberate gap
+
+**Context.** Sign-up also writes `__Host-velve_session`, so a browser that signs up while carrying a cookie overwrites it and leaves the old row standing, exactly the defect E-2120 removes from the sign-ins. Sign-up is not one of the `TRUST_LEVEL_EVENTS` and S-FIX-1 does not name it.
+**Rejected.** Calling `issueReplacingPresented` from sign-up as well.
+**Reason.** A sign-up with an address that is already taken runs the same registration and then rolls it back (E-627), so that both cases answer alike. The removal of the presented row would be rolled back with it. Afterwards the old cookie would still work for a taken address and not for a new one, and that difference tells a caller whether the address has an account (S-ENUM-3).
+**Price.** A browser that signs up while signed in keeps one orphaned live row until its idle or absolute deadline. Removing it would need a removal outside the rolled-back transaction on both paths, and that is a change to the sign-up flow this branch does not own.
+
+<a id="e-2122"></a>
+
+### Replacing a presented session does not announce a revocation to plugins
+`E-2122` · signin-replaces-session · plugin hooks, revisit if a plugin needs it
+
+**Context.** Signing out calls `beforeSessionRevoke` with reason `sign_out` before the row goes. A sign-in that now removes the presented row removes a session too.
+**Rejected.** Calling `beforeSessionRevoke` for the replaced row. No `RevokeReason` fits a replacement, and borrowing `sign_out` would tell a plugin the user signed out when they signed in.
+**Reason.** A fitting reason means a new member of `RevokeReason`, which is part of the plugin interface. The requirement this branch fixes is about the row, not about the hook. A hook that could veto the removal would also have to be able to veto the sign-in, and nothing decides that today.
+**Price.** A plugin that counts or mirrors revocations does not see these rows go. Only the provider path announces the new session through `beforeSessionCreate`, so a plugin cannot work this out from the creation hooks either.
+
+<a id="e-2150"></a>
+
+### The pipeline starts deferred work in a macrotask once the answer is handed back
+`E-2150` · rehash-after-response · runtime behaviour, settled
+
+**Context.** S-TIM-5 asks for the rehash after a successful sign-in to run after the response has been sent and not to lengthen the measured sign-in. `verifiedAccount` in `src/core/password/routes.ts` started it with `void check.rehash?.()` straight after verification, before `signedIn` issued its session and read the user, so the Argon2id derivation ran on the same event loop as the rest of the sign-in. A probe of 200 accounts per group, identical Argon2id credentials differing only by a stale key version, production parameters, mounted handler, measured a median of 66.4 ms with the rehash against 42.5 ms without, where T-TIM-5 allows 5 ms. The library has no hook that fires when a response has been written: the web handler returns a `Response` and the adapter around it sends it, and a server method returns a value.
+**Rejected.** (a) Returning a post-response task from the route to the web handler, and having the handler start it after building the `Response`. The server method would need the same code a second time, and a route that throws after verifying, a disabled account for one, would need a third path for its task. (b) Starting the rehash from `queueMicrotask` or a resolved promise at the end of the handler. A microtask still runs before the continuation that receives the answer, so it orders nothing. (c) Wrapping the response body in a stream and starting the rehash when the body is pulled. That reaches the moment the adapter reads the answer, but it works only in the web handler and changes what every route's `Response` is made of for one route's sake. (d) A `waitUntil`-style option the application passes in. It is the right hook on a platform that has one, but it is a new public option for a requirement that holds without it on a long-lived process.
+**Reason.** `runRoute` is the one function both callers go through, and its `finally` runs on every outcome. So the pipeline keeps a list of deferred work per request context, a route adds to it through `deferUntilAnswered`, and the `finally` starts the list with `setTimeout(..., 0)`. A macrotask runs only after the microtask queue has drained, which includes the continuation in `toWebHandler` that builds the `Response` and the one in the caller that receives it, and on the server method path the continuation that receives the result. The list is kept in a `WeakMap` keyed by the context, so `RequestContext`, which plugins see, does not change shape and the shipped declarations stay as they are. The rehash itself is untouched and still takes its place from the KDF semaphore (S-DOS-6). A failure is written to the log at `warn` and is never thrown anywhere a caller can see it. The deterministic test records the start of the derivation against the moment the caller holds its answer: before the change the derivation came first on all three paths, after it the answer does.
+**Price.** "After the answer is handed back" is not "after the bytes are on the wire". An adapter that awaits something of its own before it writes, a stream, a socket, can find the rehash already running on the loop beside it. On the measured path the adapter is the test's own `await`, so this is the guarantee the in-process measurement can check and no more. The deferred work also runs on throwing paths, so a correct password for a disabled account still rewrites its credential after the refusal, as it did before. Concerns `src/core/http/pipeline.ts` and `src/core/password/routes.ts`.
+
+<a id="e-2151"></a>
+
+### A runtime that stops after the response may lose the rehash, and that is accepted
+`E-2151` · rehash-after-response · open, revisit if a waitUntil option is asked for
+
+**Context.** E-2150 starts the rehash in a timer after the answer. A long-lived Node, Bun or Deno process runs that timer. A platform that freezes or ends the isolate once the response is returned, a serverless function or an edge worker without `waitUntil`, may never run it, or may cut it off between the derivation and the write.
+**Rejected.** Awaiting the rehash on such platforms, which is the defect S-TIM-5 forbids, and a `waitUntil` option, which E-2150 rejects for now.
+**Reason.** Losing the rehash loses nothing but the rehash. The write is a compare and swap on the old ciphertext (E-11), so a rewrite that never happens leaves the old credential in place, it still verifies, and the next successful sign-in starts the rewrite again. A rewrite cut off before its write writes nothing.
+**Price.** On such a platform a stale credential may stay stale across many sign-ins, and an operator watching the rehash progress sees it stall without a log line saying why. Concerns `DOCUMENTATION.md` under *Signing in with a password*.
+
+<a id="e-2152"></a>
+
+### T-TIM-5 separates its groups by key version and not by bcrypt
+`E-2152` · rehash-after-response · test construction, deviation from section 6
+
+**Context.** T-TIM-5 in section 6 compares an account with an outdated bcrypt hash against one whose hash is current, 200 measurements per group, medians within 5 ms. Verifying bcrypt and verifying Argon2id at production parameters cost different amounts, so that comparison measures the difference between two verifications as well as the rehash, and the case could fail on a sign-in that never rehashed or pass because the two costs happened to cancel.
+**Rejected.** Following the table to the letter with a bcrypt arm.
+**Reason.** Both groups in `test/password-rehash-timing.test.ts` hold the same Argon2id credential at production parameters and differ only in the key version it is sealed under, so `needsRewrite` asks for a rehash in one group and not in the other and verification costs the same in both. The rehash is then the one thing the medians can differ by. This is the construction the probe that found the defect used.
+**Price.** The case does not exercise the bcrypt import path, which is the most common reason for a rehash in practice; that path is covered by the deterministic tests in `test/password-check.test.ts` and `test/password-storage.test.ts`, not by a measurement. The time to the first byte is taken in process, until the handler returns its `Response`, not over a socket.
+
+<a id="e-2153"></a>
+
+### The T-TIM-5 case plants its own threshold before it reads the result
+`E-2153` · rehash-after-response · test construction, settled
+
+**Context.** A median comparison on a noisy runner can pass because the noise hides a real difference. The timing cases in this repository guard against that with a planted control (E-1534), but their sampler and their plant are built for Welch's t at 1 ms. T-TIM-5 decides on a median difference at 5 ms over a fixed 200 per group.
+**Rejected.** Reusing `sampleUntilResolved` from `test/timing-fixtures.ts`. It grows the sample until a Welch-t resolution is reached, while T-TIM-5 fixes 200 per group, and its plant is 1 ms. Changing it would touch a file every timing case shares.
+**Reason.** A third group signs in exactly like the current group and then spends 5 ms on the clock before its time is taken. The case first requires the difference between that group's median and the current group's to come back within half of 5 ms, and only then reads the stale group against the current group. Between measurements the case waits until the stale credential shows the current key version, so the next measurement starts on a quiet loop and the database part of T-TIM-5 is checked on every account. Measured on this branch: 24.21 ms with a rehash due against 23.89 ms without, the plant recovered as 5.14 ms. Against the pipeline and password routes of the merge base the same case gave 43.41 ms against 23.33 ms and failed.
+**Price.** The guard shows the medians can see 5 ms, not that they can see anything much smaller, and a band of half the plant is wide. The waiting between measurements means the case does not measure what a rehash already running does to the next sign-in; S-DOS-6 and T-DOS-6 are where that belongs.
+
+<a id="e-2210"></a>
+
+### The weakening detectors read the defaults the code uses
+`E-2210` · weakening-report · S-DEFAULT-1, closed
+
+**Context.** An audit started instances with each weakening `SECURITY_OPTIONS` documents and counted the start lines. Three logged nothing: a caller-supplied `fetch` had a row and no detector, `session.idleTimeout` and `session.absoluteTimeout` were not compared at all (only the freshness window was), and the rate-limit detector read `capacity` and never `refillPerSecond`. The detectors also compared against their own copies of the defaults (`DEFAULT_ADDRESS_CAPACITY`, `DEFAULT_ACCOUNT_CAPACITY`, `DEFAULT_RECOVERY_CODE_COUNT`), and the `safeDefault` strings were literals, so nothing tied either to the values `sessionSettingsOf()` and `rateLimitConfigOf()` resolve an absent option with.
+**Rejected.** Adding the three missing comparisons beside the copied constants. It fixes the three cases the audit found and leaves the next drift between a copy and the code as invisible as these were.
+**Reason.** The detectors now receive the session settings and the rate-limit configuration resolved from the configuration beside the ones resolved from nothing, and compare those; the `safeDefault` strings are built from `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`, `ARGON2ID_FLOOR`, `DEFAULT_RECOVERY_CODE_SHAPE` and `TOTP_TOLERANCE_STEPS`. A test holds those constants to the defaults A.4, A.5, A.6 and A.8 state, starts one instance per documented weakening and requires exactly one line naming the option, and requires a case for every row whose `weakenedBy` does not say nothing weakens it.
+**Price.** `security-options.ts` now imports from five feature modules it did not reach before. The `sessionMetadata` detector still reports `"none"`, which stores less than the default, as a weakening; the row names only `"full"`, and the two were left disagreeing because neither requirement here is about it. Concerns `src/core/auth/security-options.ts` and `src/core/auth/instance.ts`.
+
+<a id="e-2211"></a>
+
+### A raised rate limit is reported at start and not refused
+`E-2211` · weakening-report · S-DEFAULT-1 and S-DEFAULT-3, revisit if the architecture states a ceiling
+
+**Context.** `rateLimit.perIpAddress.refillPerSecond: 1e9` refills a billion tokens a second, which limits nothing, and started without a word. The brief asked for a ceiling above which the value is refused, or at least reported, and for refusal only if the specification allows it.
+**Rejected.** (a) Refusing a refill rate or capacity above a ceiling at start, for example the 100 a second the default `globalPerRoute.alertThresholdPerMinute` of 6000 amounts to. (b) Reporting only above such a ceiling.
+**Reason.** A.6 states the defaults and no bound, and S-DEFAULT-1 is the requirement that covers a weakening: it is permitted when written explicitly and logged at start. S-DEFAULT-6 shows what the architecture writes when it wants a floor enforced, and it wrote none for the rate limit; a ceiling picked here would be a number nobody specified. So the ceiling for reporting is the default itself: any `capacity` or `refillPerSecond` above it, per address or per account, writes the one `rateLimit` line. It was also seen while deciding that thirty-three test configurations set `capacity` and `refillPerSecond` to `100_000` to switch the limiter off for a test, and refusal would have meant rewriting all of them; that was a consideration, not the reason, and it is written down because it pulled in the same direction.
+**Price.** S-DEFAULT-3 says no option deactivates the rate limiting, and a refill of a billion a second deactivates it in effect while starting. It is announced rather than prevented. Whether a value that limits nothing is an option that disables the limiter is a question for the architecture, and this entry does not answer it. Concerns `src/core/auth/security-options.ts`.
+
+<a id="e-2212"></a>
+
+### A plugin route without an address bucket is a start error
+`E-2212` · weakening-report · S-DEFAULT-3, closed
+
+**Context.** `RateLimitRule` allows `perIpAddress: "none"`, the pipeline skips the address bucket for such a route, and `bucketRuleOf` in the plugin registry kept `"none"` as declared. A plugin route could declare both buckets `"none"`, and a `rateLimitRules` entry could replace a declared address bucket with `"none"`. The equivalent exemption from the origin check, `originCheck: "exempt"`, has been a start error since E-639.
+**Rejected.** (a) Narrowing `PluginRoute`'s `rateLimit.perIpAddress` to `BucketRule` in the type, as `originCheck` was narrowed to `"checked"`. (b) Refusing `"none"` in either bucket.
+**Reason.** 3.11 says the origin check and the rate limit always come first, also for plugin routes, so a plugin route with no address bucket is the rate-limit half of what `plugin_route_exempts_the_origin_check` refuses. The check runs on the rule that wins after `rateLimitRules`, and also refuses a missing rule and a bucket whose numbers are not finite and at least zero, because a JavaScript plugin can write either and the pipeline would hand them to the limiter. (a) was left because it changes the published declarations and 3.15 G types a plugin route as the full `RouteDefinition`; the runtime check holds for a plugin written in JavaScript either way. (b) was rejected because the account bucket can only be consumed by a handler that knows an account identifier, and the core's own address-only routes declare `perAccount: "none"` too.
+**Price.** A new start error code joins the public union, and every plugin that declared `"none"` for convenience, the fixtures of thirteen test files among them, has to declare a bucket. The core's `GET /session` and `GET /pending` remain unlimited, as 3.15 D.3 states, and a plugin has no way to declare such a read. Concerns `src/core/plugin/registry.ts` and `src/core/auth/startup.ts`.
+
+<a id="e-2213"></a>
+
+### The forbidden-switch scan follows the option type's imports
+`E-2213` · weakening-report · T-DEFAULT-3, closed
+
+**Context.** The test for S-DEFAULT-2 and S-DEFAULT-3 searched `src/core/auth` for `disablePkce` and its siblings. `PasswordConfig`, `OAuthConfig`, `VelvePlugin`, `SessionConfig` and a plugin route's declaration are each typed in their own module, so a switch added to any of them passed. T-DEFAULT-3 also says "and variants", which a fixed list of names covers only for the variants someone wrote down.
+**Rejected.** Listing the feature directories by hand. The list is a second copy of what the type imports, and it falls behind the first time a type moves.
+**Reason.** The scan now walks every relative import starting at `core/auth/config.ts`, asserts the walk reaches the password, OAuth, plugin, session, identity and route types, and adds a pattern for variants: `disable`, `skip`, `bypass`, `without`, `no`, `ignore`, `unsafe` or `allowInsecure`, followed by PKCE, state, origin, rate limit or CSRF. A planted name is shown to be found by both halves, so a clean run is a scan that looked and found nothing.
+**Price.** The walk follows value imports as well as type imports and reaches most of `src/core`, so a comment anywhere there that names one of these switches in prose fails the test and has to be reworded. The pattern still misses a switch spelled as a positive boolean, `pkce: false` for instance. Concerns `test/auth-startup.test.ts`.
+
+<a id="e-2214"></a>
+
+### The plugin address-bucket refusal rests on a strict reading of S-DEFAULT-3, and it breaks plugins that started on 1.1.0
+`E-2214` · weakening-report · correction of E-2212's basis, release 1.2.0
+
+**Context.** E-2212 gave section 3.11 as the reason a plugin route without an address bucket is a start error, saying 3.11 puts the rate limit in front of every plugin route. The independent review found that 3.11 says something narrower: a plugin may not run before the security middleware, and the origin check and the rate limiting always come first, also on direct server calls. That sentence is about the order in which they run. It does not say every plugin route must declare an address bucket, and nothing else in the architecture says so either. E-2212's reason stands as it was written; this entry records what the refusal actually rests on.
+**Rejected.** (a) Withdrawing the refusal, because the architecture does not state it. (b) Leaving E-2212 as the only record, so that a reader takes the refusal as something 3.11 demands.
+**Reason.** The basis is S-DEFAULT-3 read strictly: the library contains no option that deactivates the rate limiting, and a plugin route's `rateLimit` declaration, together with an entry in `rateLimitRules`, is an option that deactivated it for that route. The reading is stricter than the text, and it is not the only possible one. 3.15 D.3 gives two core reads no limit, `GET /session` and `GET /pending`, and those stay without a bucket, so the library does not hold its own routes to the rule it now holds plugin routes to. The difference is that those two rows are written in the architecture and a plugin route has no row. The owner decided to keep the refusal.
+**Price.** It is a breaking change for plugins in the field. A plugin that starts on 1.1.0 with `perIpAddress: "none"` on any route, or with a `rateLimitRules` entry that writes it, refuses to start on the next release with `plugin_route_without_address_rate_limit`. The owner decided that the next release is 1.2.0, released as a security fix rather than a major version, and that its release notes must name this refusal, together with `rate_limit_bucket_unusable` from E-2215, as the change that can stop an existing installation from starting. Writing those notes is outside this branch's files and is handed to whoever cuts the release. Concerns `src/core/plugin/registry.ts` and the 1.2.0 release notes.
+
+<a id="e-2215"></a>
+
+### A rate-limit bucket of none in the application's configuration is a start error
+`E-2215` · weakening-report · S-DEFAULT-3, closed
+
+**Context.** The review showed the same hole one level up from E-2212. `RateLimitConfig` types `perIpAddress` and `perAccount` as `BucketRule`, but a configuration written in JavaScript, or passed through a cast, can carry the `"none"` that `RateLimitRule` allows. `rateLimitConfigOf()` handed it to every core route that takes the configured bucket, the pipeline skipped the bucket on all of them at once, and the detector from E-2210 compared `"none".capacity` with the default and reported nothing. This branch had refused the plugin case and missed the case that reaches every core route.
+**Rejected.** Reporting `"none"` as a weakening and starting. A bucket that is not there is not a raised limit, which E-2211 reports, but the limit switched off, which S-DEFAULT-3 says no option may do.
+**Reason.** `assertConfigurationIsStartable` refuses either bucket, when it is given, with `rate_limit_bucket_unusable` unless it is a real rule whose capacity and refill rate are finite numbers of at least zero. The test is the one E-2212 applies to a plugin route's address bucket, moved to `core/http/rate-limit.ts` as `isUsableBucketRule` so both refusals share one definition and cannot drift apart.
+**Price.** A JavaScript installation that wrote `"none"` there started on 1.1.0 and refuses on 1.2.0, the breaking change E-2214 records for the release notes. The account bucket is refused as well, although only routes that take an account identifier consume it, because the type promises a bucket and the core reaches it on every one of those routes. `globalPerRoute` is not checked here, since it only raises an alarm and limits nothing. Concerns `src/core/auth/startup.ts`, `src/core/http/rate-limit.ts` and `src/core/plugin/registry.ts`.
+
 <a id="e-2390"></a>
 
 ### A reading route answers a same-origin GET that carries no Origin

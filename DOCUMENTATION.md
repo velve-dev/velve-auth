@@ -3268,6 +3268,7 @@ from a caller.
 | `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | `DELETE … WHERE user_id = $1 AND id <> $2` | how many rows went |
 | `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
 | `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
+| `replacePresentedSession({ presentedTokenHash, insert })` | `DELETE … WHERE token_sha256 = $1` when a token was presented, plus `INSERT`, one transaction | the new `Session` |
 | `replaceEverySessionOfUser({ actor, insert })` | `DELETE` of every row of the user plus `INSERT`, one transaction | the new `Session` |
 
 `observedAt` is the database's `now()`, read in the same statement as the row.
@@ -3297,6 +3298,16 @@ at the same moment therefore leave one live session rather than two — the lose
 `DELETE` matches nothing once the winner has committed, and its transaction rolls
 back. `SessionService.reissue` turns that refusal into `session_required`,
 because a session that vanished mid-flight is a session the caller no longer has.
+
+`replacePresentedSession` is what every sign-in uses. It removes the row the
+browser presented, if there is one, and inserts the new row in the same
+transaction. Unlike `replaceSession` it neither requires the presented row to
+exist nor to belong to the user signing in: a stale cookie, an expired row and a
+cookie of another account are all removed or found absent, and the sign-in
+proceeds. The answer overwrites that cookie in this browser, so a row left
+standing would be a live session nobody holds any more (E-2120). It reaches the
+row through the same owner-free `DELETE` as signing out, for the same reason —
+the predicate is the secret itself.
 
 `replaceEverySessionOfUser` is what a password change uses: it removes **every**
 session of the user and issues one new one, in one transaction. There is no
@@ -3370,7 +3381,8 @@ decides after the fact is measured against it.
 
 | Method | What it does |
 |---|---|
-| `issue({ userId, factors, observed })` | a new session — this is a sign-in |
+| `issue({ userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
+| `issueReplacingPresented({ presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
 | `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
 | `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
 
@@ -3378,16 +3390,34 @@ decides after the fact is measured against it.
 stored follows `sessionMetadata` (L-10).
 
 Every event that changes the trust level ends the session that preceded it, and
-each event calls the method that matches what preceded it. A sign-in calls
-`issue`: there is no session yet, and the second factor is completed out of
-`velve.pending_authentication`, which is not one either. An event that follows an
-existing session — the second factor completed on top of one, a new identity
-linked — calls `reissue`. A password change calls
-`reissueAfterCredentialChange`, which has no parameter that could keep the other
-sessions (S-FIX-6), and a password reset has no surviving session at all and
-calls `revokeEverySessionOfUser`. In every case the token the caller held before
-the change is gone from the table, and a request carrying it is answered exactly
-like a request without a cookie (S-FIX-1, S-FIX-3).
+each event calls the method that matches what preceded it. A sign-in — by
+password, by passkey, by magic link, through a provider, and the completion of a
+second factor — calls `issueReplacingPresented` with `RequestContext.sessionToken`,
+the cookie the request carried or `null`. A browser that is already signed in and
+signs in again therefore keeps one row, not two, and the old token stops working
+in the same transaction that writes the new one (E-2120). The second-factor
+completion passes the same token through
+`SecondFactorCompletion.complete({ presentedSessionToken })`, and the provider
+callback through `OAuthCallbackArrival.presentedSessionToken`. A new identity
+linked calls `reissueSessionOfUser`, which replaces the session the link began in.
+A password change calls `reissueAfterCredentialChange`, which has no parameter
+that could keep the other sessions (S-FIX-6). A password reset revokes every
+session of the account and then calls `issueReplacingPresented`, so a presented
+cookie of another account goes too. In every case the token the caller held
+before the change is gone from the table, and a request carrying it is answered
+exactly like a request without a cookie (S-FIX-1, S-FIX-3).
+`test/signin-replaces-session.test.ts` sends each of the eight
+`TRUST_LEVEL_EVENTS` with the previous cookie and checks exactly that.
+
+Sign-up still calls `issue`. A sign-up with an address that is already taken
+runs the same registration and rolls it back (E-627); removing the presented row
+inside that transaction would roll the removal back as well, and whether the old
+cookie still worked afterwards would tell a caller whether the address was taken
+(E-2121).
+
+Replacing a presented session does not call the `beforeSessionRevoke` hook. No
+`RevokeReason` names a replacement, and adding one changes the plugin interface,
+so a plugin that counts revocations does not see these rows go (E-2122).
 
 Re-issue is always an `INSERT` plus a `DELETE`; `UPDATE velve.session SET
 user_id` does not exist, and a re-issue whose new row would belong to a
@@ -4551,6 +4581,13 @@ identifier that names no account, an account that never generated codes, an
 account whose codes were all spent, and a disabled account. As with the mailed
 reset, every session is revoked and a new one is issued.
 
+The per-account bucket is keyed by the identifier in the comparison form sign-in
+uses — trimmed, NFKC-normalised and case-folded — so `Owner@Example.com`,
+` owner@example.com ` and its fullwidth spelling all draw from one bucket, and an
+identifier that names no account draws from its bucket after the same number of
+attempts. The bucket is asked first: an attempt it refuses answers `rate_limited`
+without deriving the new password, so a refused attempt costs no KDF slot.
+
 ### Deadlines
 
 Fixed per purpose, from architecture 3.7, and **not configurable**.
@@ -5251,7 +5288,12 @@ compile (E-349).
 There is no option that disables the origin check, the rate limiter, PKCE or the
 state check, and none that keeps the other sessions alive across a password
 change (S-DEFAULT-2, S-DEFAULT-3). Those names are absent from the type, and a
-test reads the list of them from a constant and searches the assembly for each.
+test reads the list of them from a constant and searches for each — and for the
+variants a pattern catches, `skipOriginCheck` or `no_rate_limit` — in every file
+the option type reaches by import from `core/auth/config.ts`: the password,
+OAuth, plugin, session and identity options and the route a plugin declares, not
+only the assembly. A plugin route cannot declare itself free of the address
+bucket either; that is a start error, listed under Plugins.
 
 **`log` has no default sink.** The core may not write to `console`, so a library
 that ships one would have to break its own rule; the default therefore drops
@@ -5273,6 +5315,7 @@ because nothing else would tell you.
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `rate_limit_bucket_unusable` | `rateLimit.perIpAddress` or `rateLimit.perAccount` is given and is not a bucket whose `capacity` and `refillPerSecond` are finite numbers of at least zero — `"none"` from a JavaScript configuration included, which would take every core route out of that bucket (S-DEFAULT-3, E-2215) |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
@@ -5340,7 +5383,40 @@ than surfacing in an advisory (S-DEFAULT-1, T-DEFAULT-1).
 
 At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
-can be counted. An option left at its default produces nothing.
+can be counted. An option left at its default produces nothing, and so does one
+written out at exactly its default or set stricter than it.
+
+What counts as weaker, option by option:
+
+| Option | Logged when |
+|---|---|
+| `session` | `idleTimeout`, `absoluteTimeout` or `freshnessWindow` is longer than its default; the line lists each one that is, in milliseconds |
+| `sessionMetadata` | anything but `"truncated"` |
+| `trustedProxies` | any entry |
+| `rateLimit` | `capacity` or `refillPerSecond` of `perIpAddress` or of `perAccount` is above its default |
+| `oauth` | an entry in `trustedProviders`, or `storeTokens: true` |
+| `fetch` | any `fetch` the caller supplies |
+| `plugins` | any plugin |
+| `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
+| `recoveryCodes` | `count` below ten |
+| `clock` | any clock the caller supplies |
+
+The other rows say nothing weakens them: `password` and a username mode without
+recovery codes are refused instead, and a TOTP tolerance above one step is not
+applied.
+
+**A raised rate limit is reported, not refused.** `refillPerSecond: 1e9` limits
+nothing, and it starts with one `rateLimit` line rather than a start error. A.6
+fixes the defaults and states no ceiling, so no ceiling is invented here; the
+line is how an operator learns that one is gone (E-2211). A bucket written as
+`"none"` is not a raised limit but no limit, and refuses the start with
+`rate_limit_bucket_unusable` (E-2215).
+
+The `safeDefault` strings are built from the constants the code resolves an
+absent option with — `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`,
+`ARGON2ID_FLOOR`, the recovery-code shape and the TOTP tolerance — and a test
+holds those constants to the defaults A.4, A.5, A.6 and A.8 state, so the row an
+operator reads cannot drift from the value the library uses.
 
 A default configuration writes no line at all. The counters live in
 `velve.rate_bucket`, through `createRateLimiter` from `core/limit`; the assembly
@@ -5708,7 +5784,7 @@ migration, and removing a plugin leaves its tables where they are.
 
 ### Start errors
 
-Fourteen configurations refuse the start with a `VelveStartupError` — twelve
+Fifteen configurations refuse the start with a `VelveStartupError` — thirteen
 codes only a plugin can trip, and two more a plugin can trip and so can a core
 route. None of them is a warning, because each leaves a question with no answer:
 
@@ -5722,6 +5798,7 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
+| `plugin_route_without_address_rate_limit` | A plugin route's rule — after `rateLimitRules` has replaced it — has no usable `perIpAddress` bucket: `"none"`, no rule at all, or a `capacity` or `refillPerSecond` that is not a finite number of at least zero (S-DEFAULT-3). `perAccount: "none"` is allowed. |
 | `plugin_migration_table_not_prefixed` | A migration's `createsTables` names a table outside `<id>_`. |
 | `plugin_error_code_not_namespaced` | An `errorCodes` entry does not begin `<id>.` (S-DEFAULT-5). |
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
@@ -6085,6 +6162,25 @@ keeps a plugin's rule off a core route's bucket: `"session.revoke"` in the map
 of a plugin that does not contribute `session.revoke` refuses the start rather
 than limiting nothing, and there is no key it could write that reaches a route
 it does not own.
+
+The rule that wins must carry an address bucket. The pipeline skips the address
+bucket of a route whose `perIpAddress` is `"none"`, so a declaration or a map
+entry that writes `"none"` there is refused with
+`plugin_route_without_address_rate_limit`, exactly as an `originCheck` other than
+`"checked"` is. The account bucket stays optional, because only a route that
+takes an account identifier can consume it.
+
+This refusal is a strict reading of S-DEFAULT-3 — no option deactivates the rate
+limiting — and not something the architecture states for plugin routes: 3.11
+fixes the order in which the origin check and the rate limit run, not that every
+plugin route declares a bucket. The core keeps its two unlimited reads,
+`GET /session` and `GET /pending`, because 3.15 D.3 gives them no limit; a plugin
+route has no such row (E-2212, E-2214).
+
+**Upgrading from 1.1.0.** A plugin that started on 1.1.0 with
+`perIpAddress: "none"` on a route, or with a `rateLimitRules` entry writing it,
+refuses to start from 1.2.0 on. Declare an address bucket for that route —
+`{ capacity, refillPerSecond }` — instead (E-2214).
 
 ### One reading of the declaration
 
@@ -6719,8 +6815,18 @@ signing in, signing up and both writing rows (`S-DOS-3`).
 
 After a successful verification against a credential whose stored parameters or
 key version are behind the configuration, the credential is rewritten in the
-background. The rewrite is started and not awaited, so it does not lengthen the
-sign-in that triggered it (`S-TIM-5`).
+background. The rewrite does not start until the answer has been handed back —
+the `Response` to the web handler's caller, the result to the caller of
+`auth.signIn.password` — so it does not lengthen the sign-in that triggered it
+(`S-TIM-5`, `E-2150`). It takes its place from the same semaphore as every other
+derivation (`S-DOS-6`). A rewrite that fails is logged at `warn` as
+`deferred work failed` with the route's name and never reaches the caller; the
+credential is left as it was and the next successful sign-in tries again.
+
+The rewrite runs in the same process after the answer, with no hook of the
+runtime's own, so a platform that stops the isolate the moment a response is
+returned may cut it short. Nothing is lost when it does: the old credential still
+verifies, and the next sign-in starts the rewrite again (`E-2151`).
 
 ### `POST /password/set` — `auth.password.set`
 

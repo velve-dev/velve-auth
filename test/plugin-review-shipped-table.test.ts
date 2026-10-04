@@ -49,7 +49,7 @@ function pluginRoute(
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: (_input: unknown, _context: RequestContext) => {
 			reached.push(overrides.name);
 			return Promise.resolve({ seen: true });

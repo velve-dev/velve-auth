@@ -177,6 +177,7 @@ async function signedInBySecondFactor(
 	const issued = await services.completeSecondFactor.complete({
 		pendingToken: toPendingToken(spent.pendingToken),
 		factor: spent.factor,
+		presentedSessionToken: context.sessionToken,
 		observed: { ipAddress: context.ipAddress, userAgent: context.userAgent },
 	});
 	const user = await services.users.findUserById(issued.session.userId);
@@ -542,7 +543,8 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			if (user === null || user.disabledAt !== null) {
 				throw new ConcealedError("user_disabled_on_webauthn_assertion");
 			}
-			const issued = await services.sessions.issue({
+			const issued = await services.sessions.issueReplacingPresented({
+				presentedToken: context.sessionToken,
 				userId: assertion.userId,
 				factors: ["webauthn"],
 				observed: { ipAddress: context.ipAddress, userAgent: context.userAgent },

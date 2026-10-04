@@ -66,6 +66,7 @@ export interface OAuthCallbackArrival {
 	readonly state: string;
 	readonly iss: string | null;
 	readonly pointer: string | null;
+	readonly presentedSessionToken: string | null;
 	readonly observed: ObservedRequest;
 }
 
@@ -353,8 +354,9 @@ export function createOAuthService(input: {
 	//the pending row is written first and withdrawn again when it names no factor (E-563)
 	async function signInOrAskForTheSecondFactor(
 		userId: string,
-		observed: ObservedRequest,
+		arrival: OAuthCallbackArrival,
 	): Promise<SignInResult> {
+		const { observed } = arrival;
 		const pending = await services.pending.begin({ userId, factorsCompleted: OAUTH_FACTORS });
 		if (pending.pending.availableFactors.length > 0) {
 			return {
@@ -366,7 +368,12 @@ export function createOAuthService(input: {
 		await services.pending.cancel({ token: pending.token });
 
 		const { issued, user } = await issueSessionAround(userId, () =>
-			services.sessions.issue({ userId, factors: OAUTH_FACTORS, observed }),
+			services.sessions.issueReplacingPresented({
+				presentedToken: arrival.presentedSessionToken,
+				userId,
+				factors: OAUTH_FACTORS,
+				observed,
+			}),
 		);
 		return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 	}
@@ -504,7 +511,7 @@ export function createOAuthService(input: {
 			}
 
 			const resolved = await accountForSignIn(provider, account, facts);
-			const result = await signInOrAskForTheSecondFactor(resolved.userId, arrival.observed);
+			const result = await signInOrAskForTheSecondFactor(resolved.userId, arrival);
 			if (result.status === "signed_in") {
 				await services.pluginRuntime.hooks.afterSignIn({
 					method: "oauth",

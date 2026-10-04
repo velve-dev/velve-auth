@@ -175,8 +175,9 @@ describe("code style the rules make a finding", () => {
 
 		// E-245 pinned four and said the fifth would have to be argued for. This is the other
 		// direction: `createVelveAuth` now calls `createSessionService`, so the list is one shorter.
+		// `SECURITY_OPTIONS` states its session default from `DEFAULT_SESSION_CONFIG` (E-2210), and
+		// the list is one shorter again.
 		expect(unused.sort()).toEqual([
-			"session/config.ts: DEFAULT_SESSION_CONFIG",
 			"session/config.ts: InvalidSessionConfigError",
 			"session/freshness.ts: isSessionFresh",
 		]);

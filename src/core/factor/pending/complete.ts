@@ -21,6 +21,7 @@ export interface SecondFactorCompletion {
 	complete(input: {
 		readonly pendingToken: PendingToken;
 		readonly factor: SecondFactor;
+		readonly presentedSessionToken: string | null;
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
 }
@@ -32,7 +33,7 @@ export function createSecondFactorCompletion(
 	const schema = options.schema ?? "velve";
 
 	return {
-		complete({ pendingToken, factor, observed }) {
+		complete({ pendingToken, factor, presentedSessionToken, observed }) {
 			return options.driver.transaction(async (tx) => {
 				const pending = createPendingAuthenticationService({ driver: tx, schema });
 				const sessions = createSessionService({
@@ -45,7 +46,8 @@ export function createSecondFactorCompletion(
 				});
 
 				const consumed = await pending.consume(pendingToken);
-				return sessions.issue({
+				return sessions.issueReplacingPresented({
+					presentedToken: presentedSessionToken,
 					userId: consumed.userId,
 					factors: [...consumed.factorsCompleted, factor],
 					observed,

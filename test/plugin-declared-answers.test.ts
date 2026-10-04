@@ -44,7 +44,10 @@ function throwingRoute(options: {
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: options.rateLimit ?? { perIpAddress: "none", perAccount: "none" },
+		rateLimit: options.rateLimit ?? {
+			perIpAddress: { capacity: 1000, refillPerSecond: 10 },
+			perAccount: "none",
+		},
 		handler: (_input: unknown, _context: RequestContext) =>
 			Promise.reject(new VelveError(options.thrown as "internal_error")),
 	} as PluginRoute<"quota">;
@@ -205,7 +208,7 @@ describe("a plugin route cannot exempt itself from the origin check (S-CSRF-6)",
 			caller: "anonymous",
 			freshness: "not_required",
 			originCheck,
-			rateLimit: { perIpAddress: "none", perAccount: "none" },
+			rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 			handler: () => Promise.resolve({ seen: true }),
 		};
 	}
@@ -261,7 +264,7 @@ describe("a route name may not fold onto something every object has", () => {
 			caller: "anonymous",
 			freshness: "not_required",
 			originCheck: "checked",
-			rateLimit: { perIpAddress: "none", perAccount: "none" },
+			rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 			handler: () => Promise.resolve({ seen: true }),
 		};
 	}

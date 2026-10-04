@@ -42,7 +42,7 @@ function routeAnsweringTwice(
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: () => {
 			reached.push("demo.open");
 			return Promise.resolve({ seen: true });
