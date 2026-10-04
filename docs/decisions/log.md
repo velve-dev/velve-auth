@@ -12638,3 +12638,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Keeping the 80-column wrapping and reporting about 550 lines. (b) Moving rules the brief listed as staying, such as the subsections on correcting and translating an entry, to reach the number. (c) Merging separate paragraphs or dropping the blank lines after headings purely to lower the count.
 **Reason.** The brief allowed the wrapping to change, so each paragraph and list item now sits on one line, as the entries of this log already do, and each section 9 description is joined onto its command line. That brought the file to 347 lines. The remaining 47 lines could only come out of rules or out of the file's paragraph structure, and neither is the cut this branch was asked to make.
 **Price.** The target is missed by 47 lines and the file no longer wraps at 80 columns, so its diffs are by paragraph rather than by line. Reaching 300 needs a decision this branch did not take: which further rules may live outside the file that binds. Concerns `CLAUDE.md`.
+
+<a id="e-2002"></a>
+
+### The owner chose the reviewable wrapping over the shorter count
+`E-2002` · rules-only · reverses part of E-2001
+
+**Context.** E-2001 recorded that CLAUDE.md was cut to 347 lines by putting each paragraph on one line, and that the old 80-column wrapping would have meant about 550. Shown both, the owner of the repository chose the old wrapping. Restored, the file is 596 lines; after the merge of the curated case study, ten sentences had their path changed to `docs/decisions/log.md` and one bullet was added for `CASE-STUDY.md`.
+**Rejected.** Keeping the one-line paragraphs, and moving more rules out to get under 300.
+**Reason.** One-line paragraphs make every line of the file a diff line, so the claim that no sentence was reworded could not be checked by reading the diff. The whitespace-normalised text was compared before and after the rewrap and is identical.
+**Price.** The 300-line target is missed by about three hundred lines, on purpose. E-2001 stays as written. Concerns `CLAUDE.md`.
