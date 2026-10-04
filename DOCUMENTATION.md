@@ -6451,8 +6451,9 @@ With `pluginDatabaseRole` set, each plugin statement on that borrowed
 connection runs inside a savepoint: the role is switched for the statement and
 switched back to whatever the transaction held before the savepoint is
 released, and a statement the database refuses is rolled back to the savepoint,
-so the reset can continue if the hook catches the error. That costs four extra
-statements per plugin statement on this path only (E-2582, E-2584).
+so the reset can continue if the hook catches the error. That wraps each plugin
+statement on this path in five more: reading the role, the savepoint, the
+switch, the switch back and the release (E-2582, E-2584).
 
 The listing and the delete are separate statements on a reset too. The account
 lock does not block a concurrent sign-in from inserting a session, so a session
