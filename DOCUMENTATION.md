@@ -6143,8 +6143,12 @@ and its rate-limit rules apply. A hook can refuse by throwing and observe by
 returning; it cannot replace the answer, because every one of them returns
 `Promise<void>`.
 
-**A hook point only fires if an operation reaches it, and most of the operations
-are not built yet.** `beforeSessionRevoke` runs today on every revocation a
+**A hook point only fires if an operation reaches it.** The four sign-in and
+session points run on every sign-in — password, passkey, magic link, OAuth, and
+the completion of any of them by a second factor — and the two user-create
+points on every sign-up, with the address, without a password and through OAuth;
+[which operations reach which point](#the-sign-in-session-and-user-points) says
+in what order and what a refusal leaves behind. `beforeSessionRevoke` runs on every revocation a
 `RevokeReason` names — sign-out, the three revocation routes, a password change
 or first password set, both resets, an identity link, the first confirmation of
 an address that removes a password set in another session, and a revocation a
@@ -6719,18 +6723,18 @@ answers `500 internal_error` without the plugin's text.
 #### Which points have a producer
 
 The dispatcher runs all seven and the paragraph above describes all seven, but a
-point only fires if an operation reaches it, and most of the operations are not
-built. **This table is the one place that says which do**, and a plugin
-registering a point that does not is told nothing at start.
+point only fires if an operation reaches it. **This table is the one place that
+says which do**, and a plugin registering a point that does not is told nothing
+at start.
 
 | Point | Has a producer |
 |---|---|
-| `beforeSignIn` | no |
-| `afterSignIn` | no |
-| `beforeSessionCreate` | no |
-| `afterSessionCreate` | no |
-| `beforeUserCreate` | no |
-| `afterUserCreate` | no |
+| `beforeSignIn` | **yes** |
+| `afterSignIn` | **yes** |
+| `beforeSessionCreate` | **yes** |
+| `afterSessionCreate` | **yes** |
+| `beforeUserCreate` | **yes** |
+| `afterUserCreate` | **yes** |
 | `beforeSessionRevoke` | **yes** |
 
 Which operations reach a point is stated in the chapter of the feature that
@@ -6738,6 +6742,77 @@ built them; `beforeSessionRevoke`'s are named below. **The cell is a yes or
 a no and never a list**, so a feature that gives a point its first producer flips
 one cell, and a second feature reaching the same point finds it already flipped
 and edits nothing. A list would have made that a collision (E-776).
+
+#### The sign-in, session and user points
+
+Every way in calls the same points in the same order, so a plugin that refuses a
+sign-in refuses it whichever credential is presented (E-2790):
+
+| Operation | Points, in order |
+|---|---|
+| `signIn.password` | `beforeSignIn`, then, when it ends in a session, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `signIn.passkey.finish` | `beforeSignIn`, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `signIn.magicLink.redeem` | `beforeSignIn`, then, when it ends in a session, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| the OAuth callback signing in | `beforeSignIn`, `beforeUserCreate` and `afterUserCreate` when it creates the account, then, when it ends in a session, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `factor.totp.verify`, `factor.webauthn.authenticate.finish`, `factor.recovery.verify` | `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `signUp.withPassword`, `signUp.withoutPassword` | `beforeUserCreate`, `afterUserCreate`, `beforeSessionCreate`, `afterSessionCreate` |
+| the OAuth callback finishing a link | `beforeSessionCreate`, `afterSessionCreate` |
+
+**`beforeSignIn` runs before any credential is examined and never names the
+account.** Its `userId` is always `null`: on a password sign-in it runs after the
+rate limit and before the account is looked up, on a passkey before the
+assertion is judged, on a magic link before the token is redeemed, on OAuth
+before the code is exchanged. So a hook at this point runs alike for an existing
+and a missing account and cannot add a timing or an answer that tells them apart
+(S-TIM-1, E-2791). A refusal here spends neither the mailed link nor the passkey
+challenge; only the rate-limit tokens the request already took are gone. A
+plugin that refuses by account — a ban — refuses at `beforeSessionCreate`, which
+names it.
+
+**A sign-in that stops at a second factor runs `beforeSignIn` once, at the first
+factor**, and nothing else until the factor is completed. The completion is the
+same sign-in, so it does not run `beforeSignIn` again; it runs
+`beforeSessionCreate` after the factor is judged and before the transaction that
+consumes the pending state and writes the session, then `afterSessionCreate` and
+`afterSignIn` (E-2792). `afterSignIn` names the method of the first factor —
+`password`, `oauth` or `magic_link` — and `factors` carries both. A refusal at
+`beforeSessionCreate` leaves the pending state standing, but the TOTP step or the
+recovery code it was judged on is already spent.
+
+**`beforeSessionCreate` runs before the transaction that writes the session
+opens, and `afterSessionCreate` after it commits**, on every sign-in. A refusal
+at `beforeSessionCreate` writes no session and does not remove the session the
+browser presented. On a magic link it comes after the redemption has committed,
+so the link is spent and the address confirmed, together with what that first
+confirmation removed. `afterSignIn` runs after
+`afterSessionCreate` and before the cookie is set. Both `after` points run once
+the session is committed, so a throw there answers with the plugin's code and
+sets no cookie, but the session row stays until it expires or is revoked.
+
+**A sign-up runs all four of its points, and a sign-up on a taken address runs
+them too.** `beforeUserCreate` runs once, with the identifiers the caller sent,
+after the username check and before the address is looked up. The other three run
+inside the registration's transaction, after the account row is written,
+because a taken address is answered by a registration on a drawn cover address
+that is then rolled back (3.13, S-ENUM-3): the cover runs the same three points
+in the same places, its events carry the address the caller sent and not the
+drawn one, and its `userId` names a row that is rolled back afterwards. A
+refusal at any of the four leaves no account and no session (E-2793). Two
+consequences: the hooks run while the registration's transaction is open, so a
+slow hook holds the new account row and its unique index entries for its
+duration; and on a taken address a plugin is told about an account that never
+commits, which is the price of not telling the hook, and through it the caller,
+which addresses are taken. A sign-up does not run `beforeSignIn` or
+`afterSignIn`, because `SignInEvent` names four ways in and a registration is
+none of them; neither `UserCreateEvent` nor `SessionCreateEvent` carries the
+caller's address, so a plugin that refuses by network address has no point at
+which to refuse a sign-up.
+
+**Two operations write a session without these points**: the two password
+resets, `password.redeemReset` and `password.redeemResetWithRecoveryCode`, which
+sign the caller in, and the re-issue on `password.set` and `password.change`.
+Neither runs `beforeSessionCreate` or `afterSessionCreate`, so a plugin's refusal
+there does not reach them (E-2794).
 
 `beforeSessionRevoke` fires **once per session about to go**, and always before
 the rows go, so a hook that throws leaves them standing and the caller gets
@@ -7264,7 +7339,7 @@ the route's name.
 
 ### Not built here
 
-- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. Six of the seven are still waiting for the operation that fires them; nothing is said at start about registering one, because a plugin that registers it is not wrong to have done so.
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All seven have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
 - **A plugin cannot roll a migration back.** There is no `down`, and removing a
   plugin from the configuration leaves its tables and its ledger rows standing.
   Dropping them is the application's to do, by hand — or the plugin's, in a
