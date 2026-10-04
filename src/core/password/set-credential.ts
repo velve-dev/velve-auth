@@ -3,10 +3,10 @@ import { type Actor, actorOfResolvedSession } from "../db/actor.js";
 import { lockAccountRow } from "../db/lock.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
-import { VelveError } from "../http/error-map.js";
+import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
-import type { SessionResolution } from "../session/service.js";
+import type { SessionResolution, SessionService } from "../session/service.js";
 import { createArgon2idHash } from "./argon2.js";
 import { createPasswordCredentialRepository } from "./credential.js";
 import { storedMemoryCeilingKiB } from "./limits.js";
@@ -21,6 +21,16 @@ export async function refuseIfCredentialExists(
 	//set never replaces a stored PHC credential without the current password
 	if ((await environment.credentials.findOwnedBy({ actor })) !== null) {
 		throw new VelveError("factor_already_enrolled");
+	}
+}
+
+async function refuseIfSessionWasRevoked(
+	sessions: SessionService,
+	resolved: SessionResolution,
+): Promise<void> {
+	const live = await sessions.listEveryIdOwnedBy({ resolved });
+	if (!live.includes(resolved.session.id)) {
+		throw new ConcealedError("session_not_found");
 	}
 }
 
@@ -47,7 +57,10 @@ export async function replacePasswordOfSession(
 	const issued = await services.driver.transaction(async (transaction) => {
 		//the account row comes first as a first confirmation writes these tables in reverse (E-1602)
 		await lockAccountRow(transaction, services.schema, input.resolved.userId);
-		const reissued = await services.sessions.boundTo(transaction).reissueAfterCredentialChange({
+		const sessions = services.sessions.boundTo(transaction);
+		//a session a concurrent credential change revoked must not be reissued (E-2701)
+		await refuseIfSessionWasRevoked(sessions, input.resolved);
+		const reissued = await sessions.reissueAfterCredentialChange({
 			resolved: input.resolved,
 			factors: ["password"],
 			observed: observedIn(context),
