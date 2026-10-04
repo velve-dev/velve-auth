@@ -170,7 +170,7 @@ function toResponse(
 ): Response {
 	const parts = moveTokensIntoCookies(outcome.output, environment);
 	const cookies = lastInstructionPerCookie(parts.cookies, outcome.cookies);
-	assertCookieNamesAreEnumerated(cookies);
+	assertCookieNamesAreEnumerated(cookies, cookiePolicyOf(environment).names);
 	const redirectPath = readRedirectPath(route, parts.body);
 
 	if (redirectPath !== null) {

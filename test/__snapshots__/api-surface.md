@@ -1797,7 +1797,7 @@ export {
 ## core/http/environment.d.mts
 
 import { CallerResolver } from "./caller.mjs";
-import { CookieSameSite } from "./cookies.mjs";
+import { CookieSameSite, HostPrefixedCookieName } from "./cookies.mjs";
 import { RateLimiter } from "./rate-limit.mjs";
 import { FrozenContext } from "../plugin/config.mjs";
 import { AnyRoute, RouteMetadata } from "./route.mjs";
@@ -1819,6 +1819,7 @@ interface HttpEnvironment {
   readonly rateLimiter: RateLimiter;
   readonly routes: readonly AnyRoute[];
   readonly sessionCookieMaximumAgeInSeconds: number;
+  readonly sessionCookieName: HostPrefixedCookieName;
   /** CIDR ranges whose `X-Forwarded-For` counts, and when empty the connection address does */
   readonly trustedProxies: readonly string[];
 }
