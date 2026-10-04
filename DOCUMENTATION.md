@@ -7153,6 +7153,14 @@ when the hook returns (E-2795). A `revokeSession` from that context announces
 its revocation to `beforeSessionRevoke` on the same connection. With
 `pluginDatabase` set, `ownTables.query` goes to the plugin login as described
 below for a reset, so its writes commit at once and stay when a cover rolls back.
+That login cannot see the account row the registration has written and not yet
+committed, so a row with a foreign key to `velve.user` for the `userId` a hook
+is told about is refused with `23503`: the hook throws, the registration rolls
+back, and every sign-up answers 500 `internal_error`. Under `pluginDatabase` a
+plugin keys such a row without a foreign key to the account, or writes it from
+a point after the registration has committed. No hook of a sign-up runs there:
+that point is a later sign-in's `afterSessionCreate` or `afterSignIn`, or the
+application once the sign-up has answered.
 
 Two consequences: the hooks run while the registration's transaction is open, so a
 slow hook holds the new account row and its unique index entries for its
@@ -7173,7 +7181,12 @@ connection, and as many concurrent OAuth sign-ups as the pool has connections
 all finish. A refusal at either point, or a later failure in the callback's
 transaction, rolls back the account, the identity and whatever the hook wrote to
 its own tables, unless `pluginDatabase` sends `ownTables.query` to the plugin
-login as above (E-2797). The session points that follow run after that
+login as above (E-2797). Under `pluginDatabase` the same refusal holds: the
+plugin login cannot see the uncommitted account, so an `afterUserCreate` that
+writes a row with a foreign key to `velve.user` for it is refused with `23503`
+and the callback answers 500 `internal_error`; such a row is keyed without that
+foreign key or written from `afterSessionCreate` or `afterSignIn`, which run
+after the account has committed. The session points that follow run after that
 transaction has committed, as on every sign-in.
 
 **The password operations that issue a session run the two session points
