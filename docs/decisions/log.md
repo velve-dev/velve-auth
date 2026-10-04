@@ -13772,3 +13772,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Recording it as a known runtime property only, as E-2612's tag did, which reads as settled.
 **Reason.** S-DOS-3 promises a memory bound and T-DOS-3 measures it as resident-set growth; while the measurement fails the promise is not kept in that form, whatever the cause.
 **Price.** Open until the accelerator's per-call WebAssembly memory is reused or freed promptly, or until the owner amends T-DOS-3 to measure memory held by running derivations instead of the resident set. DOCUMENTATION.md names it in the memory section.
+
+<a id="e-2624"></a>
+
+### hash-wasm's Argon2 checks were read after E-2618 and match the reader
+`E-2624` · dos-memory-bound · follow-up to E-2618, settled
+
+**Context.** E-2618's price says hash-wasm's own validation was not read and calls its limits documented as the RFC's. That was written without looking. Read afterwards in hash-wasm 4.12.0's `index.esm.js`, its Argon2 throws on a salt under 8 bytes, a `hashLength` under 4, `iterations` or `parallelism` not positive, and a memory size below `8 · parallelism`. The Argon2 reader refuses each of these already. hash-wasm is used only for version `0x13` (E-168), so its version check does not arise.
+**Rejected.** Editing E-2618's sentence, which §6 forbids for a reason that was not checked when written.
+**Reason.** The accelerator is the engine that runs whenever it is installed, so the claim that the reader covers it needed to rest on its code and not on an assumption.
+**Price.** None beyond the reading; a later hash-wasm that refuses something new reopens the gap as E-2618 says.
