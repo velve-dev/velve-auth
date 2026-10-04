@@ -6131,6 +6131,75 @@ Up to 1.1 it took `{ pendingToken }` alone and reached the pending row with
 neither check in front of it, which 3.11 does not allow (E-2830). A 1.1 caller
 that passes no `origin` no longer compiles, and at runtime is refused.
 
+#### The namespace types
+
+The four hand-written namespaces after `signOut` have exported types, so an
+application can name what it passes around — a helper that takes `auth.session`
+takes a `SessionNamespace`. All four are exported from `@velve/auth` as types
+only. As shipped in `dist/core/auth/instance.d.mts`:
+
+```ts
+interface SessionNamespace {
+  resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
+  resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>;
+  list(input: ServerCallFields): Promise<Session[]>;
+  revoke(input: { targetSessionId: string } & ServerCallFields): Promise<void>;
+  revokeAllOther(input: ServerCallFields): Promise<{ revokedCount: number }>;
+  revokeAll(input: ServerCallFields): Promise<{ revokedCount: number }>;
+  refresh(input: ServerCallFields): Promise<ResolvedSessionView | null>;
+}
+
+interface PendingNamespace {
+  resolve(token: PendingToken): Promise<PendingAuthentication | null>;
+  resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
+  cancel(input: { pendingToken: PendingToken } & ServerCallFields): Promise<void>;
+}
+
+interface UserNamespace {
+  findById(input: { userId: string }): Promise<User | null>;
+  findByEmail(input: { email: string }): Promise<User | null>;
+  disable(input: { userId: string; reason: string }): Promise<void>;
+  enable(input: { userId: string }): Promise<void>;
+  delete(input: { userId: string }): Promise<void>;
+}
+
+interface UsernameNamespace {
+  isAvailable(input: { username: string } & ServerCallFields): Promise<UsernameAvailabilityAnswer>;
+  change(input: { newUsername: string } & ServerCallFields): Promise<{ readonly user: User }>;
+}
+```
+
+| Type | Where it is | What the identity mode changes |
+|---|---|---|
+| `SessionNamespace` | `auth.session`, in every mode | nothing |
+| `PendingNamespace` | `auth.pending`, in every mode | nothing |
+| `UserNamespace` | `auth.user`, in every mode | in `"email"` `auth.user` is exactly this type; in `"username"` and `"username_email"` it is this type plus `findByUsername(input: { username: string }): Promise<User \| null>`, and in `"username"` its `findByEmail` is marked `@deprecated` |
+| `UsernameNamespace` | `auth.username` | present only in `"username"` and `"username_email"`, absent from the type and the object in `"email"` |
+
+`ServerCallFields` is the six call fields named above: `origin: string | null`,
+required, and `sessionToken`, `pendingToken`, `oauthStateToken`, `ipAddress` and
+`userAgent`, optional. A method whose input carries them runs through its
+route's pipeline, origin check first. A method whose input does not —
+`session.resolveFromHeaders`, `pending.resolve`, `pending.resolveFromHeaders`
+and every method of `auth.user` — has no origin check and no rate limit.
+
+- **`session.resolve` and `session.resolveFromHeaders`** answer a
+  `ResolvedSessionView` — `{ session, user }` — or `null`, and throw
+  `account_disabled` for a valid token on a disabled account (L-4). Neither is
+  rate limited (3.15 B.9). The second is described below.
+- **`pending.resolve(token)`** takes the token itself rather than an object and
+  answers the factors still open, or `null`.
+- **`pending.cancel({ pendingToken, ...callFields })`** is refused with
+  `origin_not_allowed` for a foreign or a `null` origin, and counts against the
+  per-address bucket of `POST /pending/cancel` under `ipAddress`, answering
+  `rate_limited` once that bucket is spent. Past both it deletes the row the token
+  names, if there is one, and resolves to nothing either way.
+- **`user.findByUsername`** exists in `"username"` and `"username_email"` only,
+  and **`user.findByEmail`** is deprecated in `"username"`; both are described
+  under the result types below.
+- **`username.isAvailable`** answers a `UsernameAvailabilityAnswer` —
+  `{ available: boolean; reason?: string }`.
+
 #### Namespaces nobody writes by hand
 
 The five above are written into `instance.ts`. Everything else on the instance is
@@ -8320,6 +8389,62 @@ auth.username.change({ sessionToken, newUsername })        // { user }
 
 Every one of them also takes `origin`, which the origin check reads on the direct
 server call exactly as it reads the header over HTTP (`S-CSRF-1`).
+
+The four objects under those two namespaces have exported types, from
+`@velve/auth` as types only. As shipped in `dist/core/factor/routes.d.mts`, with `ServerCallFields` the call
+fields of [The namespace types](#the-namespace-types):
+
+```ts
+interface TotpNamespace {
+  readonly enroll: {
+    start(input: ServerCallFields): Promise<TotpEnrollment>;
+    finish(input: { code: string } & ServerCallFields): Promise<void>;
+  };
+  verify(input: { code: string } & ServerCallFields): Promise<SignInResult>;
+  remove(input: { code: string } & ServerCallFields): Promise<void>;
+}
+
+interface RecoveryNamespace {
+  generate(input: ServerCallFields): Promise<{ codes: readonly string[] }>;
+  verify(input: { code: string } & ServerCallFields): Promise<SignInResult>;
+  remaining(input: ServerCallFields): Promise<{ remainingCount: number }>;
+}
+
+interface WebAuthnNamespace {
+  readonly register: {
+    start(input: ServerCallFields): Promise<WebAuthnRegistrationChallenge>;
+    finish(input: { challengeToken: string; response: AuthenticatorResponse; label: string }
+      & ServerCallFields): Promise<{ credential: WebAuthnCredential }>;
+  };
+  readonly authenticate: {
+    start(input: ServerCallFields): Promise<WebAuthnAuthenticationChallenge>;
+    finish(input: { challengeToken: string; response: AuthenticatorResponse }
+      & ServerCallFields): Promise<SignInResult>;
+  };
+  list(input: ServerCallFields): Promise<WebAuthnCredential[]>;
+  rename(input: { credentialId: string; label: string } & ServerCallFields):
+    Promise<{ credential: WebAuthnCredential }>;
+  remove(input: { credentialId: string } & ServerCallFields): Promise<void>;
+}
+
+interface SignInPasskeyNamespace {
+  start(input: ServerCallFields): Promise<WebAuthnAuthenticationChallenge>;
+  finish(input: { challengeToken: string; response: AuthenticatorResponse }
+    & ServerCallFields): Promise<SignInResult>;
+}
+```
+
+| Type | Where it is |
+|---|---|
+| `TotpNamespace` | `auth.factor.totp` |
+| `RecoveryNamespace` | `auth.factor.recovery` |
+| `WebAuthnNamespace` | `auth.factor.webauthn` — on the type always, on the object only with `webauthn` configured (below) |
+| `SignInPasskeyNamespace` | `auth.signIn.passkey` |
+
+Which token a method reads — `sessionToken` or `pendingToken` — is the caller
+column of [The rows](#the-rows); both are optional fields of `ServerCallFields`,
+so the type does not say which one a method needs, and a missing one is refused
+as the HTTP path refuses it.
 
 `response` is the authenticator's answer, passed through as the browser produced
 it. It is checked for being an object and not for its contents: WebAuthn
