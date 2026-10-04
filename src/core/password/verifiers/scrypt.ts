@@ -27,7 +27,7 @@ export async function deriveScrypt(input: {
 		p: input.parallelism,
 		dkLen: input.hashBytes,
 		asyncTick: ASYNC_TICK_IN_MILLISECONDS,
-		//noble's own memory limit must not refuse what the memory ceiling admitted
+		//noble's own memory limit must not refuse what the memory ceiling admitted (E-2618)
 		maxmem: BYTES_PER_BLOCK_UNIT * input.blockSize * (costFactor + input.parallelism + 1),
 	});
 }

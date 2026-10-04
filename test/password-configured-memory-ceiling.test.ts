@@ -184,6 +184,7 @@ describe("the import ceiling under the default parameters", () => {
 			driver: migrated.connection,
 			keys,
 			schema: migrated.schema,
+			memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 		});
 		const [row] = await migrated.connection.query<{ id: string }>(
 			`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
@@ -257,6 +258,7 @@ describe("a credential the derivation itself refuses (E-2617)", () => {
 				driver: migrated.connection,
 				keys: testKeyProvider(),
 				schema: migrated.schema,
+				memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 			});
 			const [row] = await migrated.connection.query<{ id: string }>(
 				`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,

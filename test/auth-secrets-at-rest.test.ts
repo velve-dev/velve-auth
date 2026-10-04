@@ -10,6 +10,7 @@ import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
 import { createPasswordCredentialRepository, openPhc } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import { createDummyCredential, setPassword } from "../src/core/password/verify.js";
 import { createOneTimeTokens } from "../src/core/token/one-time-token.js";
@@ -33,7 +34,12 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 	});
 	const config = resolvePasswordConfig({ concurrentHashLimit: 1 });
 
-	const credentials = createPasswordCredentialRepository({ driver: connection, keys, schema });
+	const credentials = createPasswordCredentialRepository({
+		driver: connection,
+		keys,
+		schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+	});
 	await setPassword(
 		{ actor: actorOfTestUser(userId), plaintext: TEST_PASSWORD, setBySessionId: null },
 		{

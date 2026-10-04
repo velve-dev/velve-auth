@@ -3,6 +3,7 @@ import type { Driver } from "../src/core/db/driver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { createVelveAuth } from "../src/index.js";
 import {
 	configFor,
@@ -649,7 +650,12 @@ describe("every refusal of the real sign-in answers alike (S-ENUM-1)", () => {
 		await auth.user.disable({ userId: disabled, reason: "a test" });
 
 		const legacy = await accountWith("legacy@example.com");
-		await createPasswordCredentialRepository({ driver: connection, keys, schema }).write({
+		await createPasswordCredentialRepository({
+			driver: connection,
+			keys,
+			schema,
+			memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+		}).write({
 			actor: actorOfTestUser(legacy),
 			phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,
 			scheme: "bcrypt",

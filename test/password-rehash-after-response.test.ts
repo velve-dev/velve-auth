@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 
 /**
  * Every derivation that writes a new PHC string goes through `createArgon2idHash`; verification
@@ -96,6 +97,7 @@ async function accountBehindTheKeyRing(): Promise<{ email: string; userId: strin
 		driver: migrated.connection,
 		keys: staleKeys,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	}).write({
 		actor: actorOfTestUser(userId),
 		phc: stalePhc,
@@ -216,6 +218,7 @@ async function accountWithBcrypt(): Promise<{ email: string; userId: string }> {
 		driver: migrated.connection,
 		keys: currentKeys,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	}).write({
 		actor: actorOfTestUser(userId),
 		phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,

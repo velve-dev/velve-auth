@@ -4,6 +4,7 @@ import { toWebHandler } from "../src/core/http/web-handler.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import { createArgon2idHash } from "../src/core/password/argon2.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, createLogSink, type LogSink } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -111,7 +112,12 @@ async function accountWithBcrypt(): Promise<{ email: string; userId: string }> {
 		[email],
 	);
 	const userId = (row as { id: string }).id;
-	await createPasswordCredentialRepository({ driver: primary, keys, schema }).write({
+	await createPasswordCredentialRepository({
+		driver: primary,
+		keys,
+		schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+	}).write({
 		actor: actorOfTestUser(userId),
 		phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,
 		scheme: "bcrypt",
@@ -180,7 +186,12 @@ describe("T-RACE-6 — the rehash writes by compare-and-swap (S-RACE-6)", () => 
 
 		const answer = await signIn(first, account.email, PASSWORD);
 		await until(() => gate.arrivals === 1, "the rehash reaching its swap");
-		await createPasswordCredentialRepository({ driver: primary, keys, schema }).write({
+		await createPasswordCredentialRepository({
+			driver: primary,
+			keys,
+			schema,
+			memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+		}).write({
 			actor: actorOfTestUser(account.userId),
 			phc: await createArgon2idHash(new TextEncoder().encode(THIRD_PARTY_PASSWORD), {
 				memoryKiB: 19456,

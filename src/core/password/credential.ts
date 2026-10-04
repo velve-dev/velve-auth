@@ -8,7 +8,6 @@ import {
 	type KeyProvider,
 } from "../keys/index.js";
 import { CredentialWriteError } from "./errors.js";
-import { MAXIMUM_STORED_MEMORY_KIB } from "./limits.js";
 import { type PasswordScheme, schemeOfStoredHash } from "./scheme.js";
 import { credentialReachesDerivation } from "./verify-switch.js";
 
@@ -76,7 +75,7 @@ export interface PasswordCredentialRepositoryOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
 	readonly schema?: string;
-	readonly memoryCeilingKiB?: number;
+	readonly memoryCeilingKiB: number;
 }
 
 function assertSchemeMatchesCredential(phc: string, scheme: PasswordScheme): void {
@@ -104,7 +103,7 @@ export function createPasswordCredentialRepository(
 		options.schema ?? PASSWORD_CREDENTIAL_SCHEMA,
 		PASSWORD_CREDENTIAL_TABLE,
 	);
-	const memoryCeilingKiB = options.memoryCeilingKiB ?? MAXIMUM_STORED_MEMORY_KIB;
+	const { memoryCeilingKiB } = options;
 
 	async function findOne(ownerId: string): Promise<PasswordCredentialRow | null> {
 		const [row] = await options.driver.query<RawRow>(

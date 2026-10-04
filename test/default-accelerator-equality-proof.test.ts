@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 
 /**
  * T-DEFAULT-7 at the configured parameters. Each PHC string comes from the library's own
@@ -47,7 +48,8 @@ async function loadEngine(): Promise<Engine> {
 			salts.queued.push(salt);
 			return argon2.createArgon2idHash(accepted(password).bytes, config.argon2id);
 		},
-		verify: (password, phc) => verifyAgainstScheme("argon2id", accepted(password), phc),
+		verify: (password, phc) =>
+			verifyAgainstScheme("argon2id", accepted(password), phc, MAXIMUM_STORED_MEMORY_KIB),
 	};
 }
 

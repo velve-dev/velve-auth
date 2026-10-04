@@ -17,7 +17,7 @@ export function argon2CostIsAcceptable(
 	memoryKiB: number,
 	iterations: number,
 	parallelism: number,
-	memoryCeilingKiB = MAXIMUM_STORED_MEMORY_KIB,
+	memoryCeilingKiB: number,
 ): boolean {
 	return (
 		memoryKiB <= memoryCeilingKiB &&
@@ -33,7 +33,7 @@ export function scryptCostIsAcceptable(
 	costExponent: number,
 	blockSize: number,
 	parallelism: number,
-	memoryCeilingKiB = MAXIMUM_STORED_MEMORY_KIB,
+	memoryCeilingKiB: number,
 ): boolean {
 	return (
 		blockSize >= 1 &&

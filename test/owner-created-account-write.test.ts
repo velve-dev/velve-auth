@@ -5,6 +5,7 @@ import {
 	openPhc,
 	type PasswordCredentialRepository,
 } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -27,6 +28,7 @@ beforeAll(async () => {
 		driver: migrated.connection,
 		keys,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	});
 	stored = await storedHashesFor(drawTestPassword());
 }, 180_000);

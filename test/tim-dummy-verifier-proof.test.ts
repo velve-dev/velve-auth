@@ -29,6 +29,7 @@ vi.mock("../src/core/password/argon2.js", async (importOriginal) => {
 });
 
 import type { Driver } from "../src/core/db/driver.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import type { PasswordEnvironment } from "../src/core/password/verify.js";
 
 const { rootKeyProvider } = await import("../src/core/keys/index.js");
@@ -58,7 +59,11 @@ beforeAll(async () => {
 	environment = {
 		config,
 		keys,
-		credentials: createPasswordCredentialRepository({ driver: noRows, keys }),
+		credentials: createPasswordCredentialRepository({
+			driver: noRows,
+			keys,
+			memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+		}),
 		semaphore: createKdfSemaphore({ limit: config.concurrentHashLimit }),
 		dummy: await createDummyCredential(keys, config),
 	};

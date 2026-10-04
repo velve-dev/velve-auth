@@ -47,7 +47,7 @@ function accepted(plaintext: string): AcceptedPassword {
 }
 
 async function verify(scheme: PasswordScheme, plaintext: string, hash: string): Promise<boolean> {
-	return verifyAgainstScheme(scheme, accepted(plaintext), hash);
+	return verifyAgainstScheme(scheme, accepted(plaintext), hash, MAXIMUM_STORED_MEMORY_KIB);
 }
 
 beforeAll(async () => {
@@ -270,9 +270,9 @@ describe("the ceiling on a stored cost parameter", () => {
 		expect(MAXIMUM_STORED_PBKDF2_ITERATIONS).toBe(2_000_000);
 
 		// Better Auth's scrypt at 32 MiB, Firebase at 16 MiB, Django's PBKDF2 at 1.2 million.
-		expect(scryptCostIsAcceptable(14, 16, 1)).toBe(true);
-		expect(scryptCostIsAcceptable(14, 8, 1)).toBe(true);
-		expect(argon2CostIsAcceptable(19456, 2, 1)).toBe(true);
+		expect(scryptCostIsAcceptable(14, 16, 1, MAXIMUM_STORED_MEMORY_KIB)).toBe(true);
+		expect(scryptCostIsAcceptable(14, 8, 1, MAXIMUM_STORED_MEMORY_KIB)).toBe(true);
+		expect(argon2CostIsAcceptable(19456, 2, 1, MAXIMUM_STORED_MEMORY_KIB)).toBe(true);
 		expect(pbkdf2CostIsAcceptable(1_200_000)).toBe(true);
 
 		// GoTrue, Auth0 and Clerk all write cost 10.
@@ -294,10 +294,23 @@ describe("the ceiling on a stored cost parameter", () => {
 	});
 
 	it("refuses at the value one past each ceiling", () => {
-		expect(argon2CostIsAcceptable(MAXIMUM_STORED_MEMORY_KIB + 1, 2, 1)).toBe(false);
-		expect(argon2CostIsAcceptable(1024, MAXIMUM_STORED_ARGON2_ITERATIONS + 1, 1)).toBe(false);
-		expect(argon2CostIsAcceptable(1024, 2, MAXIMUM_STORED_PARALLELISM + 1)).toBe(false);
-		expect(scryptCostIsAcceptable(14, 8, MAXIMUM_STORED_PARALLELISM + 1)).toBe(false);
+		expect(
+			argon2CostIsAcceptable(MAXIMUM_STORED_MEMORY_KIB + 1, 2, 1, MAXIMUM_STORED_MEMORY_KIB),
+		).toBe(false);
+		expect(
+			argon2CostIsAcceptable(
+				1024,
+				MAXIMUM_STORED_ARGON2_ITERATIONS + 1,
+				1,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(false);
+		expect(
+			argon2CostIsAcceptable(1024, 2, MAXIMUM_STORED_PARALLELISM + 1, MAXIMUM_STORED_MEMORY_KIB),
+		).toBe(false);
+		expect(
+			scryptCostIsAcceptable(14, 8, MAXIMUM_STORED_PARALLELISM + 1, MAXIMUM_STORED_MEMORY_KIB),
+		).toBe(false);
 		expect(pbkdf2CostIsAcceptable(MAXIMUM_STORED_PBKDF2_ITERATIONS + 1)).toBe(false);
 		expect(bcryptCostIsAcceptable(`$2b$${MAXIMUM_STORED_BCRYPT_COST + 1}$abcdefghijklmnop`)).toBe(
 			false,

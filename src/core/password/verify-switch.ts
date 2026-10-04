@@ -1,4 +1,3 @@
-import { MAXIMUM_STORED_MEMORY_KIB } from "./limits.js";
 import { type PhcString, parsePhc } from "./phc.js";
 import type { AcceptedPassword } from "./policy.js";
 import type { PasswordScheme } from "./scheme.js";
@@ -78,7 +77,7 @@ export async function verifyAgainstScheme(
 	scheme: PasswordScheme,
 	password: AcceptedPassword,
 	stored: string,
-	memoryCeilingKiB = MAXIMUM_STORED_MEMORY_KIB,
+	memoryCeilingKiB: number,
 ): Promise<boolean> {
 	const verifier = VERIFIER_BY_SCHEME.get(scheme);
 	if (verifier === undefined) {

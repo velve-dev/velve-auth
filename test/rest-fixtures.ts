@@ -5,6 +5,7 @@ import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { decryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createPasswordCredentialRepository, openPhc } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import {
 	type MountedAuth,
 	mountAuth,
@@ -276,6 +277,7 @@ export async function driveOneUserThroughEveryFlow(prefix: string): Promise<Driv
 		driver: mounted.connection,
 		keys,
 		schema: mounted.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	}).findByUserId(userId);
 	if (stored === null) {
 		throw new Error("the password credential is gone");

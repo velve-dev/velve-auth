@@ -11,6 +11,7 @@ import {
 	sealPhc,
 } from "../src/core/password/credential.js";
 import type { CredentialWriteErrorCode } from "../src/core/password/errors.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { parsePhc } from "../src/core/password/phc.js";
 import { needsRehash } from "../src/core/password/rehash.js";
 import type { PasswordScheme } from "../src/core/password/scheme.js";
@@ -119,7 +120,11 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 async function environmentWith(recorder: Recorder): Promise<PasswordEnvironment> {
 	const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 	const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
-	const options: PasswordCredentialRepositoryOptions = { driver: recorder.driver, keys };
+	const options: PasswordCredentialRepositoryOptions = {
+		driver: recorder.driver,
+		keys,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+	};
 	const credentials = createPasswordCredentialRepository(options);
 
 	return {
@@ -185,7 +190,11 @@ describe("the stored credential", () => {
 		};
 		const deaf: PasswordEnvironment = {
 			...environment,
-			credentials: createPasswordCredentialRepository({ driver: silent, keys: environment.keys }),
+			credentials: createPasswordCredentialRepository({
+				driver: silent,
+				keys: environment.keys,
+				memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+			}),
 		};
 
 		await expect(
