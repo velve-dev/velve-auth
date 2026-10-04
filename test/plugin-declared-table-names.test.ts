@@ -339,7 +339,7 @@ describe("a plugin migration changes nothing that is not its own (3.11)", () => 
 	const changes: readonly (readonly [string, string])[] = [
 		[
 			"sets default privileges for every table created in the schema later",
-			"ALTER DEFAULT PRIVILEGES IN SCHEMA velve GRANT SELECT ON TABLES TO PUBLIC;",
+			"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema} GRANT SELECT ON TABLES TO PUBLIC;",
 		],
 		["comments on the schema itself", "COMMENT ON SCHEMA {schema} IS 'demo';"],
 		["comments on a column of a core table", "COMMENT ON COLUMN velve.session.user_id IS 'demo';"],
