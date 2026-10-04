@@ -60,14 +60,14 @@ export async function grantOwnTablesToThePluginRole(options: {
 		const tables = await tx.query<{ name: string }>(EXISTING_TABLES, [schema, declared]);
 		for (const table of tables) {
 			await tx.query(
-				`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ${qualifiedTableName(schema, table.name)} TO ${role}`,
+				`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ${qualifiedTableName(schema, table.name)} TO ${role} /* no owner predicate: S-OWNER-10 a grant changes no row */`,
 				[],
 			);
 		}
 		const sequences = await tx.query<{ name: string }>(SEQUENCES_OF_THE_TABLES, [schema, declared]);
 		for (const sequence of sequences) {
 			await tx.query(
-				`GRANT USAGE, SELECT, UPDATE ON SEQUENCE ${qualifiedTableName(schema, sequence.name)} TO ${role}`,
+				`GRANT USAGE, SELECT, UPDATE ON SEQUENCE ${qualifiedTableName(schema, sequence.name)} TO ${role} /* no owner predicate: S-OWNER-10 a grant changes no row */`,
 				[],
 			);
 		}
