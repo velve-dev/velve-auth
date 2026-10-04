@@ -2331,9 +2331,9 @@ the error column.
 | `factor.recovery.verify` | pending | — | IP+account | `invalid_pending_authentication`, `invalid_recovery_code`, `too_many_factor_attempts` |
 | `identity.link.start` | session | **yes** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
 
-`session.resolve`, `session.resolveFromHeaders`, `pending.resolve` and `pending.resolveFromHeaders`
-are not rate limited: they run on every request of the application, a counter on them would be a
-self-blockade.
+`session.resolve` and `pending.resolve` are not rate limited, nor are
+`session.resolveFromHeaders` and `pending.resolveFromHeaders`: they run on every request of the
+application, a counter on them would be a self-blockade.
 
 ---
 

@@ -2333,9 +2333,9 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `factor.recovery.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_recovery_code`, `too_many_factor_attempts` |
 | `identity.link.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
 
-`session.resolve`, `session.resolveFromHeaders`, `pending.resolve` und `pending.resolveFromHeaders`
-sind nicht ratenbegrenzt: Sie laufen bei jeder Anfrage der Anwendung, ein Zähler darauf wäre eine
-Selbstblockade.
+`session.resolve` und `pending.resolve` sind nicht ratenbegrenzt, ebenso wenig
+`session.resolveFromHeaders` und `pending.resolveFromHeaders`: Sie laufen bei jeder Anfrage der
+Anwendung, ein Zähler darauf wäre eine Selbstblockade.
 
 ---
 
