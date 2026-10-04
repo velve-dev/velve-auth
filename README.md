@@ -71,7 +71,7 @@ pnpm add @velve/auth
 ```
 
 That is the whole install: no tag to remember, no `postinstall`, no native
-binding, no build step. `latest` points at `1.1.0` and `^1.0.0` resolves to it.
+binding, no build step. `latest` points at `1.2.0` and `^1.0.0` resolves to it.
 
 ## Example
 
@@ -134,11 +134,16 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 
 ## Status
 
-> **Status: 1.1.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
+> **Status: 1.2.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
 > stable line and `^1.0.0` resolves. Under semver the documented surface is a promise:
 > nothing in it changes shape without a major version. `1.1.0` added an option
-> and moved nothing. `next` keeps pointing at the last prerelease,
-> `1.0.0-next.2`, and nothing needs it.
+> and moved nothing. `1.2.0` is a security release and does not keep that promise
+> in full: it adds five `VelveStartupError` codes, any of which can refuse an
+> existing installation at start; a `RevokeReason` member, `email_verified`, that
+> an exhaustive `switch` has to handle; a required `sessionCookieName` in
+> `HttpEnvironment`; and changed rate-limit defaults. It is a minor version by the
+> owner's decision rather than a major one (E-2214, E-2520). `next` keeps
+> pointing at the last prerelease, `1.0.0-next.2`, and nothing needs it.
 
 **What the `1.x` line commits this package to** is the surface
 `DOCUMENTATION.md` describes: it may gain something in a minor version, and
