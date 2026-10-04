@@ -66,7 +66,7 @@ const sessionsOf = async (userId: string): Promise<number> =>
 		userId,
 	]);
 
-/** What a sign-in would find. No `/sign-in/password` row is mounted in this tree, so this is the last observable point before it. */
+/** What a sign-in would find, read beside the sign-in itself so a failure says which of the two moved. */
 async function storedCredentialOf(userId: string): Promise<unknown> {
 	return createPasswordCredentialRepository({
 		driver: mounted.connection,
@@ -92,6 +92,29 @@ describe("T-LINK-4: the three cases S-LINK-4 fixes", () => {
 				[userId],
 			),
 		).toBe(0);
+	});
+
+	it("refuses the attacker's password afterwards, over the sign-in route itself", async () => {
+		await post("/sign-up", { email: VICTIM, password: ATTACKER_PASSWORD });
+		const userId = await userIdOf(VICTIM);
+		const before = await post("/sign-in/password", { email: VICTIM, password: ATTACKER_PASSWORD });
+		await post("/sign-in/magic-link/request", { email: VICTIM });
+		await post("/sign-in/magic-link/redeem", { token: tokenOf(await lastMessage("magic_link")) });
+
+		const signIn = await post("/sign-in/password", { email: VICTIM, password: ATTACKER_PASSWORD });
+		const body = (await signIn.json()) as { error?: { code?: string } };
+
+		expect(before.status).toBe(200);
+		expect(signIn.status).toBe(401);
+		expect(body.error?.code).toBe("invalid_credentials");
+		expect(signIn.headers.getSetCookie().filter((line) => /=[^;]+/.test(line))).toStrictEqual([]);
+		expect(
+			await count(
+				`SELECT count(*)::int AS total FROM ${mounted.schema}.user
+				 WHERE id = $1 AND email_verified_at IS NOT NULL`,
+				[userId],
+			),
+		).toBe(1);
 	});
 
 	it("keeps both when the confirmation link is redeemed in the session that set the password", async () => {
