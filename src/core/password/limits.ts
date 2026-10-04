@@ -5,14 +5,22 @@ export const MAXIMUM_STORED_PARALLELISM = 64;
 export const MAXIMUM_STORED_PBKDF2_ITERATIONS = 2_000_000;
 //bcrypt cost is an exponent and 31 would take about thirty years (E-182)
 export const MAXIMUM_STORED_BCRYPT_COST = 14;
+//a configuration is refused above this and verification admits a stored memory up to it (E-2620)
+export const MAXIMUM_CONFIGURABLE_MEMORY_KIB = 1_048_576;
+
+//the library verifies every hash it writes so a configured memory above the import ceiling raises it (E-2615)
+export function storedMemoryCeilingKiB(configuredMemoryKiB: number): number {
+	return Math.max(MAXIMUM_STORED_MEMORY_KIB, configuredMemoryKiB);
+}
 
 export function argon2CostIsAcceptable(
 	memoryKiB: number,
 	iterations: number,
 	parallelism: number,
+	memoryCeilingKiB: number,
 ): boolean {
 	return (
-		memoryKiB <= MAXIMUM_STORED_MEMORY_KIB &&
+		memoryKiB <= memoryCeilingKiB &&
 		iterations >= 1 &&
 		iterations <= MAXIMUM_STORED_ARGON2_ITERATIONS &&
 		parallelism >= 1 &&
@@ -25,12 +33,13 @@ export function scryptCostIsAcceptable(
 	costExponent: number,
 	blockSize: number,
 	parallelism: number,
+	memoryCeilingKiB: number,
 ): boolean {
 	return (
 		blockSize >= 1 &&
 		parallelism >= 1 &&
 		parallelism <= MAXIMUM_STORED_PARALLELISM &&
-		(2 ** costExponent * blockSize) / 8 <= MAXIMUM_STORED_MEMORY_KIB
+		(2 ** costExponent * blockSize) / 8 <= memoryCeilingKiB
 	);
 }
 

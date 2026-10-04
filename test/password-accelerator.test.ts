@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { type AcceptedPassword, acceptSubmittedPassword } from "../src/core/password/policy.js";
 import { verifyAgainstScheme } from "../src/core/password/verify-switch.js";
 import { drawTestPassword } from "./password-fixtures.js";
@@ -75,7 +76,14 @@ describe("S-DEFAULT-7 — the accelerator changes the running time and nothing e
 			const fromPurePath = await withoutIt.createArgon2idHash(accepted(password).bytes, CHEAP);
 
 			for (const credential of [fromAccelerator, fromPurePath]) {
-				expect(await verifyAgainstScheme("argon2id", accepted(password), credential)).toBe(true);
+				expect(
+					await verifyAgainstScheme(
+						"argon2id",
+						accepted(password),
+						credential,
+						MAXIMUM_STORED_MEMORY_KIB,
+					),
+				).toBe(true);
 				crossChecks += 1;
 			}
 		}
@@ -119,7 +127,12 @@ describe("S-DEFAULT-7 — the accelerator changes the running time and nothing e
 		].join("$");
 
 		expect(
-			await verifyAgainstScheme("argon2id", accepted(passwords[0] as string), credential),
+			await verifyAgainstScheme(
+				"argon2id",
+				accepted(passwords[0] as string),
+				credential,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
 		).toBe(true);
 	}, 180_000);
 });

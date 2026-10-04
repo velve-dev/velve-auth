@@ -12,11 +12,12 @@ import {
 	type PasswordCredentialRow,
 	sealPhc,
 } from "./credential.js";
+import { MAXIMUM_CONFIGURABLE_MEMORY_KIB } from "./limits.js";
 import { acceptNewPassword, acceptSubmittedPassword } from "./policy.js";
 import { needsRewrite } from "./rehash.js";
 import { CREATED_SCHEME, type PasswordScheme } from "./scheme.js";
 import type { KdfSemaphore } from "./semaphore.js";
-import { verifyAgainstScheme } from "./verify-switch.js";
+import { credentialReachesDerivation, verifyAgainstScheme } from "./verify-switch.js";
 
 //an absent user is looked up under this id so both paths issue the same query (E-174)
 export const ABSENT_USER_ID = "00000000-0000-0000-0000-000000000000";
@@ -80,11 +81,21 @@ export async function checkPassword(
 	const source = usable ?? environment.dummy;
 
 	const opened = await openCredential(environment, source);
+	//a hash written under an earlier higher configuration still verifies and is rehashed down (E-2621)
+	const memoryCeilingKiB = MAXIMUM_CONFIGURABLE_MEMORY_KIB;
+	//a credential refused before deriving is checked as the dummy so its refusal costs the same (S-TIM-2)
+	const derivable = credentialReachesDerivation(opened.scheme, opened.phc, memoryCeilingKiB);
+	const verified = derivable ? opened : openedDummy(environment);
 	const matched = await environment.semaphore.run(() =>
-		verifyAgainstScheme(opened.scheme, accepted, opened.phc),
+		verifyAgainstScheme(verified.scheme, accepted, verified.phc, memoryCeilingKiB),
 	);
 
-	const reason = refusalReason({ row, usable, matched, userId: input.userId });
+	const reason = refusalReason({
+		row,
+		usable,
+		matched: derivable && matched,
+		userId: input.userId,
+	});
 	if (reason !== null) {
 		return { outcome: "refused", reason };
 	}
@@ -143,14 +154,23 @@ async function rewriteCredential(
 	});
 }
 
+interface OpenedCredential {
+	readonly phc: string;
+	readonly scheme: PasswordScheme;
+}
+
+function openedDummy(environment: PasswordEnvironment): OpenedCredential {
+	return { phc: environment.dummy.openedPhc, scheme: environment.dummy.scheme };
+}
+
 //a key version that left the ring fails verification instead of throwing (S-TIM-1)
 async function openCredential(
 	environment: PasswordEnvironment,
 	row: PasswordCredentialRow,
-): Promise<{ phc: string; scheme: PasswordScheme }> {
+): Promise<OpenedCredential> {
 	return openPhc(environment.keys, row).then(
 		(phc) => ({ phc, scheme: row.scheme }),
-		() => ({ phc: environment.dummy.openedPhc, scheme: environment.dummy.scheme }),
+		() => openedDummy(environment),
 	);
 }
 

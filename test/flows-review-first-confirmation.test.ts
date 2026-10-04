@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 
@@ -72,6 +73,7 @@ async function storedCredentialOf(userId: string): Promise<unknown> {
 		driver: mounted.connection,
 		keys: testKeyProvider(),
 		schema: mounted.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	}).findByUserId(userId);
 }
 

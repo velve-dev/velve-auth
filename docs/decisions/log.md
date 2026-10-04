@@ -13712,3 +13712,153 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Editing E-2676's sentence, which §6 forbids for a reason that was wrong when written, even before merge.
 **Reason.** The citation is what a reader follows to find the argument, and it pointed at an entry that does not hold it.
 **Price.** E-2676 keeps the wrong citation in its text, and a reader has to reach this entry to learn that it is wrong.
+
+<a id="e-2610"></a>
+
+### S-DOS-3 bounds derivation memory by the import ceiling, and imports stay unrestricted
+`E-2610` · dos-memory-bound · specification amended, settled
+
+**Context.** E-2362 found that S-DOS-3's bound, the semaphore size times the configured KDF memory parameter, did not hold: verification accepts an imported Argon2 or scrypt credential up to `MAXIMUM_STORED_MEMORY_KIB` = 65536 KiB (E-182), so four places can hold 256 MiB while the configured parameter is 19456 KiB. E-2362 left three options to the owner: lower the cap towards the configured parameter, make the cap follow the configured parameter, or amend S-DOS-3. The owner decided that imports must never be restricted and that every imported user's hash must keep working, so the cap stays and the requirement changes. S-DOS-3 in both architecture files now bounds the memory by the semaphore size times the larger of the configured memory parameter and the import ceiling, and says an imported hash is moved to the configured parameters at its first successful sign-in. T-DOS-3 adds a wave against imported credentials, the per-call and summed memory thresholds, and a second sign-in of each imported account at the configured `m`. Section 3.3's concurrency paragraph says the same in one sentence.
+**Rejected.** Lowering `MAXIMUM_STORED_MEMORY_KIB` to the configured parameter, which would refuse Better Auth's 32 MiB scrypt and any Argon2 estate above 19 MiB and send those users to a reset. A cap that follows the configured parameter, which has the same effect for every estate written above it. Stating in S-DOS-3 that a credential above the ceiling is refused without a KDF call: it is true of the code today, but it is a timing difference against the dummy derivation of an unknown user, and pinning it in the specification would make it harder to remove (E-2614).
+**Reason.** The memory a verification asks for is written by the source system, and the owner's decision puts working imports above a bound tied to the configured parameter. The excess is transient for every account that signs in, which E-2611 makes true, and an operator can size for it.
+**Price.** The worst case under default parameters is 256 MiB of derivation memory rather than 76 MiB, for as long as imported credentials above the configured `m` remain, and failed attempts against an imported account never move it. Release note: S-DOS-3 now bounds key-derivation memory by the concurrency limit times the larger of the configured Argon2id memory and the 64 MiB import ceiling, so size a container for 4 × 64 MiB while imported password hashes remain; each imported hash moves to the configured parameters at its first successful sign-in.
+
+<a id="e-2611"></a>
+
+### A stored Argon2id memory parameter above the configured one needs a rehash
+`E-2611` · dos-memory-bound · behaviour change, settled
+
+**Context.** E-2610 rests on the owner's statement that each imported hash is rehashed to the configured parameters at its first successful sign-in. That was not true for every import. `needsRehash` compared `m`, `t` and `p` with `<` only, so an Argon2id import at `m=65536,t=2,p=1` met the policy, was never rewritten, and asked for 64 MiB at every sign-in for good. The case in `test/dos-kdf-ceiling-proof.test.ts` that signs in forty imports and then asks for the configured `m` at their second sign-in failed with 20 of 40 credentials never rewritten, exactly the twenty at `t=2`. `needsRehash` now treats an `m` that differs from the configured one, in either direction, as needing a rehash, and section 3.3 step 5 says so in both architecture files.
+**Rejected.** Rehashing on any parameter that differs, `t` and `p` included. A higher `t` or `p` costs time and not memory, and S-DOS-3 is about memory. Leaving the rule and wording S-DOS-3 so it covers only imports below the policy, which would keep the 64 MiB worst case alive for the accounts that sign in most.
+**Reason.** S-DOS-3 as amended only describes a transient excess if every signed-in account ends at the configured `m`. S-REST-7 asks for a rehash of weaker parameters and does not forbid one of stronger.
+**Price.** A credential stored with more memory than configured is rewritten at the configured `m`, which is weaker against offline guessing for that row. An operator who lowers `argon2id.memoryKiB` now has every hash written under the higher value rewritten down at its next sign-in, where before those hashes were kept.
+
+<a id="e-2612"></a>
+
+### The resident-set half of T-DOS-3 stays marked as failing, and the overshoot is collection lag
+`E-2612` · dos-memory-bound · finding, measured, open as a runtime property
+
+**Context.** E-2364 left open how much of the resident-set growth over 200 sign-ins is memory held by running derivations and how much is garbage not yet collected. I measured it with `--expose-gc`, forcing a collection before each wave and after it, six waves of 200 sign-ins at the default parameters with and without a collection after every derivation. With `hash-wasm` and no forced collection between derivations, the peak rose by 484 to 1567 MiB per wave, and after a collection it was back to 7 to 25 MiB above the baseline, flat from the second wave on. With a collection after every derivation the peak rose by at most 29 MiB. With `@noble/hashes` alone the peak rose by 174 to 197 MiB and stayed there after a collection while `arrayBuffers` returned to 2 MiB, flat from the third wave on; with a collection after every derivation it settled at 67 MiB. In the nightly case itself, with the baseline now taken after a forced collection, six runs peaked at 511 to 966 MiB against the amended bound of 384 MiB, and three waves with a collection after each ended between 38 MiB below and 20 MiB above the baseline.
+**Rejected.** Taking the mark off by raising the tolerance, which would make the case pass by measuring nothing. Keeping the baseline uncollected: with it, eight full-file runs measured 262 to 948 MiB and two of eight came in under 384 MiB, so the `it.fails` would have failed a quarter of nightly runs for reasons unrelated to the library. Calling `gc()` inside the library after a derivation, which would put a runtime flag on the required path.
+**Reason.** Garbage that the next collection returns and that does not grow from wave to wave is not a leak. The overshoot is the accelerator's WebAssembly memories waiting for the collector, and with the pure engine the allocator keeping freed pages, neither of which the library holds. The case stays `it.fails` with the amended threshold so it starts failing the day the overshoot goes, and a new nightly case asserts the resident set after a collection stays under the same bound over three waves, which is what would catch a leak.
+**Price.** T-DOS-3's resident-set threshold is not met while `hash-wasm` is loaded, and the documentation tells operators to leave headroom for it. The `it.fails` case depends on `hash-wasm` being installed: with the pure engine alone it would come in under 384 MiB and fail as a test.
+
+<a id="e-2613"></a>
+
+### How the imported half of T-DOS-3 is driven
+`E-2613` · dos-memory-bound · test construction, settled
+
+**Context.** The amended T-DOS-3 asks for 200 simultaneous sign-ins against imported credentials at the ceiling, the memory each derivation asks for, and the summed memory of derivations running at once. The wave runs over twenty accounts seeded at `m=65536,t=1,p=1`, accepts 200 or 429 as in the configured wave, and asserts that the largest request was exactly 65536 KiB, so a run that never derived an import cannot pass. A second set at the ceiling with `t=2` and a fresh `t=1` set are signed into one at a time, the test waits until every stored ciphertext has changed, and then every derivation of a second sign-in must ask for the configured `m`. Twenty credentials at 65537 KiB must never appear among the requests.
+**Rejected.** Asserting that the summed in-flight memory exceeds the semaphore size times the configured parameter, to show the old bound broken. With `hash-wasm` loaded no two derivations overlap beneath the library (E-2361), so the counted peak is one derivation and that assertion failed for a reason unrelated to the bound.
+**Reason.** The per-call request at the ceiling and the summed bound together are the S-DOS-3 bound. The semaphore's own count, which does see contention under the accelerator, is asserted beside them.
+**Price.** With the accelerator the summed bound is met trivially beneath the library; the semaphore count is what would catch more than `min(4, cpus)` places.
+
+<a id="e-2614"></a>
+
+### Two findings next to the bound that this branch does not fix
+`E-2614` · dos-memory-bound · hand-off, open for the owner
+
+**Context.** While stating the bound as `max(configured, ceiling)` I checked whether the configured `m` can exceed the ceiling. `resolvePasswordConfig` accepts any `argon2id.memoryKiB` above the floor, and `verifyArgon2` refuses a stored `m` above `MAXIMUM_STORED_MEMORY_KIB`, so with `memoryKiB: 65537` a hash the library has just written does not verify: a probe returned `false` for the right password. An operator who raises `m` above 64 MiB locks out every user whose password is set or rehashed after the change. Separately, an imported credential above a ceiling is refused before any derivation, and a first version of the T-DOS-3 case recorded no derivation at all for a wave of sixteen sign-ins against such credentials, while an unknown user is checked against the dummy hash at the configured parameters, so a wrong password for such an account answers faster than one for an unknown identifier. The import path does not check the ceilings, so such rows can exist.
+**Rejected.** Fixing either here. The first needs a decision between refusing a configured `m` above the ceiling at start and letting verification accept the configured `m`, and the owner has fixed the ceiling for this branch. The second touches the uniformity rule, which is not this branch's requirement.
+**Reason.** Both are outside the set of files and requirements this branch was given, and both change behaviour someone relies on.
+**Price.** Until they are decided, the `max` in S-DOS-3 covers a configuration that does not work, and accounts imported above a ceiling can be told apart from unknown identifiers by timing.
+
+<a id="e-2615"></a>
+
+### Verification holds stored memory to max(import ceiling, configured memory)
+`E-2615` · dos-memory-bound · defect repaired, settled
+
+**Context.** E-2614 handed off that a configured `argon2id.memoryKiB` above `MAXIMUM_STORED_MEMORY_KIB` locked users out: `resolvePasswordConfig` accepts any value above the floor, and `verifyArgon2` refused any stored `m` above 65536 KiB, including the hashes the library had just written. `test/password-configured-memory-ceiling.test.ts` showed it with `memoryKiB` at 65537 and at 131072: a password set through `/sign-up` answered 401 at sign-in, and so did a stored credential at exactly the configured `m`. The coordinator asked for the ceiling verification applies to become `max(import ceiling, configured memoryKiB)`. `storedMemoryCeilingKiB` computes it, `argon2CostIsAcceptable` and `scryptCostIsAcceptable` take it as an optional last argument, and `checkPassword` and every repository the library builds pass it. A credential one KiB above the configured value is still refused.
+**Rejected.** Refusing a configured `memoryKiB` above 64 MiB at start, which E-2614 named as the other option: the architecture says the parameters are configurable upwards, and the owner kept the import ceiling fixed rather than making it the configuration's ceiling. Raising the ceiling for Argon2 alone: scrypt's memory goes through the same predicate, and one memory ceiling for every memory-hard scheme keeps S-DOS-3's per-place figure a single number.
+**Reason.** The library must verify what it writes, and S-DOS-3 already states the bound as the semaphore size times `max(configured, ceiling)` (E-2610), so the raised ceiling stays inside it.
+**Price.** At a configured `memoryKiB` above 64 MiB an import may also ask for up to that value, which is the bound S-DOS-3 states. Lowering `memoryKiB` from above 64 MiB lowers the ceiling with it, and a credential written under the higher value is then refused rather than rehashed, so those users go to a reset; E-2611's rehash cannot reach them because they no longer verify.
+
+<a id="e-2616"></a>
+
+### A credential the verifier would refuse before deriving is checked as the dummy
+`E-2616` · dos-memory-bound · defect repaired, settled
+
+**Context.** E-2614 handed off that a stored credential above a cost ceiling was refused before any derivation, while an unknown identifier is checked against the dummy, so a wrong password for such an account answered faster. The fifth case added to `test/tim-sign-in-route-sequence-proof.test.ts`, an account whose sealed PHC asks for 65537 KiB, ran the same statements and parameter shapes as the other four and no KDF call where they made one Argon2id call. The same early refusal applied to every other reason a verifier returns `false` without deriving: a missing parameter, salt or hash, or a string whose identifier does not match its scheme. Each verifier now has a reader, `readArgon2`, `readScrypt`, `readFirebaseScrypt`, `readPbkdf2` and `readBcrypt`, that returns the inputs of a derivation or `null`, and the verifier derives only from what its reader returned. `credentialReachesDerivation` asks the reader, and `checkPassword` verifies the dummy at the configured parameters when the answer is no, then refuses with `password_mismatch` whatever that verification returned.
+**Rejected.** A separate concealed reason for such a row: it adds a member to the one place that decides what the outside learns, and E-179 already refuses an undecryptable row as a mismatch after the same dummy verification. Deriving the stored credential with its parameters clamped to the ceiling, which would make the cost of the refusal depend on what the row holds. Leaving the readers inside the verifiers and catching an early `false`: the semaphore place would already be taken and the time already spent differently.
+**Reason.** S-TIM-1 asks for one sequence of statements and KDF calls for every identifier, and S-TIM-2 fixes what the absent-user path derives. Deciding derivability before the semaphore and substituting the dummy makes every refusal cost one derivation at the configured parameters.
+**Price.** The log names such a row `password_mismatch`, so an operator finds it by surveying the estate and not from the sign-in log. T-TIM-1b in the architecture still lists four cases; the test checks five and the table was not amended. A malformed bcrypt string that passes the cost check is still handed to `bcryptjs`, which may refuse it faster than a derivation.
+
+<a id="e-2617"></a>
+
+### The credential repository refuses a credential every sign-in would refuse
+`E-2617` · dos-memory-bound · guard added, settled
+
+**Context.** The coordinator asked whether any write path can store an over-ceiling credential. The library's own paths, `setPassword`, `replacePasswordOfSession`, `writePassword`, `writePasswordOfCreatedAccount` and the rehash through `replaceIfUnchanged`, all derive at the configured parameters, and since E-2615 the ceiling follows the configured memory, so none of them can. The repository itself can: `write`, `writeForCreatedAccount` and `replaceIfUnchanged` take a PHC string and a scheme from the caller and checked only that the two agree. `@velve/auth/import` is still an empty module, so today only tests and SQL outside the library reach it, but it is the seam a future import will use. All three methods now refuse a credential `credentialReachesDerivation` rejects with `CredentialWriteError("credential_not_verifiable")` before anything is sealed. The repository takes `memoryCeilingKiB`, defaulting to the import ceiling, and every place the library builds one passes the configured value; `CredentialWriter` in the flows carries the password configuration for that.
+**Rejected.** A cost-only check with its own error code, which would still store a credential with a missing salt that every sign-in refuses. Leaving the guard out because no library path triggers it, which would leave the future import with nothing between a source system's cost and the column.
+**Reason.** A row every sign-in refuses is a locked-out user that looks like a stored password, and the switch's readers already say which rows those are.
+**Price.** Two tests changed because of it. `test/dos-kdf-ceiling-proof.test.ts` seeds its imported rows in SQL, as an import outside the library would, since the repository now refuses the over-ceiling set. The compare-and-swap case in `test/password-storage.test.ts` wrote eight hashes that no parser reads, by appending a digit to a 43-character base64 hash; it now varies the last character among eight canonical ones. SQL written past the repository can still store such a row, and E-2616 is what keeps sign-in uniform for it.
+
+<a id="e-2618"></a>
+
+### A reader admits only what its derivation runs to the end
+`E-2618` · dos-memory-bound · defect repaired, settled
+
+**Context.** The review of E-2616 found four stored credentials that passed every cost ceiling and the reader, and that the KDF library then refused before doing any work, in about 0.01 to 0.2 ms against about 89 ms for the dummy: a bcrypt string of the wrong length, an Argon2 salt under 8 bytes, an Argon2 `m` below `8 · p`, and an Argon2 version other than `0x10` or `0x13`. Its tests counted the derivations that threw and showed each of the four answering with one where an unknown identifier ran the dummy to completion. I read the validation of `@noble/hashes` Argon2 and scrypt and of `bcryptjs` to find the rest of the class. The Argon2 reader now requires a salt of at least 8 bytes, a hash of at least 4, `m >= 8p` and a version of `0x10` or `0x13`; the bcrypt reader requires the 60-character `$2a$`, `$2b$` or `$2y$` form with the bcrypt salt alphabet, after `$2x$` is read as `$2a$`; scrypt and Firebase scrypt need `N >= 2` and a non-empty output; PBKDF2 a non-empty output. `deriveScrypt` passes noble a `maxmem` equal to what the memory ceiling admitted, because noble's default of about 1 GiB would otherwise refuse an admitted scrypt near the 1 GiB start bound of E-2620.
+**Rejected.** Catching a derivation that throws and running the dummy afterwards: the time of the failed call is already spent and the semaphore place already taken, so the sequence differs. Copying the libraries' error messages into a match list, which breaks the day a message changes.
+**Reason.** The reader is the one place that decides whether a derivation happens, so it has to know every reason the derivation would refuse, not only the cost ceilings.
+**Price.** The readers now encode input rules of three libraries. A future version of one of them that refuses something new reopens the gap until the reader learns it; the review's counter of throwing derivations in `test/tim-sign-in-route-sequence-proof.test.ts` is what would show it. hash-wasm's own validation was not read; its Argon2 limits are documented as the same as the RFC's, which these checks follow.
+
+<a id="e-2619"></a>
+
+### A configuration above the stored ceilings is refused at start
+`E-2619` · dos-memory-bound · defect repaired, settled
+
+**Context.** The review found that `resolvePasswordConfig` bounded `argon2id.iterations` and `parallelism` only from below. Above the stored ceilings of 64 every hash the library wrote was refused by its repository and by verification, and every sign-in against an older hash started a rehash that failed. Both configurations now fail while the instance is built, as `argon2id_iterations_above_ceiling` and `argon2id_parallelism_above_ceiling`.
+**Rejected.** Raising the stored ceilings to follow the configuration, as E-2615 did for memory: iterations and parallelism cost time, not memory, and the ceilings exist to bound what an import can make one sign-in cost.
+**Reason.** A configuration whose own hashes cannot be verified is an error that should stop the start, not one that shows up as failed sign-ins.
+**Price.** An operator who wanted more than 64 iterations cannot have them. Nobody has asked; the default is 2.
+
+<a id="e-2620"></a>
+
+### argon2id.memoryKiB is bounded at 1 GiB
+`E-2620` · dos-memory-bound · start bound, settled
+
+**Context.** The coordinator asked for an upper bound on `argon2id.memoryKiB` at start, 1 GiB, 1048576 KiB, refused as `argon2id_memory_above_ceiling`. `MAXIMUM_CONFIGURABLE_MEMORY_KIB` holds it, and E-2621 uses the same value as the verification ceiling.
+**Rejected.** No upper bound, which E-2615 left: the S-DOS-3 bound is then unbounded by configuration, and one sign-in can ask for any amount of memory.
+**Reason.** One number bounds what a configuration can ask of every derivation and what verification admits, so the transient bound after lowering `memoryKiB` has a maximum.
+**Price.** A deployment that wants more than 1 GiB per derivation cannot have it. At four places the worst case is 4 GiB.
+
+<a id="e-2621"></a>
+
+### Verification admits a stored memory up to the start bound, and lowering memoryKiB locks nobody out
+`E-2621` · dos-memory-bound · owner decision, corrects E-2615's price, settled
+
+**Context.** E-2615 states in its price that lowering `memoryKiB` from above 64 MiB refuses every hash written under the higher value and sends those users to a reset. The owner decided nobody may be locked out. Verification now admits a stored Argon2 or scrypt memory up to the 1 GiB start bound of E-2620 whatever the current configuration, so such a hash still verifies and E-2611's rehash rewrites it at the lowered `m` at that sign-in. `test/password-configured-memory-ceiling.test.ts` writes a password at 131072 KiB, restarts at 19456 and signs in: 200, and the stored hash then carries `m=19456`. Writes through the repository stay at `max(64 MiB, configured)`, so an import cannot bring in more. S-DOS-3 and T-DOS-3 say so in both languages.
+**Rejected.** Keeping the ceiling at `max(64 MiB, configured)` and documenting the reset, which E-2615 did and the owner overruled. Remembering the highest `memoryKiB` the deployment ever ran with, which needs state the library does not keep.
+**Reason.** A configuration change must not lock users out, and the cost of admitting the older hashes ends at each user's next sign-in.
+**Price.** A row written past the repository, in SQL, is now verified up to 1 GiB rather than 64 MiB, because verification cannot tell it from a hash written under an earlier configuration. Until the users of such rows sign in, S-DOS-3's bound is the semaphore size times the highest `m` stored, at most times 1 GiB.
+
+<a id="e-2622"></a>
+
+### The memory ceiling has no default anywhere
+`E-2622` · dos-memory-bound · interface tightened, settled
+
+**Context.** `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `verifyAgainstScheme` and `createPasswordCredentialRepository` took the memory ceiling as an optional argument defaulting to 64 MiB. A caller that forgot it got the import ceiling silently, which is the shape of the lockout E-2615 repaired. The argument is now required at all four. The 22 test files that relied on the default pass `MAXIMUM_STORED_MEMORY_KIB`, the value they used to receive, rewritten with `ast-grep`.
+**Rejected.** Keeping the default and adding a lint rule, which would be a second place to keep in step.
+**Reason.** A forgotten argument should fail type-checking, not reintroduce a lockout at run time.
+**Price.** Every call site names a ceiling, which is noise in tests that do not care about it.
+
+<a id="e-2623"></a>
+
+### S-DOS-3's resident-set threshold is not met while hash-wasm is loaded
+`E-2623` · dos-memory-bound · open gap
+
+**Context.** E-2612 measured the resident set over 200 sign-ins: with `hash-wasm` it rose by 511 to 966 MiB against T-DOS-3's bound of 384 MiB, and returned to within 20 MiB of the baseline after a forced collection, so it is collection lag and not a leak. The nightly case stays `it.fails`. The review asked for this to be recorded as what it is: T-DOS-3's resident-set threshold is not met while the accelerator is loaded.
+**Rejected.** Recording it as a known runtime property only, as E-2612's tag did, which reads as settled.
+**Reason.** S-DOS-3 promises a memory bound and T-DOS-3 measures it as resident-set growth; while the measurement fails the promise is not kept in that form, whatever the cause.
+**Price.** Open until the accelerator's per-call WebAssembly memory is reused or freed promptly, or until the owner amends T-DOS-3 to measure memory held by running derivations instead of the resident set. DOCUMENTATION.md names it in the memory section.
+
+<a id="e-2624"></a>
+
+### hash-wasm's Argon2 checks were read after E-2618 and match the reader
+`E-2624` · dos-memory-bound · follow-up to E-2618, settled
+
+**Context.** E-2618's price says hash-wasm's own validation was not read and calls its limits documented as the RFC's. That was written without looking. Read afterwards in hash-wasm 4.12.0's `index.esm.js`, its Argon2 throws on a salt under 8 bytes, a `hashLength` under 4, `iterations` or `parallelism` not positive, and a memory size below `8 · parallelism`. The Argon2 reader refuses each of these already. hash-wasm is used only for version `0x13` (E-168), so its version check does not arise.
+**Rejected.** Editing E-2618's sentence, which §6 forbids for a reason that was not checked when written.
+**Reason.** The accelerator is the engine that runs whenever it is installed, so the claim that the reader covers it needed to rest on its code and not on an assumption.
+**Price.** None beyond the reading; a later hash-wasm that refuses something new reopens the gap as E-2618 says.

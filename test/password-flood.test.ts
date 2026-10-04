@@ -8,6 +8,7 @@ import {
 	type PasswordCredentialRow,
 	sealPhc,
 } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import {
 	createKdfSemaphore,
 	DEFAULT_WAIT_LIMIT_IN_MILLISECONDS,
@@ -104,7 +105,11 @@ async function createHarness(limit: number, waitLimitInMilliseconds: number): Pr
 		environment: {
 			config,
 			keys,
-			credentials: createPasswordCredentialRepository({ driver, keys }),
+			credentials: createPasswordCredentialRepository({
+				driver,
+				keys,
+				memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+			}),
 			semaphore,
 			dummy: await createDummyCredential(keys, config),
 		},
@@ -294,7 +299,11 @@ describe("S-DOS-3, S-DOS-4 — a flood is refused, not queued forever", () => {
 		const environment: PasswordEnvironment = {
 			config,
 			keys,
-			credentials: createPasswordCredentialRepository({ driver, keys }),
+			credentials: createPasswordCredentialRepository({
+				driver,
+				keys,
+				memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+			}),
 			semaphore,
 			dummy: await createDummyCredential(keys, config),
 		};

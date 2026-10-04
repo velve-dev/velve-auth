@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import {
 	checkPassword,
@@ -73,6 +74,7 @@ beforeAll(async () => {
 		driver: migrated.connection,
 		keys,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	});
 
 	environment = {

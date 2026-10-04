@@ -4,6 +4,7 @@ import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { describe, expect, it } from "vitest";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { type AcceptedPassword, acceptSubmittedPassword } from "../src/core/password/policy.js";
 import { deriveScrypt } from "../src/core/password/verifiers/scrypt.js";
 import { verifyAgainstScheme } from "../src/core/password/verify-switch.js";
@@ -68,8 +69,22 @@ describe("Argon2 — RFC 9106", () => {
 	it("verifies the reference implementation's own encoded output", async () => {
 		const encoded = "$argon2i$v=19$m=65536,t=2,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG";
 
-		expect(await verifyAgainstScheme("argon2i", throughPolicy("password"), encoded)).toBe(true);
-		expect(await verifyAgainstScheme("argon2i", throughPolicy("passworE"), encoded)).toBe(false);
+		expect(
+			await verifyAgainstScheme(
+				"argon2i",
+				throughPolicy("password"),
+				encoded,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(true);
+		expect(
+			await verifyAgainstScheme(
+				"argon2i",
+				throughPolicy("passworE"),
+				encoded,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(false);
 	}, 60_000);
 });
 
@@ -120,10 +135,22 @@ describe("scrypt — RFC 7914 section 11", () => {
 				encodeStandardBase64(bytesOfHex(expected)),
 			].join("$");
 
-			expect(await verifyAgainstScheme("scrypt", throughPolicy(password), encoded)).toBe(true);
-			expect(await verifyAgainstScheme("scrypt", throughPolicy(`${password}x`), encoded)).toBe(
-				false,
-			);
+			expect(
+				await verifyAgainstScheme(
+					"scrypt",
+					throughPolicy(password),
+					encoded,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(true);
+			expect(
+				await verifyAgainstScheme(
+					"scrypt",
+					throughPolicy(`${password}x`),
+					encoded,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(false);
 		},
 		120_000,
 	);
@@ -222,8 +249,22 @@ describe("PBKDF2 — RFC 6070 and its SHA-2 counterparts", () => {
 				encodeStandardBase64(bytesOfHex(expected)),
 			].join("$");
 
-			expect(await verifyAgainstScheme(scheme, throughPolicy("password"), encoded)).toBe(true);
-			expect(await verifyAgainstScheme(scheme, throughPolicy("passworE"), encoded)).toBe(false);
+			expect(
+				await verifyAgainstScheme(
+					scheme,
+					throughPolicy("password"),
+					encoded,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(true);
+			expect(
+				await verifyAgainstScheme(
+					scheme,
+					throughPolicy("passworE"),
+					encoded,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(false);
 		},
 		60_000,
 	);
@@ -293,7 +334,14 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 	it.each(vectors)(
 		"verifies the published vector for %j",
 		async (password, encoded) => {
-			expect(await verifyAgainstScheme("bcrypt", asPassword(password), encoded)).toBe(true);
+			expect(
+				await verifyAgainstScheme(
+					"bcrypt",
+					asPassword(password),
+					encoded,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(true);
 		},
 		60_000,
 	);
@@ -304,7 +352,14 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 			// The change has to fall inside the first 72 bytes; past them bcrypt cannot see it.
 			const changed = `!${password.slice(1)}`;
 
-			expect(await verifyAgainstScheme("bcrypt", asPassword(changed), encoded)).toBe(false);
+			expect(
+				await verifyAgainstScheme(
+					"bcrypt",
+					asPassword(changed),
+					encoded,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(false);
 		},
 		60_000,
 	);
@@ -315,7 +370,14 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 			const [password, encoded] = vectors[0] as readonly [string, string];
 			const rewritten = revision + encoded.slice(4);
 
-			expect(await verifyAgainstScheme("bcrypt", asPassword(password), rewritten)).toBe(true);
+			expect(
+				await verifyAgainstScheme(
+					"bcrypt",
+					asPassword(password),
+					rewritten,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+			).toBe(true);
 		},
 		60_000,
 	);
@@ -324,7 +386,14 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 		const [long, encoded] = vectors[3] as readonly [string, string];
 		const different = `${long.slice(0, 72)}a completely different tail`;
 
-		expect(await verifyAgainstScheme("bcrypt", asPassword(different), encoded)).toBe(true);
+		expect(
+			await verifyAgainstScheme(
+				"bcrypt",
+				asPassword(different),
+				encoded,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(true);
 	}, 60_000);
 
 	// 6.22 asks for a vector with a NUL byte because `$2a$` and `$2x$` differ there in
@@ -333,8 +402,17 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 		const { hash } = await import("bcryptjs");
 		const encoded = await hash("velve\u0000tail", 4);
 
-		expect(await verifyAgainstScheme("bcrypt", asPassword("velve\u0000tail"), encoded)).toBe(true);
-		expect(await verifyAgainstScheme("bcrypt", asPassword("velve"), encoded)).toBe(false);
+		expect(
+			await verifyAgainstScheme(
+				"bcrypt",
+				asPassword("velve\u0000tail"),
+				encoded,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(true);
+		expect(
+			await verifyAgainstScheme("bcrypt", asPassword("velve"), encoded, MAXIMUM_STORED_MEMORY_KIB),
+		).toBe(false);
 	}, 60_000);
 
 	// crypt_blowfish's `$2x$` reproduces a sign-extension fault for bytes with the high bit set.
@@ -345,8 +423,15 @@ describe("bcrypt — the crypt_blowfish reference vectors", () => {
 		const [password, encoded] = vectors[0] as readonly [string, string];
 		const asEightBitRevision = `$2x$${encoded.slice(4)}`;
 
-		expect(await verifyAgainstScheme("bcrypt", asPassword(password), asEightBitRevision)).toBe(
-			await verifyAgainstScheme("bcrypt", asPassword(password), encoded),
+		expect(
+			await verifyAgainstScheme(
+				"bcrypt",
+				asPassword(password),
+				asEightBitRevision,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(
+			await verifyAgainstScheme("bcrypt", asPassword(password), encoded, MAXIMUM_STORED_MEMORY_KIB),
 		);
 	}, 60_000);
 });

@@ -8,6 +8,7 @@ import {
 	type PasswordCredentialRepository,
 	type PasswordCredentialRow,
 } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { parsePhc } from "../src/core/password/phc.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import { checkPassword, createDummyCredential, setPassword } from "../src/core/password/verify.js";
@@ -64,6 +65,7 @@ beforeAll(async () => {
 		driver: migrated.connection,
 		keys,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	});
 	stored = await storedHashesFor(PASSWORD);
 }, 180_000);
@@ -215,6 +217,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 			driver: migrated.connection,
 			keys: rotated,
 			schema: migrated.schema,
+			memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 		});
 
 		await rotatedCredentials.write({
@@ -332,7 +335,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 				credentials.replaceIfUnchanged({
 					userId,
 					previous: before.phc,
-					phc: `$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0t${index}`,
+					phc: `$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0t${"AEIMQUYc"[index]}`,
 					scheme: "argon2id",
 				}),
 			),

@@ -61,6 +61,7 @@ vi.mock("bcryptjs", async (importOriginal) => {
 
 import type { Driver } from "../src/core/db/driver.js";
 import type { PasswordCredentialRow } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import type { PasswordEnvironment } from "../src/core/password/verify.js";
 import type { StoredHashes } from "./password-fixtures.js";
 
@@ -148,7 +149,11 @@ async function createProbe(): Promise<Probe> {
 	const environment: PasswordEnvironment = {
 		config,
 		keys,
-		credentials: credential.createPasswordCredentialRepository({ driver, keys }),
+		credentials: credential.createPasswordCredentialRepository({
+			driver,
+			keys,
+			memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+		}),
 		semaphore: createKdfSemaphore({ limit: config.concurrentHashLimit }),
 		dummy: await verify.createDummyCredential(keys, config),
 	};

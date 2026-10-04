@@ -3,6 +3,7 @@ import { toWebHandler } from "../src/core/http/web-handler.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import { createArgon2idHash } from "../src/core/password/argon2.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import {
@@ -71,6 +72,7 @@ async function createAccounts(prefix: string, sealedUnder: typeof staleKeys, phc
 		driver: migrated.connection,
 		keys: sealedUnder,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	});
 	const accounts: Account[] = [];
 	for (let index = 0; index < MEASUREMENTS_PER_GROUP; index += 1) {
