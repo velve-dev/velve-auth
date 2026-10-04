@@ -9,7 +9,6 @@ const NAME_OVERRIDE = process.argv[3];
 const VERSION_OVERRIDE = process.argv[4];
 const DEADLINE_MS = Number(process.env.VELVE_REGISTRY_DEADLINE_MS ?? 180_000);
 const POLL_MS = 5_000;
-const PROVENANCE = "https://slsa.dev/provenance/v1";
 const PRERELEASE = /-/;
 
 /** An unauthenticated read of a scoped package that does not exist answers 401 and not 404,
@@ -129,20 +128,9 @@ if (distTags !== null) {
 	}
 }
 
-const attestations = await pollUntilPresent(
-	`${REGISTRY}/-/npm/v1/attestations/${encoded}@${version}`,
-	`the attestations of ${name}@${version}`,
-);
-if (attestations !== null) {
-	const predicates =
-		attestations.attestations?.map((attestation) => attestation.predicateType) ?? [];
-	if (!predicates.includes(PROVENANCE)) {
-		findings.push(
-			`${name}@${version} carries no ${PROVENANCE} attestation; the registry lists ${predicates.length === 0 ? "none" : predicates.join(", ")}.`,
-		);
-	}
-}
-
+/** No attestation is asked for. A publish from the maintainer's machine cannot carry a provenance
+ * attestation, because npm mints one only from a CI provider's OIDC token, and this check required
+ * one until the publish left CI (E-2761). */
 if (refusals.length > 0) {
 	refuse(refusals[0], refusals.slice(1).join("; ") || undefined);
 }
@@ -152,5 +140,5 @@ if (findings.length > 0) {
 }
 
 console.log(
-	`published version: ${REGISTRY} resolves ${name}@${version}, ${DIST_TAG} points at it, and it carries a provenance attestation`,
+	`published version: ${REGISTRY} resolves ${name}@${version}, ${DIST_TAG} points at it, and latest names no prerelease`,
 );
