@@ -13671,3 +13671,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Sending own-table statements inside a hook to the reset's connection under a savepoint. That is the library's login, which can reach the core, which is what this option exists to avoid. Opening one plugin transaction around the hook and committing or rolling it back with the reset. It would need a two-phase commit between two connections the library does not own, and a plugin connection held open across the reset.
 **Reason.** Each own-table statement commits as it runs. A hook that refuses rolls back the reset and none of what the hook wrote to its own tables, and an own-table statement the hook leaves running after it returns still runs. It never waits for a connection from the library's pool, which the waiting reset holds. A lock wait between the two transactions cannot form through `ownTables`: the reset locks the account row `FOR NO KEY UPDATE`, a plugin insert whose foreign key names it takes `FOR KEY SHARE`, which does not conflict, the reset writes no plugin table before its hooks run, and the plugin login holds no right on a core table.
 **Price.** A plugin that records something in a revoke hook and expects it gone when the revocation is refused has to undo it itself. That is stated in `DOCUMENTATION.md`. No test runs a reset with `pluginDatabase` on this branch; it is reasoned from the code and from the lock modes.
+
+<a id="e-2644"></a>
+
+### A reset with pluginDatabase set was run, and the hook's note survives the refusal as E-2643 said
+`E-2644` · plugin-login · test of E-2643, settled
+
+**Context.** E-2643's Price says no test runs a reset with `pluginDatabase` on this branch, which was true when it was written: `feature/revoke-hook`, which lends a reset's hook its transaction, had not merged. It merged while this branch was open. `test/plugin-login-reset.test.ts` now drives `/password/redeem-reset` with a hook that inserts a row naming the account into its own table, on a library connection and a plugin login of one socket each.
+**Rejected.** Editing E-2643's Price, which §6 forbids for a statement that was true when written.
+**Reason.** The reset completes with 200 while it holds the account row and the hook's insert takes `FOR KEY SHARE` on the same row from the other connection, the insert is the one `noter_note` statement the plugin login saw, and a hook that refuses after writing answers 500 with the session standing and its note kept. The merge kept the lent context's savepoint and role handling for the two other configurations and put the `pluginDatabase` branch in front of them in `createOwnTables`.
+**Price.** Only the reset was run. An OAuth link and a password change announce outside a transaction and were not run with the option.
+
+<a id="e-2645"></a>
+
+### The static scan reads a quoted privilege list as data
+`E-2645` · plugin-login · test instrument, settled
+
+**Context.** The check of E-2641 passes `has_table_privilege` the list `'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'`. `test/db-static-sql.test.ts` read `UPDATE` in it as a row-changing statement without an owner predicate. The first fix put the `no owner predicate` marker on the statement, and `test/token-static-scan.test.ts`, which pins seventeen such markers, failed on an eighteenth.
+**Rejected.** (a) Keeping the marker and raising the pinned count. The marker says a row-changing statement has no owner predicate for a stated requirement, and this statement changes no row. (b) Passing the list as a parameter from a constant. The constant would be a literal holding `UPDATE` too, and hiding a word from a scan is not the same as the scan reading it right. (c) Erasing every quoted literal before the scan. A deletion written as SQL text inside a literal would then go unread.
+**Reason.** A single-quoted literal holding privilege names and commas and nothing else is erased before the scan looks for a change, beside the existing exception for a lone `GRANT`. A case pins that such a list passes, that a `DELETE` beside one is still a change, and that a deletion inside a quoted statement is still a change.
+**Price.** A literal of exactly that shape used as something other than a privilege list would be skipped, which no statement in `src/` does.
