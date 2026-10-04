@@ -108,14 +108,13 @@ describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same th
 		expect(listed.every((session) => session.userId === ownerId)).toBe(true);
 	});
 
+	/** A spelling no uuid column holds used to reach the cast and fail it with 22P02, which the route answered 500; it now names no row and answers like an invented id (E-2242). */
 	it("cannot be pointed at another user's row by a target id that is not a uuid either", async () => {
 		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
 		const resolved = await resolvedNow(here.token);
 		const before = await snapshotOf(strangerId);
 
-		await expect(
-			service.revoke({ resolved, targetSessionId: "' OR true --" }),
-		).rejects.toMatchObject({ sqlState: "22P02" });
+		expect(await service.revoke({ resolved, targetSessionId: "' OR true --" })).toBeUndefined();
 
 		expect(await snapshotOf(strangerId)).toBe(before);
 	});

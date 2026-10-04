@@ -12909,6 +12909,71 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** E-2390 covers a missing header on reading routes. H29 is about a present `null` on any route, and changing it would contradict T-CSRF-3, which is a different decision with its own owner.
 **Price.** The specification holds a row that the code and T-CSRF-3 contradict until someone decides it. Handed off. Concerns section 1, row H29, in both language versions.
 
+<a id="e-2240"></a>
+
+### A name carried by two sources of one request is refused
+`E-2240` · input-and-redirect · request input, decided
+
+**Context.** S-OWNER-6 asks for a request carrying one parameter with contradictory values in two sources to be rejected rather than one value chosen. `readInput` in `src/core/http/web-handler.ts` read the query alone on a `GET` and the body alone on a `POST`, then spread the path parameters over either. So `GET /sign-in/oauth/callback/stubby?provider=other` took the path's value, a form-posted callback with a `provider` field took the path's value, and `POST /session/revoke?targetSessionId=X` with `{ "targetSessionId": "Y" }` acted on `Y`. Nothing was rejected. Two tests pinned that: `test/auth-route-table.test.ts` asserted the contradicting query was ignored, under the reading that a source never read cannot be chosen, and `test/oauth-callback-surface.test.ts` asserted the callback completed for the path's provider. Both now assert the refusal. The new generated case, `test/http-input-sources.test.ts`, walked 35 field-and-source pairs over the mounted route table and found 32 of them answered something other than `400 invalid_input` before the change.
+
+**Rejected.** Refusing only contradicting values and letting two equal ones through. It is the literal reading of the requirement, and it needs a comparison between a JSON value and a query string, which have different types for the same intent; any rule for that comparison is a second parser. Also rejected: reading the query on a `POST` as a further input source. A query parameter the declaration does not name would then reject every `POST` with a cache-busting suffix, and a parameter would have two places it could be read from, which is what the requirement forbids.
+
+**Reason.** The sources are merged by name and a name seen twice is `invalid_input`, whatever the values — one rule, no comparison, and the conservative side of the requirement. On a `POST` the query is still not read, but a query name the body or the path also carries is refused. A query name nothing else carries stays ignored, as before.
+
+**Price.** A request that repeats a value in two places for convenience, such as a client appending `?provider=github` to the callback path for its own logging, now fails where it used to work. The merged input is a prototype-less object, like the query reader's, so a body field named `__proto__` is a field and not a setter.
+
+<a id="e-2241"></a>
+
+### Only the two OAuth callbacks can answer with a Location
+`E-2241` · input-and-redirect · response shape, decided
+
+**Context.** S-REDIR-3 says the only `Location` the library emits is the OAuth callback's 302. `toResponse` in `src/core/http/web-handler.ts` passed every route's output to `readRedirectPath`, which turned any record with a string `redirectToPath` into a 302. A plugin route returning `{ redirectToPath: "/somewhere" }` was answered `302 Location: /somewhere`, and one returning `{ redirectToPath: "//evil.example" }` was answered 500 because the path check threw. `test/http-redirect-routes.test.ts` showed both, and its sweep over the mounted route table found three routes setting `Location` where two are allowed. The existing sweep in `test/oauth-redirect-corpus.test.ts` covers the OAuth feature's six routes and so could not see a plugin.
+
+**Rejected.** Refusing at start a plugin route whose output declares `redirectToPath`. A plugin's handler is typed `unknown` in its output and is a JavaScript function, so nothing at start can see what it will return; the refusal would have had to happen per response, as a 500, which turns a field name into an outage. Also rejected: finding the callbacks by name or path in the handler, which a plugin cannot imitate today only because `assertRouteTableIsUnambiguous` refuses a second route on that path, and which would break silently on a rename.
+
+**Reason.** The callback routes are marked where `src/core/oauth/routes.ts` builds them, with `answerWithRedirect(route)`, which records the built route object in a `WeakSet` beside `toRedirectPath`. `readRedirectPath` now takes the route and returns `null` for any route not in the set, so the output is answered as ordinary JSON. The marker is not exported from any package entry, so a plugin cannot mark its own route, and it is keyed on the object rather than on a name a plugin could also declare.
+
+**Price.** `readRedirectPath`'s signature changed, and `test/http-redirect.test.ts`, which proved the 302 mechanics with a synthetic route, now marks that route itself. A field called `redirectToPath` in a plugin's output reaches the browser as data, so an application that relied on a plugin redirecting has to do the redirect in its own client.
+
+<a id="e-2242"></a>
+
+### An identifier no uuid column can hold names no row
+`E-2242` · input-and-redirect · object identifiers, decided
+
+**Context.** S-OWNER-8 asks that "does not exist" and "belongs to another user" answer alike, and a malformed identifier is the third case of the same question. `POST /session/revoke` and `POST /identity/unlink` handed the submitted string to a `::uuid` cast, PostgreSQL refused it with 22P02, and the route answered `500 internal_error` where an invented `uuid` answered 204. `factor.webauthn.rename` already guarded its input and answered alike. `factor.webauthn.remove` guarded too, but returned early, so on an account with no other sign-in method a malformed identifier answered 204 where an invented one answered `409 last_sign_in_method`. `test/http-malformed-identifiers.test.ts` compared status, headers and body of four malformed spellings against an invented `uuid` on the four routes, for an account with a password and one without, and five of the eight cases differed. `test/session-review-ownership.test.ts` asserted the 22P02 itself as the proof that the target reached SQL as a parameter; it now asserts the call returns.
+
+**Rejected.** A `uuid()` validator in the route declarations, which the brief for this work proposed. It refuses with `400 invalid_input`, and three of the four routes answer an invented identifier with something else, so it would have replaced one difference with another; making it answer like the route would mean a validator that knows each route's answer. Also rejected: a fixed identifier such as the nil `uuid` in place of the malformed one, which names a row the moment an import writes one.
+
+**Reason.** `src/core/db/row-identifier.ts` holds the one spelling check. Where the identifier goes through `removeSignInMethod`, a malformed one is passed as `NULL`, which the count's `IS NULL` branch reads as excluding nothing and the `DELETE`'s `id = $2` matches nothing, so it runs the same lock, the same count and the same statements as an invented `uuid` and gets the same answer. `SessionService.revoke` answers `void` for every target, so there a malformed one returns before the statement. The webauthn early return is removed and `rename` uses the shared check.
+
+**Price.** The check accepts only the hyphenated form, in either case. PostgreSQL also accepts braces and the unhyphenated form, so `{…}` or 32 bare hex digits that used to reach a real row are now treated as naming none. A malformed `targetSessionId` skips one `DELETE` an invented one runs, which a timer could see; the caller already knows what it sent, so it learns nothing it did not have.
+
+<a id="e-2243"></a>
+
+### The uuid a cover request locks on is drawn in the randomness module
+`E-2243` · input-and-redirect · randomness, decided
+
+**Context.** S-RAND-5 puts every call to the CSPRNG in one module. `anAccountThatCannotExist` in `src/core/db/repositories/token.ts` called `crypto.randomUUID()` directly. Neither scan saw it: `test/token-static-scan.test.ts` and `test/token-review-randomness.test.ts` both searched for `getRandomValues` alone, which is one of the generator's three entry points. The extended scan in `test/token-review-randomness.test.ts` found that one file outside `core/token/random.ts`.
+
+**Rejected.** Replacing the draw with a fixed identifier. Its own comment cites E-931 for drawing afresh, because a fixed identifier could name a row an import creates, and nothing found here argues against that.
+
+**Reason.** `core/token/random.ts` gains `randomUuid()` and the repository calls it, so the draw stays as it was and moves to the module the requirement names. The scan now searches all of `src/` for `getRandomValues`, `randomUUID` and `subtle.generateKey`, comments stripped, and is shown to report each of the three when one is planted in another file.
+
+**Price.** `random.ts` now holds something that is not a secret, so its comment ("every secret of the library must be drawn here") describes less than the file does. The scan reads source text rather than an AST, as T-RAND-5 asks for, so a call spelled through a computed property, such as `crypto["random" + "UUID"]`, would pass it.
+
+<a id="e-2244"></a>
+
+### The session token parameters stay plain strings for now
+`E-2244` · input-and-redirect · S-RAND-6, left open
+
+**Context.** S-RAND-6 asks that a value of type `EntityId` not be usable as a token without an explicit conversion. `SessionToken` is a branded string, but `CookieWriter.setSession` and `setPending` take `string`, and so do `SessionService.resolve`, `refresh` and `signOut({ token })`. A `SessionId` therefore passes into all five without conversion, because a branded string is still a `string`. This branch was asked to fix it only if the change stayed internal.
+
+**Rejected.** Narrowing the five parameters to `SessionToken` and `PendingToken` here. Both interfaces are in the shipped declarations, `test/__snapshots__/api-surface.md` records `setSession(token: string)` and `resolve(token: string)`, so the change is a public type change, and it would touch the web handler's `moveTokensIntoCookies`, which reads the token out of an `unknown` route output and would need a cast to brand it.
+
+**Reason.** The rule for this branch was to keep the public API shape, and the narrowing is a change to it that deserves its own decision about what a plugin's `context.cookies.setSession(...)` should accept. Nothing was changed.
+
+**Price.** S-RAND-6's type half stays unmet for these five parameters: a `SessionId` can still be handed to `setSession` and would be written into the session cookie. `test/brand-invariants.test.ts` checks that each brand still brands, not what these parameters accept, so nothing fails on it.
+
 <a id="e-2330"></a>
 
 ### Eleven weak OWNER, LINK, REDIR and REST tests replaced by tests at the section-6 threshold
