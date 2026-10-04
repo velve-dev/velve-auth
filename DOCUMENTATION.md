@@ -1438,8 +1438,8 @@ interface RateLimiter {
 
 `capacity` is a number of requests — the burst a caller may spend at once — and
 `refillPerSecond` is how many requests per second flow back into the bucket, so
-`{ capacity: 5, refillPerSecond: 0.01 }` is five attempts and then one more
-every hundred seconds. An implementation is passed in through
+the default account bucket `{ capacity: 5, refillPerSecond: 1 / 300 }` is five
+attempts and then one more every three hundred seconds. An implementation is passed in through
 `auth.http.rateLimiter` and needs no change to the HTTP layer. The pipeline consumes the address bucket before the
 input is parsed and before the caller is resolved; the route consumes the account
 bucket through `context.enforceAccountRateLimit` once it has the identifier,
@@ -1656,6 +1656,159 @@ It keeps three counters, and only two of them can refuse a request.
 | Address | route name and the address prefix | `rate_limited` |
 | Account | route name and `HMAC(token-pepper, identifier)` | `rate_limited` |
 | Per route, per instance | route name, in memory | an alarm, and nothing else |
+
+### The defaults, and why they are these
+
+An instance configured with no `rateLimit` uses:
+
+```ts
+rateLimit: {
+  perIpAddress: { capacity: 30, refillPerSecond: 0.5 },     // a burst of 30, then 30 a minute
+  perAccount:   { capacity: 5,  refillPerSecond: 1 / 300 }, // a burst of 5, then 1 every 5 minutes
+  globalPerRoute: { alertThresholdPerMinute: 6000, onAlert: /* a warn line, see below */ },
+}
+```
+
+**Every figure is per route.** A bucket's key starts with the route name, so
+each route that declares a bucket has its own. What a password guesser gets
+against one account is the sum over the routes that check a password:
+`signIn.password`, which anyone can call, and `password.change`, which needs a
+fresh session of that account and so is no route for someone who does not
+already hold it. Against an account the anonymous total is therefore the one
+bucket of `signIn.password`. Other secrets are guessed on routes of their own,
+each with its own account bucket of the same size: recovery codes on
+`password.redeemResetWithRecoveryCode`, which anyone can call, and the second
+factor on `factor.totp.verify`, `factor.recovery.verify` and
+`factor.webauthn.authenticate.finish`, which need the pending state a correct
+password produces. The address figures are per route as well: one address gets the
+address allowance on every route that declares the bucket.
+
+Omitting `rateLimit` uses all three defaults. Omitting one of its fields uses
+the default for that field only, so `rateLimit: { perIpAddress: … }` keeps the
+default account bucket and the default alarm. `globalPerRoute` is replaced
+whole: an application that gives it gives both the threshold and `onAlert`.
+
+**The account bucket is the brute-force protection.** Its key is the HMAC of
+the identifier typed in, not the address it came from, so an attacker holding a
+thousand addresses gets no more guesses at one account than an attacker holding
+one. At the default that is 5 guesses at once and then 12 an hour — about 290 a
+day (5 + 86 400 / 300 = 293) against any one account, whatever the number of
+addresses. A real user who mistypes five times waits five minutes for the next
+attempt, and is never locked out: the bucket refills on its own (S-RATE-7).
+
+**The address bucket only stops one source flooding a route.** It counts every
+request on the route, successful ones included, from one IPv4 address or one
+IPv6 `/64`. An office, a university, a school, a mobile carrier's NAT or a VPN
+exit puts many users behind one address, and they share this bucket. At the
+default, one address gets 30 requests at once and then 30 a minute — about
+43 000 a day — which lets a shared network through and still stops a single
+machine hammering a route. It does little against an attacker with many
+addresses, and it does not have to: the account bucket does that.
+
+**There is no per-route throttle that refuses.** A limit on a route as a whole
+would be reached by one attacker, and from then on every user of that route would
+be refused — the attacker locks everyone out without guessing anything. The
+per-route counter is an alarm and refuses nothing (`S-RATE-8`). By default it
+writes `a route is taking more requests than its alert threshold` as a `warn`
+line, with `routeName`, `requestsInLastMinute` and `observedAt`, at most once a
+minute per route (E-2672). An application that gives its own `onAlert` gets
+every alert itself and no default line.
+
+**A weaker value is reported, not refused.** A `capacity` or a `refillPerSecond`
+above the default, in either bucket, produces one `warn` line at start,
+`a security option is weaker than its default`, naming `rateLimit` and the
+values chosen. Every looser preset below produces it, deliberately: the line
+records the trade-off that was made. It is also kept on the instance as
+`auth.weakenings`, a frozen array of `{ option, chosen }`, for a health check or
+a test to read.
+
+**Without a `log`, both lines go to the console.** The start warning and the
+route alarm are written with `console.warn`, prefixed `[@velve/auth]`, when no
+`log` is configured (E-2671). They are the only lines the library writes to the
+console; every other line needs a `log` to be seen. Configure a `log` to send
+them where the rest of the application's logs go.
+
+### Recommended presets
+
+What an attacker gets is stated per route, against one account and from one
+address.
+
+**Default** — no configuration.
+
+```ts
+createVelveAuth({ /* …, no rateLimit */ })
+```
+
+Per account: 5 at once, then 12 an hour, about 290 a day, from any number of
+addresses. Per address: 30 at once, then 30 a minute. No start warning.
+
+**Large shared network** — many users behind one address.
+
+```ts
+rateLimit: {
+  perIpAddress: { capacity: 60, refillPerSecond: 1 },
+}
+```
+
+Per account: unchanged, about 290 a day. Per address: 60 at once, then 60 a
+minute, about 86 000 a day. One start warning for `rateLimit`.
+
+**High traffic** — a shared network and a route that is watched.
+
+```ts
+rateLimit: {
+  perIpAddress: { capacity: 60, refillPerSecond: 1 },
+  globalPerRoute: {
+    alertThresholdPerMinute: 6000,
+    onAlert: (alert) => monitoring.alert("velve.route_flood", alert),
+  },
+}
+```
+
+Per account and per address as for a large shared network, and one start
+warning for `rateLimit`. The alarm goes to the monitoring system on every alert
+instead of to the log. The threshold is counted per instance, so a threshold for
+the whole service is divided by the number of processes.
+
+### When to go stricter, when to go looser
+
+Anything above the default in either bucket produces the start warning.
+Anything at or below it produces nothing.
+
+**Per address, looser** — `capacity` 60–200, `refillPerSecond` 1–3.
+For many users behind one address: a company NAT, a university, a school, a
+mobile carrier's CGNAT, a VPN exit. Also for an application whose users sign in
+in bursts: a shift start, the start of a class, an event check-in. One address
+then gets 60–180 requests a minute (about 86 000–260 000 a day). What one
+account can be guessed does not change.
+
+**Per address, stricter** — `capacity` 10, `refillPerSecond` 0.1 (the old
+default) or lower.
+For a small internal tool, an admin panel or a B2B application with few users,
+or while a credential-stuffing wave is under way. One address then gets 10 at
+once and then 6 a minute (about 8 600 a day); at 0.05 it is 3 a minute.
+
+**Per account, stricter** — `capacity` 3–5, `refillPerSecond` 1 / 900.
+For high-value accounts such as administrators or finance, for regulated
+environments, and for accounts without a second factor. One account can then be
+guessed 4 times an hour: about 99 a day at capacity 3 and 101 at capacity 5. A
+user who mistypes three times waits fifteen minutes.
+
+**Per account, looser, with care** — `capacity` up to 10, `refillPerSecond` up
+to 1 / 60.
+For users who mistype often where support costs matter, or where every account
+has a second factor. Every loosening of this bucket directly raises what a
+password guesser gets against each account per day:
+
+| `perAccount` | Guesses an hour after the burst | Guesses a day per account |
+|---|---|---|
+| `{ capacity: 5, refillPerSecond: 1 / 300 }` (default) | 12 | about 290 |
+| `{ capacity: 10, refillPerSecond: 1 / 300 }` | 12 | about 300 |
+| `{ capacity: 5, refillPerSecond: 1 / 120 }` | 30 | about 725 |
+| `{ capacity: 10, refillPerSecond: 1 / 60 }` | 60 | about 1 450 |
+
+Raising `capacity` alone only lets a user mistype more often before the first
+wait; raising `refillPerSecond` is what multiplies the guesses.
 
 ### `createRateLimiter(options)`
 
@@ -5516,7 +5669,7 @@ compile (E-349).
 | `session` | `Partial<SessionConfig>` | Sessions chapter | deadlines, cookie name, `SameSite`, freshness window |
 | `sessionMetadata` | `"truncated" \| "full" \| "none"` | `"truncated"` | how much of the address and the user agent is stored (L-10) |
 | `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts; it reaches the handler through `auth.http`, so `toWebHandler` needs no second copy |
-| `rateLimit` | `Partial<RateLimitConfig>` | 10 @ 0.1/s per address, 5 @ 0.01/s per account | bucket sizes and the alert callback |
+| `rateLimit` | `Partial<RateLimitConfig>` | 30 @ 1 per 2 s per address, 5 @ 1 per 300 s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
 | `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
@@ -5525,7 +5678,7 @@ compile (E-349).
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
-| `log` | `(level, message, fields?) => void` | a sink that drops everything | where the true reason of a refusal is written |
+| `log` | `(level, message, fields?) => void` | a sink that drops everything, except a weakening at start and a route alarm, which go to `console.warn` | where the true reason of a refusal is written |
 
 There is no option that disables the origin check, the rate limiter, PKCE or the
 state check, and none that keeps the other sessions alive across a password
@@ -5537,12 +5690,15 @@ OAuth, plugin, session and identity options and the route a plugin declares, not
 only the assembly. A plugin route cannot declare itself free of the address
 bucket either; that is a start error, listed under Plugins.
 
-**`log` has no default sink.** The core may not write to `console`, so a library
-that ships one would have to break its own rule; the default therefore drops
-everything, and an installation that wants to see the true reason behind a
-refusal (S-ENUM-6) has to pass a sink. This is the one place in the reference
-where a default is *not* the safe choice made for you, and it is called out here
-because nothing else would tell you.
+**`log` has no default sink.** The default drops everything, and an installation
+that wants to see the true reason behind a refusal (S-ENUM-6) has to pass a
+sink. Two kinds of line are the exception: a weakening reported at start
+(E-2671) and the default route alarm, at most once a minute per route (E-2672),
+go to `console.warn` when no `log` is configured, because an operator who
+weakened an option or whose route is flooded must hear about it without having
+configured anything. Nothing else reaches the console. This is the one place in the reference where a
+default is *not* the safe choice made for you, and it is called out here because
+nothing else would tell you.
 
 ### What refuses to start
 
@@ -5561,7 +5717,7 @@ because nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the eighteen namespaces 3.15 B gives the instance |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the nineteen namespaces 3.15 B gives the instance |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
@@ -5585,7 +5741,7 @@ through the optional field rather than by branching on the code first.
 
 `claimed` is what the two sides both claimed, in the form the collision was
 found in: a route name (`session.list`), a folded method and path
-(`POST /sign-out`), or one of the eighteen surface namespaces of 3.15 B
+(`POST /sign-out`), or one of the nineteen surface namespaces of 3.15 B
 (`session`). `contributors` is the two of them, in a fixed order: the side that
 already held the claim first, and the side that arrived second. A plugin appears
 under its own `id`; the library appears as `THE_CORE`, which is exported beside
@@ -5627,6 +5783,18 @@ At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
 can be counted. An option left at its default produces nothing, and so does one
 written out at exactly its default or set stricter than it.
+
+The line goes to `log`. Without a configured `log` it goes to `console.warn`
+instead, prefixed `[@velve/auth]`, so a weakening is never silent (E-2671). The
+same weakenings stay on the instance as `auth.weakenings`, a frozen array of
+`{ option, chosen }` in the order they were reported, for a health check or a
+test to read:
+
+```ts
+if (auth.weakenings.length > 0) {
+  health.degrade("auth", auth.weakenings.map((weakening) => weakening.option))
+}
+```
 
 What counts as weaker, option by option:
 
@@ -6043,7 +6211,7 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the eighteen namespaces 3.15 B gives the instance. Those eighteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the nineteen namespaces 3.15 B gives the instance. Those nineteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |

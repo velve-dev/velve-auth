@@ -22,14 +22,14 @@ afterAll(async () => {
 /**
  * E-779: the list is a statement of 3.15 B and deliberately wider than the build, so it can only be
  * checked in one direction. That the surface never carries a namespace the list omits is checkable
- * here; that the list carries all eighteen of 3.15 B is checkable only by reading it against 3.15 B.
+ * here; that the list carries all nineteen of 3.15 B is checkable only by reading it against 3.15 B.
  */
 describe("the namespaces a plugin may not take (3.11, 3.15 B)", () => {
 	it("names every namespace the built instance carries", () => {
 		const carried = Object.keys(mounted.auth as unknown as Record<string, unknown>);
 		const reserved = new Set(SURFACE_NAMESPACES);
 
-		expect(SURFACE_NAMESPACES).toHaveLength(18);
+		expect(SURFACE_NAMESPACES).toHaveLength(19);
 		expect(carried.length).toBeGreaterThan(5);
 		expect(carried.filter((name) => !reserved.has(name))).toStrictEqual([]);
 	});

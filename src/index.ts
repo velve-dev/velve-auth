@@ -38,7 +38,11 @@ export type {
 	SignUpResult,
 } from "./core/auth/results.js";
 export type { ResolvedSessionView } from "./core/auth/routes.js";
-export { SECURITY_OPTIONS, type SecurityOption } from "./core/auth/security-options.js";
+export {
+	type ChosenWeakening,
+	SECURITY_OPTIONS,
+	type SecurityOption,
+} from "./core/auth/security-options.js";
 export { type RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.js";
 export {
 	TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS,
@@ -115,8 +119,16 @@ export type { SessionToken } from "./core/session/token.js";
 //this is the one place in the package where a clock is read (E-231)
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
 
+type LogSink = NonNullable<VelveAuthConfig<IdentityMode>["log"]>;
+
+//this is the one place in the package that writes to the console and the core never does (E-2674)
+function warnOnTheConsole(...[, message, fields]: Parameters<LogSink>): void {
+	//biome-ignore lint/suspicious/noConsole: the fallback sink for weakenings and route alarms
+	console.warn(`[@velve/auth] ${message}`, fields ?? {});
+}
+
 export function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M> {
-	return assembleVelveAuth(config, SYSTEM_CLOCK);
+	return assembleVelveAuth(config, SYSTEM_CLOCK, warnOnTheConsole);
 }
 
 export const VELVE_AUTH_VERSION = "1.1.0";

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
+import { rateLimitConfigOf } from "../src/core/auth/rate-limiting.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import type { Driver } from "../src/core/db/driver.js";
 import type { OAuthConfig } from "../src/core/oauth/config.js";
@@ -23,6 +24,9 @@ import {
 	oauthConfigFor,
 	type StubProvider,
 } from "./oauth-provider.js";
+
+/** Two posts past the default address capacity of the callback route, so the last is refused. */
+const TWO_PAST_THE_DEFAULT = rateLimitConfigOf().perIpAddress.capacity + 2;
 
 const CREDENTIALS = { clientId: "id", clientSecret: "secret" };
 
@@ -203,7 +207,7 @@ describe("the form-bodied callback and an unauthenticated cross-site POST", () =
 		const mount = await mountWith("form_post");
 		const started = await startFlow(mount);
 		const statuses: number[] = [];
-		for (let attempt = 0; attempt < 12; attempt += 1) {
+		for (let attempt = 0; attempt < TWO_PAST_THE_DEFAULT; attempt += 1) {
 			const answer = await mount.auth.handler(
 				postedForm({ ...started, pointer: "" }, { code: "no-code" }),
 			);
