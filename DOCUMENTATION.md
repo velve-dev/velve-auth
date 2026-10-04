@@ -4007,6 +4007,13 @@ matched, and sets `confirmed_at`. Raises `factor_not_enrolled` when no
 enrolment was started, `factor_already_enrolled` when one is already
 confirmed, and `invalid_factor_code` when the code does not match.
 
+Only the secret the code was matched against is confirmed: the update carries
+that ciphertext in its predicate. A `start` that replaces the secret between
+the check and the confirmation leaves the new secret unconfirmed, and `finish`
+answers `invalid_factor_code`, because the code proved a secret that is no
+longer stored. The new secret is confirmed by a code from it, as any enrolment
+is (E-2871).
+
 The confirming code is written into `velve.totp_used_step` like any accepted
 code. RFC 6238 §5.2 asks that an accepted code be refused for the rest of its
 step and does not ask why it was accepted; without the claim, the code typed to
