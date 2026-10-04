@@ -165,6 +165,27 @@ Constraints: `user_email_normalized` (the address equals its own lowercase),
 (`username` and `username_key` are set together or not at all). Migration 2 adds
 `user_identity_mode`, the check that materialises the configured identity mode.
 
+The row reaches a caller as `User`, exported from `@velve/auth`, every field
+`readonly`:
+
+| Field | Type | From |
+|---|---|---|
+| `id` | `string` | `id` |
+| `createdAt`, `updatedAt` | `Date` | `created_at`, `updated_at` |
+| `email` | `string \| null` | `email` |
+| `emailVerifiedAt` | `Date \| null` | `email_verified_at` |
+| `username` | `string \| null` | `username`, the display form; `username_key` is not on it |
+| `disabledAt` | `Date \| null` | `disabled_at` |
+| `hasPassword` | `boolean` | whether a `velve.password_credential` row exists, read in the same statement rather than stored |
+| `importedFrom` | `ImportSource \| null` | `imported_from` |
+
+`ImportSource` is `"supabase" | "clerk" | "auth0" | "firebase" | "nextauth"`,
+the five values the column is documented to hold. The column has no `CHECK`, so
+a row written by hand with another value is possible, and reading it as a
+`User` throws a `TypeError` rather than handing on a value outside the type.
+Nothing in the package writes the column yet: no import module ships (E-2902),
+so `importedFrom` is `null` for every account the library created.
+
 ### `velve.password_credential`
 
 One row per user with a password.
@@ -416,9 +437,20 @@ Returns the shipped plan for one identity mode: `"email"`, `"username"` or
 | `migrations` | `readonly Migration[]` | — | the plan; core migrations plus any a plugin contributes |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema to migrate |
 
+The options object has the exported type `MigrationRunnerOptions` — `{ driver:
+Driver; migrations: readonly RunnableMigration[]; schema?: string }`, every field
+`readonly`. `RunnableMigration` is not exported; it is a `Migration` or a
+plugin's migration, which adds `owner` and `createsTables` to it and is
+recorded in the plugin ledger rather than the core one.
+
 A `Migration` is `{ version: number; name: string; sql: string }`. The checksum
 is taken over the SQL as shipped, so the same migration in two differently named
 schemas hashes the same.
+
+`AppliedMigration` is one row of the ledger as the runner and the status read it
+back — `{ version: number; name: string; checksum: string }`, every field
+`readonly`, with `applied_at` left out. No exported function returns it; it is
+the type for code that reads `velve.schema_migration` itself.
 
 `schema` must be a lowercase unquoted identifier of at most 63 bytes and may not
 be a PostgreSQL reserved key word; anything else raises `InvalidIdentifierError`
@@ -516,7 +548,14 @@ The version contract between the package and the database (F35, F37). Both take
 the same options as `runMigrations` and neither writes anything — a database
 that has never been migrated stays untouched and reports version 0.
 
-`readSchemaStatus` returns:
+The options object has the exported type `SchemaStatusOptions` — `{ driver:
+Driver; migrations: readonly Migration[]; schema?: string }`, every field
+`readonly`, `schema` defaulting to `"velve"`. Both read only the core ledger,
+`velve.schema_migration`, so the plan to pass is the core one,
+`coreMigrations(identityMode)`.
+
+`readSchemaStatus` returns a `SchemaStatus`, exported under that name, every
+field `readonly`:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -678,7 +717,10 @@ rejected shape would be a second answer beside "no row".
 import { createOwnedRowRepository } from "@velve/auth";
 ```
 
-Builds a repository over one table whose rows belong to a user.
+Builds a repository over one table whose rows belong to a user. It takes an
+`OwnedRowRepositoryOptions` and returns an `OwnedRowRepository<Row>`, both
+exported from `@velve/auth` under those names; `Row` is the row shape the caller
+declares, and the repository does not check it against the table.
 
 | Option | Type | Default | Meaning |
 |---|---|---|---|
@@ -1115,6 +1157,11 @@ answers 404 to every one of them.
 | `options.basePath` | `string` | `""` | Where the handler is mounted. Compared segment by segment; a request outside it is a 404. Never derived from a header. |
 | `options.connectionAddress` | `(request: Request) => string \| null` | `() => null` | The address the connection came from. A `Request` carries none, so the adapter supplies it. The handler passes it through `resolveClientAddress` together with `X-Forwarded-For` and the configured `trustedProxies`, so the header counts where — and only where — the configuration says it may (S-RATE-3). Without this option every request shares one bucket per route. |
 
+`options` has the type `WebHandlerOptions`, which `@velve/auth/http` exports
+beside `toWebHandler` — `{ readonly basePath?: string; readonly
+connectionAddress?: (request: Request) => string | null }`. Both fields are
+optional, and leaving `options` out is the same as passing `{}`.
+
 Every response carries `Cache-Control: no-store` and `Vary: Cookie`, set by the
 handler and not by the application (L-6). A response with a body carries
 `Content-Type: application/json`; the library never produces HTML.
@@ -1272,6 +1319,10 @@ that declaration; the client is derived from the same types.
 | `rateLimit` | `{ perIpAddress: BucketRule \| "none"; perAccount: BucketRule \| "none" }` | The buckets this route consumes. |
 | `handler` | `(input, context) => Promise<Output>` | Returns the output, or nothing for a 204. |
 
+The types of `caller` and `originCheck` are exported from `@velve/auth` under
+their own names: `CallerRequirement` is `"anonymous" | "session" | "pending" |
+"server_only"`, and `OriginRequirement` is `"checked" | "exempt"`.
+
 The order in front of the handler is fixed and cannot be reordered by a caller or
 a plugin: origin check, per-address rate limit, input parse, caller resolution,
 handler.
@@ -1388,6 +1439,7 @@ shape is checked and the contents are not.
 | `ipAddress` | `string \| null` | The address the rate limiter counts: `options.connectionAddress` resolved against `X-Forwarded-For` and `trustedProxies`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
 | `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending`, `setOAuthState`, `clearOAuthState` — a role, never a name, so no unenumerated cookie can be written. |
+| `plugin` | `FrozenContext` | The frozen context of the plugin that registered the route, from `pluginContextOf` below; a core route gets the core context, which carries no tables of its own. See [`FrozenContext`](#frozencontext). |
 | `enforceAccountRateLimit(normalisedIdentifier)` | `Promise<void>` | Consumes the per-account bucket. The identifier must already be normalised (L-5). A route that declares `perAccount` and reaches its handler without calling this writes a warning naming the route, whether the handler returned or threw; where the declaration says `perAccount: "none"` the call does nothing. |
 
 `Session` and `PendingAuthentication` are the records of architecture 3.15 C. A
@@ -1419,6 +1471,7 @@ Freshness is measured against `createdAt`, never against `lastUsedAt` (3.5).
 | `sessionCookieMaximumAgeInSeconds` | `number` | `Max-Age` of the session cookie: a whole number of seconds, at most 400 days. |
 | `freshnessWindowInSeconds` | `number` | Measured against `session.createdAt`. |
 | `callers` | `CallerResolver` | `resolveSession` returns the `Session`, `resolvePending` the `ResolvedPendingAuthentication`; both throw, and the error map decides what the caller sees. |
+| `pluginContextOf` | `(route: RouteMetadata) => FrozenContext` | The frozen context a route's handler receives as `context.plugin`: the registering plugin's for a plugin route, the core one — with no tables of its own — for a route nobody registered. Required; the instance builds it from its plugin registry. |
 | `rateLimiter` | `RateLimiter` | See below. |
 | `clock` | `Clock` | |
 | `log` | `(level, message, fields?) => void` | Where the true reason of every concealed failure is written. |
@@ -1753,6 +1806,25 @@ writes `a route is taking more requests than its alert threshold` as a `warn`
 line, with `routeName`, `requestsInLastMinute` and `observedAt`, at most once a
 minute per route (E-2672). An application that gives its own `onAlert` gets
 every alert itself and no default line.
+
+`onAlert` receives a `RateAlert`, exported from `@velve/auth`:
+
+```ts
+interface RateAlert {
+  readonly routeName: string
+  readonly requestsInLastMinute: number
+  readonly observedAt: Date
+}
+```
+
+`routeName` is the dotted route name and `observedAt` the instance clock's time
+of the request that sounded the alarm. **`requestsInLastMinute` is not a count
+over the last minute.** It is the alarm's `addressChecksObserved`, carried
+across under the name 3.15 A.6 gives it: the address checks this route has
+taken on this instance since the instance started. For the first alarm of a
+flood that starts with the instance it is the threshold to within one refill,
+which is what E-356 measured; for any later alarm it also counts every request
+before the flood (E-2903).
 
 **A weaker value is reported, not refused.** A `capacity` or a `refillPerSecond`
 above the default, in either bucket, produces one `warn` line at start,
@@ -2913,6 +2985,33 @@ the result types are what the functions return.
 `IdentityMode` is not one of them: it comes from the migration that materialises
 it, `src/core/db/migrations/identity-mode.ts` (E-190).
 
+### Types that follow the mode
+
+Four type helpers that `@velve/auth` exports beside the instance type, for code
+that has to change shape with the identity mode `M` the way the instance does.
+None of them exists at run time.
+
+```ts
+type IdentityFields<M extends IdentityMode>
+// "email" → { email: string }
+// "username" → { username: string }
+// "username_email" → { email: string; username: string }
+
+type ModeHasEmail<M extends IdentityMode>     // true for "email" and "username_email", else false
+type ModeHasUsername<M extends IdentityMode>  // true for "username" and "username_email", else false
+
+type OnlyWhen<Condition extends boolean, Surface> // Surface when Condition is true, else never
+```
+
+`IdentityFields<M>` is the set of sign-in names a new account carries in mode
+`M`; it is what sign-up takes beside the password. `ModeHasUsername<M>` is what
+removes `auth.username` from the instance type in the `email` mode.
+`ModeHasEmail<M>` and `OnlyWhen` are not used by the library's own declarations;
+they are exported for an application that writes a type of its own conditioned
+on the mode. A member typed `OnlyWhen<false, …>` is `never`, which makes it
+impossible to supply rather than absent, so it fits a property that must not be
+set in that mode.
+
 ### The comparison form
 
 Three exported functions build the form under which usernames and addresses are
@@ -3810,6 +3909,17 @@ observedAt }`. It is the only value in the library from which an `Actor` can be
 obtained (S-OWNER-7), and it is produced here and nowhere else. `observedAt` is
 the database's clock at the moment it answered, and every deadline this module
 decides after the fact is measured against it.
+
+The resolution stays inside the library. What `GET /session`, `POST
+/session/refresh` and the instance's `auth.session.resolve` and
+`auth.session.refresh` hand out is a `ResolvedSessionView`, exported from
+`@velve/auth`: `{ readonly session: Session; readonly user: User }`, the session
+record and the account it belongs to, read after the session resolved. It
+carries no `Actor` and cannot be turned into one. `GET /session` and
+`auth.session.resolve` answer `null` where no session resolves; the refresh
+route declares `caller: "session"` and fails with `session_required` instead.
+Each of them answers `null` when the account row is gone by the time it is
+read.
 
 #### Issuing and re-issuing
 
@@ -5296,6 +5406,22 @@ no default on purpose — `"sub"` is convenient and, in the one case where it is
 wrong, an account-takeover bug. A dot reaches into a nested claim, as in
 `bot.owner.user.id`.
 
+The types behind this, all exported from `@velve/auth`:
+
+| Type | What it is |
+|---|---|
+| `KnownProvider` | the union of the fourteen built-in ids below |
+| `ProviderCredentials` | the table above, every field `readonly`; only `clientId` and `clientSecret` are required |
+| `GenericProviderConfig` | `ProviderCredentials` with `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` required, and `emailClaim` and `emailVerifiedClaim` optional, all `string` |
+| `OAuthPrompt` | `"select_account" \| "consent" \| "login" \| "none"` |
+| `OAuthResponseMode` | `"query" \| "form_post"` |
+
+`providers` is typed as `ProviderCredentials` for a `KnownProvider` key and as
+`ProviderCredentials | GenericProviderConfig` for any other key. So the
+compiler accepts an unknown id with credentials alone, and the start refuses it
+with `oauth_provider_incomplete`; writing such an entry as
+`GenericProviderConfig` moves that refusal to compile time.
+
 Every endpoint the server calls itself must be an absolute `https` URL, checked
 while the instance is built. A provider configured with neither `jwksUri` nor
 `userInfoEndpoint` starts, and every sign-in through it answers
@@ -5855,6 +5981,13 @@ if (auth.weakenings.length > 0) {
   health.degrade("auth", auth.weakenings.map((weakening) => weakening.option))
 }
 ```
+
+Both shapes are exported from `@velve/auth`. A row of `SECURITY_OPTIONS` is a
+`SecurityOption` — `{ readonly option; readonly safeDefault: string; readonly
+weakenedBy: string }` — and an entry of `auth.weakenings` is a `ChosenWeakening`
+— `{ readonly option; readonly chosen: string }`. In both, `option` is
+`keyof VelveAuthConfig<IdentityMode>`, a key of the configuration type; the
+`OptionKey` the code block above names is that union, and is not exported.
 
 What counts as weaker, option by option:
 
@@ -8064,6 +8197,8 @@ it. It is checked for being an object and not for its contents: WebAuthn
 extension outputs are open-ended, the library reads none of them, and what judges
 the answer is the verifier rather than a validator that would need widening for
 every extension a browser adds.
+Its type is `AuthenticatorResponse`, exported from `@velve/auth` under that
+name, which is `Record<string, unknown>` for the same reason.
 
 **`auth.factor.webauthn` is declared on the instance type whether or not
 `webauthn` is configured, and is absent at run time where it is not.** 3.15 B
