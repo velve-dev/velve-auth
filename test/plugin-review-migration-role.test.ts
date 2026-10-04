@@ -150,7 +150,8 @@ describe("the connection a plugin migration runs on (3.11)", () => {
 /**
  * What the refusal buys, measured rather than argued: under a role that is neither a superuser nor
  * a creator of roles, PostgreSQL itself refuses the three statements that outran every measurement
- * here. The other two survive, and the entry says so rather than the reference implying otherwise.
+ * here. Of the other two, CREATE SCHEMA is refused by the catalogue attribution of E-2485 and
+ * ALTER ROLE … SET survives, and the entry says so rather than the reference implying otherwise.
  */
 describe("what the restricted role closes and what it does not (3.11)", () => {
 	// The complaint is the server's own and its wording is the server's to change: PostgreSQL 14
@@ -172,7 +173,15 @@ describe("what the restricted role closes and what it does not (3.11)", () => {
 		expect(outcome.message ?? "").toMatch(complaint);
 	});
 
-	it.each([["CREATE SCHEMA p_outside"], ["ALTER ROLE CURRENT_USER SET search_path = velve"]])(
+	it("refuses CREATE SCHEMA p_outside, which the catalogue attribution sees (E-2485)", async () => {
+		const schema = await freshSchema();
+
+		const outcome = await outcomeOf(schema, migrationOf("CREATE SCHEMA p_outside"), true);
+
+		expect(outcome.code).toBe("migration_created_more_than_a_table");
+	});
+
+	it.each([["ALTER ROLE CURRENT_USER SET search_path = velve"]])(
 		"still accepts %s, which the role restriction does not reach",
 		async (sql) => {
 			const schema = await freshSchema();

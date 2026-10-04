@@ -217,7 +217,8 @@ describe("with pluginDatabaseRole set, plugin SQL stays below the role (S-OWNER-
 	 * splits the joined names on commas, so one declared name may carry a core table behind a comma.
 	 */
 	it("grants nothing on a core table whatever a declared name contains", async () => {
-		await outcomeOf(start(["demo_entry,session"]).migrate());
+		//the start itself refuses the name since E-2481 and that refusal is an outcome too
+		await outcomeOf(Promise.resolve().then(() => start(["demo_entry,session"]).migrate()));
 
 		const [granted] = await owner.query<{ allowed: boolean }>(
 			"SELECT has_table_privilege($1, $2, 'DELETE') AS allowed",

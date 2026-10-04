@@ -23,6 +23,7 @@ type StartupErrorCode =
 	| "plugin_route_without_address_rate_limit"
 	| "plugin_table_prefix_conflict"
 	| "plugin_migration_table_not_prefixed"
+	| "plugin_migration_table_not_an_identifier"
 	| "plugin_error_code_not_namespaced"
 	| "plugin_error_code_undeclared"
 	| "plugin_rate_limit_rule_unmatched"
@@ -62,6 +63,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"one plugin id is the table prefix of another, so a table would belong to both of them (S-DEFAULT-5)",
 	plugin_migration_table_not_prefixed:
 		"a plugin migration declares a table outside its own prefix; 3.11 gives a plugin the tables named <plugin-id>_ and no others",
+	plugin_migration_table_not_an_identifier:
+		"a plugin migration declares a table name that is not a plain lowercase identifier of at most 63 bytes, so the name could not be read back as the one table it spells",
 	plugin_error_code_not_namespaced:
 		"a plugin declares an error code outside its own namespace, which would let two plugins answer for one code (S-DEFAULT-5)",
 	plugin_error_code_undeclared:
