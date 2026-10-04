@@ -10,10 +10,9 @@ const migrationModules = "core/db/migrations/";
 
 const OWNER_COLUMNS = ["user_id", "link_to_user_id"] as const;
 
-const LOOKS_LIKE_SQL = /\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b/;
+const LOOKS_LIKE_SQL = /\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b/i;
 
-/** Every table with an owner column, and the decision about who reaches it. A table that appears
- * in the schema without a line here fails the census, so it cannot arrive without a decision. */
+//a table with an owner column and no line here fails the census so none arrives without a decision
 const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	password_credential: "src/core/password/credential.ts",
 	identity: "src/core/oauth/identity-repository.ts",
@@ -43,8 +42,7 @@ type ExceptionClass =
 	| "shipped surface"
 	| "created with its account";
 
-/** The reasons a method may reach an owned table without a proof, each one a narrowing of
- * S-OWNER-1 that E-242 began and the decision log records class by class. */
+//each class narrows the requirement the way the decision log records it (E-242)
 const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 	"secret address":
 		"the row is addressed by the hash of a secret the caller presents, and the hash is a stronger predicate than the owner (E-242, E-2421)",
@@ -128,6 +126,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 
 	"src/core/auth/maintenance.ts#sweepExpiredRows": "maintenance or start-up",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
+	"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/db/cascade-guard.ts#assertEveryUserReferenceCascades": "maintenance or start-up",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.listSessionsOfUser":
@@ -231,14 +230,26 @@ function returnedObjectLiterals(callable: Callable): ts.ObjectLiteralExpression[
 	return found;
 }
 
+function declarationNamedBy(
+	expression: ts.Expression,
+	checker: ts.TypeChecker,
+): ts.Declaration | undefined {
+	if (!ts.isIdentifier(expression)) {
+		return undefined;
+	}
+	const symbol = checker.getSymbolAtLocation(expression);
+	if (symbol === undefined) {
+		return undefined;
+	}
+	const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+	return target.declarations?.[0];
+}
+
 function callableNamedBy(expression: ts.Expression, checker: ts.TypeChecker): Callable | undefined {
 	if (isCallable(expression)) {
 		return expression;
 	}
-	if (!ts.isIdentifier(expression)) {
-		return undefined;
-	}
-	const declaration = checker.getSymbolAtLocation(expression)?.declarations?.[0];
+	const declaration = declarationNamedBy(expression, checker);
 	if (declaration !== undefined && isCallable(declaration)) {
 		return declaration;
 	}
@@ -253,25 +264,87 @@ function callableNamedBy(expression: ts.Expression, checker: ts.TypeChecker): Ca
 	return undefined;
 }
 
+function objectLiteralNamedBy(
+	expression: ts.Expression,
+	checker: ts.TypeChecker,
+): ts.ObjectLiteralExpression | undefined {
+	const value = unwrapped(expression);
+	if (ts.isObjectLiteralExpression(value)) {
+		return value;
+	}
+	const declaration = declarationNamedBy(value, checker);
+	if (
+		declaration !== undefined &&
+		ts.isVariableDeclaration(declaration) &&
+		declaration.initializer !== undefined
+	) {
+		const initial = unwrapped(declaration.initializer);
+		return ts.isObjectLiteralExpression(initial) ? initial : undefined;
+	}
+	return undefined;
+}
+
+//a spread contributes the methods of the object it spreads, called or named
+function spreadLiterals(
+	spread: ts.SpreadAssignment,
+	checker: ts.TypeChecker,
+): ts.ObjectLiteralExpression[] {
+	const value = unwrapped(spread.expression);
+	if (ts.isCallExpression(value)) {
+		const callee = callableNamedBy(value.expression, checker);
+		return callee === undefined ? [] : returnedObjectLiterals(callee);
+	}
+	const literal = objectLiteralNamedBy(value, checker);
+	return literal === undefined ? [] : [literal];
+}
+
+function methodOf(
+	property: ts.ObjectLiteralElementLike,
+	checker: ts.TypeChecker,
+): Callable | undefined {
+	if (ts.isMethodDeclaration(property)) {
+		return property;
+	}
+	if (ts.isPropertyAssignment(property)) {
+		return callableNamedBy(property.initializer, checker);
+	}
+	if (ts.isShorthandPropertyAssignment(property)) {
+		const declaration = checker.getShorthandAssignmentValueSymbol(property)?.declarations?.[0];
+		if (declaration !== undefined && isCallable(declaration)) {
+			return declaration;
+		}
+		if (
+			declaration !== undefined &&
+			ts.isVariableDeclaration(declaration) &&
+			declaration.initializer !== undefined &&
+			isCallable(declaration.initializer)
+		) {
+			return declaration.initializer;
+		}
+	}
+	return undefined;
+}
+
 function methodsOf(
 	literal: ts.ObjectLiteralExpression,
 	checker: ts.TypeChecker,
+	seen: Set<ts.Node> = new Set(),
 ): [string, Callable][] {
+	if (seen.has(literal)) {
+		return [];
+	}
+	seen.add(literal);
 	const methods: [string, Callable][] = [];
 	for (const property of literal.properties) {
-		const name = property.name?.getText() ?? "";
-		if (ts.isMethodDeclaration(property)) {
-			methods.push([name, property]);
-		} else if (ts.isPropertyAssignment(property)) {
-			const value = callableNamedBy(property.initializer, checker);
-			if (value !== undefined) {
-				methods.push([name, value]);
+		if (ts.isSpreadAssignment(property)) {
+			for (const spread of spreadLiterals(property, checker)) {
+				methods.push(...methodsOf(spread, checker, seen));
 			}
-		} else if (ts.isShorthandPropertyAssignment(property)) {
-			const declaration = checker.getShorthandAssignmentValueSymbol(property)?.declarations?.[0];
-			if (declaration !== undefined && isCallable(declaration)) {
-				methods.push([name, declaration]);
-			}
+			continue;
+		}
+		const method = methodOf(property, checker);
+		if (method !== undefined) {
+			methods.push([property.name?.getText() ?? "", method]);
 		}
 	}
 	return methods;
@@ -291,18 +364,77 @@ function unitsOf(path: string, name: string, callable: Callable, checker: ts.Typ
 	);
 }
 
-function exportedDeclarations(file: ts.SourceFile): [string, Callable][] {
-	const declared: [string, Callable][] = [];
-	for (const statement of file.statements.filter(isExported)) {
-		if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
-			declared.push([statement.name.text, statement]);
+function classMethods(declaration: ts.ClassLikeDeclaration): [string, Callable][] {
+	const methods: [string, Callable][] = [];
+	for (const member of declaration.members) {
+		if (ts.isMethodDeclaration(member) && member.body !== undefined) {
+			methods.push([member.name.getText(), member]);
+		} else if (
+			ts.isPropertyDeclaration(member) &&
+			member.initializer !== undefined &&
+			isCallable(member.initializer)
+		) {
+			methods.push([member.name.getText(), member.initializer]);
 		}
-		if (!ts.isVariableStatement(statement)) {
+	}
+	return methods;
+}
+
+function unitsOfDeclaration(
+	path: string,
+	name: string,
+	declaration: ts.Node,
+	checker: ts.TypeChecker,
+): [string, Callable][] {
+	if (ts.isFunctionDeclaration(declaration)) {
+		return unitsOf(path, name, declaration, checker);
+	}
+	if (ts.isClassDeclaration(declaration)) {
+		return classMethods(declaration).map(([method, body]) => [`${path}#${name}.${method}`, body]);
+	}
+	if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) {
+		return [];
+	}
+	if (isCallable(declaration.initializer)) {
+		return unitsOf(path, name, declaration.initializer, checker);
+	}
+	const literal = objectLiteralNamedBy(declaration.initializer, checker);
+	return literal === undefined
+		? []
+		: methodsOf(literal, checker).map(([method, body]) => [`${path}#${name}.${method}`, body]);
+}
+
+function exportListed(statement: ts.Statement, checker: ts.TypeChecker): [string, ts.Node][] {
+	if (
+		!ts.isExportDeclaration(statement) ||
+		statement.moduleSpecifier !== undefined ||
+		statement.exportClause === undefined ||
+		!ts.isNamedExports(statement.exportClause)
+	) {
+		return [];
+	}
+	return statement.exportClause.elements.flatMap((element): [string, ts.Node][] => {
+		const declaration = checker.getExportSpecifierLocalTargetSymbol(element)?.declarations?.[0];
+		return declaration === undefined ? [] : [[element.name.text, declaration]];
+	});
+}
+
+function exportedDeclarations(file: ts.SourceFile, checker: ts.TypeChecker): [string, ts.Node][] {
+	const declared: [string, ts.Node][] = [];
+	for (const statement of file.statements) {
+		declared.push(...exportListed(statement, checker));
+		if (!isExported(statement)) {
 			continue;
 		}
-		for (const declaration of statement.declarationList.declarations) {
-			if (declaration.initializer !== undefined && isCallable(declaration.initializer)) {
-				declared.push([declaration.name.getText(), declaration.initializer]);
+		if (
+			(ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+			statement.name !== undefined
+		) {
+			declared.push([statement.name.text, statement]);
+		}
+		if (ts.isVariableStatement(statement)) {
+			for (const declaration of statement.declarationList.declarations) {
+				declared.push([declaration.name.getText(), declaration]);
 			}
 		}
 	}
@@ -314,8 +446,8 @@ function exportedCallables(
 	checker: ts.TypeChecker,
 	path: string,
 ): [string, Callable][] {
-	return exportedDeclarations(file).flatMap(([name, callable]) =>
-		unitsOf(path, name, callable, checker),
+	return exportedDeclarations(file, checker).flatMap(([name, declaration]) =>
+		unitsOfDeclaration(path, name, declaration, checker),
 	);
 }
 
@@ -347,9 +479,22 @@ function sameFileBodies(node: ts.Identifier, checker: ts.TypeChecker): ts.Node[]
 	return bodies;
 }
 
-/** The text a unit can send to the database: its own literals, and those of every declaration in
- * the same file it reaches by name. An import ends the walk, because a call into another module is
- * that module's census entry. */
+//an imported constant contributes its literal text and an imported function contributes nothing
+function importedConstantText(node: ts.Identifier, checker: ts.TypeChecker): string[] {
+	const declaration = declarationNamedBy(node, checker);
+	if (
+		declaration === undefined ||
+		declaration.getSourceFile() === node.getSourceFile() ||
+		!ts.isVariableDeclaration(declaration) ||
+		declaration.initializer === undefined
+	) {
+		return [];
+	}
+	const value = unwrapped(declaration.initializer);
+	return isLiteralText(value) ? [value.text] : [];
+}
+
+//a unit reaches its own literals and every same-file declaration it names, and an import ends the walk
 function reachableText(root: Callable, checker: ts.TypeChecker): string[] {
 	const texts: string[] = [];
 	const visited = new Set<ts.Node>();
@@ -363,6 +508,7 @@ function reachableText(root: Callable, checker: ts.TypeChecker): string[] {
 		}
 		if (ts.isIdentifier(node)) {
 			sameFileBodies(node, checker).forEach(visit);
+			texts.push(...importedConstantText(node, checker));
 		}
 		ts.forEachChild(node, visit);
 	};
@@ -426,6 +572,36 @@ function takesProof(callable: Callable, checker: ts.TypeChecker): boolean {
 	);
 }
 
+const BARE_OWNER_NAMES = new Set(["userId", "ownerId", "user_id"]);
+
+function isPlainString(type: ts.Type): boolean {
+	const members = type.isUnion() ? type.types : [type];
+	return members.some((member) => (member.flags & ts.TypeFlags.String) !== 0);
+}
+
+function fieldsNameABareOwner(type: ts.Type, checker: ts.TypeChecker): boolean {
+	const members = type.isUnion() ? type.types : [type];
+	return members.some((member) =>
+		checker.getPropertiesOfType(member).some((property) => {
+			const declaration = property.valueDeclaration ?? property.declarations?.[0];
+			return (
+				declaration !== undefined &&
+				BARE_OWNER_NAMES.has(property.name) &&
+				isPlainString(checker.getTypeOfSymbolAtLocation(property, declaration))
+			);
+		}),
+	);
+}
+
+//a brand beside a bare user id proves nothing about the id the statement uses
+function takesBareOwner(callable: Callable, checker: ts.TypeChecker): boolean {
+	return callable.parameters.some((parameter) => {
+		const type = checker.getTypeAtLocation(parameter);
+		const named = ts.isIdentifier(parameter.name) && BARE_OWNER_NAMES.has(parameter.name.text);
+		return (named && isPlainString(type)) || fieldsNameABareOwner(type, checker);
+	});
+}
+
 function censusOf(program: ts.Program, ownerTables: readonly string[]): CensusEntry[] {
 	const checker = program.getTypeChecker();
 	const entries: CensusEntry[] = [];
@@ -446,7 +622,11 @@ function censusOf(program: ts.Program, ownerTables: readonly string[]): CensusEn
 			if (tables.length === 0) {
 				continue;
 			}
-			entries.push({ unit, tables, carriesProof: takesProof(callable, checker) });
+			entries.push({
+				unit,
+				tables,
+				carriesProof: takesProof(callable, checker) && !takesBareOwner(callable, checker),
+			});
 		}
 	}
 	return entries.sort((left, right) => left.unit.localeCompare(right.unit));
@@ -525,7 +705,7 @@ describe("every repository method on an owned table takes a proof of ownership (
 		}
 	});
 
-	it("reports a planted method that reaches an owned table by a bare user id", () => {
+	it("reports a planted method that reaches an owned table by a bare user id, beside a brand or not", () => {
 		const planted = programOver({
 			path: "core/planted-census-fault.ts",
 			text: `import type { Actor } from "./db/actor.js";
@@ -535,6 +715,8 @@ export function createPlanted(driver: { query(sql: string, params: unknown[]): P
 			driver.query("SELECT id FROM velve.session WHERE user_id = $1", [input.userId]),
 		byActor: (input: { actor: Actor }) =>
 			driver.query("SELECT id FROM velve.session WHERE user_id = $1", [input.actor]),
+		decoy: (input: { actor: Actor; userId: string }) =>
+			driver.query("SELECT id FROM velve.session WHERE user_id = $1", [input.userId]),
 	};
 }
 `,
@@ -551,6 +733,11 @@ export function createPlanted(driver: { query(sql: string, params: unknown[]): P
 			},
 			{
 				unit: "src/core/planted-census-fault.ts#createPlanted.byUserId",
+				tables: ["(an owner column)", "session"],
+				carriesProof: false,
+			},
+			{
+				unit: "src/core/planted-census-fault.ts#createPlanted.decoy",
 				tables: ["(an owner column)", "session"],
 				carriesProof: false,
 			},
