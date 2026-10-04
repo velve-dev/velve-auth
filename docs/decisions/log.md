@@ -13552,3 +13552,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Changing the 3.15 configuration block, whose comment already states `__Host-velve_session` as the default, and T-FIX-5, which already speaks of the session name rather than a literal. Editing the context line of the architecture's own section 7 log, which records what was decided then and is not extended here. Rewriting E-2550's Price, which §6 forbids for an entry's reason; this entry records the change instead.
 **Reason.** S-FIX-5 is a requirement a deployment with a configured name would otherwise violate on every response, while the code does what S-COOKIE-1 now says. The comparison rows describe the library's own cookies, and a reader taking the name from them would look for a cookie that a configured instance no longer sets. `test/architecture-translation.test.ts` passes, so both files still carry the same identifiers, tables and headings.
 **Price.** The specification now carries the same qualifying phrase in nine places, which reads heavier than one definition would. A later clause that names the session cookie has to carry it too, and nothing checks that it does.
+
+<a id="e-2552"></a>
+
+### A configured cookie name must be a string, because it now reaches the header
+`E-2552` · cookie-name · closes a gap the review found
+
+**Context.** Before this branch `session.cookieName` never reached a `Set-Cookie` header, so the start check only ran the name pattern over it. The review showed that an object whose `toString` answered `__Host-a` the first time and `__Host-a; Domain=evil.com` afterwards passed the check and then wrote a `Domain` attribute into the header, which S-COOKIE-2 and S-FIX-5 forbid; a boxed `String` passed too and silently stopped sign-in from working.
+**Rejected.** Converting the value to a string once at start and keeping that copy.
+**Reason.** A configuration value of the wrong type is a configuration error, and refusing it names the mistake instead of repairing it out of sight; it is also the same rule E-2482 applies to declared table names.
+**Price.** A JavaScript caller passing anything but a string now fails at start with `session.cookieName must be a string`. Concerns `src/core/session/config.ts` `assertCookieName`.

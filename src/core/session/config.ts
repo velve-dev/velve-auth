@@ -72,6 +72,10 @@ function assertBelow(shorter: [string, number], longer: [string, number]): void 
 }
 
 function assertCookieName(cookieName: HostPrefixedCookieName): HostPrefixedCookieName {
+	//a name that is not a string could read differently when the header is built (S-COOKIE-2)
+	if (typeof cookieName !== "string") {
+		throw new InvalidSessionConfigError("session.cookieName must be a string");
+	}
 	if (!COOKIE_NAME.test(cookieName)) {
 		throw new InvalidSessionConfigError(
 			`session.cookieName must be __Host- followed by letters, digits, "-" or "_", not "${cookieName}"`,
