@@ -87,11 +87,20 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 	 * followed by a semicolon is not left out: a DELETE behind it would otherwise go unread. */
 	const GRANTS_PRIVILEGES = /^\s*GRANT\b[^;]*$/i;
 
+	/** The same list written as a quoted argument, as `has_table_privilege` takes it in the plugin
+	 * login check (E-2641), is data a function reads and not a statement. Only a literal holding
+	 * privilege names and commas and nothing else is read that way. */
+	const PRIVILEGE_NAME = "(?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER)";
+	const QUOTED_PRIVILEGE_LIST = new RegExp(
+		`'\\s*${PRIVILEGE_NAME}(?:\\s*,\\s*${PRIVILEGE_NAME})*\\s*'`,
+		"gi",
+	);
+	const changesRows = (sql: string): boolean =>
+		CHANGES_ROWS.test(sql.replace(QUOTED_PRIVILEGE_LIST, "''")) && !GRANTS_PRIVILEGES.test(sql);
+
 	it("gives every row-changing statement an owner predicate", () => {
 		// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
-		const changing = sqlLiterals().filter(
-			(literal) => CHANGES_ROWS.test(literal.sql) && !GRANTS_PRIVILEGES.test(literal.sql),
-		);
+		const changing = sqlLiterals().filter((literal) => changesRows(literal.sql));
 		const withoutOwner = changing
 			.filter((literal) => !DECLARES_NO_ACTOR.test(literal.sql))
 			.filter((literal) => {
@@ -102,6 +111,16 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 
 		expect(changing.length).toBeGreaterThan(0);
 		expect(withoutOwner, describing(withoutOwner)).toEqual([]);
+	});
+
+	it("leaves out a quoted privilege list and not a statement beside one", () => {
+		const asked = "SELECT has_table_privilege(r.oid, c.oid, 'SELECT, UPDATE, DELETE') FROM t";
+		const beside = "DELETE FROM velve.session WHERE has_table_privilege(r.oid, c.oid, 'UPDATE')";
+		const quotedStatement = "SELECT query_to_xml('delete from velve.session', true, false, '')";
+
+		expect(changesRows(asked)).toBe(false);
+		expect(changesRows(beside)).toBe(true);
+		expect(changesRows(quotedStatement)).toBe(true);
 	});
 
 	it("leaves out a lone GRANT and not a statement that follows one", () => {

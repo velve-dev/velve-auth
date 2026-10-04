@@ -101,7 +101,7 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 		option: "plugins",
 		safeDefault: "[]",
 		weakenedBy:
-			"any entry, because a hook can refuse a sign-in the core would have allowed; the line also says whether plugin SQL runs as pluginDatabaseRole or as the library's own role",
+			"any entry, because a hook can refuse a sign-in the core would have allowed; without pluginDatabase the line also says whether plugin SQL runs as pluginDatabaseRole or as the library's own role",
 	},
 	{
 		option: "pluginDatabaseRole",
@@ -109,6 +109,13 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 			"no default: without it plugin SQL runs as the library's own role, bounded by the statement check alone (E-738)",
 		weakenedBy:
 			"nothing: leaving it out is reported in the plugins line, the one option that gives a plugin SQL to run",
+	},
+	{
+		option: "pluginDatabase",
+		safeDefault:
+			"no default: without it plugin SQL runs on the library's own connection, under pluginDatabaseRole when that is set",
+		weakenedBy:
+			"nothing: a login that is the library's role, can become it or reaches a core table is refused when migrate() runs",
 	},
 	{
 		option: "webauthn",
@@ -178,11 +185,14 @@ function userVerificationOf(config: ObservedConfig): string {
 	return config.webauthn?.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION;
 }
 
-//plugin sql without a role reaches the core tables with the library's own rights (S-OWNER-10)
-function pluginSqlRoleOf(config: ObservedConfig): string {
+//plugin sql on the library connection can always return to the library role and read the core (S-OWNER-10)
+function pluginSqlBoundOf(config: ObservedConfig): string {
+	if (config.pluginDatabase !== undefined) {
+		return "";
+	}
 	return config.pluginDatabaseRole === undefined
-		? "plugin SQL runs as the library's own role, as no pluginDatabaseRole is set"
-		: `plugin SQL runs as role ${config.pluginDatabaseRole}`;
+		? "; plugin SQL runs as the library's own role, as no pluginDatabaseRole is set"
+		: `; plugin SQL runs as role ${config.pluginDatabaseRole} on the library's connection, which bounds its writes and leaves its reads of core tables to the statement check, as no pluginDatabase is set`;
 }
 
 //one detector per option, so a new option adds a row rather than a branch
@@ -245,7 +255,7 @@ const DETECTORS: readonly Detector[] = [
 		config.plugins !== undefined && config.plugins.length > 0
 			? {
 					option: "plugins",
-					chosen: `${config.plugins.map((plugin) => plugin.id).join(", ")}; ${pluginSqlRoleOf(config)}`,
+					chosen: `${config.plugins.map((plugin) => plugin.id).join(", ")}${pluginSqlBoundOf(config)}`,
 				}
 			: null,
 

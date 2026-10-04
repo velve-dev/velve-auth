@@ -6141,7 +6141,11 @@ With `pluginDatabaseRole` set, every plugin statement also runs as a
 PostgreSQL role that holds rights on the plugins' own tables and on nothing
 else, so a write to a core table that slips past that check is refused by the
 database; without it the start log says plugin SQL runs as the library's own
-role. See [`pluginDatabaseRole`](#plugindatabaserole).
+role. See [`pluginDatabaseRole`](#plugindatabaserole). With `pluginDatabase`
+set instead, every plugin statement is sent on a second connection that logs in
+as the plugin role and has no way back to the library's, so a read of a core
+table is refused by the database as well. See
+[`pluginDatabase`](#plugindatabase).
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
 and on the direct server call alike; a plugin route cannot make itself a reader
@@ -6201,9 +6205,11 @@ migration, and removing a plugin leaves its tables where they are.
 
 ### Start errors
 
-Sixteen configurations refuse the start with a `VelveStartupError` — fourteen
+Eighteen configurations refuse the start with a `VelveStartupError` — sixteen
 codes only a plugin can trip, and two more a plugin can trip and so can a core
-route. None of them is a warning, because each leaves a question with no answer:
+route. All but one are decided when `createVelveAuth` runs;
+`plugin_database_reaches_the_core` needs the database and is decided by
+`migrate()`. None of them is a warning, because each leaves a question with no answer:
 
 | Code | When |
 |---|---|
@@ -6221,6 +6227,8 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_error_code_not_namespaced` | An `errorCodes` entry does not begin `<id>.` (S-DEFAULT-5). |
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
 | `plugin_rate_limit_rule_unmatched` | A `rateLimitRules` key names no route this plugin contributes. |
+| `plugin_database_and_role_both_set` | `pluginDatabase` and `pluginDatabaseRole` are both set. Each one says where plugin SQL runs, and neither is allowed to override the other without a word (E-2642). |
+| `plugin_database_reaches_the_core` | The login `pluginDatabase` connects as is the library's role, can become it, or can become a role that owns the schema, may create roles (`CREATEROLE`), may create objects in the core schema or in `public`, or holds a right on a core table or on any column of one — a superuser included. Raised by `migrate()`, and by a plugin statement whenever the check is asked again (E-2641, E-2646, E-2647). |
 | `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
 | `route_name_segment_reserved` | A route name has a segment every object already carries — `__proto__`, `constructor` or `prototype`. |
 
@@ -6765,6 +6773,14 @@ it is switched for the statement and switched back to whatever the transaction
 held before the savepoint is released, which makes five more statements in all
 (E-2582, E-2584, E-2586).
 
+With [`pluginDatabase`](#plugindatabase) set, `ownTables.query` is the one
+method of the lent context that does not use the reset's connection: its
+statements go to the plugin login, each committed as it runs, with no
+savepoint and no role switch. So what the hook writes to its own tables stays
+when the reset rolls back, the hook's refusal included, and a statement it
+leaves running after it returns is not refused. The other three methods stay on
+the reset's connection as above (E-2643).
+
 The listing and the delete are separate statements on a reset too. The account
 lock does not block a concurrent sign-in from inserting a session, so a session
 committed between the two is removed without being announced. It cannot be
@@ -6892,7 +6908,9 @@ name (Rule 4), so this statement no longer reaches the database; the hole stays
 open for any such function the list does not name. With
 [`pluginDatabaseRole`](#plugindatabaserole) set, a statement that does reach the
 database runs as a role without rights on the core tables and is refused there
-with `permission denied`.
+with `permission denied`. With [`pluginDatabase`](#plugindatabase) set, the
+same is true of a read through a function the list does not name, because the
+connection has no role to return to.
 
 **Rule 2 — a table position must hold one of the plugin's own tables.** This is
 3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
@@ -7044,8 +7062,10 @@ lowercase unquoted identifier, and when it is `none`, `public` or begins with
 **Left out, nothing changes** — plugin SQL runs as the library's own role,
 bounded by the statement check alone — and the start log's `plugins` line says
 so: `chosen` ends with `plugin SQL runs as the library's own role, as no
-pluginDatabaseRole is set`, or with `plugin SQL runs as role velve_plugins` when
-it is set. It is not a start error, because every application running a plugin
+pluginDatabaseRole is set`, or, when it is set, with `plugin SQL runs as role
+velve_plugins on the library's connection, which bounds its writes and leaves
+its reads of core tables to the statement check, as no pluginDatabase is set` —
+the partial measure the next paragraphs describe. It is not a start error, because every application running a plugin
 today has no such role.
 
 **What it costs.** One plugin statement becomes four round trips — `BEGIN`,
@@ -7070,8 +7090,134 @@ from PostgreSQL or from an installed extension, together with a way back to the
 login role, would reopen it. Writes do not depend on the list: PostgreSQL checks
 a statement's tables before running it, and no built-in function runs a writing
 statement from text. A plugin connection that logs in as the plugin role, with
-no way back, would not depend on the list either and is not what this option
-does.
+no way back, does not depend on the list either; that is
+[`pluginDatabase`](#plugindatabase), and the two options are not combined.
+
+### `pluginDatabase`
+
+```ts
+import { Pool } from "pg";
+import { createNodePostgresDriver } from "@velve/auth/pg";
+
+//the application builds the second pool from its own secret store, as it does for database
+const pluginPool = new Pool({ connectionString: pluginDatabaseUrl });
+createVelveAuth({ ..., plugins: [audit], pluginDatabase: createNodePostgresDriver(pluginPool) });
+```
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `pluginDatabase` | `Driver` | absent | A second driver, logged in as the plugin role, on which every `ownTables.query` statement runs. |
+
+This is the stronger form of [`pluginDatabaseRole`](#plugindatabaserole). That
+option switches the library's own connection to the plugin role, and a login
+can always switch back to itself, so it bounds writes and leaves reads of core
+tables to the statement check's list of refused functions. **A connection that
+logs in as the plugin role has nothing to switch back to.**
+`set_config('role', 'none', true)` lands on the plugin role, `SET ROLE` to the
+library's role is refused, and a core table read inside `query_to_xml` — or any
+function PostgreSQL or an extension adds that runs SQL text — is refused with
+`permission denied` (SQLSTATE `42501`). Writes are refused as before.
+
+**The library never reads a credential.** The driver is a parameter like
+`database`, built by the application from whatever secret store it uses, and the
+library only ever calls its `query`. The connection string above is the
+application's, not something the library looks up.
+
+**The operator creates the role once**, as a role that may create roles:
+
+```sql
+CREATE ROLE velve_plugins LOGIN PASSWORD '<generated>';
+GRANT CONNECT ON DATABASE <database> TO velve_plugins;
+-- PostgreSQL 14 only; 15 and newer already ship it this way
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+```
+
+The role is created without `CREATEROLE`. On PostgreSQL 14 every role may
+create objects in `public` until that grant is revoked, and an object there can
+shadow a function or an operator a core statement resolves, so a plugin login
+that may create in `public` or in the core schema is refused.
+
+**Do not grant it membership in the library's role**, directly or through
+another role, and do not give it any right on a core table: either would let it
+reach what the separate login is there to keep it from, and either refuses the
+start. Nothing more is needed: `migrate()`, running on
+`database`, grants the role `USAGE` on the schema, `SELECT`, `INSERT`, `UPDATE`
+and `DELETE` on each declared plugin table, and `USAGE`, `SELECT` and `UPDATE`
+on their sequences — the same grants `pluginDatabaseRole` gets, given to the
+role `pluginDatabase` logs in as. Unlike `pluginDatabaseRole`, the library's
+role needs no membership in the plugin role, because nothing switches to it.
+
+**It is checked at every `migrate()`, and again every five minutes.** After the
+core and plugin migrations have applied and before anything is granted, one
+statement on each connection asks: what is the library's login
+(`SELECT current_user` on `database`), and on `pluginDatabase`, whether its
+login is that role or can become it
+(`pg_has_role(current_user, <library role>, 'MEMBER')`), and whether any role it
+can become — itself included — owns the schema, holds `CREATEROLE`, holds
+`CREATE` on the core schema or on `public`, or holds any right on a core table
+(`has_table_privilege`) or on any column of one (`has_any_column_privilege`).
+`pg_has_role` answers true for a superuser, and both privilege functions count
+`PUBLIC` grants and predefined roles such as `pg_read_all_data`, so all of those
+are refused. Any yes refuses the start with `plugin_database_reaches_the_core`.
+
+The same statement also counts the core tables it found. A check that does not
+find all of them measured nothing, so it does not pass: a plugin statement on
+an instance whose schema has not been migrated is refused with
+`plugin_database_unchecked` until `migrate()` has run — on this instance or by a
+separate job. A pass is remembered for five minutes on the instance's clock;
+the next plugin statement after that asks again before it runs. **A grant made
+after a check is seen at the next `migrate()` or within five minutes, not
+before**: the check reads the catalogue as it stands and does not watch it.
+The role's name must be a lowercase unquoted identifier, as for
+`pluginDatabaseRole`, or `migrate()` fails with `InvalidIdentifierError`.
+
+**Setting both options is a start error**, `plugin_database_and_role_both_set`.
+With `pluginDatabase` set there is no `SET ROLE` to give a role to, and letting
+one option win without a word would leave the operator believing the other one
+holds.
+
+**The start log** reports no weakening of plugin SQL when `pluginDatabase` is
+set: the `plugins` line then lists the plugin ids and nothing more, because
+plugin hooks can still refuse a sign-in. With `pluginDatabaseRole` alone it says
+the role bounds writes and leaves reads to the statement check; with neither it
+says plugin SQL runs as the library's own role, as before.
+
+**What changes for a statement.** It is checked by the statement check first, as
+before, then sent on `pluginDatabase` as one statement: no `BEGIN`, no
+`SET LOCAL ROLE`, no `COMMIT`, so one round trip instead of four. It runs in a
+transaction of its own on a connection of the plugin pool, so it sees what the
+library has committed and nothing it has not.
+
+**Inside a password reset.** A `beforeSessionRevoke` hook that a reset announces
+runs inside the reset's transaction, and its context's repositories use the
+reset's own connection. Its `ownTables` statements do not: with
+`pluginDatabase` set they go to the plugin connection, each committed as it
+runs. **A hook that refuses the reset rolls back the reset and nothing the hook
+wrote to its own tables**, and an own-table write made before another hook
+refuses stays as well. A plugin that needs its record undone with the reset
+writes it in `afterSessionCreate` or checks for the session later, rather than
+in the revoke hook. The statement is not held to the end of the hook either: an
+own-table statement the hook leaves running after it returns still runs on the
+plugin connection. In exchange, a hook's own-table statement never waits for a
+connection from the library's pool, which a reset waiting on its hook holds
+(E-2643).
+
+**Locks across the two connections.** The reset holds the account row
+`FOR NO KEY UPDATE`. An insert into a plugin table whose foreign key names that
+account takes `FOR KEY SHARE` on it, which that mode does not conflict with, so
+the hook's insert does not wait for the reset that is waiting for the hook. A
+plugin statement that waited on a row the reset had locked would wait forever,
+since PostgreSQL sees two transactions and not the hook between them. The reset
+writes no plugin table before its hooks run, and the plugin role holds no right
+on a core table, so no statement sent through `ownTables` can be made to wait on
+it.
+
+**What it costs.** A second pool and a second credential for the operator to
+manage, and the connections that pool holds. A plugin is still JavaScript in
+the application's process: it can open a connection of its own with any
+credential the process can read, and nothing here stops that. What this option
+guarantees is that a statement sent through `ownTables.query` reaches the
+plugins' own tables and nothing else, reads included.
 
 ### `RequestContext.plugin`
 

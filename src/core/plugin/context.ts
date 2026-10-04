@@ -10,6 +10,7 @@ import type {
 	RevokeReason,
 	SessionRevokeEvent,
 } from "./config.js";
+import type { PluginConnection } from "./login-connection.js";
 import { createNoOwnTables, createOwnTables, type OwnTables } from "./own-tables.js";
 
 class PluginActorError extends Error {
@@ -36,6 +37,7 @@ export interface FrozenContextServices {
 	readonly driver: import("../db/driver.js").Driver;
 	readonly log: LogSink;
 	readonly pluginDatabaseRole?: string;
+	readonly pluginConnection?: PluginConnection;
 	readonly insideATransaction?: boolean;
 }
 
@@ -153,6 +155,9 @@ export function createPluginContext(
 			...(services.pluginDatabaseRole === undefined
 				? {}
 				: { databaseRole: services.pluginDatabaseRole }),
+			...(services.pluginConnection === undefined
+				? {}
+				: { pluginConnection: services.pluginConnection }),
 			insideATransaction: services.insideATransaction === true,
 		}),
 	);

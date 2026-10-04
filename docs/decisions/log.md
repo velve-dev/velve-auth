@@ -13862,3 +13862,83 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Editing E-2618's sentence, which §6 forbids for a reason that was not checked when written.
 **Reason.** The accelerator is the engine that runs whenever it is installed, so the claim that the reader covers it needed to rest on its code and not on an assumption.
 **Price.** None beyond the reading; a later hash-wasm that refuses something new reopens the gap as E-2618 says.
+
+<a id="e-2640"></a>
+
+### Plugin SQL can run over a second driver that logs in as the plugin role
+`E-2640` · plugin-login · design, S-OWNER-10, settles E-2452
+
+**Context.** E-2452 handed off a connection that logs in as the plugin role. Under `pluginDatabaseRole` the plugin statement runs on the library's own connection, whose login can always return to itself, so a read of a core table is refused only as far as the list of E-2454 reaches. The owner decided to close it fully. `test/plugin-login-connection.test.ts` failed eight of its eleven cases before the change: the plugin's statements reached the library's connection, no plugin connection was refused, both options together started, and the start line was unchanged. The cases that send a core-table read through `set_config` and `query_to_xml`, a `SET ROLE` to the library's role, a `DELETE` and an `UPDATE` straight to the plugin login, below the statement check, passed before and after, because they measure the login role the operator creates and not the library.
+**Rejected.** (a) A connection string or credentials as the option, read and pooled by the library. §7 makes the driver a parameter and forbids keys from `process.env` inside the core, and a second pool the library opened would be a pool the application cannot size or close. (b) A function that returns a driver per statement. Nothing needs it, and it would invite opening a connection per statement. (c) Dropping the statement check when the option is set. It still refuses a second statement and DDL with a message that names the plugin, before a round trip, and it costs nothing a database refusal would not.
+**Reason.** `pluginDatabase?: Driver` is the same shape as `database`: the application builds it from its own secret store and the library only calls `query`. With it set, `createOwnTables` sends each checked statement to that driver as one statement, without `BEGIN`, `SET LOCAL ROLE` or `COMMIT`. `migrate()` grants the login's role the plugins' own tables exactly as E-2450 does for `pluginDatabaseRole`, on the library's connection, after the check of E-2641. The hook context gets the driver through `FrozenContextServices`, so every context a plugin is handed sends its own-table statements there.
+**Price.** The operator manages a second pool and a second credential, and runs `CREATE ROLE … LOGIN PASSWORD` and `GRANT CONNECT` once. The declared configuration type gains `pluginDatabase` and `StartupErrorCode` gains `plugin_database_reaches_the_core` and `plugin_database_and_role_both_set`, so the API surface snapshot was re-recorded. The brief asked for one start error code, and the decision of E-2642 needed a second. For the release notes: the new optional `pluginDatabase` runs every plugin statement over a second driver that logs in as a dedicated plugin role, closing the read of core tables that `pluginDatabaseRole` leaves to the statement check; existing configurations are unaffected. Only the test connection was exercised, on the local PostgreSQL; `pg`'s `Pool` was not run with this option.
+
+<a id="e-2641"></a>
+
+### The plugin login is refused when it can reach a core table, and the check runs at migrate()
+`E-2641` · plugin-login · start check, settled
+
+**Context.** The option is only a boundary if its login is not the library's role and cannot become it. A wrong connection string, the library's own driver passed twice, or a superuser login would start and run plugin SQL with every right on the core.
+**Rejected.** (a) Checking at `createVelveAuth`. It is synchronous and E-179 keeps checks that need the database out of it. (b) Checking membership in the library's role alone, as the brief's example query does. A login that holds a right on a core table through `PUBLIC`, through `pg_read_all_data`, through owning the schema, or through a role other than the library's would pass. (c) `to_regclass(format('%I.%I', schema, table))` to find the core tables. It needs `USAGE` on the schema, which the plugin login has only after the grants, and the first version failed `migrate()` with `permission denied for schema`. (d) Remembering a failed check. A transient connection error would then refuse every plugin statement until restart.
+**Reason.** One statement on the plugin driver asks whether its login can become the library's role, whose name one `SELECT current_user` on `database` gives; whether it can become the role that owns the schema; and whether any role it can become holds any right on a core table, read from `pg_class` and `pg_namespace` by name. `pg_has_role` answers true for a superuser, and `has_table_privilege` counts `PUBLIC` and predefined roles, so one statement covers the cases above. It runs in `migrate()` after the migrations, when the core tables exist, and before anything is granted, so nothing is granted to the library's own role. Any yes raises `plugin_database_reaches_the_core`. `ownTables.query` asks the same before its first statement on an instance whose `migrate()` never ran, with the library's role read on the context's own connection, and remembers only a pass. `migrate()` always asks again.
+**Price.** One more round trip on each connection per `migrate()`, and one on the first plugin statement of a process that skips `migrate()`. A check made before the core tables exist finds no core table and passes, so a process that sends plugin SQL before ever running `migrate()` is checked against nothing until it does. The privilege test is over tables; a right on a core sequence or a core function is not asked about, and neither is a `SECURITY DEFINER` function the plugin role may call.
+
+<a id="e-2642"></a>
+
+### Setting pluginDatabase and pluginDatabaseRole together refuses the start
+`E-2642` · plugin-login · configuration rule, settled
+
+**Context.** The brief asked to decide which option wins when both are set, or to refuse the combination.
+**Rejected.** (a) `pluginDatabase` wins. The role would then be ignored without a word, and an operator who set it would believe it holds. (b) Using `pluginDatabaseRole` as the name `migrate()` grants to and requiring the login to be that role. It gives two places for one fact, and nothing would be switched to the role, so the option would mean something different from what its own documentation says.
+**Reason.** Each option answers where plugin SQL runs, so two answers are a configuration error. `plugin_database_and_role_both_set` is decided at `createVelveAuth`, since it needs no database.
+**Price.** A second new start error code. An operator moving from the role to the login connection removes `pluginDatabaseRole` in the same change, and the role's membership grant to the library's login is then unused and can be revoked.
+
+<a id="e-2643"></a>
+
+### A hook's own-table writes over the plugin connection do not roll back with the reset
+`E-2643` · plugin-login · consequence, documented
+
+**Context.** A hook that runs while the library holds a transaction open, such as a `beforeSessionRevoke` a password reset announces, gets a context whose repositories use that transaction's connection. With `pluginDatabase` set, its `ownTables` statements go to the plugin driver instead, in transactions of their own.
+**Rejected.** Sending own-table statements inside a hook to the reset's connection under a savepoint. That is the library's login, which can reach the core, which is what this option exists to avoid. Opening one plugin transaction around the hook and committing or rolling it back with the reset. It would need a two-phase commit between two connections the library does not own, and a plugin connection held open across the reset.
+**Reason.** Each own-table statement commits as it runs. A hook that refuses rolls back the reset and none of what the hook wrote to its own tables, and an own-table statement the hook leaves running after it returns still runs. It never waits for a connection from the library's pool, which the waiting reset holds. A lock wait between the two transactions cannot form through `ownTables`: the reset locks the account row `FOR NO KEY UPDATE`, a plugin insert whose foreign key names it takes `FOR KEY SHARE`, which does not conflict, the reset writes no plugin table before its hooks run, and the plugin login holds no right on a core table.
+**Price.** A plugin that records something in a revoke hook and expects it gone when the revocation is refused has to undo it itself. That is stated in `DOCUMENTATION.md`. No test runs a reset with `pluginDatabase` on this branch; it is reasoned from the code and from the lock modes.
+
+<a id="e-2644"></a>
+
+### A reset with pluginDatabase set was run, and the hook's note survives the refusal as E-2643 said
+`E-2644` · plugin-login · test of E-2643, settled
+
+**Context.** E-2643's Price says no test runs a reset with `pluginDatabase` on this branch, which was true when it was written: `feature/revoke-hook`, which lends a reset's hook its transaction, had not merged. It merged while this branch was open. `test/plugin-login-reset.test.ts` now drives `/password/redeem-reset` with a hook that inserts a row naming the account into its own table, on a library connection and a plugin login of one socket each.
+**Rejected.** Editing E-2643's Price, which §6 forbids for a statement that was true when written.
+**Reason.** The reset completes with 200 while it holds the account row and the hook's insert takes `FOR KEY SHARE` on the same row from the other connection, the insert is the one `noter_note` statement the plugin login saw, and a hook that refuses after writing answers 500 with the session standing and its note kept. The merge kept the lent context's savepoint and role handling for the two other configurations and put the `pluginDatabase` branch in front of them in `createOwnTables`.
+**Price.** Only the reset was run. An OAuth link and a password change announce outside a transaction and were not run with the option.
+
+<a id="e-2645"></a>
+
+### The static scan reads a quoted privilege list as data
+`E-2645` · plugin-login · test instrument, settled
+
+**Context.** The check of E-2641 passes `has_table_privilege` the list `'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'`. `test/db-static-sql.test.ts` read `UPDATE` in it as a row-changing statement without an owner predicate. The first fix put the `no owner predicate` marker on the statement, and `test/token-static-scan.test.ts`, which pins seventeen such markers, failed on an eighteenth.
+**Rejected.** (a) Keeping the marker and raising the pinned count. The marker says a row-changing statement has no owner predicate for a stated requirement, and this statement changes no row. (b) Passing the list as a parameter from a constant. The constant would be a literal holding `UPDATE` too, and hiding a word from a scan is not the same as the scan reading it right. (c) Erasing every quoted literal before the scan. A deletion written as SQL text inside a literal would then go unread.
+**Reason.** A single-quoted literal holding privilege names and commas and nothing else is erased before the scan looks for a change, beside the existing exception for a lone `GRANT`. A case pins that such a list passes, that a `DELETE` beside one is still a change, and that a deletion inside a quoted statement is still a change.
+**Price.** A literal of exactly that shape used as something other than a privilege list would be skipped, which no statement in `src/` does.
+
+<a id="e-2646"></a>
+
+### The plugin login check asks column rights, role creation and create rights, and passes only on the full core
+`E-2646` · plugin-login · corrects E-2641, settled
+
+**Context.** The review committed `test/plugin-login-reach.test.ts`, and four of its eight cases failed against the check of E-2641. `has_table_privilege` does not see a column grant, so a login granted `SELECT (id, email)` on the user table, or `UPDATE (absolute_expires_at)` on the session table, passed. A login holding `CREATEROLE` passed, and on PostgreSQL 14 and 15 such a role can grant itself any non-superuser role, the library's included, which is why the migration runner refuses the attribute (E-920). And a check that ran before the core tables existed found none, passed, and was remembered for the life of the process, so a later default privilege handed the login the core while the serving process never asked again. E-2641's Price named that last case as accepted; it was wrong to accept it. The review also asked to refuse `CREATE` on the core schema or on `public`, since on PostgreSQL 14 an object there can shadow what a core statement resolves, and to keep pinning that the core schema holds no `SECURITY DEFINER` function, which its test does.
+**Rejected.** (a) Listing the columns of every core table and asking `has_column_privilege` for each. `has_any_column_privilege` asks the same in one call per table. (b) Treating a check before migration as a pass that a later `migrate()` replaces. The process that serves may never run `migrate()`, which is the case the review built. (c) Exempting `public` from the create check on PostgreSQL 14, where every role holds `CREATE` there by default. The shadowing it allows is the reason for the check, and the operator's `REVOKE` is one statement that PostgreSQL 15 made the default.
+**Reason.** The statement now also asks, for every role the login can become, `has_any_column_privilege` with `SELECT, INSERT, UPDATE, REFERENCES`, `rolcreaterole`, and `has_schema_privilege … 'CREATE'` on the core schema and on `public`; any yes is `plugin_database_reaches_the_core`. It counts the core tables it found, the plugin ledger excepted because it exists only once a plugin migration has run, and when any is missing it refuses the plugin statement with `plugin_database_unchecked` instead of passing. The review's eight cases pass, and four cases in `test/plugin-login-connection.test.ts`, which failed before this change, pin the create rights, the refusal before migration and the expiry of E-2647. The login fixture revokes `CREATE` on `public` from `PUBLIC` first, so the PostgreSQL 14 leg does not refuse every test login.
+**Price.** An operator on PostgreSQL 14 runs `REVOKE CREATE ON SCHEMA public FROM PUBLIC` once, which affects every role in that database and may break an application that relied on the old default. A serving process whose schema is migrated by a separate job refuses plugin SQL until that job has run. `plugin_database_unchecked` is the code of an internal error class, not a start error code, so the declared types did not change. The PostgreSQL 14 leg was not run locally; only PostgreSQL 18 was.
+
+<a id="e-2647"></a>
+
+### A remembered pass of the plugin login check expires after five minutes
+`E-2647` · plugin-login · interval chosen, settled
+
+**Context.** E-2641 remembered a pass for the life of the process. The review asked whether to check again on each `migrate()` and at a modest interval, and to say that a grant made after the check is only seen later.
+**Rejected.** (a) Checking before every plugin statement. It adds two round trips to each, one of them on the library's connection. (b) Never checking again in a serving process. A grant made after the start would then hold until a restart. (c) A configurable interval. Nobody has asked for one, and an option is one more thing the operator must get right.
+**Reason.** `migrate()` always asks, as it did. A pass is remembered with the time the instance's clock gave when it was asked, and the first plugin statement five minutes or more later asks again before it runs, on the context's own connection as in E-2641. A failure is never remembered. Five minutes bounds the window a later grant stays unseen while costing two round trips per five minutes of plugin traffic.
+**Price.** A grant made after a check is seen at the next `migrate()` or within five minutes, and `DOCUMENTATION.md` says so. A plugin statement that crosses the interval pays the two round trips, and one that runs inside a reset's hook pays them on the reset's connection.

@@ -42,6 +42,7 @@ import {
 	assertPluginDatabaseRole,
 	grantOwnTablesToThePluginRole,
 } from "../plugin/database-role.js";
+import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
@@ -280,6 +281,10 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		config.pluginDatabaseRole === undefined
 			? undefined
 			: assertPluginDatabaseRole(config.pluginDatabaseRole);
+	const pluginConnection =
+		config.pluginDatabase === undefined
+			? undefined
+			: createPluginConnection({ driver: config.pluginDatabase, schema, clock });
 	const frozenContextServices: FrozenContextServices = {
 		clock,
 		identityMode: identity.mode,
@@ -289,6 +294,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		driver,
 		log,
 		...(pluginDatabaseRole === undefined ? {} : { pluginDatabaseRole }),
+		...(pluginConnection === undefined ? {} : { pluginConnection }),
 	};
 	//every plugin hook runs from a handler, which runs after the origin check (S-CSRF-6)
 	const pluginRuntime = createPluginRuntime({
@@ -396,11 +402,16 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				//the plugin seam contributes here, so no feature edits this file to be run (E-776)
 				migrations: [...coreMigrations(identity.mode), ...pluginMigrations(services)],
 			});
-			if (pluginDatabaseRole !== undefined) {
+			//the plugin login is checked against the core tables this run just applied (E-2641)
+			const pluginRole =
+				pluginConnection === undefined
+					? pluginDatabaseRole
+					: await pluginConnection.verifyFrom(driver);
+			if (pluginRole !== undefined) {
 				await grantOwnTablesToThePluginRole({
 					driver,
 					schema,
-					role: pluginDatabaseRole,
+					role: pluginRole,
 					migrations: pluginMigrations(services),
 				});
 			}

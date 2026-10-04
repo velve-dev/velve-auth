@@ -446,6 +446,8 @@ interface BaseConfig<M extends IdentityMode> {
   readonly oauth?: OAuthConfig;
   readonly origins: readonly string[];
   readonly password?: PasswordConfig;
+  /** a second connection that logs in as the plugin role, on which every plugin statement runs */
+  readonly pluginDatabase?: Driver;
   /** the PostgreSQL role every plugin statement is switched to, holding rights on the plugins' own tables only */
   readonly pluginDatabaseRole?: string;
   readonly plugins?: readonly VelvePlugin[];
@@ -779,7 +781,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
