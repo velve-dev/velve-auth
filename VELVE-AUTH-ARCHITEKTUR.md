@@ -596,7 +596,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H56 Test-Helfer im Kontext | Login-, Cookie- und Factory-Helfer als Plugin (`plugins/test-utils/`) | Anders lösen | `@velve/auth/testing` als eigener Subpfad-Export mit Uhrkontrolle und deterministischem Zufall, kein Plugin, das sich in den Produktionskontext hängen kann. |
 | H57 CLI-Befehle (11) | `init`, `generate`, `migrate`, `secret`, `create-admin`, `info`, `upgrade`, `ai`, `login`, `logout`, `mcp` (`packages/cli/src/index.ts:24-36`) | Anders lösen | Kein CLI. Was gebraucht wird, sind Programmierschnittstellen: `@velve/auth/schema` (Migrationsläufer, Statusabfrage) und `@velve/auth/import`. Von den elf Befehlen entfallen `create-admin` mangels Rollenmodell, `login`/`logout`/`mcp`/`ai` binden an den kostenpflichtigen Dienst, `generate`/`migrate` werden zur Bibliotheksfunktion, `secret` ist ein Einzeiler mit `crypto.getRandomValues`. |
 
-**H: Übernehmen 17 · Anders lösen 15 · Weglassen 20 · Übertreffen 5**
+**H: Übernehmen 16 · Anders lösen 15 · Weglassen 21 · Übertreffen 5**
 
 ---
 
