@@ -5725,6 +5725,11 @@ position the checker reads as code, is refused, and so is one it cannot read at
 all. It is a guardrail against the accident, not a sandbox — a plugin runs in
 your process and can reach your driver by other means, and a core table named
 inside a string literal the database later executes is not seen.
+With `pluginDatabaseRole` set, every plugin statement also runs as a
+PostgreSQL role that holds rights on the plugins' own tables and on nothing
+else, so a write to a core table that slips past that check is refused by the
+database; without it the start log says plugin SQL runs as the library's own
+role. See [`pluginDatabaseRole`](#plugindatabaserole).
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
 and on the direct server call alike; a plugin route cannot make itself a reader
@@ -6379,6 +6384,10 @@ table named inside a literal that PostgreSQL later executes —
 `SELECT query_to_xml('select * from velve.user', …)` — is not seen. That is a
 real hole and it is open: closing it means refusing every statement whose
 literals contain SQL-shaped text, which refuses ordinary data.
+With [`pluginDatabaseRole`](#plugindatabaserole) set, that statement reaches
+the database as a role without rights on the core tables and is refused there
+with `permission denied`; the hole stays open for reads in the one way that
+section names.
 
 **Rule 2 — a table position must hold one of the plugin's own tables.** This is
 3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
@@ -6437,6 +6446,93 @@ takes it on its own table is refused by nothing (see [Lock order](#lock-order)).
 
 A core route's context carries the field, because 3.15 D.1 gives every request
 context one, and its `query` rejects: a core route owns no tables of its own.
+
+### `pluginDatabaseRole`
+
+```ts
+createVelveAuth({ ..., plugins: [audit], pluginDatabaseRole: "velve_plugins" })
+```
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `pluginDatabaseRole` | `string` | absent | The PostgreSQL role every `ownTables.query` statement is switched to. |
+
+The statement check above is lexical. This option puts a database boundary
+behind it, which is what S-OWNER-10 asks for: **a plugin writes a core table
+through the repositories only.** With it set, each plugin statement runs as
+
+```sql
+BEGIN;
+SET LOCAL ROLE velve_plugins;
+-- the plugin's one statement
+COMMIT;
+```
+
+and `velve_plugins` holds rights on the plugins' own tables and on nothing else,
+so a statement that gets past the check and writes `velve.session` fails with
+`permission denied for table session` (SQLSTATE `42501`) and changes nothing.
+`SET LOCAL` ends with the transaction, so the connection goes back to the pool as
+the library's own role.
+
+**The role is created once, by the operator.** Run as a role that may create
+roles, replacing `<library role>` with the role the instance's `database`
+connects as:
+
+```sql
+CREATE ROLE velve_plugins NOLOGIN;
+GRANT velve_plugins TO <library role>;
+```
+
+The membership is what permits `SET ROLE`. On PostgreSQL 16 and newer a
+membership granted `WITH SET FALSE` does not, so grant it plainly. The role
+needs no login, no password and no rights of its own: **`migrate()` grants it
+the rest**, on every run — `USAGE` on the schema, `SELECT`, `INSERT`, `UPDATE`
+and `DELETE` on each table a plugin declared in `createsTables` and still
+exists, and `USAGE`, `SELECT` and `UPDATE` on the sequences those tables own.
+Granting on every run is what makes a role configured after the tables were
+created reach them. The connection `migrate()` runs on must be allowed to grant
+on those tables, which the schema-owning migration role [What a plugin migration
+must do](#what-a-plugin-migration-must-do) asks for already is. A role that does
+not exist fails `migrate()` with PostgreSQL's own error, and fails every plugin
+statement the same way if `migrate()` was not run.
+
+A plugin table's foreign key to `velve.user` works under the role: PostgreSQL
+checks the referenced row as the owner of `velve.user`, so the role needs no
+right on it.
+
+The name is refused at start with `InvalidIdentifierError` unless it is a
+lowercase unquoted identifier, and when it is `none`, `public` or begins with
+`pg_`, none of which switches plugin SQL to a role of its own.
+
+**Left out, nothing changes** — plugin SQL runs as the library's own role,
+bounded by the statement check alone — and the start log's `plugins` line says
+so: `chosen` ends with `plugin SQL runs as the library's own role, as no
+pluginDatabaseRole is set`, or with `plugin SQL runs as role velve_plugins` when
+it is set. It is not a start error, because every application running a plugin
+today has no such role.
+
+**What it costs.** One plugin statement becomes four round trips — `BEGIN`,
+`SET LOCAL ROLE`, the statement, `COMMIT` — and holds a pooled connection for
+all four. Of the three driver entry points only `@velve/auth/pg` ships a driver;
+`@velve/auth/postgres-js` and `@velve/auth/neon` export nothing yet. A driver
+for either must implement `transaction` as one connection held across
+statements, which this option relies on: a driver that sends each statement on
+whatever connection is free would set the role on one connection and run the
+statement on another. Neon's HTTP query function sends a transaction as one
+batch and cannot run a statement that depends on the one before, so an
+application on Neon builds the driver on Neon's WebSocket `Pool`, which speaks
+the `pg` interface. A pooler in transaction mode keeps `SET LOCAL` correct,
+because it lasts exactly one transaction.
+
+**What it does not close.** The role is set by the library's own connection,
+and that connection's login role can always return to itself:
+`set_config('role', 'none', true)` needs no right. Inside one statement this
+does not reach a write — PostgreSQL checks a statement's tables before running
+it — and no built-in function runs a writing statement from text. It does reach
+a **read**: `SELECT set_config('role', 'none', true), query_to_xml('select … from
+velve.session', …)` runs the inner query after the reset and reads the core
+table. A plugin connection that logs in as the plugin role, with no way back,
+would close that and is not what this option does.
 
 ### `RequestContext.plugin`
 
