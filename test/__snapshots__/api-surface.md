@@ -545,6 +545,13 @@ interface UserNamespace {
     userId: string;
   }): Promise<void>;
 }
+/** the lookup by name, offered in the two modes that have a username */
+interface UserNamespaceWithUsernames extends UserNamespace {
+  findByUsername(input: {
+    username: string;
+  }): Promise<User | null>;
+}
+type UserNamespaceOf<M extends IdentityMode> = M extends "email" ? UserNamespace : UserNamespaceWithUsernames;
 interface UsernameNamespace {
   isAvailable(input: {
     username: string;
@@ -576,7 +583,7 @@ type VelveAuth<M extends IdentityMode> = AuthInternals & SeamSurface<M> & {
   signOut(input: ServerCallFields): Promise<void>;
   readonly pending: PendingNamespace;
   readonly session: SessionNamespace;
-  readonly user: UserNamespace;
+  readonly user: UserNamespaceOf<M>;
 } & (ModeHasUsername<M> extends true ? {
   readonly username: UsernameNamespace;
 } : Record<never, never>);

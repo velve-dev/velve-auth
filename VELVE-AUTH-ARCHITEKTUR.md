@@ -2106,6 +2106,8 @@ mit `account_disabled` (L-4, 3.5), bis `enable` das Konto freigibt oder die Fris
 `enable` existiert, weil eine Deaktivierung ohne Gegenstück nur per direktem SQL rückgängig zu
 machen wäre. `reason` wird nicht gespeichert (3.14 schließt ein Audit-Log aus), sondern
 protokolliert, und zwingt den Aufrufer, den Grund am Aufrufort zu formulieren.
+`findByUsername` vergleicht über `username_key`, die Vergleichsform aus 3.4, und findet ein
+Konto auch dann, wenn sein Name den heute konfigurierten Regeln nicht mehr genügt.
 
 **Kein `user.update`:** `velve.user` hat außer den Anmeldenamen keine veränderlichen Felder,
 und beide haben eigene Namensräume mit Bestätigungsabläufen; ein `user.update` wäre entweder

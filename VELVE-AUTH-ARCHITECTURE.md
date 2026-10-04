@@ -2103,6 +2103,8 @@ with `account_disabled` (L-4, 3.5), until `enable` releases the account or the l
 `enable` exists because a deactivation without a counterpart could be undone only by direct
 SQL. `reason` is not stored (3.14 rules out an audit log) but
 logged, and forces the caller to formulate the reason at the call site.
+`findByUsername` compares by `username_key`, the comparison form from 3.4, and finds an
+account even when its name no longer satisfies the rules configured today.
 
 **No `user.update`:** apart from the sign-in names `velve.user` has no mutable fields,
 and both have their own namespaces with confirmation flows; a `user.update` would be either

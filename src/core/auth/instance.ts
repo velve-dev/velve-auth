@@ -33,6 +33,7 @@ import {
 } from "../http/route.js";
 import { createServerMethod } from "../http/server-method.js";
 import { resolveIdentityConfiguration } from "../identity/configuration.js";
+import { comparisonFormOf } from "../identity/fold.js";
 import { createRateLimiter } from "../limit/index.js";
 import { type OAuthSurface, oauthRoutes } from "../oauth/routes.js";
 import { resolvePasswordConfig } from "../password/config.js";
@@ -108,6 +109,15 @@ export interface UserNamespace {
 	delete(input: { userId: string }): Promise<void>;
 }
 
+/** the lookup by name, offered in the two modes that have a username */
+interface UserNamespaceWithUsernames extends UserNamespace {
+	findByUsername(input: { username: string }): Promise<User | null>;
+}
+
+type UserNamespaceOf<M extends IdentityMode> = M extends "email"
+	? UserNamespace
+	: UserNamespaceWithUsernames;
+
 export interface UsernameNamespace {
 	isAvailable(input: { username: string } & ServerCallFields): Promise<UsernameAvailabilityAnswer>;
 	change(input: { newUsername: string } & ServerCallFields): Promise<{ readonly user: User }>;
@@ -139,7 +149,7 @@ export type VelveAuth<M extends IdentityMode> = AuthInternals &
 		signOut(input: ServerCallFields): Promise<void>;
 		readonly session: SessionNamespace;
 		readonly pending: PendingNamespace;
-		readonly user: UserNamespace;
+		readonly user: UserNamespaceOf<M>;
 	} & (ModeHasUsername<M> extends true
 		? { readonly username: UsernameNamespace }
 		: Record<never, never>);
@@ -499,6 +509,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			},
 			enable: ({ userId }) => users.setDisabledAt({ userId, disabled: false }),
 			delete: ({ userId }) => users.deleteUser(userId),
+			...(identity.mode === "email"
+				? {}
+				: {
+						//an account is found by the comparison form whatever the rules accept today (E-2833)
+						findByUsername: ({ username }: { username: string }) =>
+							users.findUserByUsernameKey(comparisonFormOf(username)),
+					}),
 		} satisfies UserNamespace,
 
 		...(usernameTable === null

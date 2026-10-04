@@ -1,12 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPendingAuthenticationService } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { TEST_ORIGIN } from "./auth-fixtures.js";
+import { createVelveAuth, type VelveAuth } from "../src/index.js";
+import { type MountedAuth, mountAuth, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
+import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import type { TestConnection } from "./db-postgres-connection.js";
 import { mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures.js";
 
 /**
- * 3.15 B.2 and B.7 name a `resolveFromHeaders` beside each `resolve`, for an application that holds
- * the request headers rather than a token, and the instance did not carry either (E-2832).
+ * 3.15 B.2, B.3 and B.7 name three methods the instance did not carry: the two `resolveFromHeaders`
+ * and `user.findByUsername` (E-2832, E-2833).
  */
 
 const FOREIGN_ORIGIN = "https://evil.example.com";
@@ -105,5 +108,65 @@ describe("pending.resolveFromHeaders (3.15 B.7)", () => {
 		expect(fromHeaders).toStrictEqual(await widest.auth.pending.resolve(begun.token));
 		expect(fromHeaders?.factorsCompleted).toStrictEqual(["password"]);
 		expect(await widest.auth.pending.resolveFromHeaders(headersWith(sessionCookie))).toBeNull();
+	});
+});
+
+describe("user.findByUsername (3.15 B.3)", () => {
+	it("finds an account by its name in any case and spacing the comparison form folds", async () => {
+		const [row] = await widest.connection.query<{ username: string }>(
+			`SELECT username FROM ${widest.schema}.user WHERE id = $1`,
+			[userId],
+		);
+		const name = row?.username ?? "";
+
+		expect((await widest.auth.user.findByUsername({ username: name }))?.id).toBe(userId);
+		expect(
+			(await widest.auth.user.findByUsername({ username: ` ${name.toUpperCase()} ` }))?.id,
+		).toBe(userId);
+		expect(await widest.auth.user.findByUsername({ username: "nobody-here" })).toBeNull();
+	});
+
+	it("does not exist in mode email", async () => {
+		const emailOnly: MountedAuth = await mountAuth("lookupsemail");
+		const carried = Object.keys(emailOnly.auth.user);
+		await dropSchema(emailOnly.connection, emailOnly.schema);
+		await emailOnly.connection.close();
+
+		expect(carried).not.toContain("findByUsername");
+		expect(carried).toContain("findByEmail");
+	});
+});
+
+describe("user in mode username (3.15 B.3)", () => {
+	let connection: TestConnection;
+	let schema: string;
+	let auth: VelveAuth<"username">;
+
+	beforeAll(async () => {
+		({ connection, schema } = await openMigratedSchema("lookupsusername", "username"));
+		auth = createVelveAuth<"username">({
+			identity: { mode: "username" },
+			database: connection,
+			schema,
+			keys: testKeyProvider(),
+			origins: [TEST_ORIGIN],
+			recoveryCodes: { count: 10, groupSize: 5 },
+		});
+	});
+
+	afterAll(async () => {
+		await dropSchema(connection, schema);
+		await connection.close();
+	});
+
+	it("finds an account by name, and keeps findByEmail so no 1.x caller breaks", async () => {
+		const [row] = await connection.query<{ id: string }>(
+			`INSERT INTO ${schema}.user (username, username_key, email)
+			 VALUES ('Named', 'named', 'named@example.com') RETURNING id`,
+			[],
+		);
+
+		expect((await auth.user.findByUsername({ username: "NAMED" }))?.id).toBe(row?.id);
+		expect((await auth.user.findByEmail({ email: "named@example.com" }))?.id).toBe(row?.id);
 	});
 });

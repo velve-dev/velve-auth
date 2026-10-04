@@ -6083,7 +6083,7 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
 | `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
 | `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
-| `auth.user` | `findById`, `findByEmail`, `disable`, `enable`, `delete` |
+| `auth.user` | `findById`, `findByEmail`, `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
 | `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
 
 Every method reached through a route takes the six call fields beside its own
@@ -6168,6 +6168,15 @@ be the opposite of a safeguard. `disable` takes a `reason`, which is written to
 the log and never stored — an audit log is out of scope — and it leaves the
 session rows standing, so each of them ends at its next resolution with
 `account_disabled`.
+
+`auth.user.findByUsername({ username })` answers the account whose
+`username_key` equals the comparison form of `username` — trimmed, NFKC,
+lower-cased per code point, as 3.4 fixes it — or `null`. It does not apply the
+configured `UsernameRules`, so an account whose name the rules would refuse
+today, because the rules changed or the account was imported, is still found.
+It exists in `"username"` and `"username_email"` and is absent in `"email"`, on
+the type and on the object. `findByEmail` compares the address as given, with
+no normalisation.
 
 `auth.pending.resolve` names only the factors still open and never any user
 data, and it mints no actor: the intermediate state is structurally unable to
