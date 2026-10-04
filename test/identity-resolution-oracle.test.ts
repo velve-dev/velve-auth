@@ -171,14 +171,14 @@ describe("resolution costs the same whether or not the identifier names an accou
 		}
 		expect(observed).toEqual({
 			"email / known@example.test": "value,null",
-			"email / known": "null,null",
-			"email / *": "null,null",
-			"username / known@example.test": "null,null",
+			"email / known": "value,null",
+			"email / *": "value,null",
+			"username / known@example.test": "null,value",
 			"username / known": "null,value",
-			"username / *": "null,null",
-			"username_email / known@example.test": "value,null",
-			"username_email / known": "null,value",
-			"username_email / *": "null,null",
+			"username / *": "null,value",
+			"username_email / known@example.test": "value,value",
+			"username_email / known": "value,value",
+			"username_email / *": "value,value",
 		});
 	});
 

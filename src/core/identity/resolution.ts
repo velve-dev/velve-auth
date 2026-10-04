@@ -38,6 +38,9 @@ interface UserRow {
 	readonly disabled: boolean;
 }
 
+//a rejected identifier binds a string like an accepted one so the lookup is the same call (S-TIM-1)
+const MATCHES_NO_ACCOUNT = "";
+
 function emailPredicateValue(
 	configuration: IdentityConfiguration,
 	identifier: string,
@@ -46,7 +49,7 @@ function emailPredicateValue(
 		return null;
 	}
 	const normalised = normaliseEmail(identifier);
-	return normalised.accepted ? normalised.value : null;
+	return normalised.accepted ? normalised.value : MATCHES_NO_ACCOUNT;
 }
 
 function usernamePredicateValue(
@@ -57,7 +60,7 @@ function usernamePredicateValue(
 		return null;
 	}
 	const normalised = normaliseUsername(identifier, configuration.username);
-	return normalised.accepted ? normalised.value.usernameKey : null;
+	return normalised.accepted ? normalised.value.usernameKey : MATCHES_NO_ACCOUNT;
 }
 
 //one statement always runs so a rejected identifier costs the same round trip (S-ENUM-1)
