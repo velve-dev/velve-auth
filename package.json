@@ -88,6 +88,7 @@
 		"check:log-append": "node tools/check-log-append.mjs",
 		"check:published-version": "node tools/check-published-version.mjs",
 		"check:release-tag": "node tools/check-release-tag.mjs",
+		"check:release-tier": "node tools/check-release-tier.mjs",
 		"check:reviewable": "node tools/check-reviewable-text.mjs",
 		"check:session-owner": "node tools/check-session-owner-update.mjs",
 		"check:skill-version": "node tools/check-skill-version.mjs",

@@ -7,8 +7,10 @@ name: Release
 # Nothing here publishes. The maintainer publishes from their own machine, so that no registry
 # credential is stored on GitHub, and pushes the tag afterwards (E-2760). What a tag still runs is
 # the verification of the tagged tree: everything ci.yml runs, then the two tiers section 6 puts
-# before a release, then the tag against the manifest. The rehearsal of the publish and the
-# registry check run on the maintainer's machine, before and after the publish they surround.
+# before a release, then the tag against the manifest. Because it runs after the publish, it
+# reports a published version rather than blocking one. What blocks the publish runs on the
+# maintainer's machine: the release tier's green run on the commit, read from release-tier.yml's
+# run on main, the rehearsal of the publish, and afterwards the registry check (E-2763).
 on:
   push:
     tags: ["v*"]
@@ -26,8 +28,9 @@ jobs:
   # The dist-tag follows from the version rather than being written down: a prerelease goes to
   # `next` and a stable version takes `latest`. It was the literal `next` until 1.0.0, which would
   # have published the stable line under the prerelease tag and left `latest` on the first
-  # prerelease for good (E-1777). Decided once, in one job, because three copies of one line is
-  # the drift E-1429 called out.
+  # prerelease for good (E-1777). Decided by the same script the maintainer's machine runs before
+  # the publish, so the tag check here and the publish there read one derivation and not two
+  # copies of it, which is the drift E-1429 called out (E-2766).
   #
   # The job id carries an underscore and not a hyphen. `needs.dist-tag.outputs.value` is not a
   # property access in an Actions expression — it parses as `needs.dist` minus `tag` — so it
@@ -63,8 +66,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   # Section 6 puts the statistical cases on a nightly schedule and three further cases before
-  # every release. This is that release moment, so both run here rather than only on their
-  # schedules — a tier whose last run was hours ago has not seen this tree.
+  # every release. The release tier has already passed on this commit before the publish, on its
+  # push to main; both tiers run again here over the tagged tree, so the nightly one is run on the
+  # released commit too and the record of the release holds both (E-2764).
   tiers:
     needs: ci
     runs-on: ubuntu-latest

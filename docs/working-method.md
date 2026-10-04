@@ -227,27 +227,40 @@ Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than n
 
 ### Publishing a version
 
-The maintainer publishes from their own machine, and no workflow holds a registry credential (E-2760). The version in `package.json` has been raised on `main` by a merged pull request before any of this starts. The first block changes nothing outside the working tree: it refuses a stale or dirty checkout and a missing npm login, derives the dist-tag, holds the version against the tag about to be cut, and packs what would be uploaded. Every step is joined by `&&`, so a refusal stops the block rather than handing an empty variable to the next line.
+The maintainer publishes from their own machine, and no workflow holds a registry credential (E-2760). The version in `package.json` has been raised on `main` by a merged pull request before any of this starts, and that merge has run `release-tier.yml` over the merge commit, because the release tier runs on every push to `main` (E-2763).
+
+The first block changes nothing outside the working tree except for one local tag. It refuses a checkout that is not exactly `origin/main` — behind it, ahead of it with a commit no pull request merged, or dirty — and a missing npm login. It builds, derives the dist-tag and runs `pnpm check:release-tag`, which checks that the version is a semantic one and that a prerelease is not about to go to `latest`; the tag name it is given is built from that same version here, so on this machine it cannot disagree with it, and the comparison of tag and manifest only means something in the Release workflow. It then asks GitHub's public API whether the release tier passed on the commit being published, which is what architecture 6.19 puts before every release, rehearses the publish, and creates the signed tag. Every step is joined by `&&`, so a refusal stops the block rather than handing an empty variable to the next line, and only a block that reached its end sets `READY`.
 
 ```sh
-git switch main && git pull --ff-only && test -z "$(git status --porcelain)" \
+unset READY \
+  && git switch main && git fetch origin main && git merge --ff-only origin/main \
+  && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" \
+  && test -z "$(git status --porcelain)" \
   && npm whoami \
   && pnpm install --frozen-lockfile && pnpm build \
   && VERSION=$(node -p 'require("./package.json").version') \
   && DIST_TAG=$(pnpm run --silent release-dist-tag) \
   && pnpm check:release-tag "v$VERSION" "$DIST_TAG" \
-  && npm publish --dry-run --access public --tag "$DIST_TAG"
+  && pnpm check:release-tier "$(git rev-parse HEAD)" \
+  && npm publish --dry-run --access public --tag "$DIST_TAG" \
+  && git tag -s "v$VERSION" -m "v$VERSION" \
+  && READY="v$VERSION"
 ```
 
-The second block publishes, in the same shell so that both variables are still set. npm asks for the second factor interactively. The tag is pushed only after the publish succeeded, and its push starts the Release workflow, which runs the gate and both release tiers over the tagged commit and holds the tag against the manifest. It rehearses no publish, because npm refuses a dry run over a version already published (E-2762). The registry check polls until the new version is readable.
+`pnpm check:release-tier` exits 1 when the tier has no successful run on the commit — it has not finished yet, or it failed — and 2 when GitHub could not be asked; neither is a reason to go on. The tag is created before the publish so that a machine without a signing key refuses here, while nothing is published yet, rather than after a publish that then has no tag (E-2765).
+
+The second block publishes, in the same shell so that `READY`, `VERSION` and `DIST_TAG` are still set, and does nothing unless the first block got to its end for this version. npm asks for the second factor interactively. The tag is pushed only after the publish succeeded, and its push starts the Release workflow, which runs the gate and both release tiers over the tagged commit and holds the tag against the manifest. It rehearses no publish, because npm refuses a dry run over a version already published (E-2762). The registry check polls until the new version is readable and its dist-tag points at it.
 
 ```sh
-npm publish --access public --tag "$DIST_TAG" \
-  && git tag -s "v$VERSION" -m "v$VERSION" && git push origin "v$VERSION" \
+test "${READY:-}" = "v$VERSION" \
+  && npm publish --access public --tag "$DIST_TAG" \
+  && git push origin "v$VERSION" \
   && pnpm check:published-version "$DIST_TAG"
 ```
 
-The two release tiers therefore run on the tag after the publish rather than before it. Their nightly run over `main` in `release-tier.yml` is the one that has seen the tree before the publish, so a red last run there is a reason not to start.
+If the publish itself fails, the signed tag exists only on this machine. Delete it with `git tag -d "v$VERSION"` before running the first block again, which otherwise refuses at `git tag -s`.
+
+The nightly tier still runs only on its schedule and on the tag, after the publish; a red last nightly run over `main` is a reason not to start.
 
 ## From §5 — the README partition, before the README was cut
 

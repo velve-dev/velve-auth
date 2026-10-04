@@ -583,7 +583,9 @@ pnpm test:nightly
                  high-repetition cases section 6 puts on a nightly schedule
 pnpm test:release
                  vitest run over the release project — the cases section 6 puts
-                 before every release; a version tag runs it
+                 before every release; release-tier.yml runs it on every push to
+                 main, and the publish waits for that run on the commit it
+                 publishes
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL.
@@ -630,6 +632,10 @@ pnpm check:release-tag
                  the tag a release is cut from names the version package.json
                  states, that version is a semantic one, and a prerelease is not
                  about to be published under latest.
+pnpm check:release-tier <commit>
+                 GitHub's public API has a successful release-tier.yml run on
+                 that commit; exit 1 when it has none, exit 2 when it could not
+                 be asked. Run by the maintainer before publishing.
 pnpm run release-dist-tag
                  prints the dist-tag the version in package.json is published
                  under: latest for a stable version, next for a prerelease.

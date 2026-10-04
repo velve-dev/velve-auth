@@ -88,8 +88,10 @@ machine, so that no registry credential is stored on GitHub, and carry **no**
 provenance attestation, because npm mints one only from a CI provider's identity
 token. `npm audit signatures` reports the registry's signature for such a
 version and no attestation. What ties it to the source instead is the signed tag
-`v<version>` on the commit it was published from, over which the Release
-workflow runs the whole gate and both release tiers.
+`v<version>` on the commit it was published from. Before the publish, the
+release tier has to have passed on that exact commit, on its push to `main`;
+after it, the tag's push runs the whole gate and both release tiers over the
+same commit in the Release workflow.
 
 ### PostgreSQL versions
 
