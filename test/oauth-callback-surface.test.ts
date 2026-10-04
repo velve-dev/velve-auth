@@ -232,6 +232,30 @@ describe("the form-bodied callback and an unauthenticated cross-site POST", () =
 	});
 
 	/**
+	 * S-OWNER-6 refuses a name carried by two sources, so what a real provider posts must carry none
+	 * the path or the query also carries. Apple's form_post body is `code`, `state`, `id_token` and,
+	 * on the first authorisation, `user`; none of them is `provider`, and nothing rides in the query.
+	 */
+	it("completes an Apple-shaped form_post whose fields name nothing the path carries", async () => {
+		const mount = await mountWith("form_post");
+		const started = await startFlow(mount);
+		const answered = await mount.auth.handler(
+			postedForm(started, {
+				code: codeCarrying(null),
+				id_token: "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl",
+				user: '{"name":{"firstName":"Ada","lastName":"Lovelace"},"email":"ada@example.com"}',
+			}),
+		);
+		const identities = await mount.auth.connection.query<{ provider: string }>(
+			`SELECT provider FROM ${mount.auth.schema}.identity`,
+			[],
+		);
+
+		expect(answered.status).toBe(302);
+		expect(identities).toStrictEqual([{ provider: "stubby" }]);
+	});
+
+	/**
 	 * `{ __proto__: "polluted" }` in an object literal is the prototype setter and creates no own
 	 * property, so the vector never reached the request and the case could not fail; the body is
 	 * built from entries instead. The repeated name is presented with a valid pointer and a valid
@@ -291,6 +315,36 @@ describe("the form-bodied callback and an unauthenticated cross-site POST", () =
 
 		expect(answered.status).toBe(400);
 		expect(row?.present).toBe(0);
+	});
+});
+
+describe("a query callback carrying what real providers append (S-OWNER-6)", () => {
+	/**
+	 * Google appends `scope`, `authuser`, `hd` and `prompt`, Microsoft and Keycloak `session_state`;
+	 * none of them is the path's `provider`, so a legitimate GET callback is not refused as a
+	 * parameter in two sources.
+	 */
+	it("completes a GET callback whose query carries the parameters providers add", async () => {
+		const mount = await mountWith();
+		const started = await startFlow(mount);
+		const query = new URLSearchParams({
+			code: codeCarrying(null),
+			state: started.state,
+			scope: "email profile openid https://www.googleapis.com/auth/userinfo.email",
+			authuser: "0",
+			hd: "example.com",
+			prompt: "consent",
+			session_state: "5b0c8d1e-9a7f-4c3b-8e2d-1f6a4b7c9d0e",
+		});
+		const answered = await mount.auth.handler(
+			requestTo(`/sign-in/oauth/callback/stubby?${query.toString()}`, {
+				method: "GET",
+				cookie: `__Host-velve_oauth_state=${started.pointer}`,
+			}),
+		);
+
+		expect(answered.status).toBe(302);
+		expect(answered.headers.get("Location")?.startsWith("/")).toBe(true);
 	});
 });
 
