@@ -170,4 +170,23 @@ describe("the ledger a plugin's own migrations are recorded in", () => {
 			"SELECT * FROM plugin_entry",
 		]);
 	});
+
+	/**
+	 * E-2453: a column list after INTO was read as more table positions, so every column after the
+	 * first was refused as a foreign table. A bracketed group is skipped whole, and the list still
+	 * continues after it, so a table behind an alias column list is checked (E-2455).
+	 */
+	it("lets an insert name several columns and still checks a table behind an alias column list", async () => {
+		const own = [
+			"INSERT INTO demo_entry (note, user_id) VALUES ($1, $2)",
+			"INSERT INTO velve.demo_entry (note, user_id, created_at) SELECT note, user_id, now() FROM demo_other",
+			"SELECT * FROM demo_entry x(a, b), demo_other",
+		];
+		const foreign = [
+			"SELECT * FROM demo_entry x(a, b), other_entry",
+			"SELECT * FROM demo_entry x(a, (b)), velve.other_entry",
+		];
+
+		expect(await reachedTheDriver([...own, ...foreign])).toStrictEqual(own);
+	});
 });

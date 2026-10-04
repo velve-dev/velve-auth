@@ -199,6 +199,18 @@ function targetAt(tokens: readonly string[], index: number): { name: string; nex
 		: { name: token, next: index + 1 };
 }
 
+//a column list or alias list is skipped whole and never read as a table list (E-2455)
+function afterTheMatchingBracket(tokens: readonly string[], open: number): number {
+	let depth = 0;
+	for (let index = open; index < tokens.length; index += 1) {
+		depth += tokens[index] === "(" ? 1 : tokens[index] === ")" ? -1 : 0;
+		if (depth === 0) {
+			return index + 1;
+		}
+	}
+	return tokens.length;
+}
+
 //every entry of a comma separated table list must count as a table position (E-762)
 function tableListAfter(tokens: readonly string[], position: number): readonly string[] {
 	const targets: string[] = [];
@@ -210,6 +222,10 @@ function tableListAfter(tokens: readonly string[], position: number): readonly s
 			targets.push(target.name);
 			expectingATable = false;
 			index = target.next;
+			continue;
+		}
+		if (tokens[index] === "(") {
+			index = afterTheMatchingBracket(tokens, index);
 			continue;
 		}
 		expectingATable = tokens[index] === ",";
