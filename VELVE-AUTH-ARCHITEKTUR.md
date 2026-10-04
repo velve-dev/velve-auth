@@ -566,7 +566,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H26 Custom Schemes | `myapp://`, `chrome-extension://`, `exp://**` per String-Zerlegung statt `new URL()` (`trusted-origins.ts:32-73`) | Anders lösen | Nicht-HTTP-Schemata werden als vollständige, exakte Origin eingetragen und als solche verglichen; keine eigene String-Zerlegung und kein `**`. Ein selbstgebauter URL-Parser neben dem eingebauten ist ein Parser-Differential (vgl. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect-URL-Validierung | Lehnt `//`, `\`, Steuerzeichen, `%2f` ab (`trusted-origins.ts:14-105`) | Anders lösen | Es werden gar keine vollständigen URLs entgegengenommen: `redirect_path` ist ein Pfad, serverseitig gehalten (Abschnitt 3.10). Was man nicht annimmt, muss man nicht validieren — fünf Advisories dieser Klasse (Nr. 1, 3, 4, 5, 25 im Sicherheitsbericht) hätten so nicht entstehen können. |
 | H28 `originCheckMiddleware` | Origin/Referer-Prüfung auf allen nicht-GET-Routen mit Cookie (`origin-check.ts:67-151`) | Übernehmen | Übernommen und verschärft: sie läuft auch bei direkten Serveraufrufen und ist nicht abschaltbar. |
-| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Weglassen | Nicht übernommen: Ein `Origin: null` wird wie jede nicht erlaubte Origin mit `origin_not_allowed` abgelehnt, auch bei `Sec-Fetch-Site: same-origin`, und T-CSRF-3 führt `null` als abzulehnende Variante. Einen fehlenden `Origin`-Kopf lässt die Prüfung nur bei den sieben lesenden `GET`-Routen mit `Sec-Fetch-Site: same-origin` zu (S-CSRF-1). |
+| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Weglassen | Nicht übernommen: Ein `Origin: null` wird wie jede nicht erlaubte Origin mit `origin_not_allowed` abgelehnt, auch bei `Sec-Fetch-Site: same-origin`, und T-CSRF-3 führt `null` als abzulehnende Variante. Einen fehlenden `Origin`-Kopf lässt die Prüfung nur bei den sieben lesenden `GET`-Routen zu, wenn die Anfrage über den HTTP-Handler kommt und `Sec-Fetch-Site: same-origin` trägt (S-CSRF-1). |
 | H30 Callback-URL-Validierung | `callbackURL`, `redirectTo`, `errorCallbackURL`, `newUserCallbackURL` gegen `trustedOrigins` (`origin-check.ts:83-150`) | Anders lösen | Vier Parameter mit URL-Semantik werden zu einem Pfadparameter (H27). Jeder zusätzliche URL-Parameter ist eine weitere Stelle, an der die Validierung vergessen werden kann — CVE-2024-56734 war genau das. |
 | H31 `advanced.disableCSRFCheck` | Schaltet die CSRF-Prüfung ab (`create-context.ts:397`) | Weglassen | Niemand. Die Prüfung ist Teil der festen Kette vor jeder Route (Abschnitt 3.11) und kennt keinen Schalter. Wer sie abschalten will, hat in der Praxis einen fehlenden Origin in der Liste — das wird dort behoben, nicht an der Prüfung; und ein Schalter, der in der Entwicklung umgelegt wird, bleibt in der Produktion umgelegt. |
 | H32 `advanced.disableOriginCheck` | Schaltet die URL-Validierung ab, und aus Kompatibilität auch CSRF (`create-context.ts:398-403`) | Weglassen | Niemand. Eine Option, die zwei Prüfungen zugleich abschaltet, obwohl ihr Name nur eine nennt, ist der Grund, warum es sie nicht geben darf. |
@@ -2333,8 +2333,9 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `factor.recovery.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_recovery_code`, `too_many_factor_attempts` |
 | `identity.link.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
 
-`session.resolve` und `pending.resolve` sind nicht ratenbegrenzt: Sie laufen bei jeder Anfrage
-der Anwendung, ein Zähler darauf wäre eine Selbstblockade.
+`session.resolve`, `session.resolveFromHeaders`, `pending.resolve` und `pending.resolveFromHeaders`
+sind nicht ratenbegrenzt: Sie laufen bei jeder Anfrage der Anwendung, ein Zähler darauf wäre eine
+Selbstblockade.
 
 ---
 
@@ -4567,7 +4568,7 @@ wird nicht genommen.
 | T-REDIR-4 | S-REDIR-4 | Integration, global | Dieselbe Abfangfunktion durchsucht `Location` und alle Query-Strings nach den in diesem Testlauf erzeugten Token-Klartexten. | **0 Treffer** über die gesamte Suite | CI bei jedem Commit |
 | T-REDIR-5 | S-REDIR-5 | Statisch | AST-Scan über `core/http/`: kein `startsWith`, `includes`, `endsWith`, `RegExp` und kein Platzhalterzeichen in einem Origin-Vergleich. | **0 Treffer** | CI bei jedem Commit |
 | T-REDIR-6 | S-REDIR-6 | Statisch + Integration | AST-Scan: jede ausgehende Anfrage-URL stammt aus dem Konfigurationsobjekt. Integration: Anbieterattrappe liefert im Discovery-Dokument abweichende Endpunkte. | **0 URLs aus Anfragedaten**; die abweichenden Endpunkte werden **nicht** aufgerufen | CI bei jedem Commit |
-| T-REDIR-7 | S-REDIR-7 | Integration, global | Über die gesamte Suite `Content-Type` jeder Antwort prüfen; zusätzlich jeden Antwortkörper nach einem Kanarienwert durchsuchen, der zuvor in jedes Eingabefeld geschrieben wurde. | **100 % `application/json`**; **0 Kanarientreffer** in Antwortkörpern außerhalb der vier in S-REDIR-7 genannten Felder | CI bei jedem Commit |
+| T-REDIR-7 | S-REDIR-7 | Integration, global | Über die gesamte Suite `Content-Type` jeder Antwort prüfen; zusätzlich jeden Antwortkörper nach einem Kanarienwert durchsuchen, der zuvor in jedes Eingabefeld geschrieben wurde. | **100 % `application/json`**; **0 Kanarientreffer** in Antwortkörpern außerhalb der Felder, die S-REDIR-7 in den vier dort genannten Antworten nennt | CI bei jedem Commit |
 
 ---
 

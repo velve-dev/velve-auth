@@ -14622,3 +14622,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the German is the source and the English had changed what it says.
 **Reason.** The rules forbid a translation that changes a reason, and permission and ability are different reasons for running no origin check there.
 **Price.** The test counts one phrase. Another rendering of *dürfte* elsewhere as *could* is not caught by it.
+
+<a id="e-2940"></a>
+
+### Three sentences of the specification say what the text they cite says
+`E-2940` · specfix · specification, corrected — T-REDIR-7, row H29, 3.15 B.9
+
+**Context.** Three nits in both languages, each a sentence that disagreed with the passage it leans on. (a) E-2932 gave T-REDIR-7 the threshold *0 Kanarientreffer in Antwortkörpern außerhalb der vier in S-REDIR-7 genannten Felder*, where S-REDIR-7 names four answers and five fields in them: `user.email` and `user.username` of the two sign-ups, `user.username` of the username change and `credential.label` of the rename. The threshold now reads *außerhalb der Felder, die S-REDIR-7 in den vier dort genannten Antworten nennt* in the German and *outside the fields S-REDIR-7 names in the four answers it names* in the English. (b) E-2931's new text for row H29 said that the check admits a missing `Origin` header on the seven reading `GET` routes with `Sec-Fetch-Site: same-origin`, and dropped the condition S-CSRF-1 states, that the request comes through the HTTP handler; the direct server call stays at `origin_not_allowed`. The row now ends *nur bei den sieben lesenden `GET`-Routen zu, wenn die Anfrage über den HTTP-Handler kommt und `Sec-Fetch-Site: same-origin` trägt (S-CSRF-1)* and *only on the seven reading `GET` routes, when the request comes through the HTTP handler and carries `Sec-Fetch-Site: same-origin` (S-CSRF-1)*, the wording of S-CSRF-1. (c) B.9's closing sentence named only `session.resolve` and `pending.resolve` as not rate limited, while B.9's own table row and E-2832 give the two `resolveFromHeaders` methods no rate limit as well; the sentence now names all four.
+**Rejected.** Nothing; each sentence was narrower or wider than the passage it cites, and the cited passage is the one that was decided.
+**Reason.** A threshold, a summary row and a closing sentence that say less or more than the requirement they rest on are where a reader picks the wrong half.
+**Price.** E-2931's Context and E-2932's Context keep their own shorter wording; this entry is where both are corrected. No test reads any of the three sentences, so the next drift between them and their sources is again found by reading.
