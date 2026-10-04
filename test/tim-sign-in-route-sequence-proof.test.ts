@@ -2,13 +2,19 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 //the counters sit under the real derivations so a KDF call outside the semaphore is counted too
 const kdfCalls: string[] = [];
+//a derivation that throws on its own inputs is a call that did none of the work
+const kdfRefusals: string[] = [];
 
 vi.mock("@noble/hashes/argon2.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("@noble/hashes/argon2.js")>();
 	const counted = <T extends (...args: never[]) => unknown>(name: string, fn: T): T =>
 		((...args: never[]) => {
 			kdfCalls.push(name);
-			return fn(...args);
+			const result = fn(...args);
+			if (result instanceof Promise) {
+				result.catch(() => kdfRefusals.push(name));
+			}
+			return result;
 		}) as T;
 	return {
 		...original,
@@ -57,6 +63,7 @@ interface Observation {
 	readonly status: number;
 	readonly calls: readonly Call[];
 	readonly kdfCalls: readonly string[];
+	readonly kdfRefusals: readonly string[];
 }
 
 const PASSWORD = drawTestPassword();
@@ -120,6 +127,11 @@ beforeAll(async () => {
 		200, 200, 200,
 	]);
 	await storeOverTheCeiling("overceiling@example.com");
+	for (const [email, { phc, scheme }] of Object.entries(MALFORMED_UNDER_THE_CEILINGS)) {
+		const signedUp = await handler(postTo("/sign-up", { email, password: PASSWORD }));
+		expect(signedUp.status, email).toBe(200);
+		await storeCredential(email, phc, scheme);
+	}
 	await handler(postTo("/sign-in/password", { email: "warmup@example.com", password: PASSWORD }));
 }, 120_000);
 
@@ -137,6 +149,33 @@ async function storeOverTheCeiling(email: string): Promise<void> {
 	);
 }
 
+//each passes every cost ceiling and is refused by the derivation itself before any work is done
+const FILLER = encodeStandardBase64(new Uint8Array(32).fill(1));
+const MALFORMED_UNDER_THE_CEILINGS: Record<string, { phc: string; scheme: string }> = {
+	"shortbcrypt@example.com": { phc: "$2b$10$tooshorttobeahash", scheme: "bcrypt" },
+	"shortsalt@example.com": {
+		phc: `$argon2id$v=19$m=19456,t=2,p=1$${encodeStandardBase64(new Uint8Array(4).fill(1))}$${FILLER}`,
+		scheme: "argon2id",
+	},
+	"tinymemory@example.com": {
+		phc: `$argon2id$v=19$m=1,t=2,p=1$${FILLER}$${FILLER}`,
+		scheme: "argon2id",
+	},
+	"unknownversion@example.com": {
+		phc: `$argon2id$v=17$m=19456,t=2,p=1$${FILLER}$${FILLER}`,
+		scheme: "argon2id",
+	},
+};
+
+async function storeCredential(email: string, phc: string, scheme: string): Promise<void> {
+	const sealed = await sealPhc(keys, phc);
+	await opened.connection.query(
+		`UPDATE ${opened.schema}.password_credential SET phc = $2, key_version = $3, scheme = $4
+		 WHERE user_id = (SELECT id FROM ${opened.schema}.user WHERE email = $1)`,
+		[email, sealed.ciphertext, sealed.keyVersion, scheme],
+	);
+}
+
 afterAll(async () => {
 	await dropSchema(opened.connection, opened.schema);
 	await opened.connection.close();
@@ -145,9 +184,15 @@ afterAll(async () => {
 async function signInAs(email: string): Promise<Observation> {
 	calls.length = 0;
 	kdfCalls.length = 0;
+	kdfRefusals.length = 0;
 	const answer = await handler(postTo("/sign-in/password", { email, password: WRONG_PASSWORD }));
 	await answer.arrayBuffer();
-	return { status: answer.status, calls: [...calls], kdfCalls: [...kdfCalls] };
+	return {
+		status: answer.status,
+		calls: [...calls],
+		kdfCalls: [...kdfCalls],
+		kdfRefusals: [...kdfRefusals],
+	};
 }
 
 describe("T-TIM-1b over the mounted route — one call sequence for every identifier (S-TIM-1)", () => {
@@ -185,4 +230,23 @@ describe("T-TIM-1b over the mounted route — one call sequence for every identi
 			expect(observed.kdfCalls, name).toStrictEqual(reference.kdfCalls);
 		}
 	}, 60_000);
+});
+
+describe("T-TIM-1b — a stored credential the derivation itself refuses (S-TIM-1, S-TIM-2)", () => {
+	it.each(Object.keys(MALFORMED_UNDER_THE_CEILINGS))(
+		"%s runs the sequence of an unknown identifier, the dummy derivation included",
+		async (email) => {
+			const absent = await signInAs("absent@example.com");
+			const observed = await signInAs(email);
+
+			expect(observed.status).toBe(absent.status);
+			expect(observed.calls.map((call) => call.statement)).toStrictEqual(
+				absent.calls.map((call) => call.statement),
+			);
+			expect(observed.kdfCalls).toStrictEqual(absent.kdfCalls);
+			expect(absent.kdfRefusals, "the dummy derivation runs to the end").toStrictEqual([]);
+			expect(observed.kdfRefusals, "the derivation ran to the end").toStrictEqual([]);
+		},
+		60_000,
+	);
 });
