@@ -215,15 +215,39 @@ It states no pattern of its own — it reads them out of .github/workflows/ci.ym
 
 ### `pnpm check:release-tag`
 
-Takes the tag and the dist-tag as arguments, or reads them from GITHUB_REF_NAME and VELVE_RELEASE_DIST_TAG. Refuses the run if either is missing or the manifest cannot be read as an object — an unchecked tag is not a matching one. It also asks VELVE_REGISTRY, npm's by default, whether the package is published at all: where it is not and the version is a prerelease, it reports before the publish that npm will point latest at it whatever --tag says, which is the one case the latest clause cannot see from the dist-tag alone (E-1771). That is a report and not a refusal, so a first publish stays possible; a registry it could not ask is told apart from one that said absent and reported as unknown. release.yml runs it before the publish; pnpm gate does not, because an ordinary branch carries no tag for it to check and it would refuse every one of them
+Takes the tag and the dist-tag as arguments, or reads them from GITHUB_REF_NAME and VELVE_RELEASE_DIST_TAG. Refuses the run if either is missing or the manifest cannot be read as an object — an unchecked tag is not a matching one. It also asks VELVE_REGISTRY, npm's by default, whether the package is published at all: where it is not and the version is a prerelease, it reports before the publish that npm will point latest at it whatever --tag says, which is the one case the latest clause cannot see from the dist-tag alone (E-1771). That is a report and not a refusal, so a first publish stays possible; a registry it could not ask is told apart from one that said absent and reported as unknown. The maintainer runs it before publishing from their own machine, and release.yml runs it again on the tag they push afterwards; pnpm gate does not, because an ordinary branch carries no tag for it to check and it would refuse every one of them
 
 ### `pnpm run release-dist-tag`
 
-release.yml runs it in a job of its own and hands the answer to the three jobs that need it, so the tag is derived once rather than written down in three places (E-1777). It is invoked through `pnpm run` and named so that no pnpm subcommand shadows it: `pnpm dist-tag` runs pnpm's own registry query instead and says nothing about it (E-1881). It writes $GITHUB_OUTPUT itself when that variable is set, so a refusal is the step's exit status; refuses a manifest it cannot read as an object or a version that is not semantic
+The maintainer runs it as `pnpm run --silent release-dist-tag` to choose the --tag of the publish, and release.yml runs it in a job of its own and hands the answer to the job that checks the tag, so the tag is derived rather than written down (E-1777). Outside Actions $GITHUB_OUTPUT is unset and it only prints the tag. It is invoked through `pnpm run` and named so that no pnpm subcommand shadows it: `pnpm dist-tag` runs pnpm's own registry query instead and says nothing about it (E-1881). It writes $GITHUB_OUTPUT itself when that variable is set, so a refusal is the step's exit status; refuses a manifest it cannot read as an object or a version that is not semantic
 
 ### `pnpm check:published-version`
 
-Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS how long it polls for a publish to become readable. Tells a registry saying the version is absent from one that could not be asked, and refuses only on the second. release.yml runs it after the publish; pnpm gate does not, because a version nobody has published has nothing to resolve
+Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS how long it polls for a publish to become readable. Tells a registry saying the version is absent from one that could not be asked, and refuses only on the second. The maintainer runs it after publishing from their own machine, and no workflow runs it, because no workflow publishes and only the maintainer knows when the publish has happened (E-2760). It asks for no provenance attestation: npm mints one only from a CI provider's OIDC token, so a version published from a workstation carries none (E-2761). pnpm gate does not run it, because a version nobody has published has nothing to resolve
+
+### Publishing a version
+
+The maintainer publishes from their own machine, and no workflow holds a registry credential (E-2760). The version in `package.json` has been raised on `main` by a merged pull request before any of this starts. The first block changes nothing outside the working tree: it refuses a stale or dirty checkout and a missing npm login, derives the dist-tag, holds the version against the tag about to be cut, and packs what would be uploaded. Every step is joined by `&&`, so a refusal stops the block rather than handing an empty variable to the next line.
+
+```sh
+git switch main && git pull --ff-only && test -z "$(git status --porcelain)" \
+  && npm whoami \
+  && pnpm install --frozen-lockfile && pnpm build \
+  && VERSION=$(node -p 'require("./package.json").version') \
+  && DIST_TAG=$(pnpm run --silent release-dist-tag) \
+  && pnpm check:release-tag "v$VERSION" "$DIST_TAG" \
+  && npm publish --dry-run --access public --tag "$DIST_TAG"
+```
+
+The second block publishes, in the same shell so that both variables are still set. npm asks for the second factor interactively. The tag is pushed only after the publish succeeded, and its push starts the Release workflow, which runs the gate and both release tiers over the tagged commit and holds the tag against the manifest. It rehearses no publish, because npm refuses a dry run over a version already published (E-2762). The registry check polls until the new version is readable.
+
+```sh
+npm publish --access public --tag "$DIST_TAG" \
+  && git tag -s "v$VERSION" -m "v$VERSION" && git push origin "v$VERSION" \
+  && pnpm check:published-version "$DIST_TAG"
+```
+
+The two release tiers therefore run on the tag after the publish rather than before it. Their nightly run over `main` in `release-tier.yml` is the one that has seen the tree before the publish, so a red last run there is a reason not to start.
 
 ## From §5 — the README partition, before the README was cut
 

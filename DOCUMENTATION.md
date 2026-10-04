@@ -81,6 +81,16 @@ points `latest` at a package's very first publish whatever `--tag` says, so it
 sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
 of them, because a range does not match a prerelease.
 
+Every version up to and including `1.1.0` was published from GitHub Actions and
+carries an npm provenance attestation tying it to a commit and a workflow run of
+this repository. Later versions are published by the maintainer from their own
+machine, so that no registry credential is stored on GitHub, and carry **no**
+provenance attestation, because npm mints one only from a CI provider's identity
+token. `npm audit signatures` reports the registry's signature for such a
+version and no attestation. What ties it to the source instead is the signed tag
+`v<version>` on the commit it was published from, over which the Release
+workflow runs the whole gate and both release tiers.
+
 ### PostgreSQL versions
 
 CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and 18 are exercised by no leg and are stated from the features the library uses; 18 is what development runs against, which is one machine and not a tier.

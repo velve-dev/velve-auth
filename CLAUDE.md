@@ -635,8 +635,9 @@ pnpm run release-dist-tag
                  under: latest for a stable version, next for a prerelease.
 pnpm check:published-version
                  the registry resolves the version package.json states, the
-                 dist-tag points at that version, latest does not point at any
-                 prerelease, and it carries a provenance attestation.
+                 dist-tag points at that version, and latest does not point at
+                 any prerelease. Run by the maintainer after publishing from
+                 their own machine; no workflow publishes.
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it
