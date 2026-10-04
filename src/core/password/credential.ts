@@ -106,13 +106,23 @@ export function createPasswordCredentialRepository(
 				};
 	}
 
-	async function writeOwnedBy(
+	async function sealedRow(
 		ownerId: string,
 		{ phc, scheme, setBySessionId }: PasswordCredentialWrite,
-	): Promise<void> {
+	): Promise<unknown[]> {
 		assertSchemeMatchesCredential(phc, scheme);
 		const sealed = await sealPhc(options.keys, phc);
+		return [ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId];
+	}
 
+	//a false conflict predicate writes nothing and must not be reported as stored (E-185)
+	function assertWritten(written: readonly unknown[]): void {
+		if (written.length !== 1) {
+			throw new CredentialWriteError("credential_not_written");
+		}
+	}
+
+	async function writeOwnedBy(ownerId: string, credential: PasswordCredentialWrite): Promise<void> {
 		//the conflict is on the owner column and the predicate says so explicitly (S-OWNER-2)
 		const written = await options.driver.query(
 			`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
@@ -123,13 +133,20 @@ export function createPasswordCredentialRepository(
 			     updated_at = now()
 			 WHERE credential.user_id = $1
 			 RETURNING user_id`,
-			[ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
+			await sealedRow(ownerId, credential),
 		);
+		assertWritten(written);
+	}
 
-		//a false conflict predicate writes nothing and must not be reported as stored (E-185)
-		if (written.length !== 1) {
-			throw new CredentialWriteError("credential_not_written");
-		}
+	//without a proof only a first credential may be written so an existing one is a key violation (E-2428)
+	async function insertFirst(ownerId: string, credential: PasswordCredentialWrite): Promise<void> {
+		const written = await options.driver.query(
+			`INSERT INTO ${table} (user_id, phc, key_version, scheme, set_by_session_id)
+			 VALUES ($1, $2, $3, $4, $5)
+			 RETURNING user_id`,
+			await sealedRow(ownerId, credential),
+		);
+		assertWritten(written);
 	}
 
 	return {
@@ -139,7 +156,7 @@ export function createPasswordCredentialRepository(
 
 		write: ({ actor, ...credential }) => writeOwnedBy(actor, credential),
 
-		writeForCreatedAccount: ({ userId, ...credential }) => writeOwnedBy(userId, credential),
+		writeForCreatedAccount: ({ userId, ...credential }) => insertFirst(userId, credential),
 
 		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)
 		async replaceIfUnchanged({ userId, previous, phc, scheme }) {
