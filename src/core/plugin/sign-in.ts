@@ -27,12 +27,19 @@ export async function createSessionUnderHooks<Written extends { readonly session
 ): Promise<Written> {
 	await hooks.beforeSessionCreate({ userId: intended.userId, factors: intended.factors });
 	const written = await write();
-	await hooks.afterSessionCreate({
-		userId: written.session.userId,
-		factors: written.session.factors,
-		sessionId: written.session.id,
-	});
+	await tellAfterSessionCreate(hooks, written.session);
 	return written;
+}
+
+export function tellAfterSessionCreate(
+	hooks: PluginHookDispatcher,
+	session: Session,
+): Promise<void> {
+	return hooks.afterSessionCreate({
+		userId: session.userId,
+		factors: session.factors,
+		sessionId: session.id,
+	});
 }
 
 export function tellAfterSignIn(

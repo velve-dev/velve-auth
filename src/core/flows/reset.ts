@@ -10,7 +10,9 @@ import type { RequestContext } from "../http/route.js";
 import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
+import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import { tellAfterSessionCreate } from "../plugin/sign-in.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
@@ -67,6 +69,11 @@ async function replacePassword(
 	const { schema, keys, sessions, pluginRuntime } = environment.services;
 	//the account row is locked first as a first confirmation writes these tables reversed (E-1602)
 	await lockAccountRow(input.transaction, schema, input.userId);
+	//a refused session refuses the reset before any revocation is announced (E-2796)
+	await hooksOnTheTransaction(pluginRuntime.hooks, input.transaction).beforeSessionCreate({
+		userId: input.userId,
+		factors: ["password"],
+	});
 	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
 	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
 	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
@@ -128,6 +135,7 @@ export async function redeemReset(
 		});
 	});
 
+	await tellAfterSessionCreate(environment.services.pluginRuntime.hooks, result.session);
 	context.cookies.setSession(result.sessionToken);
 	return result;
 }
@@ -201,6 +209,7 @@ export async function redeemResetWithRecoveryCode(
 		throw new ConcealedError("recovery_code_not_found");
 	}
 
+	await tellAfterSessionCreate(environment.services.pluginRuntime.hooks, result.session);
 	context.cookies.setSession(result.sessionToken);
 	return result;
 }

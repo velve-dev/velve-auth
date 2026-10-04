@@ -5146,6 +5146,11 @@ because whoever presented it may be the reason the account was disabled
 (E-2872). As with the mailed reset, every session is revoked and a new one is
 issued.
 
+Both resets run a plugin's `beforeSessionCreate` inside their transaction and
+`afterSessionCreate` after it commits. A plugin that refuses the session refuses
+the reset: the answer is the plugin's code, the old password stays, and the
+token or code is not spent (E-2796).
+
 The per-account bucket is keyed by the identifier in the comparison form sign-in
 uses — trimmed, NFKC-normalised and case-folded — so `Owner@Example.com`,
 ` owner@example.com ` and its fullwidth spelling all draw from one bucket, and an
@@ -7060,11 +7065,25 @@ none of them; neither `UserCreateEvent` nor `SessionCreateEvent` carries the
 caller's address, so a plugin that refuses by network address has no point at
 which to refuse a sign-up.
 
-**Two operations write a session without these points**: the two password
-resets, `password.redeemReset` and `password.redeemResetWithRecoveryCode`, which
-sign the caller in, and the re-issue on `password.set` and `password.change`.
-Neither runs `beforeSessionCreate` or `afterSessionCreate`, so a plugin's refusal
-there does not reach them (E-2794).
+**The password operations that issue a session run the two session points
+too** (E-2796):
+
+| Operation | Points, in order |
+|---|---|
+| `password.redeemReset`, `password.redeemResetWithRecoveryCode` | `beforeSessionCreate` inside the reset's transaction, `beforeSessionRevoke` for each session it removes, then `afterSessionCreate` after the commit |
+| `password.set`, `password.change` | `beforeSessionCreate` before the transaction opens, `beforeSessionRevoke` for each session it removes, then `afterSessionCreate` after the commit |
+
+A reset learns its account only by redeeming its token or code, so its
+`beforeSessionCreate` runs inside that transaction, after the account row is
+locked, with the lent context described below for `beforeSessionRevoke`. A
+refusal there answers with the plugin's code, as it does on a sign-in, and rolls
+the whole reset back: no session is written, the old password stays, and the
+mailed token or the recovery code is not spent and can be redeemed again. On
+`password.set` and `password.change` the account is known from the session, so
+the point runs before the transaction, as on a sign-in; a refusal there changes
+nothing. Both `after` points run once the transaction has committed and before
+the cookie is set, so a throw there answers with the plugin's code and sets no
+cookie, but the new password and the new session stay.
 
 `beforeSessionRevoke` fires **once per session about to go**, and always before
 the rows go, so a hook that throws leaves them standing and the caller gets
