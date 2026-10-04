@@ -590,20 +590,22 @@ import {
 ```
 
 `Actor` is a branded `string`, so a bare string is not one and the mistake does
-not compile. There are exactly three producers, one per way of proving who owns
+not compile. There are exactly four producers, one per way of proving who owns
 a row, and each takes a nominal type that only one module may assert
-(S-OWNER-7, E-93):
+(S-OWNER-7, E-93). The first three are exported; `actorOfConsumedRecoveryCode`
+is internal to the recovery-code reset:
 
 | Producer | Evidence | Asserted in |
 |---|---|---|
 | `actorOfResolvedSession` | `ResolvedSession` — a session the library resolved | `core/session/service.ts` |
 | `actorOfRedeemedOneTimeToken` | `RedeemedOneTimeToken` — a row a `DELETE … RETURNING` removed | `core/db/repositories/token.ts` |
-| `actorOfConsumedOAuthFlow` | `ConsumedOAuthFlow` — a row of `velve.oauth_flow` the callback consumed | nowhere yet; the feature that consumes a flow asserts it where it removes the row |
+| `actorOfConsumedOAuthFlow` | `ConsumedOAuthFlow` — a row of `velve.oauth_flow` the callback consumed | `core/oauth/flow-repository.ts` |
+| `actorOfConsumedRecoveryCode` | `ConsumedRecoveryCode` — a recovery code a `DELETE … RETURNING` removed | `core/factor/recovery/repository.ts` |
 
-A hand-built `{ userId: "…" }` satisfies none of the three, so no handler builds
-an actor from a request body, a query string or a header. The three provenances
-do not cross either: a consumed flow is not a redeemed token, and neither is a
-session.
+A hand-built `{ userId: "…" }` satisfies none of the four, so no handler builds
+an actor from a request body, a query string or a header. The four provenances
+do not cross either: a consumed flow is not a redeemed token, a consumed
+recovery code is neither, and none of them is a session.
 
 **What the brand does not do.** It makes minting *visible*, not impossible. A
 caller that can issue a session for an arbitrary account can resolve that
@@ -680,14 +682,22 @@ method that reaches them some other way says which way, by name.**
   `information_schema`, and fails when one appears that has no line in its
   table of decisions — a new owned table cannot arrive without a repository
   decision;
-- it finds, with the TypeScript compiler API, every exported function and
-  every method of an object an exported factory returns whose SQL names one of
-  those tables or an owner column;
+- it finds, with the TypeScript compiler API, the units a module exports — an
+  exported function, a name in an `export { … }` list, a method of an exported
+  class or of an exported object constant, and a method of an object an
+  exported function returns, spread members included — and follows each one
+  through the declarations of its own file and the string constants it
+  imports, counting it when that text holds SQL in any case and names one of
+  those tables or an owner column. A call into another module is that module's
+  unit, not this one's, so a service that only calls a repository is not
+  counted itself;
 - each one must take a parameter that carries a brand declared in
   `core/db/actor.ts` — `Actor`, `ResolvedSession`, `RedeemedOneTimeToken`,
   `ConsumedOAuthFlow` or `ConsumedRecoveryCode`, directly or as a field — or
-  stand in the exception list under one of the classes below. An exception
-  that the census no longer finds without a proof fails as well.
+  stand in the exception list under one of the classes below. A unit that takes
+  a brand and, beside it, a plain-string `userId` or `ownerId` counts as having
+  no proof. An exception that the census no longer finds without a proof fails
+  as well.
 
 | Class | Why no proof is passed | Methods |
 |---|---|---|
