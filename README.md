@@ -144,7 +144,15 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 > raised only when `pluginDatabase` or `pluginDatabaseRole` is set, the two
 > options new in `1.2.0`; a `RevokeReason` member, `email_verified`, that an
 > exhaustive `switch` has to handle; a required `sessionCookieName` in
-> `HttpEnvironment`; and changed rate-limit defaults. It is a minor version by the
+> `HttpEnvironment`; changed rate-limit defaults; `auth.pending.cancel` taking the
+> call fields, so a call without `origin` no longer compiles and one from
+> JavaScript without an allowed origin is refused with `origin_not_allowed`
+> (E-2830); the sign-in, session and user hooks firing on every way in, not
+> only on OAuth, where a throwing hook now refuses the sign-in, sign-up, reset
+> or password change (E-2790, E-2796); a start refusal for a
+> `session.absoluteTimeout` above 400 days (E-2878); and `username.change`
+> answering `session_required` instead of `invalid_credentials` for an account
+> deleted mid-request (E-2835). It is a minor version by the
 > owner's decision rather than a major one (E-2214, E-2520). `next` keeps
 > pointing at the last prerelease, `1.0.0-next.2`, and nothing needs it.
 
