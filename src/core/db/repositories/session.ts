@@ -84,6 +84,7 @@ export interface SessionRepository {
 		readonly actor: Actor;
 	}): Promise<number>;
 	deleteEverySessionOwnedBy(input: { readonly actor: Actor }): Promise<number>;
+	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
 	deleteEveryOtherSessionOwnedBy(input: {
 		readonly actor: Actor;
 		readonly keptSessionId: string;
@@ -374,6 +375,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		async deleteEverySessionOwnedBy({ actor }) {
 			const rows = await options.driver.query(deleteEveryOwnedSql, [actor]);
 			return rows.length;
+		},
+
+		async deleteEverySessionOwnedByReturningIds({ actor }) {
+			const rows = await options.driver.query<{ id: string }>(deleteEveryOwnedSql, [actor]);
+			return rows.map((row) => row.id);
 		},
 
 		async deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {

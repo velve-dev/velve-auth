@@ -1,12 +1,14 @@
 import type { RouteServices } from "../auth/routes.js";
 import { type Actor, actorOfResolvedSession } from "../db/actor.js";
+import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
+import { createSessionRepository, type SessionRepository } from "../db/repositories/session.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
-import type { SessionResolution, SessionService } from "../session/service.js";
+import type { SessionResolution } from "../session/service.js";
 import { createArgon2idHash } from "./argon2.js";
 import { createPasswordCredentialRepository } from "./credential.js";
 import { storedMemoryCeilingKiB } from "./limits.js";
@@ -24,14 +26,37 @@ export async function refuseIfCredentialExists(
 	}
 }
 
-async function refuseIfSessionWasRevoked(
-	sessions: SessionService,
+function sessionRowsOn(transaction: Driver, services: RouteServices): SessionRepository {
+	return createSessionRepository({ driver: transaction, schema: services.schema });
+}
+
+function refuseUnlessCallingSessionIsAmong(
+	sessionIds: readonly string[],
 	resolved: SessionResolution,
-): Promise<void> {
-	const live = await sessions.listEveryIdOwnedBy({ resolved });
-	if (!live.includes(resolved.session.id)) {
+): void {
+	if (!sessionIds.includes(resolved.session.id)) {
 		throw new ConcealedError("session_not_found");
 	}
+}
+
+async function announceEverySessionAboutToBeDeleted(
+	services: RouteServices,
+	transaction: Driver,
+	resolved: SessionResolution,
+): Promise<void> {
+	if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
+		return;
+	}
+	const standing = await sessionRowsOn(transaction, services).listEverySessionIdOwnedBy({
+		actor: actorOfResolvedSession(resolved),
+	});
+	//a call that is going to be refused announces nothing (E-2705)
+	refuseUnlessCallingSessionIsAmong(standing, resolved);
+	await announceEachRevocation(
+		services.pluginRuntime,
+		{ userId: resolved.userId, sessionIds: standing, reason: "password_changed" },
+		transaction,
+	);
 }
 
 //the hash is derived before the transaction so no KDF runs under a row lock (E-1185)
@@ -46,22 +71,19 @@ export async function replacePasswordOfSession(
 		createArgon2idHash(accepted.bytes, services.password.argon2id),
 	);
 
-	const owned = await services.sessions.listEveryIdOwnedBy({ resolved: input.resolved });
-	//a refused revocation must refuse the change before anything is written (S-RACE-5)
-	await announceEachRevocation(services.pluginRuntime, {
-		userId: input.resolved.userId,
-		sessionIds: owned,
-		reason: "password_changed",
-	});
-
 	const issued = await services.driver.transaction(async (transaction) => {
 		//the account row comes first as a first confirmation writes these tables in reverse (E-1602)
 		await lockAccountRow(transaction, services.schema, input.resolved.userId);
-		const sessions = services.sessions.boundTo(transaction);
+		//a refused revocation must refuse the change before anything is written (S-RACE-5)
+		await announceEverySessionAboutToBeDeleted(services, transaction, input.resolved);
+		const deleted = await sessionRowsOn(
+			transaction,
+			services,
+		).deleteEverySessionOwnedByReturningIds({ actor: actorOfResolvedSession(input.resolved) });
 		//a session a concurrent credential change revoked must not be reissued (E-2701)
-		await refuseIfSessionWasRevoked(sessions, input.resolved);
-		const reissued = await sessions.reissueAfterCredentialChange({
-			resolved: input.resolved,
+		refuseUnlessCallingSessionIsAmong(deleted, input.resolved);
+		const reissued = await services.sessions.boundTo(transaction).issue({
+			userId: input.resolved.userId,
 			factors: ["password"],
 			observed: observedIn(context),
 		});
@@ -77,14 +99,13 @@ export async function replacePasswordOfSession(
 			setBySessionId: reissued.session.id,
 			scheme: CREATED_SCHEME,
 		});
-		return reissued;
+		return { ...reissued, revokedOtherSessionsCount: deleted.length - 1 };
 	});
 
 	context.cookies.setSession(issued.token);
 	return {
 		sessionToken: issued.token,
 		session: issued.session,
-		//the calling session is subtracted from the count only where one exists (E-611)
-		revokedOtherSessionsCount: Math.max(owned.length - 1, 0),
+		revokedOtherSessionsCount: issued.revokedOtherSessionsCount,
 	};
 }

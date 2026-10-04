@@ -7674,20 +7674,36 @@ Both routes revoke **every other session of the account** and re-issue the
 calling one, in a single transaction with the credential write (`S-FIX-1`,
 `S-FIX-6`, `S-RACE-5`). This is not configurable and no option exists that turns
 it off. `revokedOtherSessionsCount` counts the sessions that were revoked, not
-counting the calling session, which is replaced rather than revoked. The new
-token arrives in `__Host-velve_session`; the previous token resolves to nothing
-from that moment.
+counting the calling session, which is replaced rather than revoked. The count is
+exact: it is taken from the rows the transaction deletes while it holds the
+account row, so a session signed in while the call waited is counted and a
+session signed out meanwhile is not (E-2705). The new token arrives in
+`__Host-velve_session`; the previous token resolves to nothing from that moment.
+
+A `beforeSessionRevoke` hook hears `password_changed` once for every session the
+change deletes, the calling session included, after the transaction has taken
+the account row and before any session is deleted. The hook runs inside that
+transaction, so a hook that throws rolls back the whole change: the password, the
+sessions and the calling token stay as they were, and the call answers 500
+(`S-RACE-5`, E-2705). The sessions announced are the ones standing when the
+account row was taken; a session a concurrent sign-in commits between that
+listing and the delete is deleted without being announced, the same gap the
+resets have (E-2585).
 
 **Two calls on one account at once.** Each route reads its precondition — no
 credential for `set`, the current password for `change` — and derives the hash
 before its transaction opens. Once the transaction holds the account row it
-checks that the calling session still exists. A `set`, `change` or reset that
-committed first has revoked it, so the later call is refused with
-`session_required` and status 401 and writes nothing: of two such calls exactly
-one succeeds, and the password that holds is the one that call submitted
-(E-2700, E-2701). A `beforeSessionRevoke` hook is asked about the
-refused call's revocations before that call reaches the account row, so a plugin
-can be told of a revocation that does not happen (E-2702).
+deletes the account's sessions and checks that the calling session was among
+them. If it was not, the call is refused with `session_required` and status 401
+and writes nothing. A call whose session was already gone when it took the
+account row announces nothing; one whose session goes in the instant between
+the announcement and the delete has announced and then rolls back. Whatever removed the
+calling session in the meantime makes the later call refuse: a `set`, `change`
+or reset that committed first, the first confirmation of an address that
+removes a password set in another session (L-12), a sign-out from the calling
+session, or a `/session/revoke` naming it from another device. Of two
+credential changes exactly one succeeds, and the password that holds is the one
+that call submitted (E-2700, E-2701, E-2705).
 
 Both routes require a **fresh** session — one created within `freshnessWindow`,
 15 minutes by default, measured from `created_at` and not from last use. A stale
