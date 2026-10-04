@@ -3,7 +3,7 @@ import { scryptCostIsAcceptable } from "../limits.js";
 import { bytesParameter, integerParameter, type PhcString } from "../phc.js";
 import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
-import { deriveScrypt } from "./scrypt.js";
+import { deriveScrypt, scryptCanDerive } from "./scrypt.js";
 
 const DERIVED_BYTES = 64;
 const AES_KEY_BYTES = 32;
@@ -37,6 +37,7 @@ export function readFirebaseScrypt(
 		signerKey === null ||
 		stored.salt === undefined ||
 		stored.hash === undefined ||
+		!scryptCanDerive(costExponent, DERIVED_BYTES) ||
 		!scryptCostIsAcceptable(costExponent, blockSize, parallelism, memoryCeilingKiB)
 	) {
 		return null;

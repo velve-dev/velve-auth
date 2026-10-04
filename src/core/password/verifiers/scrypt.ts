@@ -5,6 +5,12 @@ import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
 
 const ASYNC_TICK_IN_MILLISECONDS = 10;
+const BYTES_PER_BLOCK_UNIT = 128;
+
+//noble refuses N below 2 and an empty output before deriving so neither is handed over (S-TIM-2)
+export function scryptCanDerive(costExponent: number, hashBytes: number): boolean {
+	return costExponent >= 1 && hashBytes >= 1;
+}
 
 export async function deriveScrypt(input: {
 	readonly password: Uint8Array<ArrayBuffer>;
@@ -14,12 +20,15 @@ export async function deriveScrypt(input: {
 	readonly parallelism: number;
 	readonly hashBytes: number;
 }): Promise<Uint8Array<ArrayBuffer>> {
+	const costFactor = 2 ** input.costExponent;
 	return scryptAsync(input.password, input.salt, {
-		N: 2 ** input.costExponent,
+		N: costFactor,
 		r: input.blockSize,
 		p: input.parallelism,
 		dkLen: input.hashBytes,
 		asyncTick: ASYNC_TICK_IN_MILLISECONDS,
+		//noble's own memory limit must not refuse what the memory ceiling admitted
+		maxmem: BYTES_PER_BLOCK_UNIT * input.blockSize * (costFactor + input.parallelism + 1),
 	});
 }
 
@@ -42,6 +51,7 @@ export function readScrypt(stored: PhcString, memoryCeilingKiB: number): ScryptI
 		parallelism === null ||
 		stored.salt === undefined ||
 		stored.hash === undefined ||
+		!scryptCanDerive(costExponent, stored.hash.length) ||
 		!scryptCostIsAcceptable(costExponent, blockSize, parallelism, memoryCeilingKiB)
 	) {
 		return null;

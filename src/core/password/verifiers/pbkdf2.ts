@@ -30,7 +30,9 @@ export function readPbkdf2(stored: PhcString): Pbkdf2Inputs | null {
 		iterations === null ||
 		!pbkdf2CostIsAcceptable(iterations) ||
 		stored.salt === undefined ||
-		stored.hash === undefined
+		stored.hash === undefined ||
+		//an empty output is refused by both derivations before they start (S-TIM-2)
+		stored.hash.length === 0
 	) {
 		return null;
 	}
