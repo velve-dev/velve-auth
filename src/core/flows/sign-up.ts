@@ -3,10 +3,12 @@ import type { SignUpResult } from "../auth/results.js";
 import { createUserRepository, type User } from "../auth/user.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
+import type { AuthenticationFactor } from "../http/caller.js";
 import { VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import type { IdentifierRejection, IdentityColumns } from "../identity/columns.js";
 import { identityColumns } from "../identity/columns.js";
+import { createSessionUnderHooks } from "../plugin/sign-in.js";
 import { randomBytes } from "../token/random.js";
 import { type MintedArtefact, mintArtefact, sendOrUndo } from "./artefact.js";
 import {
@@ -90,19 +92,32 @@ async function register(
 	derived: DerivedPassword | null,
 	discard: boolean,
 ): Promise<Registration> {
-	const { driver, schema, keys, sessions } = flow.environment.services;
+	const { driver, schema, keys, sessions, pluginRuntime } = flow.environment.services;
 	const written = discard ? coverColumns(columns) : columns;
+	const factors: readonly AuthenticationFactor[] = derived === null ? [] : ["password"];
 
+	//a cover runs the hooks as a registration does and rolls back with them (S-ENUM-3)
 	const run = async (transaction: Driver): Promise<Registration> => {
 		const created = await createUserRepository({ driver: transaction, schema }).createUser({
 			...written,
 			emailVerifiedAt: null,
 		});
-		const issued = await sessions.boundTo(transaction).issue({
+		//a cover tells the identifiers the caller sent and never the drawn address (S-ENUM-3)
+		await pluginRuntime.hooks.afterUserCreate({
+			email: columns.email,
+			username: columns.username,
 			userId: created.id,
-			factors: derived === null ? [] : ["password"],
-			observed: observedIn(context),
 		});
+		const issued = await createSessionUnderHooks(
+			pluginRuntime.hooks,
+			{ userId: created.id, factors },
+			() =>
+				sessions.boundTo(transaction).issue({
+					userId: created.id,
+					factors,
+					observed: observedIn(context),
+				}),
+		);
 		if (derived !== null) {
 			await writePasswordOfCreatedAccount(
 				{ driver: transaction, keys, schema, password: flow.environment.services.password },
@@ -324,6 +339,11 @@ export async function signUp(
 		}
 	}
 
+	//the veto runs before the address is looked up so it cannot tell a taken one (S-ENUM-3)
+	await environment.services.pluginRuntime.hooks.beforeUserCreate({
+		email: columns.email,
+		username: columns.username,
+	});
 	const attempted = await registerOrCover(
 		flow,
 		context,
