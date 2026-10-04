@@ -200,3 +200,42 @@ export async function dropThePluginRole(owner: TestConnection, name: string): Pr
 		await owner.query(`DROP ROLE IF EXISTS ${name}`, []).catch(() => undefined);
 	});
 }
+
+export interface PluginLoginRole {
+	readonly name: string;
+	readonly url: string;
+}
+
+/**
+ * The role plugin SQL logs in as under `pluginDatabase`, created the way the operator creates it: a
+ * login with a password generated here and never written down, no rights of its own, and no
+ * membership in the library's role. `memberOf` grants one membership anyway, which is the
+ * misconfiguration the start check refuses.
+ */
+export async function createAPluginLoginRole(
+	owner: TestConnection,
+	name: string,
+	options: { readonly memberOf?: string } = {},
+): Promise<PluginLoginRole> {
+	const password = randomBytes(24).toString("hex");
+	const [database] = await owner.query<{ name: string }>("SELECT current_database() AS name", []);
+	await overTheSharedCatalogues(owner, async () => {
+		await owner.query(`CREATE ROLE ${name} LOGIN PASSWORD '${password}'`, []);
+		await owner.query(`GRANT CONNECT ON DATABASE "${database?.name}" TO ${name}`, []);
+		if (options.memberOf !== undefined) {
+			await owner.query(`GRANT ${options.memberOf} TO ${name}`, []);
+		}
+	});
+	const url = new URL(process.env.VELVE_TEST_DATABASE_URL ?? FALLBACK_DATABASE_URL);
+	url.username = name;
+	url.password = password;
+	return { name, url: url.toString() };
+}
+
+/** Run after the schema is dropped, with every connection that logged in as the role closed. */
+export async function dropAPluginLoginRole(owner: TestConnection, name: string): Promise<void> {
+	await overTheSharedCatalogues(owner, async () => {
+		await owner.query(`DROP OWNED BY ${name} CASCADE`, []).catch(() => undefined);
+		await owner.query(`DROP ROLE IF EXISTS ${name}`, []).catch(() => undefined);
+	});
+}
