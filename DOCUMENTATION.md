@@ -55,13 +55,38 @@ The package is ESM only and exposes the following subpaths.
 | `@velve/auth/http` | `toWebHandler()` — `(Request) => Promise<Response>` |
 | `@velve/auth/client` | the typed client, derived from the same route declaration |
 | `@velve/auth/pg` | driver for `node-postgres` |
-| `@velve/auth/postgres-js` | driver for `postgres.js` |
-| `@velve/auth/neon` | driver for `@neondatabase/serverless` |
-| `@velve/auth/import` | the migration module; its heavier dependencies load only here |
+| `@velve/auth/postgres-js` | reserved for a `postgres.js` driver; exports nothing yet |
+| `@velve/auth/neon` | reserved for a `@neondatabase/serverless` driver; exports nothing yet |
+| `@velve/auth/import` | reserved for the import module of architecture 4.1; exports nothing yet |
 | `@velve/auth/schema` | the generated SQL and the migration runner |
-| `@velve/auth/testing` | test helpers — clock control, deterministic randomness |
+| `@velve/auth/testing` | test helpers — clock control only |
 
 There is no default export from any subpath.
+
+**Three of the subpaths resolve and export nothing.** `@velve/auth/postgres-js`,
+`@velve/auth/neon` and `@velve/auth/import` are declared in `package.json` and
+each builds to a module with no export, so an import of a name from them fails
+to type-check and an import of the module itself does nothing. They are kept
+because removing a published subpath is a breaking change, and they are not yet
+filled (E-2902). Until they are:
+
+- **`postgres.js`** — write a `Driver` over it as [the driver
+  interface](#the-driver-interface) describes, with `createNodePostgresDriver` as
+  the reference implementation.
+- **`@neondatabase/serverless`** — Neon's WebSocket `Pool` follows the
+  `node-postgres` interface, and `createNodePostgresDriver` is typed structurally
+  against that interface rather than against `pg`, so the `Pool` is what a Neon
+  application builds its driver on. This repository does not test it against
+  Neon. Neon's HTTP query function sends a transaction as one batch and cannot
+  run a statement that depends on the one before, so it cannot satisfy
+  `transaction`.
+- **Importing an estate** — no import function ships. The columns an import
+  fills (`imported_from`, `imported_at`, the passkey flags) and the verifiers for
+  the seven legacy schemes in [Passwords](#passwords) are in place, so a hash
+  that reaches `password_credential` is verified and rehashed as described
+  there, but the package provides no supported way of putting it there.
+- **Deterministic randomness** — not in `@velve/auth/testing`; [its
+  section](#velve-authtesting) says why.
 
 ### `VELVE_AUTH_VERSION`
 
@@ -2404,8 +2429,10 @@ risk class as a pepper.
 
 The only two ways a PHC string crosses the column boundary. `sealPhc` returns
 `{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
-that puts a cleartext string into the column, and the import module uses these
-same two functions rather than a path of its own (architecture 4.0.3).
+that puts a cleartext string into the column, and the import module
+architecture 4.0.3 describes is to use these same two functions rather than a
+path of its own. That module does not ship yet: `@velve/auth/import` exports
+nothing (E-2902).
 
 `openPhc` throws `KeyError("key_version_unknown")` when the row names a key
 version that has left the ring, and `KeyError("authentication_failed")` when the
@@ -4538,7 +4565,7 @@ interface WebAuthnCredential {
 | Field | What it is |
 |---|---|
 | `id` | the row's `uuid`; what `rename` and `remove` take |
-| `label` | what the user called this device. Empty for a credential that arrived through the import module, which carries no label |
+| `label` | what the user called this device. Empty for a row whose `label` is `NULL`, which the schema reserves for imported credentials; no import module ships yet, so the library writes no such row (E-2902) |
 | `transports` | how the browser said the authenticator can be reached — a hint, never a decision |
 | `aaguid` | the authenticator model, or `null` when it declined to name one |
 | `isBackupEligible` | the `BE` flag: `true` means a synchronised passkey, `false` means device-bound |
@@ -4570,10 +4597,13 @@ An application that wants "a second factor must be device-bound" filters on
 watches `isCurrentlyBackedUp`. Neither is expressible in the configuration, on
 purpose: the library does not know what the application's risk model is.
 
-The import module writes both as `false` when a credential is imported from a
-system that does not export them (architecture 4.1 e), which marks a
+Architecture 4.1 e has the import module write both as `false` when a
+credential is imported from a system that does not export them, which marks a
 synchronised passkey as device-bound and would mislead exactly such a policy.
-That is why the import defaults to importing no passkeys at all.
+That is why the import is specified to import no passkeys by default. The
+module does not ship yet — `@velve/auth/import` exports nothing (E-2902) — so
+every row this library writes today carries the flags the authenticator
+reported.
 
 ### The challenge
 
