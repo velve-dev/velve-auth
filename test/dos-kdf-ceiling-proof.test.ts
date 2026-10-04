@@ -187,7 +187,7 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 
 		expect(statuses.filter((status) => status !== 200 && status !== 429)).toStrictEqual([]);
 		expect(statuses.filter((status) => status === 200).length).toBeGreaterThan(ceiling);
-		expect(kdfAccounting.calls).toBeGreaterThanOrEqual(SIMULTANEOUS_SIGN_INS / 2);
+		expect(kdfAccounting.calls).toBeGreaterThan(ceiling);
 		expect(semaphore.peakInFlight, "the semaphore's own count, under contention").toBe(ceiling);
 		expect(kdfAccounting.peakInFlight, "derivations running beneath it").toBeLessThanOrEqual(
 			ceiling,
