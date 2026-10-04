@@ -12708,3 +12708,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Cutting new `###` regions into the short README so the partition rule could stand. (b) Leaving the rule and noting it in `docs/working-method.md`.
 **Reason.** A README that describes the library as a whole has no part a single feature owns, and regions would grow it back toward the length it was cut from. (b) leaves the rules file describing a file that is not there, which `CLAUDE.md` calls a bug to be fixed before continuing. So the README is no longer partitioned: a feature reports a README change instead of making one, the gate asks for the README only where the outside picture changed, and the old rule moved word for word to `docs/working-method.md`. The release history and the PostgreSQL tier note moved word for word from the README to `DOCUMENTATION.md`, under *Package entry points*.
 **Price.** The partition exceptions drop from three to two, so a wave that changes the outside picture now funnels its README changes through whoever owns the README pass. The sentences in §7 and §1 are reworded rules, not cut ones. Concerns `CLAUDE.md` §1, §5 and §7, `README.md` and `DOCUMENTATION.md`.
+
+<a id="e-2091"></a>
+
+### The requirement audit's fixes get their ranges before any of them starts
+`E-2091` · open-points · ranges cut before a wave
+
+**Context.** An audit of all 123 security requirements against the code and the tests found fourteen requirements the code does not or only partly satisfy, about forty-three tests that do not prove what they cite, two architectural gaps and one suspected defect outside the requirements, reading routes called from the same origin. The work splits into fourteen branches, several running at the same time.
+**Rejected.** Letting each branch add its own row to the range table when it starts.
+**Reason.** Every one of those rows lands on the same line of `CLAUDE.md`, so every merge after the first would conflict there. Reserving all fourteen ranges in one change before the first branch starts is the partition rule in §5 applied to the table itself.
+**Price.** Ranges reserved for work that may turn out smaller stay as gaps in the numbering, which §6 accepts. Concerns `CLAUDE.md` §6.
