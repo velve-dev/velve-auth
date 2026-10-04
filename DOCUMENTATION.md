@@ -6001,9 +6001,11 @@ returning; it cannot replace the answer, because every one of them returns
 `Promise<void>`.
 
 **A hook point only fires if an operation reaches it, and most of the operations
-are not built yet.** `beforeSessionRevoke` runs today, on sign-out, on all three
-revocation routes and on a revocation a plugin performs itself, before the rows
-go, so a hook that throws leaves the session standing.
+are not built yet.** `beforeSessionRevoke` runs today on every revocation a
+`RevokeReason` names — sign-out, the three revocation routes, a password change
+or first password set, both resets, an identity link, and a revocation a plugin
+performs itself — before the rows go, so a hook that throws leaves the session
+standing and, on a credential change, the credential unchanged.
 
 The context a hook is given is frozen and carries no writing method on the user,
 the password, the TOTP secret or the recovery codes. A plugin's own SQL is
@@ -6580,7 +6582,7 @@ registering a point that does not is told nothing at start.
 | `beforeSessionRevoke` | **yes** |
 
 Which operations reach a point is stated in the chapter of the feature that
-built them; `beforeSessionRevoke`'s four are named below. **The cell is a yes or
+built them; `beforeSessionRevoke`'s are named below. **The cell is a yes or
 a no and never a list**, so a feature that gives a point its first producer flips
 one cell, and a second feature reaching the same point finds it already flipped
 and edits nothing. A list would have made that a collision (E-776).
@@ -6594,6 +6596,61 @@ the caller's announces nothing, which is the same answer S-OWNER-4 gives the
 caller. `signOut` needs no listing: it announces the session it already resolved.
 `FrozenRepositories.revokeSession` is the fifth producer and announces the one
 session it was given.
+
+Every `RevokeReason` has an operation that announces it, and every operation
+that revokes under a named reason announces:
+
+| Reason | Operation | Sessions announced | When |
+|---|---|---|---|
+| `sign_out` | `signOut` | the caller's | before the delete |
+| `revoked_by_user` | `session.revoke`, `session.revokeAllOther`, `session.revokeAll` | the owned ones the route removes | before the delete |
+| `revoked_by_user`, or the plugin's own | `FrozenRepositories.revokeSession` | the one named, if it exists | before the delete |
+| `password_changed` | `password.change`, `password.set` | every session of the account, the caller's included | before the transaction opens |
+| `password_reset` | `password.redeemReset`, `password.redeemResetWithRecoveryCode` | every session of the account | inside the transaction, after the account row is locked |
+| `identity_linked` | the OAuth callback finishing a link | the one session the link began in, if the account still owns it | before the transaction opens |
+
+**A refusal on a credential change refuses the change.** A hook that throws on
+`password_changed` stops the change before its transaction opens: the password,
+every session and the cookie stay as they were, and the caller gets
+`500 internal_error`. On `password_reset` the throw rolls back the transaction
+the reset runs in, so the mailed token or the recovery code is not spent either
+and can be redeemed again. On `identity_linked` no identity is inserted and the
+session is not replaced. No outcome pairs a new password with the old sessions,
+so the hook is a veto and not a way to keep sessions — S-FIX-6 and S-DEFAULT-2
+hold (E-2580, E-2581).
+
+**A reset runs the hook inside its transaction and on its connection**, because
+a reset learns which account it is for only by redeeming its token or code
+there. The context the hook gets on a reset is bound to that transaction:
+`findUserById`, `listSessionsForUser`, `revokeSession` and `ownTables.query` all
+run on the reset's own connection and never ask the pool for a second one, so
+concurrent resets cannot starve the pool however small it is. Whatever the hook
+writes rolls back with the reset if anything later in it fails, the hook's own
+refusal included. The lent context ends when the hook returns: from then on
+every statement through it is refused, checked when the statement is issued, so
+a plugin that keeps the context or leaves a chain of statements running cannot
+reach the next transaction that connection serves (E-2586). The hook runs while
+the account row is locked
+`FOR NO KEY UPDATE`; reading sessions, reading the user or writing a plugin
+table with a foreign key to `velve.user` does not wait on that lock.
+
+Each plugin statement on that borrowed connection runs inside a savepoint, so a
+statement the database refuses is rolled back to it and the reset can continue
+if the hook catches the error. That costs two more statements, the savepoint and
+its release. With `pluginDatabaseRole` set, the savepoint also carries the role:
+it is switched for the statement and switched back to whatever the transaction
+held before the savepoint is released, which makes five more statements in all
+(E-2582, E-2584, E-2586).
+
+The listing and the delete are separate statements on a reset too. The account
+lock does not block a concurrent sign-in from inserting a session, so a session
+committed between the two is removed without being announced. It cannot be
+spared: S-FIX-6 requires every session of the account to go (E-2585).
+
+Revocations no reason names announce nothing: replacing the presented session on
+sign-in (E-2122), the re-issue on a change of trust level, the first address
+confirmation that removes a password it did not set (S-LINK-4), deleting a user,
+and the sweep of expired rows (E-2583).
 
 The announcement and the deletion are **not one transaction**. A plugin is told
 about a revocation that a later failure could still prevent, and on
