@@ -460,7 +460,7 @@ describe("the defaults the rows state are the defaults the code uses (S-DEFAULT-
 			plugins: safeDefaultOf("plugins"),
 		}).toStrictEqual({
 			session: `idle ${session.idleTimeout}, absolute ${session.absoluteTimeout}, freshness ${session.freshnessWindow}, SameSite=Lax`,
-			rateLimit: `per address ${perIpAddress.capacity} @ ${perIpAddress.refillPerSecond}/s, per account ${perAccount.capacity} @ ${perAccount.refillPerSecond}/s`,
+			rateLimit: `per address ${perIpAddress.capacity} @ 1 per 2 s, per account ${perAccount.capacity} @ 1 per 300 s`,
 			password: `argon2id m=${argon2id.memoryKiB}, t=${argon2id.iterations}, p=${argon2id.parallelism}`,
 			sessionMetadata: SPECIFIED_DEFAULTS.sessionMetadata,
 			recoveryCodes: `${recoveryCodes.count} codes in groups of ${recoveryCodes.groupSize}`,

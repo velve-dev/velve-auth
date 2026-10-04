@@ -71,7 +71,7 @@ describe("a weakening is measured against the new defaults, not the old ones (S-
 
 	it("states the new defaults in SECURITY_OPTIONS", () => {
 		const rateLimit = SECURITY_OPTIONS.find((option) => option.option === "rateLimit");
-		expect(rateLimit?.safeDefault).toMatch(/^per address 30 @ 0\.5\/s, per account 5 @ /);
+		expect(rateLimit?.safeDefault).toMatch(/^per address 30 @ 1 per 2 s, per account 5 @ /);
 	});
 });
 

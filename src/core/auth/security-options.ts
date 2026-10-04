@@ -26,8 +26,20 @@ const REQUIRED = "no default: the option is required";
 //a stated default is read from the value the code uses and never written a second time (S-DEFAULT-1)
 const DEFAULT_RATE_LIMIT = rateLimitConfigOf();
 
+const SIGNIFICANT_FIGURES = 4;
+const WHOLE_NUMBER_TOLERANCE = 1e-9;
+
+function refillAsWritten(refillPerSecond: number): string {
+	const secondsPerToken = 1 / refillPerSecond;
+	const wholeSeconds = Math.round(secondsPerToken);
+	if (refillPerSecond < 1 && Math.abs(secondsPerToken - wholeSeconds) < WHOLE_NUMBER_TOLERANCE) {
+		return `1 per ${wholeSeconds} s`;
+	}
+	return `${Number(refillPerSecond.toPrecision(SIGNIFICANT_FIGURES))}/s`;
+}
+
 function bucketAsWritten(rule: BucketRule): string {
-	return `${rule.capacity} @ ${rule.refillPerSecond}/s`;
+	return `${rule.capacity} @ ${refillAsWritten(rule.refillPerSecond)}`;
 }
 
 function sameSiteAsWritten(sameSite: string): string {

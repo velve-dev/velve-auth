@@ -5518,7 +5518,7 @@ compile (E-349).
 | `session` | `Partial<SessionConfig>` | Sessions chapter | deadlines, cookie name, `SameSite`, freshness window |
 | `sessionMetadata` | `"truncated" \| "full" \| "none"` | `"truncated"` | how much of the address and the user agent is stored (L-10) |
 | `trustedProxies` | `readonly string[]` | `[]` | CIDR ranges whose `X-Forwarded-For` counts; it reaches the handler through `auth.http`, so `toWebHandler` needs no second copy |
-| `rateLimit` | `Partial<RateLimitConfig>` | 30 @ 0.5/s per address, 5 @ 1/300/s per account | bucket sizes and the alert callback |
+| `rateLimit` | `Partial<RateLimitConfig>` | 30 @ 1 per 2 s per address, 5 @ 1 per 300 s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
 | `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
