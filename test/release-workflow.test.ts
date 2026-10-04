@@ -46,6 +46,25 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8"
 	scripts: Record<string, string>;
 };
 
+const SCRIPTS_RUNNING_THE_UNIT_PROJECT = Object.entries(manifest.scripts)
+	.filter(([, body]) => /\bvitest\b/.test(body) && /--project unit\b/.test(body))
+	.map(([script]) => script);
+
+function scriptNamedBy(command: string): string | undefined {
+	if (!command.startsWith("pnpm ")) {
+		return undefined;
+	}
+	return command
+		.split(/\s+/)
+		.slice(1)
+		.find((word) => !word.startsWith("-") && word !== "run");
+}
+
+function runsTheUnitProject(command: string): boolean {
+	const script = scriptNamedBy(command);
+	return script !== undefined && SCRIPTS_RUNNING_THE_UNIT_PROJECT.includes(script);
+}
+
 /** `needs: a` and `needs: [a, b]` are the same declaration, and the chain below reads both. */
 /** A comment is prose about the file, and the comment beside the job below states the very
  * expression it warns against — reading it as code reports the repaired file as broken. */
@@ -219,6 +238,35 @@ describe("the release workflow", () => {
 			expect(source.filter((command) => command.includes("start-dex"))).not.toStrictEqual([]);
 		}
 		expect(commands(job("tiers"))).toContain("./tools/start-dex.sh");
+	});
+
+	/**
+	 * The case above names two workflows, and the nightly tier ran the acceptance case without a
+	 * provider every night because it was the third (E-2900). This one reads every workflow, finds
+	 * every job that runs a script whose vitest call includes the unit project, and requires the
+	 * provider to be started earlier in that same job.
+	 */
+	it.each(readdirSync(`${repositoryRoot}.github/workflows`))(
+		"starts the provider before the unit project in every job of %s",
+		(name) => {
+			for (const [jobName, region] of jobRegions(workflow(name))) {
+				const steps = commands(region);
+				const firstSuiteRun = steps.findIndex(runsTheUnitProject);
+				if (firstSuiteRun === -1) {
+					continue;
+				}
+				expect(
+					steps.slice(0, firstSuiteRun),
+					`${name} job ${jobName} runs the unit project before starting the provider`,
+				).toContain("./tools/start-dex.sh");
+			}
+		},
+	);
+
+	it("recognises every script that runs the unit project", () => {
+		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).toContain("test");
+		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).toContain("test:nightly");
+		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).not.toContain("test:release");
 	});
 
 	it("names only scripts package.json declares", () => {
