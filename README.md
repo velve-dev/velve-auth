@@ -86,7 +86,7 @@ import { createVelveAuth, rootKeyProvider } from "@velve/auth";
 import { toWebHandler } from "@velve/auth/http";
 import { createNodePostgresDriver } from "@velve/auth/pg";
 
-const driver = createNodePostgresDriver(new Pool({ connectionString }));
+const driver = createNodePostgresDriver(new Pool({ connectionString: process.env.DATABASE_URL }));
 
 const auth = createVelveAuth({
   database: driver,
