@@ -453,6 +453,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1880 … E-1899 | gate and infrastructure, fourteenth range — the release expression that evaluated to nothing. Fifty-eighth row overall, counted over the fifty-seven standing at dd5c938 |
 | E-1900 … E-1939 | outside the waves · `oauth-signup` — the identifier a provider cannot supply, and the acceptance against a real provider. Fifty-ninth row overall, counted over the fifty-eight standing at f4dae39. The start is counted past the fourteenth gate range rather than continued from the highest entry written: E-1885 was reserved first and overlapped it, which `test/decision-log.test.ts` refused |
 | E-1940 … E-1969 | outside the waves · `reviewable-source` — the comments in `src/` rewritten as one plain sentence ending in at most one cited identifier. Sixtieth row overall, counted over the fifty-nine standing at 0b50fb0 |
+| E-1970 … E-1999 | outside the waves · `case-study-curated` — the case study cut to a selection, and the complete log moved to docs/decisions/log.md. Sixty-first row overall, counted over the sixty standing at 38a032e |
 | E-2000 … E-2029 | outside the waves · `rules-only` — the rules file cut to rules, with its explanations moved to docs/working-method.md. Sixty-first row overall, counted over the sixty standing at 38a032e |
 
 The next wave's ranges are added to that table before its features start,

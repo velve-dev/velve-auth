@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
-const caseStudy = readFileSync(`${repositoryRoot}/CASE-STUDY.md`, "utf8");
+/** The complete log; CASE-STUDY.md is a curated selection of it and a citation site like any other. */
+const DECISION_LOG = "docs/decisions/log.md";
+const caseStudy = readFileSync(`${repositoryRoot}/${DECISION_LOG}`, "utf8");
 const rules = readFileSync(`${repositoryRoot}/CLAUDE.md`, "utf8");
 
 /** The specification is the source E-01 to E-46 were taken from, not a citation site. */
@@ -139,7 +141,7 @@ describe("decision log", () => {
 		const parsed = new Set(log.map((entry) => entry.numberLineStart));
 		const unparsed = claimedHeadings()
 			.filter((claim) => !parsed.has(claim.offset))
-			.map((claim) => `CASE-STUDY.md:${claim.line} heads no entry: ${claim.text}`);
+			.map((claim) => `${DECISION_LOG}:${claim.line} heads no entry: ${claim.text}`);
 		expect(unparsed).toEqual([]);
 		expect(log.length).toBeGreaterThan(0);
 	});
