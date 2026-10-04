@@ -12948,3 +12948,43 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Fixing it here. It is a false refusal and not a hole, and it is in the walk E-762 already says is not claimed complete.
 **Reason.** The test writes `VALUES (DEFAULT, $1, $2)` without a column list instead.
 **Price.** A plugin cannot name two or more columns in an `INSERT` through `ownTables.query`. That is missing from the documented list of known false refusals. Handed off.
+
+<a id="e-2454"></a>
+
+### The statement check refuses set_config and the functions that run SQL text
+`E-2454` · plugin-sql-role · design, supersedes the reasoning of E-2451
+
+**Context.** E-2451 rejected refusing `set_config` and `query_to_xml` by name. It argued that both can be named inside a literal that another such function executes, so the same hole would remain. The review showed that reason was wrong. To execute a literal at all, a statement must call one of these functions by name outside a literal, and that call is what the check sees. A literal holding the words is data. The review also found a second effect E-2451 had noted and dismissed: `SELECT set_config('role', '<plugin role>', false)` outlives the transaction. The library's next statement on that pooled connection then ran as the plugin role. `test/plugin-review-sql-role.test.ts` showed both, together with the read through a role reset that E-2451 left open.
+**Rejected.** (a) Running `RESET ROLE` after every plugin statement. It costs a fifth round trip, and it closes the leak but not the read. (b) Keeping E-2451's position that the role bounds writes only. The read reaches token and password hashes, and the cost of refusing it is one name list.
+**Reason.** `set_config`, `query_to_xml`, `query_to_xmlschema`, `query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema`, `ts_stat`, `ts_rewrite`, `dblink` and `dblink_exec` are refused wherever the name stands as code: plain, qualified, quoted or in upper case. The quoted spelling is covered because the reader already turns a quoted identifier into its bare name. `SET` and `RESET` are refused already by the leading-word rule, so with `set_config` gone a single plugin statement has no way to change the role. That is what lets the connection return to the pool as the library's own role. E-2451 is not edited. Its probe results stand and only its reasoning is superseded here.
+**Price.** The list is a list. A function PostgreSQL or an extension adds that runs SQL text, together with a way back to the login role, reopens the read, though not the write. Any call of `set_config` is now refused, a harmless one included. The smuggled-read case in `test/plugin-sql-role.test.ts` is sent below the check through `runAsThePluginRole`, because the check now refuses it before the database sees it.
+
+<a id="e-2455"></a>
+
+### A bracketed group in a table list is skipped to its matching bracket
+`E-2455` · plugin-sql-role · fix of E-2453
+
+**Context.** E-2453 found that `INSERT INTO t (note, user_id)` was refused, because the comma in the column list continued the table list.
+**Rejected.** Ending the table list at `(`. The review pointed out that `FROM t x(a, b), other` would then stop before `other`, and `other` would go unchecked by the position rule.
+**Reason.** While the walk is not expecting a table, a `(` is skipped to its matching `)`, and the list continues after it. A column list and an alias column list are both passed over, and a comma after the group still opens the next table position. Every token inside the group is still read by Rule 1, because the outer loop visits every position.
+**Price.** A group that never closes is skipped to the end of the statement, and only Rule 1 reads its contents. Such a statement is refused by PostgreSQL anyway.
+
+<a id="e-2456"></a>
+
+### The grant looks up and grants each declared table on its own
+`E-2456` · plugin-sql-role · fix of E-2450
+
+**Context.** E-2450's grant joined the declared names with commas and split them again with `string_to_array`. `migrate()` reads `createsTables` from the configuration on every run, and an applied migration's checksum covers its SQL only. The review showed that a declaration changed to `demo_entry,session` after the table existed gave the plugin role `DELETE` on `velve.session`.
+**Rejected.** A `text[]` parameter, which the review asked for. The test connection encodes no arrays, and a lookup per name leaves nothing to split.
+**Reason.** Each declared name must pass `assertIdentifier`, carry its plugin's prefix and name no core table. Otherwise `migrate()` fails with `InvalidIdentifierError`. The prefix check alone is not enough, because a plugin called `one` carries the prefix of `one_time_token` (E-918). Each name is looked up, and its table and owned sequences are granted, in a statement of its own.
+**Price.** Two catalogue reads per declared table on every `migrate()` run instead of two in all. A plugin whose configuration declares a malformed name now fails `migrate()` when the role is set, where before nothing read the name after its first run.
+
+<a id="e-2457"></a>
+
+### The migration runner joins declared names with commas the same way
+`E-2457` · plugin-sql-role · hand-off, finding
+
+**Context.** `OBJECTS_OF_THE_DECLARED_TABLES` in `src/core/db/migration-runner.ts` reads `child.relname = ANY(string_to_array($2, ','))` over `declared.join(",")`. That is the pattern E-2456 removed from the grant. There, a declared name containing a comma counts a core table as the plugin's own when the runner decides what a migration may touch.
+**Rejected.** Fixing it on this branch. The runner is not in this feature's file set.
+**Reason.** Reported as the review asked.
+**Price.** Until someone fixes it, a declaration such as `audit_x,session` may widen what the runner treats as owned. Handed off.
