@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import { createPasswordCredentialRepository, sealPhc } from "../src/core/password/credential.js";
-import { CredentialWriteError } from "../src/core/password/errors.js";
+import { CredentialWriteError, PasswordConfigurationError } from "../src/core/password/errors.js";
 import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, testKeyProvider } from "./auth-fixtures.js";
@@ -202,4 +202,90 @@ describe("the import ceiling under the default parameters", () => {
 			}),
 		).rejects.toStrictEqual(refused);
 	}, 60_000);
+});
+
+describe("a credential the derivation itself refuses (E-2617)", () => {
+	const filler = encodeStandardBase64(new Uint8Array(32).fill(3));
+	it.each([
+		["a bcrypt string of the wrong length", "$2b$10$tooshorttobeahash", "bcrypt"],
+		[
+			"an Argon2id salt below eight bytes",
+			`$argon2id$v=19$m=19456,t=2,p=1$${encodeStandardBase64(new Uint8Array(4).fill(3))}$${filler}`,
+			"argon2id",
+		],
+		[
+			"an Argon2id memory below eight times p",
+			`$argon2id$v=19$m=1,t=2,p=1$${filler}$${filler}`,
+			"argon2id",
+		],
+		[
+			"an Argon2id version that is neither 0x10 nor 0x13",
+			`$argon2id$v=17$m=19456,t=2,p=1$${filler}$${filler}`,
+			"argon2id",
+		],
+	] as const)(
+		"is not stored: %s",
+		async (_, phc, scheme) => {
+			const migrated = await openMigratedSchema("memceilingmalformed");
+			opened.push(migrated);
+			const credentials = createPasswordCredentialRepository({
+				driver: migrated.connection,
+				keys: testKeyProvider(),
+				schema: migrated.schema,
+			});
+			const [row] = await migrated.connection.query<{ id: string }>(
+				`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
+				["malformed@ceiling.example"],
+			);
+
+			await expect(
+				credentials.write({
+					actor: actorOfTestUser((row as { id: string }).id),
+					phc,
+					scheme,
+					setBySessionId: null,
+				}),
+			).rejects.toStrictEqual(new CredentialWriteError("credential_not_verifiable"));
+		},
+		60_000,
+	);
+});
+
+describe("a configuration whose own hashes the stored ceilings refuse", () => {
+	it.each([
+		["iterations above the stored ceiling", { memoryKiB: 19456, iterations: 65, parallelism: 1 }],
+		["parallelism above the stored ceiling", { memoryKiB: 19456, iterations: 2, parallelism: 65 }],
+	])(
+		"is refused at start or verifies what it writes: %s",
+		async (_, argon2id) => {
+			const migrated = await openMigratedSchema("memceilingconfig");
+			opened.push(migrated);
+			let handler: (request: Request) => Promise<Response>;
+			try {
+				handler = toWebHandler(
+					createVelveAuth(
+						configFor({
+							database: migrated.connection,
+							schema: migrated.schema,
+							keys: testKeyProvider(),
+							password: { argon2id },
+						}),
+					),
+				);
+			} catch (error) {
+				expect(error).toBeInstanceOf(PasswordConfigurationError);
+				return;
+			}
+
+			const signedUp = await handler(
+				postTo("/sign-up", { email: "configured@ceiling.example", password: PASSWORD }),
+			);
+			expect(signedUp.status, "a password set under this configuration is stored").toBe(200);
+			const signedIn = await handler(
+				postTo("/sign-in/password", { email: "configured@ceiling.example", password: PASSWORD }),
+			);
+			expect(signedIn.status, "and verifies").toBe(200);
+		},
+		120_000,
+	);
 });
