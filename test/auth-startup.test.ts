@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
+import { rateLimitConfigOf } from "../src/core/auth/rate-limiting.js";
 import { SECURITY_OPTIONS } from "../src/core/auth/security-options.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import {
@@ -10,9 +11,13 @@ import {
 	TRUST_LEVEL_EVENTS,
 } from "../src/core/auth/trust-level.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { DEFAULT_RECOVERY_CODE_SHAPE } from "../src/core/factor/recovery/code.js";
+import { TOTP_TOLERANCE_STEPS } from "../src/core/factor/totp/parameters.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { KeyError, rootKeyProvider } from "../src/core/keys/index.js";
-import { sessionSettingsOf } from "../src/core/session/config.js";
+import { resolvePasswordConfig } from "../src/core/password/config.js";
+import { DEFAULT_SESSION_CONFIG, sessionSettingsOf } from "../src/core/session/config.js";
+import { DEFAULT_SESSION_METADATA_MODE } from "../src/core/session/metadata.js";
 import { createVelveAuth } from "../src/index.js";
 import { createTestClock } from "../src/testing/index.js";
 import { configFor, createLogSink, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
@@ -248,6 +253,203 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 		expect(written.length).toBeGreaterThanOrEqual(15);
 		expect(written.filter((key) => !declared.has(key as never))).toStrictEqual([]);
 		expect(SECURITY_OPTIONS.length).toBe(declared.size);
+	});
+});
+
+const WEAKENED_LINE = "a security option is weaker than its default";
+
+function weakenedOptionsLoggedAt(overrides: Partial<VelveAuthConfig<"email">>): readonly unknown[] {
+	const log = createLogSink();
+	start({ log: log.write, ...overrides })();
+	return log.lines
+		.filter((line) => line.message === WEAKENED_LINE)
+		.map((line) => line.fields.option);
+}
+
+/**
+ * One documented weakening per case, and each case is what the row's `weakenedBy` names. The
+ * refill and timeout cases are the ones an audit found logging nothing: a bucket refilling a
+ * billion tokens a second limits nothing, and a session that lives a year is not the default.
+ */
+const DOCUMENTED_WEAKENINGS: readonly (readonly [
+	string,
+	string,
+	Partial<VelveAuthConfig<"email">>,
+])[] = [
+	["session", "a freshness window of one hour", { session: { freshnessWindow: "1h" } }],
+	["session", "an idle timeout of fourteen days", { session: { idleTimeout: "14d" } }],
+	["session", "an absolute timeout of a year", { session: { absoluteTimeout: "365d" } }],
+	[
+		"session",
+		"an idle and an absolute timeout of a year together",
+		{ session: { idleTimeout: "365d", absoluteTimeout: "365d" } },
+	],
+	["sessionMetadata", 'the mode "full"', { sessionMetadata: "full" }],
+	["trustedProxies", "one trusted range", { trustedProxies: ["10.0.0.0/8"] }],
+	[
+		"rateLimit",
+		"an address capacity of eleven",
+		{ rateLimit: { perIpAddress: { capacity: 11, refillPerSecond: 0.1 } } },
+	],
+	[
+		"rateLimit",
+		"an address refill of a billion a second",
+		{ rateLimit: { perIpAddress: { capacity: 10, refillPerSecond: 1e9 } } },
+	],
+	[
+		"rateLimit",
+		"an account refill of twice the default",
+		{ rateLimit: { perAccount: { capacity: 5, refillPerSecond: 0.02 } } },
+	],
+	[
+		"oauth",
+		"a trusted provider",
+		{
+			oauth: {
+				providers: { github: { clientId: "client", clientSecret: "secret" } },
+				callbackBaseUrl: `${TEST_ORIGIN}/api/auth/sign-in/oauth/callback`,
+				trustedProviders: ["github"],
+			},
+		},
+	],
+	[
+		"oauth",
+		"stored provider tokens",
+		{
+			oauth: {
+				providers: { github: { clientId: "client", clientSecret: "secret" } },
+				callbackBaseUrl: `${TEST_ORIGIN}/api/auth/sign-in/oauth/callback`,
+				trustedProviders: [],
+				storeTokens: true,
+			},
+		},
+	],
+	[
+		"fetch",
+		"a fetch the caller supplied",
+		{ fetch: (input, init) => globalThis.fetch(input, init) },
+	],
+	["plugins", "one plugin", { plugins: [{ id: "audit" }] }],
+	[
+		"webauthn",
+		'"preferred" user verification',
+		{
+			webauthn: {
+				relyingPartyId: "app.example.com",
+				relyingPartyName: "Example",
+				origins: [TEST_ORIGIN],
+				userVerification: "preferred",
+			},
+		},
+	],
+	["recoveryCodes", "nine codes", { recoveryCodes: { count: 9, groupSize: 5 } }],
+	["clock", "a settable clock", { clock: createTestClock() }],
+];
+
+describe("every documented weakening is logged once at start (S-DEFAULT-1, T-DEFAULT-1)", () => {
+	it.each(DOCUMENTED_WEAKENINGS)(
+		"names %s for %s, in exactly one line",
+		(option, _label, overrides) => {
+			expect(weakenedOptionsLoggedAt(overrides)).toStrictEqual([option]);
+		},
+	);
+
+	it("has a case for every row a caller can weaken, and no case for a row nothing weakens", () => {
+		const weakenable = SECURITY_OPTIONS.filter((row) => !row.weakenedBy.startsWith("nothing"))
+			.map((row) => row.option)
+			.sort();
+		const covered = [...new Set(DOCUMENTED_WEAKENINGS.map(([option]) => option))].sort();
+
+		expect(weakenable.length).toBeGreaterThanOrEqual(10);
+		expect(covered).toStrictEqual(weakenable);
+	});
+
+	it("says nothing about a value written out at exactly its default", () => {
+		const rates = rateLimitConfigOf();
+
+		expect(
+			weakenedOptionsLoggedAt({
+				session: DEFAULT_SESSION_CONFIG,
+				sessionMetadata: DEFAULT_SESSION_METADATA_MODE,
+				trustedProxies: [],
+				rateLimit: { perIpAddress: rates.perIpAddress, perAccount: rates.perAccount },
+				recoveryCodes: DEFAULT_RECOVERY_CODE_SHAPE,
+				plugins: [],
+			}),
+		).toStrictEqual([]);
+	});
+
+	it("says nothing about a value stricter than its default", () => {
+		expect(
+			weakenedOptionsLoggedAt({
+				session: { idleTimeout: "1d", absoluteTimeout: "2d", freshnessWindow: "5m" },
+				rateLimit: {
+					perIpAddress: { capacity: 3, refillPerSecond: 0.05 },
+					perAccount: { capacity: 2, refillPerSecond: 0.001 },
+				},
+				recoveryCodes: { count: 16, groupSize: 8 },
+			}),
+		).toStrictEqual([]);
+	});
+});
+
+/** A.2, A.4, A.5, A.6 and A.8 of the architecture, written down once as the fixture T-DEFAULT-1 asks for. */
+const SPECIFIED_DEFAULTS = {
+	session: {
+		idleTimeout: "7d",
+		absoluteTimeout: "30d",
+		idleWriteInterval: "1h",
+		freshnessWindow: "15m",
+		cookieName: "__Host-velve_session",
+		cookie: { sameSite: "lax" },
+	},
+	perIpAddress: { capacity: 10, refillPerSecond: 0.1 },
+	perAccount: { capacity: 5, refillPerSecond: 0.01 },
+	argon2id: { memoryKiB: 19456, iterations: 2, parallelism: 1 },
+	sessionMetadata: "truncated",
+	recoveryCodes: { count: 10, groupSize: 5 },
+	totpToleranceInSteps: 1,
+} as const;
+
+function safeDefaultOf(option: string): string | undefined {
+	return SECURITY_OPTIONS.find((row) => row.option === option)?.safeDefault;
+}
+
+describe("the defaults the rows state are the defaults the code uses (S-DEFAULT-1, T-DEFAULT-1)", () => {
+	it("uses exactly the specified defaults", () => {
+		const rates = rateLimitConfigOf();
+
+		expect(DEFAULT_SESSION_CONFIG).toStrictEqual(SPECIFIED_DEFAULTS.session);
+		expect(rates.perIpAddress).toStrictEqual(SPECIFIED_DEFAULTS.perIpAddress);
+		expect(rates.perAccount).toStrictEqual(SPECIFIED_DEFAULTS.perAccount);
+		expect(resolvePasswordConfig().argon2id).toStrictEqual(SPECIFIED_DEFAULTS.argon2id);
+		expect(DEFAULT_SESSION_METADATA_MODE).toBe(SPECIFIED_DEFAULTS.sessionMetadata);
+		expect(DEFAULT_RECOVERY_CODE_SHAPE).toStrictEqual(SPECIFIED_DEFAULTS.recoveryCodes);
+		expect(TOTP_TOLERANCE_STEPS).toBe(SPECIFIED_DEFAULTS.totpToleranceInSteps);
+	});
+
+	it("states in each row the default the code uses", () => {
+		const { session, perIpAddress, perAccount, argon2id, recoveryCodes } = SPECIFIED_DEFAULTS;
+
+		expect({
+			session: safeDefaultOf("session"),
+			rateLimit: safeDefaultOf("rateLimit"),
+			password: safeDefaultOf("password"),
+			sessionMetadata: safeDefaultOf("sessionMetadata"),
+			recoveryCodes: safeDefaultOf("recoveryCodes"),
+			totp: safeDefaultOf("totp"),
+			trustedProxies: safeDefaultOf("trustedProxies"),
+			plugins: safeDefaultOf("plugins"),
+		}).toStrictEqual({
+			session: `idle ${session.idleTimeout}, absolute ${session.absoluteTimeout}, freshness ${session.freshnessWindow}, SameSite=Lax`,
+			rateLimit: `per address ${perIpAddress.capacity} @ ${perIpAddress.refillPerSecond}/s, per account ${perAccount.capacity} @ ${perAccount.refillPerSecond}/s`,
+			password: `argon2id m=${argon2id.memoryKiB}, t=${argon2id.iterations}, p=${argon2id.parallelism}`,
+			sessionMetadata: SPECIFIED_DEFAULTS.sessionMetadata,
+			recoveryCodes: `${recoveryCodes.count} codes in groups of ${recoveryCodes.groupSize}`,
+			totp: `issuer required, tolerance ${SPECIFIED_DEFAULTS.totpToleranceInSteps} step`,
+			trustedProxies: "[]",
+			plugins: "[]",
+		});
 	});
 });
 
