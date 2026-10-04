@@ -69,6 +69,6 @@ describe("session.cookieName is honoured or refused, never ignored", () => {
 		);
 		const names = answer.headers.getSetCookie().map((header) => parseSetCookie(header).name);
 
-		expect(names).toStrictEqual([DEFAULT_COOKIE_NAMES.session]);
+		expect([answer.status, names]).toStrictEqual([200, [DEFAULT_COOKIE_NAMES.session]]);
 	});
 });
