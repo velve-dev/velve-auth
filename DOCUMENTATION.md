@@ -4994,6 +4994,10 @@ An expired token, a spent one, an invented one, a token minted for another
 purpose and a token belonging to a disabled account are one answer:
 `invalid_token`, byte for byte.
 
+A token presented for a disabled account is spent all the same: it does not
+sign in after `user.enable`, because whoever presented it may be the reason the
+account was disabled (E-2880).
+
 ### The first confirmation of an address (`S-LINK-4`, L-12)
 
 This is the rule the chapter exists for, and it runs on both routes that confirm
@@ -5065,6 +5069,10 @@ the account as it now stands. Runs the first-confirmation rule above, so a
 caller redeeming it in the session that signed up keeps its password and its
 session, and a caller redeeming it anywhere else does not.
 
+A token presented for a disabled account answers `invalid_token`, byte for byte
+as an invented token does, confirms nothing, and is spent all the same: it stays
+unusable after `user.enable` (E-2880).
+
 ### `auth.email.requestChange(input)`
 
 | Parameter | Type |
@@ -5092,6 +5100,10 @@ Moves the address and sets `email_verified_at` to now — redeeming the link is
 the proof that the new address is reachable. If the address has been taken since
 the token was minted, **nothing changes and the answer is `invalid_token`**,
 byte for byte the answer an invented token gets.
+
+A token presented for a disabled account answers the same way and moves
+nothing, and it is spent all the same: it stays unusable after `user.enable`
+(E-2880).
 
 ### `auth.password.requestReset(input)`
 

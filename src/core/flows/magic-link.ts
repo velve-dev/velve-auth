@@ -6,11 +6,13 @@ import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../pl
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
-	accountOfRedemption,
+	A_DISABLED_ACCOUNT,
+	accountOrDisabledOfRedemption,
 	type FlowEnvironment,
 	mailerOf,
 	observedIn,
 	readUserOrRefuse,
+	refuseADisabledAccount,
 	sessionIdOfCaller,
 } from "./environment.js";
 
@@ -67,7 +69,11 @@ export async function redeemMagicLink(
 			token: input.token,
 			purpose: "magic_link",
 		});
-		const resolved = await accountOfRedemption(environment, transaction, redeemed);
+		const resolved = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
+		//a link presented for a disabled account stays spent once it is enabled again (E-2880)
+		if (resolved === A_DISABLED_ACCOUNT) {
+			return resolved;
+		}
 		await confirmAddress({
 			transaction,
 			schema,
@@ -78,6 +84,9 @@ export async function redeemMagicLink(
 		});
 		return resolved;
 	});
+	if (account === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
+	}
 
 	//a link as the first factor must not skip the second factor (E-735)
 	const begun = await pending.begin({ userId: account.user.id, factorsCompleted: [] });

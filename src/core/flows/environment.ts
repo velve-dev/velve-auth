@@ -48,7 +48,7 @@ interface RedeemedAccount {
 
 export const A_DISABLED_ACCOUNT = Symbol("a redemption for a disabled account");
 
-//a caller that commits the spent token before refusing reads the disabled account here (E-2879)
+//every redemption commits the spent token before it refuses a disabled account (E-2880)
 export async function accountOrDisabledOfRedemption(
 	environment: FlowEnvironment,
 	driver: Driver,
@@ -64,18 +64,6 @@ export async function accountOrDisabledOfRedemption(
 //a disabled account must answer a redemption as an invented token does
 export function refuseADisabledAccount(): never {
 	throw new ConcealedError("user_disabled_on_token_redemption");
-}
-
-export async function accountOfRedemption(
-	environment: FlowEnvironment,
-	driver: Driver,
-	redemption: OneTimeTokenRedemption,
-): Promise<RedeemedAccount> {
-	const account = await accountOrDisabledOfRedemption(environment, driver, redemption);
-	if (account === A_DISABLED_ACCOUNT) {
-		refuseADisabledAccount();
-	}
-	return account;
 }
 
 //a vanished account behind a session must answer as an unresolved session (E-615)
