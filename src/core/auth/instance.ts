@@ -50,7 +50,7 @@ import { createSessionService, type SessionService } from "../session/service.js
 import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
-import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
+import { rateLimitConfigOf, routeAlarmReportedTo, routeFloodWatchOf } from "./rate-limiting.js";
 import {
 	pendingRoutes,
 	type ResolutionMemo,
@@ -266,7 +266,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	//parameters below the floor must be refused at the start, not at the first hash (S-DEFAULT-6)
 	const password = resolvePasswordConfig(config.password);
 	const sessionSettings = sessionSettingsOf(config.session);
-	const rateLimit = rateLimitConfigOf(config.rateLimit);
+	const operatorWarnings = operatorWarningSinkOf(config.log);
+	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
 	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
 	const pending = createPendingAuthenticationService({ driver, schema });
@@ -372,7 +373,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	};
 
 	const weakenings = reportedWeakenings(config, { session: sessionSettings, rateLimit });
-	report(operatorWarningSinkOf(config.log), weakenings);
+	report(operatorWarnings, weakenings);
 
 	const readSession = createServerMethod(read, environment);
 

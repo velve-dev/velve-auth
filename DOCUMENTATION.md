@@ -5387,7 +5387,7 @@ compile (E-349).
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
-| `log` | `(level, message, fields?) => void` | a sink that drops everything, except a weakening at start, which goes to `console.warn` | where the true reason of a refusal is written |
+| `log` | `(level, message, fields?) => void` | a sink that drops everything, except a weakening at start and a route alarm, which go to `console.warn` | where the true reason of a refusal is written |
 
 There is no option that disables the origin check, the rate limiter, PKCE or the
 state check, and none that keeps the other sessions alive across a password
@@ -5401,10 +5401,11 @@ bucket either; that is a start error, listed under Plugins.
 
 **`log` has no default sink.** The default drops everything, and an installation
 that wants to see the true reason behind a refusal (S-ENUM-6) has to pass a
-sink. One kind of line is the exception: a weakening reported at start goes to
-`console.warn` when no `log` is configured, because an operator who weakened an
-option must hear about it without having configured anything (E-2671). Nothing
-else reaches the console. This is the one place in the reference where a
+sink. Two kinds of line are the exception: a weakening reported at start
+(E-2671) and the default route alarm, at most once a minute per route (E-2672),
+go to `console.warn` when no `log` is configured, because an operator who
+weakened an option or whose route is flooded must hear about it without having
+configured anything. Nothing else reaches the console. This is the one place in the reference where a
 default is *not* the safe choice made for you, and it is called out here because
 nothing else would tell you.
 
