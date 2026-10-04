@@ -6364,7 +6364,7 @@ other means entirely. What this refuses is the accident — a join onto
 `velve.user` that seemed harmless, or a `"velve"."user"` written that way because
 `user` is a reserved word — not an attacker.
 
-**Three rules, and the first is the one the boundary rests on.** Two rounds of
+**Four rules, and the first is the one the boundary rests on.** Two rounds of
 review found the same defect in a different syntactic position: a table
 reference in a position the scan did not model. The boundary is therefore no
 longer carried by recognising positions — but it is not free of the parse
@@ -6384,17 +6384,24 @@ table named inside a literal that PostgreSQL later executes —
 `SELECT query_to_xml('select * from velve.user', …)` — is not seen. That is a
 real hole and it is open: closing it means refusing every statement whose
 literals contain SQL-shaped text, which refuses ordinary data.
-With [`pluginDatabaseRole`](#plugindatabaserole) set, that statement reaches
-the database as a role without rights on the core tables and is refused there
-with `permission denied`; the hole stays open for reads in the one way that
-section names.
+`query_to_xml` and the other functions that run SQL text are now refused by
+name (Rule 4), so this statement no longer reaches the database; the hole stays
+open for any such function the list does not name. With
+[`pluginDatabaseRole`](#plugindatabaserole) set, a statement that does reach the
+database runs as a role without rights on the core tables and is refused there
+with `permission denied`.
 
 **Rule 2 — a table position must hold one of the plugin's own tables.** This is
 3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
 rule: it opens after `FROM`, `JOIN`, `INTO`, `USING` and `UPDATE`, and stays open
 across commas until a keyword ends the list. It is **not claimed complete.** SQL
 has more table positions than this enumeration has, and the previous two
-enumerations were also believed complete. What changed is that a position it
+enumerations were also believed complete. A bracketed group after a table — an
+`INSERT` column list such as `(note, user_id)`, or an alias column list such as
+`x(a, b)` — is skipped whole and the list continues after it, so
+`FROM demo_entry x(a, b), other_entry` still checks `other_entry`. Until this
+skip, every column after the first in an `INSERT` column list was refused as a
+foreign table. What changed is that a position it
 misses no longer reaches a core table, because Rule 1 does not care about
 position.
 
@@ -6408,6 +6415,17 @@ table in a statement is finding nothing, and nothing is not permission:
 | a `$` that is not a parameter placeholder | dollar-quoted text the walk cannot delimit |
 | a leading keyword outside `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH` | the walk cannot find the tables of any other kind — this is what refuses `TRUNCATE`, `DROP`, `ALTER` and `COPY` |
 | a table position holding anything but a name or `(` | the target could not be identified |
+
+**Rule 4 — a function that leaves the plugin role or runs SQL text is refused by
+its name.** `set_config`, `query_to_xml`, `query_to_xmlschema`,
+`query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema`, `ts_stat`,
+`ts_rewrite`, `dblink` and `dblink_exec`, wherever the name stands as code —
+plain, `pg_catalog.`-qualified, quoted or in upper case. `set_config('role', …)`
+is the one way a single statement can leave the role
+[`pluginDatabaseRole`](#plugindatabaserole) puts it under, and the others run a
+statement written inside a literal, which Rule 1 cannot see. Inside a literal the
+same words are data and pass. The list is a list, and a function PostgreSQL or an
+installed extension adds that runs SQL text is not on it.
 
 A string literal becomes an empty literal, a comment becomes a space, and a
 quoted identifier becomes the bare name it stands for. Whitespace and comments
@@ -6428,6 +6446,8 @@ harmless and are refused anyway:
 - A CTE whose name does not carry the plugin's prefix. Prefix them.
 - Every DDL statement, including one that alters the plugin's own table.
 - A batch of two statements, and dollar-quoted text.
+- From Rule 4, any call of `set_config`, including one that sets a harmless
+  parameter.
 - From Rule 1, a plugin column named after a core table — `identity` and
   `session` being the two a plugin might plausibly reach for.
 
@@ -6471,8 +6491,19 @@ COMMIT;
 and `velve_plugins` holds rights on the plugins' own tables and on nothing else,
 so a statement that gets past the check and writes `velve.session` fails with
 `permission denied for table session` (SQLSTATE `42501`) and changes nothing.
-`SET LOCAL` ends with the transaction, so the connection goes back to the pool as
-the library's own role.
+`SET LOCAL` ends with the transaction. What makes the connection go back to the
+pool as the library's own role is that the plugin's statement cannot change the
+role in any other way: `SET` and `RESET` are refused as statements by Rule 3, and
+`set_config` — whose `false` form would outlive the transaction and hand the
+library's next statement on that connection the role the plugin chose — is
+refused by Rule 4.
+
+**It protects against faulty plugin SQL, not against a hostile plugin.** A plugin
+is JavaScript running in the application's own process. It can import a driver
+and open a connection of its own with whatever credentials the process can read,
+and nothing here can stop that. What the role guarantees is narrower: a statement
+sent through `ownTables.query` that the check misjudges still cannot write a core
+table.
 
 **The role is created once, by the operator.** Run as a role that may create
 roles, replacing `<library role>` with the role the instance's `database`
@@ -6490,7 +6521,10 @@ the rest**, on every run — `USAGE` on the schema, `SELECT`, `INSERT`, `UPDATE`
 and `DELETE` on each table a plugin declared in `createsTables` and still
 exists, and `USAGE`, `SELECT` and `UPDATE` on the sequences those tables own.
 Granting on every run is what makes a role configured after the tables were
-created reach them. The connection `migrate()` runs on must be allowed to grant
+created reach them. Each declared name is looked up and granted on its own, and
+must be a lowercase identifier that carries its plugin's prefix and names no core
+table, or `migrate()` fails with `InvalidIdentifierError` — `createsTables` is
+read from the configuration on every run, so it is checked on every run. The connection `migrate()` runs on must be allowed to grant
 on those tables, which the schema-owning migration role [What a plugin migration
 must do](#what-a-plugin-migration-must-do) asks for already is. A role that does
 not exist fails `migrate()` with PostgreSQL's own error, and fails every plugin
@@ -6525,14 +6559,16 @@ the `pg` interface. A pooler in transaction mode keeps `SET LOCAL` correct,
 because it lasts exactly one transaction.
 
 **What it does not close.** The role is set by the library's own connection,
-and that connection's login role can always return to itself:
-`set_config('role', 'none', true)` needs no right. Inside one statement this
-does not reach a write — PostgreSQL checks a statement's tables before running
-it — and no built-in function runs a writing statement from text. It does reach
-a **read**: `SELECT set_config('role', 'none', true), query_to_xml('select … from
-velve.session', …)` runs the inner query after the reset and reads the core
-table. A plugin connection that logs in as the plugin role, with no way back,
-would close that and is not what this option does.
+whose login role can always return to itself: `set_config('role', 'none', true)`
+needs no right, and with a function that runs SQL text in the same statement it
+reads any core table. Rule 4 refuses both by name, so the read is closed exactly
+as far as that list reaches — a function it does not name that runs SQL text,
+from PostgreSQL or from an installed extension, together with a way back to the
+login role, would reopen it. Writes do not depend on the list: PostgreSQL checks
+a statement's tables before running it, and no built-in function runs a writing
+statement from text. A plugin connection that logs in as the plugin role, with
+no way back, would not depend on the list either and is not what this option
+does.
 
 ### `RequestContext.plugin`
 
