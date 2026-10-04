@@ -5634,6 +5634,13 @@ No token is in it, and no method of this library returns one. `profile` is the
 provider's raw claims, overwritten on every sign-in; the library writes them and
 never reads them.
 
+`tokenExpiresAt` is the instant the provider's access token expires, computed at
+sign-in from the `expires_in` of the token answer. It is `null` when
+`storeTokens` is off, when the provider sent no `expires_in` or one that does
+not read as a number, and when it sent one outside 1 second … 365 days
+(31,536,000 seconds): such a value is stored as no deadline rather than clamped
+to one the provider did not state (E-2875).
+
 ### What the callback does, in order
 
 1. Reads the `__Host-velve_oauth_state` cookie. It is the only route pair that
@@ -6257,7 +6264,9 @@ sign-in: `undefined` means "not applicable", never "no" (L-9).
 `Identity` is the record of 3.15 C — `id`, `provider`, `subject`, `createdAt`,
 `providerEmail`, `providerEmailVerified`, `profile`, `scopes`, `tokenExpiresAt`.
 `profile` is `unknown` because the library does not read these claims and cannot
-promise a shape the provider changes tomorrow. The linking branch re-issues the
+promise a shape the provider changes tomorrow. `tokenExpiresAt: null` means the
+provider stated no usable lifetime — no `expires_in`, or one outside 1 second …
+365 days — or `storeTokens` is off (E-2875). The linking branch re-issues the
 session, because a new identity changes the trust level.
 
 `OAuthRedirect.stateCookie` is the one place a server method mentions a cookie:
