@@ -13572,3 +13572,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Announcing them under the nearest existing reason, for example `password_reset` for the S-LINK-4 removal.
 **Reason.** The task was the revocations the specification names a reason for. Borrowing a reason tells a plugin something that did not happen, which E-2122 already refused for `sign_out`. A new member of `RevokeReason` changes the plugin interface and is a decision for the specification, not for this branch.
 **Price.** A plugin that mirrors sessions still misses these rows. The S-LINK-4 removal is the one that matters, because it ends every session of an account and a plugin is not told.
+
+<a id="e-2584"></a>
+
+### A reset's revoke hook runs on the reset's connection, and E-2582 understated the hang
+`E-2584` · revoke-hook · corrects E-2582, settled
+
+**Context.** E-2582's Price says a pool of exactly one connection hangs on a reset whose hook queries. That was wrong when written. Each reset holds one pooled connection while its hook waits for a second, so as many concurrent resets as the pool has connections hold all of them and none finishes; with the `pg` default of ten and no wait bound, ten resets on different accounts hang the application. The independent review showed it in 1ad351d with `test/revoke-hook-pool-starvation.test.ts`: three concurrent resets on a pool of three answered 500 after the pool's wait bound. I measured only the size-one case and generalised from it the wrong way.
+**Rejected.** (a) Moving the reset's announcement out of the transaction, which E-2580 already found impossible. (b) Leaving the hook on the pool and documenting a minimum pool size, which no bound makes safe under load. (c) Running a plugin statement on the borrowed connection with `SET LOCAL ROLE` as before, which keeps the plugin role for the rest of the reset and refuses its own writes.
+**Reason.** The dispatcher already chose a separate context for a revoke hook (E-641). `beforeSessionRevoke` now takes an optional transaction, and for it each plugin gets a context whose user and session repositories and `ownTables` run on that transaction, still without re-announcing. The hook never asks the pool for anything, so no pool size starves. Whatever it writes rolls back with the reset, its own refusal included, which also makes E-2582's single-connection remark the behaviour everywhere. For (c), `runAsThePluginRoleInsideATransaction` reads the role the transaction holds, opens a savepoint, switches with `SET LOCAL ROLE`, runs the one statement, restores the held role with `set_config('role', …, true)` and releases the savepoint; on an error it rolls back to the savepoint, which undoes the switch and leaves the transaction usable. `RELEASE` alone would keep the switch, which is why the role is restored explicitly. `test/revoke-hook-transaction-role.test.ts` fails two of three cases with the old path and two of three again with the restore removed.
+**Price.** `PluginHookDispatcher.beforeSessionRevoke` is in the shipped declarations and gains an optional parameter, so the API snapshot was re-recorded. Each plugin statement on this path costs five more statements. A hook now runs its reads inside the reset's transaction under the account lock, so a slow hook holds that lock and that connection for as long as it takes, where before it held a second connection as well. The savepoint has a fixed name, so a plugin statement cannot nest one, which a single statement cannot do anyway.
+
+<a id="e-2585"></a>
+
+### A reset also removes a session it did not announce
+`E-2585` · revoke-hook · S-FIX-6, cannot be closed
+
+**Context.** E-2580's Price names the gap between announcement and delete on a password change only. The review found it on the resets too: the ids are listed after `lockAccountRow`, but `FOR NO KEY UPDATE` does not conflict with the `FOR KEY SHARE` a concurrent sign-in's session insert takes, so a session committed between the listing and `deleteEverySessionOwnedBy` is removed without being announced. E-2580 called the resets' listing exact by implication, by contrasting it with the change.
+**Rejected.** (a) Deleting only the listed ids. (b) Taking a stronger lock on `velve.user` to keep sign-ins out.
+**Reason.** (a) would leave a session standing after a reset, which S-FIX-6 forbids. (b) is refused by the technical constraints: `FOR UPDATE` is used nowhere and `pnpm check:lock-order` rejects it. Announcing the late session after the delete would tell a plugin about a revocation it can no longer refuse.
+**Price.** A plugin that mirrors sessions can miss one removed by a reset that raced a sign-in on the same account. The window is between two statements of one transaction.
