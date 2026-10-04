@@ -3,7 +3,7 @@
  * functions of `@noble/hashes`, `hash-wasm` and `bcryptjs` with `accounted` inside its `vi.mock`
  * factories, so a derivation the semaphore never saw is counted as well.
  */
-export interface KdfAccounting {
+interface KdfAccounting {
 	calls: number;
 	inFlight: number;
 	peakInFlight: number;

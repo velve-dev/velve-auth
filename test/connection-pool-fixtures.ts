@@ -6,7 +6,7 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
  * concurrent sign-ins through one of them are not concurrent sign-ins at all. This hands each
  * statement and each transaction a connection of its own, as a real driver's pool does.
  */
-export interface ConnectionPool extends Driver {
+interface ConnectionPool extends Driver {
 	close(): Promise<void>;
 }
 
