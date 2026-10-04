@@ -382,6 +382,33 @@ describe("the sign counter and the backup flags", () => {
 		expect((await backupFlagsOf(fixture, account)).signCount).toBe(3);
 	});
 
+	/** L-9: a counter that falls is reported and never refused, so a copy of an authenticator used
+	 * beside the original is reported every time it follows the original, whichever counter is
+	 * kept as the reference. */
+	it("reports every fall of an interleaved copy and refuses none of its sign-ins", async () => {
+		const account = await createAccount(fixture);
+		const { authenticator } = await enrol(fixture, account, "cloned");
+
+		const reported: boolean[] = [];
+		for (const signCount of [30, 2, 31, 3, 32, 4]) {
+			reported.push((await signInWith(account, authenticator, { signCount })).signCountRegressed);
+		}
+
+		expect(reported).toStrictEqual([false, true, false, true, false, true]);
+	});
+
+	/** L-9 departs from WebAuthn Level 3 §7.2 only in not refusing, so a repeated non-zero counter
+	 * is the signal that section names and is reported. */
+	it("reports a non-zero counter that does not rise as a fall", async () => {
+		const account = await createAccount(fixture);
+		const { authenticator } = await enrol(fixture, account, "repeated");
+
+		await signInWith(account, authenticator, { signCount: 5 });
+		const repeated = await signInWith(account, authenticator, { signCount: 5 });
+
+		expect(repeated.signCountRegressed).toBe(true);
+	});
+
 	/** Architecture 3.6: BE and BS are stored beside the authenticator data and written on every
 	 * sign-in, so a passkey the user has since synchronised stops reading as device-bound. */
 	it("writes the backup flags again on every sign-in", async () => {
