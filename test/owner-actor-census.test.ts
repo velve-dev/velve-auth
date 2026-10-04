@@ -123,6 +123,8 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"provider subject",
 	"src/core/oauth/identity-repository.ts#createOAuthIdentityRepository.refreshIdentity":
 		"provider subject",
+	"src/core/oauth/identity-repository.ts#createOAuthIdentityRepository.insertIdentityOfSignIn":
+		"provider subject",
 
 	"src/core/auth/maintenance.ts#sweepExpiredRows": "maintenance or start-up",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
