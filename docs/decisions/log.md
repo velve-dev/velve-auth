@@ -14632,3 +14632,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; each sentence was narrower or wider than the passage it cites, and the cited passage is the one that was decided.
 **Reason.** A threshold, a summary row and a closing sentence that say less or more than the requirement they rest on are where a reader picks the wrong half.
 **Price.** E-2931's Context and E-2932's Context keep their own shorter wording; this entry is where both are corrected. No test reads any of the three sentences, so the next drift between them and their sources is again found by reading.
+
+<a id="e-2941"></a>
+
+### T-OWNER-2's second threshold was met before E-2934 said it was not
+`E-2941` · specfix · log, corrected — E-2934's Price
+
+**Context.** E-2934's Price says that the second threshold of T-OWNER-2 is still not met, that the proof's own case finds `revokeSession` in `src/core/plugin/context.ts` reading the owner and then deleting by id, and that the proof holds it as an expected failure. That was already wrong when E-2934 was written. E-2870, which stands earlier in this log, made `revokeSession` read the owner first and delete through `deleteSessionById` with `ownerReadBefore`, whose statement is `DELETE … WHERE id = $1 AND user_id = $2`, turned the `it.fails` into an `it` and removed the case that named the plugin revocation as the only finding. Re-verified: `test/owner-predicate-proof.test.ts` holds no `it.fails`, its case *finds no function that reads an owner and then changes the row unbound* asserts an empty list, and `src/core/db/repositories/session.ts` binds `user_id = $2` in that delete. E-2934's text is not edited.
+**Rejected.** Editing E-2934's Price, which the rules forbid for an entry that existed at the merge base; a reason that was wrong when written is corrected by a new entry.
+**Reason.** E-2934 restated E-2334's position without re-reading the proof after E-2870 had changed it, and its Price carried the old state forward.
+**Price.** A reader of E-2934 alone still meets a threshold reported as unmet; only this entry says otherwise. The rest of E-2934's Price stands: a `SELECT` of other columns before an unbound change, or an integer column in a composite key that is an identifier after all, is not reported.
