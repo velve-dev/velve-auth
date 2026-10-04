@@ -6,6 +6,33 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
  * is counted wherever it runs.
  */
 
+const acquisitions = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock("../src/core/password/semaphore.js", async (importOriginal) => {
+	const original = await importOriginal<typeof import("../src/core/password/semaphore.js")>();
+	return {
+		...original,
+		createKdfSemaphore: (options: Parameters<typeof original.createKdfSemaphore>[0]) => {
+			const inner = original.createKdfSemaphore(options);
+			return {
+				get inFlight() {
+					return inner.inFlight;
+				},
+				get peakInFlight() {
+					return inner.peakInFlight;
+				},
+				get waiting() {
+					return inner.waiting;
+				},
+				run<T>(work: () => Promise<T>): Promise<T> {
+					acquisitions.count += 1;
+					return inner.run(work);
+				},
+			};
+		},
+	};
+});
+
 vi.mock("@noble/hashes/argon2.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("@noble/hashes/argon2.js")>();
 	const { accounted } = await import("./kdf-accounting-fixtures.js");
@@ -88,6 +115,7 @@ async function mountFrom(address: string, capacity: number) {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 	kdfAccounting.reset();
+	acquisitions.count = 0;
 	return handler;
 }
 
@@ -109,10 +137,14 @@ describe("T-DOS-5 — the address limit runs before the semaphore is asked for a
 		const handler = await mountFrom("203.0.113.5", ADDRESS_CAPACITY);
 		await handler(postTo("/sign-up", { email: EMAIL, password: PASSWORD }));
 		kdfAccounting.reset();
+		acquisitions.count = 0;
 
 		const statuses = await flood(handler, REQUESTS);
 
 		expect(statuses.filter((status) => status === 429)).toHaveLength(REQUESTS - ADDRESS_CAPACITY);
+		expect(acquisitions.count, "semaphore places asked for by the flood").toBeLessThanOrEqual(
+			ADDRESS_CAPACITY,
+		);
 		expect(kdfAccounting.calls, "Argon2 derivations for the flood").toBeLessThanOrEqual(
 			ADDRESS_CAPACITY,
 		);
@@ -125,5 +157,6 @@ describe("T-DOS-5 — the address limit runs before the semaphore is asked for a
 
 		expect(statuses.filter((status) => status === 429)).toHaveLength(0);
 		expect(kdfAccounting.calls).toBeGreaterThanOrEqual(10);
+		expect(acquisitions.count).toBeGreaterThanOrEqual(10);
 	}, 60_000);
 });
