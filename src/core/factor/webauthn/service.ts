@@ -14,6 +14,7 @@ import {
 } from "@simplewebauthn/server";
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
+import { isRowIdentifier } from "../../db/row-identifier.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { removeSignInMethod } from "../../identity/sign-in-methods.js";
 import { decodeBase64Url, encodeBase64Url } from "../../keys/base64url.js";
@@ -106,7 +107,6 @@ export interface WebAuthnServiceOptions {
 
 const DEFAULT_SCHEMA = "velve";
 const CEREMONY_TIMEOUT_MS = WEBAUTHN_CHALLENGE_LIFETIME_SECONDS * 1000;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 //an all zero aaguid means the model is undisclosed so the column holds null
 const UNNAMED_AAGUID = "00000000-0000-0000-0000-000000000000";
@@ -368,7 +368,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 		async rename({ actor, credentialId, label }) {
 			//another account's credential, a missing one and a bad spelling are one answer (S-OWNER-8)
-			if (!UUID.test(credentialId)) {
+			if (!isRowIdentifier(credentialId)) {
 				throw new VelveError("invalid_input");
 			}
 			const credential = await credentials.renameCredential({ id: credentialId, actor, label });
@@ -379,10 +379,6 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		},
 
 		async remove({ actor, credentialId }) {
-			//a spelling that names no row exits like a row that is not the caller's (S-OWNER-3)
-			if (!UUID.test(credentialId)) {
-				return;
-			}
 			//deletion goes through the one path that counts what is left first (E-460)
 			await removeSignInMethod({
 				driver: options.driver,

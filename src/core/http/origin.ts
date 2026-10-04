@@ -21,6 +21,16 @@ export function isOriginAllowed(header: string | null, origins: readonly string[
 	return origins.some((origin) => parseOrigin(origin) === requestOrigin);
 }
 
+interface OriginEvidence {
+	readonly origin: string | null;
+	readonly fetchSite: string | null;
+}
+
+//a same-origin get carries no origin but a site header no page can set (E-2390)
+export function isSameOriginRead(request: OriginEvidence, readingRoute: boolean): boolean {
+	return readingRoute && request.origin === null && request.fetchSite === "same-origin";
+}
+
 export function assertOriginAllowed(header: string | null, origins: readonly string[]): void {
 	if (!isOriginAllowed(header, origins)) {
 		throw new VelveError("origin_not_allowed");

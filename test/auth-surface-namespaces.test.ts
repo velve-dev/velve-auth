@@ -85,7 +85,7 @@ function routeNamed(name: string, path: string): PluginRoute<string> {
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: () => Promise.resolve(null),
 	} as PluginRoute<string>;
 }
