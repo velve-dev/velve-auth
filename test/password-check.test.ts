@@ -378,6 +378,17 @@ describe("needsRehash and the silent rehash", () => {
 		}
 	});
 
+	/** T-REST-7, the third case: a stronger import is rewritten at the configured memory (E-2611). */
+	it("is true for a memory above the policy and false for a higher t or p (S-REST-7)", () => {
+		const config = resolvePasswordConfig({ argon2id: ARGON2ID_FLOOR });
+		const at = (parameters: string) =>
+			`$argon2id$v=19$${parameters}$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk`;
+
+		expect(needsRehash(at("m=65536,t=2,p=1"), config)).toBe(true);
+		expect(needsRehash(at("m=19456,t=3,p=1"), config)).toBe(false);
+		expect(needsRehash(at("m=19456,t=2,p=2"), config)).toBe(false);
+	});
+
 	it("hands the caller a task instead of running it inside the sign-in", async () => {
 		await seed(stored.byScheme.bcrypt, "bcrypt");
 		const before = recorder.rows.get(USER_ID);
