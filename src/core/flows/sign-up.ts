@@ -8,6 +8,7 @@ import { VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import type { IdentifierRejection, IdentityColumns } from "../identity/columns.js";
 import { identityColumns } from "../identity/columns.js";
+import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { createSessionUnderHooks } from "../plugin/sign-in.js";
 import { randomBytes } from "../token/random.js";
 import { type MintedArtefact, mintArtefact, sendOrUndo } from "./artefact.js";
@@ -102,14 +103,16 @@ async function register(
 			...written,
 			emailVerifiedAt: null,
 		});
+		//a hook must see the uncommitted account and not ask the pool for a connection (E-2795)
+		const hooks = hooksOnTheTransaction(pluginRuntime.hooks, transaction);
 		//a cover tells the identifiers the caller sent and never the drawn address (S-ENUM-3)
-		await pluginRuntime.hooks.afterUserCreate({
+		await hooks.afterUserCreate({
 			email: columns.email,
 			username: columns.username,
 			userId: created.id,
 		});
 		const issued = await createSessionUnderHooks(
-			pluginRuntime.hooks,
+			hooks,
 			{ userId: created.id, factors },
 			() =>
 				sessions.boundTo(transaction).issue({

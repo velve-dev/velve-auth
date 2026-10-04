@@ -7036,8 +7036,21 @@ because a taken address is answered by a registration on a drawn cover address
 that is then rolled back (3.13, S-ENUM-3): the cover runs the same three points
 in the same places, its events carry the address the caller sent and not the
 drawn one, and its `userId` names a row that is rolled back afterwards. A
-refusal at any of the four leaves no account and no session (E-2793). Two
-consequences: the hooks run while the registration's transaction is open, so a
+refusal at any of the four leaves no account and no session (E-2793).
+
+The three points inside the transaction run on its connection, with the lent
+context a reset's `beforeSessionRevoke` gets: `findUserById`,
+`listSessionsForUser`, `revokeSession` and `ownTables.query` run on the
+registration's own connection, so a hook finds the account it is told was
+created, never asks the pool for a second connection, and as many concurrent
+sign-ups as the pool has connections all finish. What the hook writes to its own
+tables rolls back with a cover or a refused registration, and the context ends
+when the hook returns (E-2795). A `revokeSession` from that context announces
+its revocation to `beforeSessionRevoke` on the same connection. With
+`pluginDatabase` set, `ownTables.query` goes to the plugin login as described
+below for a reset, so its writes commit at once and stay when a cover rolls back.
+
+Two consequences: the hooks run while the registration's transaction is open, so a
 slow hook holds the new account row and its unique index entries for its
 duration; and on a taken address a plugin is told about an account that never
 commits, which is the price of not telling the hook, and through it the caller,

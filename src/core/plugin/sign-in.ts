@@ -19,7 +19,7 @@ export function askBeforeSignIn(
 	});
 }
 
-//the veto must be settled before the session is written and outside its transaction (E-973)
+//the veto must come before the session is written and never take a second connection (E-2795)
 export async function createSessionUnderHooks<Written extends { readonly session: Session }>(
 	hooks: PluginHookDispatcher,
 	intended: SessionCreateEvent,

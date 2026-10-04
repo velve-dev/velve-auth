@@ -485,14 +485,21 @@ async function runOnALentConnection(
 	}
 }
 
+type HookPoint<Event> = (
+	hooks: PluginHooks,
+) => ((event: Event, context: FrozenContext) => Promise<void>) | undefined;
+
+interface Dispatchers {
+	readonly onThePool: PluginHookDispatcher;
+	onTheTransaction(transaction: Driver): PluginHookDispatcher;
+}
+
 function dispatcher(
 	registered: readonly RegisteredPlugin[],
 	services: FrozenContextServices,
-): PluginHookDispatcher {
+): Dispatchers {
 	async function run<Event>(
-		hook: (
-			hooks: PluginHooks,
-		) => ((event: Event, context: FrozenContext) => Promise<void>) | undefined,
+		hook: HookPoint<Event>,
 		event: Event,
 		contextOf: (entry: RegisteredPlugin) => FrozenContext = (entry) => entry.context,
 	): Promise<void> {
@@ -504,7 +511,20 @@ function dispatcher(
 		}
 	}
 
-	return {
+	function runOnTheTransaction<Event>(
+		transaction: Driver,
+		hook: HookPoint<Event>,
+		event: Event,
+		revocationOn: (lent: Driver) => RevocationAnnouncement,
+	): Promise<void> {
+		return runOnALentConnection(transaction, (lent) =>
+			run(hook, event, (entry) =>
+				createPluginContext(servicesBoundTo(services, lent), entry.plugin.id, revocationOn(lent)),
+			),
+		);
+	}
+
+	const onThePool: PluginHookDispatcher = {
 		beforeSignIn: (event) => run((hooks) => hooks.beforeSignIn, event),
 		afterSignIn: (event) => run((hooks) => hooks.afterSignIn, event),
 		beforeSessionCreate: (event) => run((hooks) => hooks.beforeSessionCreate, event),
@@ -518,19 +538,67 @@ function dispatcher(
 						event,
 						(entry) => entry.contextInsideARevocation,
 					)
-				: runOnALentConnection(transaction, (lent) =>
-						run(
-							(hooks) => hooks.beforeSessionRevoke,
-							event,
-							(entry) =>
-								createPluginContext(
-									servicesBoundTo(services, lent),
-									entry.plugin.id,
-									SILENT_REVOCATION,
-								),
-						),
+				: runOnTheTransaction(
+						transaction,
+						(hooks) => hooks.beforeSessionRevoke,
+						event,
+						() => SILENT_REVOCATION,
 					),
 	};
+
+	//a revocation from a lent context is announced on the same transaction (E-2584)
+	const announcedOn = (lent: Driver): RevocationAnnouncement => ({
+		announce: (event) => onThePool.beforeSessionRevoke(event, lent),
+		get listened() {
+			return registered.some((entry) => entry.hooks.beforeSessionRevoke !== undefined);
+		},
+	});
+
+	const onTheTransaction = (transaction: Driver): PluginHookDispatcher => ({
+		beforeSignIn: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.beforeSignIn, event, announcedOn),
+		afterSignIn: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.afterSignIn, event, announcedOn),
+		beforeSessionCreate: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.beforeSessionCreate, event, announcedOn),
+		afterSessionCreate: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.afterSessionCreate, event, announcedOn),
+		beforeUserCreate: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.beforeUserCreate, event, announcedOn),
+		afterUserCreate: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.afterUserCreate, event, announcedOn),
+		beforeSessionRevoke: (event, lent) =>
+			onThePool.beforeSessionRevoke(event, lent ?? transaction),
+	});
+
+	return { onThePool, onTheTransaction };
+}
+
+//the shipped dispatcher type stays as it is and its transaction form is found beside it (E-2795)
+const transactionFormOf = new WeakMap<
+	PluginHookDispatcher,
+	(transaction: Driver) => PluginHookDispatcher
+>();
+
+class UnregisteredDispatcherError extends Error {
+	readonly code = "plugin_dispatcher_unregistered";
+
+	constructor() {
+		super("only a dispatcher a plugin runtime created can run its hooks on a transaction");
+		this.name = "UnregisteredDispatcherError";
+	}
+}
+
+/** the same hooks, each run on a connection lent from the transaction and never on the pool */
+export function hooksOnTheTransaction(
+	hooks: PluginHookDispatcher,
+	transaction: Driver,
+): PluginHookDispatcher {
+	const onTheTransaction = transactionFormOf.get(hooks);
+	if (onTheTransaction === undefined) {
+		throw new UnregisteredDispatcherError();
+	}
+	return onTheTransaction(transaction);
 }
 
 export function createPluginRuntime(options: {
@@ -555,7 +623,9 @@ export function createPluginRuntime(options: {
 	const ordered = inDependencyOrder(plugins);
 
 	const registered: RegisteredPlugin[] = [];
-	const hooks = dispatcher(registered, options.services);
+	const dispatchers = dispatcher(registered, options.services);
+	const hooks = dispatchers.onThePool;
+	transactionFormOf.set(hooks, dispatchers.onTheTransaction);
 	const listensTo = (point: keyof PluginHooks): boolean =>
 		registered.some((entry) => entry.hooks[point] !== undefined);
 	//the array is read only when a hook runs and may be filled after the announcement exists
