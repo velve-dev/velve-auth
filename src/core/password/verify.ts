@@ -12,7 +12,7 @@ import {
 	type PasswordCredentialRow,
 	sealPhc,
 } from "./credential.js";
-import { storedMemoryCeilingKiB } from "./limits.js";
+import { MAXIMUM_CONFIGURABLE_MEMORY_KIB } from "./limits.js";
 import { acceptNewPassword, acceptSubmittedPassword } from "./policy.js";
 import { needsRewrite } from "./rehash.js";
 import { CREATED_SCHEME, type PasswordScheme } from "./scheme.js";
@@ -81,7 +81,8 @@ export async function checkPassword(
 	const source = usable ?? environment.dummy;
 
 	const opened = await openCredential(environment, source);
-	const memoryCeilingKiB = storedMemoryCeilingKiB(environment.config.argon2id.memoryKiB);
+	//a hash written under an earlier higher configuration still verifies and is rehashed down (E-2621)
+	const memoryCeilingKiB = MAXIMUM_CONFIGURABLE_MEMORY_KIB;
 	//a credential refused before deriving is checked as the dummy so its refusal costs the same (S-TIM-2)
 	const derivable = credentialReachesDerivation(opened.scheme, opened.phc, memoryCeilingKiB);
 	const verified = derivable ? opened : openedDummy(environment);

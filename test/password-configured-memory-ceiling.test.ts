@@ -3,9 +3,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
-import { createPasswordCredentialRepository, sealPhc } from "../src/core/password/credential.js";
+import {
+	createPasswordCredentialRepository,
+	openPhc,
+	sealPhc,
+} from "../src/core/password/credential.js";
 import { CredentialWriteError, PasswordConfigurationError } from "../src/core/password/errors.js";
-import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
+import {
+	MAXIMUM_CONFIGURABLE_MEMORY_KIB,
+	MAXIMUM_STORED_MEMORY_KIB,
+} from "../src/core/password/limits.js";
+import { integerParameter, parsePhc } from "../src/core/password/phc.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -107,12 +115,28 @@ describe.each([ABOVE_THE_IMPORT_CEILING, TWICE_THE_IMPORT_CEILING])(
 			expect(answer.status).toBe(200);
 		}, 60_000);
 
-		it("refuses a stored credential one KiB above the configured memory", async () => {
+		it("verifies a stored credential above the configured memory and within the start bound", async () => {
 			await seedSealed(`above${memoryKiB}@ceiling.example`, await argon2idPhc(memoryKiB + 1));
 
 			const answer = await handler(
 				postTo("/sign-in/password", {
 					email: `above${memoryKiB}@ceiling.example`,
+					password: PASSWORD,
+				}),
+			);
+			expect(answer.status).toBe(200);
+		}, 60_000);
+
+		it("refuses a stored credential above the start bound", async () => {
+			const filler = encodeStandardBase64(new Uint8Array(32).fill(3));
+			await seedSealed(
+				`beyond${memoryKiB}@ceiling.example`,
+				`$argon2id$v=19$m=${MAXIMUM_CONFIGURABLE_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`,
+			);
+
+			const answer = await handler(
+				postTo("/sign-in/password", {
+					email: `beyond${memoryKiB}@ceiling.example`,
 					password: PASSWORD,
 				}),
 			);
@@ -307,4 +331,66 @@ describe("the upper bounds a configuration is held to at start", () => {
 			}).argon2id,
 		).toStrictEqual({ memoryKiB: 1_048_576, iterations: 64, parallelism: 64 });
 	});
+});
+
+describe("lowering argon2id.memoryKiB after hashes were written above the new value", () => {
+	it("locks nobody out and rewrites the hash at the lowered memory at the first sign-in", async () => {
+		const migrated = await openMigratedSchema("memceilinglowered");
+		opened.push(migrated);
+		const keys = testKeyProvider();
+		const mountAt = (memoryKiB: number) =>
+			toWebHandler(
+				createVelveAuth(
+					configFor({
+						database: migrated.connection,
+						schema: migrated.schema,
+						keys,
+						password: { argon2id: { memoryKiB, iterations: 2, parallelism: 1 } },
+					}),
+				),
+			);
+		const email = "lowered@ceiling.example";
+		const storedMemoryKiB = async (): Promise<number | null> => {
+			const [row] = await migrated.connection.query<{
+				user_id: string;
+				phc: Uint8Array<ArrayBuffer>;
+				key_version: number;
+			}>(
+				`SELECT credential.user_id, credential.phc, credential.key_version
+				 FROM ${migrated.schema}.password_credential credential
+				 JOIN ${migrated.schema}.user account ON account.id = credential.user_id
+				 WHERE account.email = $1`,
+				[email],
+			);
+			const sealed = row as { user_id: string; phc: Uint8Array<ArrayBuffer>; key_version: number };
+			const phc = parsePhc(
+				await openPhc(keys, {
+					userId: sealed.user_id,
+					phc: sealed.phc,
+					keyVersion: sealed.key_version,
+					scheme: "argon2id",
+				}),
+			);
+			return phc === null ? null : integerParameter(phc, "m");
+		};
+
+		const atTheHigherMemory = mountAt(TWICE_THE_IMPORT_CEILING);
+		expect(
+			(await atTheHigherMemory(postTo("/sign-up", { email, password: PASSWORD }))).status,
+		).toBe(200);
+		expect(await storedMemoryKiB()).toBe(TWICE_THE_IMPORT_CEILING);
+
+		const atTheLoweredMemory = mountAt(19456);
+		expect(
+			(await atTheLoweredMemory(postTo("/sign-in/password", { email, password: PASSWORD }))).status,
+		).toBe(200);
+		const deadline = Date.now() + 30_000;
+		while ((await storedMemoryKiB()) !== 19456 && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		expect(await storedMemoryKiB()).toBe(19456);
+		expect(
+			(await atTheLoweredMemory(postTo("/sign-in/password", { email, password: PASSWORD }))).status,
+		).toBe(200);
+	}, 120_000);
 });

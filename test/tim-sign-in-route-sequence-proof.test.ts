@@ -45,7 +45,7 @@ import type { Driver } from "../src/core/db/driver.js";
 const { toWebHandler } = await import("../src/core/http/web-handler.js");
 const { encodeStandardBase64 } = await import("../src/core/password/base64.js");
 const { sealPhc } = await import("../src/core/password/credential.js");
-const { MAXIMUM_STORED_MEMORY_KIB } = await import("../src/core/password/limits.js");
+const { MAXIMUM_CONFIGURABLE_MEMORY_KIB } = await import("../src/core/password/limits.js");
 const { createVelveAuth } = await import("../src/index.js");
 const { configFor, testKeyProvider } = await import("./auth-fixtures.js");
 const { dropSchema, openMigratedSchema } = await import("./db-fixtures.js");
@@ -140,7 +140,7 @@ async function storeOverTheCeiling(email: string): Promise<void> {
 	const filler = encodeStandardBase64(new Uint8Array(32).fill(1));
 	const sealed = await sealPhc(
 		keys,
-		`$argon2id$v=19$m=${MAXIMUM_STORED_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`,
+		`$argon2id$v=19$m=${MAXIMUM_CONFIGURABLE_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`,
 	);
 	await opened.connection.query(
 		`UPDATE ${opened.schema}.password_credential SET phc = $2, key_version = $3

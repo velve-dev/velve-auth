@@ -64,7 +64,9 @@ const { rootKeyProvider } = await import("../src/core/keys/index.js");
 const { createArgon2idHash } = await import("../src/core/password/argon2.js");
 const { encodeStandardBase64 } = await import("../src/core/password/base64.js");
 const { sealPhc } = await import("../src/core/password/credential.js");
-const { MAXIMUM_STORED_MEMORY_KIB } = await import("../src/core/password/limits.js");
+const { MAXIMUM_CONFIGURABLE_MEMORY_KIB, MAXIMUM_STORED_MEMORY_KIB } = await import(
+	"../src/core/password/limits.js"
+);
 const { createVelveAuth } = await import("../src/index.js");
 const { configFor } = await import("./auth-fixtures.js");
 const { openConnectionPool } = await import("./connection-pool-fixtures.js");
@@ -101,7 +103,7 @@ const atConfiguredParameters: string[] = [];
 const importedAtTheCap: string[] = [];
 const importedAtTheCapNeverSignedIn: string[] = [];
 const importedAtTheCapWithTheConfiguredCost: string[] = [];
-const importedAboveTheCap: string[] = [];
+const storedAboveTheStartBound: string[] = [];
 
 //the rows are written in SQL as an import would since the repository refuses one above the ceiling (E-2616)
 async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
@@ -137,9 +139,9 @@ async function phcAtTheImportCap(iterations: number): Promise<string> {
 }
 
 //verification refuses this one before deriving so its hash bytes never matter
-function phcAboveTheImportCap(): string {
+function phcAboveTheStartBound(): string {
 	const filler = encodeStandardBase64(new Uint8Array(32).fill(9));
-	return `$argon2id$v=19$m=${MAXIMUM_STORED_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`;
+	return `$argon2id$v=19$m=${MAXIMUM_CONFIGURABLE_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`;
 }
 
 beforeAll(async () => {
@@ -177,7 +179,7 @@ beforeAll(async () => {
 	importedAtTheCapWithTheConfiguredCost.push(
 		...(await seedAccounts("importedcost", await phcAtTheImportCap(2))),
 	);
-	importedAboveTheCap.push(...(await seedAccounts("abovecap", phcAboveTheImportCap())));
+	storedAboveTheStartBound.push(...(await seedAccounts("abovebound", phcAboveTheStartBound())));
 }, 120_000);
 
 afterAll(async () => {
@@ -307,15 +309,17 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 		expect(kdfAccounting.peakInFlightKiB).toBeLessThanOrEqual(ceiling * boundPerPlaceKiB);
 	}, 120_000);
 
-	it("never derives a credential above the import ceiling", async () => {
-		const statuses = await signInWave(importedAboveTheCap, 4 * ceiling);
+	it("never derives a credential above the start bound", async () => {
+		const statuses = await signInWave(storedAboveTheStartBound, 4 * ceiling);
 
 		expect(statuses.filter((status) => status === 200)).toStrictEqual([]);
 		expect(kdfAccounting.memoryRequestsKiB, "each refusal derives the dummy instead").toStrictEqual(
 			statuses.map(() => CONFIGURED_MEMORY_KIB),
 		);
 		expect(
-			kdfAccounting.memoryRequestsKiB.filter((memoryKiB) => memoryKiB > MAXIMUM_STORED_MEMORY_KIB),
+			kdfAccounting.memoryRequestsKiB.filter(
+				(memoryKiB) => memoryKiB > MAXIMUM_CONFIGURABLE_MEMORY_KIB,
+			),
 		).toStrictEqual([]);
 	}, 120_000);
 
