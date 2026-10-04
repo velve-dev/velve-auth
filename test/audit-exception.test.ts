@@ -21,11 +21,23 @@ const IGNORED_ADVISORY_PACKAGES: Record<string, string> = {
 	"GHSA-vfj7-8cjw-p6xm": "braces",
 };
 
-interface WhyRoot {
-	dependencies?: Record<string, unknown>;
-	optionalDependencies?: Record<string, unknown>;
-	devDependencies?: Record<string, unknown>;
+/**
+ * The highest version each ignored advisory is against, as the registry's advisory states it
+ * (`vulnerable_versions: "<=3.0.3"`). An installed version above it is no longer the advisory's,
+ * so the exception has to go rather than outlive it (E-2907).
+ */
+const HIGHEST_VULNERABLE_VERSION: Record<string, string> = {
+	"GHSA-vfj7-8cjw-p6xm": "3.0.3",
+};
+
+interface WhyNode {
+	version?: string;
+	dependencies?: Record<string, WhyNode>;
+	optionalDependencies?: Record<string, WhyNode>;
+	devDependencies?: Record<string, WhyNode>;
 }
+
+type WhyRoot = WhyNode;
 
 async function pathsTo(packageName: string, productionOnly: boolean): Promise<WhyRoot> {
 	const flags = productionOnly ? ["--prod"] : [];
@@ -34,6 +46,40 @@ async function pathsTo(packageName: string, productionOnly: boolean): Promise<Wh
 	});
 	const roots = JSON.parse(stdout) as WhyRoot[];
 	return roots[0] ?? {};
+}
+
+function installedVersionsOf(packageName: string, node: WhyNode): string[] {
+	const children = [
+		...Object.entries(node.dependencies ?? {}),
+		...Object.entries(node.optionalDependencies ?? {}),
+		...Object.entries(node.devDependencies ?? {}),
+	];
+	return children.flatMap(([name, child]) => [
+		...(name === packageName && child.version !== undefined ? [child.version] : []),
+		...installedVersionsOf(packageName, child),
+	]);
+}
+
+const RELEASE_PART = /^(\d+)\.(\d+)\.(\d+)/;
+
+//a version that does not read as one is reported rather than assumed to be inside the range
+function isAtMost(version: string, highest: string): boolean {
+	const installed = RELEASE_PART.exec(version);
+	const bound = RELEASE_PART.exec(highest);
+	if (installed === null || bound === null) {
+		return false;
+	}
+	for (const index of [1, 2, 3]) {
+		const difference = Number(installed[index]) - Number(bound[index]);
+		if (difference !== 0) {
+			return difference < 0;
+		}
+	}
+	return true;
+}
+
+function versionsOutsideTheAdvisory(versions: readonly string[], highest: string): string[] {
+	return versions.filter((version) => !isAtMost(version, highest));
 }
 
 describe("the audit exception covers development dependencies only", () => {
@@ -61,4 +107,41 @@ describe("the audit exception covers development dependencies only", () => {
 			expect(Object.keys(everything.devDependencies ?? {})).not.toStrictEqual([]);
 		},
 	);
+
+	it("holds a highest vulnerable version for every ignored advisory", () => {
+		expect(Object.keys(HIGHEST_VULNERABLE_VERSION).sort()).toStrictEqual(
+			Object.keys(IGNORED_ADVISORY_PACKAGES).sort(),
+		);
+	});
+
+	it.each(Object.entries(IGNORED_ADVISORY_PACKAGES))(
+		"%s is against %s, and every installed version of it is still inside the advisory",
+		async (advisory, packageName) => {
+			const highest = String(HIGHEST_VULNERABLE_VERSION[advisory]);
+			const installed = installedVersionsOf(packageName, await pathsTo(packageName, false));
+
+			expect(installed).not.toStrictEqual([]);
+			expect(versionsOutsideTheAdvisory(installed, highest)).toStrictEqual([]);
+		},
+	);
+
+	it("reports a planted version above the advisory's range, so the check can fail", () => {
+		expect(versionsOutsideTheAdvisory(["3.0.3", "3.0.4", "3.1.0", "4.0.0"], "3.0.3")).toStrictEqual(
+			["3.0.4", "3.1.0", "4.0.0"],
+		);
+		expect(versionsOutsideTheAdvisory(["3.0.2", "2.3.2", "3.0.3"], "3.0.3")).toStrictEqual([]);
+		expect(versionsOutsideTheAdvisory(["not-a-version"], "3.0.3")).toStrictEqual(["not-a-version"]);
+	});
+
+	it("finds a planted out-of-range version in a tree shaped as pnpm why prints it", () => {
+		const planted: WhyNode = {
+			devDependencies: {
+				knip: { version: "5.88.1", dependencies: { braces: { version: "3.0.4" } } },
+			},
+		};
+
+		expect(
+			versionsOutsideTheAdvisory(installedVersionsOf("braces", planted), "3.0.3"),
+		).toStrictEqual(["3.0.4"]);
+	});
 });
