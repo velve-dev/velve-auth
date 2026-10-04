@@ -417,7 +417,7 @@ async function readSchemaObjects(tx: Driver, schema: string): Promise<SchemaObje
 
 //every element is quoted so a comma or a brace inside a name cannot split it into two (E-2480)
 function asTextArrayLiteral(values: readonly string[]): string {
-	return `{${values.map((value) => `"${value.replace(/[\\"]/g, "\\$&")}"`).join(",")}}`;
+	return `{${values.map((value) => `"${String(value).replace(/[\\"]/g, "\\$&")}"`).join(",")}}`;
 }
 
 async function readObjectsOfTheDeclaredTables(

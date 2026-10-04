@@ -379,7 +379,11 @@ function assertEveryRateLimitRuleNamesAContributedRoute(plugin: VelvePlugin): vo
 }
 
 //a declared name is a plain identifier before its prefix is read (E-2481)
-function assertIsAPlainTableName(table: string): void {
+function assertIsAPlainTableName(table: unknown): void {
+	//a string object converts to text for every check and still carries its own methods (E-2482)
+	if (typeof table !== "string") {
+		throw new VelveStartupError("plugin_migration_table_not_an_identifier");
+	}
 	try {
 		assertIdentifier(table);
 	} catch (cause) {
