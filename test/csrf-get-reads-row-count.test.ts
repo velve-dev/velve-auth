@@ -14,11 +14,10 @@ import {
 } from "./proof-fixtures.js";
 
 /**
- * T-CSRF-4 as the specification words it: call every reading GET route and compare the row counts
- * of all tables before and afterwards, with only `last_used_at` and `idle_expires_at` of the
- * caller's own session excepted. Neither language excepts `velve.rate_bucket`, which E-2732 took out
- * of T-CSRF-1 for the limiter's sake and left in here, while `test/csrf-get-reads-proof.test.ts`
- * drops it from its comparison without the specification saying so.
+ * T-CSRF-4 as the specification words it: call every reading GET route and compare all tables
+ * before and afterwards, with `velve.rate_bucket` and `last_used_at` and `idle_expires_at` of the
+ * caller's own session excepted. The reading routes are rate limited by address, so the bucket
+ * table is the one table they write (E-2734).
  */
 
 const READING_GET_ROUTES = [
@@ -35,6 +34,7 @@ const QUERY_OF: Readonly<Record<string, string>> = { "/username/available": "?us
 
 let mounted: WidestMount;
 let sessionToken: string;
+let sessionId: string;
 
 beforeAll(async () => {
 	mounted = await mountWidest("csrfcount", { clock: createTestClock(new Date()) });
@@ -46,6 +46,7 @@ beforeAll(async () => {
 		}),
 	);
 	sessionToken = issuedCookieValue(signedUp, DEFAULT_COOKIE_NAMES.session) ?? "";
+	sessionId = ((await signedUp.json()) as { session: { id: string } }).session.id;
 });
 
 afterAll(async () => {
@@ -53,12 +54,30 @@ afterAll(async () => {
 	await mounted.connection.close();
 });
 
-function rowCountsOf(snapshot: ReadonlyMap<string, readonly string[]>): Record<string, number> {
-	return Object.fromEntries([...snapshot].map(([table, rows]) => [table, rows.length]));
+const PERMITTED_SESSION_WRITES = ["last_used_at", "idle_expires_at"];
+
+function withoutPermittedWrites(
+	snapshot: ReadonlyMap<string, readonly string[]>,
+): ReadonlyMap<string, readonly string[]> {
+	const kept = new Map(snapshot);
+	kept.delete("rate_bucket");
+	kept.set(
+		"session",
+		(snapshot.get("session") ?? []).map((row) => {
+			const parsed = JSON.parse(row) as Record<string, unknown>;
+			if (parsed.id === sessionId) {
+				for (const column of PERMITTED_SESSION_WRITES) {
+					delete parsed[column];
+				}
+			}
+			return JSON.stringify(parsed);
+		}),
+	);
+	return kept;
 }
 
-describe("T-CSRF-4 row counts over every table, as the specification states them", () => {
-	it("changes the row count of no table, rate_bucket included, across all seven reading routes", async () => {
+describe("T-CSRF-4 over every table, as the specification states it", () => {
+	it("changes no row of any table but rate_bucket and the caller's two session deadlines across all seven reading routes", async () => {
 		const before = await snapshotOfEveryTable(mounted.connection, mounted.schema);
 		for (const path of READING_GET_ROUTES) {
 			await mounted.handler(
@@ -70,7 +89,9 @@ describe("T-CSRF-4 row counts over every table, as the specification states them
 		}
 		const after = await snapshotOfEveryTable(mounted.connection, mounted.schema);
 
-		expect(Object.keys(rowCountsOf(before))).toContain("rate_bucket");
-		expect(rowCountsOf(after)).toStrictEqual(rowCountsOf(before));
+		expect([...before.keys()]).toContain("rate_bucket");
+		expect(after.get("rate_bucket")).not.toStrictEqual(before.get("rate_bucket"));
+		expect((before.get("session") ?? []).some((row) => row.includes(sessionId))).toBe(true);
+		expect(withoutPermittedWrites(after)).toStrictEqual(withoutPermittedWrites(before));
 	});
 });
