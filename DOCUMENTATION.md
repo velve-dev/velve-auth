@@ -2814,12 +2814,14 @@ mailbox to send to. A user who forgets a password with no recovery codes has
 lost the account, so the specification makes `identity: { mode: "username" }`
 without `recoveryCodes` refuse to start, and a compile error before that, via a
 `RecoveryCodesRequirement<Mode>` on the instance options (architecture 3.4 and
-3.15 A.3, E-18). **Neither is built yet.** Both belong to the options type of
-`createVelveAuth`, which no feature has written; `core/identity` sees a mode, not
-the instance options, and cannot state a requirement about `recoveryCodes` from
-there. Until the feature that builds `createVelveAuth` carries it, choosing
-`username` without issuing recovery codes at registration is a mistake the
-library does not catch. This is a recorded hand-off, not an oversight (E-207).
+3.15 A.3, E-18). Both are built, on the options of `createVelveAuth` rather
+than in `core/identity`, which sees a mode and not the instance options:
+`VelveAuthConfig<M>` is `BaseConfig<M> & RecoveryCodesRequirement<M>`, which
+makes `recoveryCodes` a required property in `"username"`, and a JavaScript
+caller the type does not reach is refused at start with `VelveStartupError`,
+code `recovery_codes_required`, when `recoveryCodes` is absent (S-DEFAULT-4).
+The type is described under `createVelveAuth(config)` and the refusal under
+[What refuses to start](#what-refuses-to-start).
 
 ```ts
 type IdentityConfiguration<Mode extends IdentityMode = IdentityMode>
