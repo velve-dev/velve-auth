@@ -668,6 +668,50 @@ raises `UnknownColumnError` with the code `unknown_column`. The owner column is
 never updatable through this repository — changing who owns a row is not an
 update.
 
+### Which repository methods do without an actor
+
+S-OWNER-1 says every repository method on a table with a `user_id` column takes
+an `actor`. The rule the library keeps is the narrower one E-242 found: **a
+method that reaches rows through their owner takes a proof of ownership; a
+method that reaches them some other way says which way, by name.**
+`test/owner-actor-census.test.ts` holds it (T-OWNER-1, E-2420):
+
+- it reads the tables with a `user_id` or `link_to_user_id` column from
+  `information_schema`, and fails when one appears that has no line in its
+  table of decisions — a new owned table cannot arrive without a repository
+  decision;
+- it finds, with the TypeScript compiler API, every exported function and
+  every method of an object an exported factory returns whose SQL names one of
+  those tables or an owner column;
+- each one must take a parameter that carries a brand declared in
+  `core/db/actor.ts` — `Actor`, `ResolvedSession`, `RedeemedOneTimeToken`,
+  `ConsumedOAuthFlow` or `ConsumedRecoveryCode`, directly or as a field — or
+  stand in the exception list under one of the classes below. An exception
+  that the census no longer finds without a proof fails as well.
+
+| Class | Why no proof is passed | Methods |
+|---|---|---|
+| secret address | the row is addressed by the hash of a secret the caller presents (E-242, E-2421) | `findSessionByTokenHash`, `deleteSessionByTokenHash`, `replaceSession`, `replacePresentedSession`; the three pending-authentication methods addressed by token hash |
+| consumed single-use row | the statement that removes the row is the proof (E-234, E-2421) | `consumeOneTimeToken`, `consumeFlow`, the WebAuthn challenge `consume`, `consumeCode` |
+| row that carries the proof | the insert writes the row whose secret later proves the owner (E-242, E-2422) | `insertSession`, `insertPendingAuthentication`, `replaceOneTimeToken`, the WebAuthn challenge `issue` |
+| credential under verification | the row read or written back is the credential a sign-in is verifying (E-2423) | password `findByUserId` and `replaceIfUnchanged`, recovery `pepperVersionsOf`, WebAuthn `findCredentialByCredentialId` and `recordAssertion` |
+| pending resolution | the owner is the one a pending row named when its token hash resolved, which is a structural value and not a brand (E-459, E-2424) | TOTP `findCredentialOf` and `claimTimeStep`, WebAuthn `listDescriptorsOwnedBy` and `findOwnedCredentialByCredentialId` |
+| provider subject | the identity is addressed by `(provider, subject)` and the account is the answer (S-LINK-1, E-2425) | `findIdentityBySubject`, `refreshIdentity`, `insertIdentityOfSignIn` |
+| maintenance or start-up | every owner at once, by a deadline or a catalogue (E-2426) | `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown`, `assertEveryUserReferenceCascades` |
+| shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findUserIdOfSession`, `deleteSessionById` behind `FrozenRepositories`; `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
+| created with its account | the account row was inserted by the same transaction (E-2428) | password `writeForCreatedAccount` |
+
+Where a caller holds a proof, the method takes it:
+
+| Method | Takes | Caller and proof |
+|---|---|---|
+| password `write({ actor, phc, scheme, setBySessionId })` | `Actor` | set and change: the resolved session; both resets: the redeemed token or the consumed recovery code (E-2429) |
+| password `findOwnedBy({ actor })` | `Actor` | `POST /password/set`, which refuses when a credential exists (E-2429) |
+| password `writeForCreatedAccount({ userId, … })` | user id | sign-up only, in the transaction that created the account (E-2428) |
+| OAuth identity `insertIdentity({ actor, …facts })` | `Actor` | the link callback, from the consumed flow (E-2430) |
+| OAuth identity `insertIdentityOfSignIn({ userId, …facts })` | user id | the sign-in callback, for the account the subject decided (E-2425) |
+| OAuth flow `insertFlow({ …, linkTo })` | `linkTo: { actor, sessionId } \| null` | the link start, from the resolved session; a sign-in records no owner (E-2431) |
+
 ## Lock order
 
 Two transactions that take the same two rows in opposite orders deadlock, and
@@ -2110,8 +2154,10 @@ caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
 | Method | Statement |
 |---|---|
-| `findByUserId(userId)` | `SELECT … WHERE user_id = $1` |
-| `write({ userId, phc, scheme })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
+| `findByUserId(userId)` | `SELECT … WHERE user_id = $1` — the sign-in check alone, before any proof exists (E-2423) |
+| `findOwnedBy({ actor })` | the same statement, for a caller that holds an `Actor` |
+| `write({ actor, phc, scheme, setBySessionId })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
+| `writeForCreatedAccount({ userId, phc, scheme, setBySessionId })` | the same statement, for sign-up, whose transaction inserted the account (E-2428) |
 | `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
 
 `replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
@@ -2166,7 +2212,7 @@ rehash wave after a parameter increase cannot displace live sign-ins (S-DOS-6).
 Losing the compare and swap is harmless — it returns `false` and the next
 sign-in tries again.
 
-#### `setPassword({ userId, plaintext }, environment)`
+#### `setPassword({ actor, plaintext, setBySessionId }, environment)`
 
 Applies the length policy, runs `validate`, derives Argon2id under the
 semaphore, and writes the sealed string. Revoking the user's other sessions is
