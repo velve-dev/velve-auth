@@ -6436,13 +6436,28 @@ session is not replaced. No outcome pairs a new password with the old sessions,
 so the hook is a veto and not a way to keep sessions — S-FIX-6 and S-DEFAULT-2
 hold (E-2580, E-2581).
 
-**A reset runs the hook inside its transaction**, because a reset learns which
-account it is for only by redeeming its token or code there. The hook runs while
-the account row is locked `FOR NO KEY UPDATE`; reading sessions, reading the
-user or writing a plugin table with a foreign key to `velve.user` does not wait
-on that lock. Under a pool the hook's own queries take a second connection, so a
-pool of one connection waits forever on a reset where a plugin listens and its
-hook queries (E-2582).
+**A reset runs the hook inside its transaction and on its connection**, because
+a reset learns which account it is for only by redeeming its token or code
+there. The context the hook gets on a reset is bound to that transaction:
+`findUserById`, `listSessionsForUser`, `revokeSession` and `ownTables.query` all
+run on the reset's own connection and never ask the pool for a second one, so
+concurrent resets cannot starve the pool however small it is. Whatever the hook
+writes rolls back with the reset if anything later in it fails, the hook's own
+refusal included. The hook runs while the account row is locked
+`FOR NO KEY UPDATE`; reading sessions, reading the user or writing a plugin
+table with a foreign key to `velve.user` does not wait on that lock.
+
+With `pluginDatabaseRole` set, each plugin statement on that borrowed
+connection runs inside a savepoint: the role is switched for the statement and
+switched back to whatever the transaction held before the savepoint is
+released, and a statement the database refuses is rolled back to the savepoint,
+so the reset can continue if the hook catches the error. That costs four extra
+statements per plugin statement on this path only (E-2582, E-2584).
+
+The listing and the delete are separate statements on a reset too. The account
+lock does not block a concurrent sign-in from inserting a session, so a session
+committed between the two is removed without being announced. It cannot be
+spared: S-FIX-6 requires every session of the account to go (E-2585).
 
 Revocations no reason names announce nothing: replacing the presented session on
 sign-in (E-2122), the re-issue on a change of trust level, the first address
