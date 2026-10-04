@@ -82,8 +82,10 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 		/(?<!\bFOR\s{1,20})(?<!\bFOR\s{1,20}NO\s{1,20}KEY\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
 
 	/** A privilege list names UPDATE and DELETE without changing a row: the plugin role's grants
-	 * (E-2450) list them, and a GRANT has no row to give an owner predicate to. */
-	const GRANTS_PRIVILEGES = /^\s*GRANT\b/i;
+	 * (E-2450) list them, and a GRANT has no row to give an owner predicate to. A literal sent with
+	 * no parameters goes over the simple protocol, which runs every statement in it, so a GRANT
+	 * followed by a semicolon is not left out: a DELETE behind it would otherwise go unread. */
+	const GRANTS_PRIVILEGES = /^\s*GRANT\b[^;]*$/i;
 
 	it("gives every row-changing statement an owner predicate", () => {
 		// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
@@ -100,6 +102,14 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 
 		expect(changing.length).toBeGreaterThan(0);
 		expect(withoutOwner, describing(withoutOwner)).toEqual([]);
+	});
+
+	it("leaves out a lone GRANT and not a statement that follows one", () => {
+		const lone = "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE velve.demo_entry TO velve_plugins";
+		const followed = "GRANT USAGE ON SCHEMA velve TO velve_plugins; DELETE FROM velve.session";
+
+		expect(CHANGES_ROWS.test(lone) && !GRANTS_PRIVILEGES.test(lone)).toBe(false);
+		expect(CHANGES_ROWS.test(followed) && !GRANTS_PRIVILEGES.test(followed)).toBe(true);
 	});
 
 	/** E-249: an asterisk inside the reason is the one input on which the two forms this
