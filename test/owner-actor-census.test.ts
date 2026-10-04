@@ -224,6 +224,28 @@ function returnedObjectLiterals(callable: Callable): ts.ObjectLiteralExpression[
 	return found;
 }
 
+function callableNamedBy(expression: ts.Expression, checker: ts.TypeChecker): Callable | undefined {
+	if (isCallable(expression)) {
+		return expression;
+	}
+	if (!ts.isIdentifier(expression)) {
+		return undefined;
+	}
+	const declaration = checker.getSymbolAtLocation(expression)?.declarations?.[0];
+	if (declaration !== undefined && isCallable(declaration)) {
+		return declaration;
+	}
+	if (
+		declaration !== undefined &&
+		ts.isVariableDeclaration(declaration) &&
+		declaration.initializer !== undefined &&
+		isCallable(declaration.initializer)
+	) {
+		return declaration.initializer;
+	}
+	return undefined;
+}
+
 function methodsOf(
 	literal: ts.ObjectLiteralExpression,
 	checker: ts.TypeChecker,
@@ -233,8 +255,11 @@ function methodsOf(
 		const name = property.name?.getText() ?? "";
 		if (ts.isMethodDeclaration(property)) {
 			methods.push([name, property]);
-		} else if (ts.isPropertyAssignment(property) && isCallable(property.initializer)) {
-			methods.push([name, property.initializer]);
+		} else if (ts.isPropertyAssignment(property)) {
+			const value = callableNamedBy(property.initializer, checker);
+			if (value !== undefined) {
+				methods.push([name, value]);
+			}
 		} else if (ts.isShorthandPropertyAssignment(property)) {
 			const declaration = checker.getShorthandAssignmentValueSymbol(property)?.declarations?.[0];
 			if (declaration !== undefined && isCallable(declaration)) {
@@ -376,7 +401,7 @@ function carriesProof(type: ts.Type, checker: ts.TypeChecker, depth: number): bo
 	if (properties.some(isProofBrand)) {
 		return true;
 	}
-	if (depth === 0 || (type.flags & ts.TypeFlags.Object) === 0) {
+	if (depth === 0 || (type.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) === 0) {
 		return false;
 	}
 	return properties.some((property) => {
