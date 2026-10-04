@@ -12644,7 +12644,7 @@ One consequence of restating in place that the rule does not mention, and that s
 ### The owner chose the reviewable wrapping over the shorter count
 `E-2002` · rules-only · reverses part of E-2001
 
-**Context.** E-2001 recorded that CLAUDE.md was cut to 347 lines by putting each paragraph on one line, and that the old 80-column wrapping would have meant about 550. Shown both, the owner of the repository chose the old wrapping. Restored, the file is 596 lines; after the merge of the curated case study, ten sentences had their path changed to `docs/decisions/log.md` and one bullet was added for `CASE-STUDY.md`.
+**Context.** E-2001 recorded that CLAUDE.md was cut to 347 lines by putting each paragraph on one line, and that the old 80-column wrapping would have meant about 550. Shown both, the owner of the repository chose the old wrapping. Restored, the file is 598 lines; after the merge of the curated case study, ten sentences had their path changed to `docs/decisions/log.md` and one bullet was added for `CASE-STUDY.md`.
 **Rejected.** Keeping the one-line paragraphs, and moving more rules out to get under 300.
 **Reason.** One-line paragraphs make every line of the file a diff line, so the claim that no sentence was reworded could not be checked by reading the diff. The whitespace-normalised text was compared before and after the rewrap and is identical.
 **Price.** The 300-line target is missed by about three hundred lines, on purpose. E-2001 stays as written. Concerns `CLAUDE.md`.
