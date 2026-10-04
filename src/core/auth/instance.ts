@@ -10,18 +10,21 @@ import {
 	createSecondFactorCompletion,
 	type PendingAuthenticationService,
 	type PendingToken,
+	toPendingToken,
 } from "../factor/pending/index.js";
 import { type FactorSurface, factorRoutes } from "../factor/routes.js";
 import { assertStoredFactorKeyVersionsAreKnown } from "../factor/startup.js";
 import { type EmailFlowSurface, emailFlowRoutes } from "../flows/routes.js";
 import type { CallerResolver, PendingAuthentication, Session } from "../http/caller.js";
-import type { Clock, HttpEnvironment } from "../http/environment.js";
+import { readCookies } from "../http/cookies.js";
+import { type Clock, cookiePolicyOf, type HttpEnvironment } from "../http/environment.js";
 import {
 	ConcealedError,
 	registerDeclaredPluginErrorCodes,
 	VELVE_ERROR_CODES,
 	type VelveErrorCode,
 } from "../http/error-map.js";
+import { toLoggedFailure } from "../http/pipeline.js";
 import {
 	type AnyRoute,
 	classifyCoreReadingRoutes,
@@ -70,7 +73,7 @@ import {
 	VelveStartupError,
 } from "./startup.js";
 import { assertNoStatedNameShadowsADerivedOne, nestServerMethods } from "./surface.js";
-import { createUserRepository, type User } from "./user.js";
+import { createUserRepository, type User, type UserRepository } from "./user.js";
 
 const DEFAULT_SCHEMA = "velve";
 const MILLISECONDS_IN_A_SECOND = 1000;
@@ -81,6 +84,7 @@ const ERROR_CODES = VELVE_ERROR_CODES;
 
 export interface SessionNamespace {
 	resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
+	resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>;
 	list(input: ServerCallFields): Promise<Session[]>;
 	revoke(input: { targetSessionId: string } & ServerCallFields): Promise<void>;
 	revokeAllOther(input: ServerCallFields): Promise<{ revokedCount: number }>;
@@ -91,6 +95,7 @@ export interface SessionNamespace {
 /** the intermediate state names the factors still open and never any user data */
 export interface PendingNamespace {
 	resolve(token: PendingToken): Promise<PendingAuthentication | null>;
+	resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
 	cancel(input: { pendingToken: PendingToken }): Promise<void>;
 }
 
@@ -248,6 +253,36 @@ function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 		...(config.session === undefined ? {} : { session: config.session }),
 		...(config.sessionMetadata === undefined ? {} : { sessionMetadata: config.sessionMetadata }),
 	};
+}
+
+function cookiesIn(headers: Headers, environment: HttpEnvironment) {
+	return readCookies(headers.get("cookie"), cookiePolicyOf(environment).names);
+}
+
+async function sessionViewOf(
+	sessions: SessionService,
+	users: UserRepository,
+	sessionToken: string,
+): Promise<ResolvedSessionView | null> {
+	const resolved = await sessions.resolve(sessionToken);
+	if (resolved === null) {
+		return null;
+	}
+	const user = await users.findUserById(resolved.userId);
+	return user === null ? null : { session: resolved.session, user };
+}
+
+//what a caller learns from a method without a route is decided by the same map (E-2832)
+async function failuresMappedAs<Output>(
+	methodName: string,
+	environment: HttpEnvironment,
+	resolve: () => Promise<Output>,
+): Promise<Output> {
+	try {
+		return await resolve();
+	} catch (cause) {
+		throw toLoggedFailure(cause, methodName, environment);
+	}
 }
 
 //the core reads no clock of its own, so the caller brings the fallback one (E-231)
@@ -430,6 +465,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 		session: {
 			resolve: ({ sessionToken, ...call }) => readSession({ ...call, sessionToken }),
+			resolveFromHeaders: (headers) =>
+				failuresMappedAs("session.resolveFromHeaders", environment, async () => {
+					const sessionToken = cookiesIn(headers, environment).session;
+					return sessionToken === null ? null : sessionViewOf(sessions, users, sessionToken);
+				}),
 			list: createServerMethod(list, environment),
 			revoke: createServerMethod(revoke, environment),
 			revokeAllOther: createServerMethod(revokeAllOther, environment),
@@ -439,6 +479,13 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 		pending: {
 			resolve: async (token) => (await pending.resolve(token))?.pending ?? null,
+			resolveFromHeaders: (headers) =>
+				failuresMappedAs("pending.resolveFromHeaders", environment, async () => {
+					const pendingToken = cookiesIn(headers, environment).pending;
+					return pendingToken === null
+						? null
+						: ((await pending.resolve(toPendingToken(pendingToken)))?.pending ?? null);
+				}),
 			cancel: ({ pendingToken }) => pending.cancel({ token: pendingToken }),
 		} satisfies PendingNamespace,
 

@@ -6081,8 +6081,8 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | Namespace | Methods |
 |---|---|
 | `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
-| `auth.session` | `resolve`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
-| `auth.pending` | `resolve`, `cancel` |
+| `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
+| `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
 | `auth.user` | `findById`, `findByEmail`, `disable`, `enable`, `delete` |
 | `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
 
@@ -6172,6 +6172,40 @@ session rows standing, so each of them ends at its next resolution with
 `auth.pending.resolve` names only the factors still open and never any user
 data, and it mints no actor: the intermediate state is structurally unable to
 become a session.
+
+#### `auth.session.resolveFromHeaders(headers)` and `auth.pending.resolveFromHeaders(headers)`
+
+```ts
+resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>      // session
+resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>    // pending
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `headers` | `Headers` | The headers of a request the application has already accepted, typically `request.headers` in a server-rendered page or in the application's own route. Only `Cookie` is read. |
+
+`session.resolveFromHeaders` reads the session cookie — under the name
+`session.cookieName` configures — and answers exactly as `session.resolve` does
+for that token: the session and its account, `null` without the cookie or for a
+token that names no live session, and a thrown `account_disabled` for a valid
+token on a disabled account (L-4). As a side effect it extends the idle deadline,
+at most once per `idleWriteInterval`, as `resolve` does.
+`pending.resolveFromHeaders` reads `__Host-velve_pending` and answers as
+`pending.resolve`: the factors still open, or `null`.
+
+Neither takes an `origin`, and neither is rate limited (3.15 B.2, B.9). The
+headers belong to a request the application has already accepted, and a link
+followed from another site arrives as a navigation without an `Origin` header the
+library could compare, so a check there would refuse every visitor who arrives
+from elsewhere. A method that has no route is not a server method derived from a
+route declaration, which is what S-CSRF-1 covers. Whatever the application does
+next on the strength of the answer is the application's own route and its own
+CSRF question.
+
+A request carrying the same cookie twice throws `invalid_input`, as the HTTP path
+answers it (S-COOKIE-5). A failure is mapped and logged by the same code as a
+route's, under the method's name, so a caller learns nothing the HTTP path would
+not have told it.
 
 ### The intermediate state between password and second factor
 

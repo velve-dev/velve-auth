@@ -505,6 +505,7 @@ interface SessionNamespace {
   resolve(input: {
     sessionToken: string;
   } & ServerCallFields): Promise<ResolvedSessionView | null>;
+  resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>;
   list(input: ServerCallFields): Promise<Session[]>;
   revoke(input: {
     targetSessionId: string;
@@ -520,6 +521,7 @@ interface SessionNamespace {
 /** the intermediate state names the factors still open and never any user data */
 interface PendingNamespace {
   resolve(token: PendingToken): Promise<PendingAuthentication | null>;
+  resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
   cancel(input: {
     pendingToken: PendingToken;
   }): Promise<void>;

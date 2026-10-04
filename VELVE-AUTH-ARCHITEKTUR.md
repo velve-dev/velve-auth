@@ -2076,6 +2076,14 @@ einer fremden Sitzung liegt dem Aufrufer nicht vor und soll ihm nicht vorliegen;
 ist auch bei fehlender oder fremder Zeile `void`, sonst wäre die Methode eine Auskunft über
 fremde Sitzungs-IDs.
 
+`resolveFromHeaders` liest aus den übergebenen Kopfzeilen nur das Sitzungscookie und antwortet
+wie `resolve`, mit demselben `null` und demselben `account_disabled`; ein doppeltes Cookie ist
+`invalid_input` (S-COOKIE-5). Eine Origin-Prüfung läuft dort nicht: Die Kopfzeilen gehören zu
+einer Anfrage, die die Anwendung selbst angenommen hat, und eine Navigation von einer fremden
+Seite trägt keinen `Origin`-Kopf, den die Bibliothek vergleichen dürfte. S-CSRF-1 erfasst die
+aus einer Routendeklaration erzeugten Servermethoden, und `resolveFromHeaders` hat keine Route.
+Dasselbe gilt für `pending.resolveFromHeaders` mit dem Zwischenzustandscookie (B.7).
+
 ##### B.3 `user` (6, ohne HTTP-Routen)
 
 ```ts

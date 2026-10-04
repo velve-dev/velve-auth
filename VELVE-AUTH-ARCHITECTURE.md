@@ -2073,6 +2073,14 @@ of a foreign session is not available to the caller and is not meant to be; the 
 is `void` even for a missing or foreign row, as otherwise the method would be a disclosure about
 foreign session IDs.
 
+`resolveFromHeaders` reads only the session cookie from the headers it is given and answers
+like `resolve`, with the same `null` and the same `account_disabled`; a duplicated cookie is
+`invalid_input` (S-COOKIE-5). No origin check runs there: the headers belong to a request
+the application has itself accepted, and a navigation from a foreign site carries no `Origin`
+header the library could compare. S-CSRF-1 covers the server methods produced from a route
+declaration, and `resolveFromHeaders` has no route. The same holds for
+`pending.resolveFromHeaders` with the intermediate state cookie (B.7).
+
 ##### B.3 `user` (6, without HTTP routes)
 
 ```ts
