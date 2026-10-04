@@ -1,7 +1,10 @@
 import { type RouteConflict, THE_CORE, VelveStartupError } from "../auth/startup.js";
+import { createUserRepository } from "../auth/user.js";
+import type { Driver } from "../db/driver.js";
 import { assertIdentifier, InvalidIdentifierError } from "../db/identifier.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
+import { createSessionRepository } from "../db/repositories/session.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
 import { type BucketRule, isUsableBucketRule, type RateLimitRule } from "../http/rate-limit.js";
 import {
@@ -40,7 +43,8 @@ export interface PluginHookDispatcher {
 	afterSessionCreate(event: SessionCreatedEvent): Promise<void>;
 	beforeUserCreate(event: UserCreateEvent): Promise<void>;
 	afterUserCreate(event: UserCreatedEvent): Promise<void>;
-	beforeSessionRevoke(event: SessionRevokeEvent): Promise<void>;
+	/** a `transaction` runs every hook on that transaction's connection and not on the pool's */
+	beforeSessionRevoke(event: SessionRevokeEvent, transaction?: Driver): Promise<void>;
 }
 
 export interface PluginRuntime {
@@ -425,7 +429,66 @@ function routesOf(plugin: VelvePlugin): readonly AnyRoute[] {
 	);
 }
 
-function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatcher {
+class LentConnectionReturnedError extends Error {
+	readonly code = "plugin_lent_connection_returned";
+
+	constructor() {
+		super("a context lent to a revoke hook inside a transaction ends when that hook returns");
+		this.name = "LentConnectionReturnedError";
+	}
+}
+
+interface LentConnection {
+	readonly driver: Driver;
+	giveBack(): void;
+}
+
+//every statement is checked when it is issued so a chain the hook left running is stopped too (E-2586)
+function lend(transaction: Driver): LentConnection {
+	let returned = false;
+	const driver: Driver = {
+		query: <T>(sql: string, params: unknown[]): Promise<T[]> =>
+			returned
+				? Promise.reject(new LentConnectionReturnedError())
+				: transaction.query<T>(sql, params),
+		transaction: <T>(work: (tx: Driver) => Promise<T>): Promise<T> =>
+			returned ? Promise.reject(new LentConnectionReturnedError()) : work(driver),
+	};
+	return {
+		driver,
+		giveBack: () => {
+			returned = true;
+		},
+	};
+}
+
+//a hook told inside a transaction must not ask the pool for a second connection (E-2584)
+function servicesBoundTo(services: FrozenContextServices, lent: Driver): FrozenContextServices {
+	return {
+		...services,
+		driver: lent,
+		users: createUserRepository({ driver: lent, schema: services.schema }),
+		sessions: createSessionRepository({ driver: lent, schema: services.schema }),
+		insideATransaction: true,
+	};
+}
+
+async function runOnALentConnection(
+	transaction: Driver,
+	run: (lent: Driver) => Promise<void>,
+): Promise<void> {
+	const lent = lend(transaction);
+	try {
+		await run(lent.driver);
+	} finally {
+		lent.giveBack();
+	}
+}
+
+function dispatcher(
+	registered: readonly RegisteredPlugin[],
+	services: FrozenContextServices,
+): PluginHookDispatcher {
 	async function run<Event>(
 		hook: (
 			hooks: PluginHooks,
@@ -448,12 +511,25 @@ function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatch
 		afterSessionCreate: (event) => run((hooks) => hooks.afterSessionCreate, event),
 		beforeUserCreate: (event) => run((hooks) => hooks.beforeUserCreate, event),
 		afterUserCreate: (event) => run((hooks) => hooks.afterUserCreate, event),
-		beforeSessionRevoke: (event) =>
-			run(
-				(hooks) => hooks.beforeSessionRevoke,
-				event,
-				(entry) => entry.contextInsideARevocation,
-			),
+		beforeSessionRevoke: (event, transaction) =>
+			transaction === undefined
+				? run(
+						(hooks) => hooks.beforeSessionRevoke,
+						event,
+						(entry) => entry.contextInsideARevocation,
+					)
+				: runOnALentConnection(transaction, (lent) =>
+						run(
+							(hooks) => hooks.beforeSessionRevoke,
+							event,
+							(entry) =>
+								createPluginContext(
+									servicesBoundTo(services, lent),
+									entry.plugin.id,
+									SILENT_REVOCATION,
+								),
+						),
+					),
 	};
 }
 
@@ -479,7 +555,7 @@ export function createPluginRuntime(options: {
 	const ordered = inDependencyOrder(plugins);
 
 	const registered: RegisteredPlugin[] = [];
-	const hooks = dispatcher(registered);
+	const hooks = dispatcher(registered, options.services);
 	const listensTo = (point: keyof PluginHooks): boolean =>
 		registered.some((entry) => entry.hooks[point] !== undefined);
 	//the array is read only when a hook runs and may be filled after the announcement exists
