@@ -92,6 +92,11 @@ export interface SessionRepository {
 		readonly previousTokenHash: Uint8Array;
 		readonly insert: SessionInsert;
 	}): Promise<Session>;
+	//the predicate is the presented secret so its row goes whoever owns it (E-2120)
+	replacePresentedSession(input: {
+		readonly presentedTokenHash: Uint8Array | null;
+		readonly insert: SessionInsert;
+	}): Promise<Session>;
 	replaceEverySessionOfUser(input: {
 		readonly actor: Actor;
 		readonly insert: SessionInsert;
@@ -386,6 +391,16 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				}
 				if (removed.userId !== insert.userId) {
 					throw new SessionOwnerMismatchError();
+				}
+				return insertSession(tx, insert);
+			});
+		},
+
+		//a sign-in removes the presented row in the transaction that inserts its successor (S-FIX-1)
+		replacePresentedSession({ presentedTokenHash, insert }) {
+			return options.driver.transaction(async (tx) => {
+				if (presentedTokenHash !== null) {
+					await deleteSessionByTokenHash(tx, presentedTokenHash);
 				}
 				return insertSession(tx, insert);
 			});

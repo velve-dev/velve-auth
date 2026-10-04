@@ -12719,6 +12719,56 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Every one of those rows lands on the same line of `CLAUDE.md`, so every merge after the first would conflict there. Reserving all fourteen ranges in one change before the first branch starts is the partition rule in §5 applied to the table itself.
 **Price.** Ranges reserved for work that may turn out smaller stay as gaps in the numbering, which §6 accepts. Concerns `CLAUDE.md` §6.
 
+<a id="e-2180"></a>
+
+### The recovery-code reset keys its account bucket the way sign-in does
+`E-2180` · recovery-reset-rate · fixes S-RATE-7, closed
+
+**Context.** `redeemResetWithRecoveryCode` passed the identifier to `enforceAccountRateLimit` as it was submitted. Every other caller passes a normalised form: sign-in through `comparisonFormOf`, the mailed flows through `normaliseEmail`, the session routes through the stored address. With `perAccount` at capacity 2, twelve attempts across six spellings of one address were all answered `invalid_recovery_code` and wrote six account buckets, while `/sign-in/password` answered 429 on the third spelling. The test added here showed the same on the mounted instance with three spellings: case, surrounding space and fullwidth forms.
+**Rejected.** (a) `normaliseEmail` in modes `email` and `email_or_username` and the username key in mode `username`, choosing by the mode the way `findUserByIdentifier` does. (b) Resolving the account first and keying by its stored address.
+**Reason.** (a) gives the same string as `comparisonFormOf` for every identifier it accepts and needs a fallback for those it refuses, so it is two code paths for one value. `comparisonFormOf` is what sign-in already uses for the identical lookup fields, so the two anonymous password routes now key alike. (b) is what S-RATE-7 forbids: the key is formed before the user is resolved, so an existing and a missing account advance the same row.
+**Price.** A malformed identifier still gets a bucket of its own per distinct comparison form, as it does on sign-in; such an identifier names no account, so the ceiling it lifts belongs to nobody. Concerns `src/core/flows/reset.ts`.
+
+<a id="e-2181"></a>
+
+### The recovery-code reset asks the account bucket before the KDF
+`E-2181` · recovery-reset-rate · fixes S-RATE-7, closed
+
+**Context.** The same function derived the new password with Argon2id before it asked the account bucket, so a refused attempt had already held a semaphore place and paid for a derivation. T-RATE-7 requires the rejected responses to run no KDF. The test counts `argon2idAsync` calls per request and saw one for the refused third attempt once the key alone had been fixed.
+**Rejected.** Leaving the derivation first on the ground that `redeemReset` derives before it spends its token (S-DOS-2).
+**Reason.** That ordering in `redeemReset` is about the one-time token, not the rate bucket, and `redeemReset` declares no account bucket a derivation could precede. Sign-in spends its account token before anything else for the reason E-1196 gives, and the recovery-code reset is the same anonymous password attempt. The order is the same for an existing and a missing account, so the statements an unknown identifier runs still match a resolved one's (S-TIM-6), and the derivation still runs before the code is consumed.
+**Price.** A new password the policy refuses now spends an account token before it is refused with `password_unacceptable`, where it used to be refused for free. The test commit cited S-DOS-5 for the KDF assertion; S-DOS-5 is the per-address limiter before the semaphore, and the requirement the assertion proves is S-RATE-7 through T-RATE-7. Concerns `src/core/flows/reset.ts`.
+
+<a id="e-2120"></a>
+
+### A sign-in removes the session the browser presented, whoever owns it
+`E-2120` · signin-replaces-session · session lifecycle, frozen
+
+**Context.** The requirement audit found that S-FIX-1 and S-FIX-3 held for three of the eight `TRUST_LEVEL_EVENTS` and not for the other five. Password change, password reset and identity linking already removed the previous row. Password sign-in, passkey sign-in and the three second-factor completions only inserted, and so did the magic link and the provider sign-in, which S-FIX-1 covers as sign-ins although the constant does not name them. A browser that signed in while it still carried a cookie T1 got T2 and kept T1's row: one row for `sha256(T1)` and `GET /session` with T1 answered 200 with the session. `SessionService.reissue({ previousToken })` existed and no route called it. The documentation said a sign-in calls `issue` because "there is no session yet", which is true only for a browser without a cookie. `test/signin-replaces-session.test.ts` was written first and failed on those five events, on both extra sign-ins and on both foreign-cookie cases, each time with one row still standing for T1.
+**Rejected.** (a) Calling the existing `reissue` from the sign-in routes. It refuses when the previous row is missing (E-239) and when it belongs to another user (`SessionOwnerMismatchError`), and a sign-in has to succeed with a stale cookie, an expired one or one of another account. (b) Deleting the presented row in a statement of its own before or after the insert. S-FIX-1 asks for one transaction, and two statements leave a moment with two live rows or with none. (c) Keeping a presented row of another account standing. The answer writes T2 into the same cookie, so that browser loses T1 either way, and a row nobody holds any more stays valid until its deadlines run out. (d) Doing the same for identity linking when the callback carries a cookie other than the session the link began in. Linking already replaces that session by its id (E-588) and passes T-FIX-1 and T-FIX-3. Adding a second removal there was outside what the audit found.
+**Reason.** A new repository method, `replacePresentedSession`, deletes the presented row by its token hash, if a token was presented, and inserts the new row in one transaction. `SessionService.issueReplacingPresented` hashes `RequestContext.sessionToken` and calls it. Every sign-in route now goes through it: password, passkey, magic link, provider sign-in, the second-factor completion (through a new `presentedSessionToken` on `SecondFactorCompletion.complete`) and password reset. Removing the row whatever account owns it is the decision this entry exists to record. The `DELETE` is the owner-free one signing out already uses, whose predicate is the secret itself (S-OWNER-2), so holding the cookie is the same authority to end it as signing out is. The transaction writes one user-owned table only, so no account lock is taken (CLAUDE.md §7). In a reset and a second-factor completion it runs inside a transaction that already has its lock or its consumed row first, and nothing in it comes before those.
+**Price.** `SessionService` and `SecondFactorCompletion` both gain a member, and the shipped declarations were re-recorded. The provider callback sees a session cookie only when the browser sends one. A provider answering by `form_post` arrives as a cross-site POST, which a `lax` cookie does not travel with, so there the presented row stays standing as it did before this change. Identity linking with a callback cookie different from the link's own session leaves that other row standing, per (d).
+
+<a id="e-2121"></a>
+
+### A sign-up does not remove the session the browser presented
+`E-2121` · signin-replaces-session · sign-up, deliberate gap
+
+**Context.** Sign-up also writes `__Host-velve_session`, so a browser that signs up while carrying a cookie overwrites it and leaves the old row standing, exactly the defect E-2120 removes from the sign-ins. Sign-up is not one of the `TRUST_LEVEL_EVENTS` and S-FIX-1 does not name it.
+**Rejected.** Calling `issueReplacingPresented` from sign-up as well.
+**Reason.** A sign-up with an address that is already taken runs the same registration and then rolls it back (E-627), so that both cases answer alike. The removal of the presented row would be rolled back with it. Afterwards the old cookie would still work for a taken address and not for a new one, and that difference tells a caller whether the address has an account (S-ENUM-3).
+**Price.** A browser that signs up while signed in keeps one orphaned live row until its idle or absolute deadline. Removing it would need a removal outside the rolled-back transaction on both paths, and that is a change to the sign-up flow this branch does not own.
+
+<a id="e-2122"></a>
+
+### Replacing a presented session does not announce a revocation to plugins
+`E-2122` · signin-replaces-session · plugin hooks, revisit if a plugin needs it
+
+**Context.** Signing out calls `beforeSessionRevoke` with reason `sign_out` before the row goes. A sign-in that now removes the presented row removes a session too.
+**Rejected.** Calling `beforeSessionRevoke` for the replaced row. No `RevokeReason` fits a replacement, and borrowing `sign_out` would tell a plugin the user signed out when they signed in.
+**Reason.** A fitting reason means a new member of `RevokeReason`, which is part of the plugin interface. The requirement this branch fixes is about the row, not about the hook. A hook that could veto the removal would also have to be able to veto the sign-in, and nothing decides that today.
+**Price.** A plugin that counts or mirrors revocations does not see these rows go. Only the provider path announces the new session through `beforeSessionCreate`, so a plugin cannot work this out from the creation hooks either.
+
 <a id="e-2150"></a>
 
 ### The pipeline starts deferred work in a macrotask once the answer is handed back
