@@ -118,7 +118,7 @@ WITH RECURSIVE belonging(classid, objid) AS (
   SELECT 'pg_class'::regclass, child.oid
   FROM pg_class child
   JOIN pg_namespace namespace_ ON namespace_.oid = child.relnamespace
-  WHERE namespace_.nspname = $1 AND child.relname = ANY(string_to_array($2, ','))
+  WHERE namespace_.nspname = $1 AND child.relname = ANY($2::text[])
     AND child.relkind IN ('r', 'p')
   UNION
   SELECT depend.classid, depend.objid
@@ -415,6 +415,11 @@ async function readSchemaObjects(tx: Driver, schema: string): Promise<SchemaObje
 	);
 }
 
+//every element is quoted so a comma or a brace inside a name cannot split it into two (E-2480)
+function asTextArrayLiteral(values: readonly string[]): string {
+	return `{${values.map((value) => `"${value.replace(/[\\"]/g, "\\$&")}"`).join(",")}}`;
+}
+
 async function readObjectsOfTheDeclaredTables(
 	tx: Driver,
 	schema: string,
@@ -425,7 +430,7 @@ async function readObjectsOfTheDeclaredTables(
 	}
 	const rows = await tx.query<BelongingRow>(OBJECTS_OF_THE_DECLARED_TABLES, [
 		schema,
-		declared.join(","),
+		asTextArrayLiteral(declared),
 	]);
 	return new Set(rows.map((row) => objectKey(row.catalogue, Number(row.object_id))));
 }
