@@ -39,17 +39,20 @@ describe("the state pointer is the third enumerated cookie (S-COOKIE-6, 3.10)", 
 
 		expect(written).toHaveLength(1);
 		expect(() => {
-			assertCookieNamesAreEnumerated(written);
+			assertCookieNamesAreEnumerated(written, DEFAULT_COOKIE_NAMES);
 		}).not.toThrow();
 		expect(() => {
-			assertCookieNamesAreEnumerated([
-				{
-					name: "__Host-velve_unknown",
-					value: "x",
-					maximumAgeInSeconds: 60,
-					attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
-				},
-			]);
+			assertCookieNamesAreEnumerated(
+				[
+					{
+						name: "__Host-velve_unknown",
+						value: "x",
+						maximumAgeInSeconds: 60,
+						attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+					},
+				],
+				DEFAULT_COOKIE_NAMES,
+			);
 		}).toThrow();
 	});
 

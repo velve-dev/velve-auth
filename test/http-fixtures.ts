@@ -200,6 +200,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 		origins: options.origins ?? [ALLOWED_ORIGIN],
 		trustedProxies: options.trustedProxies ?? [],
 		cookieSameSite: "lax",
+		sessionCookieName: "__Host-velve_session",
 		sessionCookieMaximumAgeInSeconds: 2_592_000,
 		freshnessWindowInSeconds: 900,
 		callers: {

@@ -1,4 +1,8 @@
-import type { CookieSameSite, HostPrefixedCookieName } from "../http/cookies.js";
+import {
+	type CookieSameSite,
+	DEFAULT_COOKIE_NAMES,
+	type HostPrefixedCookieName,
+} from "../http/cookies.js";
 import { type Duration, durationInMilliseconds } from "./duration.js";
 
 export interface SessionConfig {
@@ -71,6 +75,15 @@ function assertCookieName(cookieName: HostPrefixedCookieName): HostPrefixedCooki
 	if (!COOKIE_NAME.test(cookieName)) {
 		throw new InvalidSessionConfigError(
 			`session.cookieName must be __Host- followed by letters, digits, "-" or "_", not "${cookieName}"`,
+		);
+	}
+	//a session cookie sharing a name with the pending or the state cookie would be read as either (S-COOKIE-6)
+	if (
+		cookieName === DEFAULT_COOKIE_NAMES.pending ||
+		cookieName === DEFAULT_COOKIE_NAMES.oauthState
+	) {
+		throw new InvalidSessionConfigError(
+			`session.cookieName must not be ${DEFAULT_COOKIE_NAMES.pending} or ${DEFAULT_COOKIE_NAMES.oauthState}, which the library sets itself`,
 		);
 	}
 	return cookieName;
