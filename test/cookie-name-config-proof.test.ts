@@ -1,74 +1,200 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { toWebHandler } from "../src/core/http/web-handler.js";
-import { createVelveAuth } from "../src/index.js";
-import { configFor } from "./auth-fixtures.js";
-import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
-import type { TestConnection } from "./db-postgres-connection.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+	assertCookieNamesAreEnumerated,
+	DEFAULT_COOKIE_NAMES,
+	type HostPrefixedCookieName,
+} from "../src/core/http/cookies.js";
+import { VelveError } from "../src/core/http/error-map.js";
+import { InvalidSessionConfigError, sessionSettingsOf } from "../src/core/session/config.js";
+import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { dropSchema } from "./db-fixtures.js";
 import { postTo } from "./flows-fixtures.js";
 import { PROOF_PASSWORD, parseSetCookie } from "./proof-fixtures.js";
 
-const opened: { connection: TestConnection; schema: string }[] = [];
+const CONFIGURED_NAME: HostPrefixedCookieName = "__Host-application_session";
 
-afterEach(async () => {
-	for (const { connection, schema } of opened.splice(0)) {
-		await dropSchema(connection, schema);
-		await connection.close();
+let mounted: MountedAuth;
+let sessionToken: string;
+let signUpCookies: readonly string[];
+
+beforeAll(async () => {
+	mounted = await mountAuth("cookiename", { session: { cookieName: CONFIGURED_NAME } });
+	const answer = await mounted.handler(
+		postTo("/sign-up", { email: "named@example.com", password: PROOF_PASSWORD }),
+	);
+	if (answer.status !== 200) {
+		throw new Error(`the sign-up answered ${answer.status}`);
 	}
+	signUpCookies = answer.headers.getSetCookie();
+	sessionToken = parseSetCookie(signUpCookies[0] ?? "").value;
 });
 
-const CONFIGURED_NAME = "__Host-application_session";
+afterAll(async () => {
+	await dropSchema(mounted.connection, mounted.schema);
+	await mounted.connection.close();
+});
+
+function readSession(cookie: string): Promise<Response> {
+	return mounted.handler(requestTo("/session", { method: "GET", cookie }));
+}
 
 /**
- * Architecture 3.15 A.5 and the session chapter of DOCUMENTATION.md offer `session.cookieName`
- * as the session cookie's name and validate it at start, while S-COOKIE-1 fixes the name to
- * `__Host-velve_session` and the writer and the reader both use that constant. An option that is
- * checked and then ignored is the worst of the three shapes, so this asks for either of the other
- * two: the name is honoured, or the option is refused at start.
+ * Architecture 3.15 A.5 offers `session.cookieName`, and S-COOKIE-1 names the session cookie
+ * `__Host-velve_session` by default or the configured name. Until E-2550 the option was
+ * validated at start and then ignored; these cases hold it to being honoured, through the
+ * mounted handler, on writing and on reading.
  */
-describe("session.cookieName is honoured or refused, never ignored", () => {
-	//the configured name is validated and then ignored until the owner settles it against 3.15 A.5 (S-COOKIE-1)
-	it.fails("writes the configured name, or refuses to start with it", async () => {
-		const { connection, schema } = await openMigratedSchema("cookiename");
-		opened.push({ connection, schema });
-		let started: ReturnType<typeof createVelveAuth> | null = null;
-		try {
-			started = createVelveAuth(
-				configFor({
-					database: connection,
-					schema,
-					session: { cookieName: CONFIGURED_NAME },
-				}),
-			);
-		} catch {
-			started = null;
-		}
-		if (started === null) {
-			return;
-		}
+describe("session.cookieName is the name written and read (S-COOKIE-1)", () => {
+	/** T-COOKIE-1 under a configured name: the name exactly, the attribute set exactly. */
+	it("writes the configured name, and only it, with the fixed attribute set", () => {
+		const cookies = signUpCookies.map(parseSetCookie);
 
-		const answer = await toWebHandler(started)(
-			postTo("/sign-up", { email: "named@example.com", password: PROOF_PASSWORD }),
-		);
-		const names = answer.headers.getSetCookie().map((header) => parseSetCookie(header).name);
-
-		expect(answer.status).toBe(200);
-		expect(names).toStrictEqual([CONFIGURED_NAME]);
+		expect(cookies.map((cookie) => cookie.name)).toStrictEqual([CONFIGURED_NAME]);
+		expect(
+			cookies[0]?.attributes.filter((attribute) => !attribute.startsWith("Max-Age=")),
+		).toStrictEqual(["HttpOnly", "Secure", "SameSite=Lax", "Path=/"]);
+		expect(sessionToken).not.toBe("");
 	});
 
-	/** What the case above fails on, pinned so that it cannot fail for a reason nobody reported. */
-	it("starts with the configured name today and writes the fixed one instead", async () => {
-		const { connection, schema } = await openMigratedSchema("cookiename");
-		opened.push({ connection, schema });
-		const auth = createVelveAuth(
-			configFor({ database: connection, schema, session: { cookieName: CONFIGURED_NAME } }),
-		);
+	it("resolves the session from a cookie of the configured name", async () => {
+		const answer = await readSession(`${CONFIGURED_NAME}=${sessionToken}`);
+		const body = (await answer.json()) as { session?: unknown } | null;
 
-		const answer = await toWebHandler(auth)(
-			postTo("/sign-up", { email: "ignored@example.com", password: PROOF_PASSWORD }),
-		);
-		const names = answer.headers.getSetCookie().map((header) => parseSetCookie(header).name);
+		expect(answer.status).toBe(200);
+		expect(body?.session).toBeDefined();
+	});
 
-		expect([answer.status, names]).toStrictEqual([200, [DEFAULT_COOKIE_NAMES.session]]);
+	it("ignores the default name once another one is configured", async () => {
+		const underDefault = await readSession(`${DEFAULT_COOKIE_NAMES.session}=${sessionToken}`);
+		const withoutCookie = await mounted.handler(requestTo("/session", { method: "GET" }));
+
+		expect(withoutCookie.status).toBe(200);
+		expect([underDefault.status, await underDefault.text()]).toStrictEqual([
+			withoutCookie.status,
+			await withoutCookie.text(),
+		]);
+	});
+
+	/** T-COOKIE-5 under a configured name: both orders, and among unrelated cookies. */
+	it("rejects a request that carries the configured name twice (S-COOKIE-5)", async () => {
+		for (const cookie of [
+			`${CONFIGURED_NAME}=A; ${CONFIGURED_NAME}=${sessionToken}`,
+			`${CONFIGURED_NAME}=${sessionToken}; ${CONFIGURED_NAME}=A`,
+			`theme=dark; ${CONFIGURED_NAME}=${sessionToken}; other=1; ${CONFIGURED_NAME}=A`,
+		]) {
+			const answer = await readSession(cookie);
+			const body = await answer.text();
+			expect([cookie, answer.status, body.includes('"session"')]).toStrictEqual([
+				cookie,
+				400,
+				false,
+			]);
+		}
+	});
+
+	it("clears the configured name on sign-out", async () => {
+		const answer = await mounted.handler(
+			requestTo("/sign-out", { cookie: `${CONFIGURED_NAME}=${sessionToken}`, body: {} }),
+		);
+		const cookies = answer.headers.getSetCookie().map(parseSetCookie);
+
+		expect(answer.status).toBe(204);
+		expect(cookies.map((cookie) => [cookie.name, cookie.value])).toStrictEqual([
+			[CONFIGURED_NAME, ""],
+		]);
+	});
+});
+
+describe("the enumerated set follows the configured name (S-COOKIE-6)", () => {
+	const configured = { ...DEFAULT_COOKIE_NAMES, session: CONFIGURED_NAME };
+
+	function instructionNamed(name: HostPrefixedCookieName) {
+		return {
+			name,
+			value: "token",
+			maximumAgeInSeconds: 60,
+			attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+		} as const;
+	}
+
+	it("accepts the configured session name with the fixed pending and state names", () => {
+		expect(() =>
+			assertCookieNamesAreEnumerated(
+				[CONFIGURED_NAME, configured.pending, configured.oauthState].map(instructionNamed),
+				configured,
+			),
+		).not.toThrow();
+	});
+
+	it("refuses the default session name once another one is configured", () => {
+		expect(() =>
+			assertCookieNamesAreEnumerated([instructionNamed(DEFAULT_COOKIE_NAMES.session)], configured),
+		).toThrow(new VelveError("internal_error"));
+	});
+});
+
+describe("the configured name is checked at start", () => {
+	it("refuses a name the pending or the state cookie already carries", () => {
+		for (const cookieName of [DEFAULT_COOKIE_NAMES.pending, DEFAULT_COOKIE_NAMES.oauthState]) {
+			expect(() => sessionSettingsOf({ cookieName })).toThrow(InvalidSessionConfigError);
+		}
+	});
+
+	it("still refuses a name without the __Host- prefix", () => {
+		expect(() =>
+			sessionSettingsOf({ cookieName: "application_session" as HostPrefixedCookieName }),
+		).toThrow(InvalidSessionConfigError);
+	});
+
+	it("refuses every name that would carry an attribute, a separator or a non-token character", () => {
+		const refused = [
+			"__Host-a;Domain=evil.example",
+			"__Host-a; Domain=evil.example",
+			"__Host-a=b",
+			"__Host-a b",
+			"__Host-a\t",
+			"__Host-a\n",
+			"__Host-a\r\nX-Injected: 1",
+			"__Host-a,b",
+			"__Host-a/b",
+			"__Host-a\u0000",
+			"__Host-ä",
+			" __Host-a",
+			"__Host-",
+			"__host-a",
+			"__HOST-a",
+		];
+		const accepted = refused.filter((cookieName) => {
+			try {
+				sessionSettingsOf({ cookieName: cookieName as HostPrefixedCookieName });
+				return true;
+			} catch (error) {
+				return !(error instanceof InvalidSessionConfigError);
+			}
+		});
+
+		expect(accepted).toStrictEqual([]);
+	});
+
+	/**
+	 * The prefix test reads a non-string through `toString`, and `serializeCookie` reads it again
+	 * when it interpolates the name, so an object answering differently the second time puts a
+	 * `Domain` attribute into the header (S-COOKIE-2); a `String` object is written but never read.
+	 */
+	it("refuses a cookieName that is not a string", () => {
+		let reads = 0;
+		const changingName = {
+			toString: () => {
+				reads += 1;
+				return reads === 1 ? "__Host-a" : "__Host-a; Domain=evil.example";
+			},
+		};
+		const boxedName = Object("__Host-application_session") as object;
+
+		for (const cookieName of [changingName, boxedName]) {
+			expect(() => sessionSettingsOf({ cookieName: cookieName as never })).toThrow(
+				InvalidSessionConfigError,
+			);
+		}
 	});
 });

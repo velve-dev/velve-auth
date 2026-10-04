@@ -74,14 +74,17 @@ describe("cookies", () => {
 
 	it("refuses to set a cookie that is not enumerated", () => {
 		expect(() =>
-			assertCookieNamesAreEnumerated([
-				{
-					name: "__Host-velve_extra",
-					value: "x",
-					maximumAgeInSeconds: 60,
-					attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
-				},
-			]),
+			assertCookieNamesAreEnumerated(
+				[
+					{
+						name: "__Host-velve_extra",
+						value: "x",
+						maximumAgeInSeconds: 60,
+						attributes: "HttpOnly; Secure; SameSite=Lax; Path=/",
+					},
+				],
+				DEFAULT_COOKIE_NAMES,
+			),
 		).toThrow(VelveError);
 	});
 
@@ -96,7 +99,7 @@ describe("cookies", () => {
 		).toThrow(VelveError);
 	});
 
-	it("writes the enumerated name even when the policy carries another one", () => {
+	it("refuses to write a policy name that carries an attribute of its own", () => {
 		const collector = createCookieCollector({
 			...POLICY,
 			names: {
@@ -107,8 +110,18 @@ describe("cookies", () => {
 		});
 		collector.setSession("token-value");
 
+		expect(() => collector.collect().map(serializeCookie)).toThrow(VelveError);
+	});
+
+	it("writes the session cookie under the name the policy carries", () => {
+		const collector = createCookieCollector({
+			...POLICY,
+			names: { ...DEFAULT_COOKIE_NAMES, session: "__Host-application_session" },
+		});
+		collector.setSession("token-value");
+
 		expect(collector.collect().map(serializeCookie)).toEqual([
-			"__Host-velve_session=token-value; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax; Path=/",
+			"__Host-application_session=token-value; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax; Path=/",
 		]);
 	});
 

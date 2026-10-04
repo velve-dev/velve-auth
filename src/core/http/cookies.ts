@@ -25,6 +25,10 @@ export const DEFAULT_COOKIE_NAMES: CookieNames = {
 	oauthState: "__Host-velve_oauth_state",
 };
 
+export function cookieNamesWithSession(sessionCookieName: HostPrefixedCookieName): CookieNames {
+	return { ...DEFAULT_COOKIE_NAMES, session: sessionCookieName };
+}
+
 const PENDING_COOKIE_MAXIMUM_AGE_IN_SECONDS = 300;
 
 //the state cookie must outlive the flow row it points at, never the other way round
@@ -38,7 +42,6 @@ export interface CookieInstruction {
 }
 
 export interface CookiePolicy {
-	//only reading may use other names, the names written stay the defaults (S-COOKIE-6)
 	readonly names: CookieNames;
 	readonly sameSite: CookieSameSite;
 	readonly sessionMaximumAgeInSeconds: number;
@@ -116,8 +119,11 @@ export function serializeCookie(instruction: CookieInstruction): string {
 	return `${name}=${value}; Max-Age=${maximumAgeInSeconds}; ${attributes}`;
 }
 
-export function assertCookieNamesAreEnumerated(instructions: readonly CookieInstruction[]): void {
-	const enumerated = new Set<string>(Object.values(DEFAULT_COOKIE_NAMES));
+export function assertCookieNamesAreEnumerated(
+	instructions: readonly CookieInstruction[],
+	names: CookieNames,
+): void {
+	const enumerated = new Set<string>(Object.values(names));
 	for (const instruction of instructions) {
 		if (!enumerated.has(instruction.name)) {
 			throw new VelveError("internal_error");
@@ -128,7 +134,7 @@ export function assertCookieNamesAreEnumerated(instructions: readonly CookieInst
 export function createCookieCollector(policy: CookiePolicy): CookieCollector {
 	const instructions = new Map<HostPrefixedCookieName, CookieInstruction>();
 	const chosen = cookieAttributesFor(policy.sameSite);
-	const written = DEFAULT_COOKIE_NAMES;
+	const written = policy.names;
 
 	function write(
 		name: HostPrefixedCookieName,
