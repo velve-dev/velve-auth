@@ -5827,7 +5827,7 @@ migration, and removing a plugin leaves its tables where they are.
 
 ### Start errors
 
-Fifteen configurations refuse the start with a `VelveStartupError` — thirteen
+Sixteen configurations refuse the start with a `VelveStartupError` — fourteen
 codes only a plugin can trip, and two more a plugin can trip and so can a core
 route. None of them is a warning, because each leaves a question with no answer:
 
@@ -5843,6 +5843,7 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
 | `plugin_route_without_address_rate_limit` | A plugin route's rule — after `rateLimitRules` has replaced it — has no usable `perIpAddress` bucket: `"none"`, no rule at all, or a `capacity` or `refillPerSecond` that is not a finite number of at least zero (S-DEFAULT-3). `perAccount: "none"` is allowed. |
 | `plugin_migration_table_not_prefixed` | A migration's `createsTables` names a table outside `<id>_`. |
+| `plugin_migration_table_not_an_identifier` | A migration's `createsTables` names a table that is not a plain identifier — lowercase letters, digits, `_` and `$`, starting with a letter or `_`, at most 63 bytes. A comma, a quote, a dot, whitespace or an uppercase letter is refused before the prefix is read (E-2481). |
 | `plugin_error_code_not_namespaced` | An `errorCodes` entry does not begin `<id>.` (S-DEFAULT-5). |
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
 | `plugin_rate_limit_rule_unmatched` | A `rateLimitRules` key names no route this plugin contributes. |
@@ -5943,6 +5944,18 @@ runs — read one predicate built from the core migrations. A plugin called `one
 does not own `velve.one_time_token`, one called `recovery` does not own
 `velve.recovery_code`, and a core table added later is covered by all three
 without any of them being edited.
+
+**A declared table name is a plain identifier.** Each entry of `createsTables`
+must match `^[a-z_][a-z0-9_$]*$` and fit PostgreSQL's 63 bytes, the same check a
+configured schema name passes, and a name that does not is the start error
+`plugin_migration_table_not_an_identifier`. The prefix rule alone accepts
+`demo_entry,session`, because it begins with `demo_`, and a name PostgreSQL would
+truncate or only reach quoted is not one the runner can read back as the table it
+spells. The runner hands the declared names to its catalogue query as one `text[]`
+parameter whose every element is quoted, so even a name that reached it some
+other way stays one name: before this, it joined them with commas and split them
+again in SQL, `demo_entry,session` became `demo_entry` and `session`, and every
+object depending on the core table `session` counted as the plugin's own (E-2480).
 
 #### What a plugin migration may do
 
