@@ -18,11 +18,6 @@ head, and that chapter is the only region of this file that feature writes into
 each stub and the stub is deleted by the writer who fills it, so it is stated
 here as well, where nothing removes it.
 
-Everything below is built and ships in `1.1.0`. The mounted route table
-serves all forty-seven addresses architecture 3.15 D.3 declares in the widest
-configuration, and a narrower configuration serves fewer because it declares
-fewer.
-
 ## Contents
 
 - [Package entry points](#package-entry-points)
@@ -964,9 +959,7 @@ refusals from a fault of the runtime underneath it.
 
 The HTTP layer turns a route declaration into a request handler. It is the only
 place that decides what a caller learns, which cookies exist, and which requests
-run at all.
-
-The HTTP layer is one function. It takes Web `Request` objects and returns Web
+run at all. It takes Web `Request` objects and returns Web
 `Response` objects, so it runs unchanged behind Node, Bun, Deno and any worker
 runtime.
 
@@ -4193,10 +4186,7 @@ its redemption, the confirmation link, the address change and both redemptions,
 the mailed password reset and its redemption, and the reset that spends a
 recovery code instead of an address.
 
-The library sends nothing itself. It calls `email.send` with one of six message
-kinds and the token, and the application builds the URL and delivers it — so no
-`redirectTo` from a request has to be validated against an allowlist, because
-none exists. A `send` that throws takes the artefact with it, and on sign-up the
+A `send` that throws takes the artefact with it, and on sign-up the
 account too; it runs after the transaction has committed, so a slow callback
 never holds a lock on the account it is about.
 
@@ -5166,19 +5156,12 @@ refuses to start on one that cannot be made safe — a root key shorter than 32
 bytes, an empty origin list, a username-only mode without recovery codes, a
 recovery-code count or group size that is not a positive whole number, Argon2
 parameters below the floor — and returns the route table, the server methods and
-the maintenance sweep. [`DOCUMENTATION.md`](./DOCUMENTATION.md) states, chapter
-by chapter, what each area has built; **this paragraph names none of them**,
-because a sentence about everybody's progress is a sentence everybody has to
-edit — the sentence that stood here was wrong within a wave of being written,
-and understated once the route table was complete.
+the maintenance sweep.
 
 Every security-relevant setting defaults to the safe value, and an installation
 that weakens one gets a line in its log at start naming the option. There is no
 option that switches off the origin check, the rate limiter, PKCE or the state
 check, and none that keeps other sessions alive across a password change.
-
-[`DOCUMENTATION.md`](./DOCUMENTATION.md) has the schema table by table and every
-option of both functions.
 
 ### `createVelveAuth(config)`
 
@@ -5619,9 +5602,7 @@ returning; it cannot replace the answer, because every one of them returns
 **A hook point only fires if an operation reaches it, and most of the operations
 are not built yet.** `beforeSessionRevoke` runs today, on sign-out, on all three
 revocation routes and on a revocation a plugin performs itself, before the rows
-go, so a hook that throws leaves the session standing. Which of the seven have a producer is a table in
-[`DOCUMENTATION.md`](./DOCUMENTATION.md) and is stated there and not here: a
-plugin can register a point nothing reaches, and it will not run.
+go, so a hook that throws leaves the session standing.
 
 The context a hook is given is frozen and carries no writing method on the user,
 the password, the TOTP secret or the recovery codes. A plugin's own SQL is
@@ -5629,8 +5610,7 @@ checked before it reaches the driver: a statement naming any core table, in any
 position the checker reads as code, is refused, and so is one it cannot read at
 all. It is a guardrail against the accident, not a sandbox — a plugin runs in
 your process and can reach your driver by other means, and a core table named
-inside a string literal the database later executes is not seen. The reference
-says exactly what it refuses, what it lets through and where that hole is.
+inside a string literal the database later executes is not seen.
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
 and on the direct server call alike; a plugin route cannot make itself a reader
@@ -5673,9 +5653,7 @@ owning it rather than being granted it is what makes the advice work, and names
 what a check reading three catalogue answers cannot rule out. Core migrations are unaffected, and
 the refusal happens after the core schema has applied and before any plugin
 migration has run, so nothing is left half-done. The refusal rolls the whole migration
-back. What the measurements still do not see — a table dropped in the same
-transaction, a comment, an empty schema left behind, a lock — is written down in
-the reference rather than glossed here. There is no rollback of an applied
+back. There is no rollback of an applied
 migration, and removing a plugin leaves its tables where they are.
 
 ### `VelvePlugin`
@@ -6376,28 +6354,6 @@ if (!answer.ok) {
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
 twenty-five.
-
-Built. `@velve/auth/client` is the browser half, derived from the same route
-declaration the server methods are. It is an ordinary nested object, not a proxy:
-`createVelveClient` walks the route table once and puts a function at each leaf
-that reads the method and the path from its own row. A call the table does not
-carry is a compile error, and in JavaScript a `TypeError` — never a request to a
-path that answers 404.
-
-```ts
-import { createVelveClient } from "@velve/auth/client";
-
-const client = createVelveClient({ baseURL: "/api/auth" });
-
-const answer = await client.signIn.magicLink.request({ email });
-if (!answer.ok) {
-  switch (answer.error.code) {
-    case "invalid_input": return show("That address does not look right.");
-    case "rate_limited":  return show(`Try again in ${answer.error.retryAfterSeconds}s.`);
-    case "origin_not_allowed": return show("This page is not allowed to sign you in.");
-  }
-}
-```
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
