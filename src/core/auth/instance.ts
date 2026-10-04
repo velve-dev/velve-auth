@@ -70,6 +70,7 @@ import {
 } from "./startup.js";
 import { assertNoStatedNameShadowsADerivedOne, nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
+import { operatorWarningSinkOf } from "./warning-sink.js";
 
 const DEFAULT_SCHEMA = "velve";
 const MILLISECONDS_IN_A_SECOND = 1000;
@@ -117,6 +118,8 @@ export interface AuthInternals {
 	close(): Promise<void>;
 	/** the HTTP environment `toWebHandler` reads from the instance */
 	readonly http: HttpEnvironment;
+	/** every option the start reported as weaker than its default, in the shape it was reported */
+	readonly weakenings: readonly ChosenWeakening[];
 }
 
 /** what each feature's own seam module contributes to the surface, joined into one type */
@@ -182,6 +185,7 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 	"migrate",
 	"close",
 	"http",
+	"weakenings",
 ];
 
 //a plugin taking a core namespace must be a start error, keyed by the route's name (E-780)
@@ -210,10 +214,11 @@ function reportedWeakenings<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	chosen: { readonly session: SessionSettings; readonly rateLimit: RateLimitConfig },
 ): readonly ChosenWeakening[] {
-	return weakeningsIn(config, {
+	const weakenings = weakeningsIn(config, {
 		session: { defaults: sessionSettingsOf(), chosen: chosen.session },
 		rateLimit: { defaults: rateLimitConfigOf(), chosen: chosen.rateLimit },
 	});
+	return Object.freeze(weakenings.map((weakening) => Object.freeze({ ...weakening })));
 }
 
 function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakening[]): void {
@@ -366,7 +371,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		log,
 	};
 
-	report(log, reportedWeakenings(config, { session: sessionSettings, rateLimit }));
+	const weakenings = reportedWeakenings(config, { session: sessionSettings, rateLimit });
+	report(operatorWarningSinkOf(config.log), weakenings);
 
 	const readSession = createServerMethod(read, environment);
 
@@ -377,6 +383,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		identityMode: identity.mode,
 		errorCodes: ERROR_CODES,
 		http: environment,
+		weakenings,
 
 		maintenance: { sweep: () => sweepExpiredRows({ driver, schema }) },
 

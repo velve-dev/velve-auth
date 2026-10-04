@@ -126,6 +126,7 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	},
 ];
 
+/** one option the start found weaker than its default, and the value that was chosen for it */
 export interface ChosenWeakening {
 	readonly option: OptionKey;
 	readonly chosen: string;

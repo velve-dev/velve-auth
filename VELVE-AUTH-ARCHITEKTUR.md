@@ -1979,6 +1979,7 @@ interface AuthInternals {
   readonly identityMode: IdentityMode
   readonly errorCodes: readonly VelveErrorCode[]
   readonly maintenance: { sweep(): Promise<SweepReport> }        // L-11, ohne HTTP-Route
+  readonly weakenings: readonly { option: string; chosen: string }[]   // S-DEFAULT-1
   migrate(): Promise<MigrationReport>
   close(): Promise<void>
 }

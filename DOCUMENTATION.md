@@ -5387,7 +5387,7 @@ compile (E-349).
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
-| `log` | `(level, message, fields?) => void` | a sink that drops everything | where the true reason of a refusal is written |
+| `log` | `(level, message, fields?) => void` | a sink that drops everything, except a weakening at start, which goes to `console.warn` | where the true reason of a refusal is written |
 
 There is no option that disables the origin check, the rate limiter, PKCE or the
 state check, and none that keeps the other sessions alive across a password
@@ -5399,12 +5399,14 @@ OAuth, plugin, session and identity options and the route a plugin declares, not
 only the assembly. A plugin route cannot declare itself free of the address
 bucket either; that is a start error, listed under Plugins.
 
-**`log` has no default sink.** The core may not write to `console`, so a library
-that ships one would have to break its own rule; the default therefore drops
-everything, and an installation that wants to see the true reason behind a
-refusal (S-ENUM-6) has to pass a sink. This is the one place in the reference
-where a default is *not* the safe choice made for you, and it is called out here
-because nothing else would tell you.
+**`log` has no default sink.** The default drops everything, and an installation
+that wants to see the true reason behind a refusal (S-ENUM-6) has to pass a
+sink. One kind of line is the exception: a weakening reported at start goes to
+`console.warn` when no `log` is configured, because an operator who weakened an
+option must hear about it without having configured anything (E-2671). Nothing
+else reaches the console. This is the one place in the reference where a
+default is *not* the safe choice made for you, and it is called out here because
+nothing else would tell you.
 
 ### What refuses to start
 
@@ -5423,7 +5425,7 @@ because nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the eighteen namespaces 3.15 B gives the instance |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the nineteen namespaces 3.15 B gives the instance |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
@@ -5447,7 +5449,7 @@ through the optional field rather than by branching on the code first.
 
 `claimed` is what the two sides both claimed, in the form the collision was
 found in: a route name (`session.list`), a folded method and path
-(`POST /sign-out`), or one of the eighteen surface namespaces of 3.15 B
+(`POST /sign-out`), or one of the nineteen surface namespaces of 3.15 B
 (`session`). `contributors` is the two of them, in a fixed order: the side that
 already held the claim first, and the side that arrived second. A plugin appears
 under its own `id`; the library appears as `THE_CORE`, which is exported beside
@@ -5489,6 +5491,18 @@ At start the assembly writes one `warn` line per weakened option, naming the
 option and the value chosen — never two lines for the same option, so the lines
 can be counted. An option left at its default produces nothing, and so does one
 written out at exactly its default or set stricter than it.
+
+The line goes to `log`. Without a configured `log` it goes to `console.warn`
+instead, prefixed `[@velve/auth]`, so a weakening is never silent (E-2671). The
+same weakenings stay on the instance as `auth.weakenings`, a frozen array of
+`{ option, chosen }` in the order they were reported, for a health check or a
+test to read:
+
+```ts
+if (auth.weakenings.length > 0) {
+  health.degrade("auth", auth.weakenings.map((weakening) => weakening.option))
+}
+```
 
 What counts as weaker, option by option:
 
@@ -5903,7 +5917,7 @@ route. None of them is a warning, because each leaves a question with no answer:
 | `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the eighteen namespaces 3.15 B gives the instance. Those eighteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the nineteen namespaces 3.15 B gives the instance. Those nineteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
