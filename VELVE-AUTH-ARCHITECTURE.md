@@ -1355,7 +1355,8 @@ Course of a password check:
 3. Switch on the prefix, call the verifier, compare the result in constant time.
 4. On failure: a uniform response, no hint as to the cause.
 5. On success: determine `needsRehash` — true if the scheme != the default **or**
-   the parameters lie below the current policy.
+   the parameters lie below the current policy **or** the memory parameter lies
+   above the configured one.
 6. If `needsRehash` is true, then after the response has been sent, a rehash happens in a bounded
    background task and is written by compare-and-swap:
    `UPDATE velve.password_credential SET phc = $neu, scheme = $s, key_version = $v,
@@ -1368,7 +1369,11 @@ Concurrency: Argon2id occupies 19 MiB per call. The core holds a
 **semaphore** over the concurrent KDF calls (default: `min(4, cpus)`),
 so that concurrent sign-ins do not multiply the memory. Waiters
 run into a wait limit of 5 seconds and are then rejected with `rate_limited`
-instead of running into a memory error (L-1).
+instead of running into a memory error (L-1). An imported hash may occupy up to
+the import ceiling for stored hashes per call (`m = 65536` KiB, 64 MiB) until
+the rehash of step 6 has moved it to the configured parameters at its first
+successful sign-in; the memory bound is therefore the semaphore size times the
+larger of the two values.
 
 A known limitation that gets documented: **bcrypt truncates at 72 bytes.**
 Imported bcrypt hashes check only the first 72 bytes. After the rehash to
@@ -4242,7 +4247,7 @@ The research report records: "**every single one** would have been prevented by 
 
 - **S-DOS-1:** The input length is checked before every KDF call: a password under 8 characters and a password over 4096 bytes are rejected without a KDF call taking place. *(Section 3.3, course, step 1: "before every KDF call"; section 3.16, L-7)*
 - **S-DOS-2:** The length check depends exclusively on the input and runs before the resolution of the user; a sign-in with a password that is too long or too short therefore delivers for an existing and a non-existing identifier byte-identically the same response in the same time and is no enumeration oracle. *(Section 3.16, L-1: "exactly one code path that performs the same work regardless of the outcome"; section 3.3 step 1)*
-- **S-DOS-3:** The number of KDF calls running simultaneously in the process is limited by a semaphore to `min(4, cpus)`; the occupied memory therefore does not exceed the product of semaphore size and KDF memory parameter, independently of the number of simultaneous requests. *(Section 3.3, concurrency paragraph)*
+- **S-DOS-3:** The number of KDF calls running simultaneously in the process is limited by a semaphore to `min(4, cpus)`; the occupied memory therefore does not exceed the product of semaphore size and the larger of the configured KDF memory parameter and the import ceiling for stored hashes (`m = 65536` KiB, 64 MiB), independently of the number of simultaneous requests. An imported hash is moved to the configured parameters at its first successful sign-in. *(Section 3.3, steps 5–6 and concurrency paragraph)*
 - **S-DOS-4:** A request that has not obtained a semaphore place after 5 seconds is rejected with `rate_limited`; the wait limit applies equally to existing and non-existing accounts, and waiting requests produce no out-of-memory error and no crash. *(Section 3.16, L-1, wait limit; section 3.3, concurrency paragraph)*
 - **S-DOS-5:** The rate limiting per IP prefix and route runs before the semaphore request, so that a flood is rejected before it occupies semaphore places. *(Section 3.11: "The origin check and the rate limiting always come first — for direct server calls too.")*
 - **S-DOS-6:** The rehash in the background occupies the same semaphore as the verification path; a sign-in wave after a parameter increase displaces no running sign-ins. *(Section 3.3, step 6 "in a bounded background task" and the concurrency paragraph)*
@@ -4588,7 +4593,7 @@ soften the first, so it is declined.
 |---|---|---|---|---|---|
 | T-DOS-1 | S-DOS-1 | Unit | A KDF spy counts calls. Inputs: empty password, 7 characters, 8 characters, 4096 bytes, 4097 bytes, 1 MiB. | **0 KDF calls** for empty, 7 characters, 4097 bytes and 1 MiB; **1 call** for 8 characters and for 4096 bytes | CI on every commit |
 | T-DOS-2 | S-DOS-2 | Integration | Sign in with a 1 MiB password against an existing and against a non-existent identifier; an instrumented driver counts queries; 200 measurements per group. | Responses **byte-for-byte identical**; **0 database queries and 0 KDF calls** in both cases; difference of the median times **< 5 ms** | CI nightly |
-| T-DOS-3 | S-DOS-3 | Concurrency | 200 simultaneous sign-ins; observe running KDF calls through a counter in the semaphore; measure memory via `process.memoryUsage().rss`. | Observed maximum of simultaneous KDF calls **≤ min(4, cpus)**; RSS growth **< min(4, cpus) × 19 MiB × 1.5** | CI nightly |
+| T-DOS-3 | S-DOS-3 | Concurrency | 200 simultaneous sign-ins, once with hashes at the configured parameters and once with imported hashes at the import ceiling; observe running KDF calls through a counter in the semaphore, count the memory parameter of every KDF call; measure memory via `process.memoryUsage().rss`; afterwards sign each imported account in a second time. | Observed maximum of simultaneous KDF calls **≤ min(4, cpus)**; memory parameter per KDF call **≤ 65536 KiB**; sum of the memory parameters of simultaneously running KDF calls **≤ min(4, cpus) × max(m, 64 MiB)**; RSS growth **< min(4, cpus) × max(m, 64 MiB) × 1.5**; at the second sign-in of each imported account **every** KDF call with the configured `m` | CI nightly |
 | T-DOS-4 | S-DOS-4 | Concurrency | 500 simultaneous sign-ins at semaphore size 1 and with an artificially slowed KDF. | **500/500 responses** with a valid status code; **0 crashes**, **0 unhandled rejections**; every response arrives within the wait limit of 5 s plus 500 ms tolerance, and every response after the wait limit carries `rate_limited` | CI nightly |
 | T-DOS-5 | S-DOS-5 | Integration | Set the rate limit to 5, send 100 requests from one IP, count with the KDF spy. | **At most 5 KDF calls** for 100 requests | CI on every commit |
 | T-DOS-6 | S-DOS-6 | Concurrency | 50 sign-ins with hashes in need of a rehash; observe the semaphore counter. | Maximum of simultaneous KDF calls (verification **and** rehash together) **≤ min(4, cpus)** | CI nightly |

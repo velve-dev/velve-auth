@@ -1353,7 +1353,8 @@ Ablauf einer Kennwortprüfung:
 3. Weiche nach Präfix, Verifier aufrufen, Ergebnis zeitkonstant vergleichen.
 4. Bei Misserfolg: einheitliche Antwort, kein Hinweis auf die Ursache.
 5. Bei Erfolg: `needsRehash` bestimmen — wahr, wenn Verfahren != Standard **oder**
-   Parameter unter der aktuellen Politik liegen.
+   Parameter unter der aktuellen Politik liegen **oder** der Speicherparameter
+   über dem konfigurierten liegt.
 6. Ist `needsRehash` wahr, wird nach dem Senden der Antwort in einer begrenzten
    Hintergrundaufgabe neu gehasht und per Vergleich-und-Tausch geschrieben:
    `UPDATE velve.password_credential SET phc = $neu, scheme = $s, key_version = $v,
@@ -1366,7 +1367,11 @@ Nebenläufigkeit: Argon2id belegt pro Aufruf 19 MiB. Der Kern hält einen
 **Semaphor** über die gleichzeitigen KDF-Aufrufe (Standard: `min(4, cpus)`),
 damit gleichzeitige Anmeldungen den Speicher nicht vervielfachen. Wartende
 laufen in eine Wartegrenze von 5 Sekunden und werden dann mit `rate_limited`
-abgelehnt, statt in einen Speicherfehler zu laufen (L-1).
+abgelehnt, statt in einen Speicherfehler zu laufen (L-1). Ein importierter Hash
+darf je Aufruf bis zur Importobergrenze für gespeicherte Hashes belegen
+(`m = 65536` KiB, 64 MiB), bis ihn der Rehash aus Schritt 6 bei der ersten
+erfolgreichen Anmeldung auf die konfigurierten Parameter überführt hat; die
+Speichergrenze ist deshalb Semaphorgröße mal dem größeren der beiden Werte.
 
 Bekannte Einschränkung, die dokumentiert wird: **bcrypt schneidet bei 72 Byte ab.**
 Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte. Nach dem Rehash auf
@@ -4243,7 +4248,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 - **S-DOS-1:** Die Eingabelänge wird vor jedem KDF-Aufruf geprüft: ein Kennwort unter 8 Zeichen und ein Kennwort über 4096 Byte werden abgelehnt, ohne dass ein KDF-Aufruf stattfindet. *(Abschnitt 3.3, Ablauf, Schritt 1: „vor jedem KDF-Aufruf"; Abschnitt 3.16, L-7)*
 - **S-DOS-2:** Die Längenprüfung hängt ausschließlich von der Eingabe ab und läuft vor der Auflösung des Nutzers; eine Anmeldung mit zu langem oder zu kurzem Kennwort liefert daher für eine existierende und eine nicht existierende Kennung byteweise dieselbe Antwort in derselben Zeit und ist kein Aufzählungsorakel. *(Abschnitt 3.16, L-1: „genau ein Codepfad, der unabhängig vom Ergebnis dieselbe Arbeit verrichtet"; Abschnitt 3.3 Schritt 1)*
-- **S-DOS-3:** Die Zahl gleichzeitig laufender KDF-Aufrufe im Prozess ist durch einen Semaphor auf `min(4, cpus)` begrenzt; der belegte Speicher überschreitet daher unabhängig von der Zahl gleichzeitiger Anfragen nicht das Produkt aus Semaphorgröße und KDF-Speicherparameter. *(Abschnitt 3.3, Nebenläufigkeitsabsatz)*
+- **S-DOS-3:** Die Zahl gleichzeitig laufender KDF-Aufrufe im Prozess ist durch einen Semaphor auf `min(4, cpus)` begrenzt; der belegte Speicher überschreitet daher unabhängig von der Zahl gleichzeitiger Anfragen nicht das Produkt aus Semaphorgröße und dem größeren von konfiguriertem KDF-Speicherparameter und Importobergrenze für gespeicherte Hashes (`m = 65536` KiB, 64 MiB). Ein importierter Hash wird bei seiner ersten erfolgreichen Anmeldung auf die konfigurierten Parameter überführt. *(Abschnitt 3.3, Schritte 5–6 und Nebenläufigkeitsabsatz)*
 - **S-DOS-4:** Eine Anfrage, die nach 5 Sekunden keinen Semaphorplatz bekommen hat, wird mit `rate_limited` abgelehnt; die Wartegrenze gilt für existierende und nicht existierende Konten gleich, und wartende Anfragen erzeugen keinen Speicherfehler und keinen Absturz. *(Abschnitt 3.16, L-1, Wartegrenze; Abschnitt 3.3, Nebenläufigkeitsabsatz)*
 - **S-DOS-5:** Die Ratenbegrenzung je IP-Präfix und Route läuft vor der Semaphor-Anforderung, sodass eine Flut abgelehnt wird, bevor sie Semaphorplätze belegt. *(Abschnitt 3.11: „Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen.")*
 - **S-DOS-6:** Der Rehash im Hintergrund belegt denselben Semaphor wie der Prüfpfad; eine Anmeldewelle nach einer Parameteranhebung verdrängt keine laufenden Anmeldungen. *(Abschnitt 3.3, Schritt 6 „in einer begrenzten Hintergrundaufgabe" und Nebenläufigkeitsabsatz)*
@@ -4591,7 +4596,7 @@ wird nicht genommen.
 |---|---|---|---|---|---|
 | T-DOS-1 | S-DOS-1 | Unit | KDF-Spion zählt Aufrufe. Eingaben: leeres Kennwort, 7 Zeichen, 8 Zeichen, 4096 Byte, 4097 Byte, 1 MiB. | **0 KDF-Aufrufe** bei leer, 7 Zeichen, 4097 Byte und 1 MiB; **1 Aufruf** bei 8 Zeichen und bei 4096 Byte | CI bei jedem Commit |
 | T-DOS-2 | S-DOS-2 | Integration | Anmeldung mit 1-MiB-Kennwort gegen eine existierende und gegen eine nicht existierende Kennung; instrumentierter Treiber zählt Abfragen; 200 Messungen je Gruppe. | Antworten **byteweise identisch**; **0 Datenbankabfragen und 0 KDF-Aufrufe** in beiden Fällen; Differenz der Medianzeiten **< 5 ms** | CI nächtlich |
-| T-DOS-3 | S-DOS-3 | Nebenläufigkeit | 200 gleichzeitige Anmeldungen; laufende KDF-Aufrufe über einen Zähler im Semaphor beobachten; Speicher über `process.memoryUsage().rss` messen. | Beobachtetes Maximum gleichzeitiger KDF-Aufrufe **≤ min(4, cpus)**; RSS-Zuwachs **< min(4, cpus) × 19 MiB × 1,5** | CI nächtlich |
+| T-DOS-3 | S-DOS-3 | Nebenläufigkeit | 200 gleichzeitige Anmeldungen, einmal mit Hashes zu den konfigurierten Parametern und einmal mit importierten Hashes an der Importobergrenze; laufende KDF-Aufrufe über einen Zähler im Semaphor beobachten, den Speicherparameter jedes KDF-Aufrufs mitzählen; Speicher über `process.memoryUsage().rss` messen; danach jedes importierte Konto ein zweites Mal anmelden. | Beobachtetes Maximum gleichzeitiger KDF-Aufrufe **≤ min(4, cpus)**; Speicherparameter je KDF-Aufruf **≤ 65536 KiB**; Summe der Speicherparameter gleichzeitig laufender KDF-Aufrufe **≤ min(4, cpus) × max(m, 64 MiB)**; RSS-Zuwachs **< min(4, cpus) × max(m, 64 MiB) × 1,5**; bei der zweiten Anmeldung jedes importierten Kontos **jeder** KDF-Aufruf mit dem konfigurierten `m` | CI nächtlich |
 | T-DOS-4 | S-DOS-4 | Nebenläufigkeit | 500 gleichzeitige Anmeldungen bei Semaphorgröße 1 und künstlich verlangsamtem KDF. | **500/500 Antworten** mit gültigem Statuscode; **0 Abstürze**, **0 unbehandelte Ablehnungen**; jede Antwort trifft innerhalb der Wartegrenze von 5 s plus 500 ms Toleranz ein, und jede Antwort nach der Wartegrenze trägt `rate_limited` | CI nächtlich |
 | T-DOS-5 | S-DOS-5 | Integration | Ratenlimit auf 5 setzen, 100 Anfragen von einer IP senden, KDF-Spion zählen. | **Höchstens 5 KDF-Aufrufe** bei 100 Anfragen | CI bei jedem Commit |
 | T-DOS-6 | S-DOS-6 | Nebenläufigkeit | 50 Anmeldungen mit rehash-bedürftigen Hashes; Semaphorzähler beobachten. | Maximum gleichzeitiger KDF-Aufrufe (Prüfung **und** Rehash zusammen) **≤ min(4, cpus)** | CI nächtlich |
