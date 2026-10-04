@@ -18,13 +18,14 @@ const PASSWORD = drawTestPassword();
 
 let mounted: MountedAuth;
 let clock: TestClock;
+let provider: Awaited<ReturnType<typeof createStubProvider>>;
 
 /** Every route that answers with a fresh session, and the `Set-Cookie` lines it wrote. */
 const observed = new Map<string, readonly string[]>();
 
 beforeAll(async () => {
 	clock = createTestClock();
-	const provider = await createStubProvider({
+	provider = await createStubProvider({
 		claims: { sub: "fix-5-subject", email: "oauth@example.com", email_verified: true },
 	});
 	mounted = await mountAuth("fixcookie", {
@@ -294,6 +295,32 @@ async function walkEverySessionCreatingRoute(): Promise<void> {
 			),
 		),
 	);
+
+	const linking = await signUp("link@example.com");
+	provider.reportClaims({
+		sub: "fix-5-linked-subject",
+		email: "linked@elsewhere.example",
+		email_verified: true,
+	});
+	const linkStart = await mounted.handler(
+		postTo("/identity/link/start", { provider: "stubby" }, withSession(linking)),
+	);
+	expect(linkStart.status).toBe(200);
+	const link = (await linkStart.json()) as {
+		authorizationUrl: string;
+		stateCookie: { value: string };
+	};
+	const linkState = new URL(link.authorizationUrl).searchParams.get("state") ?? "";
+	const linked = await mounted.handler(
+		requestTo(
+			`/sign-in/oauth/callback/stubby?code=${codeCarrying(null)}&state=${encodeURIComponent(linkState)}`,
+			{
+				method: "GET",
+				cookie: `__Host-velve_oauth_state=${link.stateCookie.value}; ${SESSION_COOKIE}=${linking}`,
+			},
+		),
+	);
+	sessionOf("GET /sign-in/oauth/callback/:provider, linking an identity", linked);
 }
 
 describe("T-FIX-5 — every response that creates a session writes one cookie, one way (S-FIX-5)", () => {
@@ -316,6 +343,7 @@ describe("T-FIX-5 — every response that creates a session writes one cookie, o
 			"POST /sign-in/passkey/finish",
 			"POST /factor/webauthn/authenticate/finish",
 			"GET /sign-in/oauth/callback/:provider",
+			"GET /sign-in/oauth/callback/:provider, linking an identity",
 		]);
 	});
 
