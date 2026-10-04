@@ -66,6 +66,7 @@ export async function redeemMagicLink(
 		await confirmAddress({
 			transaction,
 			schema,
+			pluginRuntime: environment.services.pluginRuntime,
 			actor: resolved.actor,
 			confirmingSessionId,
 			newEmail: null,

@@ -6136,9 +6136,10 @@ returning; it cannot replace the answer, because every one of them returns
 **A hook point only fires if an operation reaches it, and most of the operations
 are not built yet.** `beforeSessionRevoke` runs today on every revocation a
 `RevokeReason` names — sign-out, the three revocation routes, a password change
-or first password set, both resets, an identity link, and a revocation a plugin
-performs itself — before the rows go, so a hook that throws leaves the session
-standing and, on a credential change, the credential unchanged.
+or first password set, both resets, an identity link, the first confirmation of
+an address that removes a password set in another session, and a revocation a
+plugin performs itself — before the rows go, so a hook that throws leaves the
+session standing and, on a credential change, the credential unchanged.
 
 The context a hook is given is frozen and carries no writing method on the user,
 the password, the TOTP secret or the recovery codes. A plugin's own SQL is
@@ -6749,6 +6750,7 @@ that revokes under a named reason announces:
 | `password_changed` | `password.change`, `password.set` | every session of the account, the caller's included | before the transaction opens |
 | `password_reset` | `password.redeemReset`, `password.redeemResetWithRecoveryCode` | every session of the account | inside the transaction, after the account row is locked |
 | `identity_linked` | the OAuth callback finishing a link | the one session the link began in, if the account still owns it | before the transaction opens |
+| `email_verified` | `signIn.magicLink.redeem`, `email.redeemVerification`, `email.redeemChange`, when it is the address's first confirmation and removes a password set in another session (S-LINK-4) | every session of the account | inside the transaction, after the account row is locked |
 
 **A refusal on a credential change refuses the change.** A hook that throws on
 `password_changed` stops the change before its transaction opens: the password,
@@ -6756,9 +6758,10 @@ every session and the cookie stay as they were, and the caller gets
 `500 internal_error`. On `password_reset` the throw rolls back the transaction
 the reset runs in, so the mailed token or the recovery code is not spent either
 and can be redeemed again. On `identity_linked` no identity is inserted and the
-session is not replaced. No outcome pairs a new password with the old sessions,
-so the hook is a veto and not a way to keep sessions — S-FIX-6 and S-DEFAULT-2
-hold (E-2580, E-2581).
+session is not replaced. On `email_verified` the throw rolls back the redemption:
+the token is not spent, the password stays and the address stays unconfirmed.
+No outcome pairs a new password with the old sessions, so the hook is a veto and
+not a way to keep sessions — S-FIX-6 and S-DEFAULT-2 hold (E-2580, E-2581).
 
 **A reset runs the hook inside its transaction and on its connection**, because
 a reset learns which account it is for only by redeeming its token or code
@@ -6796,10 +6799,13 @@ lock does not block a concurrent sign-in from inserting a session, so a session
 committed between the two is removed without being announced. It cannot be
 spared: S-FIX-6 requires every session of the account to go (E-2585).
 
+The first confirmation behind `email_verified` runs the hook the same way as a
+reset and for the same reason: it learns its account only by redeeming its token
+inside the transaction, so the hook gets the same lent context (E-2730).
+
 Revocations no reason names announce nothing: replacing the presented session on
-sign-in (E-2122), the re-issue on a change of trust level, the first address
-confirmation that removes a password it did not set (S-LINK-4), deleting a user,
-and the sweep of expired rows (E-2583).
+sign-in (E-2122), the re-issue on a change of trust level, deleting a user, and
+the sweep of expired rows (E-2583).
 
 The announcement and the deletion are **not one transaction**. A plugin is told
 about a revocation that a later failure could still prevent, and on
@@ -6853,11 +6859,12 @@ non-empty, and both written to the log on every call. A call whose actor is
 missing either field throws before it reaches the database.
 
 `reason` on `revokeSession` is a `RevokeReason`: `"sign_out"`,
-`"revoked_by_user"`, `"password_changed"`, `"password_reset"` or
-`"identity_linked"`. It is written to the log beside the actor **and announced**:
-`revokeSession` dispatches `beforeSessionRevoke` with the session, its owner and
-that reason, before the row goes, so a hook that throws leaves the session
-standing and the throw reaches the plugin that called `revokeSession`. E-766 left
+`"revoked_by_user"`, `"password_changed"`, `"password_reset"`,
+`"identity_linked"` or `"email_verified"`. It is written to the log beside the
+actor **and announced**: `revokeSession` dispatches `beforeSessionRevoke` with
+the session, its owner and that reason, before the row goes, so a hook that
+throws leaves the session standing and the throw reaches the plugin that called
+`revokeSession`. E-766 left
 this asymmetry open — a revocation a plugin performed was invisible to every
 other plugin while the same revocation over HTTP announced — and named a
 re-entry guard as the precondition for closing it.

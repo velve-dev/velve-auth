@@ -2790,7 +2790,7 @@ interface UserCreatedEvent    extends UserCreateEvent { readonly userId: string 
 interface SessionRevokeEvent  { readonly sessionId: string; readonly userId: string
                                 readonly reason: RevokeReason }
 type RevokeReason = "sign_out" | "revoked_by_user" | "password_changed"
-  | "password_reset" | "identity_linked"
+  | "password_reset" | "identity_linked" | "email_verified"
 
 interface FrozenContext {
   readonly clock: Clock; readonly identityMode: IdentityMode; readonly schema: string
@@ -2959,6 +2959,8 @@ That is the gap with an immediate attack consequence, and it is the same one Bet
 The attack: an attacker registers `opfer@example.com` with a password that he knows. He cannot verify the address. Later the victim signs in through a magic link — thereby proving control over the mailbox, and the account counts as verified. The password set by the attacker, however, remains valid.
 
 The rule: **if an email address is verified for the first time, and the existing password was set in a different session from the one that is verifying now, then the password sign-in is deleted and every existing session is revoked.** The rightful owner sets a password afterwards. Nothing is lost except an access that nobody ever proved.
+
+The library announces the revoked sessions to `beforeSessionRevoke` (3.15 G) with the reason `email_verified`, once per session and before any row goes. The announcement runs inside the redemption's transaction, because only there does the library learn which account is being verified; a hook that throws therefore refuses the whole verification, and the token, the password, the sessions and the unverified address stay as they were (E-2730).
 
 So that the question can be answered at all, `velve.password_credential` carries the column `set_by_session_id` (3.17). A foreign key to `velve.session` is absent: `ON DELETE CASCADE` would delete the credential as soon as the session that wrote it is revoked, and `ON DELETE SET NULL` would erase the answer at the exact moment this rule needs it, because the verifying flow revokes sessions. **NULL means unknown and is read as a different session** — an unrecorded provenance therefore costs the password and does not defeat the rule.
 

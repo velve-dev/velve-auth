@@ -2793,7 +2793,7 @@ interface UserCreatedEvent    extends UserCreateEvent { readonly userId: string 
 interface SessionRevokeEvent  { readonly sessionId: string; readonly userId: string
                                 readonly reason: RevokeReason }
 type RevokeReason = "sign_out" | "revoked_by_user" | "password_changed"
-  | "password_reset" | "identity_linked"
+  | "password_reset" | "identity_linked" | "email_verified"
 
 interface FrozenContext {
   readonly clock: Clock; readonly identityMode: IdentityMode; readonly schema: string
@@ -2962,6 +2962,8 @@ Das ist die Lücke mit unmittelbarer Angriffsfolge, und sie ist dieselbe, an der
 Der Angriff: Ein Angreifer registriert `opfer@example.com` mit einem Kennwort, das er kennt. Bestätigen kann er die Adresse nicht. Später meldet sich das Opfer über einen Magic Link an — es beweist damit Kontrolle über das Postfach, und das Konto gilt als bestätigt. Das vom Angreifer gesetzte Kennwort bleibt jedoch gültig.
 
 Die Regel: **Wird eine E-Mail-Adresse erstmals bestätigt, und wurde das vorhandene Kennwort in einer anderen Sitzung gesetzt als der, die jetzt bestätigt, dann wird die Kennwortanmeldung gelöscht und jede bestehende Sitzung widerrufen.** Der rechtmäßige Inhaber setzt danach ein Kennwort. Es geht nichts verloren außer einem Zugang, den nie jemand nachgewiesen hat.
+
+Die widerrufenen Sitzungen meldet die Bibliothek `beforeSessionRevoke` (3.15 G) mit dem Grund `email_verified`, je Sitzung einmal und bevor eine Zeile geht. Die Meldung läuft in der Transaktion der Einlösung, weil die Bibliothek erst dort erfährt, welches Konto bestätigt wird; ein Hook, der wirft, lehnt deshalb die ganze Bestätigung ab, und Token, Kennwort, Sitzungen und die unbestätigte Adresse bleiben, wie sie waren (E-2730).
 
 Damit die Frage überhaupt beantwortbar ist, trägt `velve.password_credential` die Spalte `set_by_session_id` (3.17). Ein Fremdschlüssel auf `velve.session` steht nicht dabei: `ON DELETE CASCADE` würde die Anmeldedaten löschen, sobald die eintragende Sitzung widerrufen wird, und `ON DELETE SET NULL` würde die Antwort genau in dem Moment löschen, in dem diese Regel sie braucht, denn der bestätigende Ablauf widerruft Sitzungen. **NULL heißt unbekannt und wird als eine andere Sitzung gelesen** — eine nicht aufgezeichnete Herkunft kostet also das Kennwort und hebelt die Regel nicht aus.
 

@@ -4,6 +4,8 @@ import { qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
 import { createSessionRepository } from "../db/repositories/session.js";
 import { ConcealedError } from "../http/error-map.js";
+import type { PluginRuntime } from "../plugin/registry.js";
+import { announceEachRevocation } from "../plugin/revocation.js";
 import { createPasswordProvenance } from "./credential.js";
 
 interface ConfirmationOutcome {
@@ -15,6 +17,7 @@ interface ConfirmationOutcome {
 interface AddressConfirmation {
 	readonly transaction: Driver;
 	readonly schema: string;
+	readonly pluginRuntime: PluginRuntime;
 	readonly actor: Actor;
 	readonly confirmingSessionId: string | null;
 	readonly newEmail: string | null;
@@ -73,10 +76,20 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 		return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount: 0 };
 	}
 
-	const revokedSessionCount = await createSessionRepository({
-		driver: input.transaction,
-		schema: input.schema,
-	}).deleteEverySessionOwnedBy({ actor: input.actor });
+	const sessionRows = createSessionRepository({ driver: input.transaction, schema: input.schema });
+	//a refusal must roll the redemption and the deleted password back with it (E-2730)
+	if (input.pluginRuntime.listensTo("beforeSessionRevoke")) {
+		await announceEachRevocation(
+			input.pluginRuntime,
+			{
+				userId: input.actor,
+				sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: input.actor }),
+				reason: "email_verified",
+			},
+			input.transaction,
+		);
+	}
+	const revokedSessionCount = await sessionRows.deleteEverySessionOwnedBy({ actor: input.actor });
 
 	return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount };
 }

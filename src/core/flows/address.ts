@@ -69,6 +69,7 @@ export async function redeemVerification(
 		await confirmAddress({
 			transaction,
 			schema,
+			pluginRuntime: environment.services.pluginRuntime,
 			actor: account.actor,
 			confirmingSessionId,
 			newEmail: null,
@@ -132,6 +133,7 @@ export async function redeemChange(
 		await confirmAddress({
 			transaction,
 			schema,
+			pluginRuntime: environment.services.pluginRuntime,
 			actor: account.actor,
 			confirmingSessionId,
 			newEmail: addressIn(redeemed.payload),

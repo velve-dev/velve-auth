@@ -2410,7 +2410,7 @@ import { VelveErrorCode } from "../http/error-map.mjs";
 import { RouteDeclaration } from "../http/route.mjs";
 
 //#region src/core/plugin/config.d.ts
-type RevokeReason = "identity_linked" | "password_changed" | "password_reset" | "revoked_by_user" | "sign_out";
+type RevokeReason = "email_verified" | "identity_linked" | "password_changed" | "password_reset" | "revoked_by_user" | "sign_out";
 interface SignInEvent {
   readonly ipAddress: string | null;
   readonly method: "magic_link" | "oauth" | "passkey" | "password";
