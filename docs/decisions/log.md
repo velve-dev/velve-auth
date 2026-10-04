@@ -13129,3 +13129,81 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The field now holds the `Actor` itself. A sign-in passes `linkTo: null`, and the census reads a union by its members that are not `null`, so `insertFlow` carries a proof in the one case where it writes an owner.
 
 **Price.** None found. `OAuthLinkStart` is not in the shipped declarations.
+
+<a id="e-2432"></a>
+
+### The census follows six more shapes, and a brand beside a bare id is no proof
+`E-2432` · owner-actor · T-OWNER-1, correction of E-2420
+
+**Context.** E-2420 said the census takes every exported function and every method of an object an exported factory returns. The review planted a violator in six shapes it did not follow — an `export { … }` list, a spread into the returned object, an exported class, an exported object constant, lower case SQL, and a table name taken from an imported constant — and one of them was already in the tree: `assertStoredKeyVersionsAreKnown` in `core/password/startup.ts` names its table through `PASSWORD_CREDENTIAL_TABLE` and was never counted. The review also asked for the decoy shape, a unit that takes an `Actor` and a bare user id beside it and uses the id.
+
+**Rejected.** Listing the six shapes as known blind spots instead of following them.
+
+**Reason.** Each of them is a way to write an ordinary repository, so a census that misses them reports zero for the wrong reason. The census now takes units from all six, reads SQL in any case, takes the literal text of a constant imported from another module, and counts a unit whose parameter, or a field of it, is a plain-string `userId` or `ownerId` as carrying no proof whatever brand stands beside it. The password key version check stands beside its factor counterpart under "maintenance or start-up".
+
+**Price.** An imported constant is followed only when its initializer is a literal; a table name computed in another module is still not seen. The decoy rule reads a parameter's name, so a bare id called anything else passes beside a brand. The exception list holds thirty-nine methods now, against thirty-seven when E-2420 was written, and the report of this branch's first round gave thirty-eight, which was wrong.
+
+<a id="e-2433"></a>
+
+### A password write without a proof cannot overwrite one
+`E-2433` · owner-actor · S-OWNER-1, correction of E-2428
+
+**Context.** E-2428 justified `writeForCreatedAccount` taking a bare user id by sign-up's transaction having created the account, and said the method's reach was held by its name. The review showed what that meant: it ran the same `ON CONFLICT … DO UPDATE` as `write`, so any caller with a user id could replace that account's password, and `writePasswordOfCreatedAccount` is exported from its module.
+
+**Rejected.** Keeping the upsert and checking for an existing row first.
+
+**Reason.** A read before the write is the preceding `SELECT` S-OWNER-2 rules out, with a window between the two. A plain `INSERT` without `ON CONFLICT` lets the primary key on `user_id` do it: an account that already has a credential makes the statement fail and nothing is written. Sign-up still issues one statement, and the cover registration of a taken address still inserts into a fresh account and rolls back (S-ENUM-3).
+
+**Price.** The refusal is the driver's unique-violation error, not a `CredentialWriteError`, so a caller that misuses the method learns of it as an internal error. The only caller cannot reach it.
+
+<a id="e-2434"></a>
+
+### The sign-in identity insert binds an account the sign-in decided
+`E-2434` · owner-actor · S-OWNER-1, correction of E-2425
+
+**Context.** E-2425 put `insertIdentityOfSignIn` into "provider subject" with `findIdentityBySubject` and `refreshIdentity`. Those two are addressed by `(provider, subject)`. The insert is not: it binds an account the sign-in created in the same transaction, or one the automatic linking rules joined for a trusted provider's verified address (E-558).
+
+**Rejected.** Splitting the method into one for a created account and one for a joined account.
+
+**Reason.** Both run the same statement from the same function, and the decision between them is made by `accountAnAutomaticLinkMayJoin` before the insert, not by the repository. The method gets a class of its own, "account a sign-in decided", and the code comment and the Repositories chapter say what it binds.
+
+**Price.** A joined account is one nobody in this request has proven to own; the automatic linking rules are what stand for that proof, and the class says so rather than borrowing the subject's.
+
+<a id="e-2435"></a>
+
+### The enrolment check answers a boolean and reads no secret
+`E-2435` · owner-actor · S-OWNER-1
+
+**Context.** The shipped `TotpService.isEnrolled({ userId })` read the whole credential through `findCredentialOf`, encrypted secret and key version included, to return whether it was confirmed. E-2427 listed `findCredentialOf` partly for that caller.
+
+**Rejected.** Changing `isEnrolled` to take an actor.
+
+**Reason.** It is in the shipped declarations. The repository gains `isConfirmedFor({ userId })`, an `EXISTS` over a confirmed row that returns no column of the credential, and `isEnrolled` calls it. It stands under "shipped surface"; `findCredentialOf` keeps the second factor alone.
+
+**Price.** One more method takes a bare user id, now one that can say only whether a confirmed TOTP exists for it.
+
+<a id="e-2436"></a>
+
+### Enrolment and removal claim their step with the actor they hold
+`E-2436` · owner-actor · S-OWNER-1
+
+**Context.** E-2424 recorded that `claimTimeStep` was called with a real actor from enrolment and removal and passed it as a string, because the second factor called it with a pending resolution's user id.
+
+**Rejected.** Typing the claim's owner as `Actor | PendingResolution`, as the WebAuthn repository does.
+
+**Reason.** The census reads a union by all its members, so the union would still count as no proof and would hide the enrolment and removal callers behind the pending one. `claimTimeStep` now takes the `Actor`, and the second factor claims through `claimTimeStepOfPending({ pending })`, under "pending resolution". The service's `claimOrReject` became `rejectAReplayedStep`, which takes the claim's result.
+
+**Price.** Two methods run one statement, and the three call sites each spell out the claim rather than calling one helper.
+
+<a id="e-2437"></a>
+
+### The plugin repositories take a user id because the specification gives them one
+`E-2437` · owner-actor · S-OWNER-1, correction of E-2427
+
+**Context.** E-2427 tagged the "shipped surface" class "left open" and said the plugin's view of sessions stays outside S-OWNER-1 until the shipped surface changes. For `listSessionsOfUser`, `findUserIdOfSession` and `deleteSessionById` that reads as a gap waiting for a fix.
+
+**Rejected.** Recording them as something a later branch should give an actor.
+
+**Reason.** Section 3.15 G specifies `listSessionsForUser` with a user id and `revokeSession` with a session id, and a plugin holds no session of the account it acts on, so there is no proof to pass. Those three methods are the specified shape, logged with the plugin's name (E-737), not an open item. What does remain open in E-2427 is `findCredentialOf`'s pending caller (E-2424) and the user repository's finders.
+
+**Price.** S-OWNER-1 as written in section 5 and section 3.15 G disagree on these three methods, and the class records the disagreement rather than resolving it in the specification.
