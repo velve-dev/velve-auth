@@ -2263,6 +2263,12 @@ session and only about one's own account.
 The intermediate state is not a session and is never found by `session.resolve`;
 `pending.resolve` names only the factors available for choosing, no user data. `cancel` is
 the cancel button; without it a half-finished attempt would remain valid for five minutes.
+`cancel` is the server method of the route `POST /pending/cancel` and is produced from its
+declaration like every other: beside `pendingToken` it takes the fields every server method
+produced from a route declaration takes in place of the request, `origin` and `ipAddress`
+among them, and passes the origin check and the per-address rate limit as the route does
+(3.11, S-CSRF-1). `resolve` and `resolveFromHeaders` only read and are, as B.9 says, not
+rate limited.
 
 ##### B.8 `auth.admin` does not exist
 

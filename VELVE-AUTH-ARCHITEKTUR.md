@@ -2266,6 +2266,12 @@ Sitzung und nur über das eigene Konto auftreten.
 Der Zwischenzustand ist keine Sitzung und wird von `session.resolve` nie gefunden;
 `pending.resolve` nennt nur die zur Wahl stehenden Faktoren, keine Nutzerdaten. `cancel` ist
 der Abbrechen-Knopf; ohne ihn bliebe ein halbfertiger Versuch fünf Minuten gültig.
+`cancel` ist die Servermethode der Route `POST /pending/cancel` und entsteht wie jede andere aus
+deren Deklaration: Sie nimmt neben `pendingToken` die Felder, die jede aus einer
+Routendeklaration erzeugte Servermethode an Stelle der Anfrage nimmt, darunter `origin` und
+`ipAddress`, und durchläuft Origin-Prüfung und Ratenbegrenzung je IP-Adresse wie die Route
+(3.11, S-CSRF-1). `resolve` und `resolveFromHeaders` lesen nur und sind, wie B.9 sagt, nicht
+ratenbegrenzt.
 
 ##### B.8 `auth.admin` existiert nicht
 

@@ -6084,7 +6084,7 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
 | `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
 | `auth.user` | `findById`, `findByEmail`, `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
-| `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
+| `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 
 Every method reached through a route takes the six call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
@@ -6092,6 +6092,20 @@ input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
 optional because a security field that may be omitted is omitted; the origin
 check runs on the direct server call exactly as it runs on the HTTP path
 (S-CSRF-1).
+
+`auth.pending.cancel` is one of them. It is the server method of
+`POST /pending/cancel`, built from that route's declaration, so it takes
+`pendingToken` and the call fields, is refused with `origin_not_allowed` for a
+foreign or a `null` origin, and counts against the route's per-address bucket
+under `ipAddress`:
+
+```ts
+await auth.pending.cancel({ pendingToken, origin: request.headers.get("Origin"), ipAddress });
+```
+
+Up to 1.1 it took `{ pendingToken }` alone and reached the pending row with
+neither check in front of it, which 3.11 does not allow (E-2830). A 1.1 caller
+that passes no `origin` no longer compiles, and at runtime is refused.
 
 #### Namespaces nobody writes by hand
 

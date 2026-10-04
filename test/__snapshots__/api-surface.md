@@ -524,7 +524,7 @@ interface PendingNamespace {
   resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
   cancel(input: {
     pendingToken: PendingToken;
-  }): Promise<void>;
+  } & ServerCallFields): Promise<void>;
 }
 /** what the application calls in its own process after its own authorization decision */
 interface UserNamespace {

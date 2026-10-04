@@ -97,7 +97,7 @@ export interface SessionNamespace {
 export interface PendingNamespace {
 	resolve(token: PendingToken): Promise<PendingAuthentication | null>;
 	resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
-	cancel(input: { pendingToken: PendingToken }): Promise<void>;
+	cancel(input: { pendingToken: PendingToken } & ServerCallFields): Promise<void>;
 }
 
 /** what the application calls in its own process after its own authorization decision */
@@ -381,6 +381,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);
 	const pendingTable = pendingRoutes(services);
+	const [, cancelPending] = pendingTable;
 	const usernameTable =
 		identity.mode === "email" ? null : usernameRoutes(services, identity.username);
 
@@ -504,7 +505,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 						? null
 						: ((await pending.resolve(toPendingToken(pendingToken)))?.pending ?? null);
 				}),
-			cancel: ({ pendingToken }) => pending.cancel({ token: pendingToken }),
+			//the direct call must meet the origin check and the bucket the route declares (E-2830)
+			cancel: createServerMethod(cancelPending, environment),
 		} satisfies PendingNamespace,
 
 		user: {
