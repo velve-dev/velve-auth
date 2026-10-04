@@ -9,7 +9,9 @@ import { mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures
 
 /**
  * 3.15 B.2, B.3 and B.7 name three methods the instance did not carry: the two `resolveFromHeaders`
- * and `user.findByUsername` (E-2832, E-2833).
+ * and `user.findByUsername`. B.3 also names `findByEmail` for the two modes with an address only,
+ * and the instance keeps it in mode `username` until the next major version (E-2832, E-2833,
+ * E-2834).
  */
 
 const FOREIGN_ORIGIN = "https://evil.example.com";
@@ -137,7 +139,7 @@ describe("user.findByUsername (3.15 B.3)", () => {
 	});
 });
 
-describe("user in mode username (3.15 B.3)", () => {
+describe("user in mode username (3.15 B.3, E-2834)", () => {
 	let connection: TestConnection;
 	let schema: string;
 	let auth: VelveAuth<"username">;

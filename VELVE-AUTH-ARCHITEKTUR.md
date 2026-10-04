@@ -2108,6 +2108,10 @@ machen wäre. `reason` wird nicht gespeichert (3.14 schließt ein Audit-Log aus)
 protokolliert, und zwingt den Aufrufer, den Grund am Aufrufort zu formulieren.
 `findByUsername` vergleicht über `username_key`, die Vergleichsform aus 3.4, und findet ein
 Konto auch dann, wenn sein Name den heute konfigurierten Regeln nicht mehr genügt.
+Abweichend von der Signatur oben bleibt `findByEmail` in Version 1 auch im Modus `username`
+erhalten und ist dort als veraltet markiert, weil Version 1.0 es in jedem Modus ausgeliefert hat
+und eine Entfernung innerhalb der Hauptversion Aufrufer bräche; die nächste Hauptversion entfernt
+es dort, wie die Signatur es vorsieht.
 
 **Kein `user.update`:** `velve.user` hat außer den Anmeldenamen keine veränderlichen Felder,
 und beide haben eigene Namensräume mit Bestätigungsabläufen; ein `user.update` wäre entweder

@@ -551,7 +551,13 @@ interface UserNamespaceWithUsernames extends UserNamespace {
     username: string;
   }): Promise<User | null>;
 }
-type UserNamespaceOf<M extends IdentityMode> = M extends "email" ? UserNamespace : UserNamespaceWithUsernames;
+interface UserNamespaceInUsernameMode extends UserNamespaceWithUsernames {
+  /** @deprecated mode `username` finds an account by `findByUsername`, and the next major version removes this here */
+  findByEmail(input: {
+    email: string;
+  }): Promise<User | null>;
+}
+type UserNamespaceOf<M extends IdentityMode> = M extends "email" ? UserNamespace : M extends "username" ? UserNamespaceInUsernameMode : UserNamespaceWithUsernames;
 interface UsernameNamespace {
   isAvailable(input: {
     username: string;

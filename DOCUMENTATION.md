@@ -6178,6 +6178,12 @@ It exists in `"username"` and `"username_email"` and is absent in `"email"`, on
 the type and on the object. `findByEmail` compares the address as given, with
 no normalisation.
 
+In `"username"`, 3.15 B.3 has no `findByEmail`, but 1.0 shipped it in every
+mode, so it stays there for the whole of version 1 and is marked `@deprecated`
+on the type of that mode; an editor strikes it through. An account in that mode
+can carry an address a provider reported, so the method can still find one. The
+next major version removes it from `"username"`. Use `findByUsername` there.
+
 `auth.pending.resolve` names only the factors still open and never any user
 data, and it mints no actor: the intermediate state is structurally unable to
 become a session.

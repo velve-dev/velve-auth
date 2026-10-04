@@ -114,9 +114,17 @@ interface UserNamespaceWithUsernames extends UserNamespace {
 	findByUsername(input: { username: string }): Promise<User | null>;
 }
 
+//removing the lookup by address in mode username would break a 1.x caller (E-2834)
+interface UserNamespaceInUsernameMode extends UserNamespaceWithUsernames {
+	/** @deprecated mode `username` finds an account by `findByUsername`, and the next major version removes this here */
+	findByEmail(input: { email: string }): Promise<User | null>;
+}
+
 type UserNamespaceOf<M extends IdentityMode> = M extends "email"
 	? UserNamespace
-	: UserNamespaceWithUsernames;
+	: M extends "username"
+		? UserNamespaceInUsernameMode
+		: UserNamespaceWithUsernames;
 
 export interface UsernameNamespace {
 	isAvailable(input: { username: string } & ServerCallFields): Promise<UsernameAvailabilityAnswer>;
