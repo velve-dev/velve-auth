@@ -105,21 +105,18 @@ function createFrozenRepositories(
 			actor: PluginActor;
 		}): Promise<void> => {
 			recorded(services.log, "revokeSession", assertActorIsNamed(input.actor), input.reason);
+			const userId = await services.sessions.findUserIdOfSession({ sessionId: input.sessionId });
+			if (userId === null) {
+				return;
+			}
 			//a revoke hook that throws must leave the session standing
 			if (revocation.listened) {
-				const userId = await services.sessions.findUserIdOfSession({
-					sessionId: input.sessionId,
-				});
-				if (userId === null) {
-					return;
-				}
-				await revocation.announce({
-					sessionId: input.sessionId,
-					userId,
-					reason: input.reason,
-				});
+				await revocation.announce({ sessionId: input.sessionId, userId, reason: input.reason });
 			}
-			await services.sessions.deleteSessionById({ sessionId: input.sessionId });
+			await services.sessions.deleteSessionById({
+				sessionId: input.sessionId,
+				ownerReadBefore: userId,
+			});
 		},
 	});
 }

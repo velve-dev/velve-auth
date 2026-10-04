@@ -206,7 +206,6 @@ const NAMED_EXCEPTIONS: readonly string[] = [
 	"core/auth/user.ts: S-OWNER-7, the caller is the application itself (B.3)",
 	"core/auth/user.ts: S-OWNER-7, the caller is the application itself (B.3)",
 	"core/db/repositories/session.ts: S-OWNER-2, the predicate is the secret itself",
-	"core/db/repositories/session.ts: S-OWNER-7, 3.15 G hands a plugin a session id and no owner to bind it to",
 	"core/db/repositories/token.ts: S-TOKEN-4",
 	"core/factor/pending/repository.ts: S-OWNER-2, E-242, the predicate is the secret itself",
 	"core/factor/pending/repository.ts: S-OWNER-2, E-242, the predicate is the secret itself",
@@ -650,14 +649,7 @@ describe("T-OWNER-2: no owner is read before a change that does not bind it (S-O
 		);
 	});
 
-	//the plugin revocation reads the owner and then deletes by id alone (S-OWNER-2)
-	it.fails("finds no function that reads an owner and then changes the row unbound", () => {
+	it("finds no function that reads an owner and then changes the row unbound", () => {
 		expect(readsOwnerBeforeAnUnboundChange(tree)).toStrictEqual([]);
-	});
-
-	it("finds exactly the plugin revocation, so the open finding is the one it names", () => {
-		expect(readsOwnerBeforeAnUnboundChange(tree)).toStrictEqual([
-			"core/plugin/context.ts: revokeSession [session]",
-		]);
 	});
 });
