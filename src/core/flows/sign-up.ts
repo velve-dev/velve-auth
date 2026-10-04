@@ -111,15 +111,12 @@ async function register(
 			username: columns.username,
 			userId: created.id,
 		});
-		const issued = await createSessionUnderHooks(
-			hooks,
-			{ userId: created.id, factors },
-			() =>
-				sessions.boundTo(transaction).issue({
-					userId: created.id,
-					factors,
-					observed: observedIn(context),
-				}),
+		const issued = await createSessionUnderHooks(hooks, { userId: created.id, factors }, () =>
+			sessions.boundTo(transaction).issue({
+				userId: created.id,
+				factors,
+				observed: observedIn(context),
+			}),
 		);
 		if (derived !== null) {
 			await writePasswordOfCreatedAccount(

@@ -567,8 +567,7 @@ function dispatcher(
 			runOnTheTransaction(transaction, (hooks) => hooks.beforeUserCreate, event, announcedOn),
 		afterUserCreate: (event) =>
 			runOnTheTransaction(transaction, (hooks) => hooks.afterUserCreate, event, announcedOn),
-		beforeSessionRevoke: (event, lent) =>
-			onThePool.beforeSessionRevoke(event, lent ?? transaction),
+		beforeSessionRevoke: (event, lent) => onThePool.beforeSessionRevoke(event, lent ?? transaction),
 	});
 
 	return { onThePool, onTheTransaction };
