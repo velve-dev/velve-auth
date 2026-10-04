@@ -122,12 +122,39 @@ function launderedIntoAProducer(node: ts.Node): string[] {
 	return laundered ? [`${node.expression.getText()}(… as …)`] : [];
 }
 
+function namesTheUserEntity(type: ts.TypeNode): boolean {
+	return /^(UserId|EntityId<\s*"user"\s*>)$/.test(type.getText());
+}
+
+//a user id is minted by a cast or by toEntityId, and an untyped toEntityId could be either (S-OWNER-7)
+function mintedUserIds(node: ts.Node): string[] {
+	if (
+		(ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) &&
+		namesTheUserEntity(node.type)
+	) {
+		return ["UserId"];
+	}
+	if (!ts.isCallExpression(node) || node.expression.getText() !== "toEntityId") {
+		return [];
+	}
+	const [entity] = node.typeArguments ?? [];
+	if (entity === undefined) {
+		return ["toEntityId(…) without an entity"];
+	}
+	return entity.getText() === '"user"' ? ["UserId"] : [];
+}
+
 function proofAssertionsIn(tree: SourceTree): Assertion[] {
 	const proofs = proofTypesOf(tree);
 	const found: Assertion[] = [];
 	for (const [file, text] of tree) {
 		everyNode(parsed(file, text), (node) => {
-			for (const proof of [...assertedProofs(node, proofs), ...launderedIntoAProducer(node)]) {
+			const minted = [
+				...assertedProofs(node, proofs),
+				...launderedIntoAProducer(node),
+				...mintedUserIds(node),
+			];
+			for (const proof of minted) {
 				found.push({ file, proof });
 			}
 		});
@@ -146,6 +173,11 @@ const MINTED_ONLY_IN: Readonly<Record<string, readonly string[]>> = {
 	StoredOneTimeToken: ["core/db/repositories/token.ts"],
 	ConsumedOAuthFlow: ["core/oauth/flow-repository.ts"],
 	ConsumedRecoveryCode: ["core/factor/recovery/repository.ts"],
+	UserId: [
+		"core/db/repositories/token.ts",
+		"core/factor/recovery/repository.ts",
+		"core/oauth/flow-repository.ts",
+	],
 };
 
 const EVERY_PROOF_TYPE = [
@@ -216,6 +248,31 @@ describe("T-OWNER-7: a proof of ownership is asserted only where it is produced 
 		],
 	])("catches a planted cast: %s", (_case, text, proof) => {
 		const file = "core/auth/planted.ts";
+
+		expect(outsideTheirModules(proofAssertionsIn(planted(tree, file, text)))).toStrictEqual([
+			{ file, proof },
+		]);
+	});
+
+	it.each([
+		[
+			"a handler converting a body field",
+			'export const u = toEntityId<"user">(input.userId);',
+			"UserId",
+		],
+		["a handler casting a body field", "export const u = input.userId as UserId;", "UserId"],
+		[
+			"a cast to the entity type itself",
+			'export const u = input.userId as EntityId<"user">;',
+			"UserId",
+		],
+		[
+			"a conversion that leaves the entity to inference",
+			"export const u: UserId = toEntityId(input.userId);",
+			"toEntityId(…) without an entity",
+		],
+	])("catches a planted user id: %s", (_case, text, proof) => {
+		const file = "core/auth/routes-planted.ts";
 
 		expect(outsideTheirModules(proofAssertionsIn(planted(tree, file, text)))).toStrictEqual([
 			{ file, proof },
