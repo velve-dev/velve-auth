@@ -29,11 +29,7 @@ export interface WidestMount {
 	close(): Promise<void>;
 }
 
-/**
- * Every row of 3.15 D.3 served against a real schema: mode `username_email` migrated with its own
- * CHECK, WebAuthn, TOTP, recovery codes and one stub provider. The rate limits are lifted so a
- * sweep over the table measures the routes rather than the buckets.
- */
+/** every row of 3.15 D.3 served against a schema migrated in username_email, with the rate limits lifted */
 export async function mountWidest(
 	prefix: string,
 	overrides: Partial<VelveAuthConfig<"username_email">> = {},
@@ -107,7 +103,7 @@ export function plainGet(path: string, cookie?: string): Request {
 	});
 }
 
-/** A fresh account with a password and the session its sign-up issued. */
+/** a fresh account with a password and the session its sign-up issued */
 export async function signUpOn(mount: WidestMount): Promise<SignedUpAccount> {
 	const name = `u${randomBytes(6).toString("hex")}`;
 	const answer = await mount.handler(
@@ -129,7 +125,7 @@ export async function signUpOn(mount: WidestMount): Promise<SignedUpAccount> {
 	return { userId: row.user_id, sessionId: row.id, sessionCookie };
 }
 
-/** Status, every header but `Date`, and the body bytes: what "byte-identical" compares. */
+/** the status, every header except Date and the body bytes of an answer as one comparable string */
 export async function exactAnswer(answer: Response): Promise<string> {
 	const headers = [...answer.headers]
 		.filter(([name]) => name.toLowerCase() !== "date")

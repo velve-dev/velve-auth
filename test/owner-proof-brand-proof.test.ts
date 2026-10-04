@@ -162,11 +162,7 @@ function proofAssertionsIn(tree: SourceTree): Assertion[] {
 	return found;
 }
 
-/**
- * Where each proof is minted, named file by file. A file not listed here that asserts one of
- * these types, or hands a cast to an `actorOf…` producer, makes an actor out of something other
- * than the proof the type names.
- */
+//each proof may be minted only in the modules named for it here (S-OWNER-7)
 const MINTED_ONLY_IN: Readonly<Record<string, readonly string[]>> = {
 	Actor: [ACTOR_MODULE],
 	SessionResolution: ["core/session/service.ts"],

@@ -22,7 +22,7 @@ async function serverMajorVersion(): Promise<string> {
 	return String(row?.major ?? "");
 }
 
-//a pg_dump older than the server refuses to run, so the binary of the server's own major is tried too
+//the binary of the server's own major is tried too as an older pg_dump refuses a newer server
 function pgDumpCandidates(major: string): readonly string[] {
 	return [
 		"pg_dump",
@@ -75,7 +75,7 @@ async function dumpOf(schema: string): Promise<{ text: string; how: string }> {
 const PLANTED = `planted-${randomUUID()}`;
 const PLANTED_CODE = createRecoveryCodeSet({ count: 1, groupSize: 5 })[0] ?? "";
 
-//a second account carries a known value as text and as bytes, so one dump shows the search can hit
+//a second account carries known values as text and as bytes for the search to find in the same dump
 async function plantAKnownValue(): Promise<void> {
 	const schema = driven.mounted.schema;
 	const [row] = await driven.mounted.connection.query<{ id: string }>(
@@ -95,7 +95,7 @@ async function plantAKnownValue(): Promise<void> {
 	);
 }
 
-//one dump only, since a database crowded with schemas makes each one slow to take
+//one dump per file is enough and a database crowded with schemas makes each one slow
 beforeAll(async () => {
 	driven = await driveOneUserThroughEveryFlow("restdump");
 	await plantAKnownValue();
@@ -109,10 +109,7 @@ afterAll(async () => {
 	await driven.close();
 });
 
-/**
- * The bytes a value stands for where it has any: a base64url token decodes to the random bytes it
- * encodes and a TOTP secret to the key, and either could sit in a `bytea` column as hex.
- */
+//a base64url token and a TOTP secret stand for bytes that could sit in a bytea column as hex
 function underlyingBytes(secret: Secret): Buffer | null {
 	if (secret.name === "TOTP secret") {
 		return Buffer.from(secretBytesOfBase32(secret.value));

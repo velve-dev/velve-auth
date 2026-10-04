@@ -41,11 +41,7 @@ async function idColumnsOf(tables: readonly string[]): Promise<IdColumn[]> {
 	);
 }
 
-/**
- * The tables are read from the catalogue rather than listed, so a user-bound table added later is
- * held to the rule without this file changing. `velve.user` is the row every other one references,
- * so it is held to it too.
- */
+//the user-bound tables are read from the catalogue and velve.user is held to the rule with them
 describe("T-OWNER-9: every object identifier of a user-bound row is a random uuid (S-OWNER-9)", () => {
 	it("reads the user-bound tables from the foreign keys, and finds the ones the schema names", async () => {
 		const owned = (await readUserOwnedTables(migrated.connection, migrated.schema)).map(

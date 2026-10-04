@@ -18,11 +18,7 @@ const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const ALGORITHM = "A256GCM";
 
-/**
- * The stored form, read without the library's envelope code: a 12-byte nonce, then AES-256-GCM
- * ciphertext and its 16-byte tag, sealed with the header `len("A256GCM") ‖ "A256GCM" ‖ int32
- * version` as additional data (E-65), the version standing in its own column.
- */
+//the stored form is a nonce then ciphertext and tag sealed with the algorithm and version header as additional data (E-65)
 function additionalDataFor(keyVersion: number): Uint8Array<ArrayBuffer> {
 	const header = new Uint8Array(1 + ALGORITHM.length + 4);
 	header[0] = ALGORITHM.length;
@@ -144,7 +140,7 @@ describe("T-REST-4: what the server needs back lies AES-256-GCM encrypted (S-RES
 		expect(Buffer.from(stored).indexOf(column.input())).toBe(-1);
 	});
 
-	//the verifier is never shown to the test, so it is held against the challenge the provider saw
+	//the verifier the test never sees is held against the challenge the provider saw
 	it("decrypts the PKCE verifier the authorization request committed to", async () => {
 		const pkce = COLUMNS.find((column) => column.purpose === "pkce-enc");
 		const { stored, keyVersion } = await storedOf(pkce as EncryptedColumn);

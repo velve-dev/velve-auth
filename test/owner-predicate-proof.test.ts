@@ -93,7 +93,7 @@ const CHANGE =
 const MARKER = /\/\*\s*no owner predicate:\s*(S-[A-Z]+-\d+[\s\S]*?)\*\//i;
 const INSERTED_INTO = /\bINSERT\s+INTO\s+(\$\{[^}]+\}|\w+)/i;
 
-//an upsert's DO UPDATE changes the row its INSERT names, so that is the table it is read against
+//an upsert's DO UPDATE is read against the table its INSERT names
 function changedTable(sql: string, match: RegExpMatchArray): string {
 	const named = match[2];
 	if (named !== undefined && !/^SET$/i.test(named)) {
@@ -141,12 +141,7 @@ function rowChangesIn(file: string, sql: string): RowChange[] {
 	});
 }
 
-/**
- * An owner predicate is a conjunct of the outermost WHERE that compares the owner column with a
- * parameter, and nothing else: inside a subquery, behind an OR, or only in RETURNING it binds no
- * row. `IS NOT DISTINCT FROM` is the equality a nullable owner column needs (the WebAuthn challenge
- * of a passkey sign-in has none).
- */
+//an owner predicate is a top-level conjunct comparing the owner column with a parameter, null-safe for a nullable owner (S-OWNER-2)
 const OWNER_CONJUNCT =
 	/^(?:(?:\w+|\$\{\w+\})\.)?(?:user_id|\$\{ownerColumn\})\s*(?:=|IS\s+NOT\s+DISTINCT\s+FROM)\s*\$\d+(?:::uuid)?$/i;
 
@@ -196,11 +191,7 @@ function everyRowChange(tree: SourceTree): RowChange[] {
 	});
 }
 
-/**
- * Every statement that changes a user-bound row without an owner predicate in its outermost WHERE,
- * by file and by the reason its marker gives. The list is exact in both directions: a new marker
- * fails here until it is named, and a marker that goes away fails until its line does.
- */
+//every marked statement without an owner predicate by file and reason, and the list is exact in both directions
 const NAMED_EXCEPTIONS: readonly string[] = [
 	"core/auth/maintenance.ts: S-OWNER-2, a deadline is not an owner",
 	"core/auth/user.ts: S-OWNER-2, velve.user is the owned row and id is its owner column",
@@ -323,7 +314,7 @@ describe("T-OWNER-2: the owner condition stands in the outermost WHERE (S-OWNER-
 	});
 });
 
-//the compiler resolves each call to the declaration it reaches, so a common name reaches nothing else
+//the compiler resolves each call to the declaration it reaches and a common name reaches nothing else
 function programOver(tree: SourceTree): ts.Program {
 	const options: ts.CompilerOptions = {
 		target: ts.ScriptTarget.ES2022,
@@ -470,11 +461,7 @@ interface StatementIndex {
 	issuedBy(call: ts.CallExpression): ReadonlySet<string>;
 }
 
-/**
- * What a call issues: the SQL handed to a driver's `query`, followed through the variables and
- * statement builders it was assembled from, or whatever the implementation the compiler resolves
- * the call to issues in turn. A statement that is built and never handed to `query` is not issued.
- */
+//a call issues the SQL it hands to a driver's query or whatever the implementation it resolves to issues
 function statementIndex(program: ts.Program): StatementIndex {
 	const checker = program.getTypeChecker();
 	const implementations = implementationsOf(program);
@@ -592,12 +579,7 @@ function reportedNameOf(node: ts.FunctionLikeDeclaration): string {
 	return name !== undefined && ts.isIdentifier(name) ? name.text : "(anonymous)";
 }
 
-/**
- * A function that reads a row's owner in one call and changes that row by its id alone in a later
- * one has decided the owner in TypeScript and left the statement unbound, which is the shape
- * T-OWNER-2's second threshold counts. Each call is resolved by the compiler and expanded into the
- * statements it can issue; a pair inside one call is the callee's own decision and not counted.
- */
+//a read of the owner in one call before a change by id alone in a later call is the shape the second threshold counts
 function readsOwnerBeforeAnUnboundChange(tree: SourceTree): string[] {
 	const program = programOver(tree);
 	const index = statementIndex(program);

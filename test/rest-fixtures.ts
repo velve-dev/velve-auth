@@ -21,7 +21,7 @@ const REST_PASSWORD = "the password only the at-rest proof knows 4d9a";
 const ADDRESS = "at.rest@example.com";
 const RELYING_PARTY_ID = "app.example.com";
 
-/** One secret the user's flows produced, by the name T-REST-1 gives it. */
+/** one secret the account's flows produced, under the name T-REST-1 gives it */
 export interface Secret {
 	readonly name: string;
 	readonly value: string;
@@ -93,7 +93,7 @@ async function ok(answer: Promise<Response>, what: string): Promise<Response> {
 	return settled;
 }
 
-/** The token endpoint's answer is where the three provider tokens are seen in the clear. */
+//the token endpoint's answer is the one place the three provider tokens are seen in the clear
 function recordingTokens(fetch: typeof globalThis.fetch): {
 	fetch: typeof globalThis.fetch;
 	issued: () => ProviderTokens;
@@ -168,12 +168,7 @@ async function openFlowVerifier(mounted: MountedAuth, keys: KeyProvider, state: 
 	return Buffer.from(verifier).toString("utf8");
 }
 
-/**
- * One account driven through every flow that leaves a secret at rest: a password, the session the
- * library issued, TOTP, ten recovery codes, a WebAuthn credential and an open challenge, an OAuth
- * link completed with `storeTokens: true` and a second flow left open, the four one-time tokens,
- * and last a sign-in that stops at the second factor, so the pending state is the newest row.
- */
+/** one account driven over HTTP through every flow that leaves a secret at rest */
 export async function driveOneUserThroughEveryFlow(prefix: string): Promise<DrivenUser> {
 	const keys = testKeyProvider();
 	const provider = await createStubProvider({

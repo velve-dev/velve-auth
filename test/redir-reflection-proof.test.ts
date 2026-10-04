@@ -20,7 +20,7 @@ const CANARY = "zqcanary7x3k";
 
 type DeclaredRoute = AnyRoute & { readonly input: { readonly fields: readonly string[] } };
 
-//each route gets its own canary so one route storing it cannot make the next refuse it as taken
+//each route gets its own canary and one route storing it cannot make the next refuse it as taken
 function canaryFor(field: string, route: number): string {
 	const canary = `${CANARY}r${route}`;
 	return /email/i.test(field) ? `${canary}@example.com` : canary;
@@ -180,7 +180,7 @@ describe("T-REDIR-7: JSON only, and no input reflected (S-REDIR-7)", () => {
 		]);
 	});
 
-	//a canary credential id finds no row, so the rename's echo is shown on a credential that exists
+	//the rename's echo is shown on a credential that exists as a canary credential id finds no row
 	it("returns a renamed label only where the permitted echo names it", async () => {
 		const account = await signUpOn(mount);
 		const [row] = await mount.connection.query<{ id: string }>(
