@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
@@ -454,6 +455,7 @@ describe("the defaults the rows state are the defaults the code uses (S-DEFAULT-
 });
 
 const configurationSource = fileURLToPath(new URL("../src/core/auth/config.ts", import.meta.url));
+const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
 
 function optionKeysWrittenInTheConfigurationType(): readonly string[] {
 	const source = readFileSync(configurationSource, "utf8");
@@ -477,18 +479,83 @@ describe("the options that must not exist at all (S-DEFAULT-2, S-DEFAULT-3)", ()
 		"requireEmailVerification",
 		"minimumResponseTime",
 	];
-	const sources = readdirSync(fileURLToPath(new URL("../src/core/auth", import.meta.url)), {
-		recursive: true,
-		withFileTypes: true,
-	})
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
-		.map((entry) => `${entry.parentPath}/${entry.name}`);
+	//t-default-3 names the four switches and their variants, so a spelling is matched as well as a name
+	const FORBIDDEN_VARIANT =
+		/\b(?:disable|skip|bypass|without|no|allowInsecure|unsafe|ignore)_?(?:pkce|state|origin|rate_?limit|csrf)\w*/gi;
 
-	it("names none of them anywhere in the assembly, over a set that is not empty", () => {
-		const text = sources.map((path) => readFileSync(path, "utf8")).join("\n");
+	function forbiddenNamesIn(text: string): readonly string[] {
+		return [
+			...FORBIDDEN.filter((name) => text.toLowerCase().includes(name.toLowerCase())),
+			...[...text.matchAll(FORBIDDEN_VARIANT)].map((match) => match[0]),
+		];
+	}
+
+	/**
+	 * The option type is not one file: `password`, `oauth`, `plugins`, `session` and the route a
+	 * plugin declares are each typed elsewhere and reach `BaseConfig` by import. The scan follows
+	 * every relative import from `core/auth/config.ts`, so a switch added to any of them is seen.
+	 */
+	function filesTheConfigurationTypeReaches(): readonly string[] {
+		const reached = new Set<string>();
+		const pending = [configurationSource];
+		for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+			if (reached.has(file)) {
+				continue;
+			}
+			reached.add(file);
+			for (const match of readFileSync(file, "utf8").matchAll(/from "(\.{1,2}\/[^"]+)\.js"/g)) {
+				pending.push(resolve(dirname(file), `${String(match[1])}.ts`));
+			}
+		}
+		return [...reached];
+	}
+
+	const sources = [
+		...new Set([
+			...filesTheConfigurationTypeReaches(),
+			...readdirSync(fileURLToPath(new URL("../src/core/auth", import.meta.url)), {
+				recursive: true,
+				withFileTypes: true,
+			})
+				.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+				.map((entry) => resolve(entry.parentPath, entry.name)),
+		]),
+	];
+
+	it("names none of them anywhere in the option type or the assembly, over a set that is not empty", () => {
+		const hits = sources.flatMap((path) =>
+			forbiddenNamesIn(readFileSync(path, "utf8")).map(
+				(name) => `${relative(sourceRoot, path)}: ${name}`,
+			),
+		);
 
 		expect(sources.length).toBeGreaterThanOrEqual(7);
-		expect(FORBIDDEN.filter((name) => text.includes(name))).toStrictEqual([]);
+		expect(hits).toStrictEqual([]);
+	});
+
+	it("reaches the option types of every feature, not only the assembly", () => {
+		const reached = filesTheConfigurationTypeReaches().map((path) => relative(sourceRoot, path));
+
+		expect(reached).toEqual(
+			expect.arrayContaining([
+				"core/auth/config.ts",
+				"core/password/config.ts",
+				"core/oauth/config.ts",
+				"core/plugin/config.ts",
+				"core/session/config.ts",
+				"core/identity/configuration.ts",
+				"core/http/route.ts",
+				"core/http/rate-limit.ts",
+			]),
+		);
+	});
+
+	it("finds a planted switch, so a clean scan means found nothing rather than looked nowhere", () => {
+		expect(forbiddenNamesIn("readonly disablePkce?: boolean")).toContain("disablePkce");
+		expect(forbiddenNamesIn("readonly skipOriginCheck?: true")).toContain("skipOriginCheck");
+		expect(forbiddenNamesIn("readonly no_rate_limit?: true")).toContain("no_rate_limit");
+		expect(forbiddenNamesIn("readonly noRateLimit?: true")).toContain("noRateLimit");
+		expect(forbiddenNamesIn("readonly ignoreState: true")).toContain("ignoreState");
 	});
 
 	it("reads the forbidden list from a constant rather than from a literal in the assertion", () => {
