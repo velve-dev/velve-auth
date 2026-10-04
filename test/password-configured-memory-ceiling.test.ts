@@ -2,6 +2,7 @@ import { argon2idAsync } from "@noble/hashes/argon2.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
+import { resolvePasswordConfig } from "../src/core/password/config.js";
 import { createPasswordCredentialRepository, sealPhc } from "../src/core/password/credential.js";
 import { CredentialWriteError, PasswordConfigurationError } from "../src/core/password/errors.js";
 import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
@@ -288,4 +289,22 @@ describe("a configuration whose own hashes the stored ceilings refuse", () => {
 		},
 		120_000,
 	);
+});
+
+describe("the upper bounds a configuration is held to at start", () => {
+	it.each([
+		["argon2id_memory_above_ceiling", { memoryKiB: 1_048_577, iterations: 2, parallelism: 1 }],
+		["argon2id_iterations_above_ceiling", { memoryKiB: 19456, iterations: 65, parallelism: 1 }],
+		["argon2id_parallelism_above_ceiling", { memoryKiB: 19456, iterations: 2, parallelism: 65 }],
+	] as const)("refuses %s", (code, argon2id) => {
+		expect(() => resolvePasswordConfig({ argon2id })).toThrow(new PasswordConfigurationError(code));
+	});
+
+	it("accepts each bound itself", () => {
+		expect(
+			resolvePasswordConfig({
+				argon2id: { memoryKiB: 1_048_576, iterations: 64, parallelism: 64 },
+			}).argon2id,
+		).toStrictEqual({ memoryKiB: 1_048_576, iterations: 64, parallelism: 64 });
+	});
 });

@@ -5,6 +5,8 @@ export const MAXIMUM_STORED_PARALLELISM = 64;
 export const MAXIMUM_STORED_PBKDF2_ITERATIONS = 2_000_000;
 //bcrypt cost is an exponent and 31 would take about thirty years (E-182)
 export const MAXIMUM_STORED_BCRYPT_COST = 14;
+//a configuration is refused above this and verification admits a stored memory up to it (E-2620)
+export const MAXIMUM_CONFIGURABLE_MEMORY_KIB = 1_048_576;
 
 //the library verifies every hash it writes so a configured memory above the import ceiling raises it (E-2615)
 export function storedMemoryCeilingKiB(configuredMemoryKiB: number): number {

@@ -1,4 +1,9 @@
 import { PasswordConfigurationError } from "./errors.js";
+import {
+	MAXIMUM_CONFIGURABLE_MEMORY_KIB,
+	MAXIMUM_STORED_ARGON2_ITERATIONS,
+	MAXIMUM_STORED_PARALLELISM,
+} from "./limits.js";
 import { isLegacyScheme, LEGACY_SCHEMES, type LegacyScheme } from "./scheme.js";
 
 export interface Argon2idParameters {
@@ -12,6 +17,13 @@ export const ARGON2ID_FLOOR: Argon2idParameters = {
 	memoryKiB: 19456,
 	iterations: 2,
 	parallelism: 1,
+};
+
+//every hash the library writes must pass the ceilings verification holds it to (E-2619)
+const ARGON2ID_CEILING: Argon2idParameters = {
+	memoryKiB: MAXIMUM_CONFIGURABLE_MEMORY_KIB,
+	iterations: MAXIMUM_STORED_ARGON2_ITERATIONS,
+	parallelism: MAXIMUM_STORED_PARALLELISM,
 };
 
 export const ARGON2ID_SALT_BYTES = 16;
@@ -58,6 +70,17 @@ export function resolvePasswordConfig(config: PasswordConfig = {}): ResolvedPass
 		argon2id.parallelism,
 		ARGON2ID_FLOOR.parallelism,
 		"argon2id_parallelism_below_floor",
+	);
+	assertAtMost(argon2id.memoryKiB, ARGON2ID_CEILING.memoryKiB, "argon2id_memory_above_ceiling");
+	assertAtMost(
+		argon2id.iterations,
+		ARGON2ID_CEILING.iterations,
+		"argon2id_iterations_above_ceiling",
+	);
+	assertAtMost(
+		argon2id.parallelism,
+		ARGON2ID_CEILING.parallelism,
+		"argon2id_parallelism_above_ceiling",
 	);
 	assertAtLeast(minimumLength, MINIMUM_LENGTH_FLOOR, "minimum_length_below_floor");
 
@@ -111,6 +134,16 @@ function assertAtLeast(
 	code: ConstructorParameters<typeof PasswordConfigurationError>[0],
 ): void {
 	if (!Number.isInteger(value) || value < floor) {
+		throw new PasswordConfigurationError(code);
+	}
+}
+
+function assertAtMost(
+	value: number,
+	ceiling: number,
+	code: ConstructorParameters<typeof PasswordConfigurationError>[0],
+): void {
+	if (value > ceiling) {
 		throw new PasswordConfigurationError(code);
 	}
 }
