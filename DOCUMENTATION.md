@@ -5128,6 +5128,10 @@ so a password the policy refuses does not burn the link.
 The count is every session, not every session but the caller's: a reset is not
 made from a session, so there is none to exclude.
 
+A token presented for a disabled account answers `invalid_token`, byte for byte
+as an invented token does, and it is spent all the same: it stays unusable after
+`user.enable`, as a recovery code does (E-2872, E-2879).
+
 ### `auth.password.redeemResetWithRecoveryCode(input)`
 
 | Parameter | Type | Notes |

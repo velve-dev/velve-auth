@@ -46,17 +46,36 @@ interface RedeemedAccount {
 	readonly user: User;
 }
 
+export const A_DISABLED_ACCOUNT = Symbol("a redemption for a disabled account");
+
+//a caller that commits the spent token before refusing reads the disabled account here (E-2879)
+export async function accountOrDisabledOfRedemption(
+	environment: FlowEnvironment,
+	driver: Driver,
+	redemption: OneTimeTokenRedemption,
+): Promise<RedeemedAccount | typeof A_DISABLED_ACCOUNT> {
+	const user = await readUserOrRefuse(environment, driver, redemption.userId);
+	if (user.disabledAt !== null) {
+		return A_DISABLED_ACCOUNT;
+	}
+	return { actor: actorOfRedeemedOneTimeToken(redemption), user };
+}
+
+//a disabled account must answer a redemption as an invented token does
+export function refuseADisabledAccount(): never {
+	throw new ConcealedError("user_disabled_on_token_redemption");
+}
+
 export async function accountOfRedemption(
 	environment: FlowEnvironment,
 	driver: Driver,
 	redemption: OneTimeTokenRedemption,
 ): Promise<RedeemedAccount> {
-	const user = await readUserOrRefuse(environment, driver, redemption.userId);
-	//a disabled account must answer a redemption as an invented token does
-	if (user.disabledAt !== null) {
-		throw new ConcealedError("user_disabled_on_token_redemption");
+	const account = await accountOrDisabledOfRedemption(environment, driver, redemption);
+	if (account === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
 	}
-	return { actor: actorOfRedeemedOneTimeToken(redemption), user };
+	return account;
 }
 
 //a vanished account behind a session must answer as an unresolved session (E-615)

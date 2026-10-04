@@ -15,7 +15,14 @@ import { announceEachRevocation } from "../plugin/revocation.js";
 import { tellAfterSessionCreate } from "../plugin/sign-in.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
-import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
+import {
+	A_DISABLED_ACCOUNT,
+	accountOrDisabledOfRedemption,
+	type FlowEnvironment,
+	mailerOf,
+	observedIn,
+	refuseADisabledAccount,
+} from "./environment.js";
 import type { SetPasswordResult } from "./results.js";
 
 //an unknown identifier must run the statements a resolved account runs (S-TIM-6)
@@ -126,7 +133,11 @@ export async function redeemReset(
 			token: input.token,
 			purpose: "password_reset",
 		});
-		const account = await accountOfRedemption(environment, transaction, redeemed);
+		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
+		//a token presented for a disabled account stays spent once it is enabled again (E-2879)
+		if (account === A_DISABLED_ACCOUNT) {
+			return account;
+		}
 		return replacePassword(environment, context, {
 			transaction,
 			actor: account.actor,
@@ -134,6 +145,9 @@ export async function redeemReset(
 			derived,
 		});
 	});
+	if (result === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
+	}
 
 	await tellAfterSessionCreate(environment.services.pluginRuntime.hooks, result.session);
 	context.cookies.setSession(result.sessionToken);
