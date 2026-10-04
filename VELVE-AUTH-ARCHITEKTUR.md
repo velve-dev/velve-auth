@@ -4044,7 +4044,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 **(c) Die Anforderungen.**
 
-- **S-COOKIE-1:** Der Sitzungscookie heißt `__Host-velve_session` und trägt `HttpOnly`, `Secure`, `SameSite=Lax` und `Path=/`. *(Abschnitt 3.5, Cookie-Absatz)*
+- **S-COOKIE-1:** Der Sitzungscookie heißt standardmäßig `__Host-velve_session` oder so, wie `session.cookieName` ihn konfiguriert, und trägt `HttpOnly`, `Secure`, `SameSite=Lax` und `Path=/`. *(Abschnitt 3.5, Cookie-Absatz)*
 - **S-COOKIE-2:** Es existiert keine Konfigurationsoption, die `HttpOnly` oder `Secure` am Sitzungscookie abschaltet oder ihm ein `Domain`-Attribut hinzufügt. *(Abschnitt 3.5: „Das `__Host-`-Präfix erzwingt `Secure` und verbietet `Domain`")*
 - **S-COOKIE-3:** Der Zwischenzustandscookie heißt `__Host-velve_pending`, hat eine Lebensdauer von 5 Minuten und trägt dieselbe Attributmenge wie der Sitzungscookie. *(Abschnitt 3.6, erster Absatz)*
 - **S-COOKIE-4:** Der Sitzungscookie enthält ausschließlich den Sitzungstoken; er trägt keine Nutzerdaten, keinen Sitzungszustand und kein zwischengespeichertes Prüfergebnis. *(Abschnitt 3.5: „Kein Cookie-Cache im Kern")*
@@ -4448,7 +4448,7 @@ wird nicht genommen.
 
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
-| T-COOKIE-1 | S-COOKIE-1 | Integration | `Set-Cookie` nach erfolgreicher Anmeldung parsen und gegen ein Fixture vergleichen. | Name **exakt** `__Host-velve_session`; Attributmenge exakt `{HttpOnly, Secure, SameSite=Lax, Path=/}`; **0 Abweichungen** | CI bei jedem Commit |
+| T-COOKIE-1 | S-COOKIE-1 | Integration | `Set-Cookie` nach erfolgreicher Anmeldung parsen und gegen ein Fixture vergleichen. | Name **exakt** `__Host-velve_session`, bei gesetztem `session.cookieName` **exakt** der konfigurierte Name; Attributmenge exakt `{HttpOnly, Secure, SameSite=Lax, Path=/}`; **0 Abweichungen** | CI bei jedem Commit |
 | T-COOKIE-2 | S-COOKIE-2 | Statisch | Typprüfung: der Optionstyp enthält keinen Schlüssel für Cookie-Attribute; AST-Scan: der Attributsatz wird an genau einer Stelle konstruiert und nicht per Spread erweitert. | **0 Optionsschlüssel**; **genau 1 Konstruktionsstelle**, **0 Spread-Erweiterungen** | CI bei jedem Commit |
 | T-COOKIE-3 | S-COOKIE-3 | Integration, kontrollierte Uhr | Anmeldung mit zweitem Faktor auslösen, Cookie parsen; Uhr um 5 min + 1 s vorstellen, `POST /factor/verify` aufrufen. | Name `__Host-velve_pending`, `Max-Age` **300**, gleiche Attributmenge; nach Ablauf **abgelehnt** | CI bei jedem Commit |
 | T-COOKIE-4 | S-COOKIE-4 | Integration | Cookie-Wert nach jeder sitzungserzeugenden Antwort dekodieren und auf Länge und Struktur prüfen. | Wert ist **genau ein** base64url-Token von 43 Zeichen; **0 weitere Felder**, keine Trennzeichen | CI bei jedem Commit |

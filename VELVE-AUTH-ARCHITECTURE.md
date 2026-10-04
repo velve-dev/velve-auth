@@ -4043,7 +4043,7 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 **(c) The requirements.**
 
-- **S-COOKIE-1:** The session cookie is named `__Host-velve_session` and carries `HttpOnly`, `Secure`, `SameSite=Lax` and `Path=/`. *(Section 3.5, cookie paragraph)*
+- **S-COOKIE-1:** The session cookie is named `__Host-velve_session` by default, or as `session.cookieName` configures it, and carries `HttpOnly`, `Secure`, `SameSite=Lax` and `Path=/`. *(Section 3.5, cookie paragraph)*
 - **S-COOKIE-2:** There is no configuration option that switches off `HttpOnly` or `Secure` on the session cookie or adds a `Domain` attribute to it. *(Section 3.5: "The `__Host-` prefix enforces `Secure` and forbids `Domain`")*
 - **S-COOKIE-3:** The pending-state cookie is named `__Host-velve_pending`, has a lifetime of 5 minutes and carries the same attribute set as the session cookie. *(Section 3.6, first paragraph)*
 - **S-COOKIE-4:** The session cookie contains exclusively the session token; it carries no user data, no session state and no cached check result. *(Section 3.5: "No cookie cache in the core")*
@@ -4445,7 +4445,7 @@ soften the first, so it is declined.
 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
-| T-COOKIE-1 | S-COOKIE-1 | Integration | Parse `Set-Cookie` after a successful sign-in and compare it against a fixture. | Name **exactly** `__Host-velve_session`; attribute set exactly `{HttpOnly, Secure, SameSite=Lax, Path=/}`; **0 deviations** | CI on every commit |
+| T-COOKIE-1 | S-COOKIE-1 | Integration | Parse `Set-Cookie` after a successful sign-in and compare it against a fixture. | Name **exactly** `__Host-velve_session`, or with `session.cookieName` set **exactly** the configured name; attribute set exactly `{HttpOnly, Secure, SameSite=Lax, Path=/}`; **0 deviations** | CI on every commit |
 | T-COOKIE-2 | S-COOKIE-2 | Static | Type check: the options type contains no key for cookie attributes; AST scan: the attribute set is constructed in exactly one place and is not extended by a spread. | **0 option keys**; **exactly 1 construction site**, **0 spread extensions** | CI on every commit |
 | T-COOKIE-3 | S-COOKIE-3 | Integration, controlled clock | Trigger a sign-in with a second factor, parse the cookie; advance the clock by 5 min + 1 s, call `POST /factor/verify`. | Name `__Host-velve_pending`, `Max-Age` **300**, same attribute set; after expiry **rejected** | CI on every commit |
 | T-COOKIE-4 | S-COOKIE-4 | Integration | Decode the cookie value after every session-creating response and check it for length and structure. | The value is **exactly one** base64url token of 43 characters; **0 further fields**, no separators | CI on every commit |
