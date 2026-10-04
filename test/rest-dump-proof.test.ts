@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createRecoveryCodeSet, normaliseRecoveryCode } from "../src/core/factor/recovery/code.js";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
 import { type DrivenUser, driveOneUserThroughEveryFlow, type Secret } from "./rest-fixtures.js";
 import { secretBytesOfBase32 } from "./totp-fixtures.js";
@@ -57,7 +58,7 @@ async function everyColumnAsText(schema: string): Promise<string> {
 	return parts.join("\n");
 }
 
-/** The instrument S-REST-1 names where a usable binary exists, and the same bytes as text otherwise, as `auth-secrets-at-rest` does. */
+//the instrument S-REST-1 names, with the text fallback refused in CI (S-REST-1)
 async function dumpOf(schema: string): Promise<{ text: string; how: string }> {
 	for (const binary of pgDumpCandidates(await serverMajorVersion())) {
 		const text = pgDumpWith(binary, schema);
@@ -65,10 +66,14 @@ async function dumpOf(schema: string): Promise<{ text: string; how: string }> {
 			return { text, how: binary };
 		}
 	}
+	if (process.env.CI !== undefined) {
+		throw new Error("CI must take the dump with pg_dump and no usable binary answered");
+	}
 	return { text: await everyColumnAsText(schema), how: "every column as text" };
 }
 
 const PLANTED = `planted-${randomUUID()}`;
+const PLANTED_CODE = createRecoveryCodeSet({ count: 1, groupSize: 5 })[0] ?? "";
 
 //a second account carries a known value as text and as bytes, so one dump shows the search can hit
 async function plantAKnownValue(): Promise<void> {
@@ -79,9 +84,14 @@ async function plantAKnownValue(): Promise<void> {
 	);
 	await driven.mounted.connection.query(
 		`INSERT INTO ${schema}.webauthn_credential
-		 (user_id, credential_id, public_key, backup_eligible, backup_state, user_verified_at_registration)
-		 VALUES ($1, $2, $3, false, false, true)`,
-		[row?.id, Buffer.from(PLANTED, "utf8"), Buffer.from(`${PLANTED}-key`, "utf8")],
+		 (user_id, credential_id, public_key, backup_eligible, backup_state, user_verified_at_registration, label)
+		 VALUES ($1, $2, $3, false, false, true, $4)`,
+		[
+			row?.id,
+			Buffer.from(PLANTED, "utf8"),
+			Buffer.from(`${PLANTED}-key`, "utf8"),
+			normaliseRecoveryCode(PLANTED_CODE),
+		],
 	);
 }
 
@@ -92,6 +102,7 @@ beforeAll(async () => {
 	const taken = await dumpOf(driven.mounted.schema);
 	dump = taken.text;
 	instrument = taken.how;
+	process.stderr.write(`rest-dump-proof took the dump with ${instrument}\n`);
 }, 180_000);
 
 afterAll(async () => {
@@ -110,14 +121,22 @@ function underlyingBytes(secret: Secret): Buffer | null {
 	return decoded === null ? null : Buffer.from(decoded);
 }
 
+//a recovery code is also searched in the canonical form it is compared in
+function textFormsOf(secret: Secret): readonly string[] {
+	if (!secret.name.startsWith("recovery code")) {
+		return [secret.value];
+	}
+	const canonical = normaliseRecoveryCode(secret.value);
+	return canonical === secret.value ? [secret.value] : [secret.value, canonical];
+}
+
 function encodingsOf(secret: Secret): readonly string[] {
-	const text = Buffer.from(secret.value, "utf8");
 	const bytes = underlyingBytes(secret);
 	return [
-		secret.value,
-		text.toString("base64"),
-		text.toString("base64url"),
-		text.toString("hex"),
+		...textFormsOf(secret).flatMap((form) => {
+			const text = Buffer.from(form, "utf8");
+			return [form, text.toString("base64"), text.toString("base64url"), text.toString("hex")];
+		}),
 		...(bytes === null ? [] : [bytes.toString("hex"), bytes.toString("base64")]),
 	];
 }
@@ -159,7 +178,9 @@ describe("T-REST-1: a pg_dump of the schema holds no secret in any encoding (S-R
 			stored_tokens: 1,
 		});
 		expect(dump).toContain(`CREATE TABLE ${driven.mounted.schema}.session`);
-		expect(instrument).toMatch(/pg_dump$|^every column as text$/);
+		expect(instrument).toMatch(
+			process.env.CI === undefined ? /pg_dump$|^every column as text$/ : /pg_dump$/,
+		);
 	});
 
 	it("searches twenty-four values in at least three encodings each and finds none", () => {
@@ -181,6 +202,17 @@ describe("T-REST-1: a pg_dump of the schema holds no secret in any encoding (S-R
 		expect(hitsIn(dump, [{ name: "planted", value: PLANTED }])).toStrictEqual([
 			`planted as ${PLANTED.slice(0, 12)}…`,
 			`planted as ${Buffer.from(PLANTED).toString("hex").slice(0, 12)}…`,
+		]);
+	});
+
+	it("finds a recovery code planted in its canonical form, which the grouped form alone misses", () => {
+		const planted = { name: "recovery code planted", value: PLANTED_CODE };
+		const canonical = normaliseRecoveryCode(PLANTED_CODE);
+
+		expect(PLANTED_CODE).toContain("-");
+		expect(dump).not.toContain(PLANTED_CODE);
+		expect(hitsIn(dump, [planted])).toStrictEqual([
+			`recovery code planted as ${canonical.slice(0, 12)}…`,
 		]);
 	});
 });
