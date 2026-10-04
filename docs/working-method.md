@@ -16,7 +16,6 @@ The package is a public Apache-2.0 library on npm; its readers are not assumed t
 
 ## From §3 — the comment rule as it stood before the plain-sentence form
 
-- Comments are permitted only where the reason for the code cannot be expressed in code: a specification clause being satisfied, a deliberate deviation from a standard, a non-obvious ordering constraint. Then **one sentence**, no more.
 - A reference to the specification is a legitimate comment and is encouraged where the code exists solely because of it: `S-OWNER-3`, `L-12`, `E-23`.
 - **A comment in `src/` is read by this repository's static scans as though it were code.** Around twenty-two files under `test/` and `tools/` match a regular expression against raw source text, so prose that resembles a statement, an identifier or an option this library refuses can redden a case in a file nobody touched — and several of those cases accuse a security requirement. **Three still redden today**, and these are the ones to try: the word *caching* in a comment under `src/core/session` reddens the case for `S-CACHE-1`; a comment naming a PKCE option that does not exist reddens the case for `S-REPLAY-6`; a comment spelling a brand's phantom field reddens the census in `test/brand-invariants.test.ts`. **Two more no longer redden anything** — plain prose naming `velve.password_credential`, and a comment shaped like the statement `S-FIX-2` forbids. The scans that read those two were repaired, and planting both together now leaves the whole suite green; they are cited as the measurement that motivated the repair and **not** as something to try (E-1653, E-1661). Four test files and the `check:session-owner` step strip comments first — `tools/source-text.mjs` is the one to reach for — three more strip them with a string-blind regular expression, and the rest read the text raw (E-1654). The file count is a proxy and not a census: two proxies answered twenty-one and twenty-two, and a count of *cases* is not offered at all. Write the comment, then run `pnpm test`; a hit is the scan being wrong rather than the prose, and the repair belongs at the scan.
 
@@ -92,9 +91,7 @@ The sharp edge is the honest half. The same latitude covers rewriting a **reason
 
 **The syntactic property is necessary and not sufficient either, and it is loose in three ways.** A writer can insert a complete, well-formed note at a proper boundary that **contradicts** the reason above it, and the result satisfies every clause of the property. A **measurement** restated in place is a deletion this section allows, so a deletion-bearing edit is not thereby a violation. And both of those presuppose what the third does not — that the original survives as a readable claim at all, which an insertion inside a sentence and an insertion that suppresses the original from rendering each defeat. What the property buys is that the reader is shown both claims; whether the second is fair is not something any of this decides.
 
-That is the rule itself rather than a consequence of one, so it holds whatever a diff says: leave every original **sentence** standing verbatim and rendering, put the note inside the entry it corrects at a boundary between finished sentences, and say in the note what changed. Sentence, not word — a rule that asks only for the words to survive is satisfied by inserting `not ` into one of them, which is the counterexample this whole subsection was rewritten around (E-1147).
 
-**All of that governs argument-bearing text.** A **measurement** restated in place is the one edit that needs none of it: the opening of this subsection permits it outright, and the paragraph defining a measurement above makes that partition exhaustive — a number or a count the entry states about the work is a measurement, and *everything else in an entry is a reason*. So the property and the imperative are about reasons, which is what they were always for, and saying so here sharpens the boundary rather than carving an exception into it. Without this clause the two paragraphs contradict each other for the ordinary case of a number sitting inside a sentence, and a reader reconciles them by picking whichever half suits them (E-1150).
 
 **The last clause carries weight the property does not, and is not a restatement of it.** A note appended as a near-duplicate of the sentence it corrects — identical but for one word — satisfies every clause of the property and defeats what the property is for: both claims render, neither is modified, and a reader still cannot tell which is the original or that a correction happened at all. Saying what changed is the only thing that separates them. So the imperative does **not** remove the *was it true when written* judgement — nothing here does — but it guarantees a reader can answer it, because both claims are in front of them **and labelled** (E-1142, E-1147).
 
@@ -102,7 +99,7 @@ That is the rule itself rather than a consequence of one, so it holds whatever a
 
 Two-dot is not a stricter version of the property but a wrong one — where the base has moved and has not been merged, it counts deletions `main`'s own commits made as though this branch had made them (E-538). The check is structurally blind to an edit of an entry the same branch introduced, because at the merge base that entry did not exist. That blindness is exactly right: it is the case this rule permits.
 
-**The loss the step guards against is a merge conflict resolved badly, and it guards one of the two directions.** Features append to `CASE-STUDY.md` in every wave — three of them in wave 5 — so a branch that merges `main` gets a conflict in it, and a conflict offers two bad resolutions rather than one. The step answers them differently, and the difference is the whole of what follows.
+**The loss the step guards against is a merge conflict resolved badly, and it guards one of the two directions.** Features append to `docs/decisions/log.md` in every wave — three of them in wave 5 — so a branch that merges `main` gets a conflict in it, and a conflict offers two bad resolutions rather than one. The step answers them differently, and the difference is the whole of what follows.
 
 **Keeping one's own side** drops what `main` carries. Those entries are at the merge base by construction, because `main` is the base, so dropping them is a deletion and the **first** clause fires. Reconstructed at `27e291e`: the step reports 764 lines lost and exits 1, and `test/decision-log.test.ts` is red on 74 citations resolving to no entry (E-1131).
 
@@ -116,7 +113,7 @@ The in-branch edit E-538 records is the narrower case and the one the step canno
 
 ## From §6 — numbering the decision log
 
-`CASE-STUDY.md` is the one file every feature appends to. That is a deliberate exception to the file-ownership rule in §5, and it works only because of how the numbers are handed out.
+`docs/decisions/log.md` is the one file every feature appends to. That is a deliberate exception to the file-ownership rule in §5, and it works only because of how the numbers are handed out.
 
 ### How wide a range has to be
 

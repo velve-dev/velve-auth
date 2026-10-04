@@ -23,7 +23,7 @@ is right and the translation has a bug to be fixed — never the other way round
 **Everything in this repository is written in English.** Source code,
 identifiers, commit messages, pull requests, `README.md`, `DOCUMENTATION.md`,
 `CASE-STUDY.md`, inline text and error codes. There is no exception, and
-`CASE-STUDY.md` — which used to be one — is explicitly not one.
+`docs/decisions/log.md` — which used to be one — is explicitly not one.
 
 `docs/decisions/log.md` was German until this rule changed. It is being migrated to
 English in a single central pass, so that the migration does not collide with
@@ -38,7 +38,7 @@ continued entry is **translated, not quoted**: the case study no longer
 reproduces section 7's German verbatim.
 
 The rule that is decided once and does not get revisited is this one — English
-everywhere, `CASE-STUDY.md` included.
+everywhere, `docs/decisions/log.md` included.
 
 ## 2. Scope
 
@@ -65,11 +65,14 @@ The code must be readable without comments.
 
   ```
   //changing a password needs to make all sessions invalid (S-FIX-6)
-//revoking a session that isnt yours must look the same as a missing one (E-233)
+  //revoking a session that isnt yours must look the same as a missing one (E-233)
   //freshness check uses the db time not the server time (E-238)
   //refresh only extends the idle timeout
   ```
 
+- Comments are permitted only where the reason for the code cannot be expressed
+  in code: a specification clause being satisfied, a deliberate deviation from a
+  standard, a non-obvious ordering constraint. Then **one sentence**, no more.
 - Doc comments on exported symbols stay doc comments of one plain sentence
   without an identifier, because a user reads them in the editor (E-1943). `pnpm
   check:decision-refs` fails on an identifier no document defines.
@@ -258,7 +261,8 @@ documentation is "to be written" is not finished.
   reason, every rejected alternative, every problem and its solution, in the
   entry format fixed below.
 - **`CASE-STUDY.md`** — a curated selection of `docs/decisions/log.md` for a
-  first reader. Its entries are copied from the log, never appended to it.
+  first reader. Its entries are copied from the log, and nothing is appended to the
+  selection.
 - **`CLAUDE-SKILL.md`**, and `CODEX-SKILL.md` generated from it — kept current
   in its **method**, and never in its content.
 
@@ -379,7 +383,24 @@ brought into step with its own artefact; the reason a decision was taken may not
 be rewritten.**
 
 **So insert a complete note between standing sentences. Never edit inside a
-standing sentence, and never hide the original from rendering.**
+standing sentence, and never hide the original from rendering.** That is the rule
+itself rather than a consequence of one, so it holds whatever a diff says: leave
+every original **sentence** standing verbatim and rendering, put the note inside
+the entry it corrects at a boundary between finished sentences, and say in the
+note what changed. Sentence, not word — a rule that asks only for the words to
+survive is satisfied by inserting `not ` into one of them, which is the
+counterexample this whole subsection was rewritten around (E-1147).
+
+**All of that governs argument-bearing text.** A **measurement** restated in place
+is the one edit that needs none of it: the opening of this subsection permits it
+outright, and the paragraph defining a measurement above makes that partition
+exhaustive — a number or a count the entry states about the work is a measurement,
+and *everything else in an entry is a reason*. So the property and the imperative
+are about reasons, which is what they were always for, and saying so here sharpens
+the boundary rather than carving an exception into it. Without this clause the two
+paragraphs contradict each other for the ordinary case of a number sitting inside
+a sentence, and a reader reconciles them by picking whichever half suits them
+(E-1150).
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- docs/decisions/log.md` must report zero
@@ -456,7 +477,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1900 … E-1939 | outside the waves · `oauth-signup` — the identifier a provider cannot supply, and the acceptance against a real provider. Fifty-ninth row overall, counted over the fifty-eight standing at f4dae39. The start is counted past the fourteenth gate range rather than continued from the highest entry written: E-1885 was reserved first and overlapped it, which `test/decision-log.test.ts` refused |
 | E-1940 … E-1969 | outside the waves · `reviewable-source` — the comments in `src/` rewritten as one plain sentence ending in at most one cited identifier. Sixtieth row overall, counted over the fifty-nine standing at 0b50fb0 |
 | E-1970 … E-1999 | outside the waves · `case-study-curated` — the case study cut to a selection, and the complete log moved to docs/decisions/log.md. Sixty-first row overall, counted over the sixty standing at 38a032e |
-| E-2000 … E-2029 | outside the waves · `rules-only` — the rules file cut to rules, with its explanations moved to docs/working-method.md. Sixty-first row overall, counted over the sixty standing at 38a032e |
+| E-2000 … E-2029 | outside the waves · `rules-only` — the rules file cut to rules, with its explanations moved to docs/working-method.md. Sixty-second row overall, counted over the sixty-one standing at ebada0d |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
