@@ -2,10 +2,11 @@ import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import { type CookieCollector, type CookieInstruction, createCookieCollector } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment, type LogLevel } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
-import { assertOriginAllowed } from "./origin.js";
+import { assertOriginAllowed, isSameOriginRead } from "./origin.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
 import {
 	invocationOf,
+	isReadingRoute,
 	type RequestContext,
 	type RouteMetadata,
 	type RunnableRoute,
@@ -21,6 +22,8 @@ interface CallerTokens {
 
 export interface RouteCall {
 	readonly origin: string | null;
+	/** the `Sec-Fetch-Site` header, which a server call never carries */
+	readonly fetchSite: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly readCallerTokens: () => CallerTokens;
@@ -227,7 +230,7 @@ export async function runRoute<Output>(
 	call: RouteCall,
 	environment: HttpEnvironment,
 ): Promise<RouteOutcome<Output>> {
-	if (route.originCheck === "checked") {
+	if (route.originCheck === "checked" && !isSameOriginRead(call, isReadingRoute(route))) {
 		assertOriginAllowed(call.origin, environment.origins);
 	}
 	await enforceIpAddressRateLimit(route, call, environment);
