@@ -493,6 +493,10 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2450 … E-2479 | outside the waves · `plugin-sql-role` — plugin SQL under a database role without rights on the core tables (S-OWNER-10). Reserved together before the requirement-audit fixes start, counted over the rows standing at a2a5545 |
 | E-2480 … E-2519 | outside the waves · `external-gate` — what the external review finds, and its repairs. Reserved together before the requirement-audit fixes start, counted over the rows standing at a2a5545 |
 | E-2520 … E-2549 | outside the waves · `release-1-2-0` — the 1.2.0 release. Reserved together before the requirement-audit fixes start, counted over the rows standing at a2a5545 |
+| E-2550 … E-2579 | outside the waves · `cookie-name` — session.cookieName honoured as the name the session cookie is written and read under. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
+| E-2580 … E-2609 | outside the waves · `revoke-hook` — beforeSessionRevoke called on every revocation the specification names a reason for. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
+| E-2610 … E-2639 | outside the waves · `dos-memory-bound` — the KDF memory bound stated against the import ceiling. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
+| E-2640 … E-2669 | outside the waves · `plugin-login` — plugin SQL over a connection that logs in as the plugin role. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
