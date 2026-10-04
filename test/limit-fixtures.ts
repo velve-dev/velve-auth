@@ -102,6 +102,7 @@ function testHttpEnvironment(
 		origins: [ALLOWED_ORIGIN],
 		trustedProxies: [],
 		cookieSameSite: "lax",
+		sessionCookieName: "__Host-velve_session",
 		sessionCookieMaximumAgeInSeconds: 2_592_000,
 		freshnessWindowInSeconds: 900,
 		callers: {

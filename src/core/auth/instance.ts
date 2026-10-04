@@ -353,6 +353,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		routes: [...coreRoutes, ...contributedRoutes],
 		origins: config.origins,
 		trustedProxies: config.trustedProxies ?? [],
+		sessionCookieName: sessionSettings.cookieName,
 		cookieSameSite: sessionSettings.sameSite,
 		sessionCookieMaximumAgeInSeconds: sessionSettings.cookieMaximumAgeInSeconds,
 		//one freshness window keeps the pipeline and the actor in agreement (E-233)

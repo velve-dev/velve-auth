@@ -103,7 +103,7 @@ describe("cookie policy — S-COOKIE-1 to S-COOKIE-6", () => {
 		).toThrow(VelveError);
 	});
 
-	it("emits no Domain attribute for any configured cookie name (S-COOKIE-2)", () => {
+	it("refuses to emit a configured cookie name that carries a Domain attribute (S-COOKIE-2)", () => {
 		const collector = createCookieCollector({
 			names: {
 				session: "__Host-velve_session=decoy; Domain=.evil.com; leftover",
@@ -115,9 +115,7 @@ describe("cookie policy — S-COOKIE-1 to S-COOKIE-6", () => {
 		});
 		collector.setSession("token");
 
-		for (const header of collector.collect().map(serializeCookie)) {
-			expect([header, header.includes("Domain")]).toEqual([header, false]);
-		}
+		expect(() => collector.collect().map(serializeCookie)).toThrow(VelveError);
 	});
 
 	it("sets no cookie name outside the enumerated set, whatever the configuration says", async () => {
