@@ -175,3 +175,125 @@ describe("the runner reads each declared name as one name (E-918)", () => {
 		expect(outcome).toEqual({});
 	});
 });
+
+async function runAsTheMigrationRole(
+	instance: Opened,
+	migrations: readonly OwnedMigration[],
+): Promise<{ readonly code?: string; readonly message?: string }> {
+	return asTheMigrationRole(instance.role, (driver) =>
+		runMigrations({ driver, schema: instance.schema, migrations })
+			.then(() => ({}))
+			.catch((error: { code?: string; message?: string }) => error),
+	);
+}
+
+function ownedMigration(
+	version: number,
+	createsTables: readonly string[],
+	sql: string,
+): OwnedMigration {
+	return { version, name: `step_${version}`, owner: "demo", createsTables, sql };
+}
+
+async function parentsOf(instance: Opened, table: string): Promise<number> {
+	const rows = await instance.connection.query<{ parents: number }>(
+		`SELECT count(*)::integer AS parents FROM pg_inherits
+		 WHERE inhrelid = to_regclass($1 || '.' || $2) OR inhparent = to_regclass($1 || '.' || $2)`,
+		[instance.schema, table],
+	);
+	return rows[0]?.parents ?? -1;
+}
+
+async function constraintsOfTheSessionTable(instance: Opened): Promise<readonly string[]> {
+	const rows = await instance.connection.query<{ name: string }>(
+		`SELECT conname AS name FROM pg_constraint
+		 WHERE conrelid = to_regclass($1 || '.session') ORDER BY conname`,
+		[instance.schema],
+	);
+	return rows.map((row) => row.name);
+}
+
+/**
+ * The owned set follows only the dependencies a table brings with it, and an inheritance edge is
+ * not one of them: a plugin table cannot adopt a core table as its child, nor be one (E-2483).
+ */
+describe("the owned set reaches only what a table brings with it (E-918)", () => {
+	it("refuses a plugin table that inherits from the account table", async () => {
+		const instance = await openSchema();
+
+		const refusal = await runAsTheMigrationRole(instance, [
+			ownedMigration(1, ["demo_child"], "CREATE TABLE velve.demo_child () INHERITS (velve.user);"),
+		]);
+
+		expect(refusal.code).toBe("migration_foreign_table_changed");
+		expect(await parentsOf(instance, "user")).toBe(0);
+	});
+
+	it("refuses a plugin table that inherits from the account table when no catalogue row of it changes", async () => {
+		const instance = await openSchema();
+		//relhassubclass stays set after the child is gone so inheriting again leaves the user row untouched
+		await instance.connection.query(
+			`CREATE TABLE public.${instance.schema}_earlier_child () INHERITS (${instance.schema}.user)`,
+			[],
+		);
+		await instance.connection.query(`DROP TABLE public.${instance.schema}_earlier_child`, []);
+
+		const refusal = await runAsTheMigrationRole(instance, [
+			ownedMigration(1, ["demo_child"], "CREATE TABLE velve.demo_child () INHERITS (velve.user);"),
+		]);
+
+		expect(refusal.code).toBe("migration_foreign_table_changed");
+		expect(refusal.message).toContain("inherit");
+		expect(await parentsOf(instance, "user")).toBe(0);
+	});
+
+	it("refuses a core table attached to a plugin table by a foreign key nothing validated", async () => {
+		const instance = await openSchema();
+		const before = await constraintsOfTheSessionTable(instance);
+
+		const refusal = await runAsTheMigrationRole(instance, [
+			ownedMigration(
+				1,
+				["demo_anchor"],
+				`CREATE TABLE velve.demo_anchor (id uuid PRIMARY KEY);
+				 ALTER TABLE velve.session ADD CONSTRAINT demo_anchor_fk FOREIGN KEY (user_id)
+				   REFERENCES velve.demo_anchor ON DELETE CASCADE NOT VALID;`,
+			),
+		]);
+
+		expect(refusal.code).toBe("migration_created_more_than_a_table");
+		expect(await constraintsOfTheSessionTable(instance)).toEqual(before);
+	});
+
+	it("still accepts what a plugin's own tables bring with them", async () => {
+		const instance = await openSchema();
+
+		const outcome = await runAsTheMigrationRole(instance, [
+			ownedMigration(
+				1,
+				["demo_entry", "demo_part", "demo_part_low", "demo_base", "demo_derived"],
+				`CREATE TABLE velve.demo_entry (
+				   id serial PRIMARY KEY,
+				   counter integer GENERATED ALWAYS AS IDENTITY,
+				   user_id uuid NOT NULL REFERENCES velve.user (id) ON DELETE CASCADE,
+				   label text NOT NULL DEFAULT 'none' CHECK (length(label) < 100)
+				 );
+				 CREATE INDEX demo_entry_user_idx ON velve.demo_entry (user_id);
+				 CREATE TABLE velve.demo_part (id integer, bucket integer NOT NULL) PARTITION BY RANGE (bucket);
+				 CREATE TABLE velve.demo_part_low PARTITION OF velve.demo_part FOR VALUES FROM (0) TO (10);
+				 CREATE INDEX demo_part_id_idx ON velve.demo_part (id);
+				 CREATE TABLE velve.demo_base (id integer);
+				 CREATE TABLE velve.demo_derived (extra integer) INHERITS (velve.demo_base);`,
+			),
+			ownedMigration(
+				2,
+				[],
+				`DROP INDEX velve.demo_entry_user_idx;
+				 ALTER TABLE velve.demo_derived NO INHERIT velve.demo_base;
+				 DROP TABLE velve.demo_part;`,
+			),
+		]);
+
+		expect(outcome).toEqual({});
+	});
+});

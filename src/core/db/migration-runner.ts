@@ -112,7 +112,7 @@ SELECT classid::regclass::text AS catalogue, objid AS object_id,
        pg_describe_object(classid, objid, 0) AS described
 FROM belonging`;
 
-//the plugin's set comes from its declared tables so choosing a name cannot widen it (E-918)
+//the plugin's set comes from its declared tables and follows only what a table brings with it (E-2483)
 const OBJECTS_OF_THE_DECLARED_TABLES = `
 WITH RECURSIVE belonging(classid, objid) AS (
   SELECT 'pg_class'::regclass, child.oid
@@ -124,6 +124,7 @@ WITH RECURSIVE belonging(classid, objid) AS (
   SELECT depend.classid, depend.objid
   FROM pg_depend depend
   JOIN belonging ON depend.refclassid = belonging.classid AND depend.refobjid = belonging.objid
+  WHERE depend.deptype IN ('a', 'i', 'P', 'S')
 )
 SELECT classid::regclass::text AS catalogue, objid AS object_id FROM belonging`;
 
@@ -131,10 +132,18 @@ SELECT classid::regclass::text AS catalogue, objid AS object_id FROM belonging`;
 const OBJECTS_THIS_TRANSACTION_CREATED = `
 SELECT depend.classid::regclass::text AS catalogue, depend.objid AS object_id,
        depend.refclassid::regclass::text AS referenced_catalogue,
-       depend.refobjid AS referenced_id,
+       depend.refobjid AS referenced_id, depend.deptype::text AS dependency_type,
        pg_describe_object(depend.classid, depend.objid, depend.objsubid) AS described
 FROM pg_depend depend
 WHERE depend.xmin = pg_current_xact_id()::xid`;
+
+//an inheritance edge lets one table read and delete the rows of another (E-2483)
+const INHERITANCE_THIS_TRANSACTION_MADE = `
+SELECT inheritance.inhrelid AS child_id, inheritance.inhparent AS parent_id,
+       pg_describe_object('pg_class'::regclass, inheritance.inhrelid, 0) AS child,
+       pg_describe_object('pg_class'::regclass, inheritance.inhparent, 0) AS parent
+FROM pg_inherits inheritance
+WHERE inheritance.xmin = pg_current_xact_id()::xid`;
 
 type MigrationRefusalCode =
 	| "migration_duplicate_version"
@@ -242,7 +251,15 @@ interface DependencyRow {
 	readonly object_id: number;
 	readonly referenced_catalogue: string;
 	readonly referenced_id: number;
+	readonly dependency_type: string;
 	readonly described: string;
+}
+
+interface InheritanceRow {
+	readonly child_id: number;
+	readonly parent_id: number;
+	readonly child: string;
+	readonly parent: string;
 }
 
 interface RelationFact {
@@ -267,6 +284,8 @@ type WriteCounters = ReadonlyMap<string, TableCounters>;
 //a view is excluded as a query of its own reads whatever it likes (E-903)
 const KINDS_A_TABLE_BRINGS_WITH_IT = new Set(["r", "p", "i", "I", "S"]);
 const TABLE_KINDS = new Set(["r", "p"]);
+//automatic, internal and the two partition dependencies are what a table brings with it (E-2483)
+const DEPENDENCIES_A_TABLE_BRINGS_WITH_IT = new Set(["a", "i", "P", "S"]);
 
 function schemaLockKey(schema: string): number {
 	const digest = sha256(utf8ToBytes(schema));
@@ -515,6 +534,9 @@ function objectsBelongingToTheOwnTables(
 	for (let grew = true; grew; ) {
 		grew = false;
 		for (const row of created) {
+			if (!DEPENDENCIES_A_TABLE_BRINGS_WITH_IT.has(row.dependency_type)) {
+				continue;
+			}
 			const key = objectKey(row.catalogue, Number(row.object_id));
 			const target = objectKey(row.referenced_catalogue, Number(row.referenced_id));
 			if (!belonging.has(key) && belonging.has(target)) {
@@ -539,6 +561,25 @@ function assertEveryObjectItCreatedBelongsToItsOwnTables(
 				"migration_created_more_than_a_table",
 				migration,
 				`it created ${row.described}, which belongs to none of its own tables, and 3.11 gives a plugin tables`,
+			);
+		}
+	}
+}
+
+//inheritance stays among the plugin's own tables in both directions (E-2483)
+function assertEveryInheritanceItMadeIsAmongItsOwnTables(
+	migration: OwnedMigration,
+	made: readonly InheritanceRow[],
+	own: ReadonlySet<string>,
+): void {
+	for (const row of made) {
+		const childIsOwn = own.has(objectKey("pg_class", Number(row.child_id)));
+		const parentIsOwn = own.has(objectKey("pg_class", Number(row.parent_id)));
+		if (!childIsOwn || !parentIsOwn) {
+			refuseOwned(
+				"migration_foreign_table_changed",
+				migration,
+				`it made ${row.child} inherit from ${row.parent}, and a plugin's tables inherit only from one another`,
 			);
 		}
 	}
@@ -718,6 +759,11 @@ async function applyOwnedMigration(
 		const after = await readRelations(tx, schema);
 		const own = await readObjectsOfTheDeclaredTables(tx, schema, declaredThrough);
 		assertEveryRelationItTouchedIsItsOwn(migration, schema, before, await readRelationsTouched(tx));
+		assertEveryInheritanceItMadeIsAmongItsOwnTables(
+			migration,
+			await tx.query<InheritanceRow>(INHERITANCE_THIS_TRANSACTION_MADE, []),
+			own,
+		);
 		assertItLeftEveryOtherObjectAsItFoundIt(
 			migration,
 			objectsBefore,
