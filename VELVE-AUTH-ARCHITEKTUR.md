@@ -39,7 +39,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 | Migration | fünf Anleitungen, drei davon mit bcrypt-Umstellung | Kernfunktion, fünf Quellen, Trockenlauf verpflichtend |
 | Laufzeit | scrypt über Export-Bedingung | reines TypeScript, austauschbare Rechenmaschine |
 
-**Der Umfang.** Von 618 Funktionen werden 111 übernommen, 157 anders gelöst, **322 weggelassen** und 28 übertroffen. Die Weglassungen sind keine Sparmaßnahme: 133 entfallen auf Autorisierung und die Rolle als Identitätsanbieter — ein eigenes Produkt —, 32 auf Sitzungsvarianten, die dem Widerrufsversprechen widersprechen, 28 auf Datenbankabstraktion, die mit der Festlegung auf PostgreSQL entfällt. **36 Fähigkeiten** haben in Better Auth kein Gegenstück.
+**Der Umfang.** Von 618 Funktionen werden 110 übernommen, 157 anders gelöst, **323 weggelassen** und 28 übertroffen. Die Weglassungen sind keine Sparmaßnahme: 133 entfallen auf Autorisierung und die Rolle als Identitätsanbieter — ein eigenes Produkt —, 32 auf Sitzungsvarianten, die dem Widerrufsversprechen widersprechen, 28 auf Datenbankabstraktion, die mit der Festlegung auf PostgreSQL entfällt. **36 Fähigkeiten** haben in Better Auth kein Gegenstück.
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
@@ -566,7 +566,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H26 Custom Schemes | `myapp://`, `chrome-extension://`, `exp://**` per String-Zerlegung statt `new URL()` (`trusted-origins.ts:32-73`) | Anders lösen | Nicht-HTTP-Schemata werden als vollständige, exakte Origin eingetragen und als solche verglichen; keine eigene String-Zerlegung und kein `**`. Ein selbstgebauter URL-Parser neben dem eingebauten ist ein Parser-Differential (vgl. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect-URL-Validierung | Lehnt `//`, `\`, Steuerzeichen, `%2f` ab (`trusted-origins.ts:14-105`) | Anders lösen | Es werden gar keine vollständigen URLs entgegengenommen: `redirect_path` ist ein Pfad, serverseitig gehalten (Abschnitt 3.10). Was man nicht annimmt, muss man nicht validieren — fünf Advisories dieser Klasse (Nr. 1, 3, 4, 5, 25 im Sicherheitsbericht) hätten so nicht entstehen können. |
 | H28 `originCheckMiddleware` | Origin/Referer-Prüfung auf allen nicht-GET-Routen mit Cookie (`origin-check.ts:67-151`) | Übernehmen | Übernommen und verschärft: sie läuft auch bei direkten Serveraufrufen und ist nicht abschaltbar. |
-| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Übernehmen | Unverändert; notwendig für Redirect-Ketten und Sandbox-Frames. |
+| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Weglassen | Nicht übernommen: Ein `Origin: null` wird wie jede nicht erlaubte Origin mit `origin_not_allowed` abgelehnt, auch bei `Sec-Fetch-Site: same-origin`, und T-CSRF-3 führt `null` als abzulehnende Variante. Einen fehlenden `Origin`-Kopf lässt die Prüfung nur bei den sieben lesenden `GET`-Routen mit `Sec-Fetch-Site: same-origin` zu (S-CSRF-1). |
 | H30 Callback-URL-Validierung | `callbackURL`, `redirectTo`, `errorCallbackURL`, `newUserCallbackURL` gegen `trustedOrigins` (`origin-check.ts:83-150`) | Anders lösen | Vier Parameter mit URL-Semantik werden zu einem Pfadparameter (H27). Jeder zusätzliche URL-Parameter ist eine weitere Stelle, an der die Validierung vergessen werden kann — CVE-2024-56734 war genau das. |
 | H31 `advanced.disableCSRFCheck` | Schaltet die CSRF-Prüfung ab (`create-context.ts:397`) | Weglassen | Niemand. Die Prüfung ist Teil der festen Kette vor jeder Route (Abschnitt 3.11) und kennt keinen Schalter. Wer sie abschalten will, hat in der Praxis einen fehlenden Origin in der Liste — das wird dort behoben, nicht an der Prüfung; und ein Schalter, der in der Entwicklung umgelegt wird, bleibt in der Produktion umgelegt. |
 | H32 `advanced.disableOriginCheck` | Schaltet die URL-Validierung ab, und aus Kompatibilität auch CSRF (`create-context.ts:398-403`) | Weglassen | Niemand. Eine Option, die zwei Prüfungen zugleich abschaltet, obwohl ihr Name nur eine nennt, ist der Grund, warum es sie nicht geben darf. |
@@ -929,15 +929,15 @@ Keine Fähigkeit, aber eine Haltung, die zu den 36 Zeilen gehört: Die Grenzen s
 | E | Identität und Benutzermodell | 27 | 5 | 5 | 14 | 3 |
 | F | Datenbank | 58 | 7 | 20 | 28 | 3 |
 | G | Erweiterbarkeit | 41 | 8 | 10 | 19 | 4 |
-| H | Betrieb und Querschnitt | 57 | 17 | 15 | 20 | 5 |
+| H | Betrieb und Querschnitt | 57 | 16 | 15 | 21 | 5 |
 | I | Autorisierung und Organisationen | 71 | 0 | 0 | 71 | 0 |
 | J | Als Identitätsanbieter auftreten | 62 | 0 | 0 | 62 | 0 |
 | K | Framework-Integrationen | 26 | 0 | 24 | 2 | 0 |
 | L | Kommerzielle Zusätze | 21 | 0 | 0 | 21 | 0 |
 | M | Bezahl-/Abo-Plugins | 9 | 0 | 0 | 9 | 0 |
-| | **Summe** | **618** | **111** | **157** | **322** | **28** |
+| | **Summe** | **618** | **110** | **157** | **323** | **28** |
 
-Anteile: Übernehmen 18,0 % · Anders lösen 25,4 % · Weglassen 52,1 % · Übertreffen 4,5 %.
+Anteile: Übernehmen 17,8 % · Anders lösen 25,4 % · Weglassen 52,3 % · Übertreffen 4,5 %.
 
 **Getrennte Zählung — Plugin-Entscheidungen (G.2):** 38 Pakete (26 im Hauptpaket, 12 extern) —
 Übernehmen 2, Anders lösen 7, Weglassen 29. Diese Zeilen sind Entscheidungen über Pakete; die
@@ -950,8 +950,8 @@ gar nicht erst betritt (SAML-IdP, LDAP, PAR/CIBA, mTLS, SCIM-Client, Multi-Colum
 #### Was die Verteilung über das Produkt sagt
 
 Etwas mehr als die Hälfte der Funktionen entfällt, und der Löwenanteil davon liegt in drei Blöcken: Autorisierung und Organisationen (71),
-Identitätsanbieter-Rolle (62) und kommerzielle Zusätze plus Bezahlung (30). Das sind 163 der 322 weggelassenen Funktionen — mehr als die Hälfte — und
-sie fallen nicht aus Zeitgründen weg, sondern weil sie andere Fragen beantworten als „wer ist angemeldet". Zieht man sie ab, bleiben 159 Weglassungen
+Identitätsanbieter-Rolle (62) und kommerzielle Zusätze plus Bezahlung (30). Das sind 163 der 323 weggelassenen Funktionen — mehr als die Hälfte — und
+sie fallen nicht aus Zeitgründen weg, sondern weil sie andere Fragen beantworten als „wer ist angemeldet". Zieht man sie ab, bleiben 160 Weglassungen
 über die eigentlichen Authentifizierungsabschnitte hinweg, und die verteilen sich fast vollständig auf drei Muster: abschaltbare Sicherheitsprüfungen
 (`disableCSRFCheck`, `skipStateCookieCheck`, `disableKeyHashing`), zweite Wahrheiten über den Zustand (Cookie-Cache, Secondary Storage, stateless
 Sessions) und Konfigurationsflächen, die nur existieren, weil eine Entwurfsentscheidung offengelassen wurde (Namensmapping, vier ID-Strategien, drei
@@ -963,7 +963,7 @@ Aussage dieser Auswertung: Velve Auth streitet Better Auth kaum eine Fähigkeit 
 Änderung darin, eine Option durch ein Verhalten zu ersetzen — `revokeSessionsOnPasswordReset` wird zur Regel, `requireLocalEmailVerified` zur
 Bedingung, `pathMethods` zur Deklaration, `encryptOAuthTokens` zur Voreinstellung „gar nicht speichern".
 
-Die 111 übernommenen Funktionen sind der Beleg dafür, dass Better Auth den Zuschnitt der Kernoperationen weitgehend richtig getroffen hat:
+Die 110 übernommenen Funktionen sind der Beleg dafür, dass Better Auth den Zuschnitt der Kernoperationen weitgehend richtig getroffen hat:
 Registrierung, Anmeldung, Verifikation, Reset, E-Mail-Wechsel, Kontolöschung, Sitzungsverwaltung, OAuth-Mechanik und die atomaren Konsum-Primitive
 werden unverändert übernommen. Die 28 Übertreffungen sind dagegen auffällig ungleich verteilt: sie liegen fast alle dort, wo Better Auth ein Advisory
 hatte — Kennwortpfad (A7, A9, A34), Sitzungsspeicherung (B2), Verknüpfungsregel (C86), Zweitfaktor-Zwischenzustand (D16, D33), Cookie-Präfix (H19),

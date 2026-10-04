@@ -41,7 +41,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 | Migration | five guides, three of them with a bcrypt switch | core feature, five sources, dry run mandatory |
 | Runtime | scrypt via export condition | pure TypeScript, exchangeable compute engine |
 
-**The scope.** Of 618 features, 111 are adopted, 157 solved differently, **322 omitted** and 28 surpassed. The omissions are not an economy measure: 133 fall to authorisation and the role of identity provider — a product of its own —, 32 to session variants that contradict the revocation promise, 28 to database abstraction, which disappears with the commitment to PostgreSQL. **36 capabilities** have no counterpart in Better Auth.
+**The scope.** Of 618 features, 110 are adopted, 157 solved differently, **323 omitted** and 28 surpassed. The omissions are not an economy measure: 133 fall to authorisation and the role of identity provider — a product of its own —, 32 to session variants that contradict the revocation promise, 28 to database abstraction, which disappears with the commitment to PostgreSQL. **36 capabilities** have no counterpart in Better Auth.
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
@@ -568,7 +568,7 @@ plugins themselves are already contained in A–M and are not counted twice here
 | H26 Custom schemes | `myapp://`, `chrome-extension://`, `exp://**` by string decomposition instead of `new URL()` (`trusted-origins.ts:32-73`) | Solve differently | Non-HTTP schemes are entered as a complete, exact origin and compared as such; no string decomposition of one's own and no `**`. A self-built URL parser alongside the built-in one is a parser differential (cf. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect URL validation | Rejects `//`, `\`, control characters, `%2f` (`trusted-origins.ts:14-105`) | Solve differently | Complete URLs are not taken in at all: `redirect_path` is a path, held server-side (section 3.10). What one does not take in one does not have to validate — five advisories of this class (no. 1, 3, 4, 5, 25 in the security report) could not have arisen that way. |
 | H28 `originCheckMiddleware` | Origin/referer check on all non-GET routes with a cookie (`origin-check.ts:67-151`) | Adopt | Adopted and tightened: it also runs on direct server calls and is not switchable off. |
-| H29 `Origin: null` special case | Reconstructs the origin with `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Adopt | Unchanged; necessary for redirect chains and sandbox frames. |
+| H29 `Origin: null` special case | Reconstructs the origin with `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Omit | Not adopted: an `Origin: null` is rejected with `origin_not_allowed` like every origin that is not allowed, with `Sec-Fetch-Site: same-origin` too, and T-CSRF-3 lists `null` as a variant to be rejected. The check admits a missing `Origin` header only on the seven reading `GET` routes with `Sec-Fetch-Site: same-origin` (S-CSRF-1). |
 | H30 Callback URL validation | `callbackURL`, `redirectTo`, `errorCallbackURL`, `newUserCallbackURL` against `trustedOrigins` (`origin-check.ts:83-150`) | Solve differently | Four parameters with URL semantics become one path parameter (H27). Every additional URL parameter is a further place at which the validation can be forgotten — CVE-2024-56734 was exactly that. |
 | H31 `advanced.disableCSRFCheck` | Switches the CSRF check off (`create-context.ts:397`) | Omit | Nobody. The check is part of the fixed chain in front of every route (section 3.11) and knows no switch. Whoever wants to switch it off has in practice a missing origin in the list — that is fixed there, not at the check; and a switch that is thrown in development stays thrown in production. |
 | H32 `advanced.disableOriginCheck` | Switches the URL validation off, and out of compatibility CSRF too (`create-context.ts:398-403`) | Omit | Nobody. An option that switches two checks off at once although its name names only one is the reason why it may not exist. |
@@ -931,15 +931,15 @@ Not a capability, but a stance that belongs to the 36 rows: the limits stand in 
 | E | Identity and user model | 27 | 5 | 5 | 14 | 3 |
 | F | Database | 58 | 7 | 20 | 28 | 3 |
 | G | Extensibility | 41 | 8 | 10 | 19 | 4 |
-| H | Operation and cross-cutting concerns | 57 | 17 | 15 | 20 | 5 |
+| H | Operation and cross-cutting concerns | 57 | 16 | 15 | 21 | 5 |
 | I | Authorisation and organisations | 71 | 0 | 0 | 71 | 0 |
 | J | Acting as an identity provider | 62 | 0 | 0 | 62 | 0 |
 | K | Framework integrations | 26 | 0 | 24 | 2 | 0 |
 | L | Commercial add-ons | 21 | 0 | 0 | 21 | 0 |
 | M | Payment/subscription plugins | 9 | 0 | 0 | 9 | 0 |
-| | **Sum** | **618** | **111** | **157** | **322** | **28** |
+| | **Sum** | **618** | **110** | **157** | **323** | **28** |
 
-Shares: Adopt 18.0 % · Solve differently 25.4 % · Omit 52.1 % · Surpass 4.5 %.
+Shares: Adopt 17.8 % · Solve differently 25.4 % · Omit 52.3 % · Surpass 4.5 %.
 
 **Separate count — plugin decisions (G.2):** 38 packages (26 in the main package, 12 external) —
 Adopt 2, Solve differently 7, Omit 29. These rows are decisions about packages; the
@@ -952,8 +952,8 @@ does not enter in the first place (SAML IdP, LDAP, PAR/CIBA, mTLS, SCIM client, 
 #### What the distribution says about the product
 
 Somewhat more than half of the features is dropped, and the lion's share of that lies in three blocks: authorisation and organisations (71),
-the identity provider role (62) and commercial add-ons plus payment (30). Those are 163 of the 322 omitted features — more than half — and
-they do not fall away for reasons of time but because they answer other questions than "who is signed in". If one subtracts them, 159 omissions remain
+the identity provider role (62) and commercial add-ons plus payment (30). Those are 163 of the 323 omitted features — more than half — and
+they do not fall away for reasons of time but because they answer other questions than "who is signed in". If one subtracts them, 160 omissions remain
 across the actual authentication sections, and those spread almost entirely over three patterns: security checks that can be switched off
 (`disableCSRFCheck`, `skipStateCookieCheck`, `disableKeyHashing`), second truths about the state (cookie cache, secondary storage, stateless
 sessions) and configuration surfaces that exist only because a design decision was left open (name mapping, four ID strategies, three
@@ -965,7 +965,7 @@ statement of this evaluation: Velve Auth hardly disputes any capability with Bet
 change consists in replacing an option by a behaviour — `revokeSessionsOnPasswordReset` becomes the rule, `requireLocalEmailVerified` becomes the
 condition, `pathMethods` becomes the declaration, `encryptOAuthTokens` becomes the default setting "do not store at all".
 
-The 111 adopted features are the proof that Better Auth largely got the cut of the core operations right:
+The 110 adopted features are the proof that Better Auth largely got the cut of the core operations right:
 registration, sign-in, verification, reset, email change, account deletion, session management, OAuth mechanics and the atomic consumption primitives
 are adopted unchanged. The 28 surpassings are by contrast conspicuously unevenly distributed: they lie almost all where Better Auth had an advisory
 — the password path (A7, A9, A34), the session storage (B2), the linking rule (C86), the second-factor intermediate state (D16, D33), the cookie prefix (H19),
