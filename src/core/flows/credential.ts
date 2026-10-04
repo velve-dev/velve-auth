@@ -5,6 +5,7 @@ import type { KeyProvider } from "../keys/index.js";
 import { createArgon2idHash } from "../password/argon2.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
 import { createPasswordCredentialRepository } from "../password/credential.js";
+import { storedMemoryCeilingKiB } from "../password/limits.js";
 import { acceptNewPassword } from "../password/policy.js";
 import { CREATED_SCHEME } from "../password/scheme.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
@@ -27,6 +28,7 @@ interface CredentialWriter {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
 	readonly schema: string;
+	readonly password: ResolvedPasswordConfig;
 }
 
 interface PasswordToWrite {
@@ -40,6 +42,7 @@ function credentialsOf(writer: CredentialWriter) {
 		driver: writer.driver,
 		keys: writer.keys,
 		schema: writer.schema,
+		memoryCeilingKiB: storedMemoryCeilingKiB(writer.password.argon2id.memoryKiB),
 	});
 }
 

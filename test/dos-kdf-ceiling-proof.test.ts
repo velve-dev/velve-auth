@@ -2,7 +2,6 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KdfSemaphore } from "../src/core/password/semaphore.js";
-import { actorOfTestUser } from "./db-fixtures.js";
 
 /**
  * T-DOS-3 over the mounted route with real derivations. The ceiling is read twice: from the one
@@ -64,7 +63,7 @@ const { toWebHandler } = await import("../src/core/http/web-handler.js");
 const { rootKeyProvider } = await import("../src/core/keys/index.js");
 const { createArgon2idHash } = await import("../src/core/password/argon2.js");
 const { encodeStandardBase64 } = await import("../src/core/password/base64.js");
-const { createPasswordCredentialRepository } = await import("../src/core/password/credential.js");
+const { sealPhc } = await import("../src/core/password/credential.js");
 const { MAXIMUM_STORED_MEMORY_KIB } = await import("../src/core/password/limits.js");
 const { createVelveAuth } = await import("../src/index.js");
 const { configFor } = await import("./auth-fixtures.js");
@@ -104,12 +103,9 @@ const importedAtTheCapNeverSignedIn: string[] = [];
 const importedAtTheCapWithTheConfiguredCost: string[] = [];
 const importedAboveTheCap: string[] = [];
 
+//the rows are written in SQL as an import would since the repository refuses one above the ceiling (E-2616)
 async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
-	const credentials = createPasswordCredentialRepository({
-		driver: migrated.connection,
-		keys,
-		schema: migrated.schema,
-	});
+	const sealed = await sealPhc(keys, phc);
 	const emails: string[] = [];
 	for (let index = 0; index < ACCOUNTS; index += 1) {
 		const email = `${prefix}${index}@ceiling.example`;
@@ -117,12 +113,11 @@ async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
 			`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
 			[email],
 		);
-		await credentials.write({
-			actor: actorOfTestUser((row as { id: string }).id),
-			phc,
-			scheme: "argon2id",
-			setBySessionId: null,
-		});
+		await migrated.connection.query(
+			`INSERT INTO ${migrated.schema}.password_credential (user_id, phc, key_version, scheme)
+			 VALUES ($1, $2, $3, 'argon2id')`,
+			[(row as { id: string }).id, sealed.ciphertext, sealed.keyVersion],
+		);
 		emails.push(email);
 	}
 	return emails;
@@ -316,6 +311,9 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 		const statuses = await signInWave(importedAboveTheCap, 4 * ceiling);
 
 		expect(statuses.filter((status) => status === 200)).toStrictEqual([]);
+		expect(kdfAccounting.memoryRequestsKiB, "each refusal derives the dummy instead").toStrictEqual(
+			statuses.map(() => CONFIGURED_MEMORY_KIB),
+		);
 		expect(
 			kdfAccounting.memoryRequestsKiB.filter((memoryKiB) => memoryKiB > MAXIMUM_STORED_MEMORY_KIB),
 		).toStrictEqual([]);

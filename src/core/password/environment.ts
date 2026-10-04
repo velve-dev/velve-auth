@@ -1,5 +1,6 @@
 import type { RouteServices } from "../auth/routes.js";
 import { createPasswordCredentialRepository } from "./credential.js";
+import { storedMemoryCeilingKiB } from "./limits.js";
 import { createDummyCredential, type PasswordEnvironment } from "./verify.js";
 
 export type PasswordEnvironmentReader = () => Promise<PasswordEnvironment>;
@@ -12,6 +13,7 @@ export function createPasswordEnvironmentReader(
 		driver: services.driver,
 		keys: services.keys,
 		schema: services.schema,
+		memoryCeilingKiB: storedMemoryCeilingKiB(services.password.argon2id.memoryKiB),
 	});
 	const dummy = createDummyCredential(services.keys, services.password);
 	//the eager start must not become an unhandled rejection before a check awaits it (E-1183)

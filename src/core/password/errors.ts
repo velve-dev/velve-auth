@@ -35,11 +35,13 @@ export class PasswordConfigurationError extends Error {
 
 export type CredentialWriteErrorCode =
 	| "scheme_does_not_match_credential"
+	| "credential_not_verifiable"
 	| "credential_not_written";
 
 const CREDENTIAL_WRITE_MESSAGES: Record<CredentialWriteErrorCode, string> = {
 	scheme_does_not_match_credential:
 		"the scheme column and the identifier of the credential name different functions",
+	credential_not_verifiable: "every sign-in would refuse this credential before deriving it",
 	credential_not_written: "the credential write changed no row",
 };
 

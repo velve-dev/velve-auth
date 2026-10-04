@@ -332,7 +332,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 				credentials.replaceIfUnchanged({
 					userId,
 					previous: before.phc,
-					phc: `$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0t${index}`,
+					phc: `$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0t${"AEIMQUYc"[index]}`,
 					scheme: "argon2id",
 				}),
 			),

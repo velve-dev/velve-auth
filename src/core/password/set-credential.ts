@@ -8,6 +8,7 @@ import type { RequestContext } from "../http/route.js";
 import type { SessionResolution } from "../session/service.js";
 import { createArgon2idHash } from "./argon2.js";
 import { createPasswordCredentialRepository } from "./credential.js";
+import { storedMemoryCeilingKiB } from "./limits.js";
 import { acceptNewPassword } from "./policy.js";
 import { CREATED_SCHEME } from "./scheme.js";
 import type { PasswordEnvironment } from "./verify.js";
@@ -48,6 +49,7 @@ export async function replacePasswordOfSession(
 			driver: transaction,
 			keys: services.keys,
 			schema: services.schema,
+			memoryCeilingKiB: storedMemoryCeilingKiB(services.password.argon2id.memoryKiB),
 		}).write({
 			actor: actorOfResolvedSession(input.resolved),
 			phc,
