@@ -2318,7 +2318,8 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `username.isAvailable` | — | — | IP (eng) | — |
 | `username.change` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `username_taken`, `username_invalid` |
 | `factor.totp.enroll.start` | session | **ja** | IP | `session_required`, `freshness_required`, `factor_already_enrolled` |
-| `factor.totp.enroll.finish`, `factor.totp.remove` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
+| `factor.totp.enroll.finish` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled`, `factor_already_enrolled` |
+| `factor.totp.remove` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
 | `factor.totp.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_factor_code`, `too_many_factor_attempts` |
 | `factor.webauthn.register.start` | session | **ja** | IP | `session_required`, `freshness_required` |
 | `factor.webauthn.register.finish` | session | **ja** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected` |

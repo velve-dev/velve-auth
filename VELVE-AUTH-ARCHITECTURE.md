@@ -2316,7 +2316,8 @@ the error column.
 | `username.isAvailable` | — | — | IP (tight) | — |
 | `username.change` | session | **yes** | IP+account | `session_required`, `freshness_required`, `username_taken`, `username_invalid` |
 | `factor.totp.enroll.start` | session | **yes** | IP | `session_required`, `freshness_required`, `factor_already_enrolled` |
-| `factor.totp.enroll.finish`, `factor.totp.remove` | session | **yes** | IP+account | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
+| `factor.totp.enroll.finish` | session | **yes** | IP+account | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled`, `factor_already_enrolled` |
+| `factor.totp.remove` | session | **yes** | IP+account | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
 | `factor.totp.verify` | pending | — | IP+account | `invalid_pending_authentication`, `invalid_factor_code`, `too_many_factor_attempts` |
 | `factor.webauthn.register.start` | session | **yes** | IP | `session_required`, `freshness_required` |
 | `factor.webauthn.register.finish` | session | **yes** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected` |
