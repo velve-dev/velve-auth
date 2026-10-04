@@ -6329,7 +6329,7 @@ at most once per `idleWriteInterval`, as `resolve` does.
 Neither takes an `origin`, and neither is rate limited (3.15 B.2, B.9). The
 headers belong to a request the application has already accepted, and a link
 followed from another site arrives as a navigation without an `Origin` header the
-library could compare, so a check there would refuse every visitor who arrives
+library would be allowed to compare, so a check there would refuse every visitor who arrives
 from elsewhere. A method that has no route is not a server method derived from a
 route declaration, which is what S-CSRF-1 covers. Whatever the application does
 next on the strength of the answer is the application's own route and its own
