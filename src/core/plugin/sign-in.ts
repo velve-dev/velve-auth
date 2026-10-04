@@ -1,4 +1,4 @@
-import type { Session } from "../http/caller.js";
+import type { AuthenticationFactor, Session } from "../http/caller.js";
 import type { ObservedRequest } from "../session/service.js";
 import type { SessionCreateEvent, SignInEvent } from "./config.js";
 import type { PluginHookDispatcher } from "./registry.js";
@@ -55,4 +55,17 @@ export function tellAfterSignIn(
 			? {}
 			: { signCountRegressed: completed.signCountRegressed }),
 	});
+}
+
+//a magic link is the one first factor that leaves no factor on the pending row
+export function signInMethodOfFirstFactor(
+	factorsCompleted: readonly AuthenticationFactor[],
+): SignInMethod {
+	if (factorsCompleted.includes("password")) {
+		return "password";
+	}
+	if (factorsCompleted.includes("oauth")) {
+		return "oauth";
+	}
+	return "magic_link";
 }
