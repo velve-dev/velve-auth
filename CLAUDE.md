@@ -25,7 +25,7 @@ identifiers, commit messages, pull requests, `README.md`, `DOCUMENTATION.md`,
 `CASE-STUDY.md`, inline text and error codes. There is no exception, and
 `CASE-STUDY.md` — which used to be one — is explicitly not one.
 
-`CASE-STUDY.md` was German until this rule changed. It is being migrated to
+`docs/decisions/log.md` was German until this rule changed. It is being migrated to
 English in a single central pass, so that the migration does not collide with
 the feature branches appending to it. Until that pass has run the file holds
 both languages. A German entry still in it is outstanding work, not a permitted
@@ -157,7 +157,7 @@ same reason: the file is **partitioned before the wave starts**, and a feature
 writes only inside the partition it was given. The exception is never "this file
 is shared" — it is "this file has disjoint parts, and one of them is yours".
 
-- **`CASE-STUDY.md`** — every feature appends entries to it. The partition is a
+- **`docs/decisions/log.md`** — every feature appends entries to it. The partition is a
   reserved range of decision numbers, handed out before the writer starts; §6
   sets the ranges out and `test/decision-log.test.ts` enforces them.
 - **`DOCUMENTATION.md`** — every feature documents itself in it, because item 3
@@ -196,7 +196,7 @@ A feature is finished when **all six** hold:
    one test meeting the threshold fixed in architecture section 6.
 3. `DOCUMENTATION.md` covers every new function, parameter and configuration.
 4. `README.md` is updated if the outside picture changed.
-5. `CASE-STUDY.md` records the decisions actually taken while building.
+5. `docs/decisions/log.md` records the decisions actually taken while building.
 6. The main gate has approved.
 
 ### The main gate
@@ -236,7 +236,7 @@ repair anything itself.
 - `pnpm test` green, no skipped test without a reason stated in the code
 - `pnpm publint` — the package's exports resolve as published
 - `pnpm attw` — the types resolve under every module mode the package claims
-- `README.md`, `DOCUMENTATION.md` and `CASE-STUDY.md` extended for the feature
+- `README.md`, `DOCUMENTATION.md` and `docs/decisions/log.md` extended for the feature
 - no AI attribution anywhere in the diff or the branch's commit history
 - the shipped type declarations have not changed unrecorded —
   `test/api-surface.test.ts` compares every `dist/**/*.d.mts` against a
@@ -254,13 +254,15 @@ documentation is "to be written" is not finished.
   and what it deliberately does not do.
 - **`DOCUMENTATION.md`** — every function, every parameter, every configuration
   option, every schema table. The reference.
-- **`CASE-STUDY.md`** — grows with the build. Every design decision with its
+- **`docs/decisions/log.md`** — grows with the build. Every design decision with its
   reason, every rejected alternative, every problem and its solution, in the
   entry format fixed below.
+- **`CASE-STUDY.md`** — a curated selection of `docs/decisions/log.md` for a
+  first reader. Its entries are copied from the log, never appended to it.
 - **`CLAUDE-SKILL.md`**, and `CODEX-SKILL.md` generated from it — kept current
   in its **method**, and never in its content.
 
-`CASE-STUDY.md` has one rule that matters more than the others: **no retroactive
+`docs/decisions/log.md` has one rule that matters more than the others: **no retroactive
 rationalisation.** If a decision was made for a bad reason and turned out right,
 the bad reason is what gets written down.
 
@@ -380,7 +382,7 @@ be rewritten.**
 standing sentence, and never hide the original from rendering.**
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
-it: `git diff <merge-base>...HEAD --numstat -- CASE-STUDY.md` must report zero
+it: `git diff <merge-base>...HEAD --numstat -- docs/decisions/log.md` must report zero
 deletions. The **three-dot** form is the form. Run `pnpm check:log-append` on
 the merge commit itself, before committing anything on top of it — or do not
 lean on it and read `pnpm test`'s decision-log failure instead.
@@ -468,7 +470,7 @@ feature, which is exactly what the rule above prescribes. Numbering inside the
 second range continues from its own start; the gap left at the end of the first
 range stays a gap.
 
-`test/decision-log.test.ts` reads that table. Every entry in `CASE-STUDY.md` must
+`test/decision-log.test.ts` reads that table. Every entry in `docs/decisions/log.md` must
 fall inside a declared range, and two ranges may not overlap — so a feature
 quietly taking a number it does not own fails on its own branch rather than at
 the merge, and a bad assignment fails at wave start while it is still free.
@@ -512,7 +514,7 @@ These follow from architecture section 2 and are not open for local decision:
   row touches that table at all.
 - Core dependencies are exactly these six: `@noble/hashes`, `@noble/ciphers`,
   `bcryptjs`, `otpauth`, `@simplewebauthn/server`, `jose`. Adding a seventh is a
-  decision for `CASE-STUDY.md`, not a routine change.
+  decision for `docs/decisions/log.md`, not a routine change.
 
 ## 8. Secrets
 
@@ -566,7 +568,7 @@ pnpm check:sql-collapse
                  are normalised away — a marker is a block comment, never a line
                  comment
 pnpm check:log-append
-                 no line CASE-STUDY.md had at the merge base is deleted or
+                 no line docs/decisions/log.md had at the merge base is deleted or
                  rewritten, and the branch has added at least one.
 pnpm check:skill-version
                  a skill file that changed since the merge base states a higher
