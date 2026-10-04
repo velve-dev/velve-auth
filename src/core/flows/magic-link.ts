@@ -2,6 +2,7 @@ import type { EmailConfig } from "../auth/config.js";
 import type { SignInResult } from "../auth/results.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
+import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
@@ -55,6 +56,10 @@ export async function redeemMagicLink(
 	input: { readonly token: string },
 ): Promise<SignInResult> {
 	const { driver, schema, sessions, pending } = environment.services;
+	const hooks = environment.services.pluginRuntime.hooks;
+	const observed = observedIn(context);
+	//a veto must come before the token is spent so the link can still be used
+	await askBeforeSignIn(hooks, "magic_link", observed);
 	const confirmingSessionId = await sessionIdOfCaller(environment, context);
 
 	const account = await driver.transaction(async (transaction) => {
@@ -82,17 +87,24 @@ export async function redeemMagicLink(
 	}
 
 	await pending.consume(begun.token);
-	const issued = await sessions.issueReplacingPresented({
-		presentedToken: context.sessionToken,
-		userId: account.user.id,
-		factors: [],
-		observed: observedIn(context),
-	});
+	const issued = await createSessionUnderHooks(
+		hooks,
+		{ userId: account.user.id, factors: [] },
+		() =>
+			sessions.issueReplacingPresented({
+				presentedToken: context.sessionToken,
+				userId: account.user.id,
+				factors: [],
+				observed,
+			}),
+	);
+	const user = await readUserOrRefuse(environment, driver, account.user.id);
+	await tellAfterSignIn(hooks, { method: "magic_link", observed, session: issued.session });
 	context.cookies.setSession(issued.token);
 	return {
 		status: "signed_in",
 		sessionToken: issued.token,
 		session: issued.session,
-		user: await readUserOrRefuse(environment, driver, account.user.id),
+		user,
 	};
 }
