@@ -4195,7 +4195,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 - **S-REDIR-4:** Kein `Location`-Kopfeintrag und kein Query-String einer von der Bibliothek erzeugten Weiterleitung enthält jemals einen Einmal-Token, einen Sitzungstoken oder einen PKCE-Verifier. *(Abschnitt 3.5, „Das Klartext-Token verlässt den Prozess nur im Cookie")*
 - **S-REDIR-5:** Wo ein Ursprung geprüft wird, ist die Prüfung ein Gleichheitsvergleich auf `new URL(x).origin` gegen die Liste `origins`; die Bibliothek enthält keinen Musterabgleich, keinen Platzhalter und keinen Präfixvergleich auf Ursprüngen. *(Abschnitt 3.12, `origins: ["https://app.example.com"]`)*
 - **S-REDIR-6:** Anbieter-Endpunkt-URLs (Autorisierung, Token, JWKS, Userinfo) stammen ausschließlich aus der Konfiguration bei der Initialisierung; keine Route registriert oder ändert eine Endpunkt-URL, die der Server anschließend selbst aufruft. *(Abschnitt 3.10, feste Anbieterliste plus `genericOAuth`; Abschnitt 3.12, Initialisierung)*
-- **S-REDIR-7:** Jede Antwort der Bibliothek mit Körper trägt den Inhaltstyp `application/json`; es gibt keine HTML-Antwort und keinen Antwortkörper, der einen Eingabewert des Anfragenden wiedergibt. *(Abschnitt 3.12, „Ausgabe-Typ, Fehlercodes" je Route; Abschnitt 3.15 D.3, Statuscodes je Route)*
+- **S-REDIR-7:** Jede Antwort der Bibliothek mit Körper trägt den Inhaltstyp `application/json`; es gibt keine HTML-Antwort und keinen Antwortkörper, der einen Eingabewert des Anfragenden wiedergibt. Ausgenommen sind genau vier Antworten, die laut 3.15 D.3 den gespeicherten Datensatz des Aufrufers zurückgeben: `user.email` und `user.username` aus `POST /sign-up` und `POST /sign-up/passwordless`, `user.username` aus `POST /username/change` und `credential.label` aus `POST /factor/webauthn/rename`. Das ist die eigene Eingabe nach Prüfung und Speicherung, als JSON mit dem deklarierten Typ, und keine Rückspiegelung. *(Abschnitt 3.12, „Ausgabe-Typ, Fehlercodes" je Route; Abschnitt 3.15 D.3, Statuscodes je Route)*
 
 ---
 
@@ -4563,7 +4563,7 @@ wird nicht genommen.
 | T-REDIR-4 | S-REDIR-4 | Integration, global | Dieselbe Abfangfunktion durchsucht `Location` und alle Query-Strings nach den in diesem Testlauf erzeugten Token-Klartexten. | **0 Treffer** über die gesamte Suite | CI bei jedem Commit |
 | T-REDIR-5 | S-REDIR-5 | Statisch | AST-Scan über `core/http/`: kein `startsWith`, `includes`, `endsWith`, `RegExp` und kein Platzhalterzeichen in einem Origin-Vergleich. | **0 Treffer** | CI bei jedem Commit |
 | T-REDIR-6 | S-REDIR-6 | Statisch + Integration | AST-Scan: jede ausgehende Anfrage-URL stammt aus dem Konfigurationsobjekt. Integration: Anbieterattrappe liefert im Discovery-Dokument abweichende Endpunkte. | **0 URLs aus Anfragedaten**; die abweichenden Endpunkte werden **nicht** aufgerufen | CI bei jedem Commit |
-| T-REDIR-7 | S-REDIR-7 | Integration, global | Über die gesamte Suite `Content-Type` jeder Antwort prüfen; zusätzlich jeden Antwortkörper nach einem Kanarienwert durchsuchen, der zuvor in jedes Eingabefeld geschrieben wurde. | **100 % `application/json`**; **0 Kanarientreffer** in Antwortkörpern | CI bei jedem Commit |
+| T-REDIR-7 | S-REDIR-7 | Integration, global | Über die gesamte Suite `Content-Type` jeder Antwort prüfen; zusätzlich jeden Antwortkörper nach einem Kanarienwert durchsuchen, der zuvor in jedes Eingabefeld geschrieben wurde. | **100 % `application/json`**; **0 Kanarientreffer** in Antwortkörpern außerhalb der vier in S-REDIR-7 genannten Felder | CI bei jedem Commit |
 
 ---
 
