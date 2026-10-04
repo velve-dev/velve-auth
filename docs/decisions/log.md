@@ -12688,3 +12688,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Rewording the rule on this branch.
 **Reason.** This branch's brief does not cover changing the rules, and a rules change is decided by its own branch.
 **Price.** Until the rules are changed, a wave that follows §5 literally looks for a region that is not there, and the gate line asks for a readme change a feature now usually should not make. Handed off: the README partition bullet in §5, item 4 of the definition of done and the gate line need a rules change. Concerns `CLAUDE.md` §5.
+
+<a id="e-2060"></a>
+
+### A stranger's first reading fixed two things and listed the rest
+`E-2060` · first-look · what the outside view changed
+
+**Context.** A fresh clone was read in the order GitHub presents it: the README, the file list, `src/core/password/verify.ts`, then `CASE-STUDY.md`. Two stumbles belonged to earlier steps of the same clean-up and had been missed there: the README example passed a `connectionString` it never defined, and the case study opened with one ten-sentence paragraph.
+**Rejected.** Fixing everything the reading noticed, including the three skill and rules files in the root, the build history in the README's status section and the PostgreSQL tier note in its requirements.
+**Reason.** The step was to fix only what the first four steps should have caught and to hand the rest to the owner. The root files are fixed by `CLAUDE.md`'s own list, and the status and requirements text is the owner's statement about the release, not presentation.
+**Price.** A first reader still meets `CLAUDE.md`, `CLAUDE-SKILL.md` and `CODEX-SKILL.md` among fifteen files in the root, and a status section that spends a paragraph on prereleases nobody needs. The example names `DATABASE_URL`, an environment variable the library itself never reads. Concerns `README.md` and `CASE-STUDY.md`.
