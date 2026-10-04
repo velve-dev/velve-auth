@@ -69,7 +69,8 @@ async function replacePassword(
 		driver: input.transaction,
 		schema,
 	}).deleteEverySessionOwnedBy({ actor: input.actor });
-	const issued = await sessions.boundTo(input.transaction).issue({
+	const issued = await sessions.boundTo(input.transaction).issueReplacingPresented({
+		presentedToken: context.sessionToken,
 		userId: input.userId,
 		factors: ["password"],
 		observed: observedIn(context),

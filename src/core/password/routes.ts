@@ -110,7 +110,8 @@ async function signedIn(
 	}
 
 	await services.pending.consume(begun.token);
-	const issued = await services.sessions.issue({
+	const issued = await services.sessions.issueReplacingPresented({
+		presentedToken: context.sessionToken,
 		userId,
 		factors: ["password"],
 		observed: observedIn(context),
