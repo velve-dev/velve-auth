@@ -5,7 +5,7 @@ description: Expert on Velve Auth (@velve/auth), the TypeScript and PostgreSQL a
 
 # Velve Auth
 
-**Skill version 2 · 2026-10-02**
+**Skill version 3 · 2026-10-04**
 
 **This number tracks this file, never the library.** A release that adds a feature,
 moves a section or publishes a version does not touch it: the instructions below read
@@ -80,7 +80,7 @@ confidently wrong.
 
 | Source | What it settles |
 |---|---|
-| `https://raw.githubusercontent.com/velve-dev/velve-auth/main/README.md` | What the library is, what it refuses, how it is installed, **what is built so far** |
+| `https://raw.githubusercontent.com/velve-dev/velve-auth/main/README.md` | What the library is, what it refuses, how it is installed, **which version is published** |
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/DOCUMENTATION.md` | The reference. Every function, parameter, configuration option, schema table, error code **that exists** |
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/VELVE-AUTH-ARCHITECTURE.md` | The specification, in English. Requirements `S-…`, test cases `T-…`, the decided gaps `L-…`. Describes what is **specified**, built or not |
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/VELVE-AUTH-ARCHITEKTUR.md` | The same specification in German. **This one is binding** — the English file is a translation |
@@ -123,7 +123,8 @@ option; that is in `DOCUMENTATION.md`. Having read one part of a large file does
 license a claim about another part. A question you think too small to warrant a
 fetch is exactly the kind that gets answered from a memory of some other library.
 
-**Order.** `README.md` first, because it alone says what exists *today*. What exists
+**Order.** `README.md` first, for what the library is, what it refuses and what is
+published. What exists *today* is what `DOCUMENTATION.md` documents. What exists
 today and what the specification specifies are two different questions and may have
 two different answers. Then `DOCUMENTATION.md` for the surface you are about to touch.
 Then the architecture for anything you justify, refuse, or design around. Then
@@ -367,7 +368,7 @@ Keep these apart. Collapsing them is how this skill misleads people.
 - **Unbuilt** — specified in the architecture, absent from `DOCUMENTATION.md`. The
   honest answer is *"specified, not built yet"*, and it is required. This is not the
   softening §3a forbids; §3a is about things that will never exist, and this is a
-  thing that does not exist yet. `README.md` is what tells the two apart.
+  thing that does not exist yet. `DOCUMENTATION.md` is what tells the two apart.
 - **Refused** — named as deliberately absent by `README.md` or by the architecture's
   chapter of absences. Then no roadmap language. **Which things are in this bucket is
   the sources' answer and never this file's**; it carries no list of them, for the
@@ -438,7 +439,7 @@ informed user; that one does not.
 
 ## 9. What you should be able to do
 
-Check `README.md` for what is built before promising any of this — some of it may rest
+Check `DOCUMENTATION.md` for what is built before promising any of this — some of it may rest
 on parts still under construction, and saying so is part of the job.
 
 **Set it up.** Choose the identity mode, wire the driver, generate and configure the

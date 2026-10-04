@@ -478,6 +478,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-1940 … E-1969 | outside the waves · `reviewable-source` — the comments in `src/` rewritten as one plain sentence ending in at most one cited identifier. Sixtieth row overall, counted over the fifty-nine standing at 0b50fb0 |
 | E-1970 … E-1999 | outside the waves · `case-study-curated` — the case study cut to a selection, and the complete log moved to docs/decisions/log.md. Sixty-first row overall, counted over the sixty standing at 38a032e |
 | E-2000 … E-2029 | outside the waves · `rules-only` — the rules file cut to rules, with its explanations moved to docs/working-method.md. Sixty-second row overall, counted over the sixty-one standing at ebada0d |
+| E-2030 … E-2059 | outside the waves · `readme` — the README cut to what a first reader needs, the rest moved to DOCUMENTATION.md. Counted over the rows standing at ebada0d |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
