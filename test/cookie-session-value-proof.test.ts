@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
-import { type MountedAuth, mountAuth } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 import { postTo } from "./flows-fixtures.js";
 import { createStubProvider, oauthConfigFor } from "./oauth-provider.js";
@@ -18,10 +18,13 @@ import {
 	totpCodeNow,
 	UNLIMITED_RATES,
 } from "./proof-fixtures.js";
+import { createVirtualAuthenticator } from "./webauthn-simulator.js";
 
 let mounted: MountedAuth;
 let clock: TestClock;
 let accounts = 0;
+
+const RELYING_PARTY_ID = "app.example.com";
 
 beforeAll(async () => {
 	clock = createTestClock(new Date());
@@ -33,6 +36,13 @@ beforeAll(async () => {
 		rateLimit: UNLIMITED_RATES,
 		oauth: oauthConfigFor({ openIdConnect: false }),
 		fetch: provider.fetch,
+		webauthn: {
+			relyingPartyId: RELYING_PARTY_ID,
+			relyingPartyName: "Velve Auth tests",
+			origins: [TEST_ORIGIN],
+			userVerification: "required",
+		},
+		recoveryCodes: { count: 10, groupSize: 5 },
 	});
 });
 
@@ -68,6 +78,10 @@ async function sessionOf(answer: Response): Promise<string> {
 		throw new Error(`the answer (${answer.status}) set no session cookie`);
 	}
 	return token;
+}
+
+async function signedUpSession(address: string): Promise<string> {
+	return sessionOf(await signUp(address));
 }
 
 type SessionIssuingRoute = readonly [name: string, issue: () => Promise<Response>];
@@ -145,6 +159,59 @@ const SESSION_ISSUING_ROUTES: readonly SessionIssuingRoute[] = [
 					{ currentPassword: PROOF_PASSWORD, newPassword: "another-password-of-length" },
 					{ Cookie: sessionCookieHeader(session) },
 				),
+			);
+		},
+	],
+	[
+		"POST /sign-in/passkey/finish",
+		async () => {
+			const session = await signedUpSession(nextAddress());
+			const authenticator = await createVirtualAuthenticator({
+				relyingPartyId: RELYING_PARTY_ID,
+				origin: TEST_ORIGIN,
+				flags: { userVerified: true, backupEligible: true, backupState: true },
+			});
+			const withSession = { Cookie: sessionCookieHeader(session) };
+			const registering = await mounted.handler(
+				postTo("/factor/webauthn/register/start", {}, withSession),
+			);
+			const registration = (await registering.json()) as { challengeToken: string };
+			await mounted.handler(
+				postTo(
+					"/factor/webauthn/register/finish",
+					{
+						challengeToken: registration.challengeToken,
+						response: await authenticator.attest({ challenge: registration.challengeToken }),
+						label: "A key",
+					},
+					withSession,
+				),
+			);
+			const started = await mounted.handler(postTo("/sign-in/passkey/start", {}));
+			const { challengeToken } = (await started.json()) as { challengeToken: string };
+			return mounted.handler(
+				postTo("/sign-in/passkey/finish", {
+					challengeToken,
+					response: await authenticator.assert({ challenge: challengeToken }),
+				}),
+			);
+		},
+	],
+	[
+		"POST /password/redeem-reset-with-recovery-code",
+		async () => {
+			const address = nextAddress();
+			const session = await signedUpSession(address);
+			const generated = await mounted.handler(
+				postTo("/factor/recovery/generate", {}, { Cookie: sessionCookieHeader(session) }),
+			);
+			const { codes } = (await generated.json()) as { codes: string[] };
+			return mounted.handler(
+				postTo("/password/redeem-reset-with-recovery-code", {
+					email: address,
+					recoveryCode: codes[0] ?? "",
+					newPassword: "another-password-of-length",
+				}),
 			);
 		},
 	],
