@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { toWebHandler } from "../src/core/http/web-handler.js";
-import type { OAuthConfig } from "../src/core/oauth/config.js";
+import type { NewAccountInput, OAuthConfig } from "../src/core/oauth/config.js";
 import { createVelveAuth } from "../src/index.js";
 import { requestTo, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -27,7 +27,7 @@ function configWithoutAnAddress(): OAuthConfig {
 		},
 		callbackBaseUrl: CALLBACK_BASE_URL,
 		trustedProviders: [PROVIDER],
-		identifiersForNewAccount: ({ account }) => ({
+		identifiersForNewAccount: ({ account }: NewAccountInput) => ({
 			username: String(account.claims.preferred_username),
 		}),
 	} as unknown as OAuthConfig;
