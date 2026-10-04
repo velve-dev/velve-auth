@@ -117,6 +117,8 @@ export interface BaseConfig<M extends IdentityMode> {
 	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */
 	readonly fetch?: typeof globalThis.fetch;
 	readonly plugins?: readonly VelvePlugin[];
+	/** the PostgreSQL role every plugin statement is switched to, holding rights on the plugins' own tables only */
+	readonly pluginDatabaseRole?: string;
 	readonly webauthn?: WebAuthnConfig;
 	readonly totp?: Partial<TotpConfig>;
 	readonly schema?: string;
