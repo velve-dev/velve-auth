@@ -17,7 +17,7 @@ import { codeCarrying, createStubProvider, oauthConfigFor } from "./oauth-provid
 import { secretBytesOfBase32 } from "./totp-fixtures.js";
 import { createVirtualAuthenticator } from "./webauthn-simulator.js";
 
-export const REST_PASSWORD = "the password only the at-rest proof knows 4d9a";
+const REST_PASSWORD = "the password only the at-rest proof knows 4d9a";
 const ADDRESS = "at.rest@example.com";
 const RELYING_PARTY_ID = "app.example.com";
 

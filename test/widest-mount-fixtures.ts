@@ -8,7 +8,7 @@ import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { createStubProvider, oauthConfigFor, type StubProvider } from "./oauth-provider.js";
 
-export const WIDEST_PASSWORD = "a password the widest mount accepts 7c1e";
+const WIDEST_PASSWORD = "a password the widest mount accepts 7c1e";
 
 const WEBAUTHN = {
 	relyingPartyId: "app.example.com",
