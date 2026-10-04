@@ -81,9 +81,15 @@ describe("the statements written into the source (S-FIX-2, S-OWNER-2)", () => {
 	const CHANGES_ROWS =
 		/(?<!\bFOR\s{1,20})(?<!\bFOR\s{1,20}NO\s{1,20}KEY\s{1,20})\b(DELETE\s+FROM|UPDATE)\b/i;
 
+	/** A privilege list names UPDATE and DELETE without changing a row: the plugin role's grants
+	 * (E-2450) list them, and a GRANT has no row to give an owner predicate to. */
+	const GRANTS_PRIVILEGES = /^\s*GRANT\b/i;
+
 	it("gives every row-changing statement an owner predicate", () => {
 		// Unanchored: a data-modifying CTE begins WITH, and still writes rows.
-		const changing = sqlLiterals().filter((literal) => CHANGES_ROWS.test(literal.sql));
+		const changing = sqlLiterals().filter(
+			(literal) => CHANGES_ROWS.test(literal.sql) && !GRANTS_PRIVILEGES.test(literal.sql),
+		);
 		const withoutOwner = changing
 			.filter((literal) => !DECLARES_NO_ACTOR.test(literal.sql))
 			.filter((literal) => {
