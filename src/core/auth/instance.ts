@@ -70,7 +70,6 @@ import {
 } from "./startup.js";
 import { assertNoStatedNameShadowsADerivedOne, nestServerMethods } from "./surface.js";
 import { createUserRepository, type User } from "./user.js";
-import { operatorWarningSinkOf } from "./warning-sink.js";
 
 const DEFAULT_SCHEMA = "velve";
 const MILLISECONDS_IN_A_SECOND = 1000;
@@ -255,6 +254,7 @@ function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 export function assembleVelveAuth<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	defaultClock: Clock,
+	fallbackWarningSink: HttpEnvironment["log"],
 ): VelveAuth<M> {
 	assertConfigurationIsStartable(config);
 
@@ -266,7 +266,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	//parameters below the floor must be refused at the start, not at the first hash (S-DEFAULT-6)
 	const password = resolvePasswordConfig(config.password);
 	const sessionSettings = sessionSettingsOf(config.session);
-	const operatorWarnings = operatorWarningSinkOf(config.log);
+	//a weakening and a route alarm must reach the operator even without a configured sink (E-2674)
+	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
 	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
