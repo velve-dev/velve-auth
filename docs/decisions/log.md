@@ -14382,3 +14382,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Rewriting the paragraphs into self-contained prose, which changes moved text that E-2000 kept verbatim on purpose. (b) Moving the sentences back into the rules file, which E-2000 cut to rules.
 **Reason.** A paragraph that opens with "It" is read against the paragraph above it in this file, and where that paragraph is about something else the reader gets the wrong subject, as "this file" did.
 **Price.** The file is no longer word for word what the rules file held, and its opening sentence says so. The restated antecedents are second copies of sentences in the rules file and can drift from them.
+
+<a id="e-2906"></a>
+
+### The case study's forty-six original decisions are compared with the translation they quote
+`E-2906` · gate and infrastructure · test, settled
+
+**Context.** E-1970 cut `CASE-STUDY.md` to a selection and made it quote E-01 … E-46 from the English translation's section 7, and nothing compared the copy with its source, so a correction to one would have left the other saying the old thing. `test/case-study-source.test.ts` reads section 7 of `VELVE-AUTH-ARCHITECTURE.md` and the case study, takes each entry as its bold `**E-nn — …**` heading and every line up to the next blank line, sets aside the case study's `*Where:*` line, which points into the tree and has no counterpart in the specification, and requires the rest to be identical, line for line. It found all forty-six in both and every one identical. With `E-13` changed to `E-14` in the Price of E-01 and the Rejected line of E-46 shortened, the two cases for those entries failed and the other forty-four passed.
+**Rejected.** (a) Comparing against the German section 7, which is the binding text but is not what the case study quotes; a translation defect is the business of `test/architecture-translation.test.ts`. (b) Generating the forty-six from the specification, which would make the case study a build product and is a larger change than the gap.
+**Reason.** The check was cheap: both files hold the entries in the same line shape, so the test is a parse and an equality.
+**Price.** The test compares text, so a correction made in the translation fails here until the case study is brought into step, which is the intent. The section headings between the entries, such as *Runtime and delivery*, are not compared. A `*Where:*` line is trusted to point at something real; nothing checks that the file and symbol it names exist.
