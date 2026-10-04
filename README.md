@@ -138,9 +138,12 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 > stable line and `^1.0.0` resolves. Under semver the documented surface is a promise:
 > nothing in it changes shape without a major version. `1.1.0` added an option
 > and moved nothing. `1.2.0` is a security release and does not keep that promise
-> in full: it adds five `VelveStartupError` codes, any of which can refuse an
-> existing installation at start; a `RevokeReason` member, `email_verified`, that
-> an exhaustive `switch` has to handle; a required `sessionCookieName` in
+> in full: it adds five `VelveStartupError` codes, three of which can refuse a
+> configuration that started on `1.1.0` — the other two,
+> `plugin_database_and_role_both_set` and `plugin_database_reaches_the_core`, are
+> raised only when `pluginDatabase` or `pluginDatabaseRole` is set, the two
+> options new in `1.2.0`; a `RevokeReason` member, `email_verified`, that an
+> exhaustive `switch` has to handle; a required `sessionCookieName` in
 > `HttpEnvironment`; and changed rate-limit defaults. It is a minor version by the
 > owner's decision rather than a major one (E-2214, E-2520). `next` keeps
 > pointing at the last prerelease, `1.0.0-next.2`, and nothing needs it.

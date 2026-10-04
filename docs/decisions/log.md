@@ -14182,3 +14182,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Adding the limiter to S-CSRF-6 so the old attribution becomes true, which would be a new requirement found by a citation defect.
 **Reason.** The argument of E-2732's Rejected (a) does not change: 3.11 places both before the hooks and does not order them, so a limiter that writes before the origin check is allowed, and the rejection of fixing the order stands on 3.11 rather than on S-CSRF-6.
 **Price.** None.
+
+<a id="e-2522"></a>
+
+### Two of the five new start errors cannot refuse a 1.1.0 configuration
+`E-2522` · release-1-2-0 · README status, corrected
+
+**Context.** E-2521 says the README names five new `VelveStartupError` codes, any of which can refuse an existing installation at start, and the README said so. `plugin_database_and_role_both_set` is thrown in `src/core/auth/startup.ts` only when `pluginDatabase` and `pluginDatabaseRole` are both set, and `plugin_database_reaches_the_core` in `src/core/plugin/login-connection.ts` only by the check of the login `pluginDatabase` connects as. Neither option exists at `v1.1.0`, so neither code can refuse a configuration that started there. The other three, `rate_limit_bucket_unusable`, `plugin_route_without_address_rate_limit` and `plugin_migration_table_not_an_identifier`, can. `docs/releases/1.2.0.md` already says three of the five can refuse a configuration that started on 1.1.0 and the other two only by the two new options. The sentence was wrong when it was written, so it is corrected here and E-2521 stays as it is. The README's status paragraph now says three of the five can refuse a 1.1.0 configuration and names the other two with the options that raise them.
+**Rejected.** Dropping the codes from the README and pointing at the release notes, which would take out of the status paragraph the exception it was written to state (E-2521).
+**Reason.** A reader deciding whether `^1.0.0` is safe to take needs to know which refusals can reach a configuration that already runs, and "any of which" told them all five could.
+**Price.** None.
