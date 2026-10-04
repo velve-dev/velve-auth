@@ -7084,6 +7084,18 @@ none of them; neither `UserCreateEvent` nor `SessionCreateEvent` carries the
 caller's address, so a plugin that refuses by network address has no point at
 which to refuse a sign-up.
 
+**An OAuth callback that creates an account runs its two user points on the
+callback's transaction too.** It learns that it is creating an account only
+inside the transaction that looks the provider identity up, so `beforeUserCreate`
+and `afterUserCreate` both run there, with the same lent context: a hook finds
+the account `afterUserCreate` names, never asks the pool for a second
+connection, and as many concurrent OAuth sign-ups as the pool has connections
+all finish. A refusal at either point, or a later failure in the callback's
+transaction, rolls back the account, the identity and whatever the hook wrote to
+its own tables, unless `pluginDatabase` sends `ownTables.query` to the plugin
+login as above (E-2797). The session points that follow run after that
+transaction has committed, as on every sign-in.
+
 **The password operations that issue a session run the two session points
 too** (E-2796):
 

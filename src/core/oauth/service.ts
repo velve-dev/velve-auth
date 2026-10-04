@@ -19,6 +19,7 @@ import type { RedirectPath } from "../http/redirect.js";
 import { identityColumns } from "../identity/columns.js";
 import { removeSignInMethod } from "../identity/sign-in-methods.js";
 import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
+import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
@@ -303,7 +304,9 @@ export function createOAuthService(input: {
 		) {
 			throw new VelveError("oauth_flow_invalid");
 		}
-		await services.pluginRuntime.hooks.beforeUserCreate({
+		//a hook must see the uncommitted account and not ask the pool for a connection (E-2797)
+		const hooks = hooksOnTheTransaction(services.pluginRuntime.hooks, transaction);
+		await hooks.beforeUserCreate({
 			email: columns.value.email,
 			username: columns.value.username,
 		});
@@ -317,7 +320,7 @@ export function createOAuthService(input: {
 						: null,
 			})
 			.catch(refuseAnIdentifierTakenMeanwhile);
-		await services.pluginRuntime.hooks.afterUserCreate({
+		await hooks.afterUserCreate({
 			email: created.email,
 			username: created.username,
 			userId: created.id,
