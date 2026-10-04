@@ -4720,7 +4720,7 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 
 ## 7. Entscheidungsprotokoll
 
-Dieses Protokoll wird als `CASE-STUDY.md` in das Repository übernommen und dort während des Baus fortgeschrieben. Es ist der Ausgangsbestand, nicht das Ergebnis. Jeder Eintrag hält fest, was entschieden wurde, was verworfen wurde und warum — damit die Fallstudie am Ende die tatsächlichen Gründe enthält und nicht die, die sich hinterher gut erzählen.
+Dieses Protokoll wird als `docs/decisions/log.md` in das Repository übernommen und dort während des Baus fortgeschrieben. Es ist der Ausgangsbestand, nicht das Ergebnis. Jeder Eintrag hält fest, was entschieden wurde, was verworfen wurde und warum — damit die Fallstudie am Ende die tatsächlichen Gründe enthält und nicht die, die sich hinterher gut erzählen.
 
 Format: **E-nn — Entscheidung.** Kontext · Verworfen · Grund · Preis.
 

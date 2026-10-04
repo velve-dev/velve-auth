@@ -4,7 +4,8 @@ Every function, parameter, configuration option and table. This file grows with
 the implementation; a feature is not finished until it is documented here.
 
 Concepts and rationale are not repeated here — they are in
-[`CASE-STUDY.md`](./CASE-STUDY.md). This file states what things do.
+[`CASE-STUDY.md`](./CASE-STUDY.md) and, in full, in
+[`docs/decisions/log.md`](./docs/decisions/log.md). This file states what things do.
 
 Chapters run in dependency order: everything a chapter uses stands above it.
 Where two chapters use nothing of each other, the architecture's section order
@@ -4980,7 +4981,7 @@ optional on the declaration a route writes, so anything constructing an
 Nothing else changes: the code never enters a query string, no second redirect
 is added, and the state row and PKCE are what secure the callback either way.
 Section 1 C50 solves the same problem the other way, by converting the POST into
-a GET redirect; this library does not, and `CASE-STUDY.md` E-586 sets out why and
+a GET redirect; this library does not, and `docs/decisions/log.md` E-586 sets out why and
 what that costs.
 
 ### Storing provider tokens

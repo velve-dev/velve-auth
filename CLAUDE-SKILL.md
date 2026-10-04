@@ -5,7 +5,7 @@ description: Expert on Velve Auth (@velve/auth), the TypeScript and PostgreSQL a
 
 # Velve Auth
 
-**Skill version 1 · 2026-09-09**
+**Skill version 2 · 2026-10-02**
 
 **This number tracks this file, never the library.** A release that adds a feature,
 moves a section or publishes a version does not touch it: the instructions below read
@@ -84,7 +84,7 @@ confidently wrong.
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/DOCUMENTATION.md` | The reference. Every function, parameter, configuration option, schema table, error code **that exists** |
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/VELVE-AUTH-ARCHITECTURE.md` | The specification, in English. Requirements `S-…`, test cases `T-…`, the decided gaps `L-…`. Describes what is **specified**, built or not |
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/VELVE-AUTH-ARCHITEKTUR.md` | The same specification in German. **This one is binding** — the English file is a translation |
-| `https://raw.githubusercontent.com/velve-dev/velve-auth/main/CASE-STUDY.md` | Why every decision was made, what was rejected, what it cost |
+| `https://raw.githubusercontent.com/velve-dev/velve-auth/main/docs/decisions/log.md` | Why every decision was made, what was rejected, what it cost — the complete log, of which `CASE-STUDY.md` is a short selection |
 | `https://raw.githubusercontent.com/velve-dev/velve-auth/main/CLAUDE.md` | The rules anyone changing **this repository** works under. Never apply them to the user's own project — its branch discipline, worktree naming and decision numbering are this library's internal process, not advice |
 
 **These files are far too large to read by summarising.** A fetch tool that returns a
@@ -98,8 +98,8 @@ So **download to disk and search**, rather than fetching into context:
 
 ```bash
 mkdir -p /tmp/velve-auth-docs && cd /tmp/velve-auth-docs
-for f in README.md DOCUMENTATION.md VELVE-AUTH-ARCHITECTURE.md VELVE-AUTH-ARCHITEKTUR.md CASE-STUDY.md CLAUDE.md; do
-  curl -fsSL "https://raw.githubusercontent.com/velve-dev/velve-auth/main/$f" -o "$f"
+for f in README.md DOCUMENTATION.md VELVE-AUTH-ARCHITECTURE.md VELVE-AUTH-ARCHITEKTUR.md docs/decisions/log.md CLAUDE.md; do
+  curl -fsSL --create-dirs "https://raw.githubusercontent.com/velve-dev/velve-auth/main/$f" -o "$f"
 done
 ```
 
@@ -127,7 +127,7 @@ fetch is exactly the kind that gets answered from a memory of some other library
 today and what the specification specifies are two different questions and may have
 two different answers. Then `DOCUMENTATION.md` for the surface you are about to touch.
 Then the architecture for anything you justify, refuse, or design around. Then
-`CASE-STUDY.md` when the question is *why*, or when someone proposes a change and you
+`docs/decisions/log.md` when the question is *why*, or when someone proposes a change and you
 need to know what was already tried and rejected.
 
 **If you cannot read a source, say so before you say anything else.** A listed URL
@@ -199,7 +199,7 @@ cannot be what you are reading about, the method name is not yet the question.
 
 When you need something and cannot find it: search `DOCUMENTATION.md` again with a
 different word; then the architecture, remembering the paragraph above; then
-`CASE-STUDY.md`, because if it was considered and rejected the entry gives a better
+`docs/decisions/log.md`, because if it was considered and rejected the entry gives a better
 answer than anything you could construct. Only then say it is not there.
 
 **Never write example code containing a call you have not verified against

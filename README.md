@@ -95,7 +95,8 @@ nothing in it changes shape without a major one. What it does not claim is a
 track record — the interface is specified and the schema is versioned, but this
 library is newly published and has not yet been run in anger by anyone outside
 this repository. Read `CASE-STUDY.md`, which ships inside
-the package, for why each decision was taken.
+the package, for why the decisions that shaped it were taken, and
+[`docs/decisions/log.md`](./docs/decisions/log.md) for every one of them.
 
 ## What works today
 
@@ -473,7 +474,10 @@ plainly is more useful than a plugin that half-implements them.
 
 - [`DOCUMENTATION.md`](./DOCUMENTATION.md) — the reference: every function,
   parameter, configuration option and table.
-- [`CASE-STUDY.md`](./CASE-STUDY.md) — why it is built this way. Every design
+- [`CASE-STUDY.md`](./CASE-STUDY.md) — why it is built this way, in a selection:
+  the decisions the specification started from, and the build entries that carry a
+  measurement, a found fault or a discarded assumption.
+- [`docs/decisions/log.md`](./docs/decisions/log.md) — the complete log. Every design
   decision, every rejected alternative, written during the build rather than
   after it.
 - [`VELVE-AUTH-ARCHITEKTUR.md`](./VELVE-AUTH-ARCHITEKTUR.md) — the binding
@@ -487,7 +491,7 @@ plainly is more useful than a plugin that half-implements them.
 A comment in `src/` is one sentence saying what must hold, sometimes ending in one identifier.
 `(S-FIX-6)` is a security requirement, stated as a list item in section 5 of
 [`VELVE-AUTH-ARCHITECTURE.md`](./VELVE-AUTH-ARCHITECTURE.md).
-`(E-233)` is a design decision, an entry in [`CASE-STUDY.md`](./CASE-STUDY.md) with its context,
+`(E-233)` is a design decision, an entry in [`docs/decisions/log.md`](./docs/decisions/log.md#e-233) with its context,
 what was rejected, the reason and the price. `pnpm check:decision-refs` fails if one points nowhere.
 
 ## Using it with an AI coding agent
