@@ -12868,3 +12868,43 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reporting `"none"` as a weakening and starting. A bucket that is not there is not a raised limit, which E-2211 reports, but the limit switched off, which S-DEFAULT-3 says no option may do.
 **Reason.** `assertConfigurationIsStartable` refuses either bucket, when it is given, with `rate_limit_bucket_unusable` unless it is a real rule whose capacity and refill rate are finite numbers of at least zero. The test is the one E-2212 applies to a plugin route's address bucket, moved to `core/http/rate-limit.ts` as `isUsableBucketRule` so both refusals share one definition and cannot drift apart.
 **Price.** A JavaScript installation that wrote `"none"` there started on 1.1.0 and refuses on 1.2.0, the breaking change E-2214 records for the release notes. The account bucket is refused as well, although only routes that take an account identifier consume it, because the type promises a bucket and the core reaches it on every one of those routes. `globalPerRoute` is not checked here, since it only raises an alarm and limits nothing. Concerns `src/core/auth/startup.ts`, `src/core/http/rate-limit.ts` and `src/core/plugin/registry.ts`.
+
+<a id="e-2390"></a>
+
+### A reading route answers a same-origin GET that carries no Origin
+`E-2390` · same-origin · changes how S-CSRF-1 holds for reading routes
+
+**Context.** A browser's same-origin `fetch` GET sends no `Origin` header. Checked in a real Chromium: `fetch('/probe')` from the page's own origin sent `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Mode: cors` and no `Origin`, and the same call as a POST sent `Origin`. `isOriginAllowed` answers false for a missing header, and `runRoute` runs it on every checked route, so an application reading `GET /session` from its own pages — the documented Next.js mount under `basePath: "/api/auth"` among them — got `403 origin_not_allowed` on every one of the seven reading routes. The client round-trip tests set `Origin` on every request, which is why nothing failed. `test/http-same-origin-read.test.ts` showed it before the change: `GET /session` with a valid session cookie, no `Origin` and `Sec-Fetch-Site: same-origin` answered 403 where 200 was asked.
+**Rejected.** (a) Treating a missing `Origin` as allowed on every GET. A plugin's GET may change state, which S-CSRF-4 cannot rule out and `test/plugin-review-shipped-table.test.ts` says outright. (b) Falling back to `Referer`. It can be stripped by a referrer policy and would put a second parser of URLs beside the origin comparison. (c) Accepting `same-site` as well. A sibling subdomain is not the application, and S-CSRF-2 compares origins, not sites. (d) Telling operators to set `Origin` themselves from the client. A browser forbids a page from setting it. (e) Admitting a present `Origin: null` with `Sec-Fetch-Site: same-origin`, which the comparison table's H29 row says to adopt. The task was the missing header, and T-CSRF-3 lists `null` among the variants a state-changing route rejects.
+**Reason.** `Sec-Fetch-Site` is a forbidden header name, so no page script can set it, and a browser sends `same-origin` only when the initiating origin is the target's own. A GET on a reading route changes nothing (S-CSRF-4), so what a forged same-origin read could gain is the answer, which a cross-origin page cannot read anyway without CORS. So a missing `Origin` is accepted only when all three hold: the route is one of the core's reading GET routes, the request came through the web handler, and it carries `Sec-Fetch-Site: same-origin` exactly. Every other combination keeps the rejection it had, byte for byte, and a present `Origin` is still compared under S-CSRF-2.
+**Price.** S-CSRF-1 no longer means "an `Origin` is always compared" on seven routes. It now means "an `Origin` is compared, or the browser has stated the request is same-origin". A non-browser client that sends neither header is still refused, which is the behaviour before this change. A browser too old to send fetch metadata (Safari before 16.4) still gets 403 on a same-origin read. The specification's S-CSRF-1 and T-CSRF-1 are amended to say this, in both languages.
+
+<a id="e-2391"></a>
+
+### The reading routes are recorded by object when the core table is assembled
+`E-2391` · same-origin · classification, reaches plugins
+
+**Context.** E-2390 needs the pipeline to tell a reading route from any other. S-CSRF-4 names the seven by path, `test/auth-route-table.test.ts` holds them by name, and `src/` held no classification at all.
+**Rejected.** (a) A set of seven names in `src/`. E-740 decided a route's standing is recorded against the route object rather than read back out of its name. (b) A third `originCheck` value or a declaration field. `OriginRequirement` is exported and T-CSRF-1 fixes its two values, and a field a declaration carries is a field a plugin can carry too. (c) A field on `HttpEnvironment`, which is in the shipped declarations.
+**Reason.** `assembleVelveAuth` hands the core routes to `classifyCoreReadingRoutes` before any plugin route exists, and that records each core GET route behind the origin check in a `WeakSet`. `isReadingRoute` is the one predicate that reads it. A plugin route never passes through that call, so it cannot be classified as reading, whatever it declares. A core GET that is not reading is already refused by T-CSRF-4's test, so the rule "core, GET and checked" is that classification and not a second one.
+**Price.** The set is module state written by assembly, so a route built with `defineRoute` and run through a hand-made `HttpEnvironment`, as the HTTP test harness does, is never reading and keeps the strict check. That is the safe side, but it means the harness cannot exercise this path. Only a mount made by `createVelveAuth` can.
+
+<a id="e-2392"></a>
+
+### The direct server method keeps comparing the origin it is given
+`E-2392` · same-origin · server path unchanged
+
+**Context.** The brief asked whether `createServerMethod` has the same defect. Its caller is the application's own server code, which passes `origin` explicitly. No browser stands between them, and there is no fetch metadata to read.
+**Rejected.** Adding a `fetchSite` field to `ServerCallFields`. Server code would have to make a claim about a browser it may not have, and the shipped declarations would change.
+**Reason.** The server method sets `fetchSite: null`, so a server call is never a same-origin read and `origin: null` stays refused on every checked route, as `test/auth-route-table.test.ts` and the new test both assert. An application that renders a page on the server and reads the session there passes its own configured origin. It is the origin the read is made for.
+**Price.** A server component that forwards the incoming request's `Origin` header as it stands still gets `origin_not_allowed` on a page navigation, which carries no `Origin`. That was so before this change, and `DOCUMENTATION.md` tells the reader to pass the configured origin there.
+
+<a id="e-2393"></a>
+
+### H29 still says the null origin is reconstructed, and nothing does that
+`E-2393` · same-origin · hand-off, specification
+
+**Context.** Section 1's comparison table, row H29, says the `Origin: null` special case, reconstructing the origin when `Sec-Fetch-Site: same-origin`, is adopted unchanged. The tree has never done that: `parseOrigin` refuses an opaque origin, and T-CSRF-3 makes `null` a variant every state-changing route must reject.
+**Rejected.** Reconciling H29 on this branch.
+**Reason.** E-2390 covers a missing header on reading routes. H29 is about a present `null` on any route, and changing it would contradict T-CSRF-3, which is a different decision with its own owner.
+**Price.** The specification holds a row that the code and T-CSRF-3 contradict until someone decides it. Handed off. Concerns section 1, row H29, in both language versions.
