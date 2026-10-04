@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KdfSemaphore } from "../src/core/password/semaphore.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 
 /**
  * T-DOS-6 over the mounted route. Fifty accounts hold a bcrypt hash, so each sign-in verifies with
@@ -118,7 +119,12 @@ beforeAll(async () => {
 			[email],
 		);
 		const userId = (row as { id: string }).id;
-		await credentials.write({ userId, phc: bcrypt, scheme: "bcrypt", setBySessionId: null });
+		await credentials.write({
+			actor: actorOfTestUser(userId),
+			phc: bcrypt,
+			scheme: "bcrypt",
+			setBySessionId: null,
+		});
 		accounts.push({ email, userId });
 	}
 }, 120_000);
