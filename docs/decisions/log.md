@@ -12757,3 +12757,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** `src/core/db/row-identifier.ts` holds the one spelling check. Where the identifier goes through `removeSignInMethod`, a malformed one is passed as `NULL`, which the count's `IS NULL` branch reads as excluding nothing and the `DELETE`'s `id = $2` matches nothing, so it runs the same lock, the same count and the same statements as an invented `uuid` and gets the same answer. `SessionService.revoke` answers `void` for every target, so there a malformed one returns before the statement. The webauthn early return is removed and `rename` uses the shared check.
 
 **Price.** The check accepts only the hyphenated form, in either case. PostgreSQL also accepts braces and the unhyphenated form, so `{…}` or 32 bare hex digits that used to reach a real row are now treated as naming none. A malformed `targetSessionId` skips one `DELETE` an invented one runs, which a timer could see; the caller already knows what it sent, so it learns nothing it did not have.
+
+<a id="e-2243"></a>
+
+### The uuid a cover request locks on is drawn in the randomness module
+`E-2243` · input-and-redirect · randomness, decided
+
+**Context.** S-RAND-5 puts every call to the CSPRNG in one module. `anAccountThatCannotExist` in `src/core/db/repositories/token.ts` called `crypto.randomUUID()` directly. Neither scan saw it: `test/token-static-scan.test.ts` and `test/token-review-randomness.test.ts` both searched for `getRandomValues` alone, which is one of the generator's three entry points. The extended scan in `test/token-review-randomness.test.ts` found that one file outside `core/token/random.ts`.
+
+**Rejected.** Replacing the draw with a fixed identifier. Its own comment cites E-931 for drawing afresh, because a fixed identifier could name a row an import creates, and nothing found here argues against that.
+
+**Reason.** `core/token/random.ts` gains `randomUuid()` and the repository calls it, so the draw stays as it was and moves to the module the requirement names. The scan now searches all of `src/` for `getRandomValues`, `randomUUID` and `subtle.generateKey`, comments stripped, and is shown to report each of the three when one is planted in another file.
+
+**Price.** `random.ts` now holds something that is not a secret, so its comment ("every secret of the library must be drawn here") describes less than the file does. The scan reads source text rather than an AST, as T-RAND-5 asks for, so a call spelled through a computed property, such as `crypto["random" + "UUID"]`, would pass it.

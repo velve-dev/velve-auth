@@ -5,6 +5,7 @@ import {
 	type OneTimeTokenPurpose,
 	type OneTimeTokenSubject,
 } from "../../token/purpose.js";
+import { randomUuid } from "../../token/random.js";
 import type { RedeemedOneTimeToken } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { toEntityId } from "../entity-id.js";
@@ -66,7 +67,7 @@ export class OneTimeTokenError extends Error {
 
 //drawn afresh each time as a fixed id could name a row an import creates (E-931)
 function anAccountThatCannotExist(): string {
-	return crypto.randomUUID();
+	return randomUuid();
 }
 
 const FOREIGN_KEY_VIOLATION = "23503";

@@ -2859,6 +2859,15 @@ that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
 |---|---|---|
 | `length` | `number` | how many bytes to draw |
 
+### `randomUuid()`
+
+`string`. A version 4 `uuid` from `crypto.randomUUID`, beside `randomBytes` in
+the same module. The one-time token repository draws one for each request that
+names no account, as an identifier no row may carry. No other module calls
+`getRandomValues`, `randomUUID` or `subtle.generateKey`, and
+`test/token-review-randomness.test.ts` scans all of `src/` for the three
+(S-RAND-5, E-2243). It is internal: no package entry exports it.
+
 ### `encodeBase64Url(bytes)`
 
 `string`. Canonical base64url, no padding, written here rather than through
