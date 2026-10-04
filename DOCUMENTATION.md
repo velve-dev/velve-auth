@@ -7678,6 +7678,17 @@ counting the calling session, which is replaced rather than revoked. The new
 token arrives in `__Host-velve_session`; the previous token resolves to nothing
 from that moment.
 
+**Two calls on one account at once.** Each route reads its precondition — no
+credential for `set`, the current password for `change` — and derives the hash
+before its transaction opens. Once the transaction holds the account row it
+checks that the calling session still exists. A `set`, `change` or reset that
+committed first has revoked it, so the later call is refused with
+`session_required` and status 401 and writes nothing: of two such calls exactly
+one succeeds, and the password that holds is the one that call submitted
+(E-2700, E-2701). A `beforeSessionRevoke` hook is asked about the
+refused call's revocations before that call reaches the account row, so a plugin
+can be told of a revocation that does not happen (E-2702).
+
 Both routes require a **fresh** session — one created within `freshnessWindow`,
 15 minutes by default, measured from `created_at` and not from last use. A stale
 session is refused with `freshness_required` and status 403. Freshness is
