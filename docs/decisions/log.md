@@ -12909,6 +12909,131 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** E-2390 covers a missing header on reading routes. H29 is about a present `null` on any route, and changing it would contradict T-CSRF-3, which is a different decision with its own owner.
 **Price.** The specification holds a row that the code and T-CSRF-3 contradict until someone decides it. Handed off. Concerns section 1, row H29, in both language versions.
 
+<a id="e-2240"></a>
+
+### A name carried by two sources of one request is refused
+`E-2240` · input-and-redirect · request input, decided
+
+**Context.** S-OWNER-6 asks for a request carrying one parameter with contradictory values in two sources to be rejected rather than one value chosen. `readInput` in `src/core/http/web-handler.ts` read the query alone on a `GET` and the body alone on a `POST`, then spread the path parameters over either. So `GET /sign-in/oauth/callback/stubby?provider=other` took the path's value, a form-posted callback with a `provider` field took the path's value, and `POST /session/revoke?targetSessionId=X` with `{ "targetSessionId": "Y" }` acted on `Y`. Nothing was rejected. Two tests pinned that: `test/auth-route-table.test.ts` asserted the contradicting query was ignored, under the reading that a source never read cannot be chosen, and `test/oauth-callback-surface.test.ts` asserted the callback completed for the path's provider. Both now assert the refusal. The new generated case, `test/http-input-sources.test.ts`, walked 35 field-and-source pairs over the mounted route table and found 32 of them answered something other than `400 invalid_input` before the change.
+
+**Rejected.** Refusing only contradicting values and letting two equal ones through. It is the literal reading of the requirement, and it needs a comparison between a JSON value and a query string, which have different types for the same intent; any rule for that comparison is a second parser. Also rejected: reading the query on a `POST` as a further input source. A query parameter the declaration does not name would then reject every `POST` with a cache-busting suffix, and a parameter would have two places it could be read from, which is what the requirement forbids.
+
+**Reason.** The sources are merged by name and a name seen twice is `invalid_input`, whatever the values — one rule, no comparison, and the conservative side of the requirement. On a `POST` the query is still not read, but a query name the body or the path also carries is refused. A query name nothing else carries stays ignored, as before.
+
+**Price.** A request that repeats a value in two places for convenience, such as a client appending `?provider=github` to the callback path for its own logging, now fails where it used to work. The merged input is a prototype-less object, like the query reader's, so a body field named `__proto__` is a field and not a setter.
+
+<a id="e-2241"></a>
+
+### Only the two OAuth callbacks can answer with a Location
+`E-2241` · input-and-redirect · response shape, decided
+
+**Context.** S-REDIR-3 says the only `Location` the library emits is the OAuth callback's 302. `toResponse` in `src/core/http/web-handler.ts` passed every route's output to `readRedirectPath`, which turned any record with a string `redirectToPath` into a 302. A plugin route returning `{ redirectToPath: "/somewhere" }` was answered `302 Location: /somewhere`, and one returning `{ redirectToPath: "//evil.example" }` was answered 500 because the path check threw. `test/http-redirect-routes.test.ts` showed both, and its sweep over the mounted route table found three routes setting `Location` where two are allowed. The existing sweep in `test/oauth-redirect-corpus.test.ts` covers the OAuth feature's six routes and so could not see a plugin.
+
+**Rejected.** Refusing at start a plugin route whose output declares `redirectToPath`. A plugin's handler is typed `unknown` in its output and is a JavaScript function, so nothing at start can see what it will return; the refusal would have had to happen per response, as a 500, which turns a field name into an outage. Also rejected: finding the callbacks by name or path in the handler, which a plugin cannot imitate today only because `assertRouteTableIsUnambiguous` refuses a second route on that path, and which would break silently on a rename.
+
+**Reason.** The callback routes are marked where `src/core/oauth/routes.ts` builds them, with `answerWithRedirect(route)`, which records the built route object in a `WeakSet` beside `toRedirectPath`. `readRedirectPath` now takes the route and returns `null` for any route not in the set, so the output is answered as ordinary JSON. The marker is not exported from any package entry, so a plugin cannot mark its own route, and it is keyed on the object rather than on a name a plugin could also declare.
+
+**Price.** `readRedirectPath`'s signature changed, and `test/http-redirect.test.ts`, which proved the 302 mechanics with a synthetic route, now marks that route itself. A field called `redirectToPath` in a plugin's output reaches the browser as data, so an application that relied on a plugin redirecting has to do the redirect in its own client.
+
+<a id="e-2242"></a>
+
+### An identifier no uuid column can hold names no row
+`E-2242` · input-and-redirect · object identifiers, decided
+
+**Context.** S-OWNER-8 asks that "does not exist" and "belongs to another user" answer alike, and a malformed identifier is the third case of the same question. `POST /session/revoke` and `POST /identity/unlink` handed the submitted string to a `::uuid` cast, PostgreSQL refused it with 22P02, and the route answered `500 internal_error` where an invented `uuid` answered 204. `factor.webauthn.rename` already guarded its input and answered alike. `factor.webauthn.remove` guarded too, but returned early, so on an account with no other sign-in method a malformed identifier answered 204 where an invented one answered `409 last_sign_in_method`. `test/http-malformed-identifiers.test.ts` compared status, headers and body of four malformed spellings against an invented `uuid` on the four routes, for an account with a password and one without, and five of the eight cases differed. `test/session-review-ownership.test.ts` asserted the 22P02 itself as the proof that the target reached SQL as a parameter; it now asserts the call returns.
+
+**Rejected.** A `uuid()` validator in the route declarations, which the brief for this work proposed. It refuses with `400 invalid_input`, and three of the four routes answer an invented identifier with something else, so it would have replaced one difference with another; making it answer like the route would mean a validator that knows each route's answer. Also rejected: a fixed identifier such as the nil `uuid` in place of the malformed one, which names a row the moment an import writes one.
+
+**Reason.** `src/core/db/row-identifier.ts` holds the one spelling check. Where the identifier goes through `removeSignInMethod`, a malformed one is passed as `NULL`, which the count's `IS NULL` branch reads as excluding nothing and the `DELETE`'s `id = $2` matches nothing, so it runs the same lock, the same count and the same statements as an invented `uuid` and gets the same answer. `SessionService.revoke` answers `void` for every target, so there a malformed one returns before the statement. The webauthn early return is removed and `rename` uses the shared check.
+
+**Price.** The check accepts only the hyphenated form, in either case. PostgreSQL also accepts braces and the unhyphenated form, so `{…}` or 32 bare hex digits that used to reach a real row are now treated as naming none. A malformed `targetSessionId` skips one `DELETE` an invented one runs, which a timer could see; the caller already knows what it sent, so it learns nothing it did not have.
+
+<a id="e-2243"></a>
+
+### The uuid a cover request locks on is drawn in the randomness module
+`E-2243` · input-and-redirect · randomness, decided
+
+**Context.** S-RAND-5 puts every call to the CSPRNG in one module. `anAccountThatCannotExist` in `src/core/db/repositories/token.ts` called `crypto.randomUUID()` directly. Neither scan saw it: `test/token-static-scan.test.ts` and `test/token-review-randomness.test.ts` both searched for `getRandomValues` alone, which is one of the generator's three entry points. The extended scan in `test/token-review-randomness.test.ts` found that one file outside `core/token/random.ts`.
+
+**Rejected.** Replacing the draw with a fixed identifier. Its own comment cites E-931 for drawing afresh, because a fixed identifier could name a row an import creates, and nothing found here argues against that.
+
+**Reason.** `core/token/random.ts` gains `randomUuid()` and the repository calls it, so the draw stays as it was and moves to the module the requirement names. The scan now searches all of `src/` for `getRandomValues`, `randomUUID` and `subtle.generateKey`, comments stripped, and is shown to report each of the three when one is planted in another file.
+
+**Price.** `random.ts` now holds something that is not a secret, so its comment ("every secret of the library must be drawn here") describes less than the file does. The scan reads source text rather than an AST, as T-RAND-5 asks for, so a call spelled through a computed property, such as `crypto["random" + "UUID"]`, would pass it.
+
+<a id="e-2244"></a>
+
+### The session token parameters stay plain strings for now
+`E-2244` · input-and-redirect · S-RAND-6, left open
+
+**Context.** S-RAND-6 asks that a value of type `EntityId` not be usable as a token without an explicit conversion. `SessionToken` is a branded string, but `CookieWriter.setSession` and `setPending` take `string`, and so do `SessionService.resolve`, `refresh` and `signOut({ token })`. A `SessionId` therefore passes into all five without conversion, because a branded string is still a `string`. This branch was asked to fix it only if the change stayed internal.
+
+**Rejected.** Narrowing the five parameters to `SessionToken` and `PendingToken` here. Both interfaces are in the shipped declarations, `test/__snapshots__/api-surface.md` records `setSession(token: string)` and `resolve(token: string)`, so the change is a public type change, and it would touch the web handler's `moveTokensIntoCookies`, which reads the token out of an `unknown` route output and would need a cast to brand it.
+
+**Reason.** The rule for this branch was to keep the public API shape, and the narrowing is a change to it that deserves its own decision about what a plugin's `context.cookies.setSession(...)` should accept. Nothing was changed.
+
+**Price.** S-RAND-6's type half stays unmet for these five parameters: a `SessionId` can still be handed to `setSession` and would be written into the session cookie. `test/brand-invariants.test.ts` checks that each brand still brands, not what these parameters accept, so nothing fails on it.
+
+<a id="e-2270"></a>
+
+### A refused identifier is looked up with an empty string, not with NULL
+`E-2270` · tests-tim-fix-enum-replay-rand · runtime behaviour, settled
+
+**Context.** T-TIM-1b asks for four sign-in cases with byte-identical call sequences: an existing account with a wrong password, an absent address, an account without a password credential, and an identifier that is not an email address. The case in `test/password-uniformity.test.ts` calls `checkPassword` directly, so it never saw the account lookup in `findUserByIdentifier` that runs before it. A new case on the mounted `POST /sign-in/password`, recording every statement and the shape of its parameters, found the statements and the KDF calls equal in all four cases, and one difference: the lookup bound the email column as a string in three cases and as `NULL` for `not an email at all`. A `NULL` comparison is one the planner can decide without touching the index, so the malformed identifier was answered by a different query plan.
+**Rejected.** (a) Counting `NULL` and a string as the same shape in the test. That makes the test pass by defining the difference away. (b) Binding the raw identifier when the normaliser refuses it. Nothing could match it in practice, but it puts unnormalised caller text into the predicate, which is what E-46's empty string in `requestMagicLink` was chosen to avoid.
+**Reason.** `findUserByIdentifier` in `src/core/identity/resolution.ts` now binds the empty string for a column the mode configures when the normaliser refuses the identifier, and `NULL` only for a column the mode does not configure. So the parameters depend on the configuration and never on the input. No stored address and no username key can be the empty string, because both are written only through the normalisers, which refuse it. `test/identity-resolution.test.ts` and `test/identity-resolution-oracle.test.ts` pinned the old `NULL` and were changed with it: the oracle table now shows one shape per mode, which is the property S-TIM-1 asks for.
+**Price.** The leak this closes said only that the identifier was malformed, which the caller already knows, so the gain is the requirement being met to the letter rather than a channel an attacker could use. The schema has no check that keeps the empty string out of `email` or `username_key`; a row written around the library with one would now be found by every malformed identifier. Concerns `src/core/identity/resolution.ts` and the *Identity* chapter of `DOCUMENTATION.md`.
+
+<a id="e-2271"></a>
+
+### Ten weak tests in TIM, FIX, ENUM, REPLAY and RAND are rewritten to their section 6 threshold
+`E-2271` · tests-tim-fix-enum-replay-rand · test construction, settled
+
+**Context.** The requirement audit found ten tests that did not prove their requirement at the threshold section 6 sets for the T- case of the same number. T-TIM-1b called `checkPassword` directly and never saw the account lookup. T-TIM-2 compared the dummy's parameters but never observed which function ran. T-TIM-3 had no scan that knew a `Secret` from any other operand. T-TIM-6 covered the statements of one of its two routes. T-ENUM-2 had no confirmed and no unconfirmed account. T-FIX-5 read one synthetic route. T-REPLAY-1 had no check that the issuing statement lands in a hash-keyed table. T-REPLAY-3 compared repository return values, not mounted answers. T-RAND-2 and T-RAND-4 had no case at their own sample size for the session token and the OAuth flow secrets.
+**Rejected.** Extending the files that hold the old cases. Each of them belongs to the feature that wrote it, and the new cases go through the mounted handler or a real database where the old ones did not, so they sit beside them in ten files named `test/<class>-<topic>-proof.test.ts` rather than inside them.
+**Reason.** Each new case asserts its T- case's own threshold. Where a case could pass by observing nothing, it shows that it can see something: the T-TIM-2 spy counts the hash that creates the dummy, the T-TIM-3 scan refuses to run while the program has a diagnostic, because an unresolved type is `any`, and reports exactly one finding on a copy of `src/` with `derived === other` planted, the jose scan of T-REPLAY-1 reports a planted `jose.SignJWT`, T-ENUM-2 signs the confirmed account in with its password, and T-REPLAY-3 redeems each consumed token once successfully first. The nightly half of T-TIM-6 takes 200 measurements per case beside a planted 5 ms that must come back within half of itself, the guard of E-2153; measured here, reset 1.26 ms against 1.21 ms and magic link 1.11 ms against 1.13 ms, the plant recovered as 5.02 ms on both. Nine of the ten passed the first time. T-TIM-1b on the mounted route failed, and E-2270 records the fix.
+**Price.** Three deviations from section 6 are taken here. T-FIX-5 permits one `Max-Age` beside the four attributes it names, as the case in `test/http-cookie-policy.test.ts` already did, because the session cookie carries its lifetime there. T-TIM-6 compares statements and their parameter count, not whether a parameter is `NULL`: the minted row's `user_id` is the account's id for a known address and `NULL` for an unknown one (E-597), so the insert for a known address runs a foreign-key check the other does not. The same statements run in both cases, but the work inside one of them differs, and the nightly medians are the only thing that bounds it. T-TIM-6 and T-TIM-5 take the first byte in process, as E-2152 does, not over a socket. The OAuth state counts as a T-RAND-4 value because it is the SHA-256 of a 32-byte pointer, so its width is the hash's and says nothing about the source.
+
+<a id="e-2272"></a>
+
+### Two more differences between a known and an unknown address, both measured below the limit
+`E-2272` · tests-tim-fix-enum-replay-rand · adds to E-2271
+
+**Context.** E-2271 names the foreign-key check a known address's token insert runs and an unknown one's does not. The review logged the parameters of both requests and found a second difference in the same statement: it first deletes any outstanding token of the same purpose for that `user_id`, so a known address that already holds one deletes a row while an unknown address deletes nothing, and a caller can arrange that by requesting twice. The review also noted that T-REPLAY-3 expires a token by updating its deadline in SQL rather than by advancing the clock.
+**Rejected.** Closing either difference now.
+**Reason.** Both cost microseconds: the nightly medians differ by about 50 µs against the 5 ms the requirement allows, and the statement sequence is identical, which is what S-TIM-6 states. The SQL expiry is equivalent to advancing the clock, because redemption compares against the database's time.
+**Price.** A residual signal of tens of microseconds stays, bounded only by the nightly measurement. A schema check keeping `''` out of `email` and `username_key` would harden E-2270's argument before `@velve/auth/import` becomes a second writer, and is left as a follow-up. Concerns `src/core/flows/artefact.ts` and `test/replay-redeem-answers-proof.test.ts`.
+
+<a id="e-2300"></a>
+
+### Seven weak cases in TOKEN, COOKIE, CSRF and CACHE now prove their requirement over the mounted handler
+`E-2300` · tests-token-rate-cookie-csrf-cache · test construction, settled
+
+**Context.** The requirement audit found the tests for S-TOKEN-4, S-COOKIE-2, S-COOKIE-3, S-COOKIE-4, S-COOKIE-6, S-CSRF-4 and S-CACHE-4 below the threshold section 6 sets for their T- case: most of them drove the cookie collector or a test harness rather than the assembled instance, and the S-CACHE-4 case keyed on a declared predicate rather than on every served route. The audit's RATE finding, S-RATE-7 on the recovery-code reset, was already fixed on main before this branch began, so this branch writes nothing for RATE. Each case is now a file of its own named `test/<class>-<topic>-proof.test.ts`, sharing `test/proof-fixtures.ts`. T-TOKEN-4 redeems an email-change token for A with B's session and completes a link begun from A's session with B's session cookie, and compares every row of B before and after. T-COOKIE-2 walks the whole configuration type for an attribute key and scans `src/` for the attribute literal outside `src/core/http/cookies.ts` and for any extension of it. T-COOKIE-3 ages the pending row 301 s against the database clock and spends a valid code on it. T-COOKIE-4 reads the cookie after seven session-issuing routes. T-COOKIE-6 records every Set-Cookie name over the session, pending, provider and `form_post` flows. T-CSRF-4 snapshots every base table before and after each reading GET route of the widest instance. T-CACHE-4 calls every served route of the widest instance with only a real pending cookie and with none. All seven pass against the tree. Three of them failed on their first run, each for an error in the test and not in the library: the GET calls carried no Origin header, the cookie walk linked a subject its own sign-in had already taken, and the reset case claimed more than the reset can keep, as set out below. This branch found no defect in what the seven cover.
+**Rejected.** Comparing T-CACHE-4's answers byte for byte everywhere, as the case states. `signIn.oauth.start`, `signIn.passkey.start` and `signIn.password` mint a state, a challenge or a pending token on every call, so two identical cookie-less requests already differ and no cookie can be blamed for it. Comparing only the answer, too. `pending.cancel` answers byte for byte the same with and without the cookie and differs only in deleting the row. Extending the T-TOKEN-4 reset case to "no row of B changes" as well. A reset signs A in, and every sign-in replaces the presented session whoever owns it (S-FIX-1, #76), so B's presented session row goes by design.
+**Reason.** Each route gets four calls: one that absorbs a first call's effects, one with the pending cookie, one without, and a control without. Where the last two are byte-identical the pending call must be too. Where they are not, the three routes above are compared after T-ENUM-1's normalisation, and that list is pinned exactly, so a fourth nondeterministic route fails the case rather than joining it quietly. Behaviour is the answer plus whether the call changed the presented `pending_authentication` row. Under that definition exactly six routes differ: the four with `caller: "pending"` and the two `/pending` routes. S-CACHE-4 and T-CACHE-4 say four, and E-530 already records why the reader set is six; the case cites E-530 and does not decide it. The reset case exempts B's presented session row and nothing else, and checks that B's credential still signs B in.
+**Price.** Three routes of T-CACHE-4 are proved after normalisation and not byte for byte. A UUID, an instant, a 43-character secret or an address the cookie changed in their answers would be invisible there. The T-CSRF-4 case calls the reading routes with both a session and a pending cookie at once rather than each alone. The T-COOKIE-6 set is collected over this file's flows rather than over the whole integration suite, which is what section 6 asks; a cookie only some other file's flow sets would not be seen.
+
+<a id="e-2301"></a>
+
+### session.cookieName is validated at start and then ignored, and the case is left failing
+`E-2301` · tests-token-rate-cookie-csrf-cache · finding, open for the specification's owner
+
+**Context.** 3.15 A.5 lists `cookieName` in `SessionConfig`, `DOCUMENTATION.md` documents it as the session cookie's name, and `sessionSettingsOf` refuses a name without `__Host-` at start. Nothing reads the setting afterwards: the HTTP environment hands `DEFAULT_COOKIE_NAMES` to both the collector and `readCookies`. An instance started with `__Host-application_session` writes and reads `__Host-velve_session`. S-COOKIE-1 fixes that name, so the requirement holds and the option does not.
+**Rejected.** Honouring the name, which would contradict S-COOKIE-1 and S-COOKIE-6's enumerated set, and refusing the option at start, which would change the public configuration type. Either is a change to the API, and the choice between them is the owner's.
+**Reason.** An option that is checked and then silently ignored is worse than either honest shape, because the operator who sets it believes it took effect. `test/cookie-name-config-proof.test.ts` asks for one of the two shapes and is marked `it.fails` with its reason. A second case pins what it fails on, so it cannot fail for some other reason unnoticed.
+**Price.** Until the owner decides, the suite carries a case that passes by failing. The documented option misleads anyone who sets it.
+
+<a id="e-2302"></a>
+
+### The pending-cookie test now looks for the token before it normalises the answer
+`E-2302` · tests-token-rate-cookie-csrf-cache · narrows the blind spot E-2300 states
+
+**Context.** E-2300 compares three routes after normalisation because their answers differ even between two identical requests. The review planted a fault in a scratch copy, where `signIn.password` saw the pending cookie and wrote the presented token back as its own pending cookie, and the case still passed: normalisation replaced every 43-character secret, and the presented row was never touched. The review also found two session-issuing paths S-COOKIE-4's case skipped, the passkey sign-in and the recovery-code reset, and that the pin for the ignored `cookieName` checked only the cookie names and not the status.
+**Rejected.** Dropping normalisation for the three routes.
+**Reason.** Without it the three routes never compare equal, so the test would have to exempt them outright. Searching every answer to a request carrying the pending cookie for the presented token, before anything is normalised, catches the planted fault and leaves the comparison as it was. The two skipped paths and the status in the pin were added the same way.
+**Price.** `rate_bucket` stays exempt wholesale in the S-CSRF-4 snapshot, so a reading route that reset a rate limit would still go unseen, and S-TOKEN-4's source scan is a regular expression that a destructured `input` would pass. Concerns `test/cache-pending-ignored-proof.test.ts`, `test/cookie-session-value-proof.test.ts` and `test/cookie-name-config-proof.test.ts`.
+
 <a id="e-2450"></a>
 
 ### Plugin SQL runs under SET LOCAL ROLE when a plugin database role is configured

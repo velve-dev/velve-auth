@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createSecretToken, randomBytes } from "../src/core/token/index.js";
+import { withoutComments } from "../tools/source-text.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const randomModule = `${repositoryRoot}src/core/token/random.ts`;
@@ -23,6 +24,55 @@ const shippedSources = [
 	...filesUnder(`${repositoryRoot}tools`, [".mjs"]),
 	...filesUnder(`${repositoryRoot}migrations`, [".sql"]),
 ];
+
+/** Every entry point of the Web Crypto CSPRNG, which a second module could reach without naming getRandomValues (E-2243). */
+const CSPRNG_CALL = /\b(?:getRandomValues|randomUUID|subtle\s*\.\s*generateKey)\b/;
+
+interface ScannedSource {
+	readonly path: string;
+	readonly text: string;
+}
+
+/** Comments are stripped first, so prose about the rule is not read as a call to the generator. */
+function csprngCallersIn(sources: readonly ScannedSource[]): readonly string[] {
+	return sources
+		.filter((source) => CSPRNG_CALL.test(withoutComments(source.text)))
+		.map((source) => source.path);
+}
+
+const sourceTree = filesUnder(`${repositoryRoot}src`, [".ts"]).map((path) => ({
+	path,
+	text: readFileSync(path, "utf8"),
+}));
+
+describe("no module of src/ but the randomness module reaches the CSPRNG at all (S-RAND-5, T-RAND-5)", () => {
+	it("has the whole source tree to scan", () => {
+		expect(sourceTree.length).toBeGreaterThan(100);
+		expect(sourceTree.map((source) => source.path)).toContain(randomModule);
+	});
+
+	it("finds getRandomValues, randomUUID and subtle.generateKey in core/token/random.ts alone", () => {
+		const outside = csprngCallersIn(sourceTree).filter((path) => path !== randomModule);
+		expect(outside).toStrictEqual([]);
+	});
+
+	it("reports each of the three when one is planted in another module", () => {
+		const planted = [
+			"const id = crypto.randomUUID();",
+			"const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));",
+			"const key = await crypto.subtle .generateKey(params, true, usages);",
+		];
+		for (const call of planted) {
+			const tree = [...sourceTree, { path: "src/core/planted.ts", text: call }];
+			expect(csprngCallersIn(tree), call).toContain("src/core/planted.ts");
+		}
+	});
+
+	it("does not report a call that appears only in a comment", () => {
+		const tree = [{ path: "src/core/prose.ts", text: "//never call crypto.randomUUID here\n" }];
+		expect(csprngCallersIn(tree)).toStrictEqual([]);
+	});
+});
 
 // S-RAND-5 and T-RAND-5. The scan the writer inherited covers `src/core`; this one covers
 // everything the repository ships or runs, because a second caller outside `core` would
