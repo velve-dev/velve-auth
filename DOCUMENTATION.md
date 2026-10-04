@@ -6142,20 +6142,24 @@ the measurements. Named by example, what they do **not** see:
   catalogue row to attribute and no difference to compare, so a scratch table
   built and thrown away is invisible — though what it could have been filled from
   is not, because the read of any foreign table is measured.
-- a change that writes no dependency and no catalogue row of a relation: a
-  `COMMENT`, which writes only `pg_description`. A grant is seen, because it
-  rewrites the relation's own catalogue row.
-- **an object that records no dependency on the schema at all.** Not every
-  creation writes a `pg_depend` row, and which ones do is PostgreSQL's choice
-  rather than this library's: a global object records itself in `pg_shdepend`, a
-  schema records only its owner, and a dependency on a pinned system object is
-  deliberately not recorded. `CREATE SCHEMA`, `CREATE ROLE`, `CREATE CAST` and
-  `ALTER ROLE … SET` are each accepted for that reason. The restricted migration
-  role above refuses `CREATE ROLE` and `CREATE CAST` outright, and it does **not**
-  refuse the other two: a role may always alter its own settings, and `migrate()`
-  itself needs `CREATE` on the database, so the privilege that lets a migration
-  leave an empty schema behind is one the library requires. What each of the four
-  costs is a stray object, not a reach into the core schema.
+- **a change to a catalogue the attribution does not list.** Every row the
+  migration's transaction wrote in the object catalogues — `pg_class`,
+  `pg_attribute`, `pg_index`, `pg_constraint`, `pg_trigger`, `pg_attrdef`,
+  `pg_type`, `pg_description`, `pg_namespace`, `pg_publication` and some thirty
+  more, listed in `ROWS_OF_EVERY_CATALOGUED_OBJECT` in `migration-runner.ts` — is
+  attributed to the object it describes. A change in place to an object that is
+  not the plugin's own is refused, and so is a new object that belongs to none of
+  its tables. The catalogue rows of every object in the schema are counted before
+  and after, so a removed row, such as a comment deleted with `IS NULL`, is seen
+  too (E-2485). That covers `COMMENT ON` a core object, `ALTER CONSTRAINT`,
+  `CLUSTER ON`, `CREATE PUBLICATION` and `CREATE SCHEMA`. What it does not see is a
+  catalogue the list leaves out: the shared ones (`pg_db_role_setting`, which
+  `ALTER ROLE … SET` writes, `pg_shdescription`, `pg_authid`), the two a migration
+  role cannot read (`pg_user_mapping`, `pg_statistic_ext_data`), the planner's
+  `pg_statistic`, and any catalogue a later PostgreSQL adds. `ALTER ROLE … SET` is
+  accepted for that reason. The restricted migration role above refuses `CREATE
+  ROLE` and `CREATE CAST` outright, and a role may always alter its own settings.
+  What that costs is a stray setting, not a reach into the core schema.
 - **a lock.** `LOCK TABLE velve.user IN ACCESS EXCLUSIVE MODE` changes no
   catalogue row, writes no row and reads none, so nothing here sees it. It ends
   with the transaction.
