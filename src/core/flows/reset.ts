@@ -132,6 +132,8 @@ export async function redeemReset(
 	return result;
 }
 
+const SPENT_ON_A_DISABLED_ACCOUNT = Symbol("a recovery code spent on a disabled account");
+
 //a consumed recovery code must not be replaced by a newly generated one
 export async function redeemResetWithRecoveryCode(
 	environment: FlowEnvironment,
@@ -183,9 +185,9 @@ export async function redeemResetWithRecoveryCode(
 		if (consumed === null || found === null) {
 			throw new ConcealedError("recovery_code_not_found");
 		}
-		//a disabled account must answer as a wrong code does and the code is still spent
+		//a code presented for a disabled account stays spent once it is enabled again (E-2872)
 		if (found.disabled) {
-			throw new ConcealedError("recovery_code_not_found");
+			return SPENT_ON_A_DISABLED_ACCOUNT;
 		}
 		return replacePassword(environment, context, {
 			transaction,
@@ -194,6 +196,10 @@ export async function redeemResetWithRecoveryCode(
 			derived,
 		});
 	});
+	//a disabled account must answer as a wrong code does
+	if (result === SPENT_ON_A_DISABLED_ACCOUNT) {
+		throw new ConcealedError("recovery_code_not_found");
+	}
 
 	context.cookies.setSession(result.sessionToken);
 	return result;

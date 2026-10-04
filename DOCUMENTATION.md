@@ -5000,8 +5000,11 @@ its place — that is `factor.recovery.generate`.
 
 Everything that can fail answers `invalid_recovery_code`: a wrong code, an
 identifier that names no account, an account that never generated codes, an
-account whose codes were all spent, and a disabled account. As with the mailed
-reset, every session is revoked and a new one is issued.
+account whose codes were all spent, and a disabled account. A right code for a
+disabled account is spent all the same: it stays unusable after `user.enable`,
+because whoever presented it may be the reason the account was disabled
+(E-2872). As with the mailed reset, every session is revoked and a new one is
+issued.
 
 The per-account bucket is keyed by the identifier in the comparison form sign-in
 uses — trimmed, NFKC-normalised and case-folded — so `Owner@Example.com`,
