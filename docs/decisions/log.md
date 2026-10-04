@@ -12718,3 +12718,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Letting each branch add its own row to the range table when it starts.
 **Reason.** Every one of those rows lands on the same line of `CLAUDE.md`, so every merge after the first would conflict there. Reserving all fourteen ranges in one change before the first branch starts is the partition rule in §5 applied to the table itself.
 **Price.** Ranges reserved for work that may turn out smaller stay as gaps in the numbering, which §6 accepts. Concerns `CLAUDE.md` §6.
+
+<a id="e-2240"></a>
+
+### A name carried by two sources of one request is refused
+`E-2240` · input-and-redirect · request input, decided
+
+**Context.** S-OWNER-6 asks for a request carrying one parameter with contradictory values in two sources to be rejected rather than one value chosen. `readInput` in `src/core/http/web-handler.ts` read the query alone on a `GET` and the body alone on a `POST`, then spread the path parameters over either. So `GET /sign-in/oauth/callback/stubby?provider=other` took the path's value, a form-posted callback with a `provider` field took the path's value, and `POST /session/revoke?targetSessionId=X` with `{ "targetSessionId": "Y" }` acted on `Y`. Nothing was rejected. Two tests pinned that: `test/auth-route-table.test.ts` asserted the contradicting query was ignored, under the reading that a source never read cannot be chosen, and `test/oauth-callback-surface.test.ts` asserted the callback completed for the path's provider. Both now assert the refusal. The new generated case, `test/http-input-sources.test.ts`, walked 35 field-and-source pairs over the mounted route table and found 32 of them answered something other than `400 invalid_input` before the change.
+
+**Rejected.** Refusing only contradicting values and letting two equal ones through. It is the literal reading of the requirement, and it needs a comparison between a JSON value and a query string, which have different types for the same intent; any rule for that comparison is a second parser. Also rejected: reading the query on a `POST` as a further input source. A query parameter the declaration does not name would then reject every `POST` with a cache-busting suffix, and a parameter would have two places it could be read from, which is what the requirement forbids.
+
+**Reason.** The sources are merged by name and a name seen twice is `invalid_input`, whatever the values — one rule, no comparison, and the conservative side of the requirement. On a `POST` the query is still not read, but a query name the body or the path also carries is refused. A query name nothing else carries stays ignored, as before.
+
+**Price.** A request that repeats a value in two places for convenience, such as a client appending `?provider=github` to the callback path for its own logging, now fails where it used to work. The merged input is a prototype-less object, like the query reader's, so a body field named `__proto__` is a field and not a setter.

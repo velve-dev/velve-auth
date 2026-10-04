@@ -1197,6 +1197,15 @@ percent-decoding each segment once:
   `invalid_input` rather than one of its values being chosen — the same rule as
   S-COOKIE-5 for cookies, and it matters on the OAuth callback, where `state`
   and `code` decide the outcome.
+- A `POST` route takes its input from the body plus the captured path
+  parameters, and never from the query string.
+- A name may come from one source only (S-OWNER-6). When the same name arrives
+  in two of the path, the query string and the body — on either method — the
+  request is rejected with `400 invalid_input` and neither value is used. This
+  holds even when the two values agree, so
+  `GET /sign-in/oauth/callback/github?provider=github` is refused as well
+  (E-2240). On a `POST`, a query parameter whose name the body or the path does
+  not also carry is still ignored.
 
 ### Input validators
 

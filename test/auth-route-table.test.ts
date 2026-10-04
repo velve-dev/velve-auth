@@ -255,10 +255,11 @@ describe("the table as a table", () => {
 
 describe("where an authorization parameter is read (S-OWNER-6)", () => {
 	/**
-	 * A POST reads its input from the body alone and never from the query, so a query value cannot
-	 * be chosen over a body value — the parameter has one source, which is what the requirement asks.
+	 * A POST reads its input from the body alone and never from the query, and a query naming a
+	 * field the body also carries is refused rather than ignored — the requirement asks for the
+	 * contradiction to be rejected, and ignoring one side was choosing the other (E-2240).
 	 */
-	it("ignores a query parameter that contradicts the body on a POST route", async () => {
+	it("refuses a query parameter that contradicts the body on a POST route", async () => {
 		const answer = await mounted.handler(
 			new Request(
 				"https://api.example.com/session/revoke?targetSessionId=00000000-0000-0000-0000-000000000001",
@@ -269,9 +270,10 @@ describe("where an authorization parameter is read (S-OWNER-6)", () => {
 				},
 			),
 		);
+		const body = (await answer.json()) as { error?: { code?: string } };
 
-		// No session, so the answer is the caller requirement — the point is that the query never decided.
-		expect(answer.status).toBe(401);
+		// The input is read before the caller, so the refusal comes ahead of the missing session.
+		expect(`${answer.status} ${body.error?.code ?? ""}`).toBe("400 invalid_input");
 	});
 
 	/** A GET reads only its declared fields, so a smuggled `userId` never reaches the handler. */

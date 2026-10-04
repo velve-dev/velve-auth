@@ -51,17 +51,30 @@ function readForm(text: string): Record<string, string> {
 	return fields;
 }
 
-async function readInput(request: Request, url: URL, match: RouteMatch): Promise<unknown> {
-	if (match.route.method === "GET") {
-		return { ...readQuery(url), ...match.pathParameters };
+//a name carried by two sources must be refused even when both values agree (S-OWNER-6)
+function mergeSources(
+	sources: readonly Readonly<Record<string, unknown>>[],
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = Object.create(null);
+	for (const source of sources) {
+		for (const name of Object.keys(source)) {
+			if (Object.hasOwn(merged, name)) {
+				throw new VelveError("invalid_input");
+			}
+			merged[name] = source[name];
+		}
 	}
+	return merged;
+}
+
+async function readBody(request: Request, match: RouteMatch): Promise<Record<string, unknown>> {
 	const text = await request.text();
 	//the form_post callback is posted by the provider, not by the application
 	if (match.route.requestBody === "form") {
-		return { ...readForm(text), ...match.pathParameters };
+		return readForm(text);
 	}
 	if (text === "") {
-		return { ...match.pathParameters };
+		return {};
 	}
 	let body: unknown;
 	try {
@@ -72,7 +85,25 @@ async function readInput(request: Request, url: URL, match: RouteMatch): Promise
 	if (!isRecord(body)) {
 		throw new VelveError("invalid_input");
 	}
-	return { ...body, ...match.pathParameters };
+	return body;
+}
+
+//a post reads no parameter from its query yet refuses one the body or the path also carries (S-OWNER-6)
+function refuseQueryNamesIn(url: URL, input: Readonly<Record<string, unknown>>): void {
+	for (const name of url.searchParams.keys()) {
+		if (Object.hasOwn(input, name)) {
+			throw new VelveError("invalid_input");
+		}
+	}
+}
+
+async function readInput(request: Request, url: URL, match: RouteMatch): Promise<unknown> {
+	if (match.route.method === "GET") {
+		return mergeSources([readQuery(url), match.pathParameters]);
+	}
+	const input = mergeSources([await readBody(request, match), match.pathParameters]);
+	refuseQueryNamesIn(url, input);
+	return input;
 }
 
 function readRouteCall(

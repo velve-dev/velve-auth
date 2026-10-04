@@ -214,19 +214,21 @@ describe("the form-bodied callback and an unauthenticated cross-site POST", () =
 		expect(statuses.at(-1)).toBe(429);
 	});
 
+	/** The path naming one provider and the body another is refused, and neither is chosen (E-2240). */
 	it("lets no field of the body name the provider the path already named", async () => {
 		const mount = await mountWith("form_post");
 		const started = await startFlow(mount);
 		const answered = await mount.auth.handler(
 			postedForm(started, { code: codeCarrying(null), provider: "an-unconfigured-provider" }),
 		);
-		const [identity] = await mount.auth.connection.query<{ provider: string }>(
+		const identities = await mount.auth.connection.query<{ provider: string }>(
 			`SELECT provider FROM ${mount.auth.schema}.identity`,
 			[],
 		);
 
-		expect(answered.status).toBe(302);
-		expect(identity?.provider).toBe("stubby");
+		expect(answered.status).toBe(400);
+		expect(answered.headers.get("Location")).toBeNull();
+		expect(identities).toStrictEqual([]);
 	});
 
 	/**
