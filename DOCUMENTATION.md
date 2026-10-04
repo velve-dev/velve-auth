@@ -1646,6 +1646,146 @@ It keeps three counters, and only two of them can refuse a request.
 | Account | route name and `HMAC(token-pepper, identifier)` | `rate_limited` |
 | Per route, per instance | route name, in memory | an alarm, and nothing else |
 
+### The defaults, and why they are these
+
+An instance configured with no `rateLimit` uses:
+
+```ts
+rateLimit: {
+  perIpAddress: { capacity: 30, refillPerSecond: 0.5 },     // a burst of 30, then 30 a minute
+  perAccount:   { capacity: 5,  refillPerSecond: 1 / 300 }, // a burst of 5, then 1 every 5 minutes
+  globalPerRoute: { alertThresholdPerMinute: 6000, onAlert: /* a warn line, see below */ },
+}
+```
+
+Omitting `rateLimit` uses all three defaults. Omitting one of its fields uses
+the default for that field only, so `rateLimit: { perIpAddress: … }` keeps the
+default account bucket and the default alarm. `globalPerRoute` is replaced
+whole: an application that gives it gives both the threshold and `onAlert`.
+Each bucket is kept per route, so the numbers below are per route.
+
+**The account bucket is the brute-force protection.** Its key is the HMAC of
+the identifier typed in, not the address it came from, so an attacker holding a
+thousand addresses gets no more guesses at one account than an attacker holding
+one. At the default that is 5 guesses at once and then 12 an hour — about 290 a
+day (5 + 86 400 / 300 = 293) against any one account, whatever the number of
+addresses. A real user who mistypes five times waits five minutes for the next
+attempt, and is never locked out: the bucket refills on its own (S-RATE-7).
+
+**The address bucket only stops one source flooding a route.** It counts every
+request on the route, successful ones included, from one IPv4 address or one
+IPv6 `/64`. An office, a university, a school, a mobile carrier's NAT or a VPN
+exit puts many users behind one address, and they share this bucket. At the
+default, one address gets 30 requests at once and then 30 a minute — about
+43 000 a day — which lets a shared network through and still stops a single
+machine hammering a route. It does little against an attacker with many
+addresses, and it does not have to: the account bucket does that.
+
+**There is no per-route throttle that refuses.** A limit on a route as a whole
+would be reached by one attacker, and from then on every user of that route would
+be refused — the attacker locks everyone out without guessing anything. The
+per-route counter is an alarm and refuses nothing (`S-RATE-8`). By default it
+writes `a route is taking more requests than its alert threshold` as a `warn`
+line, with `routeName`, `requestsInLastMinute` and `observedAt`, at most once a
+minute per route (E-2672). An application that gives its own `onAlert` gets
+every alert itself and no default line.
+
+**A weaker value is reported, not refused.** A `capacity` or a `refillPerSecond`
+above the default, in either bucket, produces one `warn` line at start,
+`a security option is weaker than its default`, naming `rateLimit` and the
+values chosen. Every looser preset below produces it, deliberately: the line
+records the trade-off that was made. It is also kept on the instance as
+`auth.weakenings`, a frozen array of `{ option, chosen }`, for a health check or
+a test to read.
+
+**Without a `log`, both lines go to the console.** The start warning and the
+route alarm are written with `console.warn`, prefixed `[@velve/auth]`, when no
+`log` is configured (E-2671). They are the only lines the library writes to the
+console; every other line needs a `log` to be seen. Configure a `log` to send
+them where the rest of the application's logs go.
+
+### Recommended presets
+
+What an attacker gets is stated per route, against one account and from one
+address.
+
+**Default** — no configuration.
+
+```ts
+createVelveAuth({ /* …, no rateLimit */ })
+```
+
+Per account: 5 at once, then 12 an hour, about 290 a day, from any number of
+addresses. Per address: 30 at once, then 30 a minute. No start warning.
+
+**Large shared network** — many users behind one address.
+
+```ts
+rateLimit: {
+  perIpAddress: { capacity: 60, refillPerSecond: 1 },
+}
+```
+
+Per account: unchanged, about 290 a day. Per address: 60 at once, then 60 a
+minute, about 86 000 a day. One start warning for `rateLimit`.
+
+**High traffic** — a shared network and a route that is watched.
+
+```ts
+rateLimit: {
+  perIpAddress: { capacity: 60, refillPerSecond: 1 },
+  globalPerRoute: {
+    alertThresholdPerMinute: 6000,
+    onAlert: (alert) => monitoring.alert("velve.route_flood", alert),
+  },
+}
+```
+
+Per account and per address as for a large shared network, and one start
+warning for `rateLimit`. The alarm goes to the monitoring system on every alert
+instead of to the log. The threshold is counted per instance, so a threshold for
+the whole service is divided by the number of processes.
+
+### When to go stricter, when to go looser
+
+Anything above the default in either bucket produces the start warning.
+Anything at or below it produces nothing.
+
+**Per address, looser** — `capacity` 60–200, `refillPerSecond` 1–3.
+For many users behind one address: a company NAT, a university, a school, a
+mobile carrier's CGNAT, a VPN exit. Also for an application whose users sign in
+in bursts: a shift start, the start of a class, an event check-in. One address
+then gets 60–180 requests a minute (about 86 000–260 000 a day). What one
+account can be guessed does not change.
+
+**Per address, stricter** — `capacity` 10, `refillPerSecond` 0.1 (the old
+default) or lower.
+For a small internal tool, an admin panel or a B2B application with few users,
+or while a credential-stuffing wave is under way. One address then gets 10 at
+once and then 6 a minute (about 8 600 a day); at 0.05 it is 3 a minute.
+
+**Per account, stricter** — `capacity` 3–5, `refillPerSecond` 1 / 900.
+For high-value accounts such as administrators or finance, for regulated
+environments, and for accounts without a second factor. One account can then be
+guessed 4 times an hour: about 99 a day at capacity 3 and 101 at capacity 5. A
+user who mistypes three times waits fifteen minutes.
+
+**Per account, looser, with care** — `capacity` up to 10, `refillPerSecond` up
+to 1 / 60.
+For users who mistype often where support costs matter, or where every account
+has a second factor. Every loosening of this bucket directly raises what a
+password guesser gets against each account per day:
+
+| `perAccount` | Guesses an hour after the burst | Guesses a day per account |
+|---|---|---|
+| `{ capacity: 5, refillPerSecond: 1 / 300 }` (default) | 12 | about 290 |
+| `{ capacity: 10, refillPerSecond: 1 / 300 }` | 12 | about 300 |
+| `{ capacity: 5, refillPerSecond: 1 / 120 }` | 30 | about 725 |
+| `{ capacity: 10, refillPerSecond: 1 / 60 }` | 60 | about 1 450 |
+
+Raising `capacity` alone only lets a user mistype more often before the first
+wait; raising `refillPerSecond` is what multiplies the guesses.
+
 ### `createRateLimiter(options)`
 
 ```ts
