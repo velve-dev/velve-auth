@@ -2032,7 +2032,10 @@ process dies of memory instead of refusing requests (architecture 5.18).
 
 Places are handed out first come, first served. A request that has waited
 `waitLimitInMilliseconds` is refused with `VelveError("rate_limited")`, leaves
-the queue and never runs its work, so a refusal costs no derivation. It is not
+the queue and never runs its work, so a refusal costs no derivation. The limit
+is also checked when a place is freed: on a loop too busy to run a due timer in
+time, a waiter that has already waited out the limit is refused there and then,
+and the place goes to the next waiter that has not (E-2360). It is not
 *quick*: it arrives after the full wait limit, five seconds by default, where a
 successful sign-in takes about twenty milliseconds. What it costs is nothing,
 and what it depends on is load.

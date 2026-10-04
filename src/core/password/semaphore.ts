@@ -18,6 +18,7 @@ export interface KdfSemaphore {
 interface Waiter {
 	readonly grant: () => void;
 	readonly refuse: (failure: Error) => void;
+	readonly queuedAt: number;
 	timer: ReturnType<typeof setTimeout> | undefined;
 }
 
@@ -34,10 +35,20 @@ export function createKdfSemaphore(options: KdfSemaphoreOptions): KdfSemaphore {
 		peakInFlight = Math.max(peakInFlight, inFlight);
 	}
 
+	function hasWaitedOutTheLimit(waiter: Waiter): boolean {
+		return performance.now() - waiter.queuedAt >= waitLimitInMilliseconds;
+	}
+
 	function leave(): void {
 		inFlight -= 1;
 
-		const next = waiting.shift();
+		let next = waiting.shift();
+		//a busy loop can free a place before the due timer runs and the waiter is refused anyway (S-DOS-4)
+		while (next !== undefined && hasWaitedOutTheLimit(next)) {
+			clearTimeout(next.timer);
+			next.refuse(new VelveError("rate_limited"));
+			next = waiting.shift();
+		}
 		if (next !== undefined) {
 			clearTimeout(next.timer);
 			enter();
@@ -52,7 +63,12 @@ export function createKdfSemaphore(options: KdfSemaphoreOptions): KdfSemaphore {
 		}
 
 		return new Promise<void>((resolve, reject) => {
-			const waiter: Waiter = { grant: resolve, refuse: reject, timer: undefined };
+			const waiter: Waiter = {
+				grant: resolve,
+				refuse: reject,
+				queuedAt: performance.now(),
+				timer: undefined,
+			};
 
 			waiter.timer = setTimeout(() => {
 				const queued = waiting.indexOf(waiter);

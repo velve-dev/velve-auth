@@ -13034,6 +13034,121 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Without it the three routes never compare equal, so the test would have to exempt them outright. Searching every answer to a request carrying the pending cookie for the presented token, before anything is normalised, catches the planted fault and leaves the comparison as it was. The two skipped paths and the status in the pin were added the same way.
 **Price.** `rate_bucket` stays exempt wholesale in the S-CSRF-4 snapshot, so a reading route that reset a rate limit would still go unseen, and S-TOKEN-4's source scan is a regular expression that a destructured `input` would pass. Concerns `test/cache-pending-ignored-proof.test.ts`, `test/cookie-session-value-proof.test.ts` and `test/cookie-name-config-proof.test.ts`.
 
+<a id="e-2360"></a>
+
+### A freed semaphore place is not handed to a waiter that has waited out the limit
+`E-2360` · tests-key-race-default-dos · behaviour fix, settled
+
+**Context.** The KDF semaphore refused a waiter only from the timer it set when the waiter queued. A freed place was handed to the head of the queue in the microtask that ends the previous derivation, without asking how long that waiter had waited. On a loop busy enough that the due timer had not yet run, the place went to a waiter past its limit: the nightly T-DOS-4 case written for this branch saw one place granted after 5003 ms in one run of three, and a blocking-tier case that holds the loop for twice a 50 ms limit before freeing the place saw the waiter granted every time.
+**Rejected.** Leaving it, because 3 ms is inside the 500 ms tolerance T-DOS-4 gives the answer. The tolerance is for the time to the answer, while S-DOS-4 says a request that has not obtained a place after 5 seconds is rejected, and a grant at 5003 ms obtained one. Measuring the wait on the configured `clock` was rejected as well: architecture 6 puts the wait limit on a timer and not on `clock`, so a test that moves `clock` must not refuse anything here.
+**Reason.** Each waiter records `performance.now()` when it queues, and `leave` refuses every waiter at the head whose wait has reached the limit before it grants the place to the first that has not. The timer stays and still refuses a waiter that no freed place reaches.
+**Price.** A second time source in the semaphore: the timer decides when an unserved waiter is refused, the monotonic clock decides whether a served one may still be granted. Under fake timers that do not fake `performance` the check never fires and the timer alone decides, which is the behaviour before this entry. Concerns `src/core/password/semaphore.ts` and `DOCUMENTATION.md` under *Passwords*.
+
+<a id="e-2361"></a>
+
+### The weak KEY, RACE, DEFAULT and DOS tests are rebuilt over the mounted library
+`E-2361` · tests-key-race-default-dos · test construction, settled
+
+**Context.** The requirement audit found ten requirements whose tests did not reach the section-6 threshold of their T- case: S-KEY-5, S-RACE-5, S-RACE-6, S-DEFAULT-2, S-DEFAULT-7 and S-DOS-2 to S-DOS-6. Most of them tested a part in isolation, a stub driver, a held-open promise in place of a derivation, a callback in place of the credential check, envelopes sealed without the library mounted, while the T- case describes the assembled library under load or under fault.
+**Rejected.** Extending the files that already cite these requirements. They belong to the branches that wrote them, and several of them test the part in isolation on purpose; a proof of the T- case beside them is a new file named `test/<class>-<topic>-proof.test.ts`.
+**Reason.** Each new file drives `createVelveAuth` and `toWebHandler` against a migrated schema: T-KEY-5 restarts the instance under rings {1}, {1,2} and {2} with `migrate()` each time; T-RACE-5 throws from a driver wrapper at three statements of `POST /password/change` and `POST /password/redeem-reset`; T-RACE-6 runs two instances on two connections and holds both compare-and-swaps at a gate; T-DEFAULT-2 is a recursive type over every literal key of `VelveAuthConfig<M>`; T-DEFAULT-7 loads the password modules once with and once without `hash-wasm` at m=19456, t=2, p=1; T-DOS-2 to T-DOS-6 count every bcrypt and Argon2 call beneath the library through `test/kdf-accounting-fixtures.ts` and run over `test/connection-pool-fixtures.ts`, because one test connection nests a second transaction into the first and concurrent sign-ins through it are not concurrent. T-DOS-2, T-DOS-4 and the resident-set half of T-DOS-3 run nightly; T-KEY-5 and T-DEFAULT-7 run in the blocking tier although section 6 puts them before a release, since they take one and four seconds. Each new case was shown to fail on a planted fault before it was trusted: a ring that still holds a v1 TOTP row, a driver without a transaction, a planted key at the top of the configuration and one inside `session`, a rehash taken out of the semaphore. The type walk had to drop index signatures first: as written at the start it widened the union of keys to `string` and passed with a planted `keepOtherSessions` in the configuration.
+**Price.** The type walk finds one name, `beforeSessionRevoke`, and allows exactly that one. It is a plugin hook, and a mounted case shows a hook refusing every revocation does not keep the other sessions alive across a password change, but a second hook with such a name would have to be allowed by hand. T-DOS-2 cannot see zero statements as the table says, only zero account statements and the same sequence for both identifiers, because S-DOS-5 puts the rate-limit statements first (E-1190, E-1196). With `hash-wasm` loaded no two derivations overlap, so the count beneath the library in T-DOS-3 can only fail on the semaphore's own count; T-DOS-6 runs on the pure engine for that reason. T-DOS-4 reads "every response after the wait limit carries `rate_limited`" as every semaphore place granted or refused against its own wait, not the time since the request was sent: a place granted at 4.99 s answers a little after 5 s with a 200, and no implementation without a response deadline, which L-1 rejects, can avoid that.
+
+<a id="e-2362"></a>
+
+### The S-DOS-3 memory bound does not hold, and the two cases that show it are marked as failing
+`E-2362` · tests-key-race-default-dos · finding, open for the owner
+
+**Context.** S-DOS-3 bounds the memory of key derivation by the semaphore size times the KDF memory parameter, and T-DOS-3 measures it as resident-set growth under `min(4, cpus) × 19 MiB × 1.5`. Two things break the bound against the current code. Verification accepts an imported Argon2 or scrypt credential up to `MAXIMUM_STORED_MEMORY_KIB` = 65536 KiB (E-182), 3.4 times the configured 19456, so four places can hold 256 MiB. And the resident set grew by about 590 MiB over 200 sign-ins at the default parameters, against an allowed 114 MiB: `hash-wasm` allocates a fresh WebAssembly memory for every call and leaves it to the collector. Outside the library, twenty sequential derivations at 19 MiB grew the resident set by about 390 MiB with `hash-wasm` and about 105 MiB with `@noble/hashes`.
+**Rejected.** Fixing either here. Lowering the cap changes which imported credentials still verify, and bounding the accelerator's allocation means changing or wrapping a dependency; both are decisions about the product and not test changes. Rewriting the T-DOS-3 assertion until it passes was rejected as well.
+**Reason.** `test/dos-kdf-ceiling-proof.test.ts` asserts the bound as S-DOS-3 states it, once for credentials imported at the cap and once, nightly, for the resident set, and marks both `it.fails` with one sentence saying why. Either case starts to fail the day its cause is removed, which is the signal to take the mark off.
+**Price.** Until the owner decides, S-DOS-3 is met for the number of derivations and not for their memory. The decision is whether to lower `MAXIMUM_STORED_MEMORY_KIB` towards the configured parameter, make the cap follow the configured parameter, or amend S-DOS-3 to bound the memory by the import cap; and separately whether the accelerator's per-call allocation is acceptable as garbage the collector reclaims.
+
+<a id="e-2363"></a>
+
+### T-DOS-4 times each sign-in from its own arrival at the semaphore, and allows 5 ms to observe a grant
+`E-2363` · tests-key-race-default-dos · test construction, settled
+
+**Context.** The nightly T-DOS-4 case of E-2361 failed 5 of 17 runs in review, never on a semaphore defect. Its slowest answer was measured from the start of the batch, and the 500 requests took about 400 ms of database work to reach the semaphore, so a request that waited its full 5 s there answered more than 5.5 s after the batch began. And a place was reported granted after 5000.07 ms of waiting: the wrapper reads the queue time just before the semaphore records it and reads the grant only when the work starts, a few microtasks after the semaphore granted it, and E-2360's check grants a waiter whose wait is still a hair under the limit.
+**Rejected.** Exposing the queue and grant times from the semaphore itself, which would add members to an interface for a test's sake. Raising the 500 ms tolerance on the batch-start time, which would hide a late answer of the kind the case exists to find.
+**Reason.** The wrapper now records, for each run, the time from its call to `run` until the run settles, granted or refused, and the 5.5 s bound is read on that; a warm-up sign-in runs first so the eager dummy derivation and the first connections are not inside the measurement. A grant counts as late only beyond the limit plus 5 ms, which covers the microtasks between the grant and the start of the work and is three orders of magnitude above the 0.07 ms observed. After the change the case passed 16 of 16 nightly runs.
+**Price.** The bound now covers the time spent at the semaphore and not the time before it, so a slow database ahead of the semaphore is not what this case can catch; that time is not what S-DOS-4 bounds either. A grant up to 5 ms late would pass, which E-2360's blocking-tier case still refuses deterministically.
+
+<a id="e-2364"></a>
+
+### The resident-set overrun of E-2362 is not established as the accelerator's alone
+`E-2364` · tests-key-race-default-dos · finding, correction of E-2362, open for the owner
+
+**Context.** E-2362 names `hash-wasm`'s fresh WebAssembly memory per call as the reason the resident set outgrew the S-DOS-3 bound over 200 sign-ins, and the comment on the nightly case in `test/dos-kdf-ceiling-proof.test.ts` said the same. In review the case was run with the pure engine as well, and the resident set exceeded the bound there too, once at 163 MiB against the allowed 114 MiB; this branch's own probe had already shown the pure engine growing by about 105 MiB over twenty sequential derivations outside the library, which E-2362 reported but did not weigh.
+**Rejected.** Editing E-2362's reason, which stood when it was merged into this branch's history and was wrong when written. Narrowing the case to the accelerator, which would make the overrun look like a property of one optional dependency.
+**Reason.** What is measured is that the resident set outgrows the bound with either engine, by far more with `hash-wasm`. What is not measured is how much of the growth is memory still held by running derivations and how much is garbage the collector has not yet reclaimed, under either engine; the accelerator's per-call allocation is one candidate, not an established sole cause. The comment on the case now says the cause is not established.
+**Price.** The owner's decision in E-2362 is wider than it read: removing or wrapping the accelerator alone may not bring the resident set under the bound, and whether a resident-set threshold is the right measure for S-DOS-3 at all becomes part of the question.
+
+<a id="e-2330"></a>
+
+### Eleven weak OWNER, LINK, REDIR and REST tests replaced by tests at the section-6 threshold
+`E-2330` · tests-owner-link-redir-rest · T-OWNER-2, 4, 7, 8, 9, T-LINK-4, 5, T-REDIR-7, T-REST-1, 2, 4, closed
+
+**Context.** The requirement audit found eleven requirements whose tests did not reach the threshold their T- case fixes. The scan for S-OWNER-2 accepted `user_id` anywhere after the `WHERE`; S-OWNER-4 was proved against the service and not over HTTP; S-OWNER-7 looked only for the text `as Actor`; S-OWNER-8 was proved one route at a time; S-OWNER-9 looked only for identity columns and `nextval`; T-LINK-4 stopped before the sign-in it names, under a comment saying the route was not mounted; S-LINK-5 ran only in mode `email`, where no account without an address can exist; S-REDIR-7 sent empty bodies, so no input reached a handler; T-REST-1 searched eight of its twenty-four values, and S-REST-2 and S-REST-4 checked one column each with the library's own functions.
+
+**Rejected.** Extending the files those tests stand in. They belong to the branches that wrote them, and a file of their own per requirement keeps this branch's diff disjoint; the one exception is `flows-review-first-confirmation.test.ts`, which the brief named because its stale comment had to go.
+
+**Reason.** Each new file proves its requirement the way its T- case describes. `owner-predicate-proof` parses every SQL literal through the compiler, splits the outermost `WHERE` into its `AND` conjuncts and requires `user_id = $n` among them on every table with a foreign key to `velve.user` and every table it cannot resolve, naming the fifteen marked exceptions exactly; its second half resolves calls with the type checker and follows SQL into the driver's `query`, to find a function that reads an owner and then changes the same table by id alone. `owner-proof-brand-proof` reads the brands from `actor.ts`, follows their aliases and requires every assertion of one to sit in its producing module. `owner-revoke-proof` and `owner-foreign-id-proof` go through the mounted handler of a mount serving all 47 rows and compare status, headers but `Date`, and body bytes, with a control that the caller's own id does change its row. `owner-uuid-identifier-proof` reads the user-bound tables from their foreign keys. `link-no-address-proof` mounts mode `username` on a schema migrated with its own CHECK. `redir-reflection-proof` sends a canary into every field, path parameter and query string of all 47 routes with the caller's cookie. `rest-dump-proof`, `rest-hash-proof` and `rest-envelope-proof` share one account driven over HTTP through every flow, and compare against `node:crypto` and Web Crypto rather than the library. Every planted fault the scans can be given is given to them, and each is found.
+
+**Price.** One of them found a defect in the production code: S-OWNER-2's second threshold found the plugin revocation E-2331 records, and it is left failing as `it.fails` rather than fixed. The first runs of three others failed on the tests' own setup rather than on the code (a count the S-OWNER-9 case had guessed, the schema mode of the S-LINK-5 mount, and the pending token the T-REST-1 fixture looked for in the body when it travels only in its cookie), and passed once that was corrected. Two type errors reached the branch in the S-OWNER-8 and S-LINK-5 commits because tsc was run after them and not before; each was corrected in a commit of its own. `mountAuthInMode` in `test/auth-fixtures.ts` migrates every schema in mode `email` whatever mode it mounts, so an account written in another mode meets the wrong CHECK; it is not this branch's file, so `link-no-address-proof` migrates its own schema, and the fixture is reported rather than changed. The local test database held about 3,900 schemas left by earlier runs, which makes one `pg_dump` of a single schema take around thirty seconds there; the dump is taken once per file for that reason, and in a clean database it takes under a second. A `pg_dump` older than the server refuses to run, which until now sent `auth-secrets-at-rest` to its text fallback on a machine whose server is newer than its client; `rest-dump-proof` tries the binary of the server's own major first. Concerns the eleven test files named above, `test/widest-mount-fixtures.ts` and `test/rest-fixtures.ts`.
+
+<a id="e-2331"></a>
+
+### The plugin revocation reads the session's owner and then deletes it by id alone
+`E-2331` · tests-owner-link-redir-rest · T-OWNER-2 second threshold, open
+
+**Context.** T-OWNER-2's second threshold is that no `SELECT` on the same table stands before an owner-less change in the same function. `revokeSession` in `src/core/plugin/context.ts` calls `findUserIdOfSession`, which issues `SELECT user_id FROM session WHERE id = $1`, to announce the revocation to `beforeSessionRevoke`, and then `deleteSessionById`, which issues `DELETE FROM session WHERE id = $1` under the marker that 3.15 G hands a plugin a session id and no owner. The scan finds it and finds nothing else in the tree.
+
+**Rejected.** (a) Fixing it here, by deleting with `WHERE id = $1 AND user_id = $2` bound to the owner just read. That keeps the owner decided in TypeScript and only moves where it is used, and the brief asked for a real gap to be reported rather than fixed. (b) Adding the function to an exception list in the test. The threshold is zero, and an exception would make it one without anyone deciding so.
+
+**Reason.** It is kept as `it.fails`, beside a case asserting that the plugin revocation is the only finding, so the threshold fails visibly and a second finding cannot hide behind the first. Whether it is a gap in practice is narrow: a session's owner cannot change (S-FIX-2) and session ids are never reused, so the owner announced and the row deleted cannot disagree today. What the threshold counts is the shape, and the shape is the one S-OWNER-2 exists to forbid.
+
+**Price.** `test/owner-predicate-proof.test.ts` carries an expected failure until the revocation is changed, and the change touches `src/core/plugin/context.ts` and the session repository, which this branch does not own. A fix that makes the delete itself return the owner, `DELETE … RETURNING user_id` with the announcement after it, would invert E-758's order of announcing before the rows go, so it is a decision for whoever owns that ordering.
+
+<a id="e-2332"></a>
+
+### Four answers return the caller's own stored input, and S-REDIR-7 names none of them
+`E-2332` · tests-owner-link-redir-rest · S-REDIR-7, revisit in the specification
+
+**Context.** S-REDIR-7 says no response body reflects an input value of the requester. The canary sweep finds it back in exactly four answers: `POST /sign-up` and `POST /sign-up/passwordless` return the account they wrote, address and username included; `POST /username/change` returns the account with its new username; `POST /factor/webauthn/rename` returns the credential with its new label. The route table declares those outputs, so the library is doing what it says it does.
+
+**Rejected.** Searching only error bodies, which would have passed without naming the four. Treating them as findings, which would have meant changing four declared outputs.
+
+**Reason.** The test lists the four by route and by body path, `user.email`, `user.username` and `credential.label`, and checks the list against what the tree echoes in both directions, so a fifth echo or a wider one fails. Each is the caller's own input after it was stored and validated, handed back as JSON with the declared type, which is not the reflection the requirement is written against.
+
+**Price.** The specification and the test now disagree on the letter of S-REDIR-7. The specification should name these answers as stored values and not reflections; that is the German text's change to make, and until it is made the list in the test is the only place the exception is stated.
+
+<a id="e-2333"></a>
+
+### S-LINK-5 names a mode whose CHECK forbids the account it describes
+`E-2333` · tests-owner-link-redir-rest · S-LINK-5, revisit in the specification
+
+**Context.** S-LINK-5 says that when a provider reports no address, `velve.user.email` stays NULL in modes `username` and `username_email`. The identity-mode migration for `username_email` adds `CHECK (email IS NOT NULL AND username IS NOT NULL)`, which the schema in section 3.2 states in its own comment, so in that mode an account without an address cannot be written and the sign-up is refused instead.
+
+**Rejected.** Testing `username_email` by expecting the refusal, which would test the CHECK and not the requirement. Changing the CHECK, which is the architecture's schema.
+
+**Reason.** `link-no-address-proof` proves the requirement in mode `username`, where it can hold, and leaves `username_email` untested with the reason stated in the file.
+
+**Price.** One of the two configurations the requirement names is not proved, because the specification contradicts itself there. Either S-LINK-5 should name `username` alone or the CHECK should change, and either is the specification's change to make.
+
+<a id="e-2334"></a>
+
+### Two of E-2330's proofs are narrower than their T- cases on purpose
+`E-2334` · tests-owner-link-redir-rest · T-OWNER-2 and T-OWNER-9, revisit in the specification
+
+**Context.** E-2330 describes the S-OWNER-2 and S-OWNER-9 proofs without saying where they stop short of the wording of their T- cases, and the independent review asked for that to be stated. T-OWNER-2's second threshold reads "no `SELECT` on the same table immediately before it in the same function". T-OWNER-9 says no column of type `serial`, `bigserial`, `integer` or `bigint` is the primary key of a user-bound table.
+
+**Rejected.** (a) Implementing T-OWNER-2's second threshold as written, counting any `SELECT` on the table before any owner-less change. A version of the scan that counted any owner-less change after a `SELECT` of `user_id`, and that also expanded the functions handed to a call as arguments, reported 165 functions. Most were legitimate: session resolution reads `user_id` before a sign-out deletes by the token hash, which the secret binds rather than an id, and route factories reach both statements through the handlers they define. (b) Counting every integer column of a composite primary key in T-OWNER-9, which would flag `totp_used_step`, whose key is `(user_id, time_step)` with `time_step` a `bigint`.
+
+**Reason.** The second threshold is implemented as the shape S-OWNER-2 forbids: a `SELECT` that reads `user_id` from a table in one call, followed in a later call of the same function by a change of that table reached by its id alone with no owner predicate. A pair inside a single call, and a change bound by a hash or a secret, are not counted. The S-OWNER-9 proof checks single-column primary keys only, because a TOTP time step is a counter of the clock and not an object identifier; skipping `totp_used_step` is deliberate and not an oversight.
+
+**Price.** The proofs pass on states the literal wording of their T- cases would fail. A `SELECT` of other columns before an unbound change, or an integer column that is part of a composite key and is an identifier after all, would go unreported. Concerns `test/owner-predicate-proof.test.ts` and `test/owner-uuid-identifier-proof.test.ts`.
+
 <a id="e-2420"></a>
 
 ### The census of S-OWNER-1 reads the schema, follows the SQL and asks for a brand
