@@ -51,7 +51,7 @@ import { createSessionService, type SessionService } from "../session/service.js
 import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
-import { rateLimitConfigOf, routeFloodWatchOf } from "./rate-limiting.js";
+import { rateLimitConfigOf, routeAlarmReportedTo, routeFloodWatchOf } from "./rate-limiting.js";
 import {
 	pendingRoutes,
 	type ResolutionMemo,
@@ -118,6 +118,8 @@ export interface AuthInternals {
 	close(): Promise<void>;
 	/** the HTTP environment `toWebHandler` reads from the instance */
 	readonly http: HttpEnvironment;
+	/** every option the start reported as weaker than its default, in the shape it was reported */
+	readonly weakenings: readonly ChosenWeakening[];
 }
 
 /** what each feature's own seam module contributes to the surface, joined into one type */
@@ -183,6 +185,7 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 	"migrate",
 	"close",
 	"http",
+	"weakenings",
 ];
 
 //a plugin taking a core namespace must be a start error, keyed by the route's name (E-780)
@@ -211,19 +214,19 @@ function reportedWeakenings<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	chosen: { readonly session: SessionSettings; readonly rateLimit: RateLimitConfig },
 ): readonly ChosenWeakening[] {
-	return weakeningsIn(config, {
+	const weakenings = weakeningsIn(config, {
 		session: { defaults: sessionSettingsOf(), chosen: chosen.session },
 		rateLimit: { defaults: rateLimitConfigOf(), chosen: chosen.rateLimit },
 	});
+	return Object.freeze(weakenings.map((weakening) => Object.freeze({ ...weakening })));
 }
 
+//a sink that throws on one weakening must not cost the others their line nor the start (E-2676)
 function report(log: HttpEnvironment["log"], weakenings: readonly ChosenWeakening[]): void {
 	for (const weakening of weakenings) {
 		try {
 			log("warn", "a security option is weaker than its default", { ...weakening });
-		} catch {
-			return;
-		}
+		} catch {}
 	}
 }
 
@@ -251,6 +254,7 @@ function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 export function assembleVelveAuth<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	defaultClock: Clock,
+	fallbackWarningSink: HttpEnvironment["log"],
 ): VelveAuth<M> {
 	assertConfigurationIsStartable(config);
 
@@ -262,7 +266,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	//parameters below the floor must be refused at the start, not at the first hash (S-DEFAULT-6)
 	const password = resolvePasswordConfig(config.password);
 	const sessionSettings = sessionSettingsOf(config.session);
-	const rateLimit = rateLimitConfigOf(config.rateLimit);
+	//a weakening and a route alarm must reach the operator even without a configured sink (E-2671)
+	const operatorWarnings = config.log ?? fallbackWarningSink;
+	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
 	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
 	const pending = createPendingAuthenticationService({ driver, schema });
@@ -373,7 +379,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		log,
 	};
 
-	report(log, reportedWeakenings(config, { session: sessionSettings, rateLimit }));
+	const weakenings = reportedWeakenings(config, { session: sessionSettings, rateLimit });
+	report(operatorWarnings, weakenings);
 
 	const readSession = createServerMethod(read, environment);
 
@@ -384,6 +391,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		identityMode: identity.mode,
 		errorCodes: ERROR_CODES,
 		http: environment,
+		weakenings,
 
 		maintenance: { sweep: () => sweepExpiredRows({ driver, schema }) },
 

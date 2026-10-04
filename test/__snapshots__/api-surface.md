@@ -498,6 +498,7 @@ import { OAuthSurface } from "../oauth/routes.mjs";
 import { PasswordSurface } from "../password/routes.mjs";
 import { PluginSurface } from "../plugin/routes.mjs";
 import { SweepReport } from "./maintenance.mjs";
+import { ChosenWeakening } from "./security-options.mjs";
 
 //#region src/core/auth/instance.d.ts
 interface SessionNamespace {
@@ -564,6 +565,8 @@ interface AuthInternals {
   close(): Promise<void>;
   /** the HTTP environment `toWebHandler` reads from the instance */
   readonly http: HttpEnvironment;
+  /** every option the start reported as weaker than its default, in the shape it was reported */
+  readonly weakenings: readonly ChosenWeakening[];
 }
 /** what each feature's own seam module contributes to the surface, joined into one type */
 type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PasswordSurface<M> & PluginSurface<M> & FactorSurface;
@@ -762,8 +765,14 @@ interface SecurityOption {
 }
 /** every option with its safe default and what a caller has to write to weaken it */
 declare const SECURITY_OPTIONS: readonly SecurityOption[];
+/** one option the start found weaker than its default, and the value that was chosen for it */
+interface ChosenWeakening {
+  readonly chosen: string;
+  readonly option: OptionKey;
+}
 //#endregion
 export {
+	ChosenWeakening,
 	SECURITY_OPTIONS,
 	SecurityOption,
 };
@@ -2834,8 +2843,8 @@ import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespac
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
+import { ChosenWeakening, SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
 import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
-import { SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
 import { RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
 import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, createOwnedRowRepository } from "./core/db/repositories/owned-row-repository.mjs";
@@ -2854,6 +2863,7 @@ export {
 	type BaseConfig,
 	type CallerRequirement,
 	ChangedUser,
+	type ChosenWeakening,
 	type Clock,
 	type ConsumedOAuthFlow,
 	type CookieAttributes,
