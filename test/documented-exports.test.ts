@@ -38,20 +38,11 @@ function isDocumented(name: string): boolean {
 }
 
 /**
- * The instance's namespace types are being documented by a change of their own in the same round,
- * so they are held here and not reported. The second case below fails as soon as one of them is
- * documented, so the list cannot outlive the gap it covers.
+ * The instance's namespace types were held back for a change that was to document them in the
+ * same round. No branch carries that change, and the namespaces have since gained
+ * `resolveFromHeaders` and `findByUsername`, so nothing is held back any more.
  */
-const DOCUMENTED_ELSEWHERE_IN_FLIGHT = [
-	"PendingNamespace",
-	"RecoveryNamespace",
-	"SessionNamespace",
-	"SignInPasskeyNamespace",
-	"TotpNamespace",
-	"UserNamespace",
-	"UsernameNamespace",
-	"WebAuthnNamespace",
-];
+const DOCUMENTED_ELSEWHERE_IN_FLIGHT: readonly string[] = [];
 
 function declarationFilesOfEveryEntryPoint(): string[] {
 	return Object.values(manifest.exports)
