@@ -2056,6 +2056,54 @@ Verification and the background rehash take places from the **same** semaphore,
 which is what stops a rehash wave after a parameter increase from displacing
 live sign-ins (S-DOS-6).
 
+#### How much memory the semaphore bounds
+
+The semaphore bounds how many derivations run at once, not how much memory each
+one asks for. A derivation of a credential the library wrote asks for the
+configured `m`, 19 MiB by default. A derivation of an imported Argon2, scrypt or
+Firebase scrypt credential asks for whatever the source system wrote, up to the
+import ceiling `MAXIMUM_STORED_MEMORY_KIB`, 64 MiB (see *Cost ceilings on a
+stored credential* below). So the bound S-DOS-3 promises is
+
+```
+memory held by running derivations ≤ concurrentHashLimit × max(argon2id.memoryKiB, 64 MiB)
+```
+
+which is 4 × 64 MiB = 256 MiB at the default parameters on a machine with four or
+more cores (E-2610).
+
+**Imports are not restricted to the configured `m`.** Every imported user's hash
+has to keep working, and a ceiling at 19 MiB would refuse Better Auth's 32 MiB
+scrypt estates and send those users to a password reset. The ceiling stays at
+64 MiB and the bound is stated against it instead.
+
+**The excess is transient.** At an imported credential's first successful
+sign-in, `needsRehash` is true — for a foreign scheme, for parameters below the
+policy, and for an `m` that differs from the configured one in either direction
+(E-2611) — and the background rehash writes it at the configured parameters. From
+then on that account's derivations ask for the configured `m`. What keeps the
+worst case alive is credentials that have not yet been signed into, and failed
+attempts against them, which never trigger a rehash.
+
+**Sizing a container.** While imported credentials above the configured `m`
+remain, budget `concurrentHashLimit × 64 MiB` for derivations — 256 MiB at four
+places — on top of the process's own baseline. Lowering `concurrentHashLimit`
+lowers that figure linearly at the cost of throughput. Once every imported user
+has signed in once, `concurrentHashLimit × argon2id.memoryKiB` is the figure.
+The `scheme` column, which is not encrypted, shows how many foreign-scheme
+credentials remain; an imported Argon2id credential's `m` is inside the sealed
+PHC string and is not visible without decrypting it.
+
+**Resident set versus memory held.** The figures above are what running
+derivations hold. The resident set of the process can rise further while
+garbage from finished derivations waits for the collector. With `hash-wasm`
+loaded, two hundred simultaneous sign-ins at the default parameters raised it by
+511 to 966 MiB in nightly runs; after a forced collection it was back within
+20 MiB of where it started, wave after wave, so this is collection lag and not a
+leak. With `@noble/hashes` alone the rise was about 175 to 200 MiB and stayed
+there after collection, which is the allocator keeping freed pages. The
+container needs headroom for that beyond the bound (E-2612).
+
 ### The verification switch
 
 #### `schemeOfStoredHash(phc)`
@@ -2237,11 +2285,15 @@ not this module's business; that belongs to the session module and has no switch
 #### `needsRehash(phc, config)`
 
 True when the scheme is not `argon2id`, when the Argon2 version is not 1.3, when
-any of `m`, `t` or `p` is below the configured value, when the salt is shorter
-than 16 bytes or the hash shorter than 32, or when the string does not parse at
-all. An imported credential is therefore rehashed at the first successful
-sign-in and verified with its original scheme on every sign-in until then
-(S-REST-7).
+`m` differs from the configured value, when `t` or `p` is below the configured
+value, when the salt is shorter than 16 bytes or the hash shorter than 32, or
+when the string does not parse at all. An imported credential is therefore
+rehashed at the first successful sign-in and verified with its original scheme
+on every sign-in until then (S-REST-7). An `m` above the configured value counts
+because it is memory each sign-in asks for beyond the configured budget (S-DOS-3,
+E-2611); a `t` or `p` above the configured value does not, as it costs time
+rather than memory. So lowering `argon2id.memoryKiB` also rewrites the hashes
+written under the higher value, one sign-in at a time.
 
 ### What the uniformity rule does and does not cover
 
