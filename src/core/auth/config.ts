@@ -119,6 +119,8 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly plugins?: readonly VelvePlugin[];
 	/** the PostgreSQL role every plugin statement is switched to, holding rights on the plugins' own tables only */
 	readonly pluginDatabaseRole?: string;
+	/** a second connection that logs in as the plugin role, on which every plugin statement runs */
+	readonly pluginDatabase?: Driver;
 	readonly webauthn?: WebAuthnConfig;
 	readonly totp?: Partial<TotpConfig>;
 	readonly schema?: string;

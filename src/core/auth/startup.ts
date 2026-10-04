@@ -27,6 +27,8 @@ type StartupErrorCode =
 	| "plugin_error_code_not_namespaced"
 	| "plugin_error_code_undeclared"
 	| "plugin_rate_limit_rule_unmatched"
+	| "plugin_database_and_role_both_set"
+	| "plugin_database_reaches_the_core"
 	| "route_namespace_conflict"
 	| "route_name_segment_reserved";
 
@@ -71,6 +73,10 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a plugin route names an error code the plugin does not declare in errorCodes, so the caller would be answered internal_error for a code the route promises",
 	plugin_rate_limit_rule_unmatched:
 		"a plugin declares a rateLimitRules entry for a route it does not contribute, so the rule would limit nothing",
+	plugin_database_and_role_both_set:
+		"pluginDatabase and pluginDatabaseRole are both set; plugin SQL runs either over its own login connection or under a role the library's connection switches to, and not both",
+	plugin_database_reaches_the_core:
+		"pluginDatabase logs in as a role that is the library's role, can become it, owns the schema or holds a right on a core table, so it is no boundary around plugin SQL",
 	route_namespace_conflict:
 		"two route names fold onto the same object path, so one server method would shadow the other",
 	route_name_segment_reserved:
@@ -203,6 +209,16 @@ function assertEveryConfiguredBucketIsUsable(rateLimit: unknown): void {
 	}
 }
 
+//plugin sql must have one place to run so neither option silently overrides the other (E-2642)
+function assertPluginSqlHasOneDestination(config: {
+	readonly pluginDatabase?: unknown;
+	readonly pluginDatabaseRole?: unknown;
+}): void {
+	if (config.pluginDatabase !== undefined && config.pluginDatabaseRole !== undefined) {
+		throw new VelveStartupError("plugin_database_and_role_both_set");
+	}
+}
+
 //checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
@@ -214,6 +230,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEmailCallbackWhereAddressesExist(config.identity.mode, config.email);
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 	assertEveryConfiguredBucketIsUsable(config.rateLimit);
+	assertPluginSqlHasOneDestination(config);
 }
 
 //a key provider that answers for no purpose protects nothing and must refuse the start

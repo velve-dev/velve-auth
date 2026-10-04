@@ -2,6 +2,7 @@ import type { Driver } from "../db/driver.js";
 import { assertIdentifier, assertSchemaName } from "../db/identifier.js";
 import { coreTableNameSet, namesTableOfPlugin } from "../db/migrations/index.js";
 import { runAsThePluginRole } from "./database-role.js";
+import type { PluginConnection } from "./login-connection.js";
 
 class ForeignTableError extends Error {
 	readonly code = "plugin_table_not_its_own";
@@ -304,6 +305,7 @@ export function createOwnTables(options: {
 	readonly schema: string;
 	readonly pluginId: string;
 	readonly databaseRole?: string;
+	readonly pluginConnection?: PluginConnection;
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
@@ -312,6 +314,11 @@ export function createOwnTables(options: {
 	return Object.freeze({
 		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {
 			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema, coreTables);
+			//a login with no way back to the library role needs no role switch (E-2640)
+			if (options.pluginConnection !== undefined) {
+				await options.pluginConnection.verifiedFrom(options.driver);
+				return options.pluginConnection.driver.query<Row>(sql, [...params]);
+			}
 			//without a role the statement check is the only bound (E-2450)
 			return options.databaseRole === undefined
 				? options.driver.query<Row>(sql, [...params])

@@ -195,7 +195,7 @@ describe("plugin SQL runs over its own login connection (S-OWNER-10)", () => {
 			),
 			await sqlStateOf(
 				asThePlugin.query(
-					`SELECT query_to_xml('select password_hash from ${schema}.password_credential', true, false, '') AS leaked`,
+					`SELECT query_to_xml('select phc from ${schema}.password_credential', true, false, '') AS leaked`,
 					[],
 				),
 			),
