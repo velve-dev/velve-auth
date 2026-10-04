@@ -1,6 +1,13 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
+import { DEFAULT_RECOVERY_CODE_SHAPE } from "../factor/recovery/code.js";
+import { TOTP_TOLERANCE_STEPS } from "../factor/totp/parameters.js";
+import { DEFAULT_REGISTRATION_USER_VERIFICATION } from "../factor/webauthn/config.js";
+import type { BucketRule } from "../http/rate-limit.js";
+import { ARGON2ID_FLOOR } from "../password/config.js";
+import { DEFAULT_SESSION_CONFIG, type SessionSettings } from "../session/config.js";
 import { DEFAULT_SESSION_METADATA_MODE } from "../session/metadata.js";
-import type { BaseConfig, VelveAuthConfig } from "./config.js";
+import type { BaseConfig, RateLimitConfig, VelveAuthConfig } from "./config.js";
+import { rateLimitConfigOf } from "./rate-limiting.js";
 
 /** every key of the option type */
 type OptionKey = keyof VelveAuthConfig<IdentityMode>;
@@ -16,6 +23,20 @@ export interface SecurityOption {
 const NOTHING_WEAKENS_IT = "nothing weakens it";
 const REQUIRED = "no default: the option is required";
 
+//a stated default is read from the value the code uses and never written a second time (S-DEFAULT-1)
+const DEFAULT_RATE_LIMIT = rateLimitConfigOf();
+
+function bucketAsWritten(rule: BucketRule): string {
+	return `${rule.capacity} @ ${rule.refillPerSecond}/s`;
+}
+
+function sameSiteAsWritten(sameSite: string): string {
+	return `${sameSite.charAt(0).toUpperCase()}${sameSite.slice(1)}`;
+}
+
+const SESSION_DEFAULT = `idle ${DEFAULT_SESSION_CONFIG.idleTimeout}, absolute ${DEFAULT_SESSION_CONFIG.absoluteTimeout}, freshness ${DEFAULT_SESSION_CONFIG.freshnessWindow}, SameSite=${sameSiteAsWritten(DEFAULT_SESSION_CONFIG.cookie.sameSite)}`;
+const RATE_LIMIT_DEFAULT = `per address ${bucketAsWritten(DEFAULT_RATE_LIMIT.perIpAddress)}, per account ${bucketAsWritten(DEFAULT_RATE_LIMIT.perAccount)}`;
+
 /** every option with its safe default and what a caller has to write to weaken it */
 export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	{ option: "database", safeDefault: REQUIRED, weakenedBy: NOTHING_WEAKENS_IT },
@@ -24,13 +45,14 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	{ option: "origins", safeDefault: REQUIRED, weakenedBy: NOTHING_WEAKENS_IT },
 	{
 		option: "password",
-		safeDefault: "argon2id m=19456, t=2, p=1",
+		safeDefault: `argon2id m=${ARGON2ID_FLOOR.memoryKiB}, t=${ARGON2ID_FLOOR.iterations}, p=${ARGON2ID_FLOOR.parallelism}`,
 		weakenedBy: "nothing: weaker parameters are refused at start (S-DEFAULT-6)",
 	},
 	{
 		option: "session",
-		safeDefault: "idle 7d, absolute 30d, freshness 15m, SameSite=Lax",
-		weakenedBy: "a freshness window wider than the default",
+		safeDefault: SESSION_DEFAULT,
+		weakenedBy:
+			"an idle timeout, an absolute timeout or a freshness window longer than the default",
 	},
 	{
 		option: "sessionMetadata",
@@ -44,8 +66,8 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	},
 	{
 		option: "rateLimit",
-		safeDefault: "per address 10 @ 0.1/s, per account 5 @ 0.01/s",
-		weakenedBy: "a capacity above the default",
+		safeDefault: RATE_LIMIT_DEFAULT,
+		weakenedBy: "a capacity or a refill rate above the default, per address or per account",
 	},
 	{
 		option: "email",
@@ -75,12 +97,12 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	},
 	{
 		option: "totp",
-		safeDefault: "issuer required, tolerance 1 step",
+		safeDefault: `issuer required, tolerance ${TOTP_TOLERANCE_STEPS} step`,
 		weakenedBy: "nothing: a tolerance above one step is not applied (A.8, E-1693)",
 	},
 	{
 		option: "recoveryCodes",
-		safeDefault: "10 codes in groups of 5",
+		safeDefault: `${DEFAULT_RECOVERY_CODE_SHAPE.count} codes in groups of ${DEFAULT_RECOVERY_CODE_SHAPE.groupSize}`,
 		weakenedBy: "fewer than ten codes",
 	},
 	{ option: "schema", safeDefault: "velve", weakenedBy: NOTHING_WEAKENS_IT },
@@ -101,27 +123,46 @@ export interface ChosenWeakening {
 	readonly chosen: string;
 }
 
-const DEFAULT_ADDRESS_CAPACITY = 10;
-const DEFAULT_ACCOUNT_CAPACITY = 5;
-const DEFAULT_RECOVERY_CODE_COUNT = 10;
+interface ResolvedDefaults<Resolved> {
+	readonly defaults: Resolved;
+	readonly chosen: Resolved;
+}
 
-interface FreshnessWindows {
-	readonly defaultMs: number;
-	readonly chosenMs: number;
+interface ResolvedSettings {
+	readonly session: ResolvedDefaults<SessionSettings>;
+	readonly rateLimit: ResolvedDefaults<RateLimitConfig>;
 }
 
 type ObservedConfig = BaseConfig<IdentityMode> & {
 	readonly recoveryCodes?: { readonly count: number };
 };
 
-type Detector = (config: ObservedConfig, freshness: FreshnessWindows) => ChosenWeakening | null;
+type Detector = (config: ObservedConfig, resolved: ResolvedSettings) => ChosenWeakening | null;
+
+const SESSION_DEADLINES = ["idleTimeoutMs", "absoluteTimeoutMs", "freshnessWindowMs"] as const;
+
+function sessionDeadlinesLongerThanTheDefault(
+	session: ResolvedDefaults<SessionSettings>,
+): string[] {
+	return SESSION_DEADLINES.filter(
+		(deadline) => session.chosen[deadline] > session.defaults[deadline],
+	).map((deadline) => `${deadline} ${session.chosen[deadline]}`);
+}
+
+function admitsMoreThan(chosen: BucketRule, defaults: BucketRule): boolean {
+	return chosen.capacity > defaults.capacity || chosen.refillPerSecond > defaults.refillPerSecond;
+}
+
+function userVerificationOf(config: ObservedConfig): string {
+	return config.webauthn?.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION;
+}
 
 //one detector per option, so a new option adds a row rather than a branch
 const DETECTORS: readonly Detector[] = [
-	(_config, freshness) =>
-		freshness.chosenMs > freshness.defaultMs
-			? { option: "session", chosen: `freshnessWindow ${freshness.chosenMs}ms` }
-			: null,
+	(_config, { session }) => {
+		const longer = sessionDeadlinesLongerThanTheDefault(session);
+		return longer.length > 0 ? { option: "session", chosen: longer.join(", ") } : null;
+	},
 
 	(config) =>
 		config.sessionMetadata !== undefined && config.sessionMetadata !== "truncated"
@@ -133,22 +174,25 @@ const DETECTORS: readonly Detector[] = [
 			? { option: "trustedProxies", chosen: `${config.trustedProxies.length} trusted range(s)` }
 			: null,
 
-	(config) => {
-		const address = config.rateLimit?.perIpAddress?.capacity ?? DEFAULT_ADDRESS_CAPACITY;
-		const account = config.rateLimit?.perAccount?.capacity ?? DEFAULT_ACCOUNT_CAPACITY;
-		return address > DEFAULT_ADDRESS_CAPACITY || account > DEFAULT_ACCOUNT_CAPACITY
-			? { option: "rateLimit", chosen: `capacity ${address} per address, ${account} per account` }
+	(_config, { rateLimit }) => {
+		const { chosen, defaults } = rateLimit;
+		return admitsMoreThan(chosen.perIpAddress, defaults.perIpAddress) ||
+			admitsMoreThan(chosen.perAccount, defaults.perAccount)
+			? {
+					option: "rateLimit",
+					chosen: `per address ${bucketAsWritten(chosen.perIpAddress)}, per account ${bucketAsWritten(chosen.perAccount)}`,
+				}
 			: null;
 	},
 
 	(config) =>
-		config.webauthn !== undefined && config.webauthn.userVerification !== "required"
-			? { option: "webauthn", chosen: config.webauthn.userVerification }
-			: null,
+		userVerificationOf(config) === DEFAULT_REGISTRATION_USER_VERIFICATION
+			? null
+			: { option: "webauthn", chosen: userVerificationOf(config) },
 
 	(config) => {
-		const count = config.recoveryCodes?.count ?? DEFAULT_RECOVERY_CODE_COUNT;
-		return count < DEFAULT_RECOVERY_CODE_COUNT
+		const count = config.recoveryCodes?.count ?? DEFAULT_RECOVERY_CODE_SHAPE.count;
+		return count < DEFAULT_RECOVERY_CODE_SHAPE.count
 			? { option: "recoveryCodes", chosen: `${count} codes` }
 			: null;
 	},
@@ -167,6 +211,9 @@ const DETECTORS: readonly Detector[] = [
 	},
 
 	(config) =>
+		config.fetch === undefined ? null : { option: "fetch", chosen: "a fetch the caller supplied" },
+
+	(config) =>
 		config.plugins !== undefined && config.plugins.length > 0
 			? { option: "plugins", chosen: config.plugins.map((plugin) => plugin.id).join(", ") }
 			: null,
@@ -178,12 +225,10 @@ const DETECTORS: readonly Detector[] = [
 //each weakened option appears once, as the operator reads what was given up (S-DEFAULT-1)
 export function weakeningsIn<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: { readonly count: number } },
-	defaultFreshnessWindowMs: number,
-	chosenFreshnessWindowMs: number,
+	resolved: ResolvedSettings,
 ): readonly ChosenWeakening[] {
 	const observed = config as ObservedConfig;
-	const freshness = { defaultMs: defaultFreshnessWindowMs, chosenMs: chosenFreshnessWindowMs };
-	return DETECTORS.map((detect) => detect(observed, freshness)).filter(
+	return DETECTORS.map((detect) => detect(observed, resolved)).filter(
 		(weakening): weakening is ChosenWeakening => weakening !== null,
 	);
 }

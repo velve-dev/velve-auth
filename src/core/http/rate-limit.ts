@@ -3,6 +3,22 @@ export interface BucketRule {
 	readonly refillPerSecond: number;
 }
 
+//a bucket the limiter cannot count against must never reach it (S-DEFAULT-3)
+export function isUsableBucketRule(rule: unknown): rule is BucketRule {
+	if (typeof rule !== "object" || rule === null) {
+		return false;
+	}
+	const { capacity, refillPerSecond } = rule as Partial<BucketRule>;
+	return (
+		typeof capacity === "number" &&
+		typeof refillPerSecond === "number" &&
+		Number.isFinite(capacity) &&
+		Number.isFinite(refillPerSecond) &&
+		capacity >= 0 &&
+		refillPerSecond >= 0
+	);
+}
+
 export interface RateLimitRule {
 	readonly perIpAddress: BucketRule | "none";
 	readonly perAccount: BucketRule | "none";

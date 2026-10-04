@@ -51,6 +51,13 @@ export interface SessionService {
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
+	/** issues a session and removes the one the browser presented, whoever owns it, in one transaction */
+	issueReplacingPresented(input: {
+		readonly presentedToken: string | null;
+		readonly userId: string;
+		readonly factors: readonly AuthenticationFactor[];
+		readonly observed: ObservedRequest;
+	}): Promise<IssuedSession>;
 	reissue(input: {
 		readonly previousToken: string;
 		readonly userId: string;
@@ -176,6 +183,16 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions.insertSession(
 				insertFor(userId, factors, observed, issued.tokenHash),
 			);
+			return { token: issued.token, session };
+		},
+
+		//a sign-in must leave no row for the token the browser presented (S-FIX-3)
+		async issueReplacingPresented({ presentedToken, userId, factors, observed }) {
+			const issued = createSessionToken();
+			const session = await sessions.replacePresentedSession({
+				presentedTokenHash: presentedToken === null ? null : sessionTokenHash(presentedToken),
+				insert: insertFor(userId, factors, observed, issued.tokenHash),
+			});
 			return { token: issued.token, session };
 		},
 

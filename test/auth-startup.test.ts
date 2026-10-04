@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
-import type { VelveAuthConfig } from "../src/core/auth/config.js";
+import type { VelveAuthConfig, WebAuthnConfig } from "../src/core/auth/config.js";
+import { rateLimitConfigOf } from "../src/core/auth/rate-limiting.js";
 import { SECURITY_OPTIONS } from "../src/core/auth/security-options.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import {
@@ -10,9 +12,13 @@ import {
 	TRUST_LEVEL_EVENTS,
 } from "../src/core/auth/trust-level.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { DEFAULT_RECOVERY_CODE_SHAPE } from "../src/core/factor/recovery/code.js";
+import { TOTP_TOLERANCE_STEPS } from "../src/core/factor/totp/parameters.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import { KeyError, rootKeyProvider } from "../src/core/keys/index.js";
-import { sessionSettingsOf } from "../src/core/session/config.js";
+import { resolvePasswordConfig } from "../src/core/password/config.js";
+import { DEFAULT_SESSION_CONFIG, sessionSettingsOf } from "../src/core/session/config.js";
+import { DEFAULT_SESSION_METADATA_MODE } from "../src/core/session/metadata.js";
 import { createVelveAuth } from "../src/index.js";
 import { createTestClock } from "../src/testing/index.js";
 import { configFor, createLogSink, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
@@ -251,7 +257,222 @@ describe("the weakenings an operator is told about (S-DEFAULT-1, T-DEFAULT-1)", 
 	});
 });
 
+const WEAKENED_LINE = "a security option is weaker than its default";
+
+function weakenedOptionsLoggedAt(overrides: Partial<VelveAuthConfig<"email">>): readonly unknown[] {
+	const log = createLogSink();
+	start({ log: log.write, ...overrides })();
+	return log.lines
+		.filter((line) => line.message === WEAKENED_LINE)
+		.map((line) => line.fields.option);
+}
+
+/**
+ * One documented weakening per case, and each case is what the row's `weakenedBy` names. The
+ * refill and timeout cases are the ones an audit found logging nothing: a bucket refilling a
+ * billion tokens a second limits nothing, and a session that lives a year is not the default.
+ */
+const DOCUMENTED_WEAKENINGS: readonly (readonly [
+	string,
+	string,
+	Partial<VelveAuthConfig<"email">>,
+])[] = [
+	["session", "a freshness window of one hour", { session: { freshnessWindow: "1h" } }],
+	["session", "an idle timeout of fourteen days", { session: { idleTimeout: "14d" } }],
+	["session", "an absolute timeout of a year", { session: { absoluteTimeout: "365d" } }],
+	[
+		"session",
+		"an idle and an absolute timeout of a year together",
+		{ session: { idleTimeout: "365d", absoluteTimeout: "365d" } },
+	],
+	["sessionMetadata", 'the mode "full"', { sessionMetadata: "full" }],
+	["trustedProxies", "one trusted range", { trustedProxies: ["10.0.0.0/8"] }],
+	[
+		"rateLimit",
+		"an address capacity of eleven",
+		{ rateLimit: { perIpAddress: { capacity: 11, refillPerSecond: 0.1 } } },
+	],
+	[
+		"rateLimit",
+		"an address refill of a billion a second",
+		{ rateLimit: { perIpAddress: { capacity: 10, refillPerSecond: 1e9 } } },
+	],
+	[
+		"rateLimit",
+		"an account refill of twice the default",
+		{ rateLimit: { perAccount: { capacity: 5, refillPerSecond: 0.02 } } },
+	],
+	[
+		"oauth",
+		"a trusted provider",
+		{
+			oauth: {
+				providers: { github: { clientId: "client", clientSecret: "secret" } },
+				callbackBaseUrl: `${TEST_ORIGIN}/api/auth/sign-in/oauth/callback`,
+				trustedProviders: ["github"],
+			},
+		},
+	],
+	[
+		"oauth",
+		"stored provider tokens",
+		{
+			oauth: {
+				providers: { github: { clientId: "client", clientSecret: "secret" } },
+				callbackBaseUrl: `${TEST_ORIGIN}/api/auth/sign-in/oauth/callback`,
+				trustedProviders: [],
+				storeTokens: true,
+			},
+		},
+	],
+	[
+		"fetch",
+		"a fetch the caller supplied",
+		{ fetch: (input, init) => globalThis.fetch(input, init) },
+	],
+	["plugins", "one plugin", { plugins: [{ id: "audit" }] }],
+	[
+		"webauthn",
+		'"preferred" user verification',
+		{
+			webauthn: {
+				relyingPartyId: "app.example.com",
+				relyingPartyName: "Example",
+				origins: [TEST_ORIGIN],
+				userVerification: "preferred",
+			},
+		},
+	],
+	["recoveryCodes", "nine codes", { recoveryCodes: { count: 9, groupSize: 5 } }],
+	["clock", "a settable clock", { clock: createTestClock() }],
+];
+
+describe("every documented weakening is logged once at start (S-DEFAULT-1, T-DEFAULT-1)", () => {
+	it.each(DOCUMENTED_WEAKENINGS)(
+		"names %s for %s, in exactly one line",
+		(option, _label, overrides) => {
+			expect(weakenedOptionsLoggedAt(overrides)).toStrictEqual([option]);
+		},
+	);
+
+	it("has a case for every row a caller can weaken, and no case for a row nothing weakens", () => {
+		const weakenable = SECURITY_OPTIONS.filter((row) => !row.weakenedBy.startsWith("nothing"))
+			.map((row) => row.option)
+			.sort();
+		const covered = [...new Set(DOCUMENTED_WEAKENINGS.map(([option]) => option))].sort();
+
+		expect(weakenable.length).toBeGreaterThanOrEqual(10);
+		expect(covered).toStrictEqual(weakenable);
+	});
+
+	it("says nothing about a value written out at exactly its default", () => {
+		const rates = rateLimitConfigOf();
+
+		expect(
+			weakenedOptionsLoggedAt({
+				session: DEFAULT_SESSION_CONFIG,
+				sessionMetadata: DEFAULT_SESSION_METADATA_MODE,
+				trustedProxies: [],
+				rateLimit: { perIpAddress: rates.perIpAddress, perAccount: rates.perAccount },
+				recoveryCodes: DEFAULT_RECOVERY_CODE_SHAPE,
+				plugins: [],
+			}),
+		).toStrictEqual([]);
+	});
+
+	it("says nothing about a relying party that leaves user verification at its default", () => {
+		const relyingParty = {
+			relyingPartyId: "app.example.com",
+			relyingPartyName: "Example",
+			origins: [TEST_ORIGIN],
+		};
+
+		expect(
+			weakenedOptionsLoggedAt({
+				webauthn: relyingParty as unknown as WebAuthnConfig,
+			}),
+		).toStrictEqual([]);
+		expect(
+			weakenedOptionsLoggedAt({ webauthn: { ...relyingParty, userVerification: "required" } }),
+		).toStrictEqual([]);
+	});
+
+	it("says nothing about a value stricter than its default", () => {
+		expect(
+			weakenedOptionsLoggedAt({
+				session: { idleTimeout: "1d", absoluteTimeout: "2d", freshnessWindow: "5m" },
+				rateLimit: {
+					perIpAddress: { capacity: 3, refillPerSecond: 0.05 },
+					perAccount: { capacity: 2, refillPerSecond: 0.001 },
+				},
+				recoveryCodes: { count: 16, groupSize: 8 },
+			}),
+		).toStrictEqual([]);
+	});
+});
+
+/** A.2, A.4, A.5, A.6 and A.8 of the architecture, written down once as the fixture T-DEFAULT-1 asks for. */
+const SPECIFIED_DEFAULTS = {
+	session: {
+		idleTimeout: "7d",
+		absoluteTimeout: "30d",
+		idleWriteInterval: "1h",
+		freshnessWindow: "15m",
+		cookieName: "__Host-velve_session",
+		cookie: { sameSite: "lax" },
+	},
+	perIpAddress: { capacity: 10, refillPerSecond: 0.1 },
+	perAccount: { capacity: 5, refillPerSecond: 0.01 },
+	argon2id: { memoryKiB: 19456, iterations: 2, parallelism: 1 },
+	sessionMetadata: "truncated",
+	recoveryCodes: { count: 10, groupSize: 5 },
+	totpToleranceInSteps: 1,
+} as const;
+
+function safeDefaultOf(option: string): string | undefined {
+	return SECURITY_OPTIONS.find((row) => row.option === option)?.safeDefault;
+}
+
+describe("the defaults the rows state are the defaults the code uses (S-DEFAULT-1, T-DEFAULT-1)", () => {
+	it("uses exactly the specified defaults", () => {
+		const rates = rateLimitConfigOf();
+
+		expect(DEFAULT_SESSION_CONFIG).toStrictEqual(SPECIFIED_DEFAULTS.session);
+		expect(rates.perIpAddress).toStrictEqual(SPECIFIED_DEFAULTS.perIpAddress);
+		expect(rates.perAccount).toStrictEqual(SPECIFIED_DEFAULTS.perAccount);
+		expect(resolvePasswordConfig().argon2id).toStrictEqual(SPECIFIED_DEFAULTS.argon2id);
+		expect(DEFAULT_SESSION_METADATA_MODE).toBe(SPECIFIED_DEFAULTS.sessionMetadata);
+		expect(DEFAULT_RECOVERY_CODE_SHAPE).toStrictEqual(SPECIFIED_DEFAULTS.recoveryCodes);
+		expect(TOTP_TOLERANCE_STEPS).toBe(SPECIFIED_DEFAULTS.totpToleranceInSteps);
+	});
+
+	it("states in each row the default the code uses", () => {
+		const { session, perIpAddress, perAccount, argon2id, recoveryCodes } = SPECIFIED_DEFAULTS;
+
+		expect({
+			session: safeDefaultOf("session"),
+			rateLimit: safeDefaultOf("rateLimit"),
+			password: safeDefaultOf("password"),
+			sessionMetadata: safeDefaultOf("sessionMetadata"),
+			recoveryCodes: safeDefaultOf("recoveryCodes"),
+			totp: safeDefaultOf("totp"),
+			trustedProxies: safeDefaultOf("trustedProxies"),
+			plugins: safeDefaultOf("plugins"),
+		}).toStrictEqual({
+			session: `idle ${session.idleTimeout}, absolute ${session.absoluteTimeout}, freshness ${session.freshnessWindow}, SameSite=Lax`,
+			rateLimit: `per address ${perIpAddress.capacity} @ ${perIpAddress.refillPerSecond}/s, per account ${perAccount.capacity} @ ${perAccount.refillPerSecond}/s`,
+			password: `argon2id m=${argon2id.memoryKiB}, t=${argon2id.iterations}, p=${argon2id.parallelism}`,
+			sessionMetadata: SPECIFIED_DEFAULTS.sessionMetadata,
+			recoveryCodes: `${recoveryCodes.count} codes in groups of ${recoveryCodes.groupSize}`,
+			totp: `issuer required, tolerance ${SPECIFIED_DEFAULTS.totpToleranceInSteps} step`,
+			trustedProxies: "[]",
+			plugins: "[]",
+		});
+	});
+});
+
 const configurationSource = fileURLToPath(new URL("../src/core/auth/config.ts", import.meta.url));
+const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
 
 function optionKeysWrittenInTheConfigurationType(): readonly string[] {
 	const source = readFileSync(configurationSource, "utf8");
@@ -275,18 +496,83 @@ describe("the options that must not exist at all (S-DEFAULT-2, S-DEFAULT-3)", ()
 		"requireEmailVerification",
 		"minimumResponseTime",
 	];
-	const sources = readdirSync(fileURLToPath(new URL("../src/core/auth", import.meta.url)), {
-		recursive: true,
-		withFileTypes: true,
-	})
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
-		.map((entry) => `${entry.parentPath}/${entry.name}`);
+	//t-default-3 names the four switches and their variants, so a spelling is matched as well as a name
+	const FORBIDDEN_VARIANT =
+		/\b(?:disable|skip|bypass|without|no|allowInsecure|unsafe|ignore)_?(?:pkce|state|origin|rate_?limit|csrf)\w*/gi;
 
-	it("names none of them anywhere in the assembly, over a set that is not empty", () => {
-		const text = sources.map((path) => readFileSync(path, "utf8")).join("\n");
+	function forbiddenNamesIn(text: string): readonly string[] {
+		return [
+			...FORBIDDEN.filter((name) => text.toLowerCase().includes(name.toLowerCase())),
+			...[...text.matchAll(FORBIDDEN_VARIANT)].map((match) => match[0]),
+		];
+	}
+
+	/**
+	 * The option type is not one file: `password`, `oauth`, `plugins`, `session` and the route a
+	 * plugin declares are each typed elsewhere and reach `BaseConfig` by import. The scan follows
+	 * every relative import from `core/auth/config.ts`, so a switch added to any of them is seen.
+	 */
+	function filesTheConfigurationTypeReaches(): readonly string[] {
+		const reached = new Set<string>();
+		const pending = [configurationSource];
+		for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+			if (reached.has(file)) {
+				continue;
+			}
+			reached.add(file);
+			for (const match of readFileSync(file, "utf8").matchAll(/from "(\.{1,2}\/[^"]+)\.js"/g)) {
+				pending.push(resolve(dirname(file), `${String(match[1])}.ts`));
+			}
+		}
+		return [...reached];
+	}
+
+	const sources = [
+		...new Set([
+			...filesTheConfigurationTypeReaches(),
+			...readdirSync(fileURLToPath(new URL("../src/core/auth", import.meta.url)), {
+				recursive: true,
+				withFileTypes: true,
+			})
+				.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+				.map((entry) => resolve(entry.parentPath, entry.name)),
+		]),
+	];
+
+	it("names none of them anywhere in the option type or the assembly, over a set that is not empty", () => {
+		const hits = sources.flatMap((path) =>
+			forbiddenNamesIn(readFileSync(path, "utf8")).map(
+				(name) => `${relative(sourceRoot, path)}: ${name}`,
+			),
+		);
 
 		expect(sources.length).toBeGreaterThanOrEqual(7);
-		expect(FORBIDDEN.filter((name) => text.includes(name))).toStrictEqual([]);
+		expect(hits).toStrictEqual([]);
+	});
+
+	it("reaches the option types of every feature, not only the assembly", () => {
+		const reached = filesTheConfigurationTypeReaches().map((path) => relative(sourceRoot, path));
+
+		expect(reached).toEqual(
+			expect.arrayContaining([
+				"core/auth/config.ts",
+				"core/password/config.ts",
+				"core/oauth/config.ts",
+				"core/plugin/config.ts",
+				"core/session/config.ts",
+				"core/identity/configuration.ts",
+				"core/http/route.ts",
+				"core/http/rate-limit.ts",
+			]),
+		);
+	});
+
+	it("finds a planted switch, so a clean scan means found nothing rather than looked nowhere", () => {
+		expect(forbiddenNamesIn("readonly disablePkce?: boolean")).toContain("disablePkce");
+		expect(forbiddenNamesIn("readonly skipOriginCheck?: true")).toContain("skipOriginCheck");
+		expect(forbiddenNamesIn("readonly no_rate_limit?: true")).toContain("no_rate_limit");
+		expect(forbiddenNamesIn("readonly noRateLimit?: true")).toContain("noRateLimit");
+		expect(forbiddenNamesIn("readonly ignoreState: true")).toContain("ignoreState");
 	});
 
 	it("reads the forbidden list from a constant rather than from a literal in the assertion", () => {

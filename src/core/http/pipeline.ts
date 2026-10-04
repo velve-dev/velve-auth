@@ -2,10 +2,11 @@ import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import { type CookieCollector, type CookieInstruction, createCookieCollector } from "./cookies.js";
 import { cookiePolicyOf, type HttpEnvironment, type LogLevel } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
-import { assertOriginAllowed } from "./origin.js";
+import { assertOriginAllowed, isSameOriginRead } from "./origin.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
 import {
 	invocationOf,
+	isReadingRoute,
 	type RequestContext,
 	type RouteMetadata,
 	type RunnableRoute,
@@ -21,10 +22,42 @@ interface CallerTokens {
 
 export interface RouteCall {
 	readonly origin: string | null;
+	/** the `Sec-Fetch-Site` header, which a server call never carries */
+	readonly fetchSite: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly readCallerTokens: () => CallerTokens;
 	readonly readInput: () => Promise<unknown>;
+}
+
+type DeferredWork = () => Promise<unknown>;
+
+const deferredByContext = new WeakMap<RequestContext, DeferredWork[]>();
+
+//work deferred here starts only after the caller holds its answer (S-TIM-5)
+export function deferUntilAnswered(context: RequestContext, work: DeferredWork): void {
+	const deferred = deferredByContext.get(context);
+	if (deferred === undefined) {
+		throw new Error("Deferred work needs a request context the pipeline created");
+	}
+	deferred.push(work);
+}
+
+//a macrotask runs only once every continuation that hands the answer back has run
+function startAfterAnswer(
+	deferred: readonly DeferredWork[],
+	routeName: string,
+	environment: HttpEnvironment,
+): void {
+	if (deferred.length === 0) {
+		return;
+	}
+	setTimeout(() => {
+		for (const work of deferred) {
+			//a failure here is logged for the operator and never reaches the caller
+			work().catch(() => write(environment, "warn", "deferred work failed", { route: routeName }));
+		}
+	}, 0);
 }
 
 export interface RouteOutcome<Output> {
@@ -115,6 +148,7 @@ async function createRequestContext(
 	environment: HttpEnvironment,
 	cookies: CookieCollector,
 	accountBucket: AccountBucket,
+	deferred: DeferredWork[],
 ): Promise<RequestContext> {
 	const tokens = call.readCallerTokens();
 	//a route that does not declare the cookie readable must see it as absent (S-CACHE-4)
@@ -128,7 +162,7 @@ async function createRequestContext(
 	const pending =
 		route.caller === "pending" ? await resolvePending(pendingToken, environment) : null;
 
-	return {
+	const context: RequestContext = {
 		session,
 		pending,
 		sessionToken: tokens.sessionToken,
@@ -140,6 +174,8 @@ async function createRequestContext(
 		plugin: environment.pluginContextOf(route),
 		enforceAccountRateLimit: accountBucket.consume,
 	};
+	deferredByContext.set(context, deferred);
+	return context;
 }
 
 async function enforceIpAddressRateLimit(
@@ -194,16 +230,24 @@ export async function runRoute<Output>(
 	call: RouteCall,
 	environment: HttpEnvironment,
 ): Promise<RouteOutcome<Output>> {
-	if (route.originCheck === "checked") {
+	if (route.originCheck === "checked" && !isSameOriginRead(call, isReadingRoute(route))) {
 		assertOriginAllowed(call.origin, environment.origins);
 	}
 	await enforceIpAddressRateLimit(route, call, environment);
 
 	const cookies = createCookieCollector(cookiePolicyOf(environment));
 	const accountBucket = createAccountBucket(route, environment);
+	const deferred: DeferredWork[] = [];
 	let handlerReached = false;
 	const resolveContext = async (): Promise<RequestContext> => {
-		const context = await createRequestContext(route, call, environment, cookies, accountBucket);
+		const context = await createRequestContext(
+			route,
+			call,
+			environment,
+			cookies,
+			accountBucket,
+			deferred,
+		);
 		handlerReached = true;
 		return context;
 	};
@@ -216,5 +260,6 @@ export async function runRoute<Output>(
 		if (handlerReached) {
 			warnOnUnconsumedAccountBucket(route, accountBucket, environment);
 		}
+		startAfterAnswer(deferred, route.name, environment);
 	}
 }

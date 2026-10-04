@@ -116,6 +116,7 @@ function readRouteCall(
 ): RouteCall {
 	return {
 		origin: request.headers.get("origin"),
+		fetchSite: request.headers.get("sec-fetch-site"),
 		ipAddress: readClientAddress(request),
 		userAgent: request.headers.get("user-agent"),
 		readCallerTokens: () => {
