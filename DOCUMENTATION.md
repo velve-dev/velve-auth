@@ -1026,7 +1026,7 @@ handler and not by the application (L-6). A response with a body carries
 | Situation | Answer |
 |---|---|
 | Handler returned a value | `200` with that value as JSON |
-| Handler returned `redirectTo(…)` | `302` with `Location: <path>` and no body |
+| One of the two OAuth callback routes returned `redirectTo(…)` | `302` with `Location: <path>` and no body — on any other route the same output is an ordinary `200` JSON value |
 | Handler returned nothing | `204` with no body |
 | Method and path match no route | `404` with no body — the 25 error codes have no code for "no such route" |
 | Anything threw | The status of the mapped error code, with the error envelope below |
@@ -1221,6 +1221,15 @@ percent-decoding each segment once:
   `invalid_input` rather than one of its values being chosen — the same rule as
   S-COOKIE-5 for cookies, and it matters on the OAuth callback, where `state`
   and `code` decide the outcome.
+- A `POST` route takes its input from the body plus the captured path
+  parameters, and never from the query string.
+- A name may come from one source only (S-OWNER-6). When the same name arrives
+  in two of the path, the query string and the body — on either method — the
+  request is rejected with `400 invalid_input` and neither value is used. This
+  holds even when the two values agree, so
+  `GET /sign-in/oauth/callback/github?provider=github` is refused as well
+  (E-2240). On a `POST`, a query parameter whose name the body or the path does
+  not also carry is still ignored.
 
 ### Input validators
 
@@ -1423,6 +1432,15 @@ from a request, not to this layer, which never accepts one.
 
 `redirectTo(…)` combines with a session token in the same output; the token
 still goes into the cookie and never into the `Location` value (S-REDIR-4).
+
+Only the two OAuth callback routes, `signIn.oauth.callback` and
+`signIn.oauth.callbackFormPost`, can answer with a redirect (S-REDIR-3). They
+are marked with `answerWithRedirect(route)` where the OAuth routes are built,
+and the handler reads `redirectToPath` from no other route's output. A plugin
+route — or any other route — that returns `{ redirectToPath: "/somewhere" }`
+answers `200` with that object as JSON and sets no `Location`; it is not
+refused at start, because what a handler returns is only known when it runs
+(E-2241).
 
 ### CORS
 
@@ -2798,6 +2816,13 @@ its identifier rather than by subtracting one, so it never makes the count too
 low; the delete then matches nothing and the call returns. A caller that needs
 to tell "removed" from "there was nothing to remove" reads the row first.
 
+An identifier that is not spelled as a `uuid` — `"not-a-uuid"`, `""` — is
+treated as one that names no row: it is passed to the statements as `NULL`,
+which excludes nothing from the count and deletes nothing, so it takes the same
+path and gets the same answer as an invented `uuid`, `last_sign_in_method`
+included. It used to reach the `::uuid` cast, fail it, and answer `500
+internal_error` (S-OWNER-8, E-2242).
+
 ```ts
 await removeSignInMethod({
   driver,
@@ -2857,6 +2882,15 @@ that reaches for the CSPRNG (S-RAND-1, S-RAND-5).
 | Parameter | Type | Meaning |
 |---|---|---|
 | `length` | `number` | how many bytes to draw |
+
+### `randomUuid()`
+
+`string`. A version 4 `uuid` from `crypto.randomUUID`, beside `randomBytes` in
+the same module. The one-time token repository draws one for each request that
+names no account, as an identifier no row may carry. No other module calls
+`getRandomValues`, `randomUUID` or `subtle.generateKey`, and
+`test/token-review-randomness.test.ts` scans all of `src/` for the three
+(S-RAND-5, E-2243). It is internal: no package entry exports it.
 
 ### `encodeBase64Url(bytes)`
 
@@ -3438,7 +3472,7 @@ a session the caller could not use is not a device that is still signed in.
 | Method | Freshness | Effect |
 |---|---|---|
 | `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
-| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way |
+| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way, and also for a `targetSessionId` that is not spelled as a `uuid`, which names no session (E-2242) |
 | `revokeEveryOther({ resolved })` | required | removes all but the calling session |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
@@ -4093,7 +4127,10 @@ Both take the owner from the resolved session and put it in the SQL predicate,
 never in a branch (S-OWNER-2). A credential belonging to another account, one
 that never existed, and an identifier that is not a `uuid` at all are one answer
 in each direction: `rename` answers `invalid_input` to all three, `remove`
-answers 204 to all three and changes nothing (S-OWNER-3, S-OWNER-8).
+answers the same to all three and changes nothing — 204, or
+`last_sign_in_method` on an account that has no other way in, which an
+identifier that is not a `uuid` now gets too rather than a 204 of its own
+(S-OWNER-3, S-OWNER-8, E-2242).
 
 `remove` fails with `last_sign_in_method` when the credential is the account's
 last way in. Counted are a password credential, every WebAuthn credential and
@@ -4886,7 +4923,7 @@ practice.
 | POST | `/sign-in/oauth/callback/:provider` | `auth.signIn.oauth.callbackFormPost` | form `{ code, state, iss? }` | 302, or `OAuthCallbackOutcome` |
 | GET | `/identity/list` | `auth.identity.list` | — | `Identity[]` |
 | POST | `/identity/link/start` | `auth.identity.link.start` | `{ provider, redirectPath? }` | `OAuthRedirect` |
-| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204) |
+| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204); a foreign, an invented and a non-`uuid` `identityId` answer alike (E-2242) |
 
 `signIn.oauth.start` and `identity.link.start` return
 
