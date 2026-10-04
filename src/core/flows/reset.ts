@@ -7,6 +7,7 @@ import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
+import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
@@ -128,13 +129,14 @@ export async function redeemResetWithRecoveryCode(
 		readonly newPassword: string;
 	},
 ): Promise<SetPasswordResult> {
+	//an attempt the account bucket refuses must derive nothing (S-RATE-7)
+	await context.enforceAccountRateLimit(comparisonFormOf(input.identifier));
 	const derived = await derivePassword(
 		input.newPassword,
 		environment.services.password,
 		environment.semaphore,
 	);
 	const { driver, schema, identity, keys } = environment.services;
-	await context.enforceAccountRateLimit(input.identifier);
 
 	const found = await findUserByIdentifier({
 		driver,

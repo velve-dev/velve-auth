@@ -12719,6 +12719,26 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Every one of those rows lands on the same line of `CLAUDE.md`, so every merge after the first would conflict there. Reserving all fourteen ranges in one change before the first branch starts is the partition rule in §5 applied to the table itself.
 **Price.** Ranges reserved for work that may turn out smaller stay as gaps in the numbering, which §6 accepts. Concerns `CLAUDE.md` §6.
 
+<a id="e-2180"></a>
+
+### The recovery-code reset keys its account bucket the way sign-in does
+`E-2180` · recovery-reset-rate · fixes S-RATE-7, closed
+
+**Context.** `redeemResetWithRecoveryCode` passed the identifier to `enforceAccountRateLimit` as it was submitted. Every other caller passes a normalised form: sign-in through `comparisonFormOf`, the mailed flows through `normaliseEmail`, the session routes through the stored address. With `perAccount` at capacity 2, twelve attempts across six spellings of one address were all answered `invalid_recovery_code` and wrote six account buckets, while `/sign-in/password` answered 429 on the third spelling. The test added here showed the same on the mounted instance with three spellings: case, surrounding space and fullwidth forms.
+**Rejected.** (a) `normaliseEmail` in modes `email` and `email_or_username` and the username key in mode `username`, choosing by the mode the way `findUserByIdentifier` does. (b) Resolving the account first and keying by its stored address.
+**Reason.** (a) gives the same string as `comparisonFormOf` for every identifier it accepts and needs a fallback for those it refuses, so it is two code paths for one value. `comparisonFormOf` is what sign-in already uses for the identical lookup fields, so the two anonymous password routes now key alike. (b) is what S-RATE-7 forbids: the key is formed before the user is resolved, so an existing and a missing account advance the same row.
+**Price.** A malformed identifier still gets a bucket of its own per distinct comparison form, as it does on sign-in; such an identifier names no account, so the ceiling it lifts belongs to nobody. Concerns `src/core/flows/reset.ts`.
+
+<a id="e-2181"></a>
+
+### The recovery-code reset asks the account bucket before the KDF
+`E-2181` · recovery-reset-rate · fixes S-RATE-7, closed
+
+**Context.** The same function derived the new password with Argon2id before it asked the account bucket, so a refused attempt had already held a semaphore place and paid for a derivation. T-RATE-7 requires the rejected responses to run no KDF. The test counts `argon2idAsync` calls per request and saw one for the refused third attempt once the key alone had been fixed.
+**Rejected.** Leaving the derivation first on the ground that `redeemReset` derives before it spends its token (S-DOS-2).
+**Reason.** That ordering in `redeemReset` is about the one-time token, not the rate bucket, and `redeemReset` declares no account bucket a derivation could precede. Sign-in spends its account token before anything else for the reason E-1196 gives, and the recovery-code reset is the same anonymous password attempt. The order is the same for an existing and a missing account, so the statements an unknown identifier runs still match a resolved one's (S-TIM-6), and the derivation still runs before the code is consumed.
+**Price.** A new password the policy refuses now spends an account token before it is refused with `password_unacceptable`, where it used to be refused for free. The test commit cited S-DOS-5 for the KDF assertion; S-DOS-5 is the per-address limiter before the semaphore, and the requirement the assertion proves is S-RATE-7 through T-RATE-7. Concerns `src/core/flows/reset.ts`.
+
 <a id="e-2120"></a>
 
 ### A sign-in removes the session the browser presented, whoever owns it
