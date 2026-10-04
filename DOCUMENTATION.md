@@ -5951,11 +5951,20 @@ configured schema name passes, and a name that does not is the start error
 `plugin_migration_table_not_an_identifier`. The prefix rule alone accepts
 `demo_entry,session`, because it begins with `demo_`, and a name PostgreSQL would
 truncate or only reach quoted is not one the runner can read back as the table it
-spells. The runner hands the declared names to its catalogue query as one `text[]`
-parameter whose every element is quoted, so even a name that reached it some
-other way stays one name: before this, it joined them with commas and split them
-again in SQL, `demo_entry,session` became `demo_entry` and `session`, and every
-object depending on the core table `session` counted as the plugin's own (E-2480).
+spells. An element that is not a string primitive — a `String` object, for one —
+is refused with the same code (E-2482).
+
+The runner does not lean on that check, because `runMigrations` is public in
+`@velve/auth/schema` and takes owned migrations without the registry. It
+converts each declared name with `String()`, quotes it, and hands the names to
+its catalogue query as one `text[]` parameter, so a name stays one name
+whatever characters it holds. It compares the tables that appeared with the
+declared ones name by name, not as joined strings. Before this, it joined the
+names with commas and split them again in SQL, `demo_entry,session` became
+`demo_entry` and `session`, and every object depending on the core table
+`session` counted as the plugin's own (E-2480, E-2484). A direct caller of
+`runMigrations` gets none of the registry's start checks, the identifier check
+included.
 
 #### What a plugin migration may do
 
@@ -6056,6 +6065,12 @@ The rule those three carry:
   by choosing an id: a plugin called `user_email` does not reach
   `velve.user_email_key`, and a plugin called `one` does not reach
   `velve.one_time_token`;
+- **a plugin's tables inherit only from one another.** A table the plugin
+  declared may not become the parent of a core table — `ALTER TABLE
+  velve.session INHERIT velve.<id>_entry` would make every session readable and
+  deletable through the plugin's table — nor the child of one, which would put
+  the plugin's rows into every read of the core table. Partitions of the
+  plugin's own partitioned tables are its own (E-2483);
 - **it may create only tables and what a table brings with it** — an index, a
   sequence, a partitioned parent. A view, a materialized view, a foreign table, a
   function, a trigger or a rule is refused whatever it is called and wherever it
@@ -6070,7 +6085,11 @@ The rule those three carry:
   it; a type, a domain, a collation, an operator or an extension belongs to the
   schema and not to a table, and is refused. A kind PostgreSQL adds after this
   was written is refused by the same rule, because nothing has to be added to a
-  list for it to be caught;
+  list for it to be caught. **Belonging is an automatic, internal or partition
+  dependency** (`a`, `i`, `P`, `S` in `pg_depend`), never a normal one: a
+  constraint on a core table that references a plugin table merely uses that
+  table and is not part of it, so `ALTER TABLE velve.session ADD … REFERENCES
+  velve.<id>_anchor … NOT VALID` is refused (E-2483);
 - **inside its own tables it may do as it likes** — a later migration may alter,
   fill or drop a table an earlier one of the same plugin created;
 - **outside them nothing at all**: nothing created, altered, emptied or removed
