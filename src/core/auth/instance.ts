@@ -278,7 +278,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const pluginConnection =
 		config.pluginDatabase === undefined
 			? undefined
-			: createPluginConnection({ driver: config.pluginDatabase, schema });
+			: createPluginConnection({ driver: config.pluginDatabase, schema, clock });
 	const frozenContextServices: FrozenContextServices = {
 		clock,
 		identityMode: identity.mode,
