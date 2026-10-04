@@ -145,4 +145,56 @@ describe("the configured name is checked at start", () => {
 			sessionSettingsOf({ cookieName: "application_session" as HostPrefixedCookieName }),
 		).toThrow(InvalidSessionConfigError);
 	});
+
+	it("refuses every name that would carry an attribute, a separator or a non-token character", () => {
+		const refused = [
+			"__Host-a;Domain=evil.example",
+			"__Host-a; Domain=evil.example",
+			"__Host-a=b",
+			"__Host-a b",
+			"__Host-a\t",
+			"__Host-a\n",
+			"__Host-a\r\nX-Injected: 1",
+			"__Host-a,b",
+			"__Host-a/b",
+			"__Host-a\u0000",
+			"__Host-ä",
+			" __Host-a",
+			"__Host-",
+			"__host-a",
+			"__HOST-a",
+		];
+		const accepted = refused.filter((cookieName) => {
+			try {
+				sessionSettingsOf({ cookieName: cookieName as HostPrefixedCookieName });
+				return true;
+			} catch (error) {
+				return !(error instanceof InvalidSessionConfigError);
+			}
+		});
+
+		expect(accepted).toStrictEqual([]);
+	});
+
+	/**
+	 * The prefix test reads a non-string through `toString`, and `serializeCookie` reads it again
+	 * when it interpolates the name, so an object answering differently the second time puts a
+	 * `Domain` attribute into the header (S-COOKIE-2); a `String` object is written but never read.
+	 */
+	it("refuses a cookieName that is not a string", () => {
+		let reads = 0;
+		const changingName = {
+			toString: () => {
+				reads += 1;
+				return reads === 1 ? "__Host-a" : "__Host-a; Domain=evil.example";
+			},
+		};
+		const boxedName = Object("__Host-application_session") as object;
+
+		for (const cookieName of [changingName, boxedName]) {
+			expect(() => sessionSettingsOf({ cookieName: cookieName as never })).toThrow(
+				InvalidSessionConfigError,
+			);
+		}
+	});
 });
