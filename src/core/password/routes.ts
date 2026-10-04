@@ -6,6 +6,7 @@ import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
 import type { Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
+import { deferUntilAnswered } from "../http/pipeline.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute, type RequestContext, type ServerCallFields } from "../http/route.js";
 import { object, string } from "../http/validators.js";
@@ -82,6 +83,7 @@ function requireSessionResolution(
 
 async function verifiedAccount(
 	environment: PasswordEnvironment,
+	context: RequestContext,
 	input: { readonly userId: string | null; readonly plaintext: string },
 ): Promise<string> {
 	const check = await checkPassword(input, environment);
@@ -92,8 +94,9 @@ async function verifiedAccount(
 	if (check.outcome !== "verified") {
 		throw new ConcealedError("password_mismatch");
 	}
-	//the rewrite is not awaited so it never lengthens the answer (S-TIM-5)
-	void check.rehash?.().catch(() => undefined);
+	if (check.rehash !== undefined) {
+		deferUntilAnswered(context, check.rehash);
+	}
 	return check.userId;
 }
 
@@ -155,7 +158,7 @@ export function passwordRoutes(services: RouteServices) {
 				configuration: services.identity,
 				identifier,
 			});
-			const userId = await verifiedAccount(environment, {
+			const userId = await verifiedAccount(environment, context, {
 				userId: found === null ? null : found.id,
 				plaintext: input.password,
 			});
@@ -221,7 +224,7 @@ export function passwordRoutes(services: RouteServices) {
 			const resolved = requireSessionResolution(services, context.session);
 			await context.enforceAccountRateLimit(await accountKeyOfSession(services, resolved.userId));
 			const environment = await readEnvironment();
-			await verifiedAccount(environment, {
+			await verifiedAccount(environment, context, {
 				userId: resolved.userId,
 				plaintext: input.currentPassword,
 			});

@@ -6732,8 +6732,18 @@ signing in, signing up and both writing rows (`S-DOS-3`).
 
 After a successful verification against a credential whose stored parameters or
 key version are behind the configuration, the credential is rewritten in the
-background. The rewrite is started and not awaited, so it does not lengthen the
-sign-in that triggered it (`S-TIM-5`).
+background. The rewrite does not start until the answer has been handed back —
+the `Response` to the web handler's caller, the result to the caller of
+`auth.signIn.password` — so it does not lengthen the sign-in that triggered it
+(`S-TIM-5`, `E-2150`). It takes its place from the same semaphore as every other
+derivation (`S-DOS-6`). A rewrite that fails is logged at `warn` as
+`deferred work failed` with the route's name and never reaches the caller; the
+credential is left as it was and the next successful sign-in tries again.
+
+The rewrite runs in the same process after the answer, with no hook of the
+runtime's own, so a platform that stops the isolate the moment a response is
+returned may cut it short. Nothing is lost when it does: the old credential still
+verifies, and the next sign-in starts the rewrite again (`E-2151`).
 
 ### `POST /password/set` — `auth.password.set`
 
