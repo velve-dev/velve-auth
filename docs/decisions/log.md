@@ -14612,3 +14612,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Editing E-36's title and Reason to 323 and 267, which rewrites a decision after the fact and puts section 7 out of step with the case study that quotes it. (b) A note inside section 7 beside E-36, which is the same edit of the architecture's log by another route.
 **Reason.** A decision states the count it was taken on, and a reader who meets 322 in section 7 and 323 in 2.N needs to be told which is current and why, in the place that holds the current count.
 **Price.** The reconciliation is one sentence in 2.N and nothing in section 7 or in the case study points back to it, so a reader of E-36 alone still meets 322 and 268 without the explanation. The test only holds the omitted count; a third number of E-36 that drifts is not caught.
+
+<a id="e-2939"></a>
+
+### B.2's English says what the library would be allowed to compare
+`E-2939` · specfix · translation, corrected — 3.15 B.2
+
+**Context.** The German states three times of a missing `Origin` header that it is one *den die Bibliothek vergleichen dürfte*, in S-CSRF-1, in D.3 and in B.2's paragraph on `resolveFromHeaders`. The English renders the first two as *would be allowed to compare* and the third as *could compare*, which turns a statement about what the library may compare into one about what it is able to compare. `test/translation-allowed-to-compare.test.ts` counts the German phrase against the English rendering and failed at three against two. B.2's English now reads *would be allowed to compare*; the German is unchanged.
+**Rejected.** Nothing; the German is the source and the English had changed what it says.
+**Reason.** The rules forbid a translation that changes a reason, and permission and ability are different reasons for running no origin check there.
+**Price.** The test counts one phrase. Another rendering of *dürfte* elsewhere as *could* is not caught by it.
