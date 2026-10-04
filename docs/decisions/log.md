@@ -14042,3 +14042,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Repeating unsynchronised pairs and counting failures, which measures the scheduler. A sleep between the two calls, which is the flakiest construction the tree avoids (`test/lock-order-fixtures.ts`).
 **Reason.** The test reuses `HeldDriver`: two library instances share one key ring and run on two connections, the first call is held just before the account lock, after its precondition and its derivation, and the second is run to completion before the first is released. That is the widest window two real requests open. The case asserts what the spec asks of the outcome rather than which call wins: exactly one 200, the loser refused with no session cookie, one credential recorded as set by the winner's new session (E-626), that session the only one, the loser's session revoked, the winner's password signing in and the loser's not. A case that runs the two sets one after the other pins that the serial order already behaved. Against the tree before the repair the three interleaved cases failed with two 200 answers and the serial case passed.
 **Price.** Only the one interleaving that holds the first call before the lock is driven. The other order, both calls passing their precondition and then queueing on the row, ends the same way under the repair and is not run separately.
+
+<a id="e-2704"></a>
+
+### The hash-wasm resident-set overshoot was already documented, and nothing was changed
+`E-2704` · password-set-race · documentation check, settled
+
+**Context.** The brief for this branch asked whether `DOCUMENTATION.md` states that the process memory grows above the KDF bound with `hash-wasm` loaded, and that this is collection lag and not a leak.
+**Rejected.** Adding a second statement to the password chapter.
+**Reason.** *Resident set versus memory held* under *How much memory the semaphore bounds* states it: the measured rise of 511 to 966 MiB over two hundred simultaneous sign-ins, the return to within 20 MiB of the start after a forced collection, the conclusion that it is collection lag, the headroom a container needs, and that T-DOS-3's resident-set threshold is not met while `hash-wasm` is loaded. E-2612 holds the measurement and E-2623 records it as an open gap.
+**Price.** None.
