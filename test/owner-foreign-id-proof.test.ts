@@ -17,9 +17,14 @@ let ownersObjects: Readonly<Record<string, string>>;
 
 const ID_SHAPED = /Id$/;
 
+//a built route keeps its input validator, which the metadata type does not name
+type DeclaredRoute = AnyRoute & { readonly input: { readonly fields: readonly string[] } };
+
 //every route whose input names an object by its identifier, as the widest table declares it
-function routesTakingAnId(routes: readonly AnyRoute[]): readonly AnyRoute[] {
-	return routes.filter((route) => route.input.fields.some((field) => ID_SHAPED.test(field)));
+function routesTakingAnId(routes: readonly AnyRoute[]): readonly DeclaredRoute[] {
+	return (routes as readonly DeclaredRoute[]).filter((route) =>
+		route.input.fields.some((field) => ID_SHAPED.test(field)),
+	);
 }
 
 const FIELDS_BESIDE_THE_ID: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -74,7 +79,10 @@ afterAll(async () => {
 	await mount.close();
 });
 
-function inputFor(route: AnyRoute, ids: Readonly<Record<string, string>>): Record<string, string> {
+function inputFor(
+	route: DeclaredRoute,
+	ids: Readonly<Record<string, string>>,
+): Record<string, string> {
 	const beside = FIELDS_BESIDE_THE_ID[route.name] ?? {};
 	return Object.fromEntries(
 		route.input.fields.map((field) => {
