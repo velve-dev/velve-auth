@@ -93,6 +93,9 @@ release tier has to have passed on that exact commit, on its push to `main`;
 after it, the tag's push runs the whole gate and both release tiers over the
 same commit in the Release workflow.
 
+The release notes for 1.2.0, including what an operator upgrading from 1.1.0
+has to do, are in [docs/releases/1.2.0.md](docs/releases/1.2.0.md).
+
 ### PostgreSQL versions
 
 CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and 18 are exercised by no leg and are stated from the features the library uses; 18 is what development runs against, which is one machine and not a tier.
