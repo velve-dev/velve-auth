@@ -312,6 +312,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
+	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
+		const rows = await options.driver.query<{ id: string }>(deleteEveryOwnedSql, [actor]);
+		return rows.map((row) => row.id);
+	}
+
 	return {
 		insertSession: (insert) => insertSession(options.driver, insert),
 
@@ -373,14 +378,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		},
 
 		async deleteEverySessionOwnedBy({ actor }) {
-			const rows = await options.driver.query(deleteEveryOwnedSql, [actor]);
-			return rows.length;
+			return (await deleteEverySessionOwnedByReturningIds(actor)).length;
 		},
 
-		async deleteEverySessionOwnedByReturningIds({ actor }) {
-			const rows = await options.driver.query<{ id: string }>(deleteEveryOwnedSql, [actor]);
-			return rows.map((row) => row.id);
-		},
+		deleteEverySessionOwnedByReturningIds: ({ actor }) =>
+			deleteEverySessionOwnedByReturningIds(actor),
 
 		async deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
 			const rows = await options.driver.query(deleteEveryOtherOwnedSql, [actor, keptSessionId]);
