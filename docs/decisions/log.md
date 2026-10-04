@@ -12828,3 +12828,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Honouring the name, which would contradict S-COOKIE-1 and S-COOKIE-6's enumerated set, and refusing the option at start, which would change the public configuration type. Either is a change to the API, and the choice between them is the owner's.
 **Reason.** An option that is checked and then silently ignored is worse than either honest shape, because the operator who sets it believes it took effect. `test/cookie-name-config-proof.test.ts` asks for one of the two shapes and is marked `it.fails` with its reason. A second case pins what it fails on, so it cannot fail for some other reason unnoticed.
 **Price.** Until the owner decides, the suite carries a case that passes by failing. The documented option misleads anyone who sets it.
+
+<a id="e-2302"></a>
+
+### The pending-cookie test now looks for the token before it normalises the answer
+`E-2302` · tests-token-rate-cookie-csrf-cache · narrows the blind spot E-2300 states
+
+**Context.** E-2300 compares three routes after normalisation because their answers differ even between two identical requests. The review planted a fault in a scratch copy, where `signIn.password` saw the pending cookie and wrote the presented token back as its own pending cookie, and the case still passed: normalisation replaced every 43-character secret, and the presented row was never touched. The review also found two session-issuing paths S-COOKIE-4's case skipped, the passkey sign-in and the recovery-code reset, and that the pin for the ignored `cookieName` checked only the cookie names and not the status.
+**Rejected.** Dropping normalisation for the three routes.
+**Reason.** Without it the three routes never compare equal, so the test would have to exempt them outright. Searching every answer to a request carrying the pending cookie for the presented token, before anything is normalised, catches the planted fault and leaves the comparison as it was. The two skipped paths and the status in the pin were added the same way.
+**Price.** `rate_bucket` stays exempt wholesale in the S-CSRF-4 snapshot, so a reading route that reset a rate limit would still go unseen, and S-TOKEN-4's source scan is a regular expression that a destructured `input` would pass. Concerns `test/cache-pending-ignored-proof.test.ts`, `test/cookie-session-value-proof.test.ts` and `test/cookie-name-config-proof.test.ts`.
