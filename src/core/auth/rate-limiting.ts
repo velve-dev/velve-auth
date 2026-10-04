@@ -3,8 +3,8 @@ import type { RouteFloodWatch } from "../limit/index.js";
 import type { RateLimitConfig } from "./config.js";
 
 const DEFAULT_RATE_LIMIT_CONFIG: RateLimitConfig = {
-	perIpAddress: { capacity: 10, refillPerSecond: 0.1 },
-	perAccount: { capacity: 5, refillPerSecond: 0.01 },
+	perIpAddress: { capacity: 30, refillPerSecond: 0.5 },
+	perAccount: { capacity: 5, refillPerSecond: 1 / 300 },
 	globalPerRoute: { alertThresholdPerMinute: 6000, onAlert: () => undefined },
 };
 

@@ -1850,8 +1850,8 @@ interface SessionConfig {
 
 interface BucketRule { capacity: number; refillPerSecond: number }
 interface RateLimitConfig {
-  perIpAddress: BucketRule       // Vorgabe { capacity: 10, refillPerSecond: 0.1 }
-  perAccount: BucketRule         // Vorgabe { capacity: 5, refillPerSecond: 0.01 }
+  perIpAddress: BucketRule       // Vorgabe { capacity: 30, refillPerSecond: 0.5 }
+  perAccount: BucketRule         // Vorgabe { capacity: 5, refillPerSecond: 1 / 300 }
   globalPerRoute: { alertThresholdPerMinute: number; onAlert: (alert: RateAlert) => void }
 }
 interface RateAlert { routeName: string; requestsInLastMinute: number; observedAt: Date }
@@ -2486,7 +2486,7 @@ const signInPasswordRoute = defineRoute({
   caller: "anonymous",
   freshness: "not_required",
   originCheck: "checked",
-  rateLimit: { perIpAddress: { capacity: 10, refillPerSecond: 0.1 }, perAccount: { capacity: 5, refillPerSecond: 0.01 } },
+  rateLimit: { perIpAddress: { capacity: 30, refillPerSecond: 0.5 }, perAccount: { capacity: 5, refillPerSecond: 1 / 300 } },
   handler: async (input, context): Promise<SignInResult> => { /* … */ },
 })
 

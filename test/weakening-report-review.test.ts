@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { RateLimitConfig } from "../src/core/auth/config.js";
+import { rateLimitConfigOf } from "../src/core/auth/rate-limiting.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import type { Driver } from "../src/core/db/driver.js";
 import type { BucketRule } from "../src/core/http/rate-limit.js";
@@ -31,6 +32,9 @@ const WEAKENED_LINE = "a security option is weaker than its default";
  * plugin can write it; the application's own configuration reaches every core route at once.
  */
 const SWITCHED_OFF = "none" as unknown as BucketRule;
+
+/** One request past the default address capacity, so exactly the last one is refused. */
+const ONE_PAST_THE_DEFAULT = rateLimitConfigOf().perIpAddress.capacity + 1;
 
 function startWith(rateLimit: Partial<RateLimitConfig>): {
 	readonly outcome: "refused" | "started";
@@ -73,7 +77,7 @@ describe("the application's rate-limit configuration cannot switch a bucket off 
 	it("limits a core route by address once the instance has started at the default", async () => {
 		const mounted = await mountAuth("weakening_review_default");
 		try {
-			const statuses = await signOutStatuses(mounted.handler, 11);
+			const statuses = await signOutStatuses(mounted.handler, ONE_PAST_THE_DEFAULT);
 
 			expect(statuses.filter((status) => status === 429)).toHaveLength(1);
 		} finally {
@@ -94,7 +98,7 @@ describe("the application's rate-limit configuration cannot switch a bucket off 
 		}
 		const started = mounted as Awaited<ReturnType<typeof mountAuth>>;
 		try {
-			const statuses = await signOutStatuses(started.handler, 11);
+			const statuses = await signOutStatuses(started.handler, ONE_PAST_THE_DEFAULT);
 
 			expect(statuses.filter((status) => status === 429)).toHaveLength(1);
 		} finally {

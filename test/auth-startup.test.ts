@@ -289,18 +289,18 @@ const DOCUMENTED_WEAKENINGS: readonly (readonly [
 	["trustedProxies", "one trusted range", { trustedProxies: ["10.0.0.0/8"] }],
 	[
 		"rateLimit",
-		"an address capacity of eleven",
-		{ rateLimit: { perIpAddress: { capacity: 11, refillPerSecond: 0.1 } } },
+		"an address capacity of thirty-one",
+		{ rateLimit: { perIpAddress: { capacity: 31, refillPerSecond: 0.5 } } },
 	],
 	[
 		"rateLimit",
 		"an address refill of a billion a second",
-		{ rateLimit: { perIpAddress: { capacity: 10, refillPerSecond: 1e9 } } },
+		{ rateLimit: { perIpAddress: { capacity: 30, refillPerSecond: 1e9 } } },
 	],
 	[
 		"rateLimit",
 		"an account refill of twice the default",
-		{ rateLimit: { perAccount: { capacity: 5, refillPerSecond: 0.02 } } },
+		{ rateLimit: { perAccount: { capacity: 5, refillPerSecond: 2 / 300 } } },
 	],
 	[
 		"oauth",
@@ -421,8 +421,8 @@ const SPECIFIED_DEFAULTS = {
 		cookieName: "__Host-velve_session",
 		cookie: { sameSite: "lax" },
 	},
-	perIpAddress: { capacity: 10, refillPerSecond: 0.1 },
-	perAccount: { capacity: 5, refillPerSecond: 0.01 },
+	perIpAddress: { capacity: 30, refillPerSecond: 0.5 },
+	perAccount: { capacity: 5, refillPerSecond: 1 / 300 },
 	argon2id: { memoryKiB: 19456, iterations: 2, parallelism: 1 },
 	sessionMetadata: "truncated",
 	recoveryCodes: { count: 10, groupSize: 5 },
