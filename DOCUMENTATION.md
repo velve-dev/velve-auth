@@ -696,7 +696,8 @@ method that reaches them some other way says which way, by name.**
 | row that carries the proof | the insert writes the row whose secret later proves the owner (E-242, E-2422) | `insertSession`, `insertPendingAuthentication`, `replaceOneTimeToken`, the WebAuthn challenge `issue` |
 | credential under verification | the row read or written back is the credential a sign-in is verifying (E-2423) | password `findByUserId` and `replaceIfUnchanged`, recovery `pepperVersionsOf`, WebAuthn `findCredentialByCredentialId` and `recordAssertion` |
 | pending resolution | the owner is the one a pending row named when its token hash resolved, which is a structural value and not a brand (E-459, E-2424) | TOTP `findCredentialOf` and `claimTimeStep`, WebAuthn `listDescriptorsOwnedBy` and `findOwnedCredentialByCredentialId` |
-| provider subject | the identity is addressed by `(provider, subject)` and the account is the answer (S-LINK-1, E-2425) | `findIdentityBySubject`, `refreshIdentity`, `insertIdentityOfSignIn` |
+| provider subject | the identity is addressed by `(provider, subject)` and the account is the answer (S-LINK-1, E-2425) | `findIdentityBySubject`, `refreshIdentity` |
+| account a sign-in decided | the account is one the OAuth sign-in created in the same transaction, or one automatic linking joined for a trusted provider, before any session exists (E-558, E-2434) | `insertIdentityOfSignIn` |
 | maintenance or start-up | every owner at once, by a deadline or a catalogue (E-2426) | `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown`, `assertEveryUserReferenceCascades` |
 | shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findUserIdOfSession`, `deleteSessionById` behind `FrozenRepositories`; `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
 | created with its account | the account row was inserted by the same transaction (E-2428) | password `writeForCreatedAccount` |
@@ -709,7 +710,7 @@ Where a caller holds a proof, the method takes it:
 | password `findOwnedBy({ actor })` | `Actor` | `POST /password/set`, which refuses when a credential exists (E-2429) |
 | password `writeForCreatedAccount({ userId, … })` | user id | sign-up only, in the transaction that created the account (E-2428) |
 | OAuth identity `insertIdentity({ actor, …facts })` | `Actor` | the link callback, from the consumed flow (E-2430) |
-| OAuth identity `insertIdentityOfSignIn({ userId, …facts })` | user id | the sign-in callback, for the account the subject decided (E-2425) |
+| OAuth identity `insertIdentityOfSignIn({ userId, …facts })` | user id | the sign-in callback, for the account it created or automatic linking joined (E-2434) |
 | OAuth flow `insertFlow({ …, linkTo })` | `linkTo: { actor, sessionId } \| null` | the link start, from the resolved session; a sign-in records no owner (E-2431) |
 
 ## Lock order

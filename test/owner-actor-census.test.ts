@@ -40,7 +40,8 @@ type ExceptionClass =
 	| "provider subject"
 	| "maintenance or start-up"
 	| "shipped surface"
-	| "created with its account";
+	| "created with its account"
+	| "account a sign-in decided";
 
 //each class narrows the requirement the way the decision log records it (E-242)
 const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
@@ -60,6 +61,8 @@ const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 		"the method reaches every owner at once by a deadline or a catalogue, never one owner (E-2426)",
 	"shipped surface":
 		"the only caller is a shipped declaration that takes a user id, which this requirement may not change (E-737, E-2427)",
+	"account a sign-in decided":
+		"the account is one the OAuth sign-in created in the same transaction or one automatic linking joined for a trusted provider, before any session exists (E-558, E-2434)",
 	"created with its account":
 		"the account row was inserted by the same transaction, so no other caller can own it yet (E-2428)",
 };
@@ -122,7 +125,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/oauth/identity-repository.ts#createOAuthIdentityRepository.refreshIdentity":
 		"provider subject",
 	"src/core/oauth/identity-repository.ts#createOAuthIdentityRepository.insertIdentityOfSignIn":
-		"provider subject",
+		"account a sign-in decided",
 
 	"src/core/auth/maintenance.ts#sweepExpiredRows": "maintenance or start-up",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
