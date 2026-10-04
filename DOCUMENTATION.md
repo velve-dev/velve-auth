@@ -6482,6 +6482,14 @@ it is switched for the statement and switched back to whatever the transaction
 held before the savepoint is released, which makes five more statements in all
 (E-2582, E-2584, E-2586).
 
+With [`pluginDatabase`](#plugindatabase) set, `ownTables.query` is the one
+method of the lent context that does not use the reset's connection: its
+statements go to the plugin login, each committed as it runs, with no
+savepoint and no role switch. So what the hook writes to its own tables stays
+when the reset rolls back, the hook's refusal included, and a statement it
+leaves running after it returns is not refused. The other three methods stay on
+the reset's connection as above (E-2643).
+
 The listing and the delete are separate statements on a reset too. The account
 lock does not block a concurrent sign-in from inserting a session, so a session
 committed between the two is removed without being announced. It cannot be
