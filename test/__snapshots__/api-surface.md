@@ -1155,6 +1155,7 @@ interface SecondFactorCompletion {
     readonly factor: SecondFactor;
     readonly observed: ObservedRequest;
     readonly pendingToken: PendingToken;
+    readonly presentedSessionToken: string | null;
   }): Promise<IssuedSession>;
 }
 //#endregion
@@ -2639,6 +2640,13 @@ interface SessionService {
   issue(input: {
     readonly factors: readonly AuthenticationFactor[];
     readonly observed: ObservedRequest;
+    readonly userId: string;
+  }): Promise<IssuedSession>;
+  /** issues a session and removes the one the browser presented, whoever owns it, in one transaction */
+  issueReplacingPresented(input: {
+    readonly factors: readonly AuthenticationFactor[];
+    readonly observed: ObservedRequest;
+    readonly presentedToken: string | null;
     readonly userId: string;
   }): Promise<IssuedSession>;
   reissue(input: {

@@ -81,7 +81,8 @@ export async function redeemMagicLink(
 	}
 
 	await pending.consume(begun.token);
-	const issued = await sessions.issue({
+	const issued = await sessions.issueReplacingPresented({
+		presentedToken: context.sessionToken,
 		userId: account.user.id,
 		factors: [],
 		observed: observedIn(context),

@@ -71,6 +71,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		const issued = await completion.complete({
 			pendingToken: token,
 			factor: "totp",
+			presentedSessionToken: null,
 			observed: OBSERVED,
 		});
 
@@ -100,6 +101,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 			createSecondFactorCompletion({ driver: refusing, schema }).complete({
 				pendingToken: token,
 				factor: "totp",
+				presentedSessionToken: null,
 				observed: OBSERVED,
 			}),
 		).rejects.toThrow();
@@ -124,6 +126,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 					createSecondFactorCompletion({ driver: racer, schema }).complete({
 						pendingToken: token,
 						factor: "totp",
+						presentedSessionToken: null,
 						observed: OBSERVED,
 					}),
 				),

@@ -3244,6 +3244,7 @@ from a caller.
 | `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | `DELETE … WHERE user_id = $1 AND id <> $2` | how many rows went |
 | `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
 | `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
+| `replacePresentedSession({ presentedTokenHash, insert })` | `DELETE … WHERE token_sha256 = $1` when a token was presented, plus `INSERT`, one transaction | the new `Session` |
 | `replaceEverySessionOfUser({ actor, insert })` | `DELETE` of every row of the user plus `INSERT`, one transaction | the new `Session` |
 
 `observedAt` is the database's `now()`, read in the same statement as the row.
@@ -3273,6 +3274,16 @@ at the same moment therefore leave one live session rather than two — the lose
 `DELETE` matches nothing once the winner has committed, and its transaction rolls
 back. `SessionService.reissue` turns that refusal into `session_required`,
 because a session that vanished mid-flight is a session the caller no longer has.
+
+`replacePresentedSession` is what every sign-in uses. It removes the row the
+browser presented, if there is one, and inserts the new row in the same
+transaction. Unlike `replaceSession` it neither requires the presented row to
+exist nor to belong to the user signing in: a stale cookie, an expired row and a
+cookie of another account are all removed or found absent, and the sign-in
+proceeds. The answer overwrites that cookie in this browser, so a row left
+standing would be a live session nobody holds any more (E-2120). It reaches the
+row through the same owner-free `DELETE` as signing out, for the same reason —
+the predicate is the secret itself.
 
 `replaceEverySessionOfUser` is what a password change uses: it removes **every**
 session of the user and issues one new one, in one transaction. There is no
@@ -3346,7 +3357,8 @@ decides after the fact is measured against it.
 
 | Method | What it does |
 |---|---|
-| `issue({ userId, factors, observed })` | a new session — this is a sign-in |
+| `issue({ userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
+| `issueReplacingPresented({ presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
 | `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
 | `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
 
@@ -3354,16 +3366,34 @@ decides after the fact is measured against it.
 stored follows `sessionMetadata` (L-10).
 
 Every event that changes the trust level ends the session that preceded it, and
-each event calls the method that matches what preceded it. A sign-in calls
-`issue`: there is no session yet, and the second factor is completed out of
-`velve.pending_authentication`, which is not one either. An event that follows an
-existing session — the second factor completed on top of one, a new identity
-linked — calls `reissue`. A password change calls
-`reissueAfterCredentialChange`, which has no parameter that could keep the other
-sessions (S-FIX-6), and a password reset has no surviving session at all and
-calls `revokeEverySessionOfUser`. In every case the token the caller held before
-the change is gone from the table, and a request carrying it is answered exactly
-like a request without a cookie (S-FIX-1, S-FIX-3).
+each event calls the method that matches what preceded it. A sign-in — by
+password, by passkey, by magic link, through a provider, and the completion of a
+second factor — calls `issueReplacingPresented` with `RequestContext.sessionToken`,
+the cookie the request carried or `null`. A browser that is already signed in and
+signs in again therefore keeps one row, not two, and the old token stops working
+in the same transaction that writes the new one (E-2120). The second-factor
+completion passes the same token through
+`SecondFactorCompletion.complete({ presentedSessionToken })`, and the provider
+callback through `OAuthCallbackArrival.presentedSessionToken`. A new identity
+linked calls `reissueSessionOfUser`, which replaces the session the link began in.
+A password change calls `reissueAfterCredentialChange`, which has no parameter
+that could keep the other sessions (S-FIX-6). A password reset revokes every
+session of the account and then calls `issueReplacingPresented`, so a presented
+cookie of another account goes too. In every case the token the caller held
+before the change is gone from the table, and a request carrying it is answered
+exactly like a request without a cookie (S-FIX-1, S-FIX-3).
+`test/signin-replaces-session.test.ts` sends each of the eight
+`TRUST_LEVEL_EVENTS` with the previous cookie and checks exactly that.
+
+Sign-up still calls `issue`. A sign-up with an address that is already taken
+runs the same registration and rolls it back (E-627); removing the presented row
+inside that transaction would roll the removal back as well, and whether the old
+cookie still worked afterwards would tell a caller whether the address was taken
+(E-2121).
+
+Replacing a presented session does not call the `beforeSessionRevoke` hook. No
+`RevokeReason` names a replacement, and adding one changes the plugin interface,
+so a plugin that counts revocations does not see these rows go (E-2122).
 
 Re-issue is always an `INSERT` plus a `DELETE`; `UPDATE velve.session SET
 user_id` does not exist, and a re-issue whose new row would belong to a
@@ -4526,6 +4556,13 @@ Everything that can fail answers `invalid_recovery_code`: a wrong code, an
 identifier that names no account, an account that never generated codes, an
 account whose codes were all spent, and a disabled account. As with the mailed
 reset, every session is revoked and a new one is issued.
+
+The per-account bucket is keyed by the identifier in the comparison form sign-in
+uses — trimmed, NFKC-normalised and case-folded — so `Owner@Example.com`,
+` owner@example.com ` and its fullwidth spelling all draw from one bucket, and an
+identifier that names no account draws from its bucket after the same number of
+attempts. The bucket is asked first: an attempt it refuses answers `rate_limited`
+without deriving the new password, so a refused attempt costs no KDF slot.
 
 ### Deadlines
 
@@ -6754,8 +6791,18 @@ signing in, signing up and both writing rows (`S-DOS-3`).
 
 After a successful verification against a credential whose stored parameters or
 key version are behind the configuration, the credential is rewritten in the
-background. The rewrite is started and not awaited, so it does not lengthen the
-sign-in that triggered it (`S-TIM-5`).
+background. The rewrite does not start until the answer has been handed back —
+the `Response` to the web handler's caller, the result to the caller of
+`auth.signIn.password` — so it does not lengthen the sign-in that triggered it
+(`S-TIM-5`, `E-2150`). It takes its place from the same semaphore as every other
+derivation (`S-DOS-6`). A rewrite that fails is logged at `warn` as
+`deferred work failed` with the route's name and never reaches the caller; the
+credential is left as it was and the next successful sign-in tries again.
+
+The rewrite runs in the same process after the answer, with no hook of the
+runtime's own, so a platform that stops the isolate the moment a response is
+returned may cut it short. Nothing is lost when it does: the old credential still
+verifies, and the next sign-in starts the rewrite again (`E-2151`).
 
 ### `POST /password/set` — `auth.password.set`
 
