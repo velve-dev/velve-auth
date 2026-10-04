@@ -24,7 +24,7 @@ export const UNLIMITED_RATES = {
 	perAccount: { capacity: 1_000_000, refillPerSecond: 1_000_000 },
 } as const;
 
-export interface ParsedSetCookie {
+interface ParsedSetCookie {
 	readonly name: string;
 	readonly value: string;
 	readonly attributes: readonly string[];
@@ -130,7 +130,7 @@ export async function mountWidest(
 	return { auth, handler: toWebHandler(auth), connection, schema, provider, email };
 }
 
-export interface StartedFlow {
+interface StartedFlow {
 	readonly answer: Response;
 	readonly pointer: string;
 	readonly state: string;
