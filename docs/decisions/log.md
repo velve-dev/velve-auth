@@ -12770,3 +12770,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** `core/token/random.ts` gains `randomUuid()` and the repository calls it, so the draw stays as it was and moves to the module the requirement names. The scan now searches all of `src/` for `getRandomValues`, `randomUUID` and `subtle.generateKey`, comments stripped, and is shown to report each of the three when one is planted in another file.
 
 **Price.** `random.ts` now holds something that is not a secret, so its comment ("every secret of the library must be drawn here") describes less than the file does. The scan reads source text rather than an AST, as T-RAND-5 asks for, so a call spelled through a computed property, such as `crypto["random" + "UUID"]`, would pass it.
+
+<a id="e-2244"></a>
+
+### The session token parameters stay plain strings for now
+`E-2244` · input-and-redirect · S-RAND-6, left open
+
+**Context.** S-RAND-6 asks that a value of type `EntityId` not be usable as a token without an explicit conversion. `SessionToken` is a branded string, but `CookieWriter.setSession` and `setPending` take `string`, and so do `SessionService.resolve`, `refresh` and `signOut({ token })`. A `SessionId` therefore passes into all five without conversion, because a branded string is still a `string`. This branch was asked to fix it only if the change stayed internal.
+
+**Rejected.** Narrowing the five parameters to `SessionToken` and `PendingToken` here. Both interfaces are in the shipped declarations, `test/__snapshots__/api-surface.md` records `setSession(token: string)` and `resolve(token: string)`, so the change is a public type change, and it would touch the web handler's `moveTokensIntoCookies`, which reads the token out of an `unknown` route output and would need a cast to brand it.
+
+**Reason.** The rule for this branch was to keep the public API shape, and the narrowing is a change to it that deserves its own decision about what a plugin's `context.cookies.setSession(...)` should accept. Nothing was changed.
+
+**Price.** S-RAND-6's type half stays unmet for these five parameters: a `SessionId` can still be handed to `setSession` and would be written into the session cookie. `test/brand-invariants.test.ts` checks that each brand still brands, not what these parameters accept, so nothing fails on it.
