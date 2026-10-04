@@ -1,0 +1,186 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { decodeBase64Url } from "../src/core/keys/base64url.js";
+import { type DrivenUser, driveOneUserThroughEveryFlow, type Secret } from "./rest-fixtures.js";
+import { secretBytesOfBase32 } from "./totp-fixtures.js";
+
+let driven: DrivenUser;
+let dump: string;
+
+const TEST_DATABASE_URL =
+	process.env.VELVE_TEST_DATABASE_URL ?? "postgres://velve:velve@localhost:5432/velve_test";
+
+let instrument: string;
+
+async function serverMajorVersion(): Promise<string> {
+	const [row] = await driven.mounted.connection.query<{ major: string }>(
+		"SELECT current_setting('server_version_num')::int / 10000 AS major",
+		[],
+	);
+	return String(row?.major ?? "");
+}
+
+//a pg_dump older than the server refuses to run, so the binary of the server's own major is tried too
+function pgDumpCandidates(major: string): readonly string[] {
+	return [
+		"pg_dump",
+		`/opt/homebrew/opt/postgresql@${major}/bin/pg_dump`,
+		`/usr/lib/postgresql/${major}/bin/pg_dump`,
+	];
+}
+
+function pgDumpWith(binary: string, schema: string): string | null {
+	try {
+		return execFileSync(binary, ["--schema", schema, "--no-owner", TEST_DATABASE_URL], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+	} catch {
+		return null;
+	}
+}
+
+async function everyColumnAsText(schema: string): Promise<string> {
+	const tables = await driven.mounted.connection.query<{ table_name: string }>(
+		"SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
+		[schema],
+	);
+	const parts: string[] = [];
+	for (const { table_name } of tables) {
+		const rows = await driven.mounted.connection.query<{ rendered: string }>(
+			`SELECT t::text AS rendered FROM ${schema}.${table_name} t`,
+			[],
+		);
+		parts.push(`CREATE TABLE ${schema}.${table_name}`, ...rows.map((row) => row.rendered));
+	}
+	return parts.join("\n");
+}
+
+/** The instrument S-REST-1 names where a usable binary exists, and the same bytes as text otherwise, as `auth-secrets-at-rest` does. */
+async function dumpOf(schema: string): Promise<{ text: string; how: string }> {
+	for (const binary of pgDumpCandidates(await serverMajorVersion())) {
+		const text = pgDumpWith(binary, schema);
+		if (text !== null) {
+			return { text, how: binary };
+		}
+	}
+	return { text: await everyColumnAsText(schema), how: "every column as text" };
+}
+
+const PLANTED = `planted-${randomUUID()}`;
+
+//a second account carries a known value as text and as bytes, so one dump shows the search can hit
+async function plantAKnownValue(): Promise<void> {
+	const schema = driven.mounted.schema;
+	const [row] = await driven.mounted.connection.query<{ id: string }>(
+		`INSERT INTO ${schema}.user (email) VALUES ($1) RETURNING id`,
+		[`${PLANTED}@example.com`],
+	);
+	await driven.mounted.connection.query(
+		`INSERT INTO ${schema}.webauthn_credential
+		 (user_id, credential_id, public_key, backup_eligible, backup_state, user_verified_at_registration)
+		 VALUES ($1, $2, $3, false, false, true)`,
+		[row?.id, Buffer.from(PLANTED, "utf8"), Buffer.from(`${PLANTED}-key`, "utf8")],
+	);
+}
+
+//one dump only, since a database crowded with schemas makes each one slow to take
+beforeAll(async () => {
+	driven = await driveOneUserThroughEveryFlow("restdump");
+	await plantAKnownValue();
+	const taken = await dumpOf(driven.mounted.schema);
+	dump = taken.text;
+	instrument = taken.how;
+}, 180_000);
+
+afterAll(async () => {
+	await driven.close();
+});
+
+/**
+ * The bytes a value stands for where it has any: a base64url token decodes to the random bytes it
+ * encodes and a TOTP secret to the key, and either could sit in a `bytea` column as hex.
+ */
+function underlyingBytes(secret: Secret): Buffer | null {
+	if (secret.name === "TOTP secret") {
+		return Buffer.from(secretBytesOfBase32(secret.value));
+	}
+	const decoded = /^[A-Za-z0-9_-]{22,}$/.test(secret.value) ? decodeBase64Url(secret.value) : null;
+	return decoded === null ? null : Buffer.from(decoded);
+}
+
+function encodingsOf(secret: Secret): readonly string[] {
+	const text = Buffer.from(secret.value, "utf8");
+	const bytes = underlyingBytes(secret);
+	return [
+		secret.value,
+		text.toString("base64"),
+		text.toString("base64url"),
+		text.toString("hex"),
+		...(bytes === null ? [] : [bytes.toString("hex"), bytes.toString("base64")]),
+	];
+}
+
+function hitsIn(text: string, secrets: readonly Secret[]): string[] {
+	return secrets.flatMap((secret) =>
+		encodingsOf(secret)
+			.filter((encoded) => text.includes(encoded))
+			.map((encoded) => `${secret.name} as ${encoded.slice(0, 12)}…`),
+	);
+}
+
+describe("T-REST-1: a pg_dump of the schema holds no secret in any encoding (S-REST-1)", () => {
+	it("dumps a schema that holds every artefact the flows leave behind", async () => {
+		const counts = await driven.mounted.connection.query<Record<string, number>>(
+			`SELECT
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.password_credential) AS password,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.session) AS session,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.pending_authentication) AS pending,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.one_time_token) AS one_time,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.totp_credential) AS totp,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.recovery_code) AS recovery,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.webauthn_challenge) AS challenge,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.oauth_flow) AS flow,
+			   (SELECT count(*)::int FROM ${driven.mounted.schema}.identity
+			    WHERE access_token_enc IS NOT NULL AND refresh_token_enc IS NOT NULL) AS stored_tokens`,
+			[],
+		);
+
+		expect(counts[0]).toStrictEqual({
+			password: 1,
+			session: 1,
+			pending: 1,
+			one_time: 4,
+			totp: 1,
+			recovery: 10,
+			challenge: 1,
+			flow: 1,
+			stored_tokens: 1,
+		});
+		expect(dump).toContain(`CREATE TABLE ${driven.mounted.schema}.session`);
+		expect(instrument).toMatch(/pg_dump$|^every column as text$/);
+	});
+
+	it("searches twenty-four values in at least three encodings each and finds none", () => {
+		const searches = driven.secrets.flatMap(encodingsOf);
+
+		expect(driven.secrets).toHaveLength(24);
+		expect(new Set(driven.secrets.map((secret) => secret.value)).size).toBe(24);
+		expect(driven.secrets.every((secret) => encodingsOf(secret).length >= 3)).toBe(true);
+		expect(searches.length).toBeGreaterThanOrEqual(72);
+		expect(hitsIn(dump, driven.secrets)).toStrictEqual([]);
+	});
+
+	it("finds none of the further secrets the flows produced either", () => {
+		expect(driven.beyondTheCount).toHaveLength(3);
+		expect(hitsIn(dump, driven.beyondTheCount)).toStrictEqual([]);
+	});
+
+	it("finds a value that really is in the dump, as text and as bytes", () => {
+		expect(hitsIn(dump, [{ name: "planted", value: PLANTED }])).toStrictEqual([
+			`planted as ${PLANTED.slice(0, 12)}…`,
+			`planted as ${Buffer.from(PLANTED).toString("hex").slice(0, 12)}…`,
+		]);
+	});
+});
