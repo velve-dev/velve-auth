@@ -304,10 +304,88 @@ describe("the owned set reaches only what a table brings with it (E-918)", () =>
 				[],
 				`DROP INDEX velve.demo_entry_user_idx;
 				 ALTER TABLE velve.demo_derived NO INHERIT velve.demo_base;
+				 ALTER TABLE velve.demo_part DETACH PARTITION velve.demo_part_low;
+				 ALTER TABLE velve.demo_part ATTACH PARTITION velve.demo_part_low FOR VALUES FROM (0) TO (5);
 				 DROP TABLE velve.demo_part;`,
+			),
+			ownedMigration(
+				3,
+				["demo_extra"],
+				`CREATE TABLE velve.demo_extra (id integer PRIMARY KEY, note text);
+				 ALTER TABLE velve.demo_entry ADD COLUMN extra_id integer REFERENCES velve.demo_extra (id);
+				 ALTER TABLE velve.demo_entry ADD COLUMN later serial;
+				 ALTER TABLE velve.demo_entry ADD COLUMN size integer DEFAULT 0 CHECK (size >= 0);
+				 ALTER TABLE velve.demo_entry DROP CONSTRAINT demo_entry_label_check;
+				 ALTER TABLE velve.demo_entry DROP COLUMN label;
+				 ALTER TABLE velve.demo_derived INHERIT velve.demo_base;
+				 CREATE INDEX demo_extra_note_idx ON velve.demo_extra (note);
+				 ALTER INDEX velve.demo_extra_note_idx RENAME TO demo_extra_note_lookup;
+				 ALTER SEQUENCE velve.demo_entry_id_seq RESTART WITH 100;
+				 COMMENT ON TABLE velve.demo_entry IS 'demo';
+				 COMMENT ON COLUMN velve.demo_entry.user_id IS 'owner';
+				 DROP TABLE velve.demo_derived;`,
 			),
 		]);
 
 		expect(outcome).toEqual({});
+	});
+});
+
+/**
+ * A change that writes only a catalogue row of an object the plugin does not own, or creates an
+ * object that has no dependency row, is seen through the catalogue rows the transaction wrote (E-2485).
+ */
+describe("a plugin migration changes nothing that is not its own (3.11)", () => {
+	const changes: readonly (readonly [string, string])[] = [
+		[
+			"sets default privileges for every table created in the schema later",
+			"ALTER DEFAULT PRIVILEGES IN SCHEMA velve GRANT SELECT ON TABLES TO PUBLIC;",
+		],
+		["comments on the schema itself", "COMMENT ON SCHEMA {schema} IS 'demo';"],
+		["comments on a column of a core table", "COMMENT ON COLUMN velve.session.user_id IS 'demo';"],
+		[
+			"comments on a core constraint",
+			"COMMENT ON CONSTRAINT session_user_id_fkey ON velve.session IS 'demo';",
+		],
+		[
+			"changes the statistics target of a core column",
+			"ALTER TABLE velve.session ALTER COLUMN user_id SET STATISTICS 500;",
+		],
+	];
+	for (const [what, sql] of changes) {
+		it(`refuses a migration that ${what}`, async () => {
+			const instance = await openSchema();
+
+			const refusal = await runAsTheMigrationRole(instance, [
+				ownedMigration(
+					1,
+					["demo_entry"],
+					"CREATE TABLE velve.demo_entry (id integer PRIMARY KEY);",
+				),
+				ownedMigration(2, [], sql.replace("{schema}", instance.schema)),
+			]);
+
+			expect(refusal.code).toMatch(/^migration_/);
+		});
+	}
+
+	it("refuses a migration that removes a comment the operator put on a core table", async () => {
+		const instance = await openSchema();
+		await instance.connection.query(
+			`COMMENT ON TABLE ${instance.schema}.session IS 'kept by the operator'`,
+			[],
+		);
+
+		const refusal = await runAsTheMigrationRole(instance, [
+			ownedMigration(1, ["demo_entry"], "CREATE TABLE velve.demo_entry (id integer PRIMARY KEY);"),
+			ownedMigration(2, [], "COMMENT ON TABLE velve.session IS NULL;"),
+		]);
+		const [comment] = await instance.connection.query<{ text: string | null }>(
+			`SELECT obj_description(to_regclass($1 || '.session')::oid, 'pg_class') AS text`,
+			[instance.schema],
+		);
+
+		expect(refusal.code).toBe("migration_foreign_table_changed");
+		expect(comment?.text).toBe("kept by the operator");
 	});
 });

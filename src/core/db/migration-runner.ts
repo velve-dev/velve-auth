@@ -137,6 +137,78 @@ SELECT depend.classid::regclass::text AS catalogue, depend.objid AS object_id,
 FROM pg_depend depend
 WHERE depend.xmin = pg_current_xact_id()::xid`;
 
+//every catalogue row is attributed to the object it describes so a change in place is seen (E-2485)
+const ROWS_OF_EVERY_CATALOGUED_OBJECT = `
+SELECT 'pg_class'::regclass AS classid, oid AS objid, xmin FROM pg_class
+UNION ALL SELECT 'pg_class'::regclass, attrelid, xmin FROM pg_attribute
+UNION ALL SELECT 'pg_class'::regclass, indexrelid, xmin FROM pg_index
+UNION ALL SELECT 'pg_class'::regclass, inhrelid, xmin FROM pg_inherits
+UNION ALL SELECT 'pg_class'::regclass, partrelid, xmin FROM pg_partitioned_table
+UNION ALL SELECT 'pg_class'::regclass, seqrelid, xmin FROM pg_sequence
+UNION ALL SELECT 'pg_class'::regclass, ftrelid, xmin FROM pg_foreign_table
+UNION ALL SELECT 'pg_type'::regclass, oid, xmin FROM pg_type
+UNION ALL SELECT 'pg_type'::regclass, enumtypid, xmin FROM pg_enum
+UNION ALL SELECT 'pg_type'::regclass, rngtypid, xmin FROM pg_range
+UNION ALL SELECT 'pg_constraint'::regclass, oid, xmin FROM pg_constraint
+UNION ALL SELECT 'pg_trigger'::regclass, oid, xmin FROM pg_trigger
+UNION ALL SELECT 'pg_attrdef'::regclass, oid, xmin FROM pg_attrdef
+UNION ALL SELECT 'pg_rewrite'::regclass, oid, xmin FROM pg_rewrite
+UNION ALL SELECT 'pg_policy'::regclass, oid, xmin FROM pg_policy
+UNION ALL SELECT 'pg_statistic_ext'::regclass, oid, xmin FROM pg_statistic_ext
+UNION ALL SELECT 'pg_proc'::regclass, oid, xmin FROM pg_proc
+UNION ALL SELECT 'pg_proc'::regclass, aggfnoid::oid, xmin FROM pg_aggregate
+UNION ALL SELECT 'pg_namespace'::regclass, oid, xmin FROM pg_namespace
+UNION ALL SELECT 'pg_collation'::regclass, oid, xmin FROM pg_collation
+UNION ALL SELECT 'pg_conversion'::regclass, oid, xmin FROM pg_conversion
+UNION ALL SELECT 'pg_operator'::regclass, oid, xmin FROM pg_operator
+UNION ALL SELECT 'pg_opclass'::regclass, oid, xmin FROM pg_opclass
+UNION ALL SELECT 'pg_opfamily'::regclass, oid, xmin FROM pg_opfamily
+UNION ALL SELECT 'pg_amop'::regclass, oid, xmin FROM pg_amop
+UNION ALL SELECT 'pg_amproc'::regclass, oid, xmin FROM pg_amproc
+UNION ALL SELECT 'pg_cast'::regclass, oid, xmin FROM pg_cast
+UNION ALL SELECT 'pg_transform'::regclass, oid, xmin FROM pg_transform
+UNION ALL SELECT 'pg_language'::regclass, oid, xmin FROM pg_language
+UNION ALL SELECT 'pg_ts_config'::regclass, oid, xmin FROM pg_ts_config
+UNION ALL SELECT 'pg_ts_config'::regclass, mapcfg, xmin FROM pg_ts_config_map
+UNION ALL SELECT 'pg_ts_dict'::regclass, oid, xmin FROM pg_ts_dict
+UNION ALL SELECT 'pg_ts_parser'::regclass, oid, xmin FROM pg_ts_parser
+UNION ALL SELECT 'pg_ts_template'::regclass, oid, xmin FROM pg_ts_template
+UNION ALL SELECT 'pg_extension'::regclass, oid, xmin FROM pg_extension
+UNION ALL SELECT 'pg_foreign_data_wrapper'::regclass, oid, xmin FROM pg_foreign_data_wrapper
+UNION ALL SELECT 'pg_foreign_server'::regclass, oid, xmin FROM pg_foreign_server
+UNION ALL SELECT 'pg_publication'::regclass, oid, xmin FROM pg_publication
+UNION ALL SELECT 'pg_publication_rel'::regclass, oid, xmin FROM pg_publication_rel
+UNION ALL SELECT 'pg_event_trigger'::regclass, oid, xmin FROM pg_event_trigger
+UNION ALL SELECT 'pg_default_acl'::regclass, oid, xmin FROM pg_default_acl
+UNION ALL SELECT 'pg_largeobject_metadata'::regclass, oid, xmin FROM pg_largeobject_metadata
+UNION ALL SELECT classoid, objoid, xmin FROM pg_description
+UNION ALL SELECT classoid, objoid, xmin FROM pg_seclabel`;
+
+//a row deleted leaves no xmin behind so the rows of every schema object are counted too (E-2485)
+const ROW_COUNTS_OF_THE_SCHEMA_OBJECTS = `
+WITH RECURSIVE belonging(classid, objid) AS (
+  SELECT depend.classid, depend.objid
+  FROM pg_depend depend
+  JOIN pg_namespace namespace_ ON namespace_.oid = depend.refobjid
+  WHERE depend.refclassid = 'pg_namespace'::regclass AND namespace_.nspname = $1
+  UNION
+  SELECT depend.classid, depend.objid
+  FROM pg_depend depend
+  JOIN belonging ON depend.refclassid = belonging.classid AND depend.refobjid = belonging.objid
+), catalogued AS (${ROWS_OF_EVERY_CATALOGUED_OBJECT})
+SELECT belonging.classid::regclass::text AS catalogue, belonging.objid AS object_id,
+       count(catalogued.objid) AS row_count
+FROM belonging
+LEFT JOIN catalogued ON catalogued.classid = belonging.classid AND catalogued.objid = belonging.objid
+GROUP BY belonging.classid, belonging.objid`;
+
+const OBJECTS_THIS_TRANSACTION_WROTE = `
+WITH catalogued AS (${ROWS_OF_EVERY_CATALOGUED_OBJECT})
+SELECT DISTINCT classid::regclass::text AS catalogue, objid AS object_id,
+       pg_describe_object(classid, objid, 0) AS described
+FROM catalogued
+WHERE xmin = pg_current_xact_id()::xid`;
+
 //an inheritance edge lets one table read and delete the rows of another (E-2483)
 const INHERITANCE_THIS_TRANSACTION_MADE = `
 SELECT inheritance.inhrelid AS child_id, inheritance.inhparent AS parent_id,
@@ -252,6 +324,18 @@ interface DependencyRow {
 	readonly referenced_catalogue: string;
 	readonly referenced_id: number;
 	readonly dependency_type: string;
+	readonly described: string;
+}
+
+interface RowCountRow {
+	readonly catalogue: string;
+	readonly object_id: number;
+	readonly row_count: number;
+}
+
+interface WrittenObjectRow {
+	readonly catalogue: string;
+	readonly object_id: number;
 	readonly described: string;
 }
 
@@ -439,6 +523,15 @@ function asTextArrayLiteral(values: readonly string[]): string {
 	return `{${values.map((value) => `"${String(value).replace(/[\\"]/g, "\\$&")}"`).join(",")}}`;
 }
 
+type RowCounts = ReadonlyMap<string, number>;
+
+async function readRowCountsOfTheSchemaObjects(tx: Driver, schema: string): Promise<RowCounts> {
+	const rows = await tx.query<RowCountRow>(ROW_COUNTS_OF_THE_SCHEMA_OBJECTS, [schema]);
+	return new Map(
+		rows.map((row) => [objectKey(row.catalogue, Number(row.object_id)), Number(row.row_count)]),
+	);
+}
+
 async function readObjectsOfTheDeclaredTables(
 	tx: Driver,
 	schema: string,
@@ -553,9 +646,14 @@ function assertEveryObjectItCreatedBelongsToItsOwnTables(
 	migration: OwnedMigration,
 	created: readonly DependencyRow[],
 	ownedRelations: ReadonlySet<string>,
+	written: { readonly objects: readonly WrittenObjectRow[]; readonly before: SchemaObjects },
 ): void {
 	const belonging = objectsBelongingToTheOwnTables(created, ownedRelations);
-	for (const row of created) {
+	//an object with no dependency row is seen only through the catalogue row it wrote (E-2485)
+	const writtenAndNew = written.objects.filter(
+		(row) => !written.before.has(objectKey(row.catalogue, Number(row.object_id))),
+	);
+	for (const row of [...created, ...writtenAndNew]) {
 		if (!belonging.has(objectKey(row.catalogue, Number(row.object_id)))) {
 			refuseOwned(
 				"migration_created_more_than_a_table",
@@ -580,6 +678,31 @@ function assertEveryInheritanceItMadeIsAmongItsOwnTables(
 				"migration_foreign_table_changed",
 				migration,
 				`it made ${row.child} inherit from ${row.parent}, and a plugin's tables inherit only from one another`,
+			);
+		}
+	}
+}
+
+//an object that is not the plugin's own keeps every catalogue row it had untouched (E-2485)
+function assertNoForeignObjectWasAlteredInPlace(
+	migration: OwnedMigration,
+	objectsBefore: SchemaObjects,
+	counts: { readonly before: RowCounts; readonly after: RowCounts },
+	written: readonly WrittenObjectRow[],
+	own: ReadonlySet<string>,
+): void {
+	const writtenKeys = new Set(
+		written.map((row) => objectKey(row.catalogue, Number(row.object_id))),
+	);
+	for (const [key, described] of objectsBefore) {
+		if (own.has(key)) {
+			continue;
+		}
+		if (writtenKeys.has(key) || counts.before.get(key) !== counts.after.get(key)) {
+			refuseOwned(
+				"migration_foreign_table_changed",
+				migration,
+				`it altered ${described} in place, and a plugin migration changes nothing that is not its own`,
 			);
 		}
 	}
@@ -757,6 +880,7 @@ async function applyOwnedMigration(
 		const writtenBefore = await readWriteCounters(tx, migration);
 		const before = await readRelations(tx, schema);
 		const objectsBefore = await readSchemaObjects(tx, schema);
+		const rowCountsBefore = await readRowCountsOfTheSchemaObjects(tx, schema);
 		//a declaration exempts nothing before the migration that makes it has run (E-928)
 		const ownBefore = await readObjectsOfTheDeclaredTables(tx, schema, declaredBefore);
 		assertNoDeclaredNameIsAlreadySomebodyElses(migration, schema, before, ownBefore);
@@ -776,12 +900,21 @@ async function applyOwnedMigration(
 			await readSchemaObjects(tx, schema),
 			new Set([...ownBefore, ...own]),
 		);
+		const written = await tx.query<WrittenObjectRow>(OBJECTS_THIS_TRANSACTION_WROTE, []);
+		assertNoForeignObjectWasAlteredInPlace(
+			migration,
+			objectsBefore,
+			{ before: rowCountsBefore, after: await readRowCountsOfTheSchemaObjects(tx, schema) },
+			written,
+			new Set([...ownBefore, ...own]),
+		);
 		assertTheTablesThatAppearedAreTheDeclaredOnes(migration, before, after);
 		assertNoCodeWasLeftBehind(migration, await tx.query<CodeRow>(CODE_THIS_TRANSACTION_LEFT, []));
 		assertEveryObjectItCreatedBelongsToItsOwnTables(
 			migration,
 			await tx.query<DependencyRow>(OBJECTS_THIS_TRANSACTION_CREATED, []),
 			own,
+			{ objects: written, before: objectsBefore },
 		);
 		assertNoForeignTableWasReachedByARow(
 			migration,
