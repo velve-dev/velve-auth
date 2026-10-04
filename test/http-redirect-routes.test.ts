@@ -25,7 +25,7 @@ function redirectingPluginRoute(name: string, target: string): PluginRoute<"redi
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: () => Promise.resolve({ redirectToPath: target }),
 	};
 }
