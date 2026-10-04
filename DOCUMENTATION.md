@@ -1115,12 +1115,36 @@ class were `startsWith` on a URL string. A missing `Origin` header, an opaque
 `null` origin and an unparseable value are all rejected with
 `origin_not_allowed`, and every rejection is byte-identical (S-CSRF-3).
 
+There is one exception to the missing-header rule, because browsers send no
+`Origin` on a same-origin `fetch` GET. A request with no `Origin` header is
+accepted when all three of these hold:
+
+- the route is one of the seven reading `GET` routes of S-CSRF-4: `/session`,
+  `/session/list`, `/username/available`, `/factor/webauthn/list`,
+  `/factor/recovery/remaining`, `/identity/list` and `/pending`;
+- the request came through the web handler;
+- it carries `Sec-Fetch-Site: same-origin`, exactly. A page script cannot set
+  this header, and the browser sends that value only when the calling page's
+  origin is the target's own.
+
+So `fetch("/api/auth/session")` from your own pages works without any header
+of yours. `Sec-Fetch-Site` values `same-site`, `cross-site` and `none`, a
+missing `Sec-Fetch-Site`, every `POST` route and every plugin route still answer
+`origin_not_allowed`, byte-identical to any other rejection. A plugin's `GET`
+route is not in the list, because nothing proves it changes no state. An
+`Origin` header that is present is always compared, whatever `Sec-Fetch-Site`
+says. A browser that sends no fetch metadata (Safari before 16.4) gets 403 on a
+same-origin read, as every browser did before (E-2390, E-2391).
+
 `SameSite=Lax` is not the defence. It leaves state-changing `GET` open, it is
 "same-site" rather than "same-origin" so any controlled subdomain passes it, and
 it does nothing against login CSRF.
 
 The check runs on the direct server method as well, which is why that method
-takes an `origin` field (S-CSRF-1).
+takes an `origin` field (S-CSRF-1). The same-origin exception does not apply
+there: server code has no browser metadata to show, so it passes the origin it
+reads for. That is your configured origin when you render a page on the server,
+because a page navigation carries no `Origin` header to forward (E-2392).
 
 ### `defineRoute(declaration)`
 
@@ -1304,7 +1328,7 @@ six fields, and only these six:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`; there is no way to omit the field and skip the check. |
+| `origin` | `string \| null` | Required. What an `Origin` header would have carried. `null` is rejected wherever the route declares `originCheck: "checked"`, on the reading routes too, which accept a missing header only over HTTP; there is no way to omit the field and skip the check. |
 | `sessionToken` | `string?` | What `__Host-velve_session` would have carried; used where the route declares `caller: "session"`. |
 | `pendingToken` | `string?` | What `__Host-velve_pending` would have carried; used where the route declares `caller: "pending"`. |
 | `oauthStateToken` | `string?` | What `__Host-velve_oauth_state` would have carried; used where the route declares `oauthStateCookie: "readable"`. |
