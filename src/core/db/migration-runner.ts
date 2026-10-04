@@ -629,17 +629,23 @@ function assertItLeftEveryOtherObjectAsItFoundIt(
 	}
 }
 
+function holdTheSameNames(left: readonly string[], right: readonly string[]): boolean {
+	const names = new Set(right);
+	return left.length === names.size && left.every((name) => names.has(name));
+}
+
 function assertTheTablesThatAppearedAreTheDeclaredOnes(
 	migration: OwnedMigration,
 	before: Relations,
 	after: Relations,
 ): void {
-	const declared = [...new Set(migration.createsTables)].sort();
+	const declared = [...new Set(migration.createsTables.map(String))].sort();
 	const appeared = [...after]
 		.filter(([relation, fact]) => !before.has(relation) && TABLE_KINDS.has(fact.kind))
 		.map(([relation]) => localNameOf(relation))
 		.sort();
-	if (appeared.join(",") !== declared.join(",")) {
+	//each name is compared on its own and never inside a joined string (E-2484)
+	if (!holdTheSameNames(declared, appeared)) {
 		refuseOwned(
 			"migration_table_undeclared",
 			migration,

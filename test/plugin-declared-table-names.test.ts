@@ -156,6 +156,20 @@ describe("the runner reads each declared name as one name (E-918)", () => {
 		expect(await indexesOfTheSessionTable(instance)).toEqual(before);
 	});
 
+	it("refuses one declared name holding a comma for the two tables it would spell", async () => {
+		const instance = await openSchema();
+
+		const refusal = await runAsTheMigrationRole(instance, [
+			ownedMigration(
+				1,
+				["demo_a,demo_b"],
+				"CREATE TABLE velve.demo_a (id integer); CREATE TABLE velve.demo_b (id integer);",
+			),
+		]);
+
+		expect(refusal.code).toBe("migration_table_undeclared");
+	});
+
 	it("reads a name holding a quote, a backslash and a brace as the one table it spells", async () => {
 		const instance = await openSchema();
 		const migration: OwnedMigration = {
