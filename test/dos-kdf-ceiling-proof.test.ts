@@ -1,6 +1,7 @@
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KdfSemaphore } from "../src/core/password/semaphore.js";
-import { actorOfTestUser } from "./db-fixtures.js";
 
 /**
  * T-DOS-3 over the mounted route with real derivations. The ceiling is read twice: from the one
@@ -62,8 +63,10 @@ const { toWebHandler } = await import("../src/core/http/web-handler.js");
 const { rootKeyProvider } = await import("../src/core/keys/index.js");
 const { createArgon2idHash } = await import("../src/core/password/argon2.js");
 const { encodeStandardBase64 } = await import("../src/core/password/base64.js");
-const { createPasswordCredentialRepository } = await import("../src/core/password/credential.js");
-const { MAXIMUM_STORED_MEMORY_KIB } = await import("../src/core/password/limits.js");
+const { sealPhc } = await import("../src/core/password/credential.js");
+const { MAXIMUM_CONFIGURABLE_MEMORY_KIB, MAXIMUM_STORED_MEMORY_KIB } = await import(
+	"../src/core/password/limits.js"
+);
 const { createVelveAuth } = await import("../src/index.js");
 const { configFor } = await import("./auth-fixtures.js");
 const { openConnectionPool } = await import("./connection-pool-fixtures.js");
@@ -82,11 +85,15 @@ const ACCOUNTS = 20;
 const POOL_SIZE = 12;
 const CONFIGURED_MEMORY_KIB = 19456;
 const RSS_TOLERANCE = 1.5;
+const WAVES_BEFORE_COLLECTING = 3;
 const KIB = 1024;
+const SETTLE_LIMIT_MS = 30_000;
 
 const PASSWORD = drawTestPassword();
 const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 const ceiling = Math.min(4, globalThis.navigator?.hardwareConcurrency ?? 1);
+const boundPerPlaceKiB = Math.max(CONFIGURED_MEMORY_KIB, MAXIMUM_STORED_MEMORY_KIB);
+const residentBoundMiB = ((ceiling * boundPerPlaceKiB) / KIB) * RSS_TOLERANCE;
 
 let migrated: Migrated;
 let pool: Pool;
@@ -94,13 +101,13 @@ let handler: (request: Request) => Promise<Response>;
 let semaphore: KdfSemaphore;
 const atConfiguredParameters: string[] = [];
 const importedAtTheCap: string[] = [];
+const importedAtTheCapNeverSignedIn: string[] = [];
+const importedAtTheCapWithTheConfiguredCost: string[] = [];
+const storedAboveTheStartBound: string[] = [];
 
+//the rows are written in SQL as an import would since the repository refuses one above the ceiling (E-2616)
 async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
-	const credentials = createPasswordCredentialRepository({
-		driver: migrated.connection,
-		keys,
-		schema: migrated.schema,
-	});
+	const sealed = await sealPhc(keys, phc);
 	const emails: string[] = [];
 	for (let index = 0; index < ACCOUNTS; index += 1) {
 		const email = `${prefix}${index}@ceiling.example`;
@@ -108,28 +115,33 @@ async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
 			`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
 			[email],
 		);
-		await credentials.write({
-			actor: actorOfTestUser((row as { id: string }).id),
-			phc,
-			scheme: "argon2id",
-			setBySessionId: null,
-		});
+		await migrated.connection.query(
+			`INSERT INTO ${migrated.schema}.password_credential (user_id, phc, key_version, scheme)
+			 VALUES ($1, $2, $3, 'argon2id')`,
+			[(row as { id: string }).id, sealed.ciphertext, sealed.keyVersion],
+		);
 		emails.push(email);
 	}
 	return emails;
 }
 
 //a credential an import brought in at the highest memory cost verification still accepts
-async function phcAtTheImportCap(): Promise<string> {
+async function phcAtTheImportCap(iterations: number): Promise<string> {
 	const salt = new Uint8Array(16).fill(7);
 	const hash = await argon2idAsync(new TextEncoder().encode(PASSWORD), salt, {
 		m: MAXIMUM_STORED_MEMORY_KIB,
-		t: 1,
+		t: iterations,
 		p: 1,
 		dkLen: 32,
 		version: 0x13,
 	});
-	return `$argon2id$v=19$m=${MAXIMUM_STORED_MEMORY_KIB},t=1,p=1$${encodeStandardBase64(salt)}$${encodeStandardBase64(hash)}`;
+	return `$argon2id$v=19$m=${MAXIMUM_STORED_MEMORY_KIB},t=${iterations},p=1$${encodeStandardBase64(salt)}$${encodeStandardBase64(hash)}`;
+}
+
+//verification refuses this one before deriving so its hash bytes never matter
+function phcAboveTheStartBound(): string {
+	const filler = encodeStandardBase64(new Uint8Array(32).fill(9));
+	return `$argon2id$v=19$m=${MAXIMUM_CONFIGURABLE_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`;
 }
 
 beforeAll(async () => {
@@ -160,7 +172,14 @@ beforeAll(async () => {
 		parallelism: 1,
 	});
 	atConfiguredParameters.push(...(await seedAccounts("configured", configured)));
-	importedAtTheCap.push(...(await seedAccounts("imported", await phcAtTheImportCap())));
+	importedAtTheCap.push(...(await seedAccounts("imported", await phcAtTheImportCap(1))));
+	importedAtTheCapNeverSignedIn.push(
+		...(await seedAccounts("importedfirst", await phcAtTheImportCap(1))),
+	);
+	importedAtTheCapWithTheConfiguredCost.push(
+		...(await seedAccounts("importedcost", await phcAtTheImportCap(2))),
+	);
+	storedAboveTheStartBound.push(...(await seedAccounts("abovebound", phcAboveTheStartBound())));
 }, 120_000);
 
 afterAll(async () => {
@@ -182,6 +201,47 @@ async function signInWave(emails: readonly string[], count: number): Promise<num
 	return answers.map((answer) => answer.status);
 }
 
+//a collection forced on both sides of a wave tells garbage not yet reclaimed from memory still held
+function collectGarbage(): void {
+	setFlagsFromString("--expose-gc");
+	(runInNewContext("gc") as () => void)();
+}
+
+function residentMiB(): number {
+	return process.memoryUsage().rss / KIB / KIB;
+}
+
+async function storedCiphertexts(emails: readonly string[]): Promise<string[]> {
+	const rows = await migrated.connection.query<{ phc: string }>(
+		`SELECT encode(credential.phc, 'hex') AS phc
+		 FROM ${migrated.schema}.password_credential credential
+		 JOIN ${migrated.schema}.user account ON account.id = credential.user_id
+		 WHERE account.email = ANY(string_to_array($1, ' '))
+		 ORDER BY account.email`,
+		[emails.join(" ")],
+	);
+	return rows.map((row) => row.phc);
+}
+
+//the rehash runs after the answer so the test waits until every row has been rewritten
+async function untilEveryCredentialRewritten(
+	emails: readonly string[],
+	before: readonly string[],
+): Promise<void> {
+	const deadline = Date.now() + SETTLE_LIMIT_MS;
+	for (;;) {
+		const after = await storedCiphertexts(emails);
+		const unchanged = after.filter((ciphertext, index) => ciphertext === before[index]).length;
+		if (unchanged === 0) {
+			return;
+		}
+		if (Date.now() > deadline) {
+			throw new Error(`${unchanged} of ${emails.length} credentials were never rewritten`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
 describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DOS-3)", () => {
 	it("holds two hundred simultaneous sign-ins at the default parameters to min(4, cpus)", async () => {
 		const statuses = await signInWave(atConfiguredParameters, SIMULTANEOUS_SIGN_INS);
@@ -197,14 +257,15 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 		expect(semaphore.inFlight).toBe(0);
 	}, 120_000);
 
-	//the resident set outgrows the bound with either engine and the cause is not established (E-2364)
+	//the resident set holds garbage the collector has not yet reclaimed and returns once it has (E-2612)
 	(NIGHTLY ? it.fails : it.skip)(
-		"grows the resident set by less than min(4, cpus) times 19 MiB times 1.5",
+		"grows the resident set by less than min(4, cpus) times max(m, 64 MiB) times 1.5",
 		async () => {
-			let peakRss = process.memoryUsage().rss;
-			const baselineRss = peakRss;
+			collectGarbage();
+			const baselineMiB = residentMiB();
+			let peakMiB = baselineMiB;
 			const sampler = setInterval(() => {
-				peakRss = Math.max(peakRss, process.memoryUsage().rss);
+				peakMiB = Math.max(peakMiB, residentMiB());
 			}, 5);
 			try {
 				await signInWave(atConfiguredParameters, SIMULTANEOUS_SIGN_INS);
@@ -212,17 +273,72 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 				clearInterval(sampler);
 			}
 
-			const growthMiB = (peakRss - baselineRss) / KIB / KIB;
-			expect(growthMiB).toBeLessThan(((ceiling * CONFIGURED_MEMORY_KIB) / KIB) * RSS_TOLERANCE);
+			expect(peakMiB - baselineMiB).toBeLessThan(residentBoundMiB);
 		},
 		120_000,
 	);
 
-	//an imported credential may ask for 64 MiB per derivation which the bound assumes is 19 MiB (S-DOS-3)
-	it.fails("keeps derivation memory within the semaphore size times the configured parameter for imported credentials", async () => {
-		await signInWave(importedAtTheCap, 4 * ceiling);
+	(NIGHTLY ? it : it.skip)(
+		"returns the resident set within that bound once the collector has run, wave after wave",
+		async () => {
+			collectGarbage();
+			const baselineMiB = residentMiB();
+			const afterEachWaveMiB: number[] = [];
+			for (let wave = 0; wave < WAVES_BEFORE_COLLECTING; wave += 1) {
+				await signInWave(atConfiguredParameters, SIMULTANEOUS_SIGN_INS);
+				collectGarbage();
+				afterEachWaveMiB.push(residentMiB() - baselineMiB);
+			}
 
-		expect(Math.max(...kdfAccounting.memoryRequestsKiB)).toBeLessThanOrEqual(CONFIGURED_MEMORY_KIB);
-		expect(kdfAccounting.peakInFlightKiB).toBeLessThanOrEqual(ceiling * CONFIGURED_MEMORY_KIB);
+			expect(Math.max(...afterEachWaveMiB)).toBeLessThan(residentBoundMiB);
+		},
+		300_000,
+	);
+
+	it("keeps an imported derivation within the import ceiling and the wave within min(4, cpus) times max(m, 64 MiB)", async () => {
+		const statuses = await signInWave(importedAtTheCap, SIMULTANEOUS_SIGN_INS);
+
+		expect(statuses.filter((status) => status !== 200 && status !== 429)).toStrictEqual([]);
+		expect(statuses.filter((status) => status === 200).length).toBeGreaterThan(ceiling);
+		expect(
+			Math.max(...kdfAccounting.memoryRequestsKiB),
+			"an import at the ceiling was derived",
+		).toBe(MAXIMUM_STORED_MEMORY_KIB);
+		expect(semaphore.peakInFlight).toBeLessThanOrEqual(ceiling);
+		expect(kdfAccounting.peakInFlight).toBeLessThanOrEqual(ceiling);
+		expect(kdfAccounting.peakInFlightKiB).toBeLessThanOrEqual(ceiling * boundPerPlaceKiB);
 	}, 120_000);
+
+	it("never derives a credential above the start bound", async () => {
+		const statuses = await signInWave(storedAboveTheStartBound, 4 * ceiling);
+
+		expect(statuses.filter((status) => status === 200)).toStrictEqual([]);
+		expect(kdfAccounting.memoryRequestsKiB, "each refusal derives the dummy instead").toStrictEqual(
+			statuses.map(() => CONFIGURED_MEMORY_KIB),
+		);
+		expect(
+			kdfAccounting.memoryRequestsKiB.filter(
+				(memoryKiB) => memoryKiB > MAXIMUM_CONFIGURABLE_MEMORY_KIB,
+			),
+		).toStrictEqual([]);
+	}, 120_000);
+
+	it("moves an imported credential to the configured parameters at its first successful sign-in", async () => {
+		const imported = [...importedAtTheCapNeverSignedIn, ...importedAtTheCapWithTheConfiguredCost];
+		const before = await storedCiphertexts(imported);
+		for (const email of imported) {
+			const answer = await handler(postTo("/sign-in/password", { email, password: PASSWORD }));
+			expect(answer.status).toBe(200);
+		}
+		await untilEveryCredentialRewritten(imported, before);
+
+		kdfAccounting.reset();
+		for (const email of imported) {
+			const answer = await handler(postTo("/sign-in/password", { email, password: PASSWORD }));
+			expect(answer.status).toBe(200);
+		}
+		expect(kdfAccounting.memoryRequestsKiB).toStrictEqual(
+			imported.map(() => CONFIGURED_MEMORY_KIB),
+		);
+	}, 180_000);
 });

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import type { KdfSemaphore } from "../src/core/password/semaphore.js";
 import { actorOfTestUser } from "./db-fixtures.js";
 
@@ -111,6 +112,7 @@ beforeAll(async () => {
 		driver: migrated.connection,
 		keys,
 		schema: migrated.schema,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
 	});
 	for (let index = 0; index < SIGN_INS; index += 1) {
 		const email = `rehashwave${index}@example.com`;

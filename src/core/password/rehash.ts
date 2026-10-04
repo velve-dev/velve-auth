@@ -17,11 +17,12 @@ export function needsRehash(phc: string, config: ResolvedPasswordConfig): boolea
 	const iterations = integerParameter(parsed, "t");
 	const parallelism = integerParameter(parsed, "p");
 
+	//a memory cost above the configured one is brought down to it as well (S-DOS-3)
 	return (
 		memoryKiB === null ||
 		iterations === null ||
 		parallelism === null ||
-		memoryKiB < config.argon2id.memoryKiB ||
+		memoryKiB !== config.argon2id.memoryKiB ||
 		iterations < config.argon2id.iterations ||
 		parallelism < config.argon2id.parallelism ||
 		(parsed.salt?.length ?? 0) < REQUIRED_SALT_BYTES ||

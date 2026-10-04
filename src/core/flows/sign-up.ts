@@ -105,7 +105,7 @@ async function register(
 		});
 		if (derived !== null) {
 			await writePasswordOfCreatedAccount(
-				{ driver: transaction, keys, schema },
+				{ driver: transaction, keys, schema, password: flow.environment.services.password },
 				{ userId: created.id, derived, setBySessionId: issued.session.id },
 			);
 		}

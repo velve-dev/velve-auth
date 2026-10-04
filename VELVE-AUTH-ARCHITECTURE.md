@@ -1345,7 +1345,8 @@ source format into one of these strings. Better Auth's `salt_hex:hash_hex` becom
 can be taken over unchanged.
 
 Default parameters for Argon2id: **m = 19456 KiB, t = 2, p = 1, 32 byte output,
-16 byte salt** (OWASP minimum recommendation). Configurable upwards.
+16 byte salt** (OWASP minimum recommendation). Configurable upwards, up to `m = 1048576` KiB
+(1 GiB), `t = 64` and `p = 64`.
 
 Course of a password check:
 
@@ -1355,7 +1356,8 @@ Course of a password check:
 3. Switch on the prefix, call the verifier, compare the result in constant time.
 4. On failure: a uniform response, no hint as to the cause.
 5. On success: determine `needsRehash` — true if the scheme != the default **or**
-   the parameters lie below the current policy.
+   the parameters lie below the current policy **or** the memory parameter lies
+   above the configured one.
 6. If `needsRehash` is true, then after the response has been sent, a rehash happens in a bounded
    background task and is written by compare-and-swap:
    `UPDATE velve.password_credential SET phc = $neu, scheme = $s, key_version = $v,
@@ -1368,7 +1370,13 @@ Concurrency: Argon2id occupies 19 MiB per call. The core holds a
 **semaphore** over the concurrent KDF calls (default: `min(4, cpus)`),
 so that concurrent sign-ins do not multiply the memory. Waiters
 run into a wait limit of 5 seconds and are then rejected with `rate_limited`
-instead of running into a memory error (L-1).
+instead of running into a memory error (L-1). An imported hash may occupy up to
+the import ceiling for stored hashes per call (`m = 65536` KiB, 64 MiB) until
+the rehash of step 6 has moved it to the configured parameters at its first
+successful sign-in; the memory bound is therefore the semaphore size times the
+larger of the two values. A hash written under an earlier, higher configured
+memory parameter is still verified up to the start ceiling of 1 GiB and moved
+on the same occasion, so lowering the memory parameter locks nobody out.
 
 A known limitation that gets documented: **bcrypt truncates at 72 bytes.**
 Imported bcrypt hashes check only the first 72 bytes. After the rehash to
@@ -4176,7 +4184,7 @@ The research report records: "**every single one** would have been prevented by 
 - **S-REST-4:** What the server needs in cleartext lies AES-256-GCM encrypted: `totp_credential.secret_enc`, `oauth_flow.pkce_verifier_enc`, `identity.access_token_enc`, `identity.refresh_token_enc` and `identity.id_token_enc`. *(Section 3.2, storage rule; section 2.7, row "AES-256-GCM")*
 - **S-REST-5:** A password lies exclusively as a canonical PHC string, and this lies in `password_credential.phc` (`bytea`) AES-256-GCM encrypted under the purpose `password-enc`, with the key version in `password_credential.key_version`; `scheme` stays cleartext. The library stores no foreign raw format and no reversible representation of a password. *(Section 3.3; section 3.16, L-2; section 3.17)*
 - **S-REST-6:** Foreign OAuth tokens are stored only if the application explicitly demands it; the default is `storeTokens: false`. *(Section 3.10, last paragraph)*
-- **S-REST-7:** If the library generates a password hash, the generated PHC string corresponds exactly to the configured parameters (default `m = 19456`, `t = 2`, `p = 1`, 32 bytes of output, 16 bytes of salt); a stored hash with weaker parameters or a non-standard scheme leads to a rehash at the next successful login. *(Section 3.3, default parameters and steps 5–6)*
+- **S-REST-7:** If the library generates a password hash, the generated PHC string corresponds exactly to the configured parameters (default `m = 19456`, `t = 2`, `p = 1`, 32 bytes of output, 16 bytes of salt); a stored hash with weaker parameters, a non-standard scheme or a memory parameter above the configured one leads to a rehash at the next successful login. *(Section 3.3, default parameters and steps 5–6)*
 
 ---
 
@@ -4228,7 +4236,7 @@ The research report records: "**every single one** would have been prevented by 
 - **S-DEFAULT-3:** The library contains no option that deactivates PKCE, the state check, the origin check or the rate limiting. *(Section 3.10, "PKCE S256 mandatory"; section 3.11, "The origin check and the rate limiting always come first")*
 - **S-DEFAULT-4:** The configuration `identity: "username"` without `recoveryCodes: true` leads to a start error. *(Section 3.4: "The library enforces that: `identity: "username"` without `recoveryCodes: true` is a start error.")*
 - **S-DEFAULT-5:** A name conflict between two plugins or between a plugin and the core — route, table prefix or error code — leads to a start error and not to a warning. *(Section 3.11: "A name conflict is a start error, not a warning.")*
-- **S-DEFAULT-6:** The default parameters for Argon2id are `m = 19456` KiB, `t = 2`, `p = 1` with 32 bytes of output and 16 bytes of salt and can be changed only upwards; a configuration with weaker parameters leads to a start error. *(Section 3.3: "Default parameters for Argon2id … Configurable upwards.")*
+- **S-DEFAULT-6:** The default parameters for Argon2id are `m = 19456` KiB, `t = 2`, `p = 1` with 32 bytes of output and 16 bytes of salt and can be changed only upwards; a configuration with weaker parameters leads to a start error, as does one above `m = 1048576` KiB, `t = 64` or `p = 64`. *(Section 3.3: "Default parameters for Argon2id … Configurable upwards.")*
 - **S-DEFAULT-7:** If the optional accelerator dependency `hash-wasm` is found, the Argon2id values it generates and checks are bit-identical with those of `@noble/hashes`; its presence or absence changes no security behaviour. *(Sections 2.1 and 2.7, `hash-wasm` as an optional peer dependency)*
 
 ---
@@ -4243,7 +4251,7 @@ The research report records: "**every single one** would have been prevented by 
 
 - **S-DOS-1:** The input length is checked before every KDF call: a password under 8 characters and a password over 4096 bytes are rejected without a KDF call taking place. *(Section 3.3, course, step 1: "before every KDF call"; section 3.16, L-7)*
 - **S-DOS-2:** The length check depends exclusively on the input and runs before the resolution of the user; a sign-in with a password that is too long or too short therefore delivers for an existing and a non-existing identifier byte-identically the same response in the same time and is no enumeration oracle. *(Section 3.16, L-1: "exactly one code path that performs the same work regardless of the outcome"; section 3.3 step 1)*
-- **S-DOS-3:** The number of KDF calls running simultaneously in the process is limited by a semaphore to `min(4, cpus)`; the occupied memory therefore does not exceed the product of semaphore size and KDF memory parameter, independently of the number of simultaneous requests. *(Section 3.3, concurrency paragraph)*
+- **S-DOS-3:** The number of KDF calls running simultaneously in the process is limited by a semaphore to `min(4, cpus)`; the occupied memory therefore does not exceed the product of semaphore size and the larger of the configured KDF memory parameter and the import ceiling for stored hashes (`m = 65536` KiB, 64 MiB), independently of the number of simultaneous requests. An imported hash is moved to the configured parameters at its first successful sign-in. A hash written under an earlier, higher configured memory parameter is still verified and moved likewise; until those users have signed in, the occupied memory can transiently reach the product of semaphore size and that earlier memory parameter, at most semaphore size × 1 GiB. *(Section 3.3, steps 5–6 and concurrency paragraph)*
 - **S-DOS-4:** A request that has not obtained a semaphore place after 5 seconds is rejected with `rate_limited`; the wait limit applies equally to existing and non-existing accounts, and waiting requests produce no out-of-memory error and no crash. *(Section 3.16, L-1, wait limit; section 3.3, concurrency paragraph)*
 - **S-DOS-5:** The rate limiting per IP prefix and route runs before the semaphore request, so that a flood is rejected before it occupies semaphore places. *(Section 3.11: "The origin check and the rate limiting always come first — for direct server calls too.")*
 - **S-DOS-6:** The rehash in the background occupies the same semaphore as the verification path; a sign-in wave after a parameter increase displaces no running sign-ins. *(Section 3.3, step 6 "in a bounded background task" and the concurrency paragraph)*
@@ -4332,7 +4340,7 @@ To each of the 123 requirements from section 5 belongs a test case. The test ID 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
 | T-TIM-1 | S-TIM-1 | Statistical | In-process server, real Postgres, production KDF parameters. Group X: 50 existing accounts. Group Y: 50 non-existent addresses of the same length and the same domain. n = 1000 per group, interleaved in random order, first 100 measurements discarded. Measured quantity `process.hrtime.bigint()` around the handler plus TTFB over a real socket. | Welch t-test on 10 % trimmed means: **\|t\| < 4.5**; additionally **Cliff's δ < 0.147** | CI nightly |
-| T-TIM-1b | S-TIM-1 | Unit | Instrumented driver logs every DB and KDF call. Four cases: existing account + wrong password, non-existent account, existing account without `password_credential`, syntactically invalid email. | **4/4 call sequences byte-for-byte identical** | CI on every commit |
+| T-TIM-1b | S-TIM-1 | Unit | Instrumented driver logs every DB and KDF call. Cases: existing account + wrong password, non-existent account, existing account without `password_credential`, syntactically invalid email, and a stored hash that verification refuses before deriving — above a cost ceiling or malformed. | **n/n call sequences byte-for-byte identical**, and every KDF call runs to completion | CI on every commit |
 | T-TIM-2 | S-TIM-2 | Unit | Create a dummy PHC at process start, parse the PHC parameters and compare them against the configuration; check with a spy which verifier function is called in the dummy path. | `m/t/p/salt length` exactly equal; **the function called is `verify`, not `hash`** | CI on every commit |
 | T-TIM-3 | S-TIM-3 | Static | `ts-morph` rule: in `src/core/**` every comparison operator and every comparison method (`===`, `!==`, `==`, `startsWith`, `includes`, `localeCompare`, `indexOf`) on a value of the branded type `Secret<…>` is forbidden. | **0 violations**, runtime < 5 s | CI on every commit |
 | T-TIM-4 | S-TIM-4 | Static + Integration | AST scan: no SQL literal in the repository contains `token =` without `_sha256`. In addition an integration test that creates a session and searches every text column of the table with `SELECT` for the plaintext token. | **0 SQL hits; 0 column hits** | CI on every commit |
@@ -4538,7 +4546,7 @@ soften the first, so it is declined.
 | T-REST-4 | S-REST-4 | Integration | For the 5 encrypted columns: read the raw bytes, parse the envelope, decrypt with the purpose key, compare against the input value; in addition decrypt with a wrong purpose key. | **5/5 decryptable** with the correct key; **5/5 fail** with the wrong one; the ciphertext does not contain the plaintext as a subsequence | CI on every commit |
 | T-REST-5 | S-REST-5 | Unit + Integration | Import a hash for each of the eleven prefixes of the switch from section 3.3; read the raw bytes of `password_credential.phc`, decrypt them with the key `password-enc` of the version named in `key_version` and check the prefix; search the raw bytes for `$`. In addition an AST scan for a write to `phc` without the encryption call. | **11/11 decrypted values begin with the expected prefix**; **0 `$` bytes** at position 0 of the raw bytes; `scheme` is plaintext and matches; **0 AST hits** | CI on every commit |
 | T-REST-6 | S-REST-6 | Integration + Static | Complete an OAuth flow without the option set; check the columns. Type check: `storeTokens` is optional and the default is `false`. | `access_token_enc`, `refresh_token_enc`, `id_token_enc` **all NULL**; default value in the type **`false`** | CI on every commit |
-| T-REST-7 | S-REST-7 | Unit | Create a hash, parse the PHC string; then check a hash with weaker parameters and a bcrypt hash and evaluate `needsRehash`. | Created parameters **exactly** `m=19456,t=2,p=1`, salt 16 bytes, output 32 bytes; `needsRehash` = **true in both legacy cases**, **false** for the current one | CI on every commit |
+| T-REST-7 | S-REST-7 | Unit | Create a hash, parse the PHC string; then check a hash with weaker parameters, a bcrypt hash and a hash with a memory parameter above the configured one and evaluate `needsRehash`. | Created parameters **exactly** `m=19456,t=2,p=1`, salt 16 bytes, output 32 bytes; `needsRehash` = **true in all three cases**, **false** for the current one | CI on every commit |
 
 ---
 
@@ -4589,7 +4597,7 @@ soften the first, so it is declined.
 |---|---|---|---|---|---|
 | T-DOS-1 | S-DOS-1 | Unit | A KDF spy counts calls. Inputs: empty password, 7 characters, 8 characters, 4096 bytes, 4097 bytes, 1 MiB. | **0 KDF calls** for empty, 7 characters, 4097 bytes and 1 MiB; **1 call** for 8 characters and for 4096 bytes | CI on every commit |
 | T-DOS-2 | S-DOS-2 | Integration | Sign in with a 1 MiB password against an existing and against a non-existent identifier; an instrumented driver counts queries; 200 measurements per group. | Responses **byte-for-byte identical**; **0 database queries and 0 KDF calls** in both cases; difference of the median times **< 5 ms** | CI nightly |
-| T-DOS-3 | S-DOS-3 | Concurrency | 200 simultaneous sign-ins; observe running KDF calls through a counter in the semaphore; measure memory via `process.memoryUsage().rss`. | Observed maximum of simultaneous KDF calls **≤ min(4, cpus)**; RSS growth **< min(4, cpus) × 19 MiB × 1.5** | CI nightly |
+| T-DOS-3 | S-DOS-3 | Concurrency | 200 simultaneous sign-ins, once with hashes at the configured parameters and once with imported hashes at the import ceiling; observe running KDF calls through a counter in the semaphore, count the memory parameter of every KDF call; measure memory via `process.memoryUsage().rss`; afterwards sign each imported account in a second time; sign in an account whose hash was written under a higher `m` after lowering `m`. | Observed maximum of simultaneous KDF calls **≤ min(4, cpus)**; memory parameter per KDF call **≤ 65536 KiB**; sum of the memory parameters of simultaneously running KDF calls **≤ min(4, cpus) × max(m, 64 MiB)**; RSS growth **< min(4, cpus) × max(m, 64 MiB) × 1.5**; at the second sign-in of each imported account **every** KDF call with the configured `m`; the account with the earlier higher `m` signs in, and its hash carries the lowered `m` afterwards | CI nightly |
 | T-DOS-4 | S-DOS-4 | Concurrency | 500 simultaneous sign-ins at semaphore size 1 and with an artificially slowed KDF. | **500/500 responses** with a valid status code; **0 crashes**, **0 unhandled rejections**; every response arrives within the wait limit of 5 s plus 500 ms tolerance, and every response after the wait limit carries `rate_limited` | CI nightly |
 | T-DOS-5 | S-DOS-5 | Integration | Set the rate limit to 5, send 100 requests from one IP, count with the KDF spy. | **At most 5 KDF calls** for 100 requests | CI on every commit |
 | T-DOS-6 | S-DOS-6 | Concurrency | 50 sign-ins with hashes in need of a rehash; observe the semaphore counter. | Maximum of simultaneous KDF calls (verification **and** rehash together) **≤ min(4, cpus)** | CI nightly |

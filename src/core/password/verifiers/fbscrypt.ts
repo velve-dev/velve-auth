@@ -3,17 +3,26 @@ import { scryptCostIsAcceptable } from "../limits.js";
 import { bytesParameter, integerParameter, type PhcString } from "../phc.js";
 import type { AcceptedPassword } from "../policy.js";
 import { asDerivedKey, derivedKeysAreEqual } from "../secret.js";
-import { deriveScrypt } from "./scrypt.js";
+import { deriveScrypt, scryptCanDerive } from "./scrypt.js";
 
 const DERIVED_BYTES = 64;
 const AES_KEY_BYTES = 32;
 const COUNTER_BYTES = 16;
 
-//the scrypt n and r are easy to swap and a swapped pair never matches without an error
-export async function verifyFirebaseScrypt(
-	password: AcceptedPassword,
+interface FirebaseScryptInputs {
+	readonly salt: Uint8Array<ArrayBuffer>;
+	readonly expected: Uint8Array<ArrayBuffer>;
+	readonly saltSeparator: Uint8Array<ArrayBuffer>;
+	readonly signerKey: Uint8Array<ArrayBuffer>;
+	readonly costExponent: number;
+	readonly blockSize: number;
+	readonly parallelism: number;
+}
+
+export function readFirebaseScrypt(
 	stored: PhcString,
-): Promise<boolean> {
+	memoryCeilingKiB: number,
+): FirebaseScryptInputs | null {
 	const costExponent = integerParameter(stored, "n");
 	const blockSize = integerParameter(stored, "r");
 	const parallelism = integerParameter(stored, "p");
@@ -28,24 +37,47 @@ export async function verifyFirebaseScrypt(
 		signerKey === null ||
 		stored.salt === undefined ||
 		stored.hash === undefined ||
-		!scryptCostIsAcceptable(costExponent, blockSize, parallelism)
+		!scryptCanDerive(costExponent, DERIVED_BYTES) ||
+		!scryptCostIsAcceptable(costExponent, blockSize, parallelism, memoryCeilingKiB)
 	) {
+		return null;
+	}
+
+	return {
+		salt: stored.salt,
+		expected: stored.hash,
+		saltSeparator,
+		signerKey,
+		costExponent,
+		blockSize,
+		parallelism,
+	};
+}
+
+//the scrypt n and r are easy to swap and a swapped pair never matches without an error
+export async function verifyFirebaseScrypt(
+	password: AcceptedPassword,
+	stored: PhcString,
+	memoryCeilingKiB: number,
+): Promise<boolean> {
+	const inputs = readFirebaseScrypt(stored, memoryCeilingKiB);
+	if (inputs === null) {
 		return false;
 	}
 
 	const derived = await deriveScrypt({
 		password: password.bytes,
-		salt: concatBytes(stored.salt, saltSeparator),
-		costExponent,
-		blockSize,
-		parallelism,
+		salt: concatBytes(inputs.salt, inputs.saltSeparator),
+		costExponent: inputs.costExponent,
+		blockSize: inputs.blockSize,
+		parallelism: inputs.parallelism,
 		hashBytes: DERIVED_BYTES,
 	});
 
 	//the signer key is encrypted under the scrypt output and not hashed with it
-	const encrypted = await encryptAesCtr(derived.subarray(0, AES_KEY_BYTES), signerKey);
+	const encrypted = await encryptAesCtr(derived.subarray(0, AES_KEY_BYTES), inputs.signerKey);
 
-	return derivedKeysAreEqual(asDerivedKey(encrypted), asDerivedKey(stored.hash));
+	return derivedKeysAreEqual(asDerivedKey(encrypted), asDerivedKey(inputs.expected));
 }
 
 async function encryptAesCtr(

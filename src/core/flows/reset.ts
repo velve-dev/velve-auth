@@ -91,7 +91,7 @@ async function replacePassword(
 	});
 	//the storing session must be written with the password in one statement (E-626)
 	await writePassword(
-		{ driver: input.transaction, keys, schema },
+		{ driver: input.transaction, keys, schema, password: environment.services.password },
 		{ actor: input.actor, derived: input.derived, setBySessionId: issued.session.id },
 	);
 	return {

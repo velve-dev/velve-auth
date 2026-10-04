@@ -11,6 +11,7 @@ import {
 	sealPhc,
 } from "../src/core/password/credential.js";
 import type { CredentialWriteErrorCode } from "../src/core/password/errors.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { parsePhc } from "../src/core/password/phc.js";
 import { needsRehash } from "../src/core/password/rehash.js";
 import type { PasswordScheme } from "../src/core/password/scheme.js";
@@ -119,7 +120,11 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 async function environmentWith(recorder: Recorder): Promise<PasswordEnvironment> {
 	const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 	const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
-	const options: PasswordCredentialRepositoryOptions = { driver: recorder.driver, keys };
+	const options: PasswordCredentialRepositoryOptions = {
+		driver: recorder.driver,
+		keys,
+		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+	};
 	const credentials = createPasswordCredentialRepository(options);
 
 	return {
@@ -185,7 +190,11 @@ describe("the stored credential", () => {
 		};
 		const deaf: PasswordEnvironment = {
 			...environment,
-			credentials: createPasswordCredentialRepository({ driver: silent, keys: environment.keys }),
+			credentials: createPasswordCredentialRepository({
+				driver: silent,
+				keys: environment.keys,
+				memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+			}),
 		};
 
 		await expect(
@@ -367,6 +376,17 @@ describe("needsRehash and the silent rehash", () => {
 			const phc = `$argon2id$v=19$${weaker}$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk`;
 			expect(needsRehash(phc, config), weaker).toBe(true);
 		}
+	});
+
+	/** T-REST-7, the third case: a stronger import is rewritten at the configured memory (E-2611). */
+	it("is true for a memory above the policy and false for a higher t or p (S-REST-7)", () => {
+		const config = resolvePasswordConfig({ argon2id: ARGON2ID_FLOOR });
+		const at = (parameters: string) =>
+			`$argon2id$v=19$${parameters}$c29tZXNhbHRzb21lc2FsdA$AAcOFRwjKjE4P0ZNVFtiaXB3foWMk5qhqK+2vcTL0tk`;
+
+		expect(needsRehash(at("m=65536,t=2,p=1"), config)).toBe(true);
+		expect(needsRehash(at("m=19456,t=3,p=1"), config)).toBe(false);
+		expect(needsRehash(at("m=19456,t=2,p=2"), config)).toBe(false);
 	});
 
 	it("hands the caller a task instead of running it inside the sign-in", async () => {

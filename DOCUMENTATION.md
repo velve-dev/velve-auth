@@ -2107,7 +2107,7 @@ ones architecture 3.3 fixes.
 
 | Option | Type | Default | Meaning |
 |---|---|---|---|
-| `argon2id` | `{ memoryKiB, iterations, parallelism }` | `{ 19456, 2, 1 }` | the parameters every created hash carries. Raising them is allowed, lowering any one of them is a start error (S-DEFAULT-6) |
+| `argon2id` | `{ memoryKiB, iterations, parallelism }` | `{ 19456, 2, 1 }` | the parameters every created hash carries. Raising them is allowed up to `memoryKiB` 1048576 (1 GiB), `iterations` 64 and `parallelism` 64; lowering any one below the default or raising it past that bound is a start error (S-DEFAULT-6, E-2619, E-2620) |
 | `acceptLegacy` | `readonly LegacyScheme[]` | all seven | which imported schemes are still verified. Naming fewer narrows the estate; naming an unknown scheme is a start error |
 | `minimumLength` | `number` | `8` | in characters, counted after NFKC. Below 8 is a start error |
 | `maximumLengthInBytes` | `number` | `4096` | in UTF-8 bytes. Above 4096 is a start error; lowering it is allowed |
@@ -2118,6 +2118,13 @@ ones architecture 3.3 fixes.
 "pbkdf2-sha256" | "pbkdf2-sha512" | "fbscrypt"` — the seven schemes that are
 verified but never created. Argon2id is not among them: it is the created one.
 
+The upper bounds on `iterations` and `parallelism` are the stored ceilings
+verification holds every credential to. Above them every hash the library wrote
+was refused by its own repository and its own verification, and every sign-in
+against an older hash started a rehash that failed; the configuration is now
+refused while the instance is built instead (E-2619). The 1 GiB bound on
+`memoryKiB` is the start bound verification admits a stored memory up to (E-2620).
+
 There is no option that weakens anything. Every bound is a floor or a ceiling in
 the safe direction, so `resolvePasswordConfig` has nothing to log at start-up
 (S-DEFAULT-1); a weakening attempt is refused instead of recorded.
@@ -2127,7 +2134,9 @@ the safe direction, so `resolvePasswordConfig` has nothing to log at start-up
 Turns the options into the resolved shape the rest of the module takes, or
 throws `PasswordConfigurationError` with one of these codes:
 `argon2id_memory_below_floor`, `argon2id_iterations_below_floor`,
-`argon2id_parallelism_below_floor`, `minimum_length_below_floor`,
+`argon2id_parallelism_below_floor`, `argon2id_memory_above_ceiling`,
+`argon2id_iterations_above_ceiling`, `argon2id_parallelism_above_ceiling`,
+`minimum_length_below_floor`,
 `maximum_length_above_ceiling`, `maximum_length_below_minimum_length`,
 `maximum_length_not_an_integer`, `concurrent_hash_limit_out_of_range`,
 `legacy_scheme_unknown` — the union `PasswordConfigurationErrorCode`. It is a
@@ -2219,6 +2228,65 @@ limiters, which do know, set that field themselves.
 Verification and the background rehash take places from the **same** semaphore,
 which is what stops a rehash wave after a parameter increase from displacing
 live sign-ins (S-DOS-6).
+
+#### How much memory the semaphore bounds
+
+The semaphore bounds how many derivations run at once, not how much memory each
+one asks for. A derivation of a credential the library wrote asks for the
+configured `m`, 19 MiB by default. A derivation of an imported Argon2, scrypt or
+Firebase scrypt credential asks for whatever the source system wrote, up to the
+import ceiling `MAXIMUM_STORED_MEMORY_KIB`, 64 MiB (see *Cost ceilings on a
+stored credential* below). So the bound S-DOS-3 promises is
+
+```
+memory held by running derivations ≤ concurrentHashLimit × max(argon2id.memoryKiB, 64 MiB)
+```
+
+which is 4 × 64 MiB = 256 MiB at the default parameters on a machine with four or
+more cores (E-2610). A configured `memoryKiB` above 64 MiB raises the write
+ceiling to the same value, so the library always verifies what it writes, and
+the bound is then `concurrentHashLimit × memoryKiB` (E-2615).
+
+**After lowering `memoryKiB`.** Hashes written under the higher value keep
+asking for it until their users sign in, because verification admits up to
+1 GiB (E-2621). Until then the bound is `concurrentHashLimit ×` the highest
+`memoryKiB` the deployment has ever run with, at most `concurrentHashLimit ×
+1 GiB`. Size the container for the old value until the estate has moved, or
+lower `concurrentHashLimit` for that period.
+
+**Imports are not restricted to the configured `m`.** Every imported user's hash
+has to keep working, and a ceiling at 19 MiB would refuse Better Auth's 32 MiB
+scrypt estates and send those users to a password reset. The ceiling stays at
+64 MiB and the bound is stated against it instead.
+
+**The excess is transient.** At an imported credential's first successful
+sign-in, `needsRehash` is true — for a foreign scheme, for parameters below the
+policy, and for an `m` that differs from the configured one in either direction
+(E-2611) — and the background rehash writes it at the configured parameters. From
+then on that account's derivations ask for the configured `m`. What keeps the
+worst case alive is credentials that have not yet been signed into, and failed
+attempts against them, which never trigger a rehash.
+
+**Sizing a container.** While imported credentials above the configured `m`
+remain, budget `concurrentHashLimit × 64 MiB` for derivations — 256 MiB at four
+places — on top of the process's own baseline. Lowering `concurrentHashLimit`
+lowers that figure linearly at the cost of throughput. Once every imported user
+has signed in once, `concurrentHashLimit × argon2id.memoryKiB` is the figure.
+The `scheme` column, which is not encrypted, shows how many foreign-scheme
+credentials remain; an imported Argon2id credential's `m` is inside the sealed
+PHC string and is not visible without decrypting it.
+
+**Resident set versus memory held.** The figures above are what running
+derivations hold. The resident set of the process can rise further while
+garbage from finished derivations waits for the collector. With `hash-wasm`
+loaded, two hundred simultaneous sign-ins at the default parameters raised it by
+511 to 966 MiB in nightly runs; after a forced collection it was back within
+20 MiB of where it started, wave after wave, so this is collection lag and not a
+leak. With `@noble/hashes` alone the rise was about 175 to 200 MiB and stayed
+there after collection, which is the allocator keeping freed pages. The
+container needs headroom for that beyond the bound (E-2612). S-DOS-3's resident-set
+threshold in T-DOS-3 is therefore not met while `hash-wasm` is loaded; that is
+an open gap of the library, not a property this section papers over (E-2623).
 
 ### The verification switch
 
@@ -2329,7 +2397,13 @@ version that has left the ring, and `KeyError("authentication_failed")` when the
 ciphertext does not authenticate. `checkPassword` does not let either reach the
 caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
-#### `createPasswordCredentialRepository({ driver, keys, schema? })`
+#### `createPasswordCredentialRepository({ driver, keys, schema?, memoryCeilingKiB })`
+
+`memoryCeilingKiB` is the memory ceiling a written credential is held to, and it
+has no default, so a caller that forgets it cannot fall back to a ceiling below
+the configured memory (E-2622). Every repository the library builds passes
+`storedMemoryCeilingKiB(argon2id.memoryKiB)`, `max(64 MiB, memoryKiB)`, so it
+writes what it verifies (E-2615).
 
 | Method | Statement |
 |---|---|
@@ -2343,12 +2417,22 @@ caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 the stored **ciphertext**, not the PHC string, so a password the user changed
 while a rehash was running is never overwritten by it (L-2, E-11).
 
-Both paths refuse two things before they write. A `scheme` that disagrees with
+Every writing method refuses three things. A `scheme` that disagrees with
 the identifier of the credential is `CredentialWriteError`
 `scheme_does_not_match_credential`: such a row could never verify (E-177,
-E-187). And a statement that changed no row is `credential_not_written` —
+E-187). A credential that verification would refuse before deriving — a cost
+above one of the ceilings in *Cost ceilings on a stored credential*, a missing
+parameter, salt or hash, a string that does not parse, or one the derivation
+itself would throw on (see *Checking a password*) — is
+`credential_not_verifiable`, raised before anything is sealed (E-2617, E-2618). And a
+statement that changed no row is `credential_not_written` —
 a conflict predicate that is false does not raise, it silently changes nothing,
 and the caller must not be told a password was stored when it was not (E-185).
+
+The library's own writes derive at the configured parameters and never trip
+`credential_not_verifiable`; the check guards the methods that take a PHC
+string from their caller. A row written past the repository, by SQL, can still
+hold such a credential, and `checkPassword` treats it as below.
 
 ### Checking a password
 
@@ -2383,6 +2467,28 @@ accumulated in a local variable (S-TIM-1). A credential whose scheme is not in
 `acceptLegacy` does not turn into a timing oracle for which accounts were
 imported (E-176).
 
+The same holds for a credential the verifier would refuse **before deriving**:
+a cost above a ceiling, a missing parameter, salt or hash, or one the KDF
+library would throw on before doing any work — a bcrypt string that is not the
+60-character `$2a$`/`$2b$`/`$2y$` form with the bcrypt salt alphabet, an Argon2
+salt under 8 bytes, a hash under 4 bytes, `m` below `8 · p` or a version other
+than `0x10` or `0x13`, a scrypt `N` below 2, an empty output (E-2618). Answering such a row
+without a derivation made a wrong password for that account faster than one for
+an unknown identifier. `checkPassword` asks the switch first whether the stored
+string reaches a derivation (`credentialReachesDerivation`), and if it does
+not, verifies the dummy instead and refuses with `password_mismatch` — the same
+statements, one Argon2id call at the configured parameters (S-TIM-1, S-TIM-2,
+E-2616). The log does not tell such a row from a wrong password; a survey of
+the estate does.
+
+What this does not equalise is a legacy credential that is legitimately cheap. A
+bcrypt hash at cost 4, or a PBKDF2 hash at a few thousand iterations, passes
+every ceiling, is derived as stored, and answers faster than the dummy at the
+configured Argon2id parameters. That is inherent to verifying legacy hashes as
+they are: the cost is the source system's, and the first successful sign-in
+rewrites it at the configured parameters. An estate that must not show the
+difference narrows `acceptLegacy` and sends those users to a reset.
+
 `rehash` is present when the credential is behind the current policy or the
 current key version. It is a **task, not a running promise**: the caller invokes
 it after it has sent its answer, so the rehash never lengthens the measured
@@ -2401,11 +2507,15 @@ not this module's business; that belongs to the session module and has no switch
 #### `needsRehash(phc, config)`
 
 True when the scheme is not `argon2id`, when the Argon2 version is not 1.3, when
-any of `m`, `t` or `p` is below the configured value, when the salt is shorter
-than 16 bytes or the hash shorter than 32, or when the string does not parse at
-all. An imported credential is therefore rehashed at the first successful
-sign-in and verified with its original scheme on every sign-in until then
-(S-REST-7).
+`m` differs from the configured value, when `t` or `p` is below the configured
+value, when the salt is shorter than 16 bytes or the hash shorter than 32, or
+when the string does not parse at all. An imported credential is therefore
+rehashed at the first successful sign-in and verified with its original scheme
+on every sign-in until then (S-REST-7). An `m` above the configured value counts
+because it is memory each sign-in asks for beyond the configured budget (S-DOS-3,
+E-2611); a `t` or `p` above the configured value does not, as it costs time
+rather than memory. So lowering `argon2id.memoryKiB` also rewrites the hashes
+written under the higher value, one sign-in at a time.
 
 ### What the uniformity rule does and does not cover
 
@@ -2451,6 +2561,17 @@ any of them is refused, which routes the user to the reset path (E-182).
 | `MAXIMUM_STORED_PBKDF2_ITERATIONS` | `2_000_000` | PBKDF2 `i` |
 | `MAXIMUM_STORED_BCRYPT_COST` | `14` | the cost field of a bcrypt hash |
 
+Verification and writing hold a stored memory parameter — Argon2 `m`, and
+scrypt's `128 · 2^ln · r` — to different values. **Writing** through the
+repository is held to `storedMemoryCeilingKiB(memoryKiB)` = `max(65536,
+memoryKiB)`, so an import cannot bring in more than 64 MiB or the configured
+memory, and the library never writes a hash it would refuse (E-2615).
+**Verification** admits a stored memory up to the 1 GiB start bound,
+`MAXIMUM_CONFIGURABLE_MEMORY_KIB`, whatever the current configuration. A hash
+written while `memoryKiB` was higher therefore still verifies after `memoryKiB`
+is lowered, and is rewritten at the lowered value at that sign-in, so lowering
+it locks nobody out (E-2621).
+
 bcrypt has no memory parameter, so its cost — an exponent — is the only bound
 there is: `$2a$14$` is about a second of one semaphore place and `$2a$31$` is
 about thirty years. GoTrue, Auth0 and Clerk all write cost 10, which says the
@@ -2473,7 +2594,9 @@ They are not configurable. Raising a denial-of-service ceiling is a weakening,
 and every documented source sits far below them: Better Auth's scrypt at 32 MiB,
 Firebase at 16 MiB, Django's PBKDF2 at 1.2 million iterations.
 `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable` and
-`bcryptCostIsAcceptable` are the four predicates that apply them.
+`bcryptCostIsAcceptable` are the four predicates that apply them; the first two
+take the memory ceiling as an optional last argument, defaulting to
+`MAXIMUM_STORED_MEMORY_KIB`.
 
 ### Startup
 

@@ -2,6 +2,7 @@ import { argon2idAsync } from "@noble/hashes/argon2.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
 import { resolvePasswordConfig } from "../src/core/password/config.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { parsePhc } from "../src/core/password/phc.js";
 import { type AcceptedPassword, acceptSubmittedPassword } from "../src/core/password/policy.js";
 import { LEGACY_SCHEMES, type PasswordScheme } from "../src/core/password/scheme.js";
@@ -80,7 +81,12 @@ describe("the prefix switch answers false, never a truthy value it cannot explai
 
 		for (const scheme of EVERY_SCHEME) {
 			for (const value of malformed) {
-				const answer = await verifyAgainstScheme(scheme, accepted(PASSWORD), value);
+				const answer = await verifyAgainstScheme(
+					scheme,
+					accepted(PASSWORD),
+					value,
+					MAXIMUM_STORED_MEMORY_KIB,
+				);
 				expect(answer, `${scheme} on ${JSON.stringify(value)}`).toBe(false);
 			}
 		}
@@ -98,7 +104,12 @@ describe("the prefix switch answers false, never a truthy value it cannot explai
 					continue;
 				}
 
-				const answer = await verifyAgainstScheme(scheme, accepted(PASSWORD), hash);
+				const answer = await verifyAgainstScheme(
+					scheme,
+					accepted(PASSWORD),
+					hash,
+					MAXIMUM_STORED_MEMORY_KIB,
+				);
 				expect(answer, `${prefix} filed as ${scheme}`).toBe(false);
 			}
 		}
@@ -119,6 +130,7 @@ describe("the prefix switch answers false, never a truthy value it cannot explai
 					filed,
 					accepted(PASSWORD),
 					stored.byScheme[actual],
+					MAXIMUM_STORED_MEMORY_KIB,
 				);
 				expect(answer, `${actual} filed as ${filed}`).toBe(false);
 			}
@@ -135,6 +147,7 @@ describe("the prefix switch answers false, never a truthy value it cannot explai
 				name as PasswordScheme,
 				accepted(PASSWORD),
 				stored.byScheme.argon2id,
+				MAXIMUM_STORED_MEMORY_KIB,
 			);
 			expect(answer, name).toBe(false);
 		}
@@ -148,9 +161,15 @@ describe("the prefix switch answers false, never a truthy value it cannot explai
 		for (const name of ["constructor"]) {
 			const value = `$${name}$i=1000$c29tZXNhbHQ$c29tZWhhc2hzb21laGFzaA`;
 			expect(parsePhc(value)?.id, name).toBe(name);
-			expect(await verifyAgainstScheme("pbkdf2-sha256", accepted(PASSWORD), value), name).toBe(
-				false,
-			);
+			expect(
+				await verifyAgainstScheme(
+					"pbkdf2-sha256",
+					accepted(PASSWORD),
+					value,
+					MAXIMUM_STORED_MEMORY_KIB,
+				),
+				name,
+			).toBe(false);
 		}
 	}, 120_000);
 });
@@ -161,18 +180,51 @@ describe("Argon2 version handling", () => {
 		const withoutField = versionOne.replace("$v=16", "");
 
 		expect(parsePhc(withoutField)?.version).toBeUndefined();
-		expect(await verifyAgainstScheme("argon2id", accepted(PASSWORD), versionOne)).toBe(true);
-		expect(await verifyAgainstScheme("argon2id", accepted(PASSWORD), withoutField)).toBe(true);
+		expect(
+			await verifyAgainstScheme(
+				"argon2id",
+				accepted(PASSWORD),
+				versionOne,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(true);
+		expect(
+			await verifyAgainstScheme(
+				"argon2id",
+				accepted(PASSWORD),
+				withoutField,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(true);
 	}, 120_000);
 
 	it("keeps a 1.0 credential and a 1.3 credential apart", async () => {
 		const versionOne = await argon2VectorAtVersion(PASSWORD, 0x10);
 		const thirteen = versionOne.replace("$v=16", "$v=19");
 
-		expect(await verifyAgainstScheme("argon2id", accepted(PASSWORD), versionOne)).toBe(true);
-		expect(await verifyAgainstScheme("argon2id", accepted(PASSWORD), thirteen)).toBe(false);
 		expect(
-			await verifyAgainstScheme("argon2id", accepted(PASSWORD), stored.byScheme.argon2id),
+			await verifyAgainstScheme(
+				"argon2id",
+				accepted(PASSWORD),
+				versionOne,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(true);
+		expect(
+			await verifyAgainstScheme(
+				"argon2id",
+				accepted(PASSWORD),
+				thirteen,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
+		).toBe(false);
+		expect(
+			await verifyAgainstScheme(
+				"argon2id",
+				accepted(PASSWORD),
+				stored.byScheme.argon2id,
+				MAXIMUM_STORED_MEMORY_KIB,
+			),
 		).toBe(true);
 	}, 120_000);
 });

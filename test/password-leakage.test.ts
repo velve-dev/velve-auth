@@ -10,6 +10,7 @@ import {
 	sealPhc,
 } from "../src/core/password/credential.js";
 import { PasswordConfigurationError } from "../src/core/password/errors.js";
+import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
 import { acceptNewPassword } from "../src/core/password/policy.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import {
@@ -162,7 +163,11 @@ async function createHarness(
 		environment: {
 			config,
 			keys,
-			credentials: createPasswordCredentialRepository({ driver, keys: inner }),
+			credentials: createPasswordCredentialRepository({
+				driver,
+				keys: inner,
+				memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
+			}),
 			semaphore: createKdfSemaphore({ limit: config.concurrentHashLimit }),
 			dummy: await createDummyCredential(inner, config),
 		},

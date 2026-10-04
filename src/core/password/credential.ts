@@ -9,6 +9,7 @@ import {
 } from "../keys/index.js";
 import { CredentialWriteError } from "./errors.js";
 import { type PasswordScheme, schemeOfStoredHash } from "./scheme.js";
+import { credentialReachesDerivation } from "./verify-switch.js";
 
 export const PASSWORD_ENC_PURPOSE: EncryptionKeyPurpose = "password-enc";
 export const PASSWORD_CREDENTIAL_SCHEMA = "velve";
@@ -74,11 +75,24 @@ export interface PasswordCredentialRepositoryOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
 	readonly schema?: string;
+	readonly memoryCeilingKiB: number;
 }
 
 function assertSchemeMatchesCredential(phc: string, scheme: PasswordScheme): void {
 	if (schemeOfStoredHash(phc) !== scheme) {
 		throw new CredentialWriteError("scheme_does_not_match_credential");
+	}
+}
+
+//a credential every sign-in would refuse is never stored (E-2616)
+function assertCredentialIsVerifiable(
+	phc: string,
+	scheme: PasswordScheme,
+	memoryCeilingKiB: number,
+): void {
+	assertSchemeMatchesCredential(phc, scheme);
+	if (!credentialReachesDerivation(scheme, phc, memoryCeilingKiB)) {
+		throw new CredentialWriteError("credential_not_verifiable");
 	}
 }
 
@@ -89,6 +103,7 @@ export function createPasswordCredentialRepository(
 		options.schema ?? PASSWORD_CREDENTIAL_SCHEMA,
 		PASSWORD_CREDENTIAL_TABLE,
 	);
+	const { memoryCeilingKiB } = options;
 
 	async function findOne(ownerId: string): Promise<PasswordCredentialRow | null> {
 		const [row] = await options.driver.query<RawRow>(
@@ -110,7 +125,7 @@ export function createPasswordCredentialRepository(
 		ownerId: string,
 		{ phc, scheme, setBySessionId }: PasswordCredentialWrite,
 	): Promise<unknown[]> {
-		assertSchemeMatchesCredential(phc, scheme);
+		assertCredentialIsVerifiable(phc, scheme, memoryCeilingKiB);
 		const sealed = await sealPhc(options.keys, phc);
 		return [ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId];
 	}
@@ -160,7 +175,7 @@ export function createPasswordCredentialRepository(
 
 		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)
 		async replaceIfUnchanged({ userId, previous, phc, scheme }) {
-			assertSchemeMatchesCredential(phc, scheme);
+			assertCredentialIsVerifiable(phc, scheme, memoryCeilingKiB);
 			const sealed = await sealPhc(options.keys, phc);
 
 			const changed = await options.driver.query(

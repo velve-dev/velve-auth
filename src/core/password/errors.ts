@@ -2,6 +2,9 @@ export type PasswordConfigurationErrorCode =
 	| "argon2id_memory_below_floor"
 	| "argon2id_iterations_below_floor"
 	| "argon2id_parallelism_below_floor"
+	| "argon2id_memory_above_ceiling"
+	| "argon2id_iterations_above_ceiling"
+	| "argon2id_parallelism_above_ceiling"
 	| "minimum_length_below_floor"
 	| "maximum_length_above_ceiling"
 	| "maximum_length_below_minimum_length"
@@ -13,6 +16,9 @@ const MESSAGES: Record<PasswordConfigurationErrorCode, string> = {
 	argon2id_memory_below_floor: "password.argon2id.memoryKiB is below the floor of 19456",
 	argon2id_iterations_below_floor: "password.argon2id.iterations is below the floor of 2",
 	argon2id_parallelism_below_floor: "password.argon2id.parallelism is below the floor of 1",
+	argon2id_memory_above_ceiling: "password.argon2id.memoryKiB is above the ceiling of 1048576",
+	argon2id_iterations_above_ceiling: "password.argon2id.iterations is above the ceiling of 64",
+	argon2id_parallelism_above_ceiling: "password.argon2id.parallelism is above the ceiling of 64",
 	minimum_length_below_floor: "password.minimumLength is below the floor of 8",
 	maximum_length_above_ceiling: "password.maximumLengthInBytes is above the ceiling of 4096",
 	maximum_length_below_minimum_length:
@@ -35,11 +41,13 @@ export class PasswordConfigurationError extends Error {
 
 export type CredentialWriteErrorCode =
 	| "scheme_does_not_match_credential"
+	| "credential_not_verifiable"
 	| "credential_not_written";
 
 const CREDENTIAL_WRITE_MESSAGES: Record<CredentialWriteErrorCode, string> = {
 	scheme_does_not_match_credential:
 		"the scheme column and the identifier of the credential name different functions",
+	credential_not_verifiable: "every sign-in would refuse this credential before deriving it",
 	credential_not_written: "the credential write changed no row",
 };
 
