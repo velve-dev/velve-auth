@@ -8,7 +8,7 @@ const DIST_TAG = process.argv[2] ?? "";
 const NAME_OVERRIDE = process.argv[3];
 const VERSION_OVERRIDE = process.argv[4];
 const DEADLINE_MS = Number(process.env.VELVE_REGISTRY_DEADLINE_MS ?? 180_000);
-const POLL_MS = 5_000;
+const POLL_MS = Number(process.env.VELVE_REGISTRY_POLL_MS ?? 5_000);
 const PRERELEASE = /-/;
 
 /** An unauthenticated read of a scoped package that does not exist answers 401 and not 404,
@@ -72,17 +72,29 @@ async function ask(url) {
 }
 
 /** A publish reaches the registry's read path after it returns, so absence is polled rather
- * than concluded; an unreachable registry is never concluded from at all. */
-async function pollUntilPresent(url, describe) {
+ * than concluded; an unreachable registry is never concluded from at all. A body that is there but
+ * not yet what the publish makes it, a dist-tag still on the previous version, is polled as well,
+ * and the last one read is what the findings are taken from (E-2767). */
+async function pollUntilPresent(url, describe, settled = () => true) {
 	const started = Date.now();
 	let last = { absent: 0 };
-	do {
+	let lastBody = null;
+	for (;;) {
 		last = await ask(url);
 		if (last.body !== undefined) {
-			return last.body;
+			lastBody = last.body;
+			if (settled(last.body)) {
+				return last.body;
+			}
+		}
+		if (Date.now() - started >= DEADLINE_MS) {
+			break;
 		}
 		await sleep(POLL_MS);
-	} while (Date.now() - started < DEADLINE_MS);
+	}
+	if (lastBody !== null) {
+		return lastBody;
+	}
 	if (last.unreachable !== undefined) {
 		refusals.push(`${describe} could not be read within ${DEADLINE_MS} ms: ${last.unreachable}`);
 		return null;
@@ -111,6 +123,7 @@ if (published !== null && published.version !== version) {
 const distTags = await pollUntilPresent(
 	`${REGISTRY}/-/package/${encoded}/dist-tags`,
 	`the dist-tags of ${name}`,
+	(tags) => tags?.[DIST_TAG] === version,
 );
 if (distTags !== null) {
 	if (distTags[DIST_TAG] !== version) {

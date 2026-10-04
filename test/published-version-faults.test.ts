@@ -107,3 +107,64 @@ describe("the registry check after the publish leaves CI", () => {
 		expect(result.stderr).toContain("no dist-tag was given");
 	});
 });
+
+/**
+ * npm moves a dist-tag after the publish returns, and the registry's read path can show the old
+ * one for a while. The check polls the dist-tags until the tag names the new version or the
+ * deadline passes, rather than reporting the first stale read it sees (E-2767).
+ */
+describe("the registry check waits for the dist-tag to move", () => {
+	async function registryMovingTheTagAfter(staleReads: number): Promise<string> {
+		let distTagReads = 0;
+		const server = createServer((request, response) => {
+			response.writeHead(200, { "content-type": "application/json" });
+			if (request.url?.includes("/dist-tags")) {
+				distTagReads += 1;
+				const latest = distTagReads > staleReads ? "1.2.0" : "1.1.0";
+				response.end(JSON.stringify({ latest }));
+				return;
+			}
+			response.end(JSON.stringify({ version: "1.2.0" }));
+		});
+		registry = server;
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	}
+
+	function polling(registryUrl: string, deadlineMs: number) {
+		return run(process.execPath, [TOOL, "latest", NAME, "1.2.0"], {
+			env: {
+				...process.env,
+				VELVE_REGISTRY: registryUrl,
+				VELVE_REGISTRY_DEADLINE_MS: String(deadlineMs),
+				VELVE_REGISTRY_POLL_MS: "20",
+			},
+		}).then(
+			({ stdout, stderr }) => ({ status: 0, stdout, stderr }),
+			(failure: { code?: number; stdout?: string; stderr?: string }) => ({
+				status: failure.code ?? -1,
+				stdout: failure.stdout ?? "",
+				stderr: failure.stderr ?? "",
+			}),
+		);
+	}
+
+	it("passes once the dist-tag moves within the deadline", async () => {
+		const url = await registryMovingTheTagAfter(3);
+
+		const result = await polling(url, 5_000);
+
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain(PASSED);
+	});
+
+	it("still reports a dist-tag that has not moved when the deadline passes", async () => {
+		const url = await registryMovingTheTagAfter(Number.MAX_SAFE_INTEGER);
+
+		const result = await polling(url, 200);
+
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain("The dist-tag latest points at 1.1.0 and not at 1.2.0.");
+		expect(result.stdout).not.toContain(PASSED);
+	});
+});

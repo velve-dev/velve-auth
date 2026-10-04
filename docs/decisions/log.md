@@ -14132,3 +14132,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Deleting the comment along with the copies it counted.
 **Reason.** The comment now says the job runs the same script the maintainer's machine runs before the publish, which is the drift it still prevents. The comments at the head of `release.yml` and on its `tiers` job are brought into step with E-2763 and E-2764 in the same change.
 **Price.** None.
+
+<a id="e-2767"></a>
+
+### The registry check waits for the dist-tag to move rather than reporting the first stale read
+`E-2767` · gate and infrastructure · registry check, settled
+
+**Context.** `pnpm check:published-version` polled each read until the registry answered with a body, then judged it. A dist-tag that npm moves after the publish returns can still name the previous version on the first read, and the check reported that as a finding even though the publish was fine and a second read a few seconds later would have passed. The loop also slept once more after its last read before noticing the deadline had passed.
+**Rejected.** A fixed wait before the first read, which costs every run the wait and still reports a slower registry.
+**Reason.** The dist-tags read is polled until the tag names the version or the deadline passes, and the findings are taken from the last body read. The loop checks the deadline before it sleeps. A new environment variable, `VELVE_REGISTRY_POLL_MS`, sets the interval so a test can poll quickly. `test/published-version-faults.test.ts` has two new cases against a fake registry that names the old version for the first three reads: the check now passes within its deadline, and a tag that never moves is still reported. Against the tool before this change the first case failed and the second passed.
+**Price.** A dist-tag that is really wrong is now reported after the whole deadline, three minutes by default, instead of on the first read.
