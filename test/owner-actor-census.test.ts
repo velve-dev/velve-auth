@@ -557,3 +557,97 @@ export function createPlanted(driver: { query(sql: string, params: unknown[]): P
 		]);
 	}, 120_000);
 });
+
+const PLANTED_DRIVER = "{ query(sql: string, params: unknown[]): Promise<unknown[]> }";
+
+interface PlantedShape {
+	readonly text: string;
+	readonly unit: string;
+}
+
+//each shape names velve.session by a bare user id and is a violator however it is exported
+const VIOLATOR_SHAPES: Readonly<Record<string, PlantedShape>> = {
+	"an export list": {
+		unit: "readsByOwner",
+		text: `function readsByOwner(driver: ${PLANTED_DRIVER}, userId: string) {
+	return driver.query("SELECT id FROM velve.session WHERE user_id = $1", [userId]);
+}
+export { readsByOwner };
+`,
+	},
+	"a spread into the returned object": {
+		unit: "createSpread.byUserId",
+		text: `function byOwner(driver: ${PLANTED_DRIVER}) {
+	return {
+		byUserId: (input: { userId: string }) =>
+			driver.query("SELECT id FROM velve.session WHERE user_id = $1", [input.userId]),
+	};
+}
+export function createSpread(driver: ${PLANTED_DRIVER}) {
+	return { ...byOwner(driver), count: () => 1 };
+}
+`,
+	},
+	"an exported class": {
+		unit: "SessionReader.byUserId",
+		text: `export class SessionReader {
+	constructor(private readonly driver: ${PLANTED_DRIVER}) {}
+	byUserId(userId: string) {
+		return this.driver.query("SELECT id FROM velve.session WHERE user_id = $1", [userId]);
+	}
+}
+`,
+	},
+	"an exported object": {
+		unit: "sessionReader.byUserId",
+		text: `declare const driver: ${PLANTED_DRIVER};
+export const sessionReader = {
+	byUserId(userId: string) {
+		return driver.query("SELECT id FROM velve.session WHERE user_id = $1", [userId]);
+	},
+};
+`,
+	},
+	"lower case SQL": {
+		unit: "createLower.byUserId",
+		text: `export function createLower(driver: ${PLANTED_DRIVER}) {
+	return {
+		byUserId: (input: { userId: string }) =>
+			driver.query("select id from velve.session where user_id = $1", [input.userId]),
+	};
+}
+`,
+	},
+	"a table name imported from another module": {
+		unit: "createImported.removeByScheme",
+		text: `import { PASSWORD_CREDENTIAL_TABLE } from "./password/credential.js";
+import { qualifiedTableName } from "./db/identifier.js";
+export function createImported(driver: ${PLANTED_DRIVER}, schema: string) {
+	const table = qualifiedTableName(schema, PASSWORD_CREDENTIAL_TABLE);
+	return {
+		removeByScheme: (input: { scheme: string }) =>
+			driver.query(\`DELETE FROM \${table} WHERE scheme = $1\`, [input.scheme]),
+	};
+}
+`,
+	},
+};
+
+describe("the census finds a violator whatever shape it is written in (S-OWNER-1, T-OWNER-1)", () => {
+	for (const [shape, planted] of Object.entries(VIOLATOR_SHAPES)) {
+		it(`reports a method written as ${shape}`, () => {
+			const path = "core/planted-census-shape.ts";
+			const found = censusOf(programOver({ path, text: planted.text }), ownerTables)
+				.filter((entry) => entry.unit.startsWith(`src/${path}#`))
+				.map((entry) => ({ unit: entry.unit, carriesProof: entry.carriesProof }));
+
+			expect(found).toContainEqual({ unit: `src/${path}#${planted.unit}`, carriesProof: false });
+		}, 120_000);
+	}
+
+	it("counts the password key version check the tree already holds", () => {
+		expect(census.map((entry) => entry.unit)).toContain(
+			"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown",
+		);
+	});
+});
