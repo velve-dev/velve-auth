@@ -10,7 +10,14 @@ interface ConnectionPool extends Driver {
 	close(): Promise<void>;
 }
 
-export async function openConnectionPool(size: number): Promise<ConnectionPool> {
+/**
+ * A pool waits for a free connection without limit by default, as `pg` does; `acquireTimeoutMs`
+ * makes a wait that would never end fail instead, as `connectionTimeoutMillis` does.
+ */
+export async function openConnectionPool(
+	size: number,
+	options: { readonly acquireTimeoutMs?: number } = {},
+): Promise<ConnectionPool> {
 	const connections: TestConnection[] = [];
 	for (let index = 0; index < size; index += 1) {
 		connections.push(await openTestConnection());
@@ -20,9 +27,23 @@ export async function openConnectionPool(size: number): Promise<ConnectionPool> 
 
 	function acquire(): Promise<TestConnection> {
 		const free = idle.pop();
-		return free === undefined
-			? new Promise((resolve) => waiting.push(resolve))
-			: Promise.resolve(free);
+		if (free !== undefined) {
+			return Promise.resolve(free);
+		}
+		return new Promise((resolve, reject) => {
+			const handOver = (connection: TestConnection): void => {
+				clearTimeout(timer);
+				resolve(connection);
+			};
+			const timer =
+				options.acquireTimeoutMs === undefined
+					? undefined
+					: setTimeout(() => {
+							waiting.splice(waiting.indexOf(handOver), 1);
+							reject(new Error("no pooled connection became free in time"));
+						}, options.acquireTimeoutMs);
+			waiting.push(handOver);
+		});
 	}
 
 	function release(connection: TestConnection): void {
