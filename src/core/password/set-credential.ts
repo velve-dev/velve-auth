@@ -5,6 +5,7 @@ import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
 import { VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
+import { announceEachRevocation } from "../plugin/revocation.js";
 import type { SessionResolution } from "../session/service.js";
 import { createArgon2idHash } from "./argon2.js";
 import { createPasswordCredentialRepository } from "./credential.js";
@@ -35,6 +36,12 @@ export async function replacePasswordOfSession(
 	);
 
 	const owned = await services.sessions.listEveryIdOwnedBy({ resolved: input.resolved });
+	//a refused revocation must refuse the change before anything is written (S-RACE-5)
+	await announceEachRevocation(services.pluginRuntime, {
+		userId: input.resolved.userId,
+		sessionIds: owned,
+		reason: "password_changed",
+	});
 
 	const issued = await services.driver.transaction(async (transaction) => {
 		//the account row comes first as a first confirmation writes these tables in reverse (E-1602)

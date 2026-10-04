@@ -10,6 +10,7 @@ import type { RequestContext } from "../http/route.js";
 import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
+import { announceEachRevocation } from "../plugin/revocation.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
@@ -63,13 +64,21 @@ async function replacePassword(
 		readonly derived: DerivedPassword;
 	},
 ): Promise<SetPasswordResult> {
-	const { schema, keys, sessions } = environment.services;
+	const { schema, keys, sessions, pluginRuntime } = environment.services;
 	//the account row is locked first as a first confirmation writes these tables reversed (E-1602)
 	await lockAccountRow(input.transaction, schema, input.userId);
-	const revokedOtherSessionsCount = await createSessionRepository({
-		driver: input.transaction,
-		schema,
-	}).deleteEverySessionOwnedBy({ actor: input.actor });
+	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
+	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
+	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
+		await announceEachRevocation(pluginRuntime, {
+			userId: input.userId,
+			sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: input.actor }),
+			reason: "password_reset",
+		});
+	}
+	const revokedOtherSessionsCount = await sessionRows.deleteEverySessionOwnedBy({
+		actor: input.actor,
+	});
 	const issued = await sessions.boundTo(input.transaction).issueReplacingPresented({
 		presentedToken: context.sessionToken,
 		userId: input.userId,
