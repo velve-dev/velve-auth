@@ -3739,17 +3739,20 @@ name of the option it refused:
 - a deadline longer than 8640000000000000 milliseconds — the end of the range a
   `Date` holds, and the point past which the deadline asked for is not the deadline
   given back,
+- `absoluteTimeout` longer than 400 days — the longest `Max-Age` the session
+  cookie can state,
 - `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
 - `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
 - `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh,
 - `cookieName` equal to `__Host-velve_pending` or `__Host-velve_oauth_state` — one cookie would be read as two.
 
 The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
-outlive the one deadline nothing extends. **`absoluteTimeout` above 400 days is
-accepted at startup and cannot be served over HTTP**: the cookie writer refuses a
-`Max-Age` above 34,560,000 seconds, so the first sign-in that would write the
-cookie raises `internal_error` instead. That is a limit, not a refusal — it is not
-checked when the block is read (E-1578).
+outlive the one deadline nothing extends. The cookie writer refuses a `Max-Age`
+above 34,560,000 seconds, 400 days, so **`absoluteTimeout` above 400 days is
+refused at startup** rather than started and then answered with `internal_error`
+on the first sign-in, which it was until E-2878 (E-1578). Every other duration is
+held at or below `absoluteTimeout`, so 400 days bounds all four, and the `Date`
+range above is reached only as a refusal.
 
 Deadlines are computed by the database as `now() + make_interval(secs => …)` and
 never from an interval literal. PostgreSQL 14 caps an interval literal's

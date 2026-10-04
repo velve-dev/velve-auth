@@ -72,14 +72,13 @@ describe("a deadline the configuration cannot state exactly is refused at startu
 		return "not refused";
 	}
 
-	it("takes a duration up to the end of the range a Date holds", () => {
-		const settings = sessionSettingsOf({
-			idleTimeout: "100000000d",
-			absoluteTimeout: "100000000d",
-		});
-
-		expect(settings.absoluteTimeoutMs).toBe(THE_END_OF_THE_DATE_RANGE);
+	// This case used to accept a duration of exactly the end of the Date range. No option can
+	// reach that bound and be accepted any more: absoluteTimeout stops at the cookie's 400 days,
+	// and every other duration is held at or below it, so the end of the range is now refused by
+	// the cookie's bound, which runs after this one (E-2878).
+	it("refuses the end of the range a Date holds by the cookie's bound, which no longer admits it", () => {
 		expect(new Date(THE_END_OF_THE_DATE_RANGE).getTime()).toBe(THE_END_OF_THE_DATE_RANGE);
+		expect(refusalFor("100000000d")).toContain("session.absoluteTimeout must be at most 400d");
 	});
 
 	it("refuses the next whole day above it, and names the option", () => {
