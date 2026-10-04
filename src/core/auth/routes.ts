@@ -17,6 +17,7 @@ import type { ResolvedPasswordConfig } from "../password/config.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
 import type { RevokeReason } from "../plugin/config.js";
 import type { PluginRuntime } from "../plugin/registry.js";
+import { announceEachRevocation } from "../plugin/revocation.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
 import type { OneTimeTokens } from "../token/one-time-token.js";
 import type {
@@ -122,13 +123,11 @@ async function announceRevocationOf(
 		return;
 	}
 	const owned = await services.sessions.listEveryIdOwnedBy({ resolved });
-	for (const sessionId of owned.filter(chosen)) {
-		await services.pluginRuntime.hooks.beforeSessionRevoke({
-			sessionId,
-			userId: resolved.userId,
-			reason,
-		});
-	}
+	await announceEachRevocation(services.pluginRuntime, {
+		userId: resolved.userId,
+		sessionIds: owned.filter(chosen),
+		reason,
+	});
 }
 
 async function viewOf(

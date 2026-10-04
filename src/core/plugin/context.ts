@@ -38,6 +38,7 @@ export interface FrozenContextServices {
 	readonly log: LogSink;
 	readonly pluginDatabaseRole?: string;
 	readonly pluginConnection?: PluginConnection;
+	readonly insideATransaction?: boolean;
 }
 
 //a hook told about a revocation must not be told about its own (E-641)
@@ -157,6 +158,7 @@ export function createPluginContext(
 			...(services.pluginConnection === undefined
 				? {}
 				: { pluginConnection: services.pluginConnection }),
+			insideATransaction: services.insideATransaction === true,
 		}),
 	);
 }

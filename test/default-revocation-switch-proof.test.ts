@@ -115,8 +115,10 @@ describe("T-DEFAULT-2 — no option switches off the revocation of other session
 		expectTypeOf<"memoryKiB">().toExtend<Reached>();
 	});
 
-	it("revokes the other sessions on a password change even when that hook refuses every revocation", async () => {
+	//a refusing hook vetoes the whole change and never only the revocation (E-2581)
+	it("never leaves the other sessions standing beside a changed password when that hook refuses", async () => {
 		const password = drawTestPassword();
+		const replacement = drawTestPassword();
 		const email = "hooked@example.com";
 		const signedUp = await mounted.handler(postTo("/sign-up", { email, password }));
 		const calling = sessionCookieOf(signedUp);
@@ -128,17 +130,22 @@ describe("T-DEFAULT-2 — no option switches off the revocation of other session
 		const changed = await mounted.handler(
 			postTo(
 				"/password/change",
-				{ currentPassword: password, newPassword: drawTestPassword() },
+				{ currentPassword: password, newPassword: replacement },
 				{ Cookie: `${DEFAULT_COOKIE_NAMES.session}=${calling}` },
 			),
 		);
 
-		expect(changed.status).toBe(200);
+		expect(changed.status).toBe(500);
+		const signsInWith = async (candidate: string) =>
+			(await mounted.handler(postTo("/sign-in/password", { email, password: candidate })))
+				.status === 200;
+		expect(await signsInWith(replacement)).toBe(false);
+		expect(await signsInWith(password)).toBe(true);
 		expect(
 			await mounted.auth.session.resolve({
 				origin: TEST_ORIGIN,
 				sessionToken: other.sessionToken,
 			}),
-		).toBeNull();
+		).not.toBeNull();
 	}, 60_000);
 });

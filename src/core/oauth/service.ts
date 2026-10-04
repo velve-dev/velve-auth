@@ -9,13 +9,17 @@ import { createUserRepository, type User, type UserRepository } from "../auth/us
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import { PreviousSessionMissingError } from "../db/repositories/session.js";
+import {
+	createSessionRepository,
+	PreviousSessionMissingError,
+} from "../db/repositories/session.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
 import { identityColumns } from "../identity/columns.js";
 import { removeSignInMethod } from "../identity/sign-in-methods.js";
 import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
+import { announceEachRevocation } from "../plugin/revocation.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
 import { type ProviderAccount, providerAccountOf } from "./claims.js";
@@ -377,6 +381,21 @@ export function createOAuthService(input: {
 		return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 	}
 
+	//a session the account no longer owns is not announced as it will not be revoked (E-758)
+	async function announceTheReplacedSession(linked: LinkedSession): Promise<void> {
+		if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
+			return;
+		}
+		const owned = await createSessionRepository({ driver, schema }).listEverySessionIdOwnedBy({
+			actor: actorOfConsumedOAuthFlow(linked.account),
+		});
+		await announceEachRevocation(services.pluginRuntime, {
+			userId: linked.account.userId,
+			sessionIds: owned.filter((sessionId) => sessionId === linked.previousSessionId),
+			reason: "identity_linked",
+		});
+	}
+
 	//a new identity replaces the session the link began in and no other session (E-588)
 	async function linkIdentityAndReissue(input: {
 		readonly linked: LinkedSession;
@@ -385,6 +404,7 @@ export function createOAuthService(input: {
 		readonly observed: ObservedRequest;
 	}): Promise<{ readonly identity: Identity; readonly issued: IssuedSession }> {
 		const userId = input.linked.account.userId;
+		await announceTheReplacedSession(input.linked);
 		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
 		const written = await driver.transaction(async (transaction) => {
 			//identity and session are both written below, so the account row is locked first

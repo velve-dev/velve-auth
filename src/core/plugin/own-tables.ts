@@ -1,7 +1,11 @@
 import type { Driver } from "../db/driver.js";
 import { assertIdentifier, assertSchemaName } from "../db/identifier.js";
 import { coreTableNameSet, namesTableOfPlugin } from "../db/migrations/index.js";
-import { runAsThePluginRole } from "./database-role.js";
+import {
+	runAsThePluginRole,
+	runAsThePluginRoleInsideATransaction,
+	runInsideASavepoint,
+} from "./database-role.js";
 import type { PluginConnection } from "./login-connection.js";
 
 class ForeignTableError extends Error {
@@ -306,6 +310,7 @@ export function createOwnTables(options: {
 	readonly pluginId: string;
 	readonly databaseRole?: string;
 	readonly pluginConnection?: PluginConnection;
+	readonly insideATransaction?: boolean;
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
@@ -320,8 +325,18 @@ export function createOwnTables(options: {
 				return options.pluginConnection.driver.query<Row>(sql, [...params]);
 			}
 			//without a role the statement check is the only bound (E-2450)
-			return options.databaseRole === undefined
-				? options.driver.query<Row>(sql, [...params])
+			if (options.databaseRole === undefined) {
+				return options.insideATransaction === true
+					? runInsideASavepoint(options.driver, () => options.driver.query<Row>(sql, [...params]))
+					: options.driver.query<Row>(sql, [...params]);
+			}
+			return options.insideATransaction === true
+				? runAsThePluginRoleInsideATransaction<Row>(
+						options.driver,
+						options.databaseRole,
+						sql,
+						params,
+					)
 				: runAsThePluginRole<Row>(options.driver, options.databaseRole, sql, params);
 		},
 	});
