@@ -6443,17 +6443,21 @@ there. The context the hook gets on a reset is bound to that transaction:
 run on the reset's own connection and never ask the pool for a second one, so
 concurrent resets cannot starve the pool however small it is. Whatever the hook
 writes rolls back with the reset if anything later in it fails, the hook's own
-refusal included. The hook runs while the account row is locked
+refusal included. The lent context ends when the hook returns: from then on
+every statement through it is refused, checked when the statement is issued, so
+a plugin that keeps the context or leaves a chain of statements running cannot
+reach the next transaction that connection serves (E-2586). The hook runs while
+the account row is locked
 `FOR NO KEY UPDATE`; reading sessions, reading the user or writing a plugin
 table with a foreign key to `velve.user` does not wait on that lock.
 
-With `pluginDatabaseRole` set, each plugin statement on that borrowed
-connection runs inside a savepoint: the role is switched for the statement and
-switched back to whatever the transaction held before the savepoint is
-released, and a statement the database refuses is rolled back to the savepoint,
-so the reset can continue if the hook catches the error. That wraps each plugin
-statement on this path in five more: reading the role, the savepoint, the
-switch, the switch back and the release (E-2582, E-2584).
+Each plugin statement on that borrowed connection runs inside a savepoint, so a
+statement the database refuses is rolled back to it and the reset can continue
+if the hook catches the error. That costs two more statements, the savepoint and
+its release. With `pluginDatabaseRole` set, the savepoint also carries the role:
+it is switched for the statement and switched back to whatever the transaction
+held before the savepoint is released, which makes five more statements in all
+(E-2582, E-2584, E-2586).
 
 The listing and the delete are separate statements on a reset too. The account
 lock does not block a concurrent sign-in from inserting a session, so a session
