@@ -16,6 +16,7 @@ import {
 	type ServerCallFields,
 } from "../http/route.js";
 import { object, string, unknownRecord } from "../http/validators.js";
+import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import { toPendingToken, verifyUnderPendingAttemptLimit } from "./pending/index.js";
 import {
 	createRecoveryCodeService,
@@ -534,6 +535,9 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		rateLimit: addressOnly(services),
 		//a passkey is a way in of its own so the session records webauthn alone
 		handler: async (input, context): Promise<SignInResult> => {
+			const observed = { ipAddress: context.ipAddress, userAgent: context.userAgent };
+			const hooks = services.pluginRuntime.hooks;
+			await askBeforeSignIn(hooks, "passkey", observed);
 			const assertion = await webauthn.passkey.finish({
 				challengeToken: input.challengeToken,
 				response: input.response as unknown as AuthenticationResponseJSON,
@@ -543,11 +547,22 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			if (user === null || user.disabledAt !== null) {
 				throw new ConcealedError("user_disabled_on_webauthn_assertion");
 			}
-			const issued = await services.sessions.issueReplacingPresented({
-				presentedToken: context.sessionToken,
-				userId: assertion.userId,
-				factors: ["webauthn"],
-				observed: { ipAddress: context.ipAddress, userAgent: context.userAgent },
+			const issued = await createSessionUnderHooks(
+				hooks,
+				{ userId: assertion.userId, factors: ["webauthn"] },
+				() =>
+					services.sessions.issueReplacingPresented({
+						presentedToken: context.sessionToken,
+						userId: assertion.userId,
+						factors: ["webauthn"],
+						observed,
+					}),
+			);
+			await tellAfterSignIn(hooks, {
+				method: "passkey",
+				observed,
+				session: issued.session,
+				signCountRegressed: assertion.signCountRegressed,
 			});
 			context.cookies.setSession(issued.token);
 			return {
