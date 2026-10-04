@@ -7218,19 +7218,25 @@ before, then sent on `pluginDatabase` as one statement: no `BEGIN`, no
 transaction of its own on a connection of the plugin pool, so it sees what the
 library has committed and nothing it has not.
 
-**Inside a password reset.** A `beforeSessionRevoke` hook that a reset announces
-runs inside the reset's transaction, and its context's repositories use the
-reset's own connection. Its `ownTables` statements do not: with
+**Inside a reset, a password change or a first confirmation.** A
+`beforeSessionRevoke` hook that a password reset, `password.set`,
+`password.change` or the first confirmation of an address announces runs inside
+that call's transaction, and its context's repositories use the call's own
+connection (E-2580, E-2705, E-2730). Its `ownTables` statements do not: with
 `pluginDatabase` set they go to the plugin connection, each committed as it
-runs. **A hook that refuses the reset rolls back the reset and nothing the hook
+runs. **A hook that refuses the call rolls back the call and nothing the hook
 wrote to its own tables**, and an own-table write made before another hook
-refuses stays as well. A plugin that needs its record undone with the reset
-writes it in `afterSessionCreate` or checks for the session later, rather than
-in the revoke hook. The statement is not held to the end of the hook either: an
-own-table statement the hook leaves running after it returns still runs on the
-plugin connection. In exchange, a hook's own-table statement never waits for a
-connection from the library's pool, which a reset waiting on its hook holds
-(E-2643).
+refuses, or before the call fails for any other reason, stays as well. That
+includes a `password.set` or `password.change` refused after it announced,
+because its own session was signed out between the listing and the delete
+(E-2705). Without `pluginDatabase` the same writes run on the
+call's connection and roll back with it (E-2707). A plugin that needs its record
+undone with the call writes it in `afterSessionCreate` or checks for the session
+later, rather than in the revoke hook. The statement is not held to the end of
+the hook either: an own-table statement the hook leaves running after it returns
+still runs on the plugin connection. In exchange, a hook's own-table statement
+never waits for a connection from the library's pool, which a call waiting on
+its hook holds (E-2643).
 
 **Locks across the two connections.** The reset holds the account row
 `FOR NO KEY UPDATE`. An insert into a plugin table whose foreign key names that
