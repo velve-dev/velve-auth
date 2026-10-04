@@ -1427,8 +1427,8 @@ interface RateLimiter {
 
 `capacity` is a number of requests — the burst a caller may spend at once — and
 `refillPerSecond` is how many requests per second flow back into the bucket, so
-`{ capacity: 5, refillPerSecond: 0.01 }` is five attempts and then one more
-every hundred seconds. An implementation is passed in through
+the default account bucket `{ capacity: 5, refillPerSecond: 1 / 300 }` is five
+attempts and then one more every three hundred seconds. An implementation is passed in through
 `auth.http.rateLimiter` and needs no change to the HTTP layer. The pipeline consumes the address bucket before the
 input is parsed and before the caller is resolved; the route consumes the account
 bucket through `context.enforceAccountRateLimit` once it has the identifier,
@@ -1658,11 +1658,24 @@ rateLimit: {
 }
 ```
 
+**Every figure is per route.** A bucket's key starts with the route name, so
+each route that declares a bucket has its own. What a password guesser gets
+against one account is the sum over the routes that check a password:
+`signIn.password`, which anyone can call, and `password.change`, which needs a
+fresh session of that account and so is no route for someone who does not
+already hold it. Against an account the anonymous total is therefore the one
+bucket of `signIn.password`. Other secrets are guessed on routes of their own,
+each with its own account bucket of the same size: recovery codes on
+`password.redeemResetWithRecoveryCode`, which anyone can call, and the second
+factor on `factor.totp.verify`, `factor.recovery.verify` and
+`factor.webauthn.authenticate.finish`, which need the pending state a correct
+password produces. The address figures are per route as well: one address gets the
+address allowance on every route that declares the bucket.
+
 Omitting `rateLimit` uses all three defaults. Omitting one of its fields uses
 the default for that field only, so `rateLimit: { perIpAddress: … }` keeps the
 default account bucket and the default alarm. `globalPerRoute` is replaced
 whole: an application that gives it gives both the threshold and `onAlert`.
-Each bucket is kept per route, so the numbers below are per route.
 
 **The account bucket is the brute-force protection.** Its key is the HMAC of
 the identifier typed in, not the address it came from, so an attacker holding a
