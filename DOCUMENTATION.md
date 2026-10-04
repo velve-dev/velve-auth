@@ -6244,8 +6244,11 @@ token, and it lives five minutes. Exactly four routes accept it —
 `POST /factor/webauthn/authenticate/finish` and `POST /factor/recovery/verify` —
 and those four names are one constant, `PENDING_CALLER_ROUTES`, so the count a
 test reads and the list a route is named from cannot drift apart (S-CACHE-4).
-Every other route ignores the cookie completely, and answers a request carrying
-only it byte for byte as it answers a request carrying no cookie at all.
+Two more read the cookie without being authorised by it — `GET /pending`, which
+names the factors still open, and `POST /pending/cancel`, which deletes the row
+it points to. Every other route ignores the cookie completely, and answers a
+request carrying only it byte for byte as it answers a request carrying no
+cookie at all.
 
 ```ts
 createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationService
