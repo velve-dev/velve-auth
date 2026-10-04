@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
 
 /**
  * T-DOS-2 over the mounted route. Every Argon2 derivation either engine runs is counted beneath the
@@ -74,15 +75,16 @@ beforeAll(async () => {
 	}
 	migrated = await openMigratedSchema("dosoversized");
 	const connection = migrated.connection;
+	const recording = (driver: Driver): Driver => ({
+		query: (sql, params) => {
+			statements.push(sql);
+			return driver.query(sql, params);
+		},
+		transaction: (work) => driver.transaction((tx) => work(recording(tx))),
+	});
 	const auth = createVelveAuth(
 		configFor({
-			database: {
-				query: (sql, params) => {
-					statements.push(sql);
-					return connection.query(sql, params);
-				},
-				transaction: (work) => connection.transaction(work),
-			},
+			database: recording(connection),
 			schema: migrated.schema,
 			rateLimit: {
 				perIpAddress: { capacity: 1_000_000, refillPerSecond: 1_000_000 },
