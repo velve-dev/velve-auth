@@ -224,6 +224,17 @@ interface Comparison {
 	readonly withPending: string;
 	readonly withoutCookie: string;
 	readonly deterministic: boolean;
+	readonly handsBackThePresentedToken: boolean;
+}
+
+/**
+ * Whether the presented token comes back in any header or in the body. The normalisation above
+ * replaces every 43-character secret, so a route that wrote the presented token into its own
+ * cookie or answer would compare equal to one that minted a fresh token.
+ */
+async function carriesToken(answer: Response, token: string): Promise<boolean> {
+	const headers = [...answer.headers].map(([, value]) => value).join("\n");
+	return `${headers}\n${await answer.text()}`.includes(token);
 }
 
 /** The presented intermediate state's row as text, so a call that spends, counts or deletes it shows. */
@@ -263,6 +274,7 @@ async function compare(route: Route, pendingToken: string): Promise<Comparison> 
 		verbatim(control.clone()),
 	]);
 	const deterministic = withoutText === controlText;
+	const handsBackThePresentedToken = await carriesToken(withPending.answer.clone(), pendingToken);
 	const answered = (text: string, touched: boolean) => `${text}\nstate touched: ${touched}`;
 	return {
 		name: route.name,
@@ -275,6 +287,7 @@ async function compare(route: Route, pendingToken: string): Promise<Comparison> 
 			withoutCookie.touchedTheState,
 		),
 		deterministic,
+		handsBackThePresentedToken,
 	};
 }
 
@@ -327,6 +340,14 @@ describe("only the pending readers see the intermediate state (S-CACHE-4, T-CACH
 
 		expect(notByteIdentical).toStrictEqual([]);
 		expect(comparedOnlyAfterNormalisation).toStrictEqual(ANSWERS_DIFFER_BETWEEN_IDENTICAL_REQUESTS);
+	});
+
+	it("hands the presented pending token back on no route, which the normalisation would hide", () => {
+		const echoing = comparisons
+			.filter((comparison) => comparison.handsBackThePresentedToken)
+			.map((comparison) => comparison.name);
+
+		expect(echoing).toStrictEqual([]);
 	});
 
 	it("leaves the shared intermediate state standing through every other route", async () => {
