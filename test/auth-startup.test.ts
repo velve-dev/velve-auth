@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
-import type { VelveAuthConfig } from "../src/core/auth/config.js";
+import type { VelveAuthConfig, WebAuthnConfig } from "../src/core/auth/config.js";
 import { rateLimitConfigOf } from "../src/core/auth/rate-limiting.js";
 import { SECURITY_OPTIONS } from "../src/core/auth/security-options.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
@@ -377,6 +377,23 @@ describe("every documented weakening is logged once at start (S-DEFAULT-1, T-DEF
 				recoveryCodes: DEFAULT_RECOVERY_CODE_SHAPE,
 				plugins: [],
 			}),
+		).toStrictEqual([]);
+	});
+
+	it("says nothing about a relying party that leaves user verification at its default", () => {
+		const relyingParty = {
+			relyingPartyId: "app.example.com",
+			relyingPartyName: "Example",
+			origins: [TEST_ORIGIN],
+		};
+
+		expect(
+			weakenedOptionsLoggedAt({
+				webauthn: relyingParty as unknown as WebAuthnConfig,
+			}),
+		).toStrictEqual([]);
+		expect(
+			weakenedOptionsLoggedAt({ webauthn: { ...relyingParty, userVerification: "required" } }),
 		).toStrictEqual([]);
 	});
 

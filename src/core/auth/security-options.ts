@@ -1,6 +1,7 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { DEFAULT_RECOVERY_CODE_SHAPE } from "../factor/recovery/code.js";
 import { TOTP_TOLERANCE_STEPS } from "../factor/totp/parameters.js";
+import { DEFAULT_REGISTRATION_USER_VERIFICATION } from "../factor/webauthn/config.js";
 import type { BucketRule } from "../http/rate-limit.js";
 import { ARGON2ID_FLOOR } from "../password/config.js";
 import { DEFAULT_SESSION_CONFIG, type SessionSettings } from "../session/config.js";
@@ -152,6 +153,10 @@ function admitsMoreThan(chosen: BucketRule, defaults: BucketRule): boolean {
 	return chosen.capacity > defaults.capacity || chosen.refillPerSecond > defaults.refillPerSecond;
 }
 
+function userVerificationOf(config: ObservedConfig): string {
+	return config.webauthn?.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION;
+}
+
 //one detector per option, so a new option adds a row rather than a branch
 const DETECTORS: readonly Detector[] = [
 	(_config, { session }) => {
@@ -181,9 +186,9 @@ const DETECTORS: readonly Detector[] = [
 	},
 
 	(config) =>
-		config.webauthn !== undefined && config.webauthn.userVerification !== "required"
-			? { option: "webauthn", chosen: config.webauthn.userVerification }
-			: null,
+		userVerificationOf(config) === DEFAULT_REGISTRATION_USER_VERIFICATION
+			? null
+			: { option: "webauthn", chosen: userVerificationOf(config) },
 
 	(config) => {
 		const count = config.recoveryCodes?.count ?? DEFAULT_RECOVERY_CODE_SHAPE.count;
