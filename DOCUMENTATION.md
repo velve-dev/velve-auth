@@ -5254,6 +5254,7 @@ because nothing else would tell you.
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `rate_limit_bucket_unusable` | `rateLimit.perIpAddress` or `rateLimit.perAccount` is given and is not a bucket whose `capacity` and `refillPerSecond` are finite numbers of at least zero — `"none"` from a JavaScript configuration included, which would take every core route out of that bucket (S-DEFAULT-3, E-2215) |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
@@ -5335,7 +5336,7 @@ What counts as weaker, option by option:
 | `oauth` | an entry in `trustedProviders`, or `storeTokens: true` |
 | `fetch` | any `fetch` the caller supplies |
 | `plugins` | any plugin |
-| `webauthn` | `userVerification: "preferred"` |
+| `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
 | `recoveryCodes` | `count` below ten |
 | `clock` | any clock the caller supplies |
 
@@ -5346,7 +5347,9 @@ applied.
 **A raised rate limit is reported, not refused.** `refillPerSecond: 1e9` limits
 nothing, and it starts with one `rateLimit` line rather than a start error. A.6
 fixes the defaults and states no ceiling, so no ceiling is invented here; the
-line is how an operator learns that one is gone (E-2211).
+line is how an operator learns that one is gone (E-2211). A bucket written as
+`"none"` is not a raised limit but no limit, and refuses the start with
+`rate_limit_bucket_unusable` (E-2215).
 
 The `safeDefault` strings are built from the constants the code resolves an
 absent option with — `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`,
@@ -6099,14 +6102,24 @@ of a plugin that does not contribute `session.revoke` refuses the start rather
 than limiting nothing, and there is no key it could write that reaches a route
 it does not own.
 
-The rule that wins must carry an address bucket. 3.11 puts the rate limit in
-front of every plugin route, and the pipeline skips the address bucket of a route
-whose `perIpAddress` is `"none"` — so a declaration or a map entry that writes
-`"none"` there is refused with `plugin_route_without_address_rate_limit`, exactly
-as an `originCheck` other than `"checked"` is. The account bucket stays optional,
-because only a route that takes an account identifier can consume it. The core
-keeps its two unlimited reads, `GET /session` and `GET /pending`, because 3.15
-D.3 gives them no limit; a plugin route has no such row (E-2212).
+The rule that wins must carry an address bucket. The pipeline skips the address
+bucket of a route whose `perIpAddress` is `"none"`, so a declaration or a map
+entry that writes `"none"` there is refused with
+`plugin_route_without_address_rate_limit`, exactly as an `originCheck` other than
+`"checked"` is. The account bucket stays optional, because only a route that
+takes an account identifier can consume it.
+
+This refusal is a strict reading of S-DEFAULT-3 — no option deactivates the rate
+limiting — and not something the architecture states for plugin routes: 3.11
+fixes the order in which the origin check and the rate limit run, not that every
+plugin route declares a bucket. The core keeps its two unlimited reads,
+`GET /session` and `GET /pending`, because 3.15 D.3 gives them no limit; a plugin
+route has no such row (E-2212, E-2214).
+
+**Upgrading from 1.1.0.** A plugin that started on 1.1.0 with
+`perIpAddress: "none"` on a route, or with a `rateLimitRules` entry writing it,
+refuses to start from 1.2.0 on. Declare an address bucket for that route —
+`{ capacity, refillPerSecond }` — instead (E-2214).
 
 ### One reading of the declaration
 
