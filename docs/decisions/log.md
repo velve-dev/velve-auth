@@ -13602,3 +13602,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Letting the error reach the caller of `createVelveAuth`, which would turn a broken log sink into a refused start, the opposite of what the swallow was for (E-333's note that a sink that is down must not cost the caller anything). Falling back to the console for a line the configured sink refused, which writes to the console in an installation that chose a sink.
 **Reason.** Each weakening is a separate fact for the operator, and a failure to record one says nothing about the next.
 **Price.** A sink that throws on every line still records nothing, and nothing says so; `auth.weakenings` is then the only place the weakenings can be read.
+
+<a id="e-2677"></a>
+
+### E-2676 credited the swallowed sink to the wrong entry
+`E-2677` · rate-defaults · corrects E-2676, settled
+
+**Context.** E-2676's Rejected cites "E-333's note that a sink that is down must not cost the caller anything". E-333 says nothing of the kind; it decides that `log` has no default sink. The argument that a throwing sink is swallowed so that it does not cost the caller its answer is the pipeline's, and the log records it in E-383, about `onAlert`, which says it follows the pipeline's handling of a `log` that throws. I cited from memory and did not check before committing.
+**Rejected.** Editing E-2676's sentence, which §6 forbids for a reason that was wrong when written, even before merge.
+**Reason.** The citation is what a reader follows to find the argument, and it pointed at an entry that does not hold it.
+**Price.** E-2676 keeps the wrong citation in its text, and a reader has to reach this entry to learn that it is wrong.
