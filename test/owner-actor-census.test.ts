@@ -114,7 +114,8 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"credential under verification",
 
 	"src/core/factor/totp/repository.ts#createTotpRepository.findCredentialOf": "pending resolution",
-	"src/core/factor/totp/repository.ts#createTotpRepository.claimTimeStep": "pending resolution",
+	"src/core/factor/totp/repository.ts#createTotpRepository.claimTimeStepOfPending":
+		"pending resolution",
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.listDescriptorsOwnedBy":
 		"pending resolution",
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.findOwnedCredentialByCredentialId":
@@ -138,6 +139,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"shipped surface",
 	"src/core/db/repositories/session.ts#createSessionRepository.deleteSessionById":
 		"shipped surface",
+	"src/core/factor/totp/repository.ts#createTotpRepository.isConfirmedFor": "shipped surface",
 	"src/core/auth/user.ts#createUserRepository.findUserById": "shipped surface",
 	"src/core/auth/user.ts#createUserRepository.findUserByEmail": "shipped surface",
 	"src/core/auth/user.ts#createUserRepository.findUserByUsernameKey": "shipped surface",
