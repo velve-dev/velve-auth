@@ -196,7 +196,7 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 		expect(semaphore.inFlight).toBe(0);
 	}, 120_000);
 
-	//every accelerator call leaves its own wasm memory for the collector so the resident set outgrows the bound (S-DOS-3)
+	//the resident set outgrows the bound with either engine and the cause is not established (E-2364)
 	(NIGHTLY ? it.fails : it.skip)(
 		"grows the resident set by less than min(4, cpus) times 19 MiB times 1.5",
 		async () => {
