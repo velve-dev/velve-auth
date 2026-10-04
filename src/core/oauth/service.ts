@@ -110,6 +110,18 @@ function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 	throw cause;
 }
 
+const UNIQUE_VIOLATION = "23505";
+
+//an identifier another sign-up took after the check must end the flow as a taken one does (E-2874)
+function refuseAnIdentifierTakenMeanwhile(cause: unknown): never {
+	const fields = typeof cause === "object" && cause !== null ? cause : {};
+	const { code, sqlState } = fields as { readonly code?: unknown; readonly sqlState?: unknown };
+	if (code === UNIQUE_VIOLATION || sqlState === UNIQUE_VIOLATION) {
+		throw new VelveError("oauth_flow_invalid");
+	}
+	throw cause;
+}
+
 //a link flow writes both columns, so a row carrying one alone was not written by this library
 function linkedSessionOf(flow: ConsumedOAuthFlowRow): LinkedSession | null {
 	if (flow.linkTo === null) {
@@ -295,12 +307,16 @@ export function createOAuthService(input: {
 			email: columns.value.email,
 			username: columns.value.username,
 		});
-		const created = await users.createUser({
-			...columns.value,
-			//a provider claim verifies an address only where the operator trusts it (E-558)
-			emailVerifiedAt:
-				account.emailVerified && provider.trustedForAutomaticLinking ? services.clock.now() : null,
-		});
+		const created = await users
+			.createUser({
+				...columns.value,
+				//a provider claim verifies an address only where the operator trusts it (E-558)
+				emailVerifiedAt:
+					account.emailVerified && provider.trustedForAutomaticLinking
+						? services.clock.now()
+						: null,
+			})
+			.catch(refuseAnIdentifierTakenMeanwhile);
 		await services.pluginRuntime.hooks.afterUserCreate({
 			email: created.email,
 			username: created.username,
