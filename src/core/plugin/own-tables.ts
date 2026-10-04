@@ -20,6 +20,20 @@ const WRITES_THROUGH_A_NAMED_TABLE = /^update$/;
 const CLOSES_A_TABLE_LIST =
 	/^(?:where|group|order|having|limit|offset|fetch|window|on|set|select|returning|union|intersect|except|values|for|as|with|do|and|or|not)$/;
 
+//a function that leaves the plugin role or runs sql text must be refused by its name (E-2454)
+const LEAVES_THE_ROLE_OR_RUNS_TEXT = new Set([
+	"set_config",
+	"query_to_xml",
+	"query_to_xmlschema",
+	"query_to_xml_and_xmlschema",
+	"cursor_to_xml",
+	"cursor_to_xmlschema",
+	"ts_stat",
+	"ts_rewrite",
+	"dblink",
+	"dblink_exec",
+]);
+
 const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const IDENTIFIER_OR_QUALIFIED = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 const TOKEN = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*|\$\d+|\S/g;
@@ -150,6 +164,13 @@ function namesACoreTable(token: string, coreTables: ReadonlySet<string>): boolea
 		.some((part) => coreTables.has(part));
 }
 
+function namesAnEscapingFunction(token: string): boolean {
+	return token
+		.toLowerCase()
+		.split(".")
+		.some((part) => LEAVES_THE_ROLE_OR_RUNS_TEXT.has(part));
+}
+
 function refuse(pluginId: string, schema: string, what: string): never {
 	throw new ForeignTableError(
 		`plugin ${pluginId} may reach tables named ${pluginId}_… in schema ${schema} and no others, not ${what}`,
@@ -231,6 +252,9 @@ function assertEveryTokenIsTheirs(
 	for (const [position, token] of tokens.entries()) {
 		if (namesACoreTable(token, coreTables) || namesTheCoreSchema(token, pluginId, schema)) {
 			refuse(pluginId, schema, token);
+		}
+		if (namesAnEscapingFunction(token)) {
+			refuse(pluginId, schema, `the function ${token}`);
 		}
 		if (opensATableList(tokens, position)) {
 			for (const target of tableListAfter(tokens, position)) {

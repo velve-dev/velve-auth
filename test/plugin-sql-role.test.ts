@@ -162,19 +162,28 @@ describe("plugin SQL runs as a role without rights on the core tables (S-OWNER-1
 		expect(before).toBe(1);
 	});
 
-	it("refuses at the database the statement the check lets through, a core table named inside a literal", async () => {
+	/**
+	 * The statement check now refuses query_to_xml by name (E-2454), so the read a literal smuggles
+	 * past it is sent below the check, as the write cases above are, to show what the role alone does.
+	 */
+	it("refuses at the database a core table named inside a literal that query_to_xml runs", async () => {
 		const smuggled = `SELECT query_to_xml('select token_sha256 from ${schema}.session', true, false, '') AS leaked FROM ${schema}.demo_entry`;
 
 		const withTheRole = await sqlStateOf(
-			contextOfThePlugin(start(pluginRole)).ownTables.query(smuggled, []),
+			runAsThePluginRole(asTheLibrary, pluginRole, smuggled, []),
 		);
-		const withoutTheRole = await contextOfThePlugin(start()).ownTables.query<{
-			leaked: string;
-		}>(smuggled, []);
+		const withoutTheRole = await asTheLibrary.query<{ leaked: string }>(smuggled, []);
+		const refusedByTheCheck = await contextOfThePlugin(start())
+			.ownTables.query(smuggled, [])
+			.then(
+				() => "reached the database",
+				(error: { code?: string }) => error.code,
+			);
 
 		expect(withTheRole).toBe(PERMISSION_DENIED);
 		expect(withoutTheRole.length).toBeGreaterThan(0);
 		expect(withoutTheRole[0]?.leaked).toContain("token_sha256");
+		expect(refusedByTheCheck).toBe("plugin_table_not_its_own");
 	});
 });
 
