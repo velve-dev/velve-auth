@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AnyRoute, defineRoute, type RequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
@@ -6,7 +6,7 @@ import { toWebHandler } from "../src/http/index.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, TEST_ORIGIN } from "./auth-fixtures.js";
 import { widestVelveAuth } from "./client-fixtures.js";
-import { unreachableDriver } from "./plugin-fixtures.js";
+import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 
 /**
  * The edges of E-2390 that T-CSRF-1's procedure names and the writer's test leaves open: every
@@ -124,7 +124,7 @@ function recordingRoute<Id extends string>(id: Id, reached: string[]): PluginRou
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: (_input: unknown, _context: RequestContext) => {
 			reached.push(`${id}.read`);
 			return Promise.resolve({ seen: true });
@@ -137,6 +137,17 @@ function pluginOf<Id extends string>(id: Id, reached: string[]): VelvePlugin<Id>
 }
 
 describe("a plugin GET route is never reading (S-CSRF-6)", () => {
+	let database: Awaited<ReturnType<typeof openMigratedSchema>>;
+
+	beforeAll(async () => {
+		database = await openMigratedSchema("sameoriginplugin");
+	});
+
+	afterAll(async () => {
+		await dropSchema(database.connection, database.schema);
+		await database.connection.close();
+	});
+
 	for (const order of [
 		["alpha", "beta"],
 		["beta", "alpha"],
@@ -146,7 +157,8 @@ describe("a plugin GET route is never reading (S-CSRF-6)", () => {
 			const handler = toWebHandler(
 				createVelveAuth(
 					configFor({
-						database: unreachableDriver(),
+						database: database.connection,
+						schema: database.schema,
 						plugins: order.map((id) => pluginOf(id, reached)),
 					}),
 				),
@@ -171,7 +183,9 @@ describe("a plugin GET route is never reading (S-CSRF-6)", () => {
 
 	it("refuses the same-origin form on a GET route added to the table after the instance exists", async () => {
 		const reached: string[] = [];
-		const auth = createVelveAuth(configFor({ database: unreachableDriver() }));
+		const auth = createVelveAuth(
+			configFor({ database: database.connection, schema: database.schema }),
+		);
 		const handler = toWebHandler(auth, { basePath: BASE_PATH });
 		const late = defineRoute({
 			...recordingRoute("late", reached),

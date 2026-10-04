@@ -9,7 +9,6 @@ import { configFor, type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixt
 import { widestVelveAuth } from "./client-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 import { postTo } from "./flows-fixtures.js";
-import { unreachableDriver } from "./plugin-fixtures.js";
 
 /**
  * A browser sends no `Origin` on a same-origin GET made with `fetch`, and sends
@@ -226,17 +225,20 @@ describe("a plugin's GET route, which nothing proves is reading (S-CSRF-1)", () 
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: (_input: unknown, _context: RequestContext) => {
 			reached.push("demo.read");
 			return Promise.resolve({ seen: true });
 		},
 	};
 	const plugin: VelvePlugin<"demo"> = { id: "demo", routes: [route] };
-	const pluginHandler = toWebHandler(
-		createVelveAuth(configFor({ database: unreachableDriver(), plugins: [plugin] })),
-		{ basePath: BASE_PATH },
-	);
+	const pluginHandler = (request: Request) =>
+		toWebHandler(
+			createVelveAuth(
+				configFor({ database: mounted.connection, schema: mounted.schema, plugins: [plugin] }),
+			),
+			{ basePath: BASE_PATH },
+		)(request);
 
 	it("refuses the same-origin form without an Origin, before the handler", async () => {
 		const answer = await pluginHandler(
