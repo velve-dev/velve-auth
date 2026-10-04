@@ -2070,7 +2070,9 @@ memory held by running derivations ≤ concurrentHashLimit × max(argon2id.memor
 ```
 
 which is 4 × 64 MiB = 256 MiB at the default parameters on a machine with four or
-more cores (E-2610).
+more cores (E-2610). A configured `memoryKiB` above 64 MiB raises the ceiling
+verification applies to the same value, so the library always verifies what it
+writes, and the bound is then `concurrentHashLimit × memoryKiB` (E-2615).
 
 **Imports are not restricted to the configured `m`.** Every imported user's hash
 has to keep working, and a ceiling at 19 MiB would refuse Better Auth's 32 MiB
@@ -2213,7 +2215,12 @@ version that has left the ring, and `KeyError("authentication_failed")` when the
 ciphertext does not authenticate. `checkPassword` does not let either reach the
 caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
-#### `createPasswordCredentialRepository({ driver, keys, schema? })`
+#### `createPasswordCredentialRepository({ driver, keys, schema?, memoryCeilingKiB? })`
+
+`memoryCeilingKiB` is the memory ceiling a stored credential is held to. It
+defaults to `MAXIMUM_STORED_MEMORY_KIB`; every repository the library builds
+passes `storedMemoryCeilingKiB(argon2id.memoryKiB)`, so it writes what it
+verifies (E-2615).
 
 | Method | Statement |
 |---|---|
@@ -2227,12 +2234,21 @@ caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 the stored **ciphertext**, not the PHC string, so a password the user changed
 while a rehash was running is never overwritten by it (L-2, E-11).
 
-Both paths refuse two things before they write. A `scheme` that disagrees with
+Every writing method refuses three things. A `scheme` that disagrees with
 the identifier of the credential is `CredentialWriteError`
 `scheme_does_not_match_credential`: such a row could never verify (E-177,
-E-187). And a statement that changed no row is `credential_not_written` —
+E-187). A credential that verification would refuse before deriving — a cost
+above one of the ceilings in *Cost ceilings on a stored credential*, a missing
+parameter, salt or hash, or a string that does not parse — is
+`credential_not_verifiable`, raised before anything is sealed (E-2617). And a
+statement that changed no row is `credential_not_written` —
 a conflict predicate that is false does not raise, it silently changes nothing,
 and the caller must not be told a password was stored when it was not (E-185).
+
+The library's own writes derive at the configured parameters and never trip
+`credential_not_verifiable`; the check guards the methods that take a PHC
+string from their caller. A row written past the repository, by SQL, can still
+hold such a credential, and `checkPassword` treats it as below.
 
 ### Checking a password
 
@@ -2266,6 +2282,16 @@ accumulated in a local variable (S-TIM-1). A credential whose scheme is not in
 `acceptLegacy` is **still** verified — against the dummy — so that narrowing
 `acceptLegacy` does not turn into a timing oracle for which accounts were
 imported (E-176).
+
+The same holds for a credential the verifier would refuse **before deriving**:
+a cost above a ceiling, a missing parameter, salt or hash. Answering such a row
+without a derivation made a wrong password for that account faster than one for
+an unknown identifier. `checkPassword` asks the switch first whether the stored
+string reaches a derivation (`credentialReachesDerivation`), and if it does
+not, verifies the dummy instead and refuses with `password_mismatch` — the same
+statements, one Argon2id call at the configured parameters (S-TIM-1, S-TIM-2,
+E-2616). The log does not tell such a row from a wrong password; a survey of
+the estate does.
 
 `rehash` is present when the credential is behind the current policy or the
 current key version. It is a **task, not a running promise**: the caller invokes
@@ -2339,6 +2365,16 @@ any of them is refused, which routes the user to the reset path (E-182).
 | `MAXIMUM_STORED_PBKDF2_ITERATIONS` | `2_000_000` | PBKDF2 `i` |
 | `MAXIMUM_STORED_BCRYPT_COST` | `14` | the cost field of a bcrypt hash |
 
+The memory ceiling has one exception. When `argon2id.memoryKiB` is configured
+above 64 MiB, verification holds a stored memory parameter — Argon2 `m`, and
+scrypt's `128 · 2^ln · r` — to the configured value instead,
+`storedMemoryCeilingKiB(memoryKiB)` = `max(65536, memoryKiB)`. Without it, the
+library refused every hash it wrote at that setting and locked out each user
+who set or reset a password (E-2615). Lowering `memoryKiB` again from above
+64 MiB lowers the ceiling with it, and a credential written under the higher
+value is then refused rather than rehashed, so such a change sends those users
+to a reset.
+
 bcrypt has no memory parameter, so its cost — an exponent — is the only bound
 there is: `$2a$14$` is about a second of one semaphore place and `$2a$31$` is
 about thirty years. GoTrue, Auth0 and Clerk all write cost 10, which says the
@@ -2361,7 +2397,9 @@ They are not configurable. Raising a denial-of-service ceiling is a weakening,
 and every documented source sits far below them: Better Auth's scrypt at 32 MiB,
 Firebase at 16 MiB, Django's PBKDF2 at 1.2 million iterations.
 `argon2CostIsAcceptable`, `scryptCostIsAcceptable`, `pbkdf2CostIsAcceptable` and
-`bcryptCostIsAcceptable` are the four predicates that apply them.
+`bcryptCostIsAcceptable` are the four predicates that apply them; the first two
+take the memory ceiling as an optional last argument, defaulting to
+`MAXIMUM_STORED_MEMORY_KIB`.
 
 ### Startup
 
