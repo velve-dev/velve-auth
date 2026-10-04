@@ -136,5 +136,12 @@
 		"tsdown": "^0.15.6",
 		"typescript": "^5.9.2",
 		"vitest": "^4.1.11"
+	},
+	"pnpm": {
+		"auditConfig": {
+			"ignoreGhsas": [
+				"GHSA-vfj7-8cjw-p6xm"
+			]
+		}
 	}
 }

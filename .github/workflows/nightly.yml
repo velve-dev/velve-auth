@@ -68,5 +68,7 @@ jobs:
       - name: What ships
         run: pnpm audit --prod
 
+      # One advisory is ignored in package.json, against a package only a development dependency
+      # reaches, and test/audit-exception.test.ts holds it to that and to its removal (E-2901).
       - name: What builds and tests it
         run: pnpm audit
