@@ -35,6 +35,7 @@ export interface FrozenContextServices {
 	readonly sessions: SessionRepository;
 	readonly driver: import("../db/driver.js").Driver;
 	readonly log: LogSink;
+	readonly pluginDatabaseRole?: string;
 }
 
 //a hook told about a revocation must not be told about its own (E-641)
@@ -144,7 +145,14 @@ export function createPluginContext(
 	return freezeContext(
 		services,
 		createFrozenRepositories(services, revocation),
-		createOwnTables({ driver: services.driver, schema: services.schema, pluginId }),
+		createOwnTables({
+			driver: services.driver,
+			schema: services.schema,
+			pluginId,
+			...(services.pluginDatabaseRole === undefined
+				? {}
+				: { databaseRole: services.pluginDatabaseRole }),
+		}),
 	);
 }
 

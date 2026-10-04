@@ -126,7 +126,13 @@ function topLevelConjuncts(statement: string, depths: readonly number[], offset:
 	);
 }
 
+//a lone grant names privileges and changes no row (E-2450)
+const GRANTS_PRIVILEGES = /^\s*GRANT\b[^;]*$/i;
+
 function rowChangesIn(file: string, sql: string): RowChange[] {
+	if (GRANTS_PRIVILEGES.test(sql)) {
+		return [];
+	}
 	const depths = depthsOf(sql);
 	return [...sql.matchAll(CHANGE)].map((match) => {
 		const start = match.index;
@@ -293,6 +299,23 @@ describe("T-OWNER-2: the owner condition stands in the outermost WHERE (S-OWNER-
 
 		expect(planted).toHaveLength(1);
 		expect(withoutOwnerPredicate(planted)).toHaveLength(1);
+	});
+
+	it("still reads a statement that follows a grant", () => {
+		const changes = rowChangesIn(
+			"core/planted.ts",
+			"GRANT SELECT ON t TO r; DELETE FROM t WHERE id = $1",
+		).map((change) => ({ ...change, table: UNKNOWN_TABLE }));
+
+		expect(withoutOwnerPredicate(changes).map((change) => change.text)).toContain(
+			"DELETE FROM t WHERE id = $1",
+		);
+	});
+
+	it("reads a lone grant as changing no row", () => {
+		expect(
+			rowChangesIn("core/planted.ts", "GRANT USAGE, SELECT, UPDATE ON SEQUENCE s TO r"),
+		).toStrictEqual([]);
 	});
 
 	it.each([

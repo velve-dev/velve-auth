@@ -174,3 +174,29 @@ export async function dropTheMigrationRole(
 		await owner.query(`DROP ROLE IF EXISTS ${role.name}`, []).catch(() => undefined);
 	});
 }
+
+/**
+ * The role plugin SQL is switched to, created the way the operator creates it: no login, no rights
+ * of its own, and the connection's role made a member so `SET LOCAL ROLE` is allowed. The grants on
+ * the plugin's own tables are `migrate()`'s to give, so none are given here.
+ */
+export async function createThePluginRole(
+	owner: TestConnection,
+	schema: string,
+	member: MigrationRole,
+): Promise<string> {
+	const name = `${schema}_plugins`;
+	await overTheSharedCatalogues(owner, async () => {
+		await owner.query(`CREATE ROLE ${name} NOLOGIN`, []);
+		await owner.query(`GRANT ${name} TO ${member.name}`, []);
+	});
+	return name;
+}
+
+/** Run after the schema is dropped and before the member role is, so the membership goes with it. */
+export async function dropThePluginRole(owner: TestConnection, name: string): Promise<void> {
+	await overTheSharedCatalogues(owner, async () => {
+		await owner.query(`DROP OWNED BY ${name} CASCADE`, []).catch(() => undefined);
+		await owner.query(`DROP ROLE IF EXISTS ${name}`, []).catch(() => undefined);
+	});
+}
