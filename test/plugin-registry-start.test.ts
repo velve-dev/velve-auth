@@ -29,6 +29,8 @@ function codeOfRefusal(plugins: readonly VelvePlugin[]): string {
 	return "the configuration started";
 }
 
+const ADDRESS_BUCKET = { capacity: 30, refillPerSecond: 1 };
+
 function routeNamed(name: string, path: string): PluginRoute<string> {
 	return {
 		name,
@@ -39,7 +41,7 @@ function routeNamed(name: string, path: string): PluginRoute<string> {
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: ADDRESS_BUCKET, perAccount: "none" },
 		handler: () => Promise.resolve(null),
 	} as PluginRoute<string>;
 }
@@ -184,5 +186,54 @@ describe("a plugin that reaches for the security middleware is refused at start 
 		});
 
 		expect(() => mount([plugin])).toThrow(VelveStartupError);
+	});
+});
+
+/**
+ * 3.11 puts the origin check and the rate limit in front of every plugin route, and S-DEFAULT-3
+ * says no option switches either off. A route that declares no address bucket was kept by the
+ * registry as declared, while the matching origin-check exemption already refused the start.
+ */
+describe("a plugin route cannot declare itself unlimited by address (S-DEFAULT-3)", () => {
+	function withRule(rateLimit: unknown, rules?: Readonly<Record<string, unknown>>): VelvePlugin {
+		return asJavaScriptPlugin({
+			id: "demo",
+			routes: [{ ...routeNamed("demo.only", "/x/demo/only"), rateLimit }],
+			...(rules === undefined ? {} : { rateLimitRules: rules }),
+		});
+	}
+
+	it("refuses a route that declares no bucket at all", () => {
+		expect(codeOfRefusal([withRule({ perIpAddress: "none", perAccount: "none" })])).toBe(
+			"plugin_route_without_address_rate_limit",
+		);
+	});
+
+	it("refuses a route whose only bucket is the account one", () => {
+		const accountOnly = {
+			perIpAddress: "none",
+			perAccount: { capacity: 5, refillPerSecond: 0.01 },
+		};
+
+		expect(codeOfRefusal([withRule(accountOnly)])).toBe("plugin_route_without_address_rate_limit");
+	});
+
+	it("refuses a rateLimitRules entry that replaces the address bucket with none", () => {
+		const declared = { perIpAddress: ADDRESS_BUCKET, perAccount: "none" };
+		const replaced = { "demo.only": { perIpAddress: "none", perAccount: "none" } };
+
+		expect(codeOfRefusal([withRule(declared, replaced)])).toBe(
+			"plugin_route_without_address_rate_limit",
+		);
+	});
+
+	it("refuses a route that leaves the rule out, as a JavaScript plugin can", () => {
+		expect(codeOfRefusal([withRule(undefined)])).toBe("plugin_route_without_address_rate_limit");
+	});
+
+	it("starts a route with an address bucket and no account bucket", () => {
+		expect(codeOfRefusal([withRule({ perIpAddress: ADDRESS_BUCKET, perAccount: "none" })])).toBe(
+			"the configuration started",
+		);
 	});
 });

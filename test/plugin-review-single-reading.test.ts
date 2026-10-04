@@ -43,7 +43,7 @@ function routeCountingItsReads(counts: Map<string, number>): Readonly<Record<str
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: () => Promise.resolve({ seen: true }),
 	};
 	const spied: Record<string, unknown> = {};
@@ -126,7 +126,7 @@ describe("what the start reads of the plugin list (S-CSRF-6)", () => {
 			caller: "anonymous",
 			freshness: "not_required",
 			originCheck: "checked",
-			rateLimit: { perIpAddress: "none", perAccount: "none" },
+			rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 			handler: () => Promise.resolve({ seen: true }),
 		};
 

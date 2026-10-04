@@ -18,6 +18,7 @@ type StartupErrorCode =
 	| "plugin_field_unknown"
 	| "plugin_route_reads_a_core_cookie"
 	| "plugin_route_exempts_the_origin_check"
+	| "plugin_route_without_address_rate_limit"
 	| "plugin_table_prefix_conflict"
 	| "plugin_migration_table_not_prefixed"
 	| "plugin_error_code_not_namespaced"
@@ -51,6 +52,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes that read __Host-velve_pending and a plugin route is not one of them',
 	plugin_route_exempts_the_origin_check:
 		'a plugin route declares an originCheck other than "checked"; S-CSRF-1 leaves the OAuth callback as the only route without it, and exempting one is how a plugin bypasses it (S-CSRF-6)',
+	plugin_route_without_address_rate_limit:
+		'a plugin route declares perIpAddress "none" or no usable address bucket; 3.11 puts the rate limit in front of every plugin route and S-DEFAULT-3 leaves no option that switches it off',
 	plugin_table_prefix_conflict:
 		"one plugin id is the table prefix of another, so a table would belong to both of them (S-DEFAULT-5)",
 	plugin_migration_table_not_prefixed:

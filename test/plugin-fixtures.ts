@@ -41,7 +41,7 @@ export function createContextProbe(options: { readonly path?: string } = {}): Co
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: (_input: unknown, context: RequestContext) => {
 			calls.push({ route: "demo.echo", context });
 			return Promise.resolve({ seen: true });

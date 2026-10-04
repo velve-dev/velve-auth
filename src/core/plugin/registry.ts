@@ -333,6 +333,28 @@ function assertNoRouteExemptsItselfFromTheOriginCheck(plugin: VelvePlugin): void
 	}
 }
 
+function isUsableAddressBucket(rule: unknown): boolean {
+	if (typeof rule !== "object" || rule === null) {
+		return false;
+	}
+	const { capacity, refillPerSecond } = rule as Partial<BucketRule>;
+	return (
+		Number.isFinite(capacity) &&
+		Number.isFinite(refillPerSecond) &&
+		(capacity as number) >= 0 &&
+		(refillPerSecond as number) >= 0
+	);
+}
+
+//a plugin route must never leave the address bucket out of its rule (S-DEFAULT-3)
+function assertEveryRouteIsLimitedByAddress(plugin: VelvePlugin): void {
+	for (const route of plugin.routes ?? []) {
+		if (!isUsableAddressBucket(route.rateLimit.perIpAddress)) {
+			throw new VelveStartupError("plugin_route_without_address_rate_limit");
+		}
+	}
+}
+
 function isCoreErrorCode(code: AnyErrorCode): boolean {
 	return (VELVE_ERROR_CODES as readonly string[]).includes(code);
 }
@@ -446,6 +468,7 @@ export function createPluginRuntime(options: {
 		assertEveryErrorCodeIsItsOwn(plugin);
 		assertEveryRouteErrorIsDeclared(plugin);
 		assertEveryRateLimitRuleNamesAContributedRoute(plugin);
+		assertEveryRouteIsLimitedByAddress(plugin);
 		assertEveryDeclaredTableIsItsOwn(plugin);
 	}
 	const ordered = inDependencyOrder(plugins);

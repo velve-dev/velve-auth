@@ -26,7 +26,7 @@ function throwing(code: string): PluginRoute<"quota"> {
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
-		rateLimit: { perIpAddress: "none", perAccount: "none" },
+		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: (_input: unknown, _context: RequestContext) =>
 			Promise.reject(new VelveError(code as "internal_error")),
 	} as PluginRoute<"quota">;
