@@ -1,4 +1,5 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
+import { isUsableBucketRule } from "../http/rate-limit.js";
 import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
@@ -11,6 +12,7 @@ type StartupErrorCode =
 	| "recovery_codes_required"
 	| "recovery_code_shape_unusable"
 	| "oauth_provider_incomplete"
+	| "rate_limit_bucket_unusable"
 	| "plugin_id_duplicated"
 	| "plugin_dependency_missing"
 	| "plugin_dependency_cycle"
@@ -40,6 +42,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"recoveryCodes.count and recoveryCodes.groupSize must each be a positive whole number: a count of nothing is a set with no way back in, and a group of nothing never ends",
 	oauth_provider_incomplete:
 		"a provider id that is not one of the fourteen built in needs authorizationEndpoint, tokenEndpoint and subjectClaim",
+	rate_limit_bucket_unusable:
+		'rateLimit.perIpAddress and rateLimit.perAccount must each be a bucket of a finite capacity and refill rate of at least zero; "none" would take every core route out of that bucket, and S-DEFAULT-3 leaves no option that switches the rate limit off',
 	plugin_id_duplicated: "two plugins claim the same id, so neither owns its namespace",
 	plugin_dependency_missing:
 		"a plugin declares a dependency on a plugin that is not configured, so nothing can order the two",
@@ -180,6 +184,22 @@ function assertEveryUnknownProviderCarriesItsEndpoints(oauth: unknown): void {
 	}
 }
 
+//a javascript caller can hand over the none a route rule allows and it must not reach a core route (E-2215)
+function assertEveryConfiguredBucketIsUsable(rateLimit: unknown): void {
+	if (typeof rateLimit !== "object" || rateLimit === null) {
+		return;
+	}
+	const { perIpAddress, perAccount } = rateLimit as {
+		perIpAddress?: unknown;
+		perAccount?: unknown;
+	};
+	for (const bucket of [perIpAddress, perAccount]) {
+		if (bucket !== undefined && !isUsableBucketRule(bucket)) {
+			throw new VelveStartupError("rate_limit_bucket_unusable");
+		}
+	}
+}
+
 //checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
@@ -190,6 +210,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertRecoveryCodeShapeIsUsable(config.recoveryCodes);
 	assertEmailCallbackWhereAddressesExist(config.identity.mode, config.email);
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
+	assertEveryConfiguredBucketIsUsable(config.rateLimit);
 }
 
 //a key provider that answers for no purpose protects nothing and must refuse the start

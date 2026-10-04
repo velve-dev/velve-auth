@@ -2,7 +2,7 @@ import { type RouteConflict, THE_CORE, VelveStartupError } from "../auth/startup
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
-import type { BucketRule, RateLimitRule } from "../http/rate-limit.js";
+import { type BucketRule, isUsableBucketRule, type RateLimitRule } from "../http/rate-limit.js";
 import {
 	type AnyRoute,
 	defineRoute,
@@ -333,23 +333,10 @@ function assertNoRouteExemptsItselfFromTheOriginCheck(plugin: VelvePlugin): void
 	}
 }
 
-function isUsableAddressBucket(rule: unknown): boolean {
-	if (typeof rule !== "object" || rule === null) {
-		return false;
-	}
-	const { capacity, refillPerSecond } = rule as Partial<BucketRule>;
-	return (
-		Number.isFinite(capacity) &&
-		Number.isFinite(refillPerSecond) &&
-		(capacity as number) >= 0 &&
-		(refillPerSecond as number) >= 0
-	);
-}
-
 //a plugin route must never leave the address bucket out of its rule (S-DEFAULT-3)
 function assertEveryRouteIsLimitedByAddress(plugin: VelvePlugin): void {
 	for (const route of plugin.routes ?? []) {
-		if (!isUsableAddressBucket(route.rateLimit.perIpAddress)) {
+		if (!isUsableBucketRule(route.rateLimit.perIpAddress)) {
 			throw new VelveStartupError("plugin_route_without_address_rate_limit");
 		}
 	}
