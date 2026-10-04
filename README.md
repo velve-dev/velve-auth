@@ -136,22 +136,11 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 
 ## Status
 
-**Version 1.1.0 is published.** `pnpm add @velve/auth` — that is the whole
-install, and the interface here does not change again without a major version.
-
 > **Status: 1.1.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
 > stable line and `^1.0.0` resolves. Under semver what is here is a promise:
 > nothing here changes shape without a major version. `1.1.0` added an option
 > and moved nothing. `next` keeps pointing at the last prerelease,
 > `1.0.0-next.2`, and nothing needs it.
-
-Two earlier prereleases are still on the registry and are **not** what you want:
-`1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
-does not allow a version to be withdrawn once anyone might depend on it, and
-because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
-points `latest` at a package's very first publish whatever `--tag` says, so it
-sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
-of them, because a range does not match a prerelease.
 
 **What the `1.x` line commits this package to** is the surface
 `DOCUMENTATION.md` describes: it may gain something in a minor version, and
@@ -161,6 +150,14 @@ library is newly published and has not yet been run in anger by anyone outside
 this repository. Read `CASE-STUDY.md`, which ships inside
 the package, for why the decisions that shaped it were taken, and
 [`docs/decisions/log.md`](./docs/decisions/log.md) for every one of them.
+
+Two earlier prereleases are still on the registry and are **not** what you want:
+`1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
+does not allow a version to be withdrawn once anyone might depend on it, and
+because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
+points `latest` at a package's very first publish whatever `--tag` says, so it
+sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
+of them, because a range does not match a prerelease.
 
 ## Documentation
 
