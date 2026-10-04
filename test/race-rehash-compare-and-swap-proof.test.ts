@@ -61,7 +61,7 @@ function gatingTheSwap(inner: Driver): Driver {
 	};
 }
 
-interface Process {
+interface Instance {
 	readonly connection: TestConnection;
 	readonly handler: (request: Request) => Promise<Response>;
 	readonly log: LogSink;
@@ -72,7 +72,7 @@ let schema: string;
 const instances: Instance[] = [];
 let accounts = 0;
 
-async function startInstance(): Promise<Process> {
+async function startInstance(): Promise<Instance> {
 	const connection = await openTestConnection();
 	const log = createLogSink();
 	const auth = createVelveAuth(
@@ -138,7 +138,7 @@ async function until(condition: () => boolean, what: string): Promise<void> {
 	}
 }
 
-function signIn(instance: Process, email: string, password: string): Promise<Response> {
+function signIn(instance: Instance, email: string, password: string): Promise<Response> {
 	return instance.handler(postTo("/sign-in/password", { email, password }));
 }
 
