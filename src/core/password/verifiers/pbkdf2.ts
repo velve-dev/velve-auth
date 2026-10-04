@@ -14,10 +14,14 @@ const DIGEST_BY_ID = new Map<string, { subtle: "SHA-256" | "SHA-512"; noble: CHa
 	["pbkdf2-sha512", { subtle: "SHA-512", noble: sha512 }],
 ]);
 
-export async function verifyPbkdf2(
-	password: AcceptedPassword,
-	stored: PhcString,
-): Promise<boolean> {
+interface Pbkdf2Inputs {
+	readonly digest: { subtle: "SHA-256" | "SHA-512"; noble: CHash };
+	readonly iterations: number;
+	readonly salt: Uint8Array<ArrayBuffer>;
+	readonly expected: Uint8Array<ArrayBuffer>;
+}
+
+export function readPbkdf2(stored: PhcString): Pbkdf2Inputs | null {
 	const digest = DIGEST_BY_ID.get(stored.id);
 	const iterations = integerParameter(stored, "i");
 
@@ -28,24 +32,36 @@ export async function verifyPbkdf2(
 		stored.salt === undefined ||
 		stored.hash === undefined
 	) {
+		return null;
+	}
+
+	return { digest, iterations, salt: stored.salt, expected: stored.hash };
+}
+
+export async function verifyPbkdf2(
+	password: AcceptedPassword,
+	stored: PhcString,
+): Promise<boolean> {
+	const inputs = readPbkdf2(stored);
+	if (inputs === null) {
 		return false;
 	}
 
 	const derived =
 		(await subtlePbkdf2(
-			digest.subtle,
+			inputs.digest.subtle,
 			password.bytes,
-			stored.salt,
-			iterations,
-			stored.hash.length,
+			inputs.salt,
+			inputs.iterations,
+			inputs.expected.length,
 		)) ??
-		(await pbkdf2Async(digest.noble, password.bytes, stored.salt, {
-			c: iterations,
-			dkLen: stored.hash.length,
+		(await pbkdf2Async(inputs.digest.noble, password.bytes, inputs.salt, {
+			c: inputs.iterations,
+			dkLen: inputs.expected.length,
 			asyncTick: ASYNC_TICK_IN_MILLISECONDS,
 		}));
 
-	return derivedKeysAreEqual(asDerivedKey(derived), asDerivedKey(stored.hash));
+	return derivedKeysAreEqual(asDerivedKey(derived), asDerivedKey(inputs.expected));
 }
 
 //no WASM is used for PBKDF2 as it measured 2.3 times slower here

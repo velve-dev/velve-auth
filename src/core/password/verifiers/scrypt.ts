@@ -23,10 +23,15 @@ export async function deriveScrypt(input: {
 	});
 }
 
-export async function verifyScrypt(
-	password: AcceptedPassword,
-	stored: PhcString,
-): Promise<boolean> {
+interface ScryptInputs {
+	readonly salt: Uint8Array<ArrayBuffer>;
+	readonly expected: Uint8Array<ArrayBuffer>;
+	readonly costExponent: number;
+	readonly blockSize: number;
+	readonly parallelism: number;
+}
+
+export function readScrypt(stored: PhcString, memoryCeilingKiB: number): ScryptInputs | null {
 	const costExponent = integerParameter(stored, "ln");
 	const blockSize = integerParameter(stored, "r");
 	const parallelism = integerParameter(stored, "p");
@@ -37,19 +42,32 @@ export async function verifyScrypt(
 		parallelism === null ||
 		stored.salt === undefined ||
 		stored.hash === undefined ||
-		!scryptCostIsAcceptable(costExponent, blockSize, parallelism)
+		!scryptCostIsAcceptable(costExponent, blockSize, parallelism, memoryCeilingKiB)
 	) {
+		return null;
+	}
+
+	return { salt: stored.salt, expected: stored.hash, costExponent, blockSize, parallelism };
+}
+
+export async function verifyScrypt(
+	password: AcceptedPassword,
+	stored: PhcString,
+	memoryCeilingKiB: number,
+): Promise<boolean> {
+	const inputs = readScrypt(stored, memoryCeilingKiB);
+	if (inputs === null) {
 		return false;
 	}
 
 	const derived = await deriveScrypt({
 		password: password.bytes,
-		salt: stored.salt,
-		costExponent,
-		blockSize,
-		parallelism,
-		hashBytes: stored.hash.length,
+		salt: inputs.salt,
+		costExponent: inputs.costExponent,
+		blockSize: inputs.blockSize,
+		parallelism: inputs.parallelism,
+		hashBytes: inputs.expected.length,
 	});
 
-	return derivedKeysAreEqual(asDerivedKey(derived), asDerivedKey(stored.hash));
+	return derivedKeysAreEqual(asDerivedKey(derived), asDerivedKey(inputs.expected));
 }

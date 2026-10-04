@@ -37,8 +37,11 @@ vi.mock("bcryptjs", async (importOriginal) => {
 import type { Driver } from "../src/core/db/driver.js";
 
 const { toWebHandler } = await import("../src/core/http/web-handler.js");
+const { encodeStandardBase64 } = await import("../src/core/password/base64.js");
+const { sealPhc } = await import("../src/core/password/credential.js");
+const { MAXIMUM_STORED_MEMORY_KIB } = await import("../src/core/password/limits.js");
 const { createVelveAuth } = await import("../src/index.js");
-const { configFor } = await import("./auth-fixtures.js");
+const { configFor, testKeyProvider } = await import("./auth-fixtures.js");
 const { dropSchema, openMigratedSchema } = await import("./db-fixtures.js");
 const { postTo } = await import("./flows-fixtures.js");
 const { drawTestPassword } = await import("./password-fixtures.js");
@@ -60,6 +63,7 @@ const PASSWORD = drawTestPassword();
 const WRONG_PASSWORD = drawTestPassword();
 
 const calls: Call[] = [];
+const keys = testKeyProvider();
 let opened: Opened;
 let handler: (request: Request) => Promise<Response>;
 
@@ -95,6 +99,7 @@ beforeAll(async () => {
 			configFor({
 				database: recording(opened.connection),
 				schema: opened.schema,
+				keys,
 				rateLimit: {
 					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
 					perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
@@ -108,9 +113,29 @@ beforeAll(async () => {
 	const credentialless = await handler(
 		postTo("/sign-up/passwordless", { email: "credentialless@example.com" }),
 	);
-	expect([present.status, credentialless.status]).toStrictEqual([200, 200]);
+	const overCeiling = await handler(
+		postTo("/sign-up", { email: "overceiling@example.com", password: PASSWORD }),
+	);
+	expect([present.status, credentialless.status, overCeiling.status]).toStrictEqual([
+		200, 200, 200,
+	]);
+	await storeOverTheCeiling("overceiling@example.com");
 	await handler(postTo("/sign-in/password", { email: "warmup@example.com", password: PASSWORD }));
 }, 120_000);
+
+//an import the cost ceilings refuse must cost what an absent user costs (S-TIM-2)
+async function storeOverTheCeiling(email: string): Promise<void> {
+	const filler = encodeStandardBase64(new Uint8Array(32).fill(1));
+	const sealed = await sealPhc(
+		keys,
+		`$argon2id$v=19$m=${MAXIMUM_STORED_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`,
+	);
+	await opened.connection.query(
+		`UPDATE ${opened.schema}.password_credential SET phc = $2, key_version = $3
+		 WHERE user_id = (SELECT id FROM ${opened.schema}.user WHERE email = $1)`,
+		[email, sealed.ciphertext, sealed.keyVersion],
+	);
+}
 
 afterAll(async () => {
 	await dropSchema(opened.connection, opened.schema);
@@ -126,12 +151,13 @@ async function signInAs(email: string): Promise<Observation> {
 }
 
 describe("T-TIM-1b over the mounted route — one call sequence for every identifier (S-TIM-1)", () => {
-	it("runs the same statements, parameter shapes and KDF calls in all four cases", async () => {
+	it("runs the same statements, parameter shapes and KDF calls in all five cases", async () => {
 		const cases = {
 			"existing account, wrong password": await signInAs("present@example.com"),
 			"no such account": await signInAs("absent@example.com"),
 			"account without a password credential": await signInAs("credentialless@example.com"),
 			"not an email address": await signInAs("not an email at all"),
+			"stored credential above the cost ceiling": await signInAs("overceiling@example.com"),
 		};
 		const reference = cases["existing account, wrong password"];
 
