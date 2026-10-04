@@ -13025,3 +13025,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** `link-no-address-proof` proves the requirement in mode `username`, where it can hold, and leaves `username_email` untested with the reason stated in the file.
 
 **Price.** One of the two configurations the requirement names is not proved, because the specification contradicts itself there. Either S-LINK-5 should name `username` alone or the CHECK should change, and either is the specification's change to make.
+
+<a id="e-2334"></a>
+
+### Two of E-2330's proofs are narrower than their T- cases on purpose
+`E-2334` · tests-owner-link-redir-rest · T-OWNER-2 and T-OWNER-9, revisit in the specification
+
+**Context.** E-2330 describes the S-OWNER-2 and S-OWNER-9 proofs without saying where they stop short of the wording of their T- cases, and the independent review asked for that to be stated. T-OWNER-2's second threshold reads "no `SELECT` on the same table immediately before it in the same function". T-OWNER-9 says no column of type `serial`, `bigserial`, `integer` or `bigint` is the primary key of a user-bound table.
+
+**Rejected.** (a) Implementing T-OWNER-2's second threshold as written, counting any `SELECT` on the table before any owner-less change. A version of the scan that counted any owner-less change after a `SELECT` of `user_id`, and that also expanded the functions handed to a call as arguments, reported 165 functions. Most were legitimate: session resolution reads `user_id` before a sign-out deletes by the token hash, which the secret binds rather than an id, and route factories reach both statements through the handlers they define. (b) Counting every integer column of a composite primary key in T-OWNER-9, which would flag `totp_used_step`, whose key is `(user_id, time_step)` with `time_step` a `bigint`.
+
+**Reason.** The second threshold is implemented as the shape S-OWNER-2 forbids: a `SELECT` that reads `user_id` from a table in one call, followed in a later call of the same function by a change of that table reached by its id alone with no owner predicate. A pair inside a single call, and a change bound by a hash or a secret, are not counted. The S-OWNER-9 proof checks single-column primary keys only, because a TOTP time step is a counter of the clock and not an object identifier; skipping `totp_used_step` is deliberate and not an oversight.
+
+**Price.** The proofs pass on states the literal wording of their T- cases would fail. A `SELECT` of other columns before an unbound change, or an integer column that is part of a composite key and is an identifier after all, would go unreported. Concerns `test/owner-predicate-proof.test.ts` and `test/owner-uuid-identifier-proof.test.ts`.
