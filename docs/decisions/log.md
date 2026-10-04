@@ -13148,3 +13148,83 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The second threshold is implemented as the shape S-OWNER-2 forbids: a `SELECT` that reads `user_id` from a table in one call, followed in a later call of the same function by a change of that table reached by its id alone with no owner predicate. A pair inside a single call, and a change bound by a hash or a secret, are not counted. The S-OWNER-9 proof checks single-column primary keys only, because a TOTP time step is a counter of the clock and not an object identifier; skipping `totp_used_step` is deliberate and not an oversight.
 
 **Price.** The proofs pass on states the literal wording of their T- cases would fail. A `SELECT` of other columns before an unbound change, or an integer column that is part of a composite key and is an identifier after all, would go unreported. Concerns `test/owner-predicate-proof.test.ts` and `test/owner-uuid-identifier-proof.test.ts`.
+
+<a id="e-2450"></a>
+
+### Plugin SQL runs under SET LOCAL ROLE when a plugin database role is configured
+`E-2450` · plugin-sql-role · design, S-OWNER-10
+
+**Context.** S-OWNER-10 says a plugin writes core tables only through the repositories. `ownTables.query` passed a plugin's single statement to the library's own connection after a lexical check, which E-738 calls a guardrail and not a sandbox. So the requirement rested on a tokenizer. A real bypass of that check exists and is documented: `SELECT query_to_xml('select token_sha256 from velve.session', …) FROM velve.demo_entry` names the core table only inside a literal. `test/plugin-sql-role.test.ts` showed before the change that this read returned the session table's token hashes even with a role named in the configuration, and that a `DELETE` and an `UPDATE` of `velve.session` run below the check changed the table. No lexical bypass that writes was found, so the write cases call `runAsThePluginRole` directly, below the check, to stand in for one.
+**Rejected.** (a) A start error when plugins are configured without a role. It would stop every application running a plugin today. (b) An option nested under `plugins`. `plugins` is an array of plugins, so a nested option would change its type. (c) A second driver that logs in as the plugin role. It is stronger, see E-2452, and it asks the operator for a second pool and a second credential. (d) A helper that returns the operator's `CREATE ROLE` statements. The two statements are shorter than any call that would produce them, and the library would then hold a role name it does not otherwise need. They are in `DOCUMENTATION.md`.
+**Reason.** A top-level optional `pluginDatabaseRole` is the smallest shape: one string. Each plugin statement runs in a transaction of its own that starts with `SET LOCAL ROLE`, so the role cannot outlive the statement on a pooled connection. `migrate()` grants the role `USAGE` on the schema, `SELECT`, `INSERT`, `UPDATE` and `DELETE` on each declared table that exists, and `USAGE`, `SELECT` and `UPDATE` on the sequences those tables own. It grants on every run, so a role configured after the tables were created still reaches them. The grants run after the plugin migrations, in their own transaction, outside the runner's measurements, so a grant is never read as a migration changing a table. With the role, the write cases and the smuggled read fail with SQLSTATE 42501 and the plugin's own insert, foreign key to `velve.user` included, succeeds. Without it, behaviour is unchanged and the `plugins` start line now ends by saying plugin SQL runs as the library's own role. That is a weakening in the plugins row rather than a row of its own, because the absence weakens nothing unless a plugin is configured, and `test/auth-startup.test.ts` holds each documented case to exactly one option. The `pluginDatabaseRole` row therefore says nothing weakens it and points at the plugins line. The name is refused at start when it is `none`, `public` or a `pg_` name, because `SET ROLE none` resets the role and the other two are no role a plugin should become.
+**Price.** One plugin statement costs four round trips instead of one (`BEGIN`, `SET LOCAL ROLE`, the statement, `COMMIT`) and holds a pooled connection across all four. The operator runs `CREATE ROLE … NOLOGIN` and `GRANT … TO <library role>` once, with a role that may create roles. On PostgreSQL 16 and newer the membership must not be granted `WITH SET FALSE`. The connection `migrate()` runs on must be allowed to grant on the plugin tables, which the schema-owning migration role already is. Of the three driver entry points only `@velve/auth/pg` ships a driver. `@velve/auth/postgres-js` and `@velve/auth/neon` export nothing, so their constraint was checked against what the option needs and not against code: a `transaction` that holds one connection across statements. Neon's HTTP query function sends a transaction as one non-interactive batch and cannot carry it. Neon's WebSocket `Pool` speaks the `pg` interface and can. This was not run against Neon. Only the `pg` driver and the test connection were exercised, on PostgreSQL 14.
+
+<a id="e-2451"></a>
+
+### The role is a ceiling on writes and not on reads
+`E-2451` · plugin-sql-role · residue, open
+
+**Context.** The role is set by the library's own connection, whose login role is a member of it. `set_config('role', 'none', true)` needs no privilege and returns the statement's transaction to that login role. Probed against PostgreSQL 14 as a non-superuser member: `SELECT set_config('role','none',true), query_to_xml('select * from <schema>.session', …)` returned the session rows with the plugin role set. The same reset inside a writing CTE still failed with permission denied, and `query_to_xml` over a `DELETE` failed with `DELETE is not allowed in a non-volatile function`.
+**Rejected.** Refusing `set_config` and `query_to_xml` by name in the statement check. Both can be named inside a literal that another such function executes, which is the same kind of hole as before, and a list of functions that run SQL text falls behind the server.
+**Reason.** PostgreSQL checks the tables of a statement before running it, so a reset in the middle of a statement cannot widen that statement's own writes. No built-in function runs a writing statement from text. So S-OWNER-10, which is about writing, holds with the role. Reading core tables, the token hashes and password hashes among them, does not.
+**Price.** A plugin that means harm can still read every core table with the role configured. Closing that needs a connection that logs in as the plugin role and cannot return to the library's (E-2452). A plugin can also call `set_config('role', …, false)`, which outlives the transaction on a pooled connection. That was already possible before this change with any role the library's connection can reach, and it is not addressed here.
+
+<a id="e-2452"></a>
+
+### A plugin connection that logs in as the plugin role is the stronger form and is not built
+`E-2452` · plugin-sql-role · hand-off, revisit if reads must be bounded
+
+**Context.** E-2451 leaves reads of core tables open because the session user can always reset the role.
+**Rejected.** Building a `pluginDatabase: Driver` on this branch. The owner chose `SET LOCAL ROLE` for this task, and S-OWNER-10 is about writes.
+**Reason.** A connection whose login is the plugin role has no role to return to. `set_config('role','none')` lands on the plugin role, and none of the reads in E-2451 reach a core table. It would also drop the transaction around each statement.
+**Price.** The operator would need a second pool, a second credential and a login role. Handed off as the next step if plugin reads of core tables must be bounded too.
+
+<a id="e-2453"></a>
+
+### An INSERT with a column list of more than one column is refused by the statement check
+`E-2453` · plugin-sql-role · finding, hand-off
+
+**Context.** Writing the test, `INSERT INTO <schema>.demo_entry (note, user_id) VALUES ($1, $2)` was refused with `not user_id`. `tableListAfter` keeps reading after `INTO <table>` and treats the comma inside the column list as continuing a table list, so every column after the first is checked as a table. The existing tests use a single column, `INSERT INTO demo_entry (note) VALUES ($1)`, which is why this was not seen.
+**Rejected.** Fixing it here. It is a false refusal and not a hole, and it is in the walk E-762 already says is not claimed complete.
+**Reason.** The test writes `VALUES (DEFAULT, $1, $2)` without a column list instead.
+**Price.** A plugin cannot name two or more columns in an `INSERT` through `ownTables.query`. That is missing from the documented list of known false refusals. Handed off.
+
+<a id="e-2454"></a>
+
+### The statement check refuses set_config and the functions that run SQL text
+`E-2454` · plugin-sql-role · design, supersedes the reasoning of E-2451
+
+**Context.** E-2451 rejected refusing `set_config` and `query_to_xml` by name. It argued that both can be named inside a literal that another such function executes, so the same hole would remain. The review showed that reason was wrong. To execute a literal at all, a statement must call one of these functions by name outside a literal, and that call is what the check sees. A literal holding the words is data. The review also found a second effect E-2451 had noted and dismissed: `SELECT set_config('role', '<plugin role>', false)` outlives the transaction. The library's next statement on that pooled connection then ran as the plugin role. `test/plugin-review-sql-role.test.ts` showed both, together with the read through a role reset that E-2451 left open.
+**Rejected.** (a) Running `RESET ROLE` after every plugin statement. It costs a fifth round trip, and it closes the leak but not the read. (b) Keeping E-2451's position that the role bounds writes only. The read reaches token and password hashes, and the cost of refusing it is one name list.
+**Reason.** `set_config`, `query_to_xml`, `query_to_xmlschema`, `query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema`, `ts_stat`, `ts_rewrite`, `dblink` and `dblink_exec` are refused wherever the name stands as code: plain, qualified, quoted or in upper case. The quoted spelling is covered because the reader already turns a quoted identifier into its bare name. `SET` and `RESET` are refused already by the leading-word rule, so with `set_config` gone a single plugin statement has no way to change the role. That is what lets the connection return to the pool as the library's own role. E-2451 is not edited. Its probe results stand and only its reasoning is superseded here.
+**Price.** The list is a list. A function PostgreSQL or an extension adds that runs SQL text, together with a way back to the login role, reopens the read, though not the write. Any call of `set_config` is now refused, a harmless one included. The smuggled-read case in `test/plugin-sql-role.test.ts` is sent below the check through `runAsThePluginRole`, because the check now refuses it before the database sees it.
+
+<a id="e-2455"></a>
+
+### A bracketed group in a table list is skipped to its matching bracket
+`E-2455` · plugin-sql-role · fix of E-2453
+
+**Context.** E-2453 found that `INSERT INTO t (note, user_id)` was refused, because the comma in the column list continued the table list.
+**Rejected.** Ending the table list at `(`. The review pointed out that `FROM t x(a, b), other` would then stop before `other`, and `other` would go unchecked by the position rule.
+**Reason.** While the walk is not expecting a table, a `(` is skipped to its matching `)`, and the list continues after it. A column list and an alias column list are both passed over, and a comma after the group still opens the next table position. Every token inside the group is still read by Rule 1, because the outer loop visits every position.
+**Price.** A group that never closes is skipped to the end of the statement, and only Rule 1 reads its contents. Such a statement is refused by PostgreSQL anyway.
+
+<a id="e-2456"></a>
+
+### The grant looks up and grants each declared table on its own
+`E-2456` · plugin-sql-role · fix of E-2450
+
+**Context.** E-2450's grant joined the declared names with commas and split them again with `string_to_array`. `migrate()` reads `createsTables` from the configuration on every run, and an applied migration's checksum covers its SQL only. The review showed that a declaration changed to `demo_entry,session` after the table existed gave the plugin role `DELETE` on `velve.session`.
+**Rejected.** A `text[]` parameter, which the review asked for. The test connection encodes no arrays, and a lookup per name leaves nothing to split.
+**Reason.** Each declared name must pass `assertIdentifier`, carry its plugin's prefix and name no core table. Otherwise `migrate()` fails with `InvalidIdentifierError`. The prefix check alone is not enough, because a plugin called `one` carries the prefix of `one_time_token` (E-918). Each name is looked up, and its table and owned sequences are granted, in a statement of its own.
+**Price.** Two catalogue reads per declared table on every `migrate()` run instead of two in all. A plugin whose configuration declares a malformed name now fails `migrate()` when the role is set, where before nothing read the name after its first run.
+
+<a id="e-2457"></a>
+
+### The migration runner joins declared names with commas the same way
+`E-2457` · plugin-sql-role · hand-off, finding
+
+**Context.** `OBJECTS_OF_THE_DECLARED_TABLES` in `src/core/db/migration-runner.ts` reads `child.relname = ANY(string_to_array($2, ','))` over `declared.join(",")`. That is the pattern E-2456 removed from the grant. There, a declared name containing a comma counts a core table as the plugin's own when the runner decides what a migration may touch.
+**Rejected.** Fixing it on this branch. The runner is not in this feature's file set.
+**Reason.** Reported as the review asked.
+**Price.** Until someone fixes it, a declaration such as `audit_x,session` may widen what the runner treats as owned. Handed off.

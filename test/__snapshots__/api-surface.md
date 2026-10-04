@@ -446,6 +446,8 @@ interface BaseConfig<M extends IdentityMode> {
   readonly oauth?: OAuthConfig;
   readonly origins: readonly string[];
   readonly password?: PasswordConfig;
+  /** the PostgreSQL role every plugin statement is switched to, holding rights on the plugins' own tables only */
+  readonly pluginDatabaseRole?: string;
   readonly plugins?: readonly VelvePlugin[];
   readonly rateLimit?: Partial<RateLimitConfig>;
   readonly schema?: string;

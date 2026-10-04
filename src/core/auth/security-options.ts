@@ -88,7 +88,15 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 	{
 		option: "plugins",
 		safeDefault: "[]",
-		weakenedBy: "any entry, because a hook can refuse a sign-in the core would have allowed",
+		weakenedBy:
+			"any entry, because a hook can refuse a sign-in the core would have allowed; the line also says whether plugin SQL runs as pluginDatabaseRole or as the library's own role",
+	},
+	{
+		option: "pluginDatabaseRole",
+		safeDefault:
+			"no default: without it plugin SQL runs as the library's own role, bounded by the statement check alone (E-738)",
+		weakenedBy:
+			"nothing: leaving it out is reported in the plugins line, the one option that gives a plugin SQL to run",
 	},
 	{
 		option: "webauthn",
@@ -157,6 +165,13 @@ function userVerificationOf(config: ObservedConfig): string {
 	return config.webauthn?.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION;
 }
 
+//plugin sql without a role reaches the core tables with the library's own rights (S-OWNER-10)
+function pluginSqlRoleOf(config: ObservedConfig): string {
+	return config.pluginDatabaseRole === undefined
+		? "plugin SQL runs as the library's own role, as no pluginDatabaseRole is set"
+		: `plugin SQL runs as role ${config.pluginDatabaseRole}`;
+}
+
 //one detector per option, so a new option adds a row rather than a branch
 const DETECTORS: readonly Detector[] = [
 	(_config, { session }) => {
@@ -215,7 +230,10 @@ const DETECTORS: readonly Detector[] = [
 
 	(config) =>
 		config.plugins !== undefined && config.plugins.length > 0
-			? { option: "plugins", chosen: config.plugins.map((plugin) => plugin.id).join(", ") }
+			? {
+					option: "plugins",
+					chosen: `${config.plugins.map((plugin) => plugin.id).join(", ")}; ${pluginSqlRoleOf(config)}`,
+				}
 			: null,
 
 	(config) =>

@@ -1,6 +1,7 @@
 import type { Driver } from "../db/driver.js";
 import { assertIdentifier, assertSchemaName } from "../db/identifier.js";
 import { coreTableNameSet, namesTableOfPlugin } from "../db/migrations/index.js";
+import { runAsThePluginRole } from "./database-role.js";
 
 class ForeignTableError extends Error {
 	readonly code = "plugin_table_not_its_own";
@@ -18,6 +19,20 @@ const WRITES_THROUGH_A_NAMED_TABLE = /^update$/;
 //the words that close a table list are not claimed complete (E-762)
 const CLOSES_A_TABLE_LIST =
 	/^(?:where|group|order|having|limit|offset|fetch|window|on|set|select|returning|union|intersect|except|values|for|as|with|do|and|or|not)$/;
+
+//a function that leaves the plugin role or runs sql text must be refused by its name (E-2454)
+const LEAVES_THE_ROLE_OR_RUNS_TEXT = new Set([
+	"set_config",
+	"query_to_xml",
+	"query_to_xmlschema",
+	"query_to_xml_and_xmlschema",
+	"cursor_to_xml",
+	"cursor_to_xmlschema",
+	"ts_stat",
+	"ts_rewrite",
+	"dblink",
+	"dblink_exec",
+]);
 
 const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const IDENTIFIER_OR_QUALIFIED = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/;
@@ -149,6 +164,13 @@ function namesACoreTable(token: string, coreTables: ReadonlySet<string>): boolea
 		.some((part) => coreTables.has(part));
 }
 
+function namesAnEscapingFunction(token: string): boolean {
+	return token
+		.toLowerCase()
+		.split(".")
+		.some((part) => LEAVES_THE_ROLE_OR_RUNS_TEXT.has(part));
+}
+
 function refuse(pluginId: string, schema: string, what: string): never {
 	throw new ForeignTableError(
 		`plugin ${pluginId} may reach tables named ${pluginId}_… in schema ${schema} and no others, not ${what}`,
@@ -177,6 +199,18 @@ function targetAt(tokens: readonly string[], index: number): { name: string; nex
 		: { name: token, next: index + 1 };
 }
 
+//a column list or alias list is skipped whole and never read as a table list (E-2455)
+function afterTheMatchingBracket(tokens: readonly string[], open: number): number {
+	let depth = 0;
+	for (let index = open; index < tokens.length; index += 1) {
+		depth += tokens[index] === "(" ? 1 : tokens[index] === ")" ? -1 : 0;
+		if (depth === 0) {
+			return index + 1;
+		}
+	}
+	return tokens.length;
+}
+
 //every entry of a comma separated table list must count as a table position (E-762)
 function tableListAfter(tokens: readonly string[], position: number): readonly string[] {
 	const targets: string[] = [];
@@ -188,6 +222,10 @@ function tableListAfter(tokens: readonly string[], position: number): readonly s
 			targets.push(target.name);
 			expectingATable = false;
 			index = target.next;
+			continue;
+		}
+		if (tokens[index] === "(") {
+			index = afterTheMatchingBracket(tokens, index);
 			continue;
 		}
 		expectingATable = tokens[index] === ",";
@@ -231,6 +269,9 @@ function assertEveryTokenIsTheirs(
 		if (namesACoreTable(token, coreTables) || namesTheCoreSchema(token, pluginId, schema)) {
 			refuse(pluginId, schema, token);
 		}
+		if (namesAnEscapingFunction(token)) {
+			refuse(pluginId, schema, `the function ${token}`);
+		}
 		if (opensATableList(tokens, position)) {
 			for (const target of tableListAfter(tokens, position)) {
 				assertTargetIsTheirs(target, pluginId, schema);
@@ -262,6 +303,7 @@ export function createOwnTables(options: {
 	readonly driver: Driver;
 	readonly schema: string;
 	readonly pluginId: string;
+	readonly databaseRole?: string;
 }): OwnTables {
 	const schema = assertSchemaName(options.schema);
 	const pluginId = assertIdentifier(options.pluginId);
@@ -270,7 +312,10 @@ export function createOwnTables(options: {
 	return Object.freeze({
 		query: async <Row>(sql: string, params: readonly unknown[]): Promise<Row[]> => {
 			assertEveryTableCarriesThePluginPrefix(sql, pluginId, schema, coreTables);
-			return options.driver.query<Row>(sql, [...params]);
+			//without a role the statement check is the only bound (E-2450)
+			return options.databaseRole === undefined
+				? options.driver.query<Row>(sql, [...params])
+				: runAsThePluginRole<Row>(options.driver, options.databaseRole, sql, params);
 		},
 	});
 }
