@@ -5,7 +5,12 @@ import { createArgon2idHash } from "../src/core/password/argon2.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
-import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import {
+	actorOfTestUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
 import { postTo } from "./flows-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword } from "./password-fixtures.js";
@@ -75,7 +80,12 @@ async function createAccounts(prefix: string, sealedUnder: typeof staleKeys, phc
 			[email],
 		);
 		const userId = (row as { id: string }).id;
-		await credentials.write({ userId, phc, scheme: "argon2id", setBySessionId: null });
+		await credentials.write({
+			actor: actorOfTestUser(userId),
+			phc,
+			scheme: "argon2id",
+			setBySessionId: null,
+		});
 		accounts.push({ email, userId });
 	}
 	return accounts;

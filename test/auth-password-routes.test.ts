@@ -13,7 +13,7 @@ import {
 	TEST_ORIGIN,
 	testKeyProvider,
 } from "./auth-fixtures.js";
-import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { difference, normalisedAnswer, postTo } from "./flows-fixtures.js";
 import { storedHashesFor } from "./password-fixtures.js";
@@ -650,7 +650,7 @@ describe("every refusal of the real sign-in answers alike (S-ENUM-1)", () => {
 
 		const legacy = await accountWith("legacy@example.com");
 		await createPasswordCredentialRepository({ driver: connection, keys, schema }).write({
-			userId: legacy,
+			actor: actorOfTestUser(legacy),
 			phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,
 			scheme: "bcrypt",
 			setBySessionId: null,

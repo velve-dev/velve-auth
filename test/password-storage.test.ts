@@ -11,7 +11,12 @@ import {
 import { parsePhc } from "../src/core/password/phc.js";
 import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import { checkPassword, createDummyCredential, setPassword } from "../src/core/password/verify.js";
-import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import {
+	actorOfTestUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
 
@@ -77,7 +82,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 
 			const scheme = prefix.startsWith("$2") ? "bcrypt" : prefix.slice(1, -1);
 			await credentials.write({
-				userId,
+				actor: actorOfTestUser(userId),
 				phc,
 				scheme: scheme as PasswordCredentialRow["scheme"],
 				setBySessionId: null,
@@ -108,7 +113,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 	it("leaves no column of the schema carrying the PHC string in any of three encodings", async () => {
 		const userId = await createUser("dump");
 		await credentials.write({
-			userId,
+			actor: actorOfTestUser(userId),
 			phc: stored.byScheme.argon2id,
 			scheme: "argon2id",
 			setBySessionId: null,
@@ -167,7 +172,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 	it("refuses the ciphertext under a different root key rather than answering wrongly", async () => {
 		const userId = await createUser("wrongkey");
 		await credentials.write({
-			userId,
+			actor: actorOfTestUser(userId),
 			phc: stored.byScheme.argon2id,
 			scheme: "argon2id",
 			setBySessionId: null,
@@ -213,7 +218,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 		});
 
 		await rotatedCredentials.write({
-			userId,
+			actor: actorOfTestUser(userId),
 			phc: stored.byScheme.argon2id,
 			scheme: "argon2id",
 			setBySessionId: null,
@@ -236,7 +241,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 	it("replaces a legacy credential after a correct sign-in and only then", async () => {
 		const userId = await createUser("rehash");
 		await credentials.write({
-			userId,
+			actor: actorOfTestUser(userId),
 			phc: stored.byScheme.bcrypt,
 			scheme: "bcrypt",
 			setBySessionId: null,
@@ -279,7 +284,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 	it("loses to a password the user changed while it was running", async () => {
 		const userId = await createUser("race");
 		await credentials.write({
-			userId,
+			actor: actorOfTestUser(userId),
 			phc: stored.byScheme.bcrypt,
 			scheme: "bcrypt",
 			setBySessionId: null,
@@ -299,7 +304,10 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 			throw new Error("a bcrypt credential must ask to be rehashed");
 		}
 
-		await setPassword({ userId, plaintext: WRONG_PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(userId), plaintext: WRONG_PASSWORD, setBySessionId: null },
+			environment,
+		);
 		const chosen = await readRaw(userId);
 
 		expect(await check.rehash()).toBe(false);
@@ -312,7 +320,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 	it("lets exactly one of eight concurrent rehashes win", async () => {
 		const userId = await createUser("concurrent");
 		await credentials.write({
-			userId,
+			actor: actorOfTestUser(userId),
 			phc: stored.byScheme.bcrypt,
 			scheme: "bcrypt",
 			setBySessionId: null,

@@ -40,7 +40,8 @@ type ExceptionClass =
 	| "pending resolution"
 	| "provider subject"
 	| "maintenance or start-up"
-	| "shipped surface";
+	| "shipped surface"
+	| "created with its account";
 
 /** The reasons a method may reach an owned table without a proof, each one a narrowing of
  * S-OWNER-1 that E-242 began and the decision log records class by class. */
@@ -61,6 +62,8 @@ const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 		"the method reaches every owner at once by a deadline or a catalogue, never one owner (E-2426)",
 	"shipped surface":
 		"the only caller is a shipped declaration that takes a user id, which this requirement may not change (E-737, E-2427)",
+	"created with its account":
+		"the account row was inserted by the same transaction, so no other caller can own it yet (E-2428)",
 };
 
 const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
@@ -98,6 +101,8 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 
 	"src/core/password/credential.ts#createPasswordCredentialRepository.findByUserId":
 		"credential under verification",
+	"src/core/password/credential.ts#createPasswordCredentialRepository.writeForCreatedAccount":
+		"created with its account",
 	"src/core/password/credential.ts#createPasswordCredentialRepository.replaceIfUnchanged":
 		"credential under verification",
 	"src/core/factor/recovery/repository.ts#createRecoveryCodeRepository.pepperVersionsOf":

@@ -9,7 +9,7 @@ import type { IdentifierRejection, IdentityColumns } from "../identity/columns.j
 import { identityColumns } from "../identity/columns.js";
 import { randomBytes } from "../token/random.js";
 import { type MintedArtefact, mintArtefact, sendOrUndo } from "./artefact.js";
-import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
+import { type DerivedPassword, derivePassword, writePasswordOfCreatedAccount } from "./credential.js";
 import { type FlowEnvironment, observedIn } from "./environment.js";
 
 interface SignUpAttempt {
@@ -100,7 +100,7 @@ async function register(
 			observed: observedIn(context),
 		});
 		if (derived !== null) {
-			await writePassword(
+			await writePasswordOfCreatedAccount(
 				{ driver: transaction, keys, schema },
 				{ userId: created.id, derived, setBySessionId: issued.session.id },
 			);

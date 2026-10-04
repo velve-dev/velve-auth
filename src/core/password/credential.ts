@@ -1,3 +1,4 @@
+import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import {
@@ -40,15 +41,20 @@ export async function openPhc(keys: KeyProvider, row: PasswordCredentialRow): Pr
 	);
 }
 
-export interface PasswordCredentialRepository {
-	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
+interface PasswordCredentialWrite {
+	phc: string;
+	scheme: PasswordScheme;
 	//setBySessionId is never defaulted or a later first confirmation drops the password (E-626)
-	write(input: {
-		userId: string;
-		phc: string;
-		scheme: PasswordScheme;
-		setBySessionId: string | null;
-	}): Promise<void>;
+	setBySessionId: string | null;
+}
+
+export interface PasswordCredentialRepository {
+	//a sign-in has no proof yet as the row read here is what the proof is made from (E-2423)
+	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
+	findOwnedBy(input: { readonly actor: Actor }): Promise<PasswordCredentialRow | null>;
+	write(input: { actor: Actor } & PasswordCredentialWrite): Promise<void>;
+	//the account row was inserted by the same transaction so no other caller can own it (E-2428)
+	writeForCreatedAccount(input: { userId: string } & PasswordCredentialWrite): Promise<void>;
 	replaceIfUnchanged(input: {
 		userId: string;
 		previous: Uint8Array<ArrayBuffer>;
@@ -84,45 +90,56 @@ export function createPasswordCredentialRepository(
 		PASSWORD_CREDENTIAL_TABLE,
 	);
 
+	async function findOne(ownerId: string): Promise<PasswordCredentialRow | null> {
+		const [row] = await options.driver.query<RawRow>(
+			`SELECT user_id, phc, key_version, scheme FROM ${table} WHERE user_id = $1`,
+			[ownerId],
+		);
+
+		return row === undefined
+			? null
+			: {
+					userId: row.user_id,
+					phc: row.phc,
+					keyVersion: row.key_version,
+					scheme: row.scheme,
+				};
+	}
+
+	async function writeOwnedBy(
+		ownerId: string,
+		{ phc, scheme, setBySessionId }: PasswordCredentialWrite,
+	): Promise<void> {
+		assertSchemeMatchesCredential(phc, scheme);
+		const sealed = await sealPhc(options.keys, phc);
+
+		//the conflict is on the owner column and the predicate says so explicitly (S-OWNER-2)
+		const written = await options.driver.query(
+			`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (user_id) DO UPDATE
+			 SET phc = EXCLUDED.phc, key_version = EXCLUDED.key_version,
+			     scheme = EXCLUDED.scheme, set_by_session_id = EXCLUDED.set_by_session_id,
+			     updated_at = now()
+			 WHERE credential.user_id = $1
+			 RETURNING user_id`,
+			[ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
+		);
+
+		//a false conflict predicate writes nothing and must not be reported as stored (E-185)
+		if (written.length !== 1) {
+			throw new CredentialWriteError("credential_not_written");
+		}
+	}
+
 	return {
-		async findByUserId(userId) {
-			const [row] = await options.driver.query<RawRow>(
-				`SELECT user_id, phc, key_version, scheme FROM ${table} WHERE user_id = $1`,
-				[userId],
-			);
+		findByUserId: findOne,
 
-			return row === undefined
-				? null
-				: {
-						userId: row.user_id,
-						phc: row.phc,
-						keyVersion: row.key_version,
-						scheme: row.scheme,
-					};
-		},
+		findOwnedBy: ({ actor }) => findOne(actor),
 
-		async write({ userId, phc, scheme, setBySessionId }) {
-			assertSchemeMatchesCredential(phc, scheme);
-			const sealed = await sealPhc(options.keys, phc);
+		write: ({ actor, ...credential }) => writeOwnedBy(actor, credential),
 
-			//the conflict is on the owner column and the predicate says so explicitly (S-OWNER-2)
-			const written = await options.driver.query(
-				`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
-				 VALUES ($1, $2, $3, $4, $5)
-				 ON CONFLICT (user_id) DO UPDATE
-				 SET phc = EXCLUDED.phc, key_version = EXCLUDED.key_version,
-				     scheme = EXCLUDED.scheme, set_by_session_id = EXCLUDED.set_by_session_id,
-				     updated_at = now()
-				 WHERE credential.user_id = $1
-				 RETURNING user_id`,
-				[userId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
-			);
-
-			//a false conflict predicate writes nothing and must not be reported as stored (E-185)
-			if (written.length !== 1) {
-				throw new CredentialWriteError("credential_not_written");
-			}
-		},
+		writeForCreatedAccount: ({ userId, ...credential }) => writeOwnedBy(userId, credential),
 
 		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)
 		async replaceIfUnchanged({ userId, previous, phc, scheme }) {

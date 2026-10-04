@@ -28,6 +28,7 @@ import {
 	type PasswordEnvironment,
 	setPassword,
 } from "../src/core/password/verify.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
 
@@ -160,7 +161,10 @@ function callShapes(): string[] {
 
 describe("the stored credential", () => {
 	it("writes the PHC string encrypted and the scheme in the clear", async () => {
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			environment,
+		);
 		const row = recorder.rows.get(USER_ID);
 
 		expect(row?.scheme).toBe("argon2id");
@@ -185,7 +189,10 @@ describe("the stored credential", () => {
 		};
 
 		await expect(
-			setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, deaf),
+			setPassword(
+				{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+				deaf,
+			),
 		).rejects.toMatchObject({ code: NOT_WRITTEN });
 		expect(recorder.rows.get(USER_ID)).toBeUndefined();
 	}, 30_000);
@@ -195,7 +202,7 @@ describe("the stored credential", () => {
 	it("refuses a scheme column that disagrees with the credential it is written with", async () => {
 		await expect(
 			environment.credentials.write({
-				userId: USER_ID,
+				actor: actorOfTestUser(USER_ID),
 				phc: stored.byScheme.argon2i,
 				scheme: "argon2id",
 				setBySessionId: null,
@@ -204,7 +211,7 @@ describe("the stored credential", () => {
 
 		await expect(
 			environment.credentials.write({
-				userId: USER_ID,
+				actor: actorOfTestUser(USER_ID),
 				phc: "not a stored hash at all",
 				scheme: "argon2id",
 				setBySessionId: null,
@@ -213,7 +220,10 @@ describe("the stored credential", () => {
 	});
 
 	it("cannot be read with the key of another purpose", async () => {
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			environment,
+		);
 		const row = recorder.rows.get(USER_ID) as PasswordCredentialRow;
 		const otherKeys = rootKeyProvider({
 			currentVersion: 1,
@@ -403,7 +413,7 @@ describe("needsRehash and the silent rehash", () => {
 		}
 
 		await setPassword(
-			{ userId: USER_ID, plaintext: WRONG_PASSWORD, setBySessionId: null },
+			{ actor: actorOfTestUser(USER_ID), plaintext: WRONG_PASSWORD, setBySessionId: null },
 			environment,
 		);
 		const chosen = recorder.rows.get(USER_ID);
@@ -421,7 +431,10 @@ describe("needsRehash and the silent rehash", () => {
 			...environment,
 			config: resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID }),
 		};
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, strong);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			strong,
+		);
 
 		const settled = await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, strong);
 		expect(settled).toEqual({ outcome: "verified", userId: USER_ID });
@@ -454,7 +467,10 @@ describe("the key ring is checked at startup, not per sign-in", () => {
 	}
 
 	it("passes when every stored version is in the ring", async () => {
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			environment,
+		);
 
 		await expect(
 			assertStoredKeyVersionsAreKnown({ driver: recorder.driver, keys: environment.keys }),
@@ -475,7 +491,10 @@ describe("the key ring is checked at startup, not per sign-in", () => {
 	});
 
 	it("names every version the ring no longer holds", async () => {
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			environment,
+		);
 
 		const failure = await assertStoredKeyVersionsAreKnown({
 			driver: recorder.driver,
@@ -488,7 +507,10 @@ describe("the key ring is checked at startup, not per sign-in", () => {
 	}, 30_000);
 
 	it("refuses the sign-in without throwing when the check was skipped", async () => {
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			environment,
+		);
 		const blinded: PasswordEnvironment = { ...environment, keys: await keysWithout([1]) };
 
 		expect(await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, blinded)).toEqual({
@@ -502,7 +524,10 @@ describe("the key ring is checked at startup, not per sign-in", () => {
 	}, 60_000);
 
 	it("costs one decryption attempt whether the key is there or not", async () => {
-		await setPassword({ userId: USER_ID, plaintext: PASSWORD, setBySessionId: null }, environment);
+		await setPassword(
+			{ actor: actorOfTestUser(USER_ID), plaintext: PASSWORD, setBySessionId: null },
+			environment,
+		);
 		const attempts: number[] = [];
 
 		for (const missing of [[], [1]]) {
