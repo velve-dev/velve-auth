@@ -5937,7 +5937,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_error_code_undeclared` | A route names a namespaced code in `errors` that `errorCodes` does not declare. |
 | `plugin_rate_limit_rule_unmatched` | A `rateLimitRules` key names no route this plugin contributes. |
 | `plugin_database_and_role_both_set` | `pluginDatabase` and `pluginDatabaseRole` are both set. Each one says where plugin SQL runs, and neither is allowed to override the other without a word (E-2642). |
-| `plugin_database_reaches_the_core` | The login `pluginDatabase` connects as is the library's role, can become it, is a member of the role that owns the schema, or holds a right on a core table through any role it can become — a superuser included. Raised by `migrate()`, and by the first plugin statement of an instance whose `migrate()` never ran (E-2641). |
+| `plugin_database_reaches_the_core` | The login `pluginDatabase` connects as is the library's role, can become it, or can become a role that owns the schema, may create roles (`CREATEROLE`), may create objects in the core schema or in `public`, or holds a right on a core table or on any column of one — a superuser included. Raised by `migrate()`, and by a plugin statement whenever the check is asked again (E-2641, E-2646, E-2647). |
 | `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
 | `route_name_segment_reserved` | A route name has a segment every object already carries — `__proto__`, `constructor` or `prototype`. |
 
@@ -6837,7 +6837,14 @@ application's, not something the library looks up.
 ```sql
 CREATE ROLE velve_plugins LOGIN PASSWORD '<generated>';
 GRANT CONNECT ON DATABASE <database> TO velve_plugins;
+-- PostgreSQL 14 only; 15 and newer already ship it this way
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 ```
+
+The role is created without `CREATEROLE`. On PostgreSQL 14 every role may
+create objects in `public` until that grant is revoked, and an object there can
+shadow a function or an operator a core statement resolves, so a plugin login
+that may create in `public` or in the core schema is refused.
 
 **Do not grant it membership in the library's role**, directly or through
 another role, and do not give it any right on a core table: either would let it
@@ -6849,18 +6856,28 @@ on their sequences — the same grants `pluginDatabaseRole` gets, given to the
 role `pluginDatabase` logs in as. Unlike `pluginDatabaseRole`, the library's
 role needs no membership in the plugin role, because nothing switches to it.
 
-**It is checked once, at `migrate()`.** After the core and plugin migrations
-have applied and before anything is granted, one statement on each connection
-asks: what is the library's login (`SELECT current_user` on `database`), and on
-`pluginDatabase`, whether its login is that role or can become it
-(`pg_has_role(current_user, <library role>, 'MEMBER')`), whether it can become the
-role that owns the schema, and whether any role it can become — itself included —
-holds any right on a core table. `pg_has_role` answers true for a superuser, and
-`has_table_privilege` counts `PUBLIC` grants and predefined roles such as
-`pg_read_all_data`, so all of those are refused. Any yes refuses the start with
-`plugin_database_reaches_the_core`. An instance whose `migrate()` never ran
-asks the same before its first plugin statement and remembers only a pass. The
-role's name must be a lowercase unquoted identifier, as for
+**It is checked at every `migrate()`, and again every five minutes.** After the
+core and plugin migrations have applied and before anything is granted, one
+statement on each connection asks: what is the library's login
+(`SELECT current_user` on `database`), and on `pluginDatabase`, whether its
+login is that role or can become it
+(`pg_has_role(current_user, <library role>, 'MEMBER')`), and whether any role it
+can become — itself included — owns the schema, holds `CREATEROLE`, holds
+`CREATE` on the core schema or on `public`, or holds any right on a core table
+(`has_table_privilege`) or on any column of one (`has_any_column_privilege`).
+`pg_has_role` answers true for a superuser, and both privilege functions count
+`PUBLIC` grants and predefined roles such as `pg_read_all_data`, so all of those
+are refused. Any yes refuses the start with `plugin_database_reaches_the_core`.
+
+The same statement also counts the core tables it found. A check that does not
+find all of them measured nothing, so it does not pass: a plugin statement on
+an instance whose schema has not been migrated is refused with
+`plugin_database_unchecked` until `migrate()` has run — on this instance or by a
+separate job. A pass is remembered for five minutes on the instance's clock;
+the next plugin statement after that asks again before it runs. **A grant made
+after a check is seen at the next `migrate()` or within five minutes, not
+before**: the check reads the catalogue as it stands and does not watch it.
+The role's name must be a lowercase unquoted identifier, as for
 `pluginDatabaseRole`, or `migrate()` fails with `InvalidIdentifierError`.
 
 **Setting both options is a start error**, `plugin_database_and_role_both_set`.
