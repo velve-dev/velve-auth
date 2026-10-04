@@ -43,6 +43,18 @@ WHERE owned.id = $1
 RETURNING owned.id`;
 }
 
+const UNIQUE_VIOLATION = "23505";
+
+//an address another change took after the check must answer as a taken one does (S-ENUM-5)
+function refuseAnAddressTakenMeanwhile(cause: unknown): never {
+	const fields = typeof cause === "object" && cause !== null ? cause : {};
+	const { code, sqlState } = fields as { readonly code?: unknown; readonly sqlState?: unknown };
+	if (code === UNIQUE_VIOLATION || sqlState === UNIQUE_VIOLATION) {
+		throw new ConcealedError("email_taken_on_change");
+	}
+	throw cause;
+}
+
 //the deletion is unconditional as a guard would spare a pre-registered account (S-LINK-4)
 export async function confirmAddress(input: AddressConfirmation): Promise<ConfirmationOutcome> {
 	//the account row is locked first to order this against a password replacement (E-1602)
@@ -53,10 +65,9 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 	const wasTheFirstConfirmation = marked.length === 1;
 
 	if (input.newEmail !== null) {
-		const moved = await input.transaction.query(moveAddressStatement(input.schema), [
-			input.actor,
-			input.newEmail,
-		]);
+		const moved = await input.transaction
+			.query(moveAddressStatement(input.schema), [input.actor, input.newEmail])
+			.catch(refuseAnAddressTakenMeanwhile);
 		if (moved.length !== 1) {
 			throw new ConcealedError("email_taken_on_change");
 		}
