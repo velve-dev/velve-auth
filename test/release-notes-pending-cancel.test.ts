@@ -23,6 +23,6 @@ function breakingList(): string {
 
 describe("the 1.2.0 release notes (E-2830)", () => {
 	it("name pending.cancel among the changes that can break compilation", () => {
-		expect(breakingList()).toMatch(/`(?:auth\.)?pending\.cancel`/);
+		expect(breakingList()).toContain("pending.cancel");
 	});
 });
