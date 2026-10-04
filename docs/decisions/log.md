@@ -14172,3 +14172,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Sending own-table statements of a lent context to the transaction when the call is a credential change, which E-2643 rejected for the reset because it puts plugin SQL back on the library's login.
 **Reason.** What a plugin can rely on is set by which connection its statement runs on, and that is decided in one place for every call that lends a context, whatever the call is.
 **Price.** None in the code. A plugin with `pluginDatabase` set that took E-2705 at its word and recorded something in the revoke hook of a credential change will find the record standing after a refused change.
+
+<a id="e-2735"></a>
+
+### S-CSRF-6 does not place the limiter, 3.11 does
+`E-2735` · specfix · decision log, corrected — source of a citation
+
+**Context.** E-2732's Rejected (a) says that S-CSRF-6 already places the origin check and the limiter both before the hooks without ordering the two. S-CSRF-6 says only that a plugin can neither replace nor bypass the origin check nor run before it, in both languages, and names no rate limit. The sentence that puts the origin check and the rate limit both in front is in 3.11, "Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen", which S-CSRF-1, S-RATE-4 and S-DEFAULT-3 cite. The attribution was wrong when it was written, so it is corrected here and E-2732 stays as it is.
+**Rejected.** Adding the limiter to S-CSRF-6 so the old attribution becomes true, which would be a new requirement found by a citation defect.
+**Reason.** The argument of E-2732's Rejected (a) does not change: 3.11 places both before the hooks and does not order them, so a limiter that writes before the origin check is allowed, and the rejection of fixing the order stands on 3.11 rather than on S-CSRF-6.
+**Price.** None.
