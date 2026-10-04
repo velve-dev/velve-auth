@@ -5871,7 +5871,7 @@ compile (E-349).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `database` | `Driver` | — | the driver from `@velve/auth/pg`, `/postgres-js` or `/neon`; the only way a connection enters |
+| `database` | `Driver` | — | the driver from `@velve/auth/pg`, the one driver that ships, or one the application writes over another client as [the driver interface](#the-driver-interface) describes; the only way a connection enters |
 | `identity` | `IdentityConfig<M>` | — | which sign-in names exist; decides the CHECK constraint and the instance type |
 | `keys` | `KeyProvider` | — | the root key and the ring; all six purpose keys are derived from it |
 | `origins` | `readonly string[]` | — | the allowed origins; an empty list is a start error, not a blanket permission |
