@@ -7,7 +7,7 @@ import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
-import { postTo } from "./flows-fixtures.js";
+import { difference, postTo } from "./flows-fixtures.js";
 import { secretBytesOfBase32 } from "./totp-fixtures.js";
 
 /**
@@ -65,8 +65,10 @@ function withSession(token: string): { Cookie: string } {
 	return { Cookie: `${DEFAULT_COOKIE_NAMES.session}=${token}` };
 }
 
-async function codesOfANewAccount(): Promise<{ userId: string; codes: readonly string[] }> {
-	const signedUp = await handler(postTo("/sign-up", { email: ADDRESS, password: PASSWORD }));
+async function codesOfANewAccount(
+	address: string = ADDRESS,
+): Promise<{ userId: string; codes: readonly string[] }> {
+	const signedUp = await handler(postTo("/sign-up", { email: address, password: PASSWORD }));
 	expect(signedUp.status).toBe(200);
 	const session = sessionCookieOf(signedUp);
 	const started = await handler(postTo("/factor/totp/enroll/start", {}, withSession(session)));
@@ -85,7 +87,7 @@ async function codesOfANewAccount(): Promise<{ userId: string; codes: readonly s
 	const { codes } = (await generated.json()) as { codes: readonly string[] };
 	const [row] = await connection.query<{ id: string }>(
 		`SELECT id FROM ${schema}.user WHERE email = $1`,
-		[ADDRESS],
+		[address],
 	);
 	return { userId: row?.id ?? "", codes };
 }
@@ -127,5 +129,30 @@ describe("a recovery-code reset on a disabled account", () => {
 			postTo("/sign-in/password", { email: ADDRESS, password: PASSWORD }),
 		);
 		expect(signedIn.status).toBe(200);
+	});
+
+	/** L-4 and S-OWNER-8: the refusal for a disabled account is the one a wrong code and an unknown
+	 * identifier get, status, header set and body, now that one of them commits and the others roll
+	 * back. */
+	it("answers a right code for a disabled account byte for byte as a wrong code and an unknown identifier", async () => {
+		const address = "disabled-recovery-bytes@example.com";
+		const { userId, codes } = await codesOfANewAccount(address);
+		const [presented, unused] = codes;
+		const input = { email: address, recoveryCode: presented, newPassword: REPLACEMENT };
+
+		await auth.user.disable({ userId, reason: "the test disables it" });
+		const whileDisabled = await handler(postTo(ROUTE, input));
+		const wrongCode = await handler(
+			postTo(ROUTE, {
+				...input,
+				recoveryCode: unused?.replace(/^./, (first) => (first === "a" ? "b" : "a")),
+			}),
+		);
+		const unknownAccount = await handler(
+			postTo(ROUTE, { ...input, email: "nobody-recovery@example.com" }),
+		);
+
+		expect(await difference(whileDisabled.clone(), wrongCode)).toStrictEqual([]);
+		expect(await difference(whileDisabled, unknownAccount)).toStrictEqual([]);
 	});
 });
