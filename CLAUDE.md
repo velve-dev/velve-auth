@@ -498,6 +498,9 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2610 … E-2639 | outside the waves · `dos-memory-bound` — the KDF memory bound stated against the import ceiling. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 | E-2640 … E-2669 | outside the waves · `plugin-login` — plugin SQL over a connection that logs in as the plugin role. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 | E-2670 … E-2699 | outside the waves · `rate-defaults` — the new rate-limit defaults, the recommended presets, and weakenings and route alarms made visible without a log sink. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
+| E-2700 … E-2729 | outside the waves · `password-set-race` — two password.set calls on one account at the same time. Reserved together before the 1.2.0 follow-ups start, counted over the rows standing at 623dd53 |
+| E-2730 … E-2759 | outside the waves · `specfix`, third range — the revoke reason the S-LINK-4 sweep lacks and the wording of T-CSRF-1. Reserved together before the 1.2.0 follow-ups start, counted over the rows standing at 623dd53 |
+| E-2760 … E-2789 | gate and infrastructure, fifteenth range — the publish taken out of the release workflow and run from the maintainer's machine, so no registry credential lives on GitHub. Reserved together before the 1.2.0 follow-ups start, counted over the rows standing at 623dd53 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
