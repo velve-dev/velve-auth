@@ -1,4 +1,5 @@
 import type { RouteServices } from "../auth/routes.js";
+import { type Actor, actorOfResolvedSession } from "../db/actor.js";
 import { lockAccountRow } from "../db/lock.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
@@ -13,10 +14,10 @@ import type { PasswordEnvironment } from "./verify.js";
 
 export async function refuseIfCredentialExists(
 	environment: PasswordEnvironment,
-	userId: string,
+	actor: Actor,
 ): Promise<void> {
 	//set never replaces a stored PHC credential without the current password
-	if ((await environment.credentials.findByUserId(userId)) !== null) {
+	if ((await environment.credentials.findOwnedBy({ actor })) !== null) {
 		throw new VelveError("factor_already_enrolled");
 	}
 }
@@ -48,7 +49,7 @@ export async function replacePasswordOfSession(
 			keys: services.keys,
 			schema: services.schema,
 		}).write({
-			userId: input.resolved.userId,
+			actor: actorOfResolvedSession(input.resolved),
 			phc,
 			//the password is recorded as set by the session this change just issued (E-626)
 			setBySessionId: reissued.session.id,

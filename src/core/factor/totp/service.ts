@@ -84,12 +84,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 	}
 
 	//the matched step is recorded so a window code cannot be replayed (S-REPLAY-4)
-	async function claimOrReject(userId: string, timeStep: number): Promise<void> {
-		const claimed = await credentials.claimTimeStep({
-			userId,
-			timeStep,
-			retentionSeconds,
-		});
+	function rejectAReplayedStep(claimed: boolean): void {
 		if (!claimed) {
 			throw new ConcealedError("totp_step_replayed");
 		}
@@ -133,7 +128,9 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				if (step === null) {
 					throw new ConcealedError("totp_code_wrong");
 				}
-				await claimOrReject(actor, step);
+				rejectAReplayedStep(
+					await credentials.claimTimeStep({ actor, timeStep: step, retentionSeconds }),
+				);
 				if (!(await credentials.confirmCredential({ actor }))) {
 					throw new VelveError("factor_already_enrolled");
 				}
@@ -146,7 +143,13 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					credential: await credentials.findCredentialOf({ userId: resolution.userId }),
 					code,
 				});
-				await claimOrReject(resolution.userId, step);
+				rejectAReplayedStep(
+					await credentials.claimTimeStepOfPending({
+						pending: resolution,
+						timeStep: step,
+						retentionSeconds,
+					}),
+				);
 				return resolution;
 			});
 		},
@@ -158,15 +161,14 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				throw new VelveError("factor_not_enrolled");
 			}
 			const step = await matchConfirmedCode({ credential, code });
-			await claimOrReject(actor, step);
+			rejectAReplayedStep(
+				await credentials.claimTimeStep({ actor, timeStep: step, retentionSeconds }),
+			);
 			if (!(await credentials.removeCredential({ actor }))) {
 				throw new VelveError("factor_not_enrolled");
 			}
 		},
 
-		async isEnrolled({ userId }) {
-			const credential = await credentials.findCredentialOf({ userId });
-			return credential !== null && credential.confirmedAt !== null;
-		},
+		isEnrolled: ({ userId }) => credentials.isConfirmedFor({ userId }),
 	};
 }

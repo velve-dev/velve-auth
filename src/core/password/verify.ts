@@ -1,3 +1,4 @@
+import type { Actor } from "../db/actor.js";
 import type { ConcealedReason } from "../http/error-map.js";
 import type { KeyProvider } from "../keys/index.js";
 import { randomBytes } from "../token/random.js";
@@ -102,7 +103,7 @@ export async function checkPassword(
 
 export async function setPassword(
 	input: {
-		readonly userId: string;
+		readonly actor: Actor;
 		readonly plaintext: string;
 		//the session may be null where the caller has none but is never left out (E-626)
 		readonly setBySessionId: string | null;
@@ -116,7 +117,7 @@ export async function setPassword(
 	);
 
 	await environment.credentials.write({
-		userId: input.userId,
+		actor: input.actor,
 		phc,
 		scheme: CREATED_SCHEME,
 		setBySessionId: input.setBySessionId,

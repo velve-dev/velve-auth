@@ -39,7 +39,6 @@ import {
 	type EncryptedProviderTokens,
 	type IdentityFacts,
 	NO_STORED_TOKENS,
-	type OAuthIdentityRepository,
 } from "./identity-repository.js";
 import { accountAnAutomaticLinkMayJoin } from "./linking.js";
 import type { OutboundFetch } from "./outbound.js";
@@ -163,12 +162,7 @@ function assertTheAccountIsEnabled(user: User | null): void {
 	}
 }
 
-async function insertOrRefuse(
-	repository: OAuthIdentityRepository,
-	userId: string,
-	facts: IdentityFacts,
-): Promise<Identity> {
-	const inserted = await repository.insertIdentity({ userId, ...facts });
+function refuseIfAlreadyLinked(inserted: Identity | null): Identity {
 	if (inserted === null) {
 		throw new VelveError("identity_already_linked");
 	}
@@ -329,7 +323,12 @@ export function createOAuthService(input: {
 				assertTheAccountIsEnabled(joinable);
 			}
 			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
-			return { userId: owner.id, identity: await insertOrRefuse(owned, owner.id, facts) };
+			return {
+				userId: owner.id,
+				identity: refuseIfAlreadyLinked(
+					await owned.insertIdentityOfSignIn({ userId: owner.id, ...facts }),
+				),
+			};
 		});
 	}
 
@@ -395,11 +394,12 @@ export function createOAuthService(input: {
 				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
 			);
 			//a link only ever inserts and the unique pair refuses every existing identity (E-979)
-			const identity = await insertOrRefuse(owned, userId, input.facts);
+			const actor = actorOfConsumedOAuthFlow(input.linked.account);
+			const identity = refuseIfAlreadyLinked(await owned.insertIdentity({ actor, ...input.facts }));
 			const issued = await services.sessions
 				.boundTo(transaction)
 				.reissueSessionOfUser({
-					actor: actorOfConsumedOAuthFlow(input.linked.account),
+					actor,
 					previousSessionId: input.linked.previousSessionId,
 					factors: OAUTH_FACTORS,
 					observed: input.observed,

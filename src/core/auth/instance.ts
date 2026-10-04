@@ -38,6 +38,10 @@ import { createKdfSemaphore } from "../password/semaphore.js";
 import { assertStoredKeyVersionsAreKnown } from "../password/startup.js";
 import type { VelvePlugin } from "../plugin/config.js";
 import type { FrozenContextServices } from "../plugin/context.js";
+import {
+	assertPluginDatabaseRole,
+	grantOwnTablesToThePluginRole,
+} from "../plugin/database-role.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
@@ -266,6 +270,10 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
 
+	const pluginDatabaseRole =
+		config.pluginDatabaseRole === undefined
+			? undefined
+			: assertPluginDatabaseRole(config.pluginDatabaseRole);
 	const frozenContextServices: FrozenContextServices = {
 		clock,
 		identityMode: identity.mode,
@@ -274,6 +282,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		sessions: createSessionRepository({ driver, schema }),
 		driver,
 		log,
+		...(pluginDatabaseRole === undefined ? {} : { pluginDatabaseRole }),
 	};
 	//every plugin hook runs from a handler, which runs after the origin check (S-CSRF-6)
 	const pluginRuntime = createPluginRuntime({
@@ -378,6 +387,14 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				//the plugin seam contributes here, so no feature edits this file to be run (E-776)
 				migrations: [...coreMigrations(identity.mode), ...pluginMigrations(services)],
 			});
+			if (pluginDatabaseRole !== undefined) {
+				await grantOwnTablesToThePluginRole({
+					driver,
+					schema,
+					role: pluginDatabaseRole,
+					migrations: pluginMigrations(services),
+				});
+			}
 			await assertKeysAnswerForEveryPurpose(config.keys);
 			//a dead key version is reported once at startup and not on the sign-in path (E-179)
 			await assertStoredKeyVersionsAreKnown({ driver, keys: config.keys, schema });

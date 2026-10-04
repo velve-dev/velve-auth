@@ -29,20 +29,38 @@ interface CredentialWriter {
 	readonly schema: string;
 }
 
-//the storing session must be written in the same statement as the password (E-626)
-export async function writePassword(
-	writer: CredentialWriter,
-	input: {
-		readonly userId: string;
-		readonly derived: DerivedPassword;
-		readonly setBySessionId: string | null;
-	},
-): Promise<void> {
-	await createPasswordCredentialRepository({
+interface PasswordToWrite {
+	readonly derived: DerivedPassword;
+	//the storing session must be written in the same statement as the password (E-626)
+	readonly setBySessionId: string | null;
+}
+
+function credentialsOf(writer: CredentialWriter) {
+	return createPasswordCredentialRepository({
 		driver: writer.driver,
 		keys: writer.keys,
 		schema: writer.schema,
-	}).write({
+	});
+}
+
+export async function writePassword(
+	writer: CredentialWriter,
+	input: { readonly actor: Actor } & PasswordToWrite,
+): Promise<void> {
+	await credentialsOf(writer).write({
+		actor: input.actor,
+		phc: input.derived.phc,
+		scheme: CREATED_SCHEME,
+		setBySessionId: input.setBySessionId,
+	});
+}
+
+//only a sign-up may call this as its own transaction inserted the account row (E-2428)
+export async function writePasswordOfCreatedAccount(
+	writer: CredentialWriter,
+	input: { readonly userId: string } & PasswordToWrite,
+): Promise<void> {
+	await credentialsOf(writer).writeForCreatedAccount({
 		userId: input.userId,
 		phc: input.derived.phc,
 		scheme: CREATED_SCHEME,

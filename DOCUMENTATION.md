@@ -590,20 +590,22 @@ import {
 ```
 
 `Actor` is a branded `string`, so a bare string is not one and the mistake does
-not compile. There are exactly three producers, one per way of proving who owns
+not compile. There are exactly four producers, one per way of proving who owns
 a row, and each takes a nominal type that only one module may assert
-(S-OWNER-7, E-93):
+(S-OWNER-7, E-93). The first three are exported; `actorOfConsumedRecoveryCode`
+is internal to the recovery-code reset:
 
 | Producer | Evidence | Asserted in |
 |---|---|---|
 | `actorOfResolvedSession` | `ResolvedSession` — a session the library resolved | `core/session/service.ts` |
 | `actorOfRedeemedOneTimeToken` | `RedeemedOneTimeToken` — a row a `DELETE … RETURNING` removed | `core/db/repositories/token.ts` |
-| `actorOfConsumedOAuthFlow` | `ConsumedOAuthFlow` — a row of `velve.oauth_flow` the callback consumed | nowhere yet; the feature that consumes a flow asserts it where it removes the row |
+| `actorOfConsumedOAuthFlow` | `ConsumedOAuthFlow` — a row of `velve.oauth_flow` the callback consumed | `core/oauth/flow-repository.ts` |
+| `actorOfConsumedRecoveryCode` | `ConsumedRecoveryCode` — a recovery code a `DELETE … RETURNING` removed | `core/factor/recovery/repository.ts` |
 
-A hand-built `{ userId: "…" }` satisfies none of the three, so no handler builds
-an actor from a request body, a query string or a header. The three provenances
-do not cross either: a consumed flow is not a redeemed token, and neither is a
-session.
+A hand-built `{ userId: "…" }` satisfies none of the four, so no handler builds
+an actor from a request body, a query string or a header. The four provenances
+do not cross either: a consumed flow is not a redeemed token, a consumed
+recovery code is neither, and none of them is a session.
 
 **What the brand does not do.** It makes minting *visible*, not impossible. A
 caller that can issue a session for an arbitrary account can resolve that
@@ -667,6 +669,60 @@ that never existed produce the same `null`, so nothing leaks the difference
 raises `UnknownColumnError` with the code `unknown_column`. The owner column is
 never updatable through this repository — changing who owns a row is not an
 update.
+
+### Which repository methods do without an actor
+
+S-OWNER-1 says every repository method on a table with a `user_id` column takes
+an `actor`. The rule the library keeps is the narrower one E-242 found: **a
+method that reaches rows through their owner takes a proof of ownership; a
+method that reaches them some other way says which way, by name.**
+`test/owner-actor-census.test.ts` holds it (T-OWNER-1, E-2420):
+
+- it reads the tables with a `user_id` or `link_to_user_id` column from
+  `information_schema`, and fails when one appears that has no line in its
+  table of decisions — a new owned table cannot arrive without a repository
+  decision;
+- it finds, with the TypeScript compiler API, the units a module exports — an
+  exported function, a name in an `export { … }` list, a method of an exported
+  class or of an exported object constant, and a method of an object an
+  exported function returns, spread members included — and follows each one
+  through the declarations of its own file and the string constants it
+  imports, counting it when that text holds SQL in any case and names one of
+  those tables or an owner column. A call into another module is that module's
+  unit, not this one's, so a service that only calls a repository is not
+  counted itself;
+- each one must take a parameter that carries a brand declared in
+  `core/db/actor.ts` — `Actor`, `ResolvedSession`, `RedeemedOneTimeToken`,
+  `ConsumedOAuthFlow` or `ConsumedRecoveryCode`, directly or as a field — or
+  stand in the exception list under one of the classes below. A unit that takes
+  a brand and, beside it, a plain-string `userId` or `ownerId` counts as having
+  no proof. An exception that the census no longer finds without a proof fails
+  as well.
+
+| Class | Why no proof is passed | Methods |
+|---|---|---|
+| secret address | the row is addressed by the hash of a secret the caller presents (E-242, E-2421) | `findSessionByTokenHash`, `deleteSessionByTokenHash`, `replaceSession`, `replacePresentedSession`; the three pending-authentication methods addressed by token hash |
+| consumed single-use row | the statement that removes the row is the proof (E-234, E-2421) | `consumeOneTimeToken`, `consumeFlow`, the WebAuthn challenge `consume`, `consumeCode` |
+| row that carries the proof | the insert writes the row whose secret later proves the owner (E-242, E-2422) | `insertSession`, `insertPendingAuthentication`, `replaceOneTimeToken`, the WebAuthn challenge `issue` |
+| credential under verification | the row read or written back is the credential a sign-in is verifying (E-2423) | password `findByUserId` and `replaceIfUnchanged`, recovery `pepperVersionsOf`, WebAuthn `findCredentialByCredentialId` and `recordAssertion` |
+| pending resolution | the owner is the one a pending row named when its token hash resolved, which is a structural value and not a brand (E-459, E-2424) | TOTP `findCredentialOf` and `claimTimeStepOfPending`, WebAuthn `listDescriptorsOwnedBy` and `findOwnedCredentialByCredentialId` |
+| provider subject | the identity is addressed by `(provider, subject)` and the account is the answer (S-LINK-1, E-2425) | `findIdentityBySubject`, `refreshIdentity` |
+| account a sign-in decided | the account is one the OAuth sign-in created in the same transaction, or one automatic linking joined for a trusted provider, before any session exists (E-558, E-2434) | `insertIdentityOfSignIn` |
+| maintenance or start-up | every owner at once, by a deadline or a catalogue (E-2426) | `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown`, `assertEveryUserReferenceCascades` |
+| shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findUserIdOfSession`, `deleteSessionById` behind `FrozenRepositories`; TOTP `isConfirmedFor`, which answers `TotpService.isEnrolled` with a boolean and no secret (E-2435); `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
+| created with its account | the account row was inserted by the same transaction (E-2428) | password `writeForCreatedAccount` |
+
+Where a caller holds a proof, the method takes it:
+
+| Method | Takes | Caller and proof |
+|---|---|---|
+| password `write({ actor, phc, scheme, setBySessionId })` | `Actor` | set and change: the resolved session; both resets: the redeemed token or the consumed recovery code (E-2429) |
+| password `findOwnedBy({ actor })` | `Actor` | `POST /password/set`, which refuses when a credential exists (E-2429) |
+| password `writeForCreatedAccount({ userId, … })` | user id | sign-up only, in the transaction that created the account (E-2428) |
+| OAuth identity `insertIdentity({ actor, …facts })` | `Actor` | the link callback, from the consumed flow (E-2430) |
+| OAuth identity `insertIdentityOfSignIn({ userId, …facts })` | user id | the sign-in callback, for the account it created or automatic linking joined (E-2434) |
+| TOTP `claimTimeStep({ actor, timeStep, retentionSeconds })` | `Actor` | enrolment and removal, from the session; the second factor claims through `claimTimeStepOfPending({ pending, … })` (E-2436) |
+| OAuth flow `insertFlow({ …, linkTo })` | `linkTo: { actor, sessionId } \| null` | the link start, from the resolved session; a sign-in records no owner (E-2431) |
 
 ## Lock order
 
@@ -2113,8 +2169,10 @@ caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
 | Method | Statement |
 |---|---|
-| `findByUserId(userId)` | `SELECT … WHERE user_id = $1` |
-| `write({ userId, phc, scheme })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
+| `findByUserId(userId)` | `SELECT … WHERE user_id = $1` — the sign-in check alone, before any proof exists (E-2423) |
+| `findOwnedBy({ actor })` | the same statement, for a caller that holds an `Actor` |
+| `write({ actor, phc, scheme, setBySessionId })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
+| `writeForCreatedAccount({ userId, phc, scheme, setBySessionId })` | the same statement, for sign-up, whose transaction inserted the account (E-2428) |
 | `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
 
 `replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
@@ -2169,7 +2227,7 @@ rehash wave after a parameter increase cannot displace live sign-ins (S-DOS-6).
 Losing the compare and swap is harmless — it returns `false` and the next
 sign-in tries again.
 
-#### `setPassword({ userId, plaintext }, environment)`
+#### `setPassword({ actor, plaintext, setBySessionId }, environment)`
 
 Applies the length policy, runs `validate`, derives Argon2id under the
 semaphore, and writes the sealed string. Revoking the user's other sessions is
@@ -5771,6 +5829,11 @@ position the checker reads as code, is refused, and so is one it cannot read at
 all. It is a guardrail against the accident, not a sandbox — a plugin runs in
 your process and can reach your driver by other means, and a core table named
 inside a string literal the database later executes is not seen.
+With `pluginDatabaseRole` set, every plugin statement also runs as a
+PostgreSQL role that holds rights on the plugins' own tables and on nothing
+else, so a write to a core table that slips past that check is refused by the
+database; without it the start log says plugin SQL runs as the library's own
+role. See [`pluginDatabaseRole`](#plugindatabaserole).
 
 Origin checking and rate limiting run before any plugin code, on the HTTP path
 and on the direct server call alike; a plugin route cannot make itself a reader
@@ -6441,7 +6504,7 @@ other means entirely. What this refuses is the accident — a join onto
 `velve.user` that seemed harmless, or a `"velve"."user"` written that way because
 `user` is a reserved word — not an attacker.
 
-**Three rules, and the first is the one the boundary rests on.** Two rounds of
+**Four rules, and the first is the one the boundary rests on.** Two rounds of
 review found the same defect in a different syntactic position: a table
 reference in a position the scan did not model. The boundary is therefore no
 longer carried by recognising positions — but it is not free of the parse
@@ -6461,13 +6524,24 @@ table named inside a literal that PostgreSQL later executes —
 `SELECT query_to_xml('select * from velve.user', …)` — is not seen. That is a
 real hole and it is open: closing it means refusing every statement whose
 literals contain SQL-shaped text, which refuses ordinary data.
+`query_to_xml` and the other functions that run SQL text are now refused by
+name (Rule 4), so this statement no longer reaches the database; the hole stays
+open for any such function the list does not name. With
+[`pluginDatabaseRole`](#plugindatabaserole) set, a statement that does reach the
+database runs as a role without rights on the core tables and is refused there
+with `permission denied`.
 
 **Rule 2 — a table position must hold one of the plugin's own tables.** This is
 3.15 G's restriction rather than 3.11's prohibition, and it **is** a position
 rule: it opens after `FROM`, `JOIN`, `INTO`, `USING` and `UPDATE`, and stays open
 across commas until a keyword ends the list. It is **not claimed complete.** SQL
 has more table positions than this enumeration has, and the previous two
-enumerations were also believed complete. What changed is that a position it
+enumerations were also believed complete. A bracketed group after a table — an
+`INSERT` column list such as `(note, user_id)`, or an alias column list such as
+`x(a, b)` — is skipped whole and the list continues after it, so
+`FROM demo_entry x(a, b), other_entry` still checks `other_entry`. Until this
+skip, every column after the first in an `INSERT` column list was refused as a
+foreign table. What changed is that a position it
 misses no longer reaches a core table, because Rule 1 does not care about
 position.
 
@@ -6481,6 +6555,17 @@ table in a statement is finding nothing, and nothing is not permission:
 | a `$` that is not a parameter placeholder | dollar-quoted text the walk cannot delimit |
 | a leading keyword outside `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH` | the walk cannot find the tables of any other kind — this is what refuses `TRUNCATE`, `DROP`, `ALTER` and `COPY` |
 | a table position holding anything but a name or `(` | the target could not be identified |
+
+**Rule 4 — a function that leaves the plugin role or runs SQL text is refused by
+its name.** `set_config`, `query_to_xml`, `query_to_xmlschema`,
+`query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema`, `ts_stat`,
+`ts_rewrite`, `dblink` and `dblink_exec`, wherever the name stands as code —
+plain, `pg_catalog.`-qualified, quoted or in upper case. `set_config('role', …)`
+is the one way a single statement can leave the role
+[`pluginDatabaseRole`](#plugindatabaserole) puts it under, and the others run a
+statement written inside a literal, which Rule 1 cannot see. Inside a literal the
+same words are data and pass. The list is a list, and a function PostgreSQL or an
+installed extension adds that runs SQL text is not on it.
 
 A string literal becomes an empty literal, a comment becomes a space, and a
 quoted identifier becomes the bare name it stands for. Whitespace and comments
@@ -6501,6 +6586,8 @@ harmless and are refused anyway:
 - A CTE whose name does not carry the plugin's prefix. Prefix them.
 - Every DDL statement, including one that alters the plugin's own table.
 - A batch of two statements, and dollar-quoted text.
+- From Rule 4, any call of `set_config`, including one that sets a harmless
+  parameter.
 - From Rule 1, a plugin column named after a core table — `identity` and
   `session` being the two a plugin might plausibly reach for.
 
@@ -6519,6 +6606,109 @@ takes it on its own table is refused by nothing (see [Lock order](#lock-order)).
 
 A core route's context carries the field, because 3.15 D.1 gives every request
 context one, and its `query` rejects: a core route owns no tables of its own.
+
+### `pluginDatabaseRole`
+
+```ts
+createVelveAuth({ ..., plugins: [audit], pluginDatabaseRole: "velve_plugins" })
+```
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `pluginDatabaseRole` | `string` | absent | The PostgreSQL role every `ownTables.query` statement is switched to. |
+
+The statement check above is lexical. This option puts a database boundary
+behind it, which is what S-OWNER-10 asks for: **a plugin writes a core table
+through the repositories only.** With it set, each plugin statement runs as
+
+```sql
+BEGIN;
+SET LOCAL ROLE velve_plugins;
+-- the plugin's one statement
+COMMIT;
+```
+
+and `velve_plugins` holds rights on the plugins' own tables and on nothing else,
+so a statement that gets past the check and writes `velve.session` fails with
+`permission denied for table session` (SQLSTATE `42501`) and changes nothing.
+`SET LOCAL` ends with the transaction. What makes the connection go back to the
+pool as the library's own role is that the plugin's statement cannot change the
+role in any other way: `SET` and `RESET` are refused as statements by Rule 3, and
+`set_config` — whose `false` form would outlive the transaction and hand the
+library's next statement on that connection the role the plugin chose — is
+refused by Rule 4.
+
+**It protects against faulty plugin SQL, not against a hostile plugin.** A plugin
+is JavaScript running in the application's own process. It can import a driver
+and open a connection of its own with whatever credentials the process can read,
+and nothing here can stop that. What the role guarantees is narrower: a statement
+sent through `ownTables.query` that the check misjudges still cannot write a core
+table.
+
+**The role is created once, by the operator.** Run as a role that may create
+roles, replacing `<library role>` with the role the instance's `database`
+connects as:
+
+```sql
+CREATE ROLE velve_plugins NOLOGIN;
+GRANT velve_plugins TO <library role>;
+```
+
+The membership is what permits `SET ROLE`. On PostgreSQL 16 and newer a
+membership granted `WITH SET FALSE` does not, so grant it plainly. The role
+needs no login, no password and no rights of its own: **`migrate()` grants it
+the rest**, on every run — `USAGE` on the schema, `SELECT`, `INSERT`, `UPDATE`
+and `DELETE` on each table a plugin declared in `createsTables` and still
+exists, and `USAGE`, `SELECT` and `UPDATE` on the sequences those tables own.
+Granting on every run is what makes a role configured after the tables were
+created reach them. Each declared name is looked up and granted on its own, and
+must be a lowercase identifier that carries its plugin's prefix and names no core
+table, or `migrate()` fails with `InvalidIdentifierError` — `createsTables` is
+read from the configuration on every run, so it is checked on every run. The connection `migrate()` runs on must be allowed to grant
+on those tables, which the schema-owning migration role [What a plugin migration
+must do](#what-a-plugin-migration-must-do) asks for already is. A role that does
+not exist fails `migrate()` with PostgreSQL's own error, and fails every plugin
+statement the same way if `migrate()` was not run.
+
+A plugin table's foreign key to `velve.user` works under the role: PostgreSQL
+checks the referenced row as the owner of `velve.user`, so the role needs no
+right on it.
+
+The name is refused at start with `InvalidIdentifierError` unless it is a
+lowercase unquoted identifier, and when it is `none`, `public` or begins with
+`pg_`, none of which switches plugin SQL to a role of its own.
+
+**Left out, nothing changes** — plugin SQL runs as the library's own role,
+bounded by the statement check alone — and the start log's `plugins` line says
+so: `chosen` ends with `plugin SQL runs as the library's own role, as no
+pluginDatabaseRole is set`, or with `plugin SQL runs as role velve_plugins` when
+it is set. It is not a start error, because every application running a plugin
+today has no such role.
+
+**What it costs.** One plugin statement becomes four round trips — `BEGIN`,
+`SET LOCAL ROLE`, the statement, `COMMIT` — and holds a pooled connection for
+all four. Of the three driver entry points only `@velve/auth/pg` ships a driver;
+`@velve/auth/postgres-js` and `@velve/auth/neon` export nothing yet. A driver
+for either must implement `transaction` as one connection held across
+statements, which this option relies on: a driver that sends each statement on
+whatever connection is free would set the role on one connection and run the
+statement on another. Neon's HTTP query function sends a transaction as one
+batch and cannot run a statement that depends on the one before, so an
+application on Neon builds the driver on Neon's WebSocket `Pool`, which speaks
+the `pg` interface. A pooler in transaction mode keeps `SET LOCAL` correct,
+because it lasts exactly one transaction.
+
+**What it does not close.** The role is set by the library's own connection,
+whose login role can always return to itself: `set_config('role', 'none', true)`
+needs no right, and with a function that runs SQL text in the same statement it
+reads any core table. Rule 4 refuses both by name, so the read is closed exactly
+as far as that list reaches — a function it does not name that runs SQL text,
+from PostgreSQL or from an installed extension, together with a way back to the
+login role, would reopen it. Writes do not depend on the list: PostgreSQL checks
+a statement's tables before running it, and no built-in function runs a writing
+statement from text. A plugin connection that logs in as the plugin role, with
+no way back, would not depend on the list either and is not what this option
+does.
 
 ### `RequestContext.plugin`
 

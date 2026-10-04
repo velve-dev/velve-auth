@@ -13149,6 +13149,320 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Price.** The proofs pass on states the literal wording of their T- cases would fail. A `SELECT` of other columns before an unbound change, or an integer column that is part of a composite key and is an identifier after all, would go unreported. Concerns `test/owner-predicate-proof.test.ts` and `test/owner-uuid-identifier-proof.test.ts`.
 
+<a id="e-2450"></a>
+
+### Plugin SQL runs under SET LOCAL ROLE when a plugin database role is configured
+`E-2450` · plugin-sql-role · design, S-OWNER-10
+
+**Context.** S-OWNER-10 says a plugin writes core tables only through the repositories. `ownTables.query` passed a plugin's single statement to the library's own connection after a lexical check, which E-738 calls a guardrail and not a sandbox. So the requirement rested on a tokenizer. A real bypass of that check exists and is documented: `SELECT query_to_xml('select token_sha256 from velve.session', …) FROM velve.demo_entry` names the core table only inside a literal. `test/plugin-sql-role.test.ts` showed before the change that this read returned the session table's token hashes even with a role named in the configuration, and that a `DELETE` and an `UPDATE` of `velve.session` run below the check changed the table. No lexical bypass that writes was found, so the write cases call `runAsThePluginRole` directly, below the check, to stand in for one.
+**Rejected.** (a) A start error when plugins are configured without a role. It would stop every application running a plugin today. (b) An option nested under `plugins`. `plugins` is an array of plugins, so a nested option would change its type. (c) A second driver that logs in as the plugin role. It is stronger, see E-2452, and it asks the operator for a second pool and a second credential. (d) A helper that returns the operator's `CREATE ROLE` statements. The two statements are shorter than any call that would produce them, and the library would then hold a role name it does not otherwise need. They are in `DOCUMENTATION.md`.
+**Reason.** A top-level optional `pluginDatabaseRole` is the smallest shape: one string. Each plugin statement runs in a transaction of its own that starts with `SET LOCAL ROLE`, so the role cannot outlive the statement on a pooled connection. `migrate()` grants the role `USAGE` on the schema, `SELECT`, `INSERT`, `UPDATE` and `DELETE` on each declared table that exists, and `USAGE`, `SELECT` and `UPDATE` on the sequences those tables own. It grants on every run, so a role configured after the tables were created still reaches them. The grants run after the plugin migrations, in their own transaction, outside the runner's measurements, so a grant is never read as a migration changing a table. With the role, the write cases and the smuggled read fail with SQLSTATE 42501 and the plugin's own insert, foreign key to `velve.user` included, succeeds. Without it, behaviour is unchanged and the `plugins` start line now ends by saying plugin SQL runs as the library's own role. That is a weakening in the plugins row rather than a row of its own, because the absence weakens nothing unless a plugin is configured, and `test/auth-startup.test.ts` holds each documented case to exactly one option. The `pluginDatabaseRole` row therefore says nothing weakens it and points at the plugins line. The name is refused at start when it is `none`, `public` or a `pg_` name, because `SET ROLE none` resets the role and the other two are no role a plugin should become.
+**Price.** One plugin statement costs four round trips instead of one (`BEGIN`, `SET LOCAL ROLE`, the statement, `COMMIT`) and holds a pooled connection across all four. The operator runs `CREATE ROLE … NOLOGIN` and `GRANT … TO <library role>` once, with a role that may create roles. On PostgreSQL 16 and newer the membership must not be granted `WITH SET FALSE`. The connection `migrate()` runs on must be allowed to grant on the plugin tables, which the schema-owning migration role already is. Of the three driver entry points only `@velve/auth/pg` ships a driver. `@velve/auth/postgres-js` and `@velve/auth/neon` export nothing, so their constraint was checked against what the option needs and not against code: a `transaction` that holds one connection across statements. Neon's HTTP query function sends a transaction as one non-interactive batch and cannot carry it. Neon's WebSocket `Pool` speaks the `pg` interface and can. This was not run against Neon. Only the `pg` driver and the test connection were exercised, on PostgreSQL 14.
+
+<a id="e-2451"></a>
+
+### The role is a ceiling on writes and not on reads
+`E-2451` · plugin-sql-role · residue, open
+
+**Context.** The role is set by the library's own connection, whose login role is a member of it. `set_config('role', 'none', true)` needs no privilege and returns the statement's transaction to that login role. Probed against PostgreSQL 14 as a non-superuser member: `SELECT set_config('role','none',true), query_to_xml('select * from <schema>.session', …)` returned the session rows with the plugin role set. The same reset inside a writing CTE still failed with permission denied, and `query_to_xml` over a `DELETE` failed with `DELETE is not allowed in a non-volatile function`.
+**Rejected.** Refusing `set_config` and `query_to_xml` by name in the statement check. Both can be named inside a literal that another such function executes, which is the same kind of hole as before, and a list of functions that run SQL text falls behind the server.
+**Reason.** PostgreSQL checks the tables of a statement before running it, so a reset in the middle of a statement cannot widen that statement's own writes. No built-in function runs a writing statement from text. So S-OWNER-10, which is about writing, holds with the role. Reading core tables, the token hashes and password hashes among them, does not.
+**Price.** A plugin that means harm can still read every core table with the role configured. Closing that needs a connection that logs in as the plugin role and cannot return to the library's (E-2452). A plugin can also call `set_config('role', …, false)`, which outlives the transaction on a pooled connection. That was already possible before this change with any role the library's connection can reach, and it is not addressed here.
+
+<a id="e-2452"></a>
+
+### A plugin connection that logs in as the plugin role is the stronger form and is not built
+`E-2452` · plugin-sql-role · hand-off, revisit if reads must be bounded
+
+**Context.** E-2451 leaves reads of core tables open because the session user can always reset the role.
+**Rejected.** Building a `pluginDatabase: Driver` on this branch. The owner chose `SET LOCAL ROLE` for this task, and S-OWNER-10 is about writes.
+**Reason.** A connection whose login is the plugin role has no role to return to. `set_config('role','none')` lands on the plugin role, and none of the reads in E-2451 reach a core table. It would also drop the transaction around each statement.
+**Price.** The operator would need a second pool, a second credential and a login role. Handed off as the next step if plugin reads of core tables must be bounded too.
+
+<a id="e-2453"></a>
+
+### An INSERT with a column list of more than one column is refused by the statement check
+`E-2453` · plugin-sql-role · finding, hand-off
+
+**Context.** Writing the test, `INSERT INTO <schema>.demo_entry (note, user_id) VALUES ($1, $2)` was refused with `not user_id`. `tableListAfter` keeps reading after `INTO <table>` and treats the comma inside the column list as continuing a table list, so every column after the first is checked as a table. The existing tests use a single column, `INSERT INTO demo_entry (note) VALUES ($1)`, which is why this was not seen.
+**Rejected.** Fixing it here. It is a false refusal and not a hole, and it is in the walk E-762 already says is not claimed complete.
+**Reason.** The test writes `VALUES (DEFAULT, $1, $2)` without a column list instead.
+**Price.** A plugin cannot name two or more columns in an `INSERT` through `ownTables.query`. That is missing from the documented list of known false refusals. Handed off.
+
+<a id="e-2454"></a>
+
+### The statement check refuses set_config and the functions that run SQL text
+`E-2454` · plugin-sql-role · design, supersedes the reasoning of E-2451
+
+**Context.** E-2451 rejected refusing `set_config` and `query_to_xml` by name. It argued that both can be named inside a literal that another such function executes, so the same hole would remain. The review showed that reason was wrong. To execute a literal at all, a statement must call one of these functions by name outside a literal, and that call is what the check sees. A literal holding the words is data. The review also found a second effect E-2451 had noted and dismissed: `SELECT set_config('role', '<plugin role>', false)` outlives the transaction. The library's next statement on that pooled connection then ran as the plugin role. `test/plugin-review-sql-role.test.ts` showed both, together with the read through a role reset that E-2451 left open.
+**Rejected.** (a) Running `RESET ROLE` after every plugin statement. It costs a fifth round trip, and it closes the leak but not the read. (b) Keeping E-2451's position that the role bounds writes only. The read reaches token and password hashes, and the cost of refusing it is one name list.
+**Reason.** `set_config`, `query_to_xml`, `query_to_xmlschema`, `query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema`, `ts_stat`, `ts_rewrite`, `dblink` and `dblink_exec` are refused wherever the name stands as code: plain, qualified, quoted or in upper case. The quoted spelling is covered because the reader already turns a quoted identifier into its bare name. `SET` and `RESET` are refused already by the leading-word rule, so with `set_config` gone a single plugin statement has no way to change the role. That is what lets the connection return to the pool as the library's own role. E-2451 is not edited. Its probe results stand and only its reasoning is superseded here.
+**Price.** The list is a list. A function PostgreSQL or an extension adds that runs SQL text, together with a way back to the login role, reopens the read, though not the write. Any call of `set_config` is now refused, a harmless one included. The smuggled-read case in `test/plugin-sql-role.test.ts` is sent below the check through `runAsThePluginRole`, because the check now refuses it before the database sees it.
+
+<a id="e-2455"></a>
+
+### A bracketed group in a table list is skipped to its matching bracket
+`E-2455` · plugin-sql-role · fix of E-2453
+
+**Context.** E-2453 found that `INSERT INTO t (note, user_id)` was refused, because the comma in the column list continued the table list.
+**Rejected.** Ending the table list at `(`. The review pointed out that `FROM t x(a, b), other` would then stop before `other`, and `other` would go unchecked by the position rule.
+**Reason.** While the walk is not expecting a table, a `(` is skipped to its matching `)`, and the list continues after it. A column list and an alias column list are both passed over, and a comma after the group still opens the next table position. Every token inside the group is still read by Rule 1, because the outer loop visits every position.
+**Price.** A group that never closes is skipped to the end of the statement, and only Rule 1 reads its contents. Such a statement is refused by PostgreSQL anyway.
+
+<a id="e-2456"></a>
+
+### The grant looks up and grants each declared table on its own
+`E-2456` · plugin-sql-role · fix of E-2450
+
+**Context.** E-2450's grant joined the declared names with commas and split them again with `string_to_array`. `migrate()` reads `createsTables` from the configuration on every run, and an applied migration's checksum covers its SQL only. The review showed that a declaration changed to `demo_entry,session` after the table existed gave the plugin role `DELETE` on `velve.session`.
+**Rejected.** A `text[]` parameter, which the review asked for. The test connection encodes no arrays, and a lookup per name leaves nothing to split.
+**Reason.** Each declared name must pass `assertIdentifier`, carry its plugin's prefix and name no core table. Otherwise `migrate()` fails with `InvalidIdentifierError`. The prefix check alone is not enough, because a plugin called `one` carries the prefix of `one_time_token` (E-918). Each name is looked up, and its table and owned sequences are granted, in a statement of its own.
+**Price.** Two catalogue reads per declared table on every `migrate()` run instead of two in all. A plugin whose configuration declares a malformed name now fails `migrate()` when the role is set, where before nothing read the name after its first run.
+
+<a id="e-2457"></a>
+
+### The migration runner joins declared names with commas the same way
+`E-2457` · plugin-sql-role · hand-off, finding
+
+**Context.** `OBJECTS_OF_THE_DECLARED_TABLES` in `src/core/db/migration-runner.ts` reads `child.relname = ANY(string_to_array($2, ','))` over `declared.join(",")`. That is the pattern E-2456 removed from the grant. There, a declared name containing a comma counts a core table as the plugin's own when the runner decides what a migration may touch.
+**Rejected.** Fixing it on this branch. The runner is not in this feature's file set.
+**Reason.** Reported as the review asked.
+**Price.** Until someone fixes it, a declaration such as `audit_x,session` may widen what the runner treats as owned. Handed off.
+
+<a id="e-2420"></a>
+
+### The census of S-OWNER-1 reads the schema, follows the SQL and asks for a brand
+`E-2420` · owner-actor · T-OWNER-1, census rules
+
+**Context.** T-OWNER-1 asks for a static test: read the tables with a `user_id` column from `information_schema`, find every repository method that reaches one, and check that its signature carries an `actor`. No such test existed. S-OWNER-1 was held by the `Actor` brand where it was used and by E-242's narrowing where it was not, and an audit found methods that reach rows by owner with a bare user id even under E-242: `listSessionsOfUser`, `findCredentialOf`, `pepperVersionsOf`, `findByUserId`, `insertIdentity` and `refreshIdentity` among them.
+
+**Rejected.** (a) Matching method names or parameter names with a regular expression over the source text. (b) Using `ts-morph`, which T-OWNER-1 names. (c) Listing the repository files by hand and checking only those.
+
+**Reason.** (a) cannot see that `deleteOwnedSql` is a statement on `velve.session` three declarations away, nor that a parameter typed `{ actor: Actor } & Rest` carries an actor. (b) would be a new dependency for what the `typescript` package already in the tree does. (c) is the census that misses the file nobody listed. So `test/owner-actor-census.test.ts` reads `user_id` and `link_to_user_id` from `information_schema` in a migrated schema; takes every exported function, and every method of an object literal an exported function returns, as a unit; follows each identifier to its declaration in the same file and collects the string and template text it reaches; counts the unit when that text holds SQL and names an owned table or an owner column; and accepts it when a parameter, or a field of one up to two levels down, has a property whose declaration is a unique-symbol brand in `src/core/db/actor.ts`. A union counts only when every member that is not `null` carries a brand. Everything else must stand in an exception list under a class whose description cites the entry that decided it. The table of owned tables is a list with one decision per table, so a new table with an owner column fails the census until someone writes its line. A planted method with a bare user id and one with an actor show the census tells the two apart.
+
+**Price.** The walk stops at an import. A method whose SQL lives in another module is that module's entry, which is right for repositories and means a service calling a repository is never counted itself — the census checks the repository's signature, not which method a caller picks. A caller that holds a proof can still call an exception method with a bare id, and nothing here notices. The table match is textual: a string literal equal to a table name inside a unit that also holds SQL counts, so a word like `"session"` in such a unit would enrol it, and a table name built at run time would not be seen at all. The threshold is the one section 6 sets, zero methods without an actor, but only after the exception list has taken out the methods E-242 and the entries below excuse — thirty-seven of them when this was written.
+
+<a id="e-2421"></a>
+
+### A secret address and a consumed row stay exceptions, by name
+`E-2421` · owner-actor · S-OWNER-1, exception classes
+
+**Context.** E-242 found the rule's true form for the session repository: whoever reaches a row through a secret has already proven it. E-234 found the second form: the statement that removes a single-use row is what proves its owner, and it hands that proof back. The census needed both as named classes rather than as a silence.
+
+**Rejected.** Treating a token hash parameter as a proof type in the census.
+
+**Reason.** A `Uint8Array` is not a brand, and the census would then accept any method that happens to take bytes. The classes name the methods instead: `findSessionByTokenHash`, `deleteSessionByTokenHash`, `replaceSession`, `replacePresentedSession` and the three pending-authentication methods addressed by token hash are "secret address"; `consumeOneTimeToken`, `consumeFlow`, the challenge `consume` and `consumeCode` are "consumed single-use row".
+
+**Price.** `consumeCode` asserts its `ConsumedRecoveryCode` brand in `factor/recovery/repository.ts`, and the redeemed token brand is asserted in `db/repositories/token.ts`, not in `actor.ts`; the brief for this branch said minting happens only in `actor.ts`, and that is true of the conversion to an `Actor` and not of the brands it converts from. Nothing was changed there.
+
+<a id="e-2422"></a>
+
+### The insert that writes a proof's row takes no proof
+`E-2422` · owner-actor · S-OWNER-1, exception class
+
+**Context.** `insertSession`, `insertPendingAuthentication`, `replaceOneTimeToken` and the WebAuthn challenge `issue` all write a `user_id` from a plain string, and the census lists them.
+
+**Rejected.** Threading an actor into them.
+
+**Reason.** Each writes the row whose secret will later be the proof, so no proof can precede it: a session is what an actor is made from (E-242), a pending row is what the second factor is checked against (E-321), a one-time token is minted for an address that holds no session, and a challenge is consumed by its hash. They form the class "row that carries the proof".
+
+**Price.** The challenge `issue` has a caller that does hold a session — passkey registration — and passes its user id as a string, because the same method serves the sign-in ceremony with a pending owner or none. Splitting it would have given registration an actor and changed nothing about what the challenge row can do, so it was left.
+
+<a id="e-2423"></a>
+
+### The credential a sign-in verifies is read before any proof exists
+`E-2423` · owner-actor · S-OWNER-1, exception class
+
+**Context.** The password check reads `velve.password_credential` for the user the identifier lookup found, the recovery reset reads the pepper versions of the account its identifier named, and the discoverable passkey sign-in looks a credential up by the id the authenticator sent. None of them has a proof, because the read is what the proof is made from. After a successful check, `replaceIfUnchanged` and `recordAssertion` write back to the row that was just verified.
+
+**Rejected.** Removing `findByUserId` and giving the password check an actor.
+
+**Reason.** There is no actor to give: the sign-in has the user id the typed identifier resolved to, which is exactly what E-93 forbids turning into an actor. The methods form the class "credential under verification": password `findByUserId` and `replaceIfUnchanged`, recovery `pepperVersionsOf`, WebAuthn `findCredentialByCredentialId` and `recordAssertion`.
+
+**Price.** `findByUserId` is a method on an owned table that takes any string, and the census accepts it because it is named in the list, not because the type stops a second caller. Before this branch the set route used it too; it now reads through `findOwnedBy` (E-2429), but a future route could pick the old method again and pass.
+
+<a id="e-2424"></a>
+
+### A pending resolution is the owner's evidence and is not a brand
+`E-2424` · owner-actor · S-OWNER-1, left open
+
+**Context.** E-459 let the WebAuthn credential repository take `CredentialOwner = Actor | PendingResolution`, so the second-factor ceremony can name the account the pending row named. TOTP's `findCredentialOf` and `claimTimeStep` take a bare user id for the same reason. The census asks for a brand from `actor.ts`, and `PendingResolution` is `ResolvedPendingAuthentication`, a plain interface anyone can build.
+
+**Rejected.** (a) Accepting `PendingResolution` as a proof in the census. (b) Adding a pending brand to `actor.ts` and asserting it in the pending service.
+
+**Reason.** (a) would make the census accept a type a caller can write by hand, which is the hole the brand exists to close. (b) changes the shipped declarations: `PendingResolution` is in `core/factor/pending/service.d.mts`, `ResolvedPendingAuthentication` in `core/http/caller.d.mts`, and both are returned by the shipped `verify` of the TOTP and recovery services. This branch was told to stop and record rather than change the public surface. So the four methods form the class "pending resolution": TOTP `findCredentialOf` and `claimTimeStep`, WebAuthn `listDescriptorsOwnedBy` and `findOwnedCredentialByCredentialId`.
+
+**Price.** On these four methods S-OWNER-1 rests on the pending row having been resolved by its token hash, which the type does not show. `claimTimeStep` is also called from enrolment and removal with a real actor, and passes it as a string. Branding the pending resolution is a public type change and is left for a branch that may make one.
+
+<a id="e-2425"></a>
+
+### An identity is reached by its provider and subject
+`E-2425` · owner-actor · S-OWNER-1, exception class
+
+**Context.** `findIdentityBySubject` and `refreshIdentity` address `velve.identity` by `(provider, subject)`, and their statements already carry the S-LINK-1 marker. The insert of a sign-in that creates or joins an account has no proof either: the account is the one the provider's subject decided, created in the same transaction or matched under the automatic linking rules.
+
+**Rejected.** Minting an actor from the account the sign-in created or joined.
+
+**Reason.** That would be an actor from a user id with nothing in the signature saying where it came from, the shape E-93 rules out. The three methods form the class "provider subject": `findIdentityBySubject`, `refreshIdentity` and the new `insertIdentityOfSignIn`.
+
+**Price.** `insertIdentityOfSignIn` and `insertIdentity` run the same statement and differ only in what they take. A caller with a proof could call the one without it.
+
+<a id="e-2426"></a>
+
+### Maintenance and start-up reach every owner at once
+`E-2426` · owner-actor · S-OWNER-1, exception class
+
+**Context.** The census lists `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown` and `assertEveryUserReferenceCascades`. The first deletes by deadline, the second reads the distinct key versions of the factor tables, the third reads the catalogue.
+
+**Rejected.** Nothing else was considered; none of them is about one owner.
+
+**Reason.** A method that reaches every owner's rows by a deadline or a catalogue has no owner to bind, and S-OWNER-1 is about reaching one user's rows instead of another's. They form the class "maintenance or start-up".
+
+**Price.** The class excuses any method that claims it. Its members are named one by one in the test, so a new one has to be added by hand.
+
+<a id="e-2427"></a>
+
+### Three repository paths take a user id because the shipped surface does
+`E-2427` · owner-actor · S-OWNER-1, left open
+
+**Context.** The audit named `listSessionsOfUser`. Its only caller is `FrozenRepositories.listSessionsForUser({ userId, actor })`, where `actor` is a `PluginActor` that names the plugin and authorises nothing (E-737); `findUserIdOfSession` and `deleteSessionById` serve `revokeSession` the same way. TOTP `findCredentialOf` also serves the shipped `TotpService.isEnrolled({ userId })`. The user repository's three finders read `EXISTS` on `velve.password_credential` to fill `hasPassword`, and `UserRepository` is shipped with `findUserById(userId: string)`.
+
+**Rejected.** Changing the plugin surface or `isEnrolled` to take an `Actor`.
+
+**Reason.** All three are in `test/__snapshots__/api-surface.md`, and this branch was told to keep the public API and to stop and record rather than change a shipped declaration. Section 3.15 G hands a plugin a user id, not a session. The six methods form the class "shipped surface"; `findCredentialOf` stands under "pending resolution" because that is its other caller.
+
+**Price.** A plugin can list any account's sessions and revoke any session by id, logged with its own name. That is the behaviour 3.15 G specifies, and it stays outside S-OWNER-1 until the shipped surface changes.
+
+<a id="e-2428"></a>
+
+### Sign-up writes its password for the account its own transaction created
+`E-2428` · owner-actor · S-OWNER-1, exception class
+
+**Context.** The password `write` was called from sign-up, the set and change routes and both resets. Every caller but sign-up holds a proof (E-2429). Sign-up has just inserted the account row in the same transaction and holds nothing but its id.
+
+**Rejected.** (a) Keeping one `write` with a bare user id for everyone. (b) Issuing the session first and minting an actor from it.
+
+**Reason.** (a) is the violation the census reports. (b) resolves a session only to obtain an actor for a row nobody else can reach yet, which is the minting E-341 calls visible rather than impossible. A second method, `writeForCreatedAccount`, runs the same statement for sign-up alone, and the census lists it under a class of its own, "created with its account".
+
+**Price.** The method takes any user id. That only sign-up calls it is held by the name and by `writePasswordOfCreatedAccount` being the one function that reaches it.
+
+<a id="e-2429"></a>
+
+### A password write takes the actor its caller already holds
+`E-2429` · owner-actor · S-OWNER-1
+
+**Context.** `write({ userId, … })` was called by `replacePasswordOfSession` with `input.resolved.userId`, by the reset flows with `input.userId` next to an `input.actor`, and by `setPassword`. The set route's `refuseIfCredentialExists` read the credential through `findByUserId(resolved.userId)`.
+
+**Rejected.** Narrowing `userId` to the `UserId` entity brand instead of an `Actor`.
+
+**Reason.** A `UserId` says what the string is, not who proved it. `write` now takes `actor`, `replacePasswordOfSession` passes `actorOfResolvedSession(input.resolved)`, the resets pass the actor they already had, and the set route reads through a new `findOwnedBy({ actor })`. `setPassword` takes `actor` as well; only tests call it.
+
+**Price.** Twenty-eight call sites in nine test files now build an actor with `actorOfTestUser`, where they wrote a user id before. The password chapter of `DOCUMENTATION.md` described the old signatures and was corrected with the Repositories chapter, which is one chapter more than this branch's brief allowed.
+
+<a id="e-2430"></a>
+
+### A linked identity is inserted with the actor of the consumed flow
+`E-2430` · owner-actor · S-OWNER-1
+
+**Context.** `linkIdentityAndReissue` read `input.linked.account.userId` for the insert and, a few lines further down, turned the same `ConsumedOAuthFlow` into an actor for the session reissue.
+
+**Rejected.** Leaving one insert with a user id and documenting the link as an exception.
+
+**Reason.** The link holds the proof; dropping it to a string before the one write that binds an identity to an account is exactly what the audit was about. `insertIdentity` now takes `actor`, the link passes `actorOfConsumedOAuthFlow(input.linked.account)` to both the insert and the reissue, and the sign-in path uses `insertIdentityOfSignIn` (E-2425). `OAuthIdentityRepository` and `OwnedIdentity` lost an export nothing imported.
+
+**Price.** `insertOrRefuse` became `refuseIfAlreadyLinked`, which takes the insert's result rather than the repository, so the two inserts read differently at their two call sites.
+
+<a id="e-2431"></a>
+
+### The link start carries an actor, not the string it was made from
+`E-2431` · owner-actor · S-OWNER-1
+
+**Context.** `velve.oauth_flow.link_to_user_id` is an owner column. `linkStartOf` built `OAuthLinkStart` as `{ userId: actorOf(services, session), sessionId }`, so the value was an `Actor` and the field widened it to a string before `insertFlow` wrote it.
+
+**Rejected.** Listing `insertFlow` as an exception because a sign-in flow writes no owner.
+
+**Reason.** The field now holds the `Actor` itself. A sign-in passes `linkTo: null`, and the census reads a union by its members that are not `null`, so `insertFlow` carries a proof in the one case where it writes an owner.
+
+**Price.** None found. `OAuthLinkStart` is not in the shipped declarations.
+
+<a id="e-2432"></a>
+
+### The census follows six more shapes, and a brand beside a bare id is no proof
+`E-2432` · owner-actor · T-OWNER-1, correction of E-2420
+
+**Context.** E-2420 said the census takes every exported function and every method of an object an exported factory returns. The review planted a violator in six shapes it did not follow — an `export { … }` list, a spread into the returned object, an exported class, an exported object constant, lower case SQL, and a table name taken from an imported constant — and one of them was already in the tree: `assertStoredKeyVersionsAreKnown` in `core/password/startup.ts` names its table through `PASSWORD_CREDENTIAL_TABLE` and was never counted. The review also asked for the decoy shape, a unit that takes an `Actor` and a bare user id beside it and uses the id.
+
+**Rejected.** Listing the six shapes as known blind spots instead of following them.
+
+**Reason.** Each of them is a way to write an ordinary repository, so a census that misses them reports zero for the wrong reason. The census now takes units from all six, reads SQL in any case, takes the literal text of a constant imported from another module, and counts a unit whose parameter, or a field of it, is a plain-string `userId` or `ownerId` as carrying no proof whatever brand stands beside it. The password key version check stands beside its factor counterpart under "maintenance or start-up".
+
+**Price.** An imported constant is followed only when its initializer is a literal; a table name computed in another module is still not seen. The decoy rule reads a parameter's name, so a bare id called anything else passes beside a brand. The exception list holds thirty-nine methods now, against thirty-seven when E-2420 was written, and the report of this branch's first round gave thirty-eight, which was wrong.
+
+<a id="e-2433"></a>
+
+### A password write without a proof cannot overwrite one
+`E-2433` · owner-actor · S-OWNER-1, correction of E-2428
+
+**Context.** E-2428 justified `writeForCreatedAccount` taking a bare user id by sign-up's transaction having created the account, and said the method's reach was held by its name. The review showed what that meant: it ran the same `ON CONFLICT … DO UPDATE` as `write`, so any caller with a user id could replace that account's password, and `writePasswordOfCreatedAccount` is exported from its module.
+
+**Rejected.** Keeping the upsert and checking for an existing row first.
+
+**Reason.** A read before the write is the preceding `SELECT` S-OWNER-2 rules out, with a window between the two. A plain `INSERT` without `ON CONFLICT` lets the primary key on `user_id` do it: an account that already has a credential makes the statement fail and nothing is written. Sign-up still issues one statement, and the cover registration of a taken address still inserts into a fresh account and rolls back (S-ENUM-3).
+
+**Price.** The refusal is the driver's unique-violation error, not a `CredentialWriteError`, so a caller that misuses the method learns of it as an internal error. The only caller cannot reach it.
+
+<a id="e-2434"></a>
+
+### The sign-in identity insert binds an account the sign-in decided
+`E-2434` · owner-actor · S-OWNER-1, correction of E-2425
+
+**Context.** E-2425 put `insertIdentityOfSignIn` into "provider subject" with `findIdentityBySubject` and `refreshIdentity`. Those two are addressed by `(provider, subject)`. The insert is not: it binds an account the sign-in created in the same transaction, or one the automatic linking rules joined for a trusted provider's verified address (E-558).
+
+**Rejected.** Splitting the method into one for a created account and one for a joined account.
+
+**Reason.** Both run the same statement from the same function, and the decision between them is made by `accountAnAutomaticLinkMayJoin` before the insert, not by the repository. The method gets a class of its own, "account a sign-in decided", and the code comment and the Repositories chapter say what it binds.
+
+**Price.** A joined account is one nobody in this request has proven to own; the automatic linking rules are what stand for that proof, and the class says so rather than borrowing the subject's.
+
+<a id="e-2435"></a>
+
+### The enrolment check answers a boolean and reads no secret
+`E-2435` · owner-actor · S-OWNER-1
+
+**Context.** The shipped `TotpService.isEnrolled({ userId })` read the whole credential through `findCredentialOf`, encrypted secret and key version included, to return whether it was confirmed. E-2427 listed `findCredentialOf` partly for that caller.
+
+**Rejected.** Changing `isEnrolled` to take an actor.
+
+**Reason.** It is in the shipped declarations. The repository gains `isConfirmedFor({ userId })`, an `EXISTS` over a confirmed row that returns no column of the credential, and `isEnrolled` calls it. It stands under "shipped surface"; `findCredentialOf` keeps the second factor alone.
+
+**Price.** One more method takes a bare user id, now one that can say only whether a confirmed TOTP exists for it.
+
+<a id="e-2436"></a>
+
+### Enrolment and removal claim their step with the actor they hold
+`E-2436` · owner-actor · S-OWNER-1
+
+**Context.** E-2424 recorded that `claimTimeStep` was called with a real actor from enrolment and removal and passed it as a string, because the second factor called it with a pending resolution's user id.
+
+**Rejected.** Typing the claim's owner as `Actor | PendingResolution`, as the WebAuthn repository does.
+
+**Reason.** The census reads a union by all its members, so the union would still count as no proof and would hide the enrolment and removal callers behind the pending one. `claimTimeStep` now takes the `Actor`, and the second factor claims through `claimTimeStepOfPending({ pending })`, under "pending resolution". The service's `claimOrReject` became `rejectAReplayedStep`, which takes the claim's result.
+
+**Price.** Two methods run one statement, and the three call sites each spell out the claim rather than calling one helper.
+
+<a id="e-2437"></a>
+
+### The plugin repositories take a user id because the specification gives them one
+`E-2437` · owner-actor · S-OWNER-1, correction of E-2427
+
+**Context.** E-2427 tagged the "shipped surface" class "left open" and said the plugin's view of sessions stays outside S-OWNER-1 until the shipped surface changes. For `listSessionsOfUser`, `findUserIdOfSession` and `deleteSessionById` that reads as a gap waiting for a fix.
+
+**Rejected.** Recording them as something a later branch should give an actor.
+
+**Reason.** Section 3.15 G specifies `listSessionsForUser` with a user id and `revokeSession` with a session id, and a plugin holds no session of the account it acts on, so there is no proof to pass. Those three methods are the specified shape, logged with the plugin's name (E-737), not an open item. What does remain open in E-2427 is `findCredentialOf`'s pending caller (E-2424) and the user repository's finders.
+
+**Price.** S-OWNER-1 as written in section 5 and section 3.15 G disagree on these three methods, and the class records the disagreement rather than resolving it in the specification.
+
 <a id="e-2480"></a>
 
 ### The runner reads each declared plugin table as one name

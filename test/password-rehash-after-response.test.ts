@@ -31,7 +31,7 @@ const { rootKeyProvider } = await import("../src/core/keys/index.js");
 const { createArgon2idHash } = await import("../src/core/password/argon2.js");
 const { createPasswordCredentialRepository } = await import("../src/core/password/credential.js");
 const { configFor, TEST_ORIGIN } = await import("./auth-fixtures.js");
-const { dropSchema, openMigratedSchema } = await import("./db-fixtures.js");
+const { actorOfTestUser, dropSchema, openMigratedSchema } = await import("./db-fixtures.js");
 const { postTo } = await import("./flows-fixtures.js");
 const { generateRootKey } = await import("./keys-fixtures.js");
 const { drawTestPassword, storedHashesFor } = await import("./password-fixtures.js");
@@ -96,7 +96,12 @@ async function accountBehindTheKeyRing(): Promise<{ email: string; userId: strin
 		driver: migrated.connection,
 		keys: staleKeys,
 		schema: migrated.schema,
-	}).write({ userId, phc: stalePhc, scheme: "argon2id", setBySessionId: null });
+	}).write({
+		actor: actorOfTestUser(userId),
+		phc: stalePhc,
+		scheme: "argon2id",
+		setBySessionId: null,
+	});
 	return { email, userId };
 }
 
@@ -212,7 +217,7 @@ async function accountWithBcrypt(): Promise<{ email: string; userId: string }> {
 		keys: currentKeys,
 		schema: migrated.schema,
 	}).write({
-		userId,
+		actor: actorOfTestUser(userId),
 		phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,
 		scheme: "bcrypt",
 		setBySessionId: null,

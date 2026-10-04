@@ -6,7 +6,7 @@ import { createArgon2idHash } from "../src/core/password/argon2.js";
 import { createPasswordCredentialRepository } from "../src/core/password/credential.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, createLogSink, type LogSink } from "./auth-fixtures.js";
-import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { postTo } from "./flows-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
@@ -112,7 +112,7 @@ async function accountWithBcrypt(): Promise<{ email: string; userId: string }> {
 	);
 	const userId = (row as { id: string }).id;
 	await createPasswordCredentialRepository({ driver: primary, keys, schema }).write({
-		userId,
+		actor: actorOfTestUser(userId),
 		phc: (await storedHashesFor(PASSWORD)).byScheme.bcrypt,
 		scheme: "bcrypt",
 		setBySessionId: null,
@@ -181,7 +181,7 @@ describe("T-RACE-6 — the rehash writes by compare-and-swap (S-RACE-6)", () => 
 		const answer = await signIn(first, account.email, PASSWORD);
 		await until(() => gate.arrivals === 1, "the rehash reaching its swap");
 		await createPasswordCredentialRepository({ driver: primary, keys, schema }).write({
-			userId: account.userId,
+			actor: actorOfTestUser(account.userId),
 			phc: await createArgon2idHash(new TextEncoder().encode(THIRD_PARTY_PASSWORD), {
 				memoryKiB: 19456,
 				iterations: 2,
