@@ -7,7 +7,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { postTo } from "./flows-fixtures.js";
+import { normalisedAnswer, postTo } from "./flows-fixtures.js";
 import { backendPidOf, HeldDriver, waitUntilWaitingForALock } from "./lock-order-fixtures.js";
 
 /**
@@ -96,10 +96,6 @@ async function changeTokenOf(address: string): Promise<string> {
 	return message.token;
 }
 
-async function shapeOf(answer: Response): Promise<{ status: number; body: string }> {
-	return { status: answer.status, body: await answer.text() };
-}
-
 describe("two confirmed changes to one address at the same time (S-ENUM-5)", () => {
 	it("answers the one that loses on the unique key as the same change is answered without a race", async () => {
 		const winnerToken = await changeTokenOf("winner@example.com");
@@ -115,10 +111,16 @@ describe("two confirmed changes to one address at the same time (S-ENUM-5)", () 
 
 		const [won, lost] = await Promise.all([winning, losing]);
 		const withoutARace = await second(postTo("/email/redeem-change", { token: loserToken }));
+		const invented = await second(
+			postTo("/email/redeem-change", { token: `${loserToken.slice(0, -4)}AAAA` }),
+		);
 
 		expect(won.status).toBe(200);
-		expect(await shapeOf(lost)).toStrictEqual(await shapeOf(withoutARace));
 		expect(withoutARace.status).toBe(400);
+		const racing = await normalisedAnswer(lost);
+		//the racing answer must be the one an invalid token gets with its header set (S-ENUM-5)
+		expect(racing).toBe(await normalisedAnswer(withoutARace));
+		expect(racing).toBe(await normalisedAnswer(invented));
 		const [row] = await observer.query<{ total: number }>(
 			`SELECT count(*)::integer AS total FROM ${schema}.user WHERE email = $1`,
 			[CONTESTED],

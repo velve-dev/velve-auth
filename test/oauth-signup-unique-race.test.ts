@@ -6,6 +6,7 @@ import { createVelveAuth } from "../src/index.js";
 import { TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { normalisedAnswer } from "./flows-fixtures.js";
 import { backendPidOf, HeldDriver, waitUntilWaitingForALock } from "./lock-order-fixtures.js";
 import { codeCarrying, createStubProvider, oauthConfigFor } from "./oauth-provider.js";
 
@@ -93,10 +94,6 @@ function callbackFor(started: Started): Request {
 	);
 }
 
-async function shapeOf(answer: Response): Promise<{ status: number; body: string }> {
-	return { status: answer.status, body: await answer.text() };
-}
-
 describe("two OAuth sign-ups with one address at the same time (E-560, S-ENUM-5)", () => {
 	it("answers the one that loses on the unique key as a taken address is answered without a race", async () => {
 		const winnerFlow = await startFlow(first);
@@ -115,7 +112,7 @@ describe("two OAuth sign-ups with one address at the same time (E-560, S-ENUM-5)
 
 		expect(won.status).toBe(302);
 		expect(withoutARace.status).not.toBe(500);
-		expect(await shapeOf(lost)).toStrictEqual(await shapeOf(withoutARace));
+		expect(await normalisedAnswer(lost)).toBe(await normalisedAnswer(withoutARace));
 		const [row] = await observer.query<{ total: number }>(
 			`SELECT count(*)::integer AS total FROM ${schema}.user WHERE email = $1`,
 			[CONTESTED],
