@@ -14442,3 +14442,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Deriving the exemptions from the code, by skipping every method that is not built from a route, which is the defect's own shape: `pending.cancel` would have exempted itself.
 **Reason.** A method that should be checked is named by the specification, so the list has to come from there for the test to catch a method the code wrongly leaves out. Asserting the exemption set and the count as well means a parse that matches nothing fails rather than passes.
 **Price.** The parser depends on the wording of B.9's header, of the sentence closing B.9, of T-CSRF-1's last sentence and of the method count in B, and each change there has to be met in the test. `http` is skipped by name, so a namespace added under that name would not be walked. The test does not compare table contents before and after the refused calls; T-CSRF-1's row-count comparison stays with `test/csrf-every-route-both-paths.test.ts`.
+
+<a id="e-2835"></a>
+
+### username.change answers a vanished account as a missing session
+`E-2835` · server-surface · 3.15 D.1 and B.9, error contract, decided
+
+**Context.** D.1 says a handler throws only the codes its route declares. `username.change` threw `ConcealedError("user_not_found")` when the update of the name found no row, which the error map turns into `invalid_credentials`, and its declaration does not list that code; B.9's row for it lists `session_required`, `freshness_required`, `username_taken` and `username_invalid`. The branch is reached when the account is deleted between the resolution of the session and the update, which the update's `RETURNING` exists to notice. `test/username-change-vanished-account.test.ts` plants the deletion in front of the update through a wrapping driver and asserts that the answer's code is among the route's declared ones and is `session_required`; before the change it failed with `invalid_credentials` not in the declared list. The handler now throws `ConcealedError("session_not_found")`, which maps to `session_required`.
+**Rejected.** Adding `invalid_credentials` to the route's `errors`, which would make the declaration true by widening it to a code that tells a signed-in caller their credentials were wrong when nothing about them was checked, and which B.9 does not list.
+**Reason.** Deleting an account cascades to its sessions, so once the update finds no account the session the caller presented is gone too; `session_required` is what the next request with that cookie answers anyway, and it is already declared.
+**Price.** None in the contract. A caller cannot tell from the code that the account rather than only the session went, which is what any other request would tell them too.

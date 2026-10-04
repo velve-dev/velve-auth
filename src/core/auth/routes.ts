@@ -432,8 +432,9 @@ export function usernameRoutes(services: RouteServices, rules: UsernameRules) {
 					}
 					throw cause;
 				});
+			//an account deleted after its session resolved leaves the caller without a session (E-2835)
 			if (changed === null) {
-				throw new ConcealedError("user_not_found");
+				throw new ConcealedError("session_not_found");
 			}
 			return { user: changed };
 		},
