@@ -6752,15 +6752,15 @@ that revokes under a named reason announces:
 | `sign_out` | `signOut` | the caller's | before the delete |
 | `revoked_by_user` | `session.revoke`, `session.revokeAllOther`, `session.revokeAll` | the owned ones the route removes | before the delete |
 | `revoked_by_user`, or the plugin's own | `FrozenRepositories.revokeSession` | the one named, if it exists | before the delete |
-| `password_changed` | `password.change`, `password.set` | every session of the account, the caller's included | before the transaction opens |
+| `password_changed` | `password.change`, `password.set` | every session of the account, the caller's included | inside the transaction, after the account row is locked |
 | `password_reset` | `password.redeemReset`, `password.redeemResetWithRecoveryCode` | every session of the account | inside the transaction, after the account row is locked |
 | `identity_linked` | the OAuth callback finishing a link | the one session the link began in, if the account still owns it | before the transaction opens |
 | `email_verified` | `signIn.magicLink.redeem`, `email.redeemVerification`, `email.redeemChange`, when it is the address's first confirmation and removes a password set in another session (S-LINK-4) | every session of the account | inside the transaction, after the account row is locked and before any of those sessions is deleted; the token is already redeemed, the password row deleted and the address confirmed, so the hook sees the account in that state |
 
 **A refusal on a credential change refuses the change.** A hook that throws on
-`password_changed` stops the change before its transaction opens: the password,
+`password_changed` rolls back the transaction the change runs in: the password,
 every session and the cookie stay as they were, and the caller gets
-`500 internal_error`. On `password_reset` the throw rolls back the transaction
+`500 internal_error` (E-2705). On `password_reset` the throw rolls back the transaction
 the reset runs in, so the mailed token or the recovery code is not spent either
 and can be redeemed again. On `identity_linked` no identity is inserted and the
 session is not replaced. On `email_verified` the throw rolls back the redemption:
@@ -6807,6 +6807,9 @@ spared: S-FIX-6 requires every session of the account to go (E-2585).
 The first confirmation behind `email_verified` runs the hook the same way as a
 reset and for the same reason: it learns its account only by redeeming its token
 inside the transaction, so the hook gets the same lent context (E-2730).
+`password.set` and `password.change` run it the same way too, so that a call
+refused under the account lock announces nothing and the count it answers is the
+rows it deleted (E-2705).
 
 Revocations no reason names announce nothing: replacing the presented session on
 sign-in (E-2122), the re-issue on a change of trust level, deleting a user, and

@@ -14082,3 +14082,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the announcement before the password delete so the old sentence becomes true. The library learns whether the password goes only from the statement that deletes it, `deleteUnlessSetInSession`, and an account whose password stays keeps its sessions (E-608), so announcing first would need a second read of the provenance that could disagree with the delete.
 **Reason.** E-2730's sentence was wrong when it was written, so it is corrected by this entry and E-2730 stays as it is. What a plugin can rely on is the order of the announcement relative to the deletion it announces, which is the true part of the old sentence, and what the account looks like when it is told, which a plugin reading through its context will see anyway.
 **Price.** None in the code. A plugin that read the old sentence and expected to find the password still present will find it gone.
+
+<a id="e-2706"></a>
+
+### The plugin chapter said the password routes announce before their transaction
+`E-2706` · password-set-race · documentation hand-off, settled
+
+**Context.** E-2705 moved the `password_changed` announcement inside the transaction. The plugin chapter of `DOCUMENTATION.md`, which the password section does not own, still said in the table of revoke reasons that it runs before the transaction opens and that a throwing hook stops the change before the transaction opens. The row now says inside the transaction after the account row is locked, the refusal paragraph says the throw rolls the change back, and the paragraph on the lent context names the two password routes beside the resets and the first confirmation.
+**Rejected.** Leaving the chapter for its owner and only reporting it, which would have shipped a reference that contradicts the code in the release this branch prepares.
+**Reason.** The change is a consequence of E-2705 and nothing else, it touches no sentence about another feature's behaviour, and the release notes for 1.2.0 read from this chapter.
+**Price.** A file region outside this feature's set was edited, which CLAUDE.md §5 asks to be reported; this entry and the commit are the report.
