@@ -160,7 +160,7 @@ describe("resolution costs the same whether or not the identifier names an accou
 		expect(observed).toEqual(EXISTING_AND_ABSENT.map(([existing]) => `${existing}: identical`));
 	});
 
-	it("passes the identifier through the normaliser of every column the mode configures", async () => {
+	it("binds one parameter shape per mode, whether the identifier is accepted or refused", async () => {
 		const observed: Record<string, string> = {};
 		for (const mode of Object.keys(CONFIGURATIONS) as IdentityMode[]) {
 			for (const identifier of ["known@example.test", "known", "*"]) {

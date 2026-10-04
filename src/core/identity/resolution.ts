@@ -38,7 +38,7 @@ interface UserRow {
 	readonly disabled: boolean;
 }
 
-//a rejected identifier binds a string like an accepted one so the lookup is the same call (S-TIM-1)
+//a rejected identifier must bind a string like an accepted one (S-TIM-1)
 const MATCHES_NO_ACCOUNT = "";
 
 function emailPredicateValue(
