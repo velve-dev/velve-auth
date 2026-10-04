@@ -12718,3 +12718,43 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Letting each branch add its own row to the range table when it starts.
 **Reason.** Every one of those rows lands on the same line of `CLAUDE.md`, so every merge after the first would conflict there. Reserving all fourteen ranges in one change before the first branch starts is the partition rule in §5 applied to the table itself.
 **Price.** Ranges reserved for work that may turn out smaller stay as gaps in the numbering, which §6 accepts. Concerns `CLAUDE.md` §6.
+
+<a id="e-2210"></a>
+
+### The weakening detectors read the defaults the code uses
+`E-2210` · weakening-report · S-DEFAULT-1, closed
+
+**Context.** An audit started instances with each weakening `SECURITY_OPTIONS` documents and counted the start lines. Three logged nothing: a caller-supplied `fetch` had a row and no detector, `session.idleTimeout` and `session.absoluteTimeout` were not compared at all (only the freshness window was), and the rate-limit detector read `capacity` and never `refillPerSecond`. The detectors also compared against their own copies of the defaults (`DEFAULT_ADDRESS_CAPACITY`, `DEFAULT_ACCOUNT_CAPACITY`, `DEFAULT_RECOVERY_CODE_COUNT`), and the `safeDefault` strings were literals, so nothing tied either to the values `sessionSettingsOf()` and `rateLimitConfigOf()` resolve an absent option with.
+**Rejected.** Adding the three missing comparisons beside the copied constants. It fixes the three cases the audit found and leaves the next drift between a copy and the code as invisible as these were.
+**Reason.** The detectors now receive the session settings and the rate-limit configuration resolved from the configuration beside the ones resolved from nothing, and compare those; the `safeDefault` strings are built from `DEFAULT_SESSION_CONFIG`, `rateLimitConfigOf()`, `ARGON2ID_FLOOR`, `DEFAULT_RECOVERY_CODE_SHAPE` and `TOTP_TOLERANCE_STEPS`. A test holds those constants to the defaults A.4, A.5, A.6 and A.8 state, starts one instance per documented weakening and requires exactly one line naming the option, and requires a case for every row whose `weakenedBy` does not say nothing weakens it.
+**Price.** `security-options.ts` now imports from five feature modules it did not reach before. The `sessionMetadata` detector still reports `"none"`, which stores less than the default, as a weakening; the row names only `"full"`, and the two were left disagreeing because neither requirement here is about it. Concerns `src/core/auth/security-options.ts` and `src/core/auth/instance.ts`.
+
+<a id="e-2211"></a>
+
+### A raised rate limit is reported at start and not refused
+`E-2211` · weakening-report · S-DEFAULT-1 and S-DEFAULT-3, revisit if the architecture states a ceiling
+
+**Context.** `rateLimit.perIpAddress.refillPerSecond: 1e9` refills a billion tokens a second, which limits nothing, and started without a word. The brief asked for a ceiling above which the value is refused, or at least reported, and for refusal only if the specification allows it.
+**Rejected.** (a) Refusing a refill rate or capacity above a ceiling at start, for example the 100 a second the default `globalPerRoute.alertThresholdPerMinute` of 6000 amounts to. (b) Reporting only above such a ceiling.
+**Reason.** A.6 states the defaults and no bound, and S-DEFAULT-1 is the requirement that covers a weakening: it is permitted when written explicitly and logged at start. S-DEFAULT-6 shows what the architecture writes when it wants a floor enforced, and it wrote none for the rate limit; a ceiling picked here would be a number nobody specified. So the ceiling for reporting is the default itself: any `capacity` or `refillPerSecond` above it, per address or per account, writes the one `rateLimit` line. It was also seen while deciding that thirty-three test configurations set `capacity` and `refillPerSecond` to `100_000` to switch the limiter off for a test, and refusal would have meant rewriting all of them; that was a consideration, not the reason, and it is written down because it pulled in the same direction.
+**Price.** S-DEFAULT-3 says no option deactivates the rate limiting, and a refill of a billion a second deactivates it in effect while starting. It is announced rather than prevented. Whether a value that limits nothing is an option that disables the limiter is a question for the architecture, and this entry does not answer it. Concerns `src/core/auth/security-options.ts`.
+
+<a id="e-2212"></a>
+
+### A plugin route without an address bucket is a start error
+`E-2212` · weakening-report · S-DEFAULT-3, closed
+
+**Context.** `RateLimitRule` allows `perIpAddress: "none"`, the pipeline skips the address bucket for such a route, and `bucketRuleOf` in the plugin registry kept `"none"` as declared. A plugin route could declare both buckets `"none"`, and a `rateLimitRules` entry could replace a declared address bucket with `"none"`. The equivalent exemption from the origin check, `originCheck: "exempt"`, has been a start error since E-639.
+**Rejected.** (a) Narrowing `PluginRoute`'s `rateLimit.perIpAddress` to `BucketRule` in the type, as `originCheck` was narrowed to `"checked"`. (b) Refusing `"none"` in either bucket.
+**Reason.** 3.11 says the origin check and the rate limit always come first, also for plugin routes, so a plugin route with no address bucket is the rate-limit half of what `plugin_route_exempts_the_origin_check` refuses. The check runs on the rule that wins after `rateLimitRules`, and also refuses a missing rule and a bucket whose numbers are not finite and at least zero, because a JavaScript plugin can write either and the pipeline would hand them to the limiter. (a) was left because it changes the published declarations and 3.15 G types a plugin route as the full `RouteDefinition`; the runtime check holds for a plugin written in JavaScript either way. (b) was rejected because the account bucket can only be consumed by a handler that knows an account identifier, and the core's own address-only routes declare `perAccount: "none"` too.
+**Price.** A new start error code joins the public union, and every plugin that declared `"none"` for convenience, the fixtures of thirteen test files among them, has to declare a bucket. The core's `GET /session` and `GET /pending` remain unlimited, as 3.15 D.3 states, and a plugin has no way to declare such a read. Concerns `src/core/plugin/registry.ts` and `src/core/auth/startup.ts`.
+
+<a id="e-2213"></a>
+
+### The forbidden-switch scan follows the option type's imports
+`E-2213` · weakening-report · T-DEFAULT-3, closed
+
+**Context.** The test for S-DEFAULT-2 and S-DEFAULT-3 searched `src/core/auth` for `disablePkce` and its siblings. `PasswordConfig`, `OAuthConfig`, `VelvePlugin`, `SessionConfig` and a plugin route's declaration are each typed in their own module, so a switch added to any of them passed. T-DEFAULT-3 also says "and variants", which a fixed list of names covers only for the variants someone wrote down.
+**Rejected.** Listing the feature directories by hand. The list is a second copy of what the type imports, and it falls behind the first time a type moves.
+**Reason.** The scan now walks every relative import starting at `core/auth/config.ts`, asserts the walk reaches the password, OAuth, plugin, session, identity and route types, and adds a pattern for variants: `disable`, `skip`, `bypass`, `without`, `no`, `ignore`, `unsafe` or `allowInsecure`, followed by PKCE, state, origin, rate limit or CSRF. A planted name is shown to be found by both halves, so a clean run is a scan that looked and found nothing.
+**Price.** The walk follows value imports as well as type imports and reaches most of `src/core`, so a comment anywhere there that names one of these switches in prose fails the test and has to be reworded. The pattern still misses a switch spelled as a positive boolean, `pkce: false` for instance. Concerns `test/auth-startup.test.ts`.
