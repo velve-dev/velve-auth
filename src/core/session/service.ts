@@ -5,6 +5,7 @@ import {
 	PreviousSessionMissingError,
 	type SessionInsert,
 } from "../db/repositories/session.js";
+import { isRowIdentifier } from "../db/row-identifier.js";
 import type { AuthenticationFactor, Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import { type SessionConfig, type SessionSettings, sessionSettingsOf } from "./config.js";
@@ -232,6 +233,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 		//revoking a foreign or missing session changes nothing and answers the same (S-OWNER-4)
 		async revoke({ resolved, targetSessionId }) {
+			//a spelling no uuid column could hold names no session and answers like one (S-OWNER-8)
+			if (!isRowIdentifier(targetSessionId)) {
+				return;
+			}
 			await sessions.deleteSessionOwnedBy({
 				sessionId: targetSessionId,
 				actor: actorOfFreshSession(resolved),

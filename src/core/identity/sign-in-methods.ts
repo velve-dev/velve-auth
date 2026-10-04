@@ -2,6 +2,7 @@ import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
+import { rowIdentifierOrNull } from "../db/row-identifier.js";
 import { VelveError } from "../http/error-map.js";
 
 export interface SignInMethodCount {
@@ -40,11 +41,13 @@ export function totalSignInMethods(count: SignInMethodCount): number {
 }
 
 function excludedWebauthnCredentialId(removal: SignInMethodRemoval | undefined): string | null {
-	return removal?.method === "webauthn_credential" ? removal.credentialId : null;
+	return removal?.method === "webauthn_credential"
+		? rowIdentifierOrNull(removal.credentialId)
+		: null;
 }
 
 function excludedIdentityId(removal: SignInMethodRemoval | undefined): string | null {
-	return removal?.method === "linked_identity" ? removal.identityId : null;
+	return removal?.method === "linked_identity" ? rowIdentifierOrNull(removal.identityId) : null;
 }
 
 //a confirmed address and recovery codes are no sign-in names
@@ -95,12 +98,12 @@ function removalStatement(
 		case "webauthn_credential":
 			return {
 				sql: `DELETE FROM ${table} WHERE user_id = $1 AND id = $2`,
-				params: [removal.credentialId],
+				params: [rowIdentifierOrNull(removal.credentialId)],
 			};
 		case "linked_identity":
 			return {
 				sql: `DELETE FROM ${table} WHERE user_id = $1 AND id = $2`,
-				params: [removal.identityId],
+				params: [rowIdentifierOrNull(removal.identityId)],
 			};
 	}
 }

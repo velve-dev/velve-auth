@@ -2792,6 +2792,13 @@ its identifier rather than by subtracting one, so it never makes the count too
 low; the delete then matches nothing and the call returns. A caller that needs
 to tell "removed" from "there was nothing to remove" reads the row first.
 
+An identifier that is not spelled as a `uuid` — `"not-a-uuid"`, `""` — is
+treated as one that names no row: it is passed to the statements as `NULL`,
+which excludes nothing from the count and deletes nothing, so it takes the same
+path and gets the same answer as an invented `uuid`, `last_sign_in_method`
+included. It used to reach the `::uuid` cast, fail it, and answer `500
+internal_error` (S-OWNER-8, E-2242).
+
 ```ts
 await removeSignInMethod({
   driver,
@@ -3402,7 +3409,7 @@ a session the caller could not use is not a device that is still signed in.
 | Method | Freshness | Effect |
 |---|---|---|
 | `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
-| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way |
+| `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way, and also for a `targetSessionId` that is not spelled as a `uuid`, which names no session (E-2242) |
 | `revokeEveryOther({ resolved })` | required | removes all but the calling session |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
@@ -4057,7 +4064,10 @@ Both take the owner from the resolved session and put it in the SQL predicate,
 never in a branch (S-OWNER-2). A credential belonging to another account, one
 that never existed, and an identifier that is not a `uuid` at all are one answer
 in each direction: `rename` answers `invalid_input` to all three, `remove`
-answers 204 to all three and changes nothing (S-OWNER-3, S-OWNER-8).
+answers the same to all three and changes nothing — 204, or
+`last_sign_in_method` on an account that has no other way in, which an
+identifier that is not a `uuid` now gets too rather than a 204 of its own
+(S-OWNER-3, S-OWNER-8, E-2242).
 
 `remove` fails with `last_sign_in_method` when the credential is the account's
 last way in. Counted are a password credential, every WebAuthn credential and
@@ -4843,7 +4853,7 @@ practice.
 | POST | `/sign-in/oauth/callback/:provider` | `auth.signIn.oauth.callbackFormPost` | form `{ code, state, iss? }` | 302, or `OAuthCallbackOutcome` |
 | GET | `/identity/list` | `auth.identity.list` | — | `Identity[]` |
 | POST | `/identity/link/start` | `auth.identity.link.start` | `{ provider, redirectPath? }` | `OAuthRedirect` |
-| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204) |
+| POST | `/identity/unlink` | `auth.identity.unlink` | `{ identityId }` | — (204); a foreign, an invented and a non-`uuid` `identityId` answer alike (E-2242) |
 
 `signIn.oauth.start` and `identity.link.start` return
 
