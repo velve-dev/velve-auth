@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KdfSemaphore } from "../src/core/password/semaphore.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 
 /**
  * T-DOS-3 over the mounted route with real derivations. The ceiling is read twice: from the one
@@ -108,7 +109,7 @@ async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
 			[email],
 		);
 		await credentials.write({
-			userId: (row as { id: string }).id,
+			actor: actorOfTestUser((row as { id: string }).id),
 			phc,
 			scheme: "argon2id",
 			setBySessionId: null,

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { PasswordCredentialRepository } from "../src/core/password/credential.js";
 import { withoutComments } from "../tools/source-text.mjs";
+import { actorOfTestUser } from "./db-fixtures.js";
 
 const coreDirectory = fileURLToPath(new URL("../src/core", import.meta.url));
 
@@ -49,13 +50,13 @@ describe("no password reaches the table without saying which session stored it (
 		const withoutProvenance = (repository: PasswordCredentialRepository) =>
 			// @ts-expect-error S-LINK-4 is decided on this column, so omitting it is a compile error.
 			repository.write({
-				userId: "a",
+				actor: actorOfTestUser("a"),
 				phc: "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA",
 				scheme: "argon2id",
 			});
 		const withProvenance = (repository: PasswordCredentialRepository) =>
 			repository.write({
-				userId: "a",
+				actor: actorOfTestUser("a"),
 				phc: "$argon2id$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA",
 				scheme: "argon2id",
 				setBySessionId: null,

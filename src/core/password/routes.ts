@@ -1,6 +1,7 @@
 import type { SignInLookup } from "../auth/config.js";
 import type { SignInResult } from "../auth/results.js";
 import type { RouteServices } from "../auth/routes.js";
+import { actorOfResolvedSession } from "../db/actor.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
@@ -193,7 +194,7 @@ export function passwordRoutes(services: RouteServices) {
 			const resolved = requireSessionResolution(services, context.session);
 			await context.enforceAccountRateLimit(await accountKeyOfSession(services, resolved.userId));
 			const environment = await readEnvironment();
-			await refuseIfCredentialExists(environment, resolved.userId);
+			await refuseIfCredentialExists(environment, actorOfResolvedSession(resolved));
 			return replacePasswordOfSession(services, environment, context, {
 				resolved,
 				newPassword: input.newPassword,

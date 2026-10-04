@@ -18,6 +18,7 @@ import {
 	type PasswordEnvironment,
 	setPassword,
 } from "../src/core/password/verify.js";
+import { actorOfTestUser } from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
 
@@ -319,7 +320,7 @@ describe("L-7 — the validate hook cannot run at sign-in", () => {
 		const decomposed = "passworéword";
 
 		await setPassword(
-			{ userId: USER_ID, plaintext: decomposed, setBySessionId: null },
+			{ actor: actorOfTestUser(USER_ID), plaintext: decomposed, setBySessionId: null },
 			harness.environment,
 		);
 

@@ -29,19 +29,23 @@ export interface IdentityFacts {
 	readonly tokens: EncryptedProviderTokens;
 }
 
-export interface OwnedIdentity {
+interface OwnedIdentity {
 	readonly identity: Identity;
 	readonly userId: string;
 }
 
-export interface OAuthIdentityRepository {
+interface OAuthIdentityRepository {
 	//provider and subject are the whole predicate, no query finds an identity by address (S-LINK-1)
 	findIdentityBySubject(input: {
 		readonly provider: string;
 		readonly subject: string;
 	}): Promise<OwnedIdentity | null>;
 	//null means the pair is already linked, to this account or to another (E-989)
-	insertIdentity(input: { readonly userId: string } & IdentityFacts): Promise<Identity | null>;
+	insertIdentity(input: { readonly actor: Actor } & IdentityFacts): Promise<Identity | null>;
+	//a sign-in binds the account it created or automatic linking joined and holds no proof (E-2434)
+	insertIdentityOfSignIn(
+		input: { readonly userId: string } & IdentityFacts,
+	): Promise<Identity | null>;
 	//the provider's verification state is written per identity on every sign-in (S-LINK-6)
 	refreshIdentity(input: IdentityFacts): Promise<Identity>;
 	listIdentitiesOwnedBy(input: { readonly actor: Actor }): Promise<Identity[]>;
@@ -152,21 +156,25 @@ RETURNING ${RETURNED_COLUMNS}`;
 	const listStatement = `SELECT ${RETURNED_COLUMNS} FROM ${identities}
 WHERE user_id = $1 ORDER BY created_at, id`;
 
+	async function insertOwnedBy(ownerId: string, facts: IdentityFacts): Promise<Identity | null> {
+		const [row] = await options.driver.query<IdentityRow>(insertStatement, [
+			ownerId,
+			facts.provider,
+			facts.subject,
+			...factParameters(facts),
+		]);
+		return row === undefined ? null : toIdentity(row);
+	}
+
 	return {
 		async findIdentityBySubject({ provider, subject }) {
 			const [row] = await options.driver.query<IdentityRow>(findStatement, [provider, subject]);
 			return row === undefined ? null : { identity: toIdentity(row), userId: row.user_id };
 		},
 
-		async insertIdentity({ userId, provider, subject, ...facts }) {
-			const [row] = await options.driver.query<IdentityRow>(insertStatement, [
-				userId,
-				provider,
-				subject,
-				...factParameters({ provider, subject, ...facts }),
-			]);
-			return row === undefined ? null : toIdentity(row);
-		},
+		insertIdentity: ({ actor, ...facts }) => insertOwnedBy(actor, facts),
+
+		insertIdentityOfSignIn: ({ userId, ...facts }) => insertOwnedBy(userId, facts),
 
 		async refreshIdentity({ provider, subject, ...facts }) {
 			const [row] = await options.driver.query<IdentityRow>(refreshStatement, [

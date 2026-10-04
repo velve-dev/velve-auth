@@ -2,6 +2,7 @@ import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../../db/identifier.js";
 import { lockAccountRow } from "../../db/lock.js";
+import type { PendingResolution } from "../pending/service.js";
 
 export interface TotpRepositoryOptions {
 	readonly driver: Driver;
@@ -20,19 +21,26 @@ export interface TotpCredentialInsert {
 	readonly keyVersion: number;
 }
 
-export interface TimeStepClaim {
-	readonly userId: string;
+interface TimeStep {
 	readonly timeStep: number;
 	readonly retentionSeconds: number;
 }
+
+export type TimeStepClaim = { readonly actor: Actor } & TimeStep;
+
+type PendingTimeStepClaim = { readonly pending: PendingResolution } & TimeStep;
 
 export interface TotpRepository {
 	putUnconfirmedCredential(input: TotpCredentialInsert): Promise<StoredTotpCredential | null>;
 	findCredential(input: { actor: Actor }): Promise<StoredTotpCredential | null>;
 	findCredentialOf(input: { userId: string }): Promise<StoredTotpCredential | null>;
+	//the shipped enrolment check takes a user id so this answers a boolean and no secret (E-2435)
+	isConfirmedFor(input: { userId: string }): Promise<boolean>;
 	confirmCredential(input: { actor: Actor }): Promise<boolean>;
 	removeCredential(input: { actor: Actor }): Promise<boolean>;
 	claimTimeStep(input: TimeStepClaim): Promise<boolean>;
+	//the pending row named the owner when its token hash resolved it (E-2424)
+	claimTimeStepOfPending(input: PendingTimeStepClaim): Promise<boolean>;
 }
 
 interface CredentialRow {
@@ -68,6 +76,10 @@ RETURNING secret_enc, key_version, confirmed_at`;
 	const findStatement = `SELECT secret_enc, key_version, confirmed_at FROM ${credentials}
 WHERE user_id = $1`;
 
+	const isConfirmedStatement = `SELECT EXISTS (
+	SELECT 1 FROM ${credentials} WHERE user_id = $1 AND confirmed_at IS NOT NULL
+) AS confirmed`;
+
 	const confirmStatement = `UPDATE ${credentials} SET confirmed_at = now()
 WHERE user_id = $1 AND confirmed_at IS NULL
 RETURNING user_id`;
@@ -82,6 +94,15 @@ RETURNING user_id`;
 VALUES ($1, $2, now() + make_interval(secs => $3::double precision))
 ON CONFLICT (user_id, time_step) DO NOTHING
 RETURNING time_step`;
+
+	async function claimStep(ownerId: string, step: TimeStep): Promise<boolean> {
+		const rows = await options.driver.query(claimStepStatement, [
+			ownerId,
+			step.timeStep,
+			step.retentionSeconds,
+		]);
+		return rows.length === 1;
+	}
 
 	return {
 		async putUnconfirmedCredential({ actor, secretEnc, keyVersion }) {
@@ -119,13 +140,17 @@ RETURNING time_step`;
 			});
 		},
 
-		async claimTimeStep({ userId, timeStep, retentionSeconds }) {
-			const rows = await options.driver.query(claimStepStatement, [
+		claimTimeStep: ({ actor, timeStep, retentionSeconds }) =>
+			claimStep(actor, { timeStep, retentionSeconds }),
+
+		claimTimeStepOfPending: ({ pending, timeStep, retentionSeconds }) =>
+			claimStep(pending.userId, { timeStep, retentionSeconds }),
+
+		async isConfirmedFor({ userId }) {
+			const [row] = await options.driver.query<{ confirmed: boolean }>(isConfirmedStatement, [
 				userId,
-				timeStep,
-				retentionSeconds,
 			]);
-			return rows.length === 1;
+			return row?.confirmed === true;
 		},
 	};
 }

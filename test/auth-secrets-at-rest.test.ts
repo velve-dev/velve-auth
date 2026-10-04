@@ -14,7 +14,7 @@ import { createKdfSemaphore } from "../src/core/password/semaphore.js";
 import { createDummyCredential, setPassword } from "../src/core/password/verify.js";
 import { createOneTimeTokens } from "../src/core/token/one-time-token.js";
 import { ONE_TIME_TOKEN_PURPOSES } from "../src/core/token/purpose.js";
-import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
 let connection: TestConnection;
@@ -35,7 +35,7 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 
 	const credentials = createPasswordCredentialRepository({ driver: connection, keys, schema });
 	await setPassword(
-		{ userId, plaintext: TEST_PASSWORD, setBySessionId: null },
+		{ actor: actorOfTestUser(userId), plaintext: TEST_PASSWORD, setBySessionId: null },
 		{
 			config,
 			semaphore: createKdfSemaphore({ limit: 1 }),

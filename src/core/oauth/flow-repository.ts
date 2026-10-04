@@ -1,4 +1,4 @@
-import type { ConsumedOAuthFlow } from "../db/actor.js";
+import type { Actor, ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { toEntityId } from "../db/entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
@@ -18,7 +18,7 @@ interface OAuthFlowInsert {
 
 //a link must replace the session it started in, which this row carries (S-FIX-1)
 export interface OAuthLinkStart {
-	readonly userId: string;
+	readonly actor: Actor;
 	readonly sessionId: string;
 }
 
@@ -83,7 +83,7 @@ RETURNING provider, pkce_verifier_enc, key_version, nonce, redirect_path, link_t
 				input.keyVersion,
 				input.nonce,
 				input.redirectPath,
-				input.linkTo?.userId ?? null,
+				input.linkTo?.actor ?? null,
 				input.linkTo?.sessionId ?? null,
 				OAUTH_FLOW_LIFETIME_IN_SECONDS,
 			]);

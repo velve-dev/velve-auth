@@ -13228,3 +13228,237 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Fixing it on this branch. The runner is not in this feature's file set.
 **Reason.** Reported as the review asked.
 **Price.** Until someone fixes it, a declaration such as `audit_x,session` may widen what the runner treats as owned. Handed off.
+
+<a id="e-2420"></a>
+
+### The census of S-OWNER-1 reads the schema, follows the SQL and asks for a brand
+`E-2420` · owner-actor · T-OWNER-1, census rules
+
+**Context.** T-OWNER-1 asks for a static test: read the tables with a `user_id` column from `information_schema`, find every repository method that reaches one, and check that its signature carries an `actor`. No such test existed. S-OWNER-1 was held by the `Actor` brand where it was used and by E-242's narrowing where it was not, and an audit found methods that reach rows by owner with a bare user id even under E-242: `listSessionsOfUser`, `findCredentialOf`, `pepperVersionsOf`, `findByUserId`, `insertIdentity` and `refreshIdentity` among them.
+
+**Rejected.** (a) Matching method names or parameter names with a regular expression over the source text. (b) Using `ts-morph`, which T-OWNER-1 names. (c) Listing the repository files by hand and checking only those.
+
+**Reason.** (a) cannot see that `deleteOwnedSql` is a statement on `velve.session` three declarations away, nor that a parameter typed `{ actor: Actor } & Rest` carries an actor. (b) would be a new dependency for what the `typescript` package already in the tree does. (c) is the census that misses the file nobody listed. So `test/owner-actor-census.test.ts` reads `user_id` and `link_to_user_id` from `information_schema` in a migrated schema; takes every exported function, and every method of an object literal an exported function returns, as a unit; follows each identifier to its declaration in the same file and collects the string and template text it reaches; counts the unit when that text holds SQL and names an owned table or an owner column; and accepts it when a parameter, or a field of one up to two levels down, has a property whose declaration is a unique-symbol brand in `src/core/db/actor.ts`. A union counts only when every member that is not `null` carries a brand. Everything else must stand in an exception list under a class whose description cites the entry that decided it. The table of owned tables is a list with one decision per table, so a new table with an owner column fails the census until someone writes its line. A planted method with a bare user id and one with an actor show the census tells the two apart.
+
+**Price.** The walk stops at an import. A method whose SQL lives in another module is that module's entry, which is right for repositories and means a service calling a repository is never counted itself — the census checks the repository's signature, not which method a caller picks. A caller that holds a proof can still call an exception method with a bare id, and nothing here notices. The table match is textual: a string literal equal to a table name inside a unit that also holds SQL counts, so a word like `"session"` in such a unit would enrol it, and a table name built at run time would not be seen at all. The threshold is the one section 6 sets, zero methods without an actor, but only after the exception list has taken out the methods E-242 and the entries below excuse — thirty-seven of them when this was written.
+
+<a id="e-2421"></a>
+
+### A secret address and a consumed row stay exceptions, by name
+`E-2421` · owner-actor · S-OWNER-1, exception classes
+
+**Context.** E-242 found the rule's true form for the session repository: whoever reaches a row through a secret has already proven it. E-234 found the second form: the statement that removes a single-use row is what proves its owner, and it hands that proof back. The census needed both as named classes rather than as a silence.
+
+**Rejected.** Treating a token hash parameter as a proof type in the census.
+
+**Reason.** A `Uint8Array` is not a brand, and the census would then accept any method that happens to take bytes. The classes name the methods instead: `findSessionByTokenHash`, `deleteSessionByTokenHash`, `replaceSession`, `replacePresentedSession` and the three pending-authentication methods addressed by token hash are "secret address"; `consumeOneTimeToken`, `consumeFlow`, the challenge `consume` and `consumeCode` are "consumed single-use row".
+
+**Price.** `consumeCode` asserts its `ConsumedRecoveryCode` brand in `factor/recovery/repository.ts`, and the redeemed token brand is asserted in `db/repositories/token.ts`, not in `actor.ts`; the brief for this branch said minting happens only in `actor.ts`, and that is true of the conversion to an `Actor` and not of the brands it converts from. Nothing was changed there.
+
+<a id="e-2422"></a>
+
+### The insert that writes a proof's row takes no proof
+`E-2422` · owner-actor · S-OWNER-1, exception class
+
+**Context.** `insertSession`, `insertPendingAuthentication`, `replaceOneTimeToken` and the WebAuthn challenge `issue` all write a `user_id` from a plain string, and the census lists them.
+
+**Rejected.** Threading an actor into them.
+
+**Reason.** Each writes the row whose secret will later be the proof, so no proof can precede it: a session is what an actor is made from (E-242), a pending row is what the second factor is checked against (E-321), a one-time token is minted for an address that holds no session, and a challenge is consumed by its hash. They form the class "row that carries the proof".
+
+**Price.** The challenge `issue` has a caller that does hold a session — passkey registration — and passes its user id as a string, because the same method serves the sign-in ceremony with a pending owner or none. Splitting it would have given registration an actor and changed nothing about what the challenge row can do, so it was left.
+
+<a id="e-2423"></a>
+
+### The credential a sign-in verifies is read before any proof exists
+`E-2423` · owner-actor · S-OWNER-1, exception class
+
+**Context.** The password check reads `velve.password_credential` for the user the identifier lookup found, the recovery reset reads the pepper versions of the account its identifier named, and the discoverable passkey sign-in looks a credential up by the id the authenticator sent. None of them has a proof, because the read is what the proof is made from. After a successful check, `replaceIfUnchanged` and `recordAssertion` write back to the row that was just verified.
+
+**Rejected.** Removing `findByUserId` and giving the password check an actor.
+
+**Reason.** There is no actor to give: the sign-in has the user id the typed identifier resolved to, which is exactly what E-93 forbids turning into an actor. The methods form the class "credential under verification": password `findByUserId` and `replaceIfUnchanged`, recovery `pepperVersionsOf`, WebAuthn `findCredentialByCredentialId` and `recordAssertion`.
+
+**Price.** `findByUserId` is a method on an owned table that takes any string, and the census accepts it because it is named in the list, not because the type stops a second caller. Before this branch the set route used it too; it now reads through `findOwnedBy` (E-2429), but a future route could pick the old method again and pass.
+
+<a id="e-2424"></a>
+
+### A pending resolution is the owner's evidence and is not a brand
+`E-2424` · owner-actor · S-OWNER-1, left open
+
+**Context.** E-459 let the WebAuthn credential repository take `CredentialOwner = Actor | PendingResolution`, so the second-factor ceremony can name the account the pending row named. TOTP's `findCredentialOf` and `claimTimeStep` take a bare user id for the same reason. The census asks for a brand from `actor.ts`, and `PendingResolution` is `ResolvedPendingAuthentication`, a plain interface anyone can build.
+
+**Rejected.** (a) Accepting `PendingResolution` as a proof in the census. (b) Adding a pending brand to `actor.ts` and asserting it in the pending service.
+
+**Reason.** (a) would make the census accept a type a caller can write by hand, which is the hole the brand exists to close. (b) changes the shipped declarations: `PendingResolution` is in `core/factor/pending/service.d.mts`, `ResolvedPendingAuthentication` in `core/http/caller.d.mts`, and both are returned by the shipped `verify` of the TOTP and recovery services. This branch was told to stop and record rather than change the public surface. So the four methods form the class "pending resolution": TOTP `findCredentialOf` and `claimTimeStep`, WebAuthn `listDescriptorsOwnedBy` and `findOwnedCredentialByCredentialId`.
+
+**Price.** On these four methods S-OWNER-1 rests on the pending row having been resolved by its token hash, which the type does not show. `claimTimeStep` is also called from enrolment and removal with a real actor, and passes it as a string. Branding the pending resolution is a public type change and is left for a branch that may make one.
+
+<a id="e-2425"></a>
+
+### An identity is reached by its provider and subject
+`E-2425` · owner-actor · S-OWNER-1, exception class
+
+**Context.** `findIdentityBySubject` and `refreshIdentity` address `velve.identity` by `(provider, subject)`, and their statements already carry the S-LINK-1 marker. The insert of a sign-in that creates or joins an account has no proof either: the account is the one the provider's subject decided, created in the same transaction or matched under the automatic linking rules.
+
+**Rejected.** Minting an actor from the account the sign-in created or joined.
+
+**Reason.** That would be an actor from a user id with nothing in the signature saying where it came from, the shape E-93 rules out. The three methods form the class "provider subject": `findIdentityBySubject`, `refreshIdentity` and the new `insertIdentityOfSignIn`.
+
+**Price.** `insertIdentityOfSignIn` and `insertIdentity` run the same statement and differ only in what they take. A caller with a proof could call the one without it.
+
+<a id="e-2426"></a>
+
+### Maintenance and start-up reach every owner at once
+`E-2426` · owner-actor · S-OWNER-1, exception class
+
+**Context.** The census lists `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown` and `assertEveryUserReferenceCascades`. The first deletes by deadline, the second reads the distinct key versions of the factor tables, the third reads the catalogue.
+
+**Rejected.** Nothing else was considered; none of them is about one owner.
+
+**Reason.** A method that reaches every owner's rows by a deadline or a catalogue has no owner to bind, and S-OWNER-1 is about reaching one user's rows instead of another's. They form the class "maintenance or start-up".
+
+**Price.** The class excuses any method that claims it. Its members are named one by one in the test, so a new one has to be added by hand.
+
+<a id="e-2427"></a>
+
+### Three repository paths take a user id because the shipped surface does
+`E-2427` · owner-actor · S-OWNER-1, left open
+
+**Context.** The audit named `listSessionsOfUser`. Its only caller is `FrozenRepositories.listSessionsForUser({ userId, actor })`, where `actor` is a `PluginActor` that names the plugin and authorises nothing (E-737); `findUserIdOfSession` and `deleteSessionById` serve `revokeSession` the same way. TOTP `findCredentialOf` also serves the shipped `TotpService.isEnrolled({ userId })`. The user repository's three finders read `EXISTS` on `velve.password_credential` to fill `hasPassword`, and `UserRepository` is shipped with `findUserById(userId: string)`.
+
+**Rejected.** Changing the plugin surface or `isEnrolled` to take an `Actor`.
+
+**Reason.** All three are in `test/__snapshots__/api-surface.md`, and this branch was told to keep the public API and to stop and record rather than change a shipped declaration. Section 3.15 G hands a plugin a user id, not a session. The six methods form the class "shipped surface"; `findCredentialOf` stands under "pending resolution" because that is its other caller.
+
+**Price.** A plugin can list any account's sessions and revoke any session by id, logged with its own name. That is the behaviour 3.15 G specifies, and it stays outside S-OWNER-1 until the shipped surface changes.
+
+<a id="e-2428"></a>
+
+### Sign-up writes its password for the account its own transaction created
+`E-2428` · owner-actor · S-OWNER-1, exception class
+
+**Context.** The password `write` was called from sign-up, the set and change routes and both resets. Every caller but sign-up holds a proof (E-2429). Sign-up has just inserted the account row in the same transaction and holds nothing but its id.
+
+**Rejected.** (a) Keeping one `write` with a bare user id for everyone. (b) Issuing the session first and minting an actor from it.
+
+**Reason.** (a) is the violation the census reports. (b) resolves a session only to obtain an actor for a row nobody else can reach yet, which is the minting E-341 calls visible rather than impossible. A second method, `writeForCreatedAccount`, runs the same statement for sign-up alone, and the census lists it under a class of its own, "created with its account".
+
+**Price.** The method takes any user id. That only sign-up calls it is held by the name and by `writePasswordOfCreatedAccount` being the one function that reaches it.
+
+<a id="e-2429"></a>
+
+### A password write takes the actor its caller already holds
+`E-2429` · owner-actor · S-OWNER-1
+
+**Context.** `write({ userId, … })` was called by `replacePasswordOfSession` with `input.resolved.userId`, by the reset flows with `input.userId` next to an `input.actor`, and by `setPassword`. The set route's `refuseIfCredentialExists` read the credential through `findByUserId(resolved.userId)`.
+
+**Rejected.** Narrowing `userId` to the `UserId` entity brand instead of an `Actor`.
+
+**Reason.** A `UserId` says what the string is, not who proved it. `write` now takes `actor`, `replacePasswordOfSession` passes `actorOfResolvedSession(input.resolved)`, the resets pass the actor they already had, and the set route reads through a new `findOwnedBy({ actor })`. `setPassword` takes `actor` as well; only tests call it.
+
+**Price.** Twenty-eight call sites in nine test files now build an actor with `actorOfTestUser`, where they wrote a user id before. The password chapter of `DOCUMENTATION.md` described the old signatures and was corrected with the Repositories chapter, which is one chapter more than this branch's brief allowed.
+
+<a id="e-2430"></a>
+
+### A linked identity is inserted with the actor of the consumed flow
+`E-2430` · owner-actor · S-OWNER-1
+
+**Context.** `linkIdentityAndReissue` read `input.linked.account.userId` for the insert and, a few lines further down, turned the same `ConsumedOAuthFlow` into an actor for the session reissue.
+
+**Rejected.** Leaving one insert with a user id and documenting the link as an exception.
+
+**Reason.** The link holds the proof; dropping it to a string before the one write that binds an identity to an account is exactly what the audit was about. `insertIdentity` now takes `actor`, the link passes `actorOfConsumedOAuthFlow(input.linked.account)` to both the insert and the reissue, and the sign-in path uses `insertIdentityOfSignIn` (E-2425). `OAuthIdentityRepository` and `OwnedIdentity` lost an export nothing imported.
+
+**Price.** `insertOrRefuse` became `refuseIfAlreadyLinked`, which takes the insert's result rather than the repository, so the two inserts read differently at their two call sites.
+
+<a id="e-2431"></a>
+
+### The link start carries an actor, not the string it was made from
+`E-2431` · owner-actor · S-OWNER-1
+
+**Context.** `velve.oauth_flow.link_to_user_id` is an owner column. `linkStartOf` built `OAuthLinkStart` as `{ userId: actorOf(services, session), sessionId }`, so the value was an `Actor` and the field widened it to a string before `insertFlow` wrote it.
+
+**Rejected.** Listing `insertFlow` as an exception because a sign-in flow writes no owner.
+
+**Reason.** The field now holds the `Actor` itself. A sign-in passes `linkTo: null`, and the census reads a union by its members that are not `null`, so `insertFlow` carries a proof in the one case where it writes an owner.
+
+**Price.** None found. `OAuthLinkStart` is not in the shipped declarations.
+
+<a id="e-2432"></a>
+
+### The census follows six more shapes, and a brand beside a bare id is no proof
+`E-2432` · owner-actor · T-OWNER-1, correction of E-2420
+
+**Context.** E-2420 said the census takes every exported function and every method of an object an exported factory returns. The review planted a violator in six shapes it did not follow — an `export { … }` list, a spread into the returned object, an exported class, an exported object constant, lower case SQL, and a table name taken from an imported constant — and one of them was already in the tree: `assertStoredKeyVersionsAreKnown` in `core/password/startup.ts` names its table through `PASSWORD_CREDENTIAL_TABLE` and was never counted. The review also asked for the decoy shape, a unit that takes an `Actor` and a bare user id beside it and uses the id.
+
+**Rejected.** Listing the six shapes as known blind spots instead of following them.
+
+**Reason.** Each of them is a way to write an ordinary repository, so a census that misses them reports zero for the wrong reason. The census now takes units from all six, reads SQL in any case, takes the literal text of a constant imported from another module, and counts a unit whose parameter, or a field of it, is a plain-string `userId` or `ownerId` as carrying no proof whatever brand stands beside it. The password key version check stands beside its factor counterpart under "maintenance or start-up".
+
+**Price.** An imported constant is followed only when its initializer is a literal; a table name computed in another module is still not seen. The decoy rule reads a parameter's name, so a bare id called anything else passes beside a brand. The exception list holds thirty-nine methods now, against thirty-seven when E-2420 was written, and the report of this branch's first round gave thirty-eight, which was wrong.
+
+<a id="e-2433"></a>
+
+### A password write without a proof cannot overwrite one
+`E-2433` · owner-actor · S-OWNER-1, correction of E-2428
+
+**Context.** E-2428 justified `writeForCreatedAccount` taking a bare user id by sign-up's transaction having created the account, and said the method's reach was held by its name. The review showed what that meant: it ran the same `ON CONFLICT … DO UPDATE` as `write`, so any caller with a user id could replace that account's password, and `writePasswordOfCreatedAccount` is exported from its module.
+
+**Rejected.** Keeping the upsert and checking for an existing row first.
+
+**Reason.** A read before the write is the preceding `SELECT` S-OWNER-2 rules out, with a window between the two. A plain `INSERT` without `ON CONFLICT` lets the primary key on `user_id` do it: an account that already has a credential makes the statement fail and nothing is written. Sign-up still issues one statement, and the cover registration of a taken address still inserts into a fresh account and rolls back (S-ENUM-3).
+
+**Price.** The refusal is the driver's unique-violation error, not a `CredentialWriteError`, so a caller that misuses the method learns of it as an internal error. The only caller cannot reach it.
+
+<a id="e-2434"></a>
+
+### The sign-in identity insert binds an account the sign-in decided
+`E-2434` · owner-actor · S-OWNER-1, correction of E-2425
+
+**Context.** E-2425 put `insertIdentityOfSignIn` into "provider subject" with `findIdentityBySubject` and `refreshIdentity`. Those two are addressed by `(provider, subject)`. The insert is not: it binds an account the sign-in created in the same transaction, or one the automatic linking rules joined for a trusted provider's verified address (E-558).
+
+**Rejected.** Splitting the method into one for a created account and one for a joined account.
+
+**Reason.** Both run the same statement from the same function, and the decision between them is made by `accountAnAutomaticLinkMayJoin` before the insert, not by the repository. The method gets a class of its own, "account a sign-in decided", and the code comment and the Repositories chapter say what it binds.
+
+**Price.** A joined account is one nobody in this request has proven to own; the automatic linking rules are what stand for that proof, and the class says so rather than borrowing the subject's.
+
+<a id="e-2435"></a>
+
+### The enrolment check answers a boolean and reads no secret
+`E-2435` · owner-actor · S-OWNER-1
+
+**Context.** The shipped `TotpService.isEnrolled({ userId })` read the whole credential through `findCredentialOf`, encrypted secret and key version included, to return whether it was confirmed. E-2427 listed `findCredentialOf` partly for that caller.
+
+**Rejected.** Changing `isEnrolled` to take an actor.
+
+**Reason.** It is in the shipped declarations. The repository gains `isConfirmedFor({ userId })`, an `EXISTS` over a confirmed row that returns no column of the credential, and `isEnrolled` calls it. It stands under "shipped surface"; `findCredentialOf` keeps the second factor alone.
+
+**Price.** One more method takes a bare user id, now one that can say only whether a confirmed TOTP exists for it.
+
+<a id="e-2436"></a>
+
+### Enrolment and removal claim their step with the actor they hold
+`E-2436` · owner-actor · S-OWNER-1
+
+**Context.** E-2424 recorded that `claimTimeStep` was called with a real actor from enrolment and removal and passed it as a string, because the second factor called it with a pending resolution's user id.
+
+**Rejected.** Typing the claim's owner as `Actor | PendingResolution`, as the WebAuthn repository does.
+
+**Reason.** The census reads a union by all its members, so the union would still count as no proof and would hide the enrolment and removal callers behind the pending one. `claimTimeStep` now takes the `Actor`, and the second factor claims through `claimTimeStepOfPending({ pending })`, under "pending resolution". The service's `claimOrReject` became `rejectAReplayedStep`, which takes the claim's result.
+
+**Price.** Two methods run one statement, and the three call sites each spell out the claim rather than calling one helper.
+
+<a id="e-2437"></a>
+
+### The plugin repositories take a user id because the specification gives them one
+`E-2437` · owner-actor · S-OWNER-1, correction of E-2427
+
+**Context.** E-2427 tagged the "shipped surface" class "left open" and said the plugin's view of sessions stays outside S-OWNER-1 until the shipped surface changes. For `listSessionsOfUser`, `findUserIdOfSession` and `deleteSessionById` that reads as a gap waiting for a fix.
+
+**Rejected.** Recording them as something a later branch should give an actor.
+
+**Reason.** Section 3.15 G specifies `listSessionsForUser` with a user id and `revokeSession` with a session id, and a plugin holds no session of the account it acts on, so there is no proof to pass. Those three methods are the specified shape, logged with the plugin's name (E-737), not an open item. What does remain open in E-2427 is `findCredentialOf`'s pending caller (E-2424) and the user repository's finders.
+
+**Price.** S-OWNER-1 as written in section 5 and section 3.15 G disagree on these three methods, and the class records the disagreement rather than resolving it in the specification.

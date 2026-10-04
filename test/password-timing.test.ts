@@ -8,7 +8,12 @@ import {
 	createDummyCredential,
 	type PasswordEnvironment,
 } from "../src/core/password/verify.js";
-import { dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import {
+	actorOfTestUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword } from "./password-fixtures.js";
 import {
@@ -87,7 +92,12 @@ beforeAll(async () => {
 			[`present-${index}@timing.example`],
 		);
 		const userId = (row as { id: string }).id;
-		await credentials.write({ userId, phc, scheme: "argon2id", setBySessionId: null });
+		await credentials.write({
+			actor: actorOfTestUser(userId),
+			phc,
+			scheme: "argon2id",
+			setBySessionId: null,
+		});
 		presentUserIds.push(userId);
 	}
 }, 600_000);
