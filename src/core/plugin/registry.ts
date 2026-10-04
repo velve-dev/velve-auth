@@ -1,4 +1,5 @@
 import { type RouteConflict, THE_CORE, VelveStartupError } from "../auth/startup.js";
+import { assertIdentifier, InvalidIdentifierError } from "../db/identifier.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
@@ -377,10 +378,23 @@ function assertEveryRateLimitRuleNamesAContributedRoute(plugin: VelvePlugin): vo
 	}
 }
 
+//a declared name is a plain identifier before its prefix is read (E-2481)
+function assertIsAPlainTableName(table: string): void {
+	try {
+		assertIdentifier(table);
+	} catch (cause) {
+		if (cause instanceof InvalidIdentifierError) {
+			throw new VelveStartupError("plugin_migration_table_not_an_identifier");
+		}
+		throw cause;
+	}
+}
+
 //a table a plugin declares must carry the plugin's own prefix (S-DEFAULT-5)
 function assertEveryDeclaredTableIsItsOwn(plugin: VelvePlugin): void {
 	for (const migration of plugin.migrations ?? []) {
 		for (const table of migration.createsTables) {
+			assertIsAPlainTableName(table);
 			if (!namesTableOfPlugin(table, plugin.id)) {
 				throw new VelveStartupError("plugin_migration_table_not_prefixed");
 			}

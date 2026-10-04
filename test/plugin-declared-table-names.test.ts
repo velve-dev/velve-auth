@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { VelveStartupError } from "../src/core/auth/startup.js";
+import type { Driver } from "../src/core/db/driver.js";
 import type { OwnedMigration } from "../src/core/db/migration.js";
 import { runMigrations } from "../src/core/db/migration-runner.js";
+import type { VelvePlugin } from "../src/core/plugin/config.js";
+import { createVelveAuth } from "../src/index.js";
+import { configFor } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import {
@@ -8,6 +13,7 @@ import {
 	createTheMigrationRole,
 	dropTheMigrationRole,
 	type MigrationRole,
+	unreachableDriver,
 } from "./plugin-fixtures.js";
 
 /**
@@ -16,6 +22,52 @@ import {
  * begins with `demo_`, and the runner used to join the names with commas and split them again in
  * SQL — so that one name became two, and the second was the core table `session`.
  */
+const MALFORMED_NAMES: readonly string[] = [
+	"demo_entry,session",
+	'demo_entry"',
+	"demo_entry session",
+	"demo_entry\tsession",
+	"demo_entry.session",
+	"demo_Entry",
+	`demo_${"x".repeat(60)}`,
+];
+
+function pluginDeclaring(table: string, sql = "SELECT 1"): VelvePlugin {
+	return {
+		id: "demo",
+		migrations: [{ version: 1, name: "declare_the_table", createsTables: [table], sql }],
+	} as unknown as VelvePlugin;
+}
+
+function codeOfTheStart(plugin: VelvePlugin, database: Driver = unreachableDriver()): string {
+	try {
+		createVelveAuth(configFor({ database, plugins: [plugin] }));
+	} catch (cause) {
+		return cause instanceof VelveStartupError ? cause.code : `not a start error: ${String(cause)}`;
+	}
+	return "the configuration started";
+}
+
+describe("a declared table name is a plain identifier (3.11, S-DEFAULT-5)", () => {
+	for (const name of MALFORMED_NAMES) {
+		it(`refuses the start for the declared name ${JSON.stringify(name)}`, () => {
+			expect(codeOfTheStart(pluginDeclaring(name))).toBe(
+				"plugin_migration_table_not_an_identifier",
+			);
+		});
+	}
+
+	it("still starts with a well-formed name inside the plugin's prefix", () => {
+		expect(codeOfTheStart(pluginDeclaring("demo_entry"))).toBe("the configuration started");
+	});
+
+	it("still refuses a well-formed name outside the prefix as not prefixed", () => {
+		expect(codeOfTheStart(pluginDeclaring("other_entry"))).toBe(
+			"plugin_migration_table_not_prefixed",
+		);
+	});
+});
+
 interface Opened {
 	readonly connection: TestConnection;
 	readonly schema: string;
