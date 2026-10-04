@@ -127,7 +127,6 @@ interface ResolvedDefaults<Resolved> {
 	readonly chosen: Resolved;
 }
 
-//what the assembly resolved from the configuration beside what it resolves from nothing
 interface ResolvedSettings {
 	readonly session: ResolvedDefaults<SessionSettings>;
 	readonly rateLimit: ResolvedDefaults<RateLimitConfig>;
