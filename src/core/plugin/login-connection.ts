@@ -25,7 +25,7 @@ SELECT current_user AS role,
         reachable.oid,
         core.oid,
         'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
-      ) /* no owner predicate: S-OWNER-10 names privileges and changes no row */
+      )
   ) AS reaches_a_core_table`;
 
 interface PluginLoginReach {
