@@ -2514,6 +2514,7 @@ export {
 
 ## core/plugin/registry.d.mts
 
+import { Driver } from "../db/driver.mjs";
 import { OwnedMigration } from "../db/migration.mjs";
 import { PluginErrorCode } from "../http/error-map.mjs";
 import { FrozenContext, PluginHooks, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./config.mjs";
@@ -2528,7 +2529,8 @@ interface PluginHookDispatcher {
   afterSessionCreate(event: SessionCreatedEvent): Promise<void>;
   beforeUserCreate(event: UserCreateEvent): Promise<void>;
   afterUserCreate(event: UserCreatedEvent): Promise<void>;
-  beforeSessionRevoke(event: SessionRevokeEvent): Promise<void>;
+  /** a `transaction` runs every hook on that transaction's connection and not on the pool's */
+  beforeSessionRevoke(event: SessionRevokeEvent, transaction?: Driver): Promise<void>;
 }
 interface PluginRuntime {
   /** the error codes every configured plugin declares */

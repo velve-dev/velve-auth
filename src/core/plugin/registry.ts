@@ -1,7 +1,10 @@
 import { type RouteConflict, THE_CORE, VelveStartupError } from "../auth/startup.js";
+import { createUserRepository } from "../auth/user.js";
+import type { Driver } from "../db/driver.js";
 import { assertIdentifier, InvalidIdentifierError } from "../db/identifier.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
+import { createSessionRepository } from "../db/repositories/session.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
 import { type BucketRule, isUsableBucketRule, type RateLimitRule } from "../http/rate-limit.js";
 import {
@@ -40,7 +43,8 @@ export interface PluginHookDispatcher {
 	afterSessionCreate(event: SessionCreatedEvent): Promise<void>;
 	beforeUserCreate(event: UserCreateEvent): Promise<void>;
 	afterUserCreate(event: UserCreatedEvent): Promise<void>;
-	beforeSessionRevoke(event: SessionRevokeEvent): Promise<void>;
+	/** a `transaction` runs every hook on that transaction's connection and not on the pool's */
+	beforeSessionRevoke(event: SessionRevokeEvent, transaction?: Driver): Promise<void>;
 }
 
 export interface PluginRuntime {
@@ -425,7 +429,24 @@ function routesOf(plugin: VelvePlugin): readonly AnyRoute[] {
 	);
 }
 
-function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatcher {
+//a hook told inside a transaction must not ask the pool for a second connection (E-2584)
+function servicesBoundTo(
+	services: FrozenContextServices,
+	transaction: Driver,
+): FrozenContextServices {
+	return {
+		...services,
+		driver: transaction,
+		users: createUserRepository({ driver: transaction, schema: services.schema }),
+		sessions: createSessionRepository({ driver: transaction, schema: services.schema }),
+		insideATransaction: true,
+	};
+}
+
+function dispatcher(
+	registered: readonly RegisteredPlugin[],
+	services: FrozenContextServices,
+): PluginHookDispatcher {
 	async function run<Event>(
 		hook: (
 			hooks: PluginHooks,
@@ -448,11 +469,18 @@ function dispatcher(registered: readonly RegisteredPlugin[]): PluginHookDispatch
 		afterSessionCreate: (event) => run((hooks) => hooks.afterSessionCreate, event),
 		beforeUserCreate: (event) => run((hooks) => hooks.beforeUserCreate, event),
 		afterUserCreate: (event) => run((hooks) => hooks.afterUserCreate, event),
-		beforeSessionRevoke: (event) =>
+		beforeSessionRevoke: (event, transaction) =>
 			run(
 				(hooks) => hooks.beforeSessionRevoke,
 				event,
-				(entry) => entry.contextInsideARevocation,
+				transaction === undefined
+					? (entry) => entry.contextInsideARevocation
+					: (entry) =>
+							createPluginContext(
+								servicesBoundTo(services, transaction),
+								entry.plugin.id,
+								SILENT_REVOCATION,
+							),
 			),
 	};
 }
@@ -479,7 +507,7 @@ export function createPluginRuntime(options: {
 	const ordered = inDependencyOrder(plugins);
 
 	const registered: RegisteredPlugin[] = [];
-	const hooks = dispatcher(registered);
+	const hooks = dispatcher(registered, options.services);
 	const listensTo = (point: keyof PluginHooks): boolean =>
 		registered.some((entry) => entry.hooks[point] !== undefined);
 	//the array is read only when a hook runs and may be filled after the announcement exists

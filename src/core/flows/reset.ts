@@ -70,11 +70,15 @@ async function replacePassword(
 	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
 	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
 	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
-		await announceEachRevocation(pluginRuntime, {
-			userId: input.userId,
-			sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: input.actor }),
-			reason: "password_reset",
-		});
+		await announceEachRevocation(
+			pluginRuntime,
+			{
+				userId: input.userId,
+				sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: input.actor }),
+				reason: "password_reset",
+			},
+			input.transaction,
+		);
 	}
 	const revokedOtherSessionsCount = await sessionRows.deleteEverySessionOwnedBy({
 		actor: input.actor,

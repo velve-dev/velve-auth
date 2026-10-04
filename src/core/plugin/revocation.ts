@@ -1,3 +1,4 @@
+import type { Driver } from "../db/driver.js";
 import type { RevokeReason } from "./config.js";
 import type { PluginRuntime } from "./registry.js";
 
@@ -11,12 +12,16 @@ interface RevocationToAnnounce {
 export async function announceEachRevocation(
 	runtime: PluginRuntime,
 	revocation: RevocationToAnnounce,
+	transaction?: Driver,
 ): Promise<void> {
 	for (const sessionId of revocation.sessionIds) {
-		await runtime.hooks.beforeSessionRevoke({
-			sessionId,
-			userId: revocation.userId,
-			reason: revocation.reason,
-		});
+		await runtime.hooks.beforeSessionRevoke(
+			{
+				sessionId,
+				userId: revocation.userId,
+				reason: revocation.reason,
+			},
+			transaction,
+		);
 	}
 }

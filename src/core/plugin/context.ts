@@ -36,6 +36,7 @@ export interface FrozenContextServices {
 	readonly driver: import("../db/driver.js").Driver;
 	readonly log: LogSink;
 	readonly pluginDatabaseRole?: string;
+	readonly insideATransaction?: boolean;
 }
 
 //a hook told about a revocation must not be told about its own (E-641)
@@ -152,6 +153,7 @@ export function createPluginContext(
 			...(services.pluginDatabaseRole === undefined
 				? {}
 				: { databaseRole: services.pluginDatabaseRole }),
+			insideATransaction: services.insideATransaction === true,
 		}),
 	);
 }
