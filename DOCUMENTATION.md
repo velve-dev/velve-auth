@@ -4527,6 +4527,13 @@ identifier that names no account, an account that never generated codes, an
 account whose codes were all spent, and a disabled account. As with the mailed
 reset, every session is revoked and a new one is issued.
 
+The per-account bucket is keyed by the identifier in the comparison form sign-in
+uses — trimmed, NFKC-normalised and case-folded — so `Owner@Example.com`,
+` owner@example.com ` and its fullwidth spelling all draw from one bucket, and an
+identifier that names no account draws from its bucket after the same number of
+attempts. The bucket is asked first: an attempt it refuses answers `rate_limited`
+without deriving the new password, so a refused attempt costs no KDF slot.
+
 ### Deadlines
 
 Fixed per purpose, from architecture 3.7, and **not configurable**.
