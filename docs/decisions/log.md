@@ -4,417 +4,511 @@ This is the complete decision log of Velve Auth: every entry from E-01 onwards, 
 
 ---
 
-# Velve Auth — Fallstudie
+# Velve Auth — Case study
 
-Dieses Protokoll ist der Ausgangsbestand aus Abschnitt 7 der Zielarchitektur
-(`VELVE-AUTH-ARCHITEKTUR.md`), unverändert übernommen, und wird während des Baus
-fortgeschrieben. Es ist nicht das Ergebnis, sondern das Mitschreiben.
+This log is the starting stock from section 7 of the target architecture
+(`VELVE-AUTH-ARCHITEKTUR.md`), taken over unchanged, and is continued during the
+build. It is not the result but the notes taken along the way.
 
-Jeder Eintrag hält fest, was entschieden wurde, was verworfen wurde und warum —
-damit die Fallstudie am Ende die tatsächlichen Gründe enthält und nicht die, die
-sich hinterher gut erzählen. Wo eine Entscheidung aus einem schlechten Grund
-fiel und sich später als richtig erwies, steht der schlechte Grund hier.
+Every entry records what was decided, what was rejected and why — so that in
+the end the case study contains the actual reasons and not the ones that tell
+well afterwards. Where a decision was taken for a bad reason and later turned
+out right, the bad reason stands here.
 
-Format: **E-nn — Entscheidung.** Kontext · Verworfen · Grund · Preis.
+The format the entries were written in was: **E-nn — Decision.** Context · Rejected · Reason · Price.
+The German entries were translated into English in one central pass, into the
+entry format the rules file fixes (E-2990).
 
-Die Einträge E-01 bis E-46 stammen aus dem Entwurf. Ab E-47 stehen die
-Entscheidungen, die beim Bauen fielen.
+The entries E-01 to E-46 come from the draft. From E-47 on stand the decisions
+that were taken while building.
 
 ---
 
-### Laufzeit und Auslieferung
+### Runtime and delivery
 
 <a id="e-01"></a>
 
-**E-01 — Reines TypeScript, kein eigenes Rust/WASM.**
-*Kontext:* Argon2id ist der teuerste Rechenschritt der Bibliothek.
-*Verworfen:* (a) Kryptokern in Rust, als WASM eingebunden. (b) `hash-wasm` im Pflichtpfad.
-*Grund:* Der Gewinn eines eigenen Moduls gegenüber fertigem WASM beträgt Faktor 1,6 (47 ms gegen 76 ms), und der schnelle Weg dorthin braucht `node:wasi`, `node:worker_threads` und `node:fs` — genau die Module, die auf Caprock nicht zugesichert sind. `hash-wasm` scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder`. Eine Bibliothek, deren Zweck Ortsunabhängigkeit ist, darf ihren Kern nicht an eine Ausführungsart binden, die verbreitete Laufzeiten verbieten.
-*Preis:* 263 ms statt 76 ms je Kennwortprüfung im Messaufbau (2 vCPU; auf Serverhardware niedriger bei gleichem Faktor). Abgefedert durch den Semaphor aus E-13 und dadurch, dass die Rechenmaschine austauschbar bleibt (E-02).
+### Pure TypeScript, no Rust/WASM of our own
+`E-01` · architecture · translated from the German original
+
+**Context.** Argon2id is the most expensive computation step of the library.
+**Rejected.** (a) A crypto core in Rust, bound in as WASM. (b) `hash-wasm` on the required path.
+**Reason.** The gain of a module of our own over ready-made WASM is a factor of 1.6 (47 ms against 76 ms), and the fast way there needs `node:wasi`, `node:worker_threads` and `node:fs` — exactly the modules that are not guaranteed on Caprock. `hash-wasm` fails in Cloudflare Workers with `Wasm code generation disallowed by embedder`. A library whose purpose is independence of place must not bind its core to a form of execution that widespread runtimes forbid.
+**Price.** 263 ms instead of 76 ms per password verification in the measurement setup (2 vCPU; lower on server hardware at the same factor). Cushioned by the semaphore from E-13 and by the fact that the compute engine stays exchangeable (E-02).
 
 <a id="e-02"></a>
 
-**E-02 — Die Argon2id-Implementierung ist austauschbar, weil die Ausgaben bitgleich sind.**
-*Kontext:* E-01 legt sich auf die langsamste Variante fest.
-*Verworfen:* Die Rechenmaschine fest in den Kern zu verdrahten.
-*Grund:* Messung zeigt: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen bytegleiche Hashes und verifizieren sich gegenseitig. Damit ist die Wahl reversibel, ohne dass ein einziger gespeicherter Hash angefasst wird. Die Entscheidung E-01 kostet also keine Zukunft.
-*Preis:* Eine zusätzliche Abstraktionsschicht von etwa dreißig Zeilen.
+### The Argon2id implementation is exchangeable, because the outputs are bit-identical
+`E-02` · architecture · translated from the German original
+
+**Context.** E-01 commits to the slowest variant.
+**Rejected.** Wiring the compute engine fixedly into the core.
+**Reason.** Measurement shows: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce byte-identical hashes and verify each other. That makes the choice reversible without a single stored hash being touched. Decision E-01 therefore costs no future.
+**Price.** One additional abstraction layer of about thirty lines.
 
 <a id="e-03"></a>
 
-**E-03 — `crypto.subtle` überall dort, wo es die Primitive schon gibt.**
-*Kontext:* PBKDF2, SHA-2, HMAC und AES-GCM liegen im heißen Pfad (Abschnitt 2.7).
-*Verworfen:* Alles über `@noble/*` laufen lassen, der Einheitlichkeit wegen.
-*Grund:* PBKDF2 mit 600.000 Iterationen: 269 ms über `crypto.subtle`, 926 ms in JavaScript, **2161 ms über WASM**. SHA-2 auf großen Blöcken fast dreimal so schnell. AES-GCM hardwarebeschleunigt. Es ist Nicht-JavaScript ohne native Bindings — genau das, was gesucht war.
-*Preis:* Zwei Wege statt einem. `@noble/ciphers` bleibt als Rückfall für unvollständige Web-Crypto-Implementierungen.
+### `crypto.subtle` everywhere the primitive already exists there
+`E-03` · architecture · translated from the German original
+
+**Context.** PBKDF2, SHA-2, HMAC and AES-GCM lie on the hot path (section 2.7).
+**Rejected.** Running everything through `@noble/*` for the sake of uniformity.
+**Reason.** PBKDF2 with 600,000 iterations: 269 ms via `crypto.subtle`, 926 ms in JavaScript, **2161 ms via WASM**. SHA-2 on large blocks almost three times as fast. AES-GCM hardware-accelerated. It is non-JavaScript without native bindings — exactly what was sought.
+**Price.** Two paths instead of one. `@noble/ciphers` remains as a fallback for incomplete Web Crypto implementations.
 
 <a id="e-04"></a>
 
-**E-04 — Nur ESM, nur Node ab 20, vorkompiliert ausgeliefert.**
-*Kontext:* Auslieferungsform des npm-Pakets (Abschnitt 2.5).
-*Verworfen:* Doppelausgabe ESM+CJS.
-*Grund:* Doppelausgabe verdoppelt die Testmatrix und erzeugt die bekannten Dual-Package-Fehler. Node 20 macht `crypto`, `crypto.subtle` und `getRandomValues` global — damit fällt jedes Laufzeit-Sondergehäuse weg.
-*Preis:* CommonJS-Nutzer brauchen dynamisches `import()`.
+### ESM only, Node 20 and up only, delivered precompiled
+`E-04` · architecture · translated from the German original
+
+**Context.** Delivery form of the npm package (section 2.5).
+**Rejected.** Dual output ESM+CJS.
+**Reason.** Dual output doubles the test matrix and produces the known dual-package faults. Node 20 makes `crypto`, `crypto.subtle` and `getRandomValues` global — with that every runtime special case falls away.
+**Price.** CommonJS users need a dynamic `import()`.
 
 <a id="e-05"></a>
 
-**E-05 — Ein npm-Paket mit Subpfaden, kein Monorepo.**
-*Kontext:* Ein-Personen-Team; Subpfade nach Abschnitt 3.1.
-*Verworfen:* Better Auths Zuschnitt mit 23 Paketen.
-*Grund:* Bei einem Ein-Personen-Team ist Versionsdrift zwischen eigenen Paketen die teuerste Fehlerklasse: Sie tritt erst beim Nutzer auf und ist dort schwer zu diagnostizieren. Schwere Abhängigkeiten bleiben trotzdem draußen, weil `@velve/auth/import` nur beim Import geladen wird.
-*Preis:* Größeres Repository, gröbere Freigabegranularität.
+### One npm package with subpaths, no monorepo
+`E-05` · architecture · translated from the German original
 
-### Datenbank
+**Context.** One-person team; subpaths per section 3.1.
+**Rejected.** Better Auth's cut with 23 packages.
+**Reason.** With a one-person team, version drift between one's own packages is the most expensive class of fault: it only occurs at the user and is hard to diagnose there. Heavy dependencies still stay out, because `@velve/auth/import` is loaded only on import.
+**Price.** Larger repository, coarser release granularity.
+
+### Database
 
 <a id="e-06"></a>
 
-**E-06 — Nur PostgreSQL, kein Abfrageaufbauer, handgeschriebenes SQL.**
-*Kontext:* Die Datenbankschicht ist bei Better Auth mit 58 Funktionen der größte Block an Abstraktion (Abschnitt 1 F).
-*Verworfen:* (a) Adapter für MySQL und SQLite. (b) ORM-Adapter für Prisma, Drizzle, Kysely.
-*Grund:* Better Auths Abstraktion zahlt Portabilität mit dem kleinsten gemeinsamen Nenner: `supportsArrays: false` selbst für PostgreSQL, keine partiellen Indizes, kein `ON CONFLICT`, kein `citext`, ein Transformationsdurchlauf pro Zeile in JavaScript. Der Ratenbegrenzer emuliert dort ein Upsert mit bis zu vier Round-Trips, das hier eine Anweisung ist. Ein Adapter, den niemand betreibt, ist keine Reichweite, sondern eine unbewiesene Behauptung.
-*Preis:* Kein MySQL, kein SQLite, keine ORM-Integration. Wer das braucht, nimmt Better Auth — und das ist eine ehrliche Antwort.
+### PostgreSQL only, no query builder, hand-written SQL
+`E-06` · architecture · translated from the German original
+
+**Context.** The database layer is, with 58 functions, the largest block of abstraction in Better Auth (section 1 F).
+**Rejected.** (a) Adapters for MySQL and SQLite. (b) ORM adapters for Prisma, Drizzle, Kysely.
+**Reason.** Better Auth's abstraction pays for portability with the lowest common denominator: `supportsArrays: false` even for PostgreSQL, no partial indexes, no `ON CONFLICT`, no `citext`, one transformation pass per row in JavaScript. The rate limiter there emulates an upsert with up to four round trips that is one statement here. An adapter nobody operates is not reach but an unproven claim.
+**Price.** No MySQL, no SQLite, no ORM integration. Whoever needs that takes Better Auth — and that is an honest answer.
 
 <a id="e-07"></a>
 
-**E-07 — Eigenes Postgres-Schema `velve`.**
-*Kontext:* Die Tabellen liegen in der Datenbank der Anwendung, neben deren eigenen.
-*Verworfen:* Tabellen mit Präfix im `public`-Schema.
-*Grund:* `user` ist in SQL ein reserviertes Wort; ein eigenes Schema löst das Anführungszeichenproblem und die Kollision mit der `users`-Tabelle der Anwendung in einem Zug. Rechtevergabe und Sicherung lassen sich am Schema festmachen.
-*Preis:* `search_path` muss stimmen; alle Abfragen qualifizieren voll.
+### Its own Postgres schema `velve`
+`E-07` · architecture · translated from the German original
+
+**Context.** The tables lie in the application's database, next to its own.
+**Rejected.** Tables with a prefix in the `public` schema.
+**Reason.** `user` is a reserved word in SQL; a schema of its own solves the quoting problem and the collision with the application's `users` table in one go. Privilege assignment and backup can be pinned to the schema.
+**Price.** The `search_path` has to be right; all queries qualify fully.
 
 <a id="e-08"></a>
 
-**E-08 — Versionierte, transaktionale, vorwärtsgerichtete SQL-Migrationen.**
-*Kontext:* Sechzehn Tabellen (Abschnitt 3.17), die sich über Versionen ändern werden.
-*Verworfen:* Schemaableitung zur Laufzeit aus der Konfiguration, wie Better Auth sie betreibt.
-*Grund:* Dort ist `migrate` nur additiv, nicht transaktional, kennt keine Versionshistorie, kann nicht umbenennen, löschen oder umtypisieren, rüstet Indizes auf bestehenden Spalten nicht nach und funktioniert nur mit Kysely. Das ist kein Migrationssystem, sondern ein Schemaangleicher. Ausgeliefertes SQL kann der Betreiber außerdem lesen, prüfen und mit eigenem Werkzeug anwenden.
-*Preis:* Handarbeit bei jeder Schemaänderung.
+### Versioned, transactional, forward-directed SQL migrations
+`E-08` · architecture · translated from the German original
 
-### Kennwörter
+**Context.** Sixteen tables (section 3.17) that will change across versions.
+**Rejected.** Schema derivation at runtime from the configuration, the way Better Auth operates it.
+**Reason.** There, `migrate` is only additive, not transactional, knows no version history, cannot rename, drop or retype, does not retrofit indexes on existing columns and works only with Kysely. That is not a migration system but a schema aligner. Delivered SQL can moreover be read, checked and applied with the operator's own tooling.
+**Price.** Manual work on every schema change.
+
+### Passwords
 
 <a id="e-09"></a>
 
-**E-09 — Multi-Verfahren-Weiche im Kern, nicht als Plugin.**
-*Kontext:* Nicht verhandelbare Anforderung.
-*Verworfen:* Ein austauschbares `hash`/`verify`-Paar wie in Better Auth.
-*Grund:* Dort ersetzt der Haken **beide** Richtungen. Wer bcrypt verifizieren will, erzeugt zwangsläufig auch bcrypt — für alle Nutzer, dauerhaft. Genau das empfehlen die dortigen Migrationsanleitungen wörtlich (`docs/.../supabase-migration-guide.mdx:971`, gleichlautend in `clerk-migration-guide.mdx:47` und `auth0-migration-guide.mdx:595`), und niemand sagt dazu, dass das Zielsystem damit dauerhaft auf bcrypt(10) festliegt. Prüfen und Erzeugen müssen getrennte Entscheidungen sein.
-*Preis:* Vier Verifizierer im Kern, die dauerhaft gepflegt werden.
+### Multi-procedure switch in the core, not as a plugin
+`E-09` · architecture · translated from the German original
+
+**Context.** Non-negotiable requirement.
+**Rejected.** An exchangeable `hash`/`verify` pair as in Better Auth.
+**Reason.** There the hook replaces **both** directions. Whoever wants to verify bcrypt necessarily also produces bcrypt — for all users, permanently. That is exactly what the migration guides there recommend verbatim (`docs/.../supabase-migration-guide.mdx:971`, identically in `clerk-migration-guide.mdx:47` and `auth0-migration-guide.mdx:595`), and nobody says alongside it that the target system is thereby permanently fixed to bcrypt(10). Verifying and producing must be separate decisions.
+**Price.** Four verifiers in the core that are maintained permanently.
 
 <a id="e-10"></a>
 
-**E-10 — Ein kanonischer PHC-String, Weiche am Präfix, kein fremdes Rohformat in der Datenbank.**
-*Kontext:* Fünf Quellen mit mehr als einem Dutzend Hash-Formaten (Abschnitt 4).
-*Verworfen:* Fremdformate speichern und eine Herkunftsspalte mitführen.
-*Grund:* Better Auths `salt_hex:hash_hex` trägt weder Algorithmus noch Parameter. Die Folge ist, dass die scrypt-Parameter nie erhöht werden können, ohne alle Nutzer auszusperren — der Bestand ist eingefroren. Ein selbstbeschreibender String macht Parameterwechsel zu einem Nicht-Ereignis. Für Firebase-Hashes wird bewusst GoTrues bestehendes `$fbscrypt$`-Format übernommen statt eines eigenen, damit Supabase-Bestände unverändert durchlaufen.
-*Preis:* Der Import muss jedes Quellformat umschreiben, nicht durchreichen.
+### One canonical PHC string, switch on the prefix, no foreign raw format in the database
+`E-10` · architecture · translated from the German original
+
+**Context.** Five sources with more than a dozen hash formats (section 4).
+**Rejected.** Storing foreign formats and carrying an origin column along.
+**Reason.** Better Auth's `salt_hex:hash_hex` carries neither algorithm nor parameters. The consequence is that the scrypt parameters can never be raised without locking out all users — the estate is frozen. A self-describing string makes a parameter change a non-event. For Firebase hashes, GoTrue's existing `$fbscrypt$` format is deliberately adopted instead of one of our own, so that Supabase estates pass through unchanged.
+**Price.** The import has to rewrite every source format, not pass it through.
 
 <a id="e-11"></a>
 
-**E-11 — Stiller Rehash nach der Antwort, per Vergleich-und-Tausch.**
-*Kontext:* `needsRehash` ist nach jeder Anmeldung mit einem Fremd-Hash wahr (Abschnitt 3.3, Schritt 5).
-*Verworfen:* (a) Rehash synchron vor der Antwort. (b) Rehash in einem Wartungslauf.
-*Grund:* Synchron verdoppelt die Anmeldelatenz auf über eine halbe Sekunde. Ein Wartungslauf ist unmöglich, weil das Klartextkennwort nur im Moment der Anmeldung existiert. Die Schreiboperation `WHERE user_id = $1 AND phc = $alt` ist gegen gleichzeitige Anmeldungen sicher, und ein verlorener Rehash ist folgenlos — der nächste Versuch holt ihn nach.
-*Preis:* Eine Hintergrundaufgabe, deren Fehlschlag protokolliert und nicht gemeldet wird.
+### Silent rehash after the response, by compare-and-swap
+`E-11` · architecture · translated from the German original
+
+**Context.** `needsRehash` is true after every sign-in with a foreign hash (section 3.3, step 5).
+**Rejected.** (a) Rehash synchronously before the response. (b) Rehash in a maintenance run.
+**Reason.** Synchronously doubles the sign-in latency to over half a second. A maintenance run is impossible, because the plaintext password only exists at the moment of the sign-in. The write operation `WHERE user_id = $1 AND phc = $alt` is safe against simultaneous sign-ins, and a lost rehash is inconsequential — the next attempt catches it up.
+**Price.** A background task whose failure is logged and not reported.
 
 <a id="e-12"></a>
 
-**E-12 — Der PHC-String wird verschlüsselt gespeichert, statt gepeppert.**
-*Kontext:* Festgelegt in L-2 (Abschnitt 3.16); Schlüsselzweck `password-enc`, Spalte `key_version`, Rotation auf dem Weg des Rehashs.
-*Verworfen:* Klassischer Pepper in der Ableitung.
-*Grund:* Ein Pepper in der Ableitung bricht jeden importierten Hash, denn der wurde ohne ihn erzeugt. Umschlagverschlüsselung der Spalte erreicht dieselbe Wirkung — ein Datenbankauszug allein nützt nichts — und wirkt für erzeugte und importierte Hashes gleichermaßen. Sie ist außerdem rotierbar, ein Pepper ist es praktisch nicht.
-*Preis:* Schlüsselverlust bedeutet Kennwortverlust. Steht an erster Stelle der Betriebsdokumentation.
+### The PHC string is stored encrypted instead of peppered
+`E-12` · architecture · translated from the German original
+
+**Context.** Fixed in L-2 (section 3.16); key purpose `password-enc`, column `key_version`, rotation along the path of the rehash.
+**Rejected.** A classic pepper in the derivation.
+**Reason.** A pepper in the derivation breaks every imported hash, because that one was produced without it. Envelope encryption of the column achieves the same effect — a database dump alone is of no use — and works equally for produced and imported hashes. It is moreover rotatable, which a pepper practically is not.
+**Price.** Loss of the key means loss of the passwords. Stands in first place in the operations documentation.
 
 <a id="e-13"></a>
 
-**E-13 — Semaphor über gleichzeitige KDF-Aufrufe.**
-*Kontext:* Argon2id belegt 19 MiB je Aufruf; die Anmeldung ist unauthentifiziert erreichbar.
-*Verworfen:* Keine Begrenzung, wie in Better Auth.
-*Grund:* Argon2id mit 19 MiB und hundert gleichzeitigen Anmeldungen sind 1,9 GB. Ohne Begrenzung ist die Anmeldung selbst der Angriffsvektor. Better Auth prüft an `/sign-in/email` nicht einmal die Eingabelänge vor dem KDF-Aufruf und hasht auch bei unbekannter Adresse (`api/routes/sign-in.ts:526-539`); `/change-password` hasht das neue Kennwort sogar **vor** der Prüfung des alten (`api/routes/update-user.ts:276-277`). Die Längenprüfung vor dem KDF folgt L-7: mindestens 8 Zeichen, höchstens 4096 Byte, keine Zusammensetzungsregeln; ein Abgleich gegen Leak-Korpora hängt an `password.validate` und läuft nie bei der Anmeldung.
-*Preis:* Unter Last wartet die Anmeldung, statt zu scheitern — bis zur Wartegrenze von 5 Sekunden (L-1).
+### Semaphore over simultaneous KDF calls
+`E-13` · architecture · translated from the German original
+
+**Context.** Argon2id occupies 19 MiB per call; the sign-in is reachable unauthenticated.
+**Rejected.** No limit, as in Better Auth.
+**Reason.** Argon2id with 19 MiB and a hundred simultaneous sign-ins is 1.9 GB. Without a limit the sign-in is itself the attack vector. Better Auth does not even check the input length at `/sign-in/email` before the KDF call and hashes even for an unknown address (`api/routes/sign-in.ts:526-539`); `/change-password` even hashes the new password **before** verifying the old one (`api/routes/update-user.ts:276-277`). The length check before the KDF follows L-7: at least 8 characters, at most 4096 bytes, no composition rules; a comparison against leak corpora hangs on `password.validate` and never runs at sign-in.
+**Price.** Under load the sign-in waits instead of failing — up to the wait limit of 5 seconds (L-1).
 
 <a id="e-14"></a>
 
-**E-14 — Keine Antwort-Deadline.**
-*Kontext:* Aufzählungsschutz über Zeitverhalten (Abschnitt 3.13, L-1).
-*Verworfen:* Feste Mindestdauer je Endpunkt, wie Better Auth sie mit 500 ms bei `send-verification-email` einsetzt.
-*Grund:* Eine Deadline verdeckt Ungleichförmigkeit, statt sie zu verhindern, und leckt oberhalb der Schwelle wieder. Die Regel „ein Codepfad, gleiche Arbeit unabhängig vom Ergebnis" ist stärker und im Test nachweisbar.
-*Preis:* Der Nachweis ist ein statistischer Test, der in CI gepflegt werden muss. Davon getrennt bleibt die Wartegrenze des Semaphors von 5 Sekunden — eine Ressourcengrenze, keine Zeitangleichung (L-1).
+### No response deadline
+`E-14` · architecture · translated from the German original
 
-### Identität
+**Context.** Enumeration protection through timing behaviour (section 3.13, L-1).
+**Rejected.** A fixed minimum duration per endpoint, as Better Auth applies it with 500 ms at `send-verification-email`.
+**Reason.** A deadline conceals non-uniformity instead of preventing it, and leaks again above the threshold. The rule "one code path, the same work independent of the result" is stronger and provable in the test.
+**Price.** The proof is a statistical test that has to be maintained in CI. Separate from that remains the semaphore's wait limit of 5 seconds — a resource limit, not a timing equalisation (L-1).
+
+### Identity
 
 <a id="e-15"></a>
 
-**E-15 — Drei Identitätskonfigurationen als diskriminierte Union, materialisiert als CHECK-Constraint.**
-*Kontext:* `email`, `username`, `username_email` (Abschnitt 3.4).
-*Verworfen:* Alle Felder immer optional und zur Laufzeit prüfen.
-*Grund:* Wenn die Konfiguration den Typ bestimmt, existiert `auth.username.changeUsername` in der Konfiguration `email` nicht — der Fehler tritt beim Kompilieren auf, nicht beim Nutzer. Das Constraint sorgt dafür, dass auch ein direkter Datenbankzugriff die Invariante nicht bricht.
-*Preis:* Ein Wechsel der Konfiguration nach der Einführung ist eine echte Migration.
+### Three identity configurations as a discriminated union, materialised as a CHECK constraint
+`E-15` · architecture · translated from the German original
+
+**Context.** `email`, `username`, `username_email` (section 3.4).
+**Rejected.** Making all fields always optional and checking at runtime.
+**Reason.** If the configuration determines the type, `auth.username.changeUsername` does not exist in the configuration `email` — the error occurs at compile time, not at the user. The constraint ensures that even a direct database access does not break the invariant.
+**Price.** A change of the configuration after the introduction is a real migration.
 
 <a id="e-16"></a>
 
-**E-16 — Die E-Mail ist nirgends Pflicht und wird nirgends erfunden.**
-*Kontext:* `velve.user.email` ist NULL-fähig (Abschnitt 3.2).
-*Verworfen:* Better Auths Weg: `email NOT NULL UNIQUE` plus Platzhalteradressen.
-*Grund:* Dort ist das keine Doku-Empfehlung, sondern eingebauter Produktionscode — `createPlaceholderEmail` wird von Roblox, TikTok, WeChat, Reddit, Twitter, SIWE, Anonymous und dem Entra-Helfer aufgerufen und erzeugt Adressen wie `<id>@<ns>.placeholder.invalid`, an die kein Plugin je etwas senden kann. Issue #9124 ist dazu offen, die Doku räumt es ein (`concepts/oauth.mdx:409`). Eine ungültige Adresse in der Datenbank ist schlimmer als gar keine, weil nachgelagerte Systeme sie für echt halten.
-*Preis:* Jeder Codepfad muss `email IS NULL` aushalten.
+### The email is nowhere mandatory and is nowhere invented
+`E-16` · architecture · translated from the German original
+
+**Context.** `velve.user.email` is nullable (section 3.2).
+**Rejected.** Better Auth's way: `email NOT NULL UNIQUE` plus placeholder addresses.
+**Reason.** There this is not a documentation recommendation but built-in production code — `createPlaceholderEmail` is called by Roblox, TikTok, WeChat, Reddit, Twitter, SIWE, Anonymous and the Entra helper and produces addresses like `<id>@<ns>.placeholder.invalid` that no plugin can ever send anything to. Issue #9124 is open on it, the documentation admits it (`concepts/oauth.mdx:409`). An invalid address in the database is worse than none at all, because downstream systems take it for real.
+**Price.** Every code path has to withstand `email IS NULL`.
 
 <a id="e-17"></a>
 
-**E-17 — Benutzernamen: Anzeigeform und Vergleichsform getrennt, mit Zeichen-Erlaubnisliste.**
-*Kontext:* Der Benutzername ist in zwei der drei Konfigurationen Anmeldename.
-*Verworfen:* Nur eine Spalte, kleingeschrieben.
-*Grund:* Eine Erlaubnisliste ist der wirksamste Homoglyphenschutz, weil sie das Problem gar nicht entstehen lässt; eine Skelettbildung nach Unicode-Confusables wäre die aufwendigere und fehleranfälligere Alternative. Die getrennte Anzeigeform erhält die Schreibweise, die der Nutzer gewählt hat.
-*Preis:* Nicht-lateinische Benutzernamen sind in der Vorgabe ausgeschlossen. Die Erlaubnisliste ist konfigurierbar, mit dokumentierter Warnung.
+### Usernames: display form and comparison form separated, with a character allowlist
+`E-17` · architecture · translated from the German original
+
+**Context.** The username is the sign-in name in two of the three configurations.
+**Rejected.** Only one column, lowercased.
+**Reason.** An allowlist is the most effective homoglyph protection, because it does not let the problem arise in the first place; skeleton formation according to Unicode confusables would be the more laborious and more error-prone alternative. The separate display form preserves the spelling the user chose.
+**Price.** Non-Latin usernames are excluded by default. The allowlist is configurable, with a documented warning.
 
 <a id="e-18"></a>
 
-**E-18 — In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail, und das ist ein Startfehler ohne Wiederherstellungscodes.**
-*Kontext:* Konfiguration `username` ohne Postfach (Abschnitt 3.4).
-*Verworfen:* — Es gibt keinen zweiten Kanal, den die Bibliothek erfinden könnte.
-*Grund:* Ohne Postfach gibt es keinen Kanal außerhalb des Kennworts. Das lässt sich nicht wegkonfigurieren, nur ehrlich benennen. Die Bibliothek verweigert den Start, statt die Lücke offenzulassen.
-*Preis:* Eine Pflichtoption, die man erklären muss.
+### In the configuration `username` there is no reset by email, and that is a start error without recovery codes
+`E-18` · architecture · translated from the German original
+
+**Context.** Configuration `username` without a mailbox (section 3.4).
+**Rejected.** — There is no second channel the library could invent.
+**Reason.** Without a mailbox there is no channel outside the password. That cannot be configured away, only named honestly. The library refuses to start instead of leaving the gap open.
+**Price.** A mandatory option that has to be explained.
 
 <a id="e-19"></a>
 
-**E-19 — Benutzernamen sind aufzählbar, und das wird gesagt.**
-*Kontext:* Verfügbarkeitsprüfung bei der Registrierung.
-*Verworfen:* Die Prüfung nicht anzubieten.
-*Grund:* Wer eine Verfügbarkeitsprüfung anbietet, verrät die Existenz — daran ändert keine Formulierung etwas. Sie nicht anzubieten macht Registrierungsformulare unbrauchbar. Also: anbieten, hart begrenzen, dokumentieren. E-Mail-Aufzählung bleibt vollständig geschlossen.
-*Preis:* Eine Einschränkung im Datenblatt statt einer stillen Lücke.
+### Usernames are enumerable, and that is said
+`E-19` · architecture · translated from the German original
 
-### Sitzungen
+**Context.** Availability check at registration.
+**Rejected.** Not offering the check.
+**Reason.** Whoever offers an availability check reveals the existence — no wording changes that. Not offering it makes registration forms unusable. So: offer it, limit it hard, document it. Email enumeration stays completely closed.
+**Price.** A limitation in the data sheet instead of a silent gap.
+
+### Sessions
 
 <a id="e-20"></a>
 
-**E-20 — Datenbanksitzungen, undurchsichtiges Token, nur `sha256` gespeichert.**
-*Kontext:* Sofortiger Widerruf ist das Kernversprechen des Sitzungsmodells (Abschnitt 3.5).
-*Verworfen:* (a) JWT mit Refresh-Rotation. (b) Klartext-Token in der Datenbank, wie Better Auth es tut.
-*Grund:* Sofortiger Widerruf ist die Eigenschaft, um die es geht; JWT kann sie prinzipiell nicht liefern, und die Reuse-Detection dafür ist eine eigene Fehlerklasse — Better Auths eigener OAuth-Server hat sie zweimal falsch gehabt (GHSA-7w99-5wm4-3g79, GHSA-392p-2q2v-4372). Das Klartext-Token dort ist eine unnötige Preisgabe: der Server vergleicht nur, also genügt der Hash. Bemerkenswert ist, dass dieselbe Codebasis für `verification.identifier` sehr wohl eine Hashing-Option kennt.
-*Preis:* Ein indizierter Datenbanktreffer je Anfrage. Bei einem Unique-Index auf 32 Byte ist das die günstigste Abfrage im System. Die Zeile hält `ip` und `user_agent` in der Vorgabe gekürzt — `/24` bzw. `/64`, Browser- und Systemfamilie (L-10); wer den vollen Wert braucht, schaltet ihn ein.
+### Database sessions, opaque token, only `sha256` stored
+`E-20` · architecture · translated from the German original
+
+**Context.** Immediate revocation is the core promise of the session model (section 3.5).
+**Rejected.** (a) JWT with refresh rotation. (b) Plaintext token in the database, as Better Auth does it.
+**Reason.** Immediate revocation is the property at stake; JWT cannot deliver it in principle, and the reuse detection for it is a class of fault of its own — Better Auth's own OAuth server got it wrong twice (GHSA-7w99-5wm4-3g79, GHSA-392p-2q2v-4372). The plaintext token there is an unnecessary disclosure: the server only compares, so the hash suffices. It is remarkable that the same code base does know a hashing option for `verification.identifier`.
+**Price.** One indexed database hit per request. With a unique index on 32 bytes that is the cheapest query in the system. The row keeps `ip` and `user_agent` truncated by default — `/24` resp. `/64`, browser and system family (L-10); whoever needs the full value switches it on.
 
 <a id="e-21"></a>
 
-**E-21 — Kein Cookie-Cache, in keiner Variante.**
-*Kontext:* Der Datenbanktreffer aus E-20 ist die Stelle, an der ein Zwischenspeicher lockt.
-*Verworfen:* Signiertes Cookie, JWE-Cookie, Redis-Zwischenspeicher.
-*Grund:* Der schwerste veröffentlichte Fehler in Better Auth hängt genau daran: GHSA-xg6x-h9c9-2m83, CVSS 9.1 — der Cookie-Cache legte die Sitzung ab, bevor der zweite Faktor geprüft war, und umging damit 2FA vollständig. Dazu kommt, dass widerrufene Sitzungen im Cache bis zum Ablauf weiterleben und der Vorgabewert `compact` Sitzung und Nutzer einschließlich Adresse **unverschlüsselt** im Browser ablegt. Ein Zwischenspeicher darf Daten halten, niemals eine Autorisierungsentscheidung. Aus demselben Grund setzt jeder Handler `Cache-Control: no-store` und `Vary: Cookie` (L-6) — ein vorgelagertes CDN ist der Normalfall, und auch dort darf keine Antwort der Bibliothek liegen bleiben.
-*Preis:* Ein Datenbanktreffer je Anfrage bleibt bestehen.
+### No cookie cache, in no variant
+`E-21` · architecture · translated from the German original
+
+**Context.** The database hit from E-20 is the place where a cache beckons.
+**Rejected.** Signed cookie, JWE cookie, Redis cache.
+**Reason.** The gravest published fault in Better Auth hangs on exactly that: GHSA-xg6x-h9c9-2m83, CVSS 9.1 — the cookie cache stored the session before the second factor had been verified, and thereby bypassed 2FA completely. On top of that, revoked sessions live on in the cache until expiry, and the default value `compact` stores session and user including the address **unencrypted** in the browser. A cache may hold data, never an authorisation decision. For the same reason every handler sets `Cache-Control: no-store` and `Vary: Cookie` (L-6) — an upstream CDN is the normal case, and no response of the library may be left lying there either.
+**Price.** One database hit per request remains.
 
 <a id="e-22"></a>
 
-**E-22 — Zwei Fristen: Leerlauf und absolut.**
-*Kontext:* Lebensdauer einer Sitzung (Abschnitt 3.5).
-*Verworfen:* Ein gleitendes Fenster wie bei Better Auth und NextAuth.
-*Grund:* Ein rein gleitendes Fenster läuft nie ab, solange jemand es benutzt — auch ein Angreifer. Die absolute Frist begrenzt den Schaden eines gestohlenen Tokens ohne Zutun.
-*Preis:* Nutzer melden sich in festen Abständen neu an.
+### Two deadlines: idle and absolute
+`E-22` · architecture · translated from the German original
+
+**Context.** Lifetime of a session (section 3.5).
+**Rejected.** A sliding window as at Better Auth and NextAuth.
+**Reason.** A purely sliding window never expires as long as somebody is using it — an attacker too. The absolute deadline limits the damage of a stolen token without anyone's involvement.
+**Price.** Users sign in again at fixed intervals.
 
 <a id="e-23"></a>
 
-**E-23 — Neuvergabe bei jedem Vertrauenswechsel, immer als Einfügen plus Löschen in einer Transaktion.**
-*Kontext:* Anmeldung, zweiter Faktor, Kennwortänderung und Verknüpfung ändern die Vertrauensstufe.
-*Verworfen:* Die bestehende Zeile per `UPDATE` umschreiben.
-*Grund:* `UPDATE session SET user_id` existiert nicht und wird durch Lint-Regel **und** Datenbank-Trigger verhindert. Zwei Sperren gegen dieselbe Fehlerklasse sind hier angemessen, weil ihr Eintreten unbemerkt bleibt.
-*Preis:* Etwas mehr Schreiblast bei der Anmeldung.
+### Reissue on every trust change, always as an insert plus a delete in one transaction
+`E-23` · architecture · translated from the German original
+
+**Context.** Sign-in, second factor, password change and linking change the trust level.
+**Rejected.** Rewriting the existing row by `UPDATE`.
+**Reason.** `UPDATE session SET user_id` does not exist and is prevented by a lint rule **and** a database trigger. Two locks against the same class of fault are appropriate here, because its occurrence goes unnoticed.
+**Price.** Somewhat more write load at sign-in.
 
 <a id="e-24"></a>
 
-**E-24 — Kennwortänderung und Reset widerrufen andere Sitzungen. Ohne Schalter.**
-*Kontext:* Ein Reset ist meist die Reaktion auf einen Verdacht.
-*Verworfen:* Eine Option mit sicherem Vorgabewert.
-*Grund:* In Better Auth ist `revokeSessionsOnPasswordReset` eine Option ohne Vorgabewert (`api/routes/password.ts:328-330`). Ein Reset, der die Sitzungen des Angreifers stehen lässt, erfüllt seinen Zweck nicht — und die Auswertung der 33 Advisories zeigt: fast jede kritische Einstufung hing an einer Voreinstellung, nicht an einem Fehler.
-*Preis:* Keiner, der es wert wäre.
+### Password change and reset revoke other sessions. Without a switch
+`E-24` · architecture · translated from the German original
 
-### Zweiter Faktor
+**Context.** A reset is mostly the reaction to a suspicion.
+**Rejected.** An option with a safe default value.
+**Reason.** In Better Auth, `revokeSessionsOnPasswordReset` is an option without a default value (`api/routes/password.ts:328-330`). A reset that leaves the attacker's sessions standing does not fulfil its purpose — and the evaluation of the 33 advisories shows: almost every critical rating hung on a default setting, not on a bug.
+**Price.** None that would be worth it.
+
+### Second factor
 
 <a id="e-25"></a>
 
-**E-25 — Der Zwischenzustand ist eine eigene Tabelle, keine Sitzung, und erreicht genau vier Routen.**
-*Kontext:* Der Moment zwischen korrektem Kennwort und zweitem Faktor (Abschnitt 3.6).
-*Verworfen:* Eine Sitzung mit Markierung „zweiter Faktor ausstehend".
-*Grund:* Hier hat Better Auth es richtig gemacht — eigenes Cookie plus Verifikationszeile statt Sitzung — und das wird ausdrücklich übernommen. Der Zusatz ist die Beschränkung auf genau die vier Routen mit `caller: "pending"`: sonst ist der Zwischenzustand ein halber Ausweis, der irgendwo als ganzer gelesen wird. Nach fünf Fehlversuchen wird die Zeile gelöscht und der Vorgang beginnt beim Kennwort von vorn; kein Kontosperren (L-8).
-*Preis:* Eine Tabelle mehr.
+### The intermediate state is a table of its own, not a session, and reaches exactly four routes
+`E-25` · architecture · translated from the German original
+
+**Context.** The moment between the correct password and the second factor (section 3.6).
+**Rejected.** A session with the marking "second factor pending".
+**Reason.** Here Better Auth got it right — a cookie of its own plus a verification row instead of a session — and that is expressly adopted. The addition is the restriction to exactly the four routes with `caller: "pending"`: otherwise the intermediate state is half an identity card that is somewhere read as a whole one. After five failed attempts the row is deleted and the process starts again at the password; no account lockout (L-8).
+**Price.** One more table.
 
 <a id="e-26"></a>
 
-**E-26 — WebAuthn ist ein eigenständiger Anmeldeweg, und synchronisierte Passkeys sind von gerätegebundenen unterscheidbar.**
-*Kontext:* Passkey-Anmeldung ohne Kennwort und WebAuthn als zweiter Faktor (Abschnitt 3.6).
-*Verworfen:* WebAuthn nur als zweiter Faktor; die Flags verwerfen.
-*Grund:* Die Flags `backupEligible` und `backupState` kommen ohnehin in den Authenticator-Daten an; sie nicht zu speichern wäre Informationsverlust ohne Gegenwert. Sie werden gespeichert und weitergereicht — eine Richtlinie darauf ist Sache der Anwendung, nicht der Bibliothek. Nach derselben Logik wird ein rückläufiger `sign_count` als Feld `signCountRegressed` gemeldet, nicht abgelehnt: Synchronisierte Passkeys führen den Zähler nicht verlässlich (L-9). Und weil WebAuthn ein eigener Anmeldeweg ist, zählt er zu den Wegen, deren letzter nicht entfernt werden darf — der Versuch scheitert mit `last_sign_in_method` (L-13).
-*Preis:* Zwei Spalten und ein erklärungsbedürftiges Begriffspaar in der Dokumentation.
+### WebAuthn is a sign-in path of its own, and synchronised passkeys are distinguishable from device-bound ones
+`E-26` · architecture · translated from the German original
+
+**Context.** Passkey sign-in without a password and WebAuthn as a second factor (section 3.6).
+**Rejected.** WebAuthn only as a second factor; discarding the flags.
+**Reason.** The flags `backupEligible` and `backupState` arrive in the authenticator data anyway; not storing them would be a loss of information without a counter-value. They are stored and passed on — a policy on top of that is the application's business, not the library's. By the same logic a regressing `sign_count` is reported as the field `signCountRegressed`, not rejected: synchronised passkeys do not keep the counter reliably (L-9). And because WebAuthn is a sign-in path of its own, it counts among the paths whose last one may not be removed — the attempt fails with `last_sign_in_method` (L-13).
+**Price.** Two columns and a pair of terms in the documentation that needs explaining.
 
 <a id="e-27"></a>
 
-**E-27 — Wiederherstellungscodes: 160 bit, HMAC gespeichert, Nachschlagen statt Durchlaufen.**
-*Kontext:* Zehn Codes je Nutzer; in der Konfiguration `username` der einzige Weg zurück ins Konto.
-*Verworfen:* Argon2id auf jedem Code.
-*Grund:* Bei 160 bit Entropie aus einem CSPRNG bringt eine speicherharte Ableitung nichts — es gibt kein Wörterbuch. Sie würde aber zehn KDF-Aufrufe je Prüfung erzwingen, wenn man die Codes durchläuft. Der HMAC erlaubt den direkten Indextreffer. Jede Zeile trägt `key_version`, damit eine Rotation von `token-pepper` die Codes nicht entwertet (L-3).
-*Preis:* Die Begründung muss in der Dokumentation stehen, sonst liest es sich wie eine Nachlässigkeit.
+### Recovery codes: 160 bit, stored as HMAC, lookup instead of iteration
+`E-27` · architecture · translated from the German original
+
+**Context.** Ten codes per user; in the configuration `username` the only way back into the account.
+**Rejected.** Argon2id on every code.
+**Reason.** At 160 bit of entropy from a CSPRNG a memory-hard derivation brings nothing — there is no dictionary. It would however force ten KDF calls per verification if the codes are iterated over. The HMAC allows the direct index hit. Every row carries `key_version`, so that a rotation of `token-pepper` does not devalue the codes (L-3).
+**Price.** The rationale has to be in the documentation, otherwise it reads like negligence.
 
 <a id="e-28"></a>
 
-**E-28 — TOTP-Replay über `PRIMARY KEY (user_id, time_step)`.**
-*Kontext:* Toleranz ±1 Schritt (Abschnitt 3.6); ein Code darf im Fenster nur einmal gelten.
-*Verworfen:* Lesen und Einfügen als zwei Anweisungen.
-*Grund:* Der Einfügeversuch **ist** die Prüfung. Das ist race-frei ohne Sperre und ohne zusätzliche Abfrage.
-*Preis:* Eine Tabelle, die aufgeräumt werden muss — über `auth.maintenance.sweep()` oder das mitgelieferte SQL, nicht über einen Zeitgeber im Kern (L-11).
+### TOTP replay via `PRIMARY KEY (user_id, time_step)`
+`E-28` · architecture · translated from the German original
 
-### Drittanbieter
+**Context.** Tolerance ±1 step (section 3.6); a code may be valid only once within the window.
+**Rejected.** Reading and inserting as two statements.
+**Reason.** The insert attempt **is** the check. That is race-free without a lock and without an additional query.
+**Price.** A table that has to be cleaned up — via `auth.maintenance.sweep()` or the SQL delivered with it, not via a timer in the core (L-11).
+
+### Third parties
 
 <a id="e-29"></a>
 
-**E-29 — `(provider, subject)` ist der einzige Verknüpfungsschlüssel. Die E-Mail ist nie einer.**
-*Kontext:* Anbieterverknüpfung (Abschnitt 3.10) und Import (Abschnitt 4.0.6).
-*Verworfen:* Verknüpfung über E-Mail-Gleichheit, auch bei verifizierter Anbieteradresse.
-*Grund:* Das ist die häufigste schwere Fehlerklasse überhaupt: CVE-2026-53516 (CVSS 8,3), GHSA-qq9h-g4jm-xgf3 (8,3), GHSA-fmh4-wcc4-5jm3 (7,7) — dreimal dieselbe Ursache in einer Codebasis. Automatisch verknüpft wird nur, wenn der Anbieter die Adresse als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter als vertrauenswürdig konfiguriert ist. Drei Bedingungen, alle drei notwendig. Dieselbe Regel gilt nach innen: Wird eine Adresse erstmals bestätigt und stammt das vorhandene Kennwort aus einer anderen Sitzung als der, die jetzt bestätigt, wird die Kennwortanmeldung gelöscht und jede Sitzung widerrufen (L-12) — sonst bleibt der Vorabzugang eines Angreifers gültig, genau der Fehler aus GHSA-qq9h-g4jm-xgf3.
-*Preis:* Mehr ausdrückliche Verknüpfungen im Nutzerfluss.
+### `(provider, subject)` is the only linking key. The email is never one
+`E-29` · architecture · translated from the German original
+
+**Context.** Provider linking (section 3.10) and import (section 4.0.6).
+**Rejected.** Linking via email equality, even with a verified provider address.
+**Reason.** This is the most frequent grave class of fault of all: CVE-2026-53516 (CVSS 8.3), GHSA-qq9h-g4jm-xgf3 (8.3), GHSA-fmh4-wcc4-5jm3 (7.7) — three times the same cause in one code base. Automatic linking happens only if the provider reports the address as verified **and** the local account is verified **and** the provider is configured as trusted. Three conditions, all three necessary. The same rule applies inwards: if an address is confirmed for the first time and the existing password comes from a different session than the one now confirming, the password sign-in is deleted and every session revoked (L-12) — otherwise an attacker's advance access stays valid, exactly the fault from GHSA-qq9h-g4jm-xgf3.
+**Price.** More explicit linking in the user flow.
 
 <a id="e-30"></a>
 
-**E-30 — Vierzehn Anbieter statt sechsunddreißig.**
-*Kontext:* Anbieterliste zum Start (Abschnitt 3.10).
-*Verworfen:* Gleichziehen mit Better Auths Anbieterliste.
-*Grund:* Die Schnittstelle ist der Wert, nicht die Anzahl. Anbieter sind der Teil, der sich später am billigsten nachziehen lässt — und jeder einzelne ist Wartungslast, wenn sich sein OAuth-Verhalten ändert. Better Auths Anbieterabstraktion ist übrigens die sauberste Ecke seiner Codebasis und dient hier als Vorbild.
-*Preis:* Eine kürzere Liste auf der Produktseite.
+### Fourteen providers instead of thirty-six
+`E-30` · architecture · translated from the German original
+
+**Context.** Provider list at launch (section 3.10).
+**Rejected.** Drawing level with Better Auth's provider list.
+**Reason.** The interface is the value, not the number. Providers are the part that can be caught up on most cheaply later — and every single one is a maintenance load when its OAuth behaviour changes. Better Auth's provider abstraction is, by the way, the cleanest corner of its code base and serves as the model here.
+**Price.** A shorter list on the product page.
 
 <a id="e-31"></a>
 
-**E-31 — Fremde Tokens werden standardmäßig nicht gespeichert.**
-*Kontext:* Access-, Refresh- und ID-Tokens der Anbieter nach dem Anmelden.
-*Verworfen:* Speichern als Vorgabe, verschlüsselt.
-*Grund:* Was nicht gespeichert ist, kann nicht auslaufen. Die meisten Anwendungen brauchen nach dem Anmelden kein Anbieter-Token; wer es braucht, schaltet es ein und bekommt es verschlüsselt.
-*Preis:* Eine Option, die manche übersehen und dann suchen.
+### Foreign tokens are not stored by default
+`E-31` · architecture · translated from the German original
 
-### Erweiterbarkeit
+**Context.** Access, refresh and ID tokens of the providers after the sign-in.
+**Rejected.** Storing as the default, encrypted.
+**Reason.** What is not stored cannot leak. Most applications do not need a provider token after the sign-in; whoever needs it switches it on and gets it encrypted.
+**Price.** An option that some overlook and then go looking for.
+
+### Extensibility
 
 <a id="e-32"></a>
 
-**E-32 — Aufgezählte Erweiterungspunkte statt offener Erweiterbarkeit.**
-*Kontext:* Plugin-Schnittstelle (Abschnitt 3.11).
-*Verworfen:* Better Auths Modell, in dem ein Plugin Kernendpunkte überschreiben, den Kontext per `Object.assign` mutieren, `password.hash` ersetzen und die Optionen fremder Plugins beschreiben kann.
-*Grund:* Dort ist das keine theoretische Möglichkeit: Das Stripe-Plugin schreibt tatsächlich in die Optionen des Organization-Plugins (`packages/stripe/src/index.ts:256`) und erzeugt damit eine unsichtbare Reihenfolgeabhängigkeit. Kollisionen werden nur protokolliert, `init` läuft ohne `try/catch`, und `plugin.migrations` sowie `plugin.adapter` sind toter Code. Ein Plugin ist ein Zuhörer mit Vetorecht, kein Miteigentümer.
-*Preis:* Manches Plugin, das dort möglich wäre, ist hier unmöglich. Das ist beabsichtigt.
+### Enumerated extension points instead of open extensibility
+`E-32` · architecture · translated from the German original
+
+**Context.** Plugin interface (section 3.11).
+**Rejected.** Better Auth's model, in which a plugin can override core endpoints, mutate the context by `Object.assign`, replace `password.hash` and write the options of foreign plugins.
+**Reason.** There this is not a theoretical possibility: the Stripe plugin actually writes into the options of the Organization plugin (`packages/stripe/src/index.ts:256`) and thereby produces an invisible order dependency. Collisions are only logged, `init` runs without `try/catch`, and `plugin.migrations` as well as `plugin.adapter` are dead code. A plugin is a listener with a right of veto, not a co-owner.
+**Price.** Many a plugin that would be possible there is impossible here. That is intended.
 
 <a id="e-33"></a>
 
-**E-33 — Namenskollision ist ein Startfehler.**
-*Kontext:* Zwei Plugins, oder Plugin und Kern, beanspruchen denselben Routen- oder Tabellennamen.
-*Verworfen:* Warnung im Protokoll, wie Better Auth es tut.
-*Grund:* Eine Warnung im Protokoll wird im Betrieb nicht gelesen. Ein Fehler beim Start wird gelesen.
-*Preis:* Weniger Nachsicht bei der Einführung.
+### A name collision is a start error
+`E-33` · architecture · translated from the German original
+
+**Context.** Two plugins, or a plugin and the core, claim the same route or table name.
+**Rejected.** A warning in the log, as Better Auth does it.
+**Reason.** A warning in the log is not read in operation. An error at start is read.
+**Price.** Less leniency at the introduction.
 
 <a id="e-34"></a>
 
-**E-34 — Eine Routendeklaration erzeugt Handler, Servermethode und Client.**
-*Kontext:* Client und Server müssen dieselbe Oberfläche kennen (Abschnitt 3.12).
-*Verworfen:* Better Auths Laufzeit-Proxy über Pfadsegmente mit der Heuristik „Body vorhanden, also POST".
-*Grund:* Dort gibt es keinen Laufzeitvertrag zwischen Client und Server; die Typen entstehen rein statisch aus `Auth["api"]`, was zu den bekannten Inferenzproblemen führt (Issues #1252, #4654 mit TS2742, #5159). Aus einer Deklaration abgeleitet, kann ein Aufruf, den es nicht gibt, nicht kompilieren.
-*Preis:* Eine Deklarationsschicht, die gepflegt werden muss.
+### One route declaration produces handler, server method and client
+`E-34` · architecture · translated from the German original
 
-### Umfang
+**Context.** Client and server must know the same surface (section 3.12).
+**Rejected.** Better Auth's runtime proxy over path segments with the heuristic "body present, so POST".
+**Reason.** There is no runtime contract between client and server there; the types arise purely statically from `Auth["api"]`, which leads to the known inference problems (issues #1252, #4654 with TS2742, #5159). Derived from one declaration, a call that does not exist cannot compile.
+**Price.** A declaration layer that has to be maintained.
+
+### Scope
 
 <a id="e-35"></a>
 
-**E-35 — Keine Rollen, keine Berechtigungen, keine Organisationen.**
-*Kontext:* Vorgabe des Auftraggebers.
-*Verworfen:* Rollen und Organisationen als optionales Modul im selben Paket.
-*Grund:* Die Zahlen stützen sie: In Better Auth entfallen 133 von 618 Funktionen auf Autorisierung und Identitätsanbieter-Rollen (Abschnitt 1 I und J); allein die Dokumentation des Organization-Plugins umfasst 2586 Zeilen. Das ist ein eigenes Produkt, das nur zufällig im selben Paket wohnt. Die Bibliothek beantwortet, wer angemeldet ist — was diese Person darf, weiß nur die Anwendung.
-*Preis:* Wer beides will, braucht zwei Dinge. Das ist die richtige Anzahl.
+### No roles, no permissions, no organisations
+`E-35` · architecture · translated from the German original
+
+**Context.** Specification of the client.
+**Rejected.** Roles and organisations as an optional module in the same package.
+**Reason.** The numbers support it: in Better Auth, 133 of 618 functions fall to authorisation and identity-provider roles (section 1 I and J); the documentation of the Organization plugin alone comprises 2586 lines. That is a product of its own that only happens to live in the same package. The library answers who is signed in — what that person may do is known only to the application.
+**Price.** Whoever wants both needs two things. That is the right number.
 
 <a id="e-36"></a>
 
-**E-36 — 322 von 618 Funktionen werden weggelassen.**
-*Kontext:* Ergebnis des Funktionsvergleichs (Abschnitt 1).
-*Verworfen:* Funktionsgleichheit mit Better Auth als Ziel.
-*Grund:* Nicht als Sparmaßnahme, sondern weil 133 davon außerhalb des Zwecks liegen, 32 auf Sitzungsvarianten entfallen, die dem Widerrufsversprechen widersprechen, und 28 auf Datenbankabstraktion, die mit der Festlegung auf PostgreSQL entfällt. Übernommen oder anders gelöst werden 268, übertroffen 28.
-*Preis:* Velve Auth ist kein Ersatz für jeden Better-Auth-Einsatz. Wo es einer ist, ist es ein besserer.
+### 322 of 618 functions are left out
+`E-36` · architecture · translated from the German original
+
+**Context.** Result of the function comparison (section 1).
+**Rejected.** Function parity with Better Auth as a goal.
+**Reason.** Not as an economy measure, but because 133 of them lie outside the purpose, 32 fall to session variants that contradict the revocation promise, and 28 to database abstraction that falls away with the commitment to PostgreSQL. 268 are adopted or solved differently, 28 exceeded.
+**Price.** Velve Auth is not a replacement for every Better Auth deployment. Where it is one, it is a better one.
 
 <a id="e-37"></a>
 
-**E-37 — Kein E-Mail-Versand, kein Audit-Log, keine Admin-Oberfläche.**
-*Kontext:* Betriebsfunktionen rund um die Anmeldung (Abschnitt 3.14).
-*Verworfen:* Eingebauter Versand, Audit-Tabelle im Schema, mitgelieferte Oberfläche.
-*Grund:* Versand ist ein Callback, weil jede ernsthafte Anwendung schon einen Versandweg hat und die Bibliothek dort nicht dazwischenstehen soll. Audit-Log und Oberfläche gehören zur Anwendung, die den fachlichen Kontext kennt. Better Auth hat beides ebenfalls nicht im offenen Teil — dort allerdings, weil es kostenpflichtige Produkte sind.
-*Preis:* Mehr Arbeit beim Einbau.
+### No email sending, no audit log, no admin interface
+`E-37` · architecture · translated from the German original
+
+**Context.** Operational functions around the sign-in (section 3.14).
+**Rejected.** Built-in sending, an audit table in the schema, a delivered interface.
+**Reason.** Sending is a callback, because every serious application already has a sending path and the library should not get in the way there. Audit log and interface belong to the application, which knows the domain context. Better Auth likewise has neither in the open part — there, however, because they are paid products.
+**Price.** More work at integration.
 
 ### Migration
 
 <a id="e-38"></a>
 
-**E-38 — Migration ist Kernfunktion mit Trockenlauf, nicht eine Anleitung im Wiki.**
-*Kontext:* Fünf Quellen als Vorgabe des Auftraggebers (Abschnitt 4).
-*Verworfen:* Anleitungen mit Beispielskript, wie Better Auth sie liefert.
-*Grund:* Better Auth hat fünf Anleitungen; die drei, die Kennwörter betreffen, empfehlen alle dasselbe — global auf bcrypt(10) umstellen — und für Firebase, die einzige Quelle mit nicht-trivialem Hash, gibt es gar keine. Ein Import ohne vorherigen Trockenlauf ist ein Blindflug: Welche Verfahren im Bestand liegen, weiß man vorher nicht.
-*Preis:* Der aufwendigste Einzelbaustein nach dem Kern.
+### Migration is a core function with a dry run, not a guide in the wiki
+`E-38` · architecture · translated from the German original
+
+**Context.** Five sources as a specification of the client (section 4).
+**Rejected.** Guides with an example script, as Better Auth delivers them.
+**Reason.** Better Auth has five guides; the three that concern passwords all recommend the same thing — switch globally to bcrypt(10) — and for Firebase, the only source with a non-trivial hash, there is none at all. An import without a prior dry run is a blind flight: which procedures lie in the estate is not known beforehand.
+**Price.** The most laborious individual building block after the core.
 
 <a id="e-39"></a>
 
-**E-39 — md4, md5, sha1 und roher HMAC werden nicht verifiziert.**
-*Kontext:* Auth0-`custom_password_hash` und Clerk-`password_hasher` können solche Verfahren enthalten (Abschnitte 4.2 d und 4.3 d).
-*Verworfen:* Einmalige Verifikation mit sofortigem Rehash.
-*Grund:* Das würde dauerhafte Altfläche im Kern für Hashes schaffen, die faktisch Klartext sind — und der Einmal-Charakter ließe sich nicht erzwingen. Die Regel lautet: kein Verfahren, das weder iteriert noch speicherhart ist; sie trifft ebenso `sha256`, `sha512` und `ldap` bei Auth0 sowie zehn der neunzehn Clerk-Verfahren. Betroffene erhalten den Reset-Pfad (E-41).
-*Preis:* Bei einer Auth0-Migration mit Altbestand müssen diese Nutzer ihr Kennwort neu setzen.
+### md4, md5, sha1 and raw HMAC are not verified
+`E-39` · architecture · translated from the German original
+
+**Context.** Auth0's `custom_password_hash` and Clerk's `password_hasher` can contain such procedures (sections 4.2 d and 4.3 d).
+**Rejected.** One-time verification with an immediate rehash.
+**Reason.** That would create permanent legacy surface in the core for hashes that are effectively plaintext — and the one-time character could not be enforced. The rule is: no procedure that neither iterates nor is memory-hard; it also hits `sha256`, `sha512` and `ldap` at Auth0 as well as ten of the nineteen Clerk procedures. Those affected get the reset path (E-41).
+**Price.** In an Auth0 migration with an old estate these users have to set their password anew.
 
 <a id="e-40"></a>
 
-**E-40 — Keine automatische Zusammenführung bei Kollision.**
-*Kontext:* Zwei Quellkonten mit derselben E-Mail (Abschnitt 4.0.6).
-*Verworfen:* Zusammenführen; „ältestes Konto gewinnt" nur auf ausdrückliche Anweisung (`skip-duplicates`).
-*Grund:* Beim Zusammenführen zweier Quellkonten mit derselben Adresse überlebt nur ein Kennworthash — das ist eine Rechteausweitung durch Migration und bricht dieselbe Regel, die E-29 für OAuth aufstellt.
-*Preis:* Kollisionen brechen den Lauf ab und müssen entschieden werden.
+### No automatic merge on a collision
+`E-40` · architecture · translated from the German original
+
+**Context.** Two source accounts with the same email (section 4.0.6).
+**Rejected.** Merging; "oldest account wins" only on an explicit instruction (`skip-duplicates`).
+**Reason.** When merging two source accounts with the same address, only one password hash survives — that is a privilege escalation through migration and breaks the same rule that E-29 sets up for OAuth.
+**Price.** Collisions abort the run and have to be decided.
 
 <a id="e-41"></a>
 
-**E-41 — Nicht verifizierbare Hashes führen zu einer Reset-Pflicht in einer eigenen Tabelle, nicht zu einem Sentinel im PHC-Feld.**
-*Kontext:* Reset-Pfad für Nutzer ohne brauchbaren Hash (Abschnitt 4.0.5).
-*Verworfen:* Ein Platzhalterwert in `password_credential.phc`.
-*Grund:* Ein Sentinel-Wert hätte eine weitere Präfixzeile in der Weiche erzwungen und damit den Prüfpfad um einen Sonderfall erweitert, der kein Hash ist. Die Antwort bei der Anmeldung bleibt byteweise identisch; der Hinweis wandert in die E-Mail.
-*Preis:* Eine Tabelle und eine Zusatzabfrage im Fehlerzweig.
+### Unverifiable hashes lead to a reset obligation in a table of its own, not to a sentinel in the PHC field
+`E-41` · architecture · translated from the German original
 
-### Sicherheit als Vorgabe
+**Context.** Reset path for users without a usable hash (section 4.0.5).
+**Rejected.** A placeholder value in `password_credential.phc`.
+**Reason.** A sentinel value would have forced a further prefix line in the switch and thereby extended the verification path by a special case that is not a hash. The response at sign-in stays byte-for-byte identical; the hint moves into the email.
+**Price.** A table and an additional query in the error branch.
+
+### Security by default
 
 <a id="e-42"></a>
 
-**E-42 — Jede sicherheitsrelevante Einstellung ist im Vorgabewert sicher.**
-*Kontext:* Better Auths Advisory-Historie (Abschnitt 5).
-*Verworfen:* Bequeme Vorgaben mit Sicherheitsoptionen zum Einschalten.
-*Grund:* Die Auswertung der 33 Advisories ergibt: Die häufigste Ursache ist keine Kryptoschwäche, sondern eine fehlende Eigentümerprüfung (10 Fälle), und fast jede kritische Einstufung hing an einer Voreinstellung. Abschwächung muss ausdrücklich, protokolliert und beim Start sichtbar sein.
-*Preis:* Weniger Bequemlichkeit bei der Einführung.
+### Every security-relevant setting is safe in its default value
+`E-42` · architecture · translated from the German original
+
+**Context.** Better Auth's advisory history (section 5).
+**Rejected.** Convenient defaults with security options to switch on.
+**Reason.** The evaluation of the 33 advisories yields: the most frequent cause is not a crypto weakness but a missing owner check (10 cases), and almost every critical rating hung on a default setting. A weakening must be explicit, logged and visible at start.
+**Price.** Less convenience at the introduction.
 
 <a id="e-43"></a>
 
-**E-43 — Jede Repository-Methode auf nutzergebundenen Tabellen verlangt einen `actor`.**
-*Kontext:* Zehn von 33 Advisories der Klasse „fehlende Eigentümerbindung".
-*Verworfen:* Eigentümerprüfung im Handler, per Review erzwungen.
-*Grund:* Die zehn Advisories der Klasse „fehlende Eigentümerbindung" haben dieselbe Gestalt: eine fehlende Zeile `AND user_id = :actor`. Wenn die Signatur den Aufrufer zwingt, den Handelnden zu nennen, kann man ihn nicht vergessen — man kann ihn nur falsch angeben, und das ist ein sichtbarer Fehler statt eines unsichtbaren.
-*Preis:* Etwas mehr Tipparbeit im Kern.
+### Every repository method on user-bound tables demands an `actor`
+`E-43` · architecture · translated from the German original
+
+**Context.** Ten of 33 advisories of the class "missing owner binding".
+**Rejected.** Owner checking in the handler, enforced by review.
+**Reason.** The ten advisories of the class "missing owner binding" have the same shape: a missing line `AND user_id = :actor`. If the signature forces the caller to name the acting party, it cannot be forgotten — it can only be given wrongly, and that is a visible error instead of an invisible one.
+**Price.** Somewhat more typing in the core.
 
 <a id="e-44"></a>
 
-**E-44 — Zweckgetrennte Schlüssel per HKDF, Version im Umschlag jedes erzeugten Werts.**
-*Kontext:* Sechs Schlüsselzwecke (Abschnitt 3.8).
-*Verworfen:* Ein Secret für alles, wie Better Auth es tut.
-*Grund:* Dort signiert `ctx.secret` Cookies, E-Mail-JWTs und den Cache-HMAC; die Rotation ist nur für Verschlüsselung umgesetzt, Signaturen rotieren nicht, und ein Secret-Wechsel entwertet alle Sitzungen und alle offenen Links gleichzeitig. Hier überlebt jede Rotation sämtliche Sitzungen, weil Sitzungen undurchsichtige Datenbankzeilen sind und mit keinem Schlüssel zusammenhängen. Wo kein Umschlag existiert, steht die Version als Spalte: `password_credential.key_version` für `password-enc` (L-2) und `recovery_code.key_version` für `token-pepper` (L-3).
-*Preis:* Ein Schlüsselring, der verwaltet werden will.
+### Purpose-separated keys via HKDF, the version in the envelope of every produced value
+`E-44` · architecture · translated from the German original
+
+**Context.** Six key purposes (section 3.8).
+**Rejected.** One secret for everything, as Better Auth does it.
+**Reason.** There `ctx.secret` signs cookies, email JWTs and the cache HMAC; rotation is implemented only for encryption, signatures do not rotate, and a change of secret devalues all sessions and all open links at the same time. Here every rotation survives all sessions, because sessions are opaque database rows and are connected to no key. Where no envelope exists, the version stands as a column: `password_credential.key_version` for `password-enc` (L-2) and `recovery_code.key_version` for `token-pepper` (L-3).
+**Price.** A key ring that wants managing.
 
 <a id="e-45"></a>
 
-**E-45 — `__Host-`-Präfix für alle Cookies der Bibliothek.**
-*Kontext:* `__Host-velve_session` und `__Host-velve_pending` (Abschnitte 3.5, 3.6).
-*Verworfen:* `__Secure-` mit konfigurierbarem `Domain`.
-*Grund:* Das Präfix lässt den Browser `Secure` und `Path=/` erzwingen und `Domain` verbieten — Cookie-Tossing aus einer übernommenen Subdomain ist damit ausgeschlossen. Better Auth definiert das Präfix (`cookies/cookie-utils.ts:35`), setzt es aber nie — `cookies/index.ts:75` wählt nur zwischen `__Secure-` und keinem Präfix.
-*Preis:* Kein `Domain`-Scope, also braucht Cross-Subdomain einen Tokenaustausch statt eines geteilten Cookies.
+### The `__Host-` prefix for all cookies of the library
+`E-45` · architecture · translated from the German original
+
+**Context.** `__Host-velve_session` and `__Host-velve_pending` (sections 3.5, 3.6).
+**Rejected.** `__Secure-` with a configurable `Domain`.
+**Reason.** The prefix makes the browser enforce `Secure` and `Path=/` and forbid `Domain` — cookie tossing from a taken-over subdomain is thereby ruled out. Better Auth defines the prefix (`cookies/cookie-utils.ts:35`) but never sets it — `cookies/index.ts:75` only chooses between `__Secure-` and no prefix.
+**Price.** No `Domain` scope, so cross-subdomain needs a token exchange instead of a shared cookie.
 
 <a id="e-46"></a>
 
-**E-46 — Aufzählungsschutz ist der Vorgabewert und liegt an einer Stelle.**
-*Kontext:* Anmeldung, Registrierung, Reset und E-Mail-Wechsel (Abschnitt 3.13).
-*Verworfen:* Schutz je Endpunkt, nachrüstbar.
-*Grund:* In Better Auth wurde er viermal einzeln nachgemeldet (#7972, #7944, #5017, #8096), greift auch in 1.7.3 nicht im Standardaufbau, und `/sign-up/email` protokolliert die Adresse im Klartext, während es 422 zurückgibt. Nachgerüsteter Schutz ist lückenhafter Schutz. Zwei Folgen daraus: „Konto deaktiviert" ist bei der Anmeldung unsichtbar und erscheint nur bei der Auflösung einer bestehenden Sitzung (L-4); und der kontobezogene Zähler wird auf dem Bezeichner gebildet, nicht auf der Konto-ID, damit er vor der Nutzerauflösung greift und existierende wie nicht existierende Konten gleich behandelt — Überschreitung lehnt ab, statt zu verzögern, weil eine Verzögerung ein Zeitkanal wäre (L-5). Aus demselben Grund gibt es kein `requireEmailVerification`: Eine Anmeldesperre für unbestätigte Konten wäre ein Aufzählungskanal und zugleich eine Sackgasse, weil `email.requestVerification` eine Sitzung verlangt. Anmeldung und Registrierung liefern immer eine Sitzung, `User.emailVerifiedAt` trägt den Zustand, die Anwendung entscheidet (Abschnitt 1, A5; S-TIM-7).
-*Preis:* Fehlermeldungen sind für Entwickler unbequemer. Der wahre Grund steht im Serverprotokoll.
+### Enumeration protection is the default value and lies in one place
+`E-46` · architecture · translated from the German original
+
+**Context.** Sign-in, registration, reset and email change (section 3.13).
+**Rejected.** Protection per endpoint, retrofittable.
+**Reason.** In Better Auth it was reported afterwards four times individually (#7972, #7944, #5017, #8096), does not take effect in the standard setup even in 1.7.3, and `/sign-up/email` logs the address in plaintext while returning 422. Retrofitted protection is patchy protection. Two consequences follow from that: "account disabled" is invisible at sign-in and appears only on the resolution of an existing session (L-4); and the account-related counter is formed on the identifier, not on the account ID, so that it takes effect before the user resolution and treats existing and non-existent accounts alike — exceeding it rejects instead of delaying, because a delay would be a timing channel (L-5). For the same reason there is no `requireEmailVerification`: a sign-in block for unconfirmed accounts would be an enumeration channel and at the same time a dead end, because `email.requestVerification` demands a session. Sign-in and registration always deliver a session, `User.emailVerifiedAt` carries the state, the application decides (section 1, A5; S-TIM-7).
+**Price.** Error messages are less convenient for developers. The true reason is in the server log.
 
 ---
 
-## Entscheidungen aus dem Bau
+## Decisions from the build
 
 <a id="e-47"></a>
 
