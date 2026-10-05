@@ -113,8 +113,10 @@ release tier has to have passed on that exact commit, on its push to `main`;
 after it, the tag's push runs the whole gate and both release tiers over the
 same commit in the Release workflow.
 
-The release notes for 1.2.0, including what an operator upgrading from 1.1.0
-has to do, are in [docs/releases/1.2.0.md](docs/releases/1.2.0.md).
+The release notes for 2.0.0, including every breaking change and what an
+operator upgrading from 1.1.0 has to do, are in
+[docs/releases/2.0.0.md](docs/releases/2.0.0.md). 1.x gets no further releases
+(E-3020).
 
 ### PostgreSQL versions
 
@@ -1222,7 +1224,7 @@ them, and a `cookieName` equal to either of them is refused at startup, since
 one cookie would otherwise be read as two. The names come from the enumeration
 in `src/core/http/cookies.ts` — `cookieNamesWithSession` puts the configured
 session name into it — which is also what a response is checked against before
-it is sent. Before 1.2.0 the option was validated at startup and then ignored,
+it is sent. Before 2.0.0 the option was validated at startup and then ignored,
 and the session cookie was always `__Host-velve_session` (E-2550). Both the name and the value are checked against a token
 charset first, so no name and no value can end a `Set-Cookie` field early and
 append an attribute of its own.
@@ -7020,7 +7022,7 @@ route has no such row (E-2212, E-2214).
 
 **Upgrading from 1.1.0.** A plugin that started on 1.1.0 with
 `perIpAddress: "none"` on a route, or with a `rateLimitRules` entry writing it,
-refuses to start from 1.2.0 on. Declare an address bucket for that route —
+refuses to start from 2.0.0 on. Declare an address bucket for that route —
 `{ capacity, refillPerSecond }` — instead (E-2214).
 
 ### One reading of the declaration

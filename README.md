@@ -71,7 +71,7 @@ pnpm add @velve/auth
 ```
 
 That is the whole install: no tag to remember, no `postinstall`, no native
-binding, no build step. `latest` points at `1.2.0` and `^1.0.0` resolves to it.
+binding, no build step. `latest` points at `2.0.0` and `^2.0.0` resolves to it.
 
 ## Example
 
@@ -134,29 +134,36 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 
 ## Status
 
-> **Status: 1.2.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
-> stable line and `^1.0.0` resolves. Under semver the documented surface is a promise:
-> nothing in it changes shape without a major version. `1.1.0` added an option
-> and moved nothing. `1.2.0` is a security release and does not keep that promise
-> in full: it adds five `VelveStartupError` codes, three of which can refuse a
-> configuration that started on `1.1.0` — the other two,
-> `plugin_database_and_role_both_set` and `plugin_database_reaches_the_core`, are
-> raised only when `pluginDatabase` or `pluginDatabaseRole` is set, the two
-> options new in `1.2.0`; a `RevokeReason` member, `email_verified`, that an
-> exhaustive `switch` has to handle; a required `sessionCookieName` in
-> `HttpEnvironment`; changed rate-limit defaults; `auth.pending.cancel` taking the
-> call fields, so a call without `origin` no longer compiles and one from
-> JavaScript without an allowed origin is refused with `origin_not_allowed`
-> (E-2830); the sign-in, session and user hooks firing on every way in, not
-> only on OAuth, where a throwing hook now refuses the sign-in, sign-up, reset
-> or password change (E-2790, E-2796); a start refusal for a
-> `session.absoluteTimeout` above 400 days (E-2878); and `username.change`
-> answering `session_required` instead of `invalid_credentials` for an account
-> deleted mid-request (E-2835). It is a minor version by the
-> owner's decision rather than a major one (E-2214, E-2520). `next` keeps
-> pointing at the last prerelease, `1.0.0-next.2`, and nothing needs it.
+> **Status: 2.0.0.** `latest` points at it, so `pnpm add @velve/auth` installs
+> it. Under semver the documented surface is a promise: nothing in it changes
+> shape without a major version, and 2.0.0 is one. It is a security release,
+> prepared as 1.2.0 and never published under that number, and it ships as a
+> major because some of its fixes break existing installations (E-3020). What
+> breaks, in short:
+>
+> - `@velve/auth/postgres-js`, `/neon` and `/import` are removed; they exported
+>   nothing (E-3021).
+> - `auth.user.findByEmail` is removed in identity mode `username` (E-3022).
+> - New start refusals: three new `VelveStartupError` codes that can refuse a
+>   configuration that started on 1.1.0, Argon2id parameters above their
+>   ceilings, and a `session.absoluteTimeout` above 400 days.
+> - The sign-in, session and user hooks fire on every way in, and
+>   `beforeSessionRevoke` on more revocations; a hook that throws now refuses
+>   the operation (E-2581, E-2790, E-2796).
+> - Rate-limit defaults changed (E-2670).
+> - `session.cookieName` is honoured, which signs every user out once if you set
+>   it (E-2550).
+> - `auth.pending.cancel` takes the call fields and runs the origin check and
+>   the rate limit of its route (E-2830).
+> - Exported types gain members: `StartupErrorCode`, `RevokeReason`, a required
+>   `HttpEnvironment.sessionCookieName`, and the namespace types.
+>
+> Every break and the upgrade steps are in
+> [`docs/releases/2.0.0.md`](./docs/releases/2.0.0.md). 1.x gets no further
+> releases. `next` keeps pointing at the last prerelease, `1.0.0-next.2`, and
+> nothing needs it.
 
-**What the `1.x` line commits this package to** is the surface
+**What the `2.x` line commits this package to** is the surface
 `DOCUMENTATION.md` describes: it may gain something in a minor version, and
 nothing in it changes shape without a major one. What it does not claim is a
 track record — the interface is specified and the schema is versioned, but this

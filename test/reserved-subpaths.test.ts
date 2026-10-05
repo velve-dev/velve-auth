@@ -62,7 +62,7 @@ describe("the three empty subpaths are gone (E-3021)", () => {
 });
 
 describe("no document offers one of the three removed subpaths", () => {
-	it.each(["README.md", "DOCUMENTATION.md", "docs/releases/1.2.0.md"])("%s", (file) => {
+	it.each(["README.md", "DOCUMENTATION.md", "docs/releases/2.0.0.md"])("%s", (file) => {
 		expect(passagesOfferingARemovedSubpath(readFromRoot(file))).toStrictEqual([]);
 	});
 
