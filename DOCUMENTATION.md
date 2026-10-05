@@ -4622,10 +4622,27 @@ running and did not rise: equality counts, because a counter in use has to
 increase. An authenticator that keeps no counter reports zero every time and is
 never reported as regressed.
 
-The value stored afterwards is the one the authenticator reported, not the
-higher of the two. Keeping the maximum would report the fall on every subsequent
-sign-in until the authenticator caught up, and a field that is always set is a
-field nobody reads (E-462).
+The value stored afterwards is the highest counter the credential has reported,
+as WebAuthn Level 2 §7.2 step 21 keeps it: a sign-in raises it and never lowers
+it. The comparison is made by the `UPDATE` itself
+(`sign_count = GREATEST(sign_count, $n)`), so two assertions that read the same
+row cannot write the lower counter over the higher one. The report is made
+against the counter read before verification and against the counter the write
+left behind, so an assertion whose write lands after a higher one is reported
+too.
+
+What that means for an application:
+
+- A copy of an authenticator used after the original is reported on **every**
+  use, including after the original stops being used, because its counter stays
+  below the stored one.
+- An authenticator whose counter was reset legitimately — after a factory reset,
+  for instance — is reported on every sign-in until its counter passes the
+  stored value. Nothing is refused in either case; the sign-in succeeds and the
+  field is set.
+
+This reverses E-462, which stored the reported value so a fall was reported once;
+the change is the owner's ruling (E-3050).
 
 ### Listing, renaming and removing
 
@@ -4752,7 +4769,7 @@ unusable before that.
 | `user_id` | `uuid` | `ON DELETE CASCADE` |
 | `credential_id` | `bytea` | the WebAuthn credential ID, globally unique. Never leaves the process |
 | `public_key` | `bytea` | COSE. Never leaves the process |
-| `sign_count` | `bigint` | last reported counter. Never leaves the process; it appears only as `signCountRegressed` |
+| `sign_count` | `bigint` | the highest counter reported, never lowered (E-3050). Never leaves the process; it appears only as `signCountRegressed` |
 | `transports` | `text[]` | stored and read as JSON rather than through a delimiter, because the values are the browser's words (E-473) |
 | `aaguid` | `uuid` | `NULL` when the authenticator reported all zeros |
 | `backup_eligible`, `backup_state` | `boolean` | `BE` and `BS`, rewritten on every sign-in |
