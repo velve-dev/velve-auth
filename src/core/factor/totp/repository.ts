@@ -36,7 +36,8 @@ export interface TotpRepository {
 	findCredentialOf(input: { userId: string }): Promise<StoredTotpCredential | null>;
 	//the shipped enrolment check takes a user id so this answers a boolean and no secret (E-2435)
 	isConfirmedFor(input: { userId: string }): Promise<boolean>;
-	confirmCredential(input: { actor: Actor }): Promise<boolean>;
+	//only the secret the code was matched against may be confirmed
+	confirmCredential(input: { actor: Actor; secretEnc: Uint8Array<ArrayBuffer> }): Promise<boolean>;
 	removeCredential(input: { actor: Actor }): Promise<boolean>;
 	claimTimeStep(input: TimeStepClaim): Promise<boolean>;
 	//the pending row named the owner when its token hash resolved it (E-2424)
@@ -81,7 +82,7 @@ WHERE user_id = $1`;
 ) AS confirmed`;
 
 	const confirmStatement = `UPDATE ${credentials} SET confirmed_at = now()
-WHERE user_id = $1 AND confirmed_at IS NULL
+WHERE user_id = $1 AND secret_enc = $2 AND confirmed_at IS NULL
 RETURNING user_id`;
 
 	const removeCredentialStatement = `DELETE FROM ${credentials} WHERE user_id = $1 RETURNING user_id`;
@@ -125,8 +126,8 @@ RETURNING time_step`;
 			return readCredential(row);
 		},
 
-		async confirmCredential({ actor }) {
-			const rows = await options.driver.query(confirmStatement, [actor]);
+		async confirmCredential({ actor, secretEnc }) {
+			const rows = await options.driver.query(confirmStatement, [actor, secretEnc]);
 			return rows.length === 1;
 		},
 

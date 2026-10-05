@@ -10,19 +10,21 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}/package.json`, "utf8
 	scripts: Record<string, string>;
 };
 
-/** §9 is the command reference, so it names commands the gate does not run. Two are run by a
- * person and by nothing else — the formatter and the gate itself — and five are run by
+/** §9 is the command reference, so it names commands the gate does not run. Four are run by a
+ * person and by no workflow — the formatter, the gate itself, the registry check, which can only
+ * run once the maintainer has published from their own machine (E-2760), and the release tier
+ * check, which asks GitHub about the commit the maintainer is about to publish (E-2763). Four are run by
  * release.yml: the two tiers section 6 puts on a schedule rather than on a commit (E-526, E-535),
- * the two release checks §9 documents and §5's checklist deliberately does not, because one
- * refuses a branch carrying no tag and the other a version nobody has published (E-1461), and the
- * derivation that decides which dist-tag the release publishes under (E-1777).
+ * the tag check §9 documents and §5's checklist deliberately does not, because it refuses a branch
+ * carrying no tag (E-1461), and the derivation that decides which dist-tag a release is published
+ * under (E-1777). §5 leaves the registry check out for the same reason, since a version nobody has
+ * published has nothing to resolve.
  * Anything else appearing in §9 without appearing in the gate script is drift. */
-const RUN_BY_A_PERSON = ["format", "gate"];
+const RUN_BY_A_PERSON = ["format", "gate", "check:published-version", "check:release-tier"];
 const RUN_BY_THE_RELEASE_WORKFLOW = [
 	"test:nightly",
 	"test:release",
 	"check:release-tag",
-	"check:published-version",
 	"release-dist-tag",
 ];
 const NOT_RUN_BY_THE_GATE = [...RUN_BY_A_PERSON, ...RUN_BY_THE_RELEASE_WORKFLOW];
@@ -121,7 +123,7 @@ describe("the gate's command lists", () => {
 		expect(gateList).toEqual(gateSteps);
 	});
 
-	it("names in §9 every command the gate runs, and nothing beyond the seven it declares", () => {
+	it("names in §9 every command the gate runs, and nothing beyond the eight it declares", () => {
 		expect(sorted(commandList)).toEqual(sorted([...gateSteps, ...NOT_RUN_BY_THE_GATE]));
 	});
 

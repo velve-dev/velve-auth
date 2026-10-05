@@ -10,10 +10,19 @@ import type { RequestContext } from "../http/route.js";
 import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
+import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import { tellAfterSessionCreate } from "../plugin/sign-in.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
-import { accountOfRedemption, type FlowEnvironment, mailerOf, observedIn } from "./environment.js";
+import {
+	A_DISABLED_ACCOUNT,
+	accountOrDisabledOfRedemption,
+	type FlowEnvironment,
+	mailerOf,
+	observedIn,
+	refuseADisabledAccount,
+} from "./environment.js";
 import type { SetPasswordResult } from "./results.js";
 
 //an unknown identifier must run the statements a resolved account runs (S-TIM-6)
@@ -67,6 +76,11 @@ async function replacePassword(
 	const { schema, keys, sessions, pluginRuntime } = environment.services;
 	//the account row is locked first as a first confirmation writes these tables reversed (E-1602)
 	await lockAccountRow(input.transaction, schema, input.userId);
+	//a refused session refuses the reset before any revocation is announced (E-2796)
+	await hooksOnTheTransaction(pluginRuntime.hooks, input.transaction).beforeSessionCreate({
+		userId: input.userId,
+		factors: ["password"],
+	});
 	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
 	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
 	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
@@ -119,7 +133,11 @@ export async function redeemReset(
 			token: input.token,
 			purpose: "password_reset",
 		});
-		const account = await accountOfRedemption(environment, transaction, redeemed);
+		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
+		//a token presented for a disabled account stays spent once it is enabled again (E-2879)
+		if (account === A_DISABLED_ACCOUNT) {
+			return account;
+		}
 		return replacePassword(environment, context, {
 			transaction,
 			actor: account.actor,
@@ -127,10 +145,16 @@ export async function redeemReset(
 			derived,
 		});
 	});
+	if (result === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
+	}
 
+	await tellAfterSessionCreate(environment.services.pluginRuntime.hooks, result.session);
 	context.cookies.setSession(result.sessionToken);
 	return result;
 }
+
+const SPENT_ON_A_DISABLED_ACCOUNT = Symbol("a recovery code spent on a disabled account");
 
 //a consumed recovery code must not be replaced by a newly generated one
 export async function redeemResetWithRecoveryCode(
@@ -183,9 +207,9 @@ export async function redeemResetWithRecoveryCode(
 		if (consumed === null || found === null) {
 			throw new ConcealedError("recovery_code_not_found");
 		}
-		//a disabled account must answer as a wrong code does and the code is still spent
+		//a code presented for a disabled account stays spent once it is enabled again (E-2872)
 		if (found.disabled) {
-			throw new ConcealedError("recovery_code_not_found");
+			return SPENT_ON_A_DISABLED_ACCOUNT;
 		}
 		return replacePassword(environment, context, {
 			transaction,
@@ -194,7 +218,12 @@ export async function redeemResetWithRecoveryCode(
 			derived,
 		});
 	});
+	//a disabled account must answer as a wrong code does
+	if (result === SPENT_ON_A_DISABLED_ACCOUNT) {
+		throw new ConcealedError("recovery_code_not_found");
+	}
 
+	await tellAfterSessionCreate(environment.services.pluginRuntime.hooks, result.session);
 	context.cookies.setSession(result.sessionToken);
 	return result;
 }

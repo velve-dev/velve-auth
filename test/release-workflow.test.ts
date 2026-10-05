@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -46,6 +46,25 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8"
 	scripts: Record<string, string>;
 };
 
+const SCRIPTS_RUNNING_THE_UNIT_PROJECT = Object.entries(manifest.scripts)
+	.filter(([, body]) => /\bvitest\b/.test(body) && /--project unit\b/.test(body))
+	.map(([script]) => script);
+
+function scriptNamedBy(command: string): string | undefined {
+	if (!command.startsWith("pnpm ")) {
+		return undefined;
+	}
+	return command
+		.split(/\s+/)
+		.slice(1)
+		.find((word) => !word.startsWith("-") && word !== "run");
+}
+
+function runsTheUnitProject(command: string): boolean {
+	const script = scriptNamedBy(command);
+	return script !== undefined && SCRIPTS_RUNNING_THE_UNIT_PROJECT.includes(script);
+}
+
 /** `needs: a` and `needs: [a, b]` are the same declaration, and the chain below reads both. */
 /** A comment is prose about the file, and the comment beside the job below states the very
  * expression it warns against — reading it as code reports the repaired file as broken. */
@@ -85,14 +104,7 @@ describe("the release workflow", () => {
 	});
 
 	it("declares exactly the jobs a release is made of", () => {
-		expect([...releaseJobs.keys()]).toStrictEqual([
-			"dist_tag",
-			"ci",
-			"tiers",
-			"version",
-			"publish",
-			"verify",
-		]);
+		expect([...releaseJobs.keys()]).toStrictEqual(["dist_tag", "ci", "tiers", "version"]);
 	});
 
 	/** The release runs everything ci.yml runs because it runs ci.yml, rather than because a
@@ -121,12 +133,10 @@ describe("the release workflow", () => {
 		expect(commands(job("tiers"))).toContain("pnpm test:release");
 	});
 
-	it("lets each step gate the next, from ci.yml to the registry", () => {
+	it("lets each step gate the next, from ci.yml to the tag check", () => {
 		const chain: [string, string][] = [
 			["tiers", "ci"],
 			["version", "tiers"],
-			["publish", "version"],
-			["verify", "publish"],
 		];
 
 		for (const [dependent, required] of chain) {
@@ -137,7 +147,7 @@ describe("the release workflow", () => {
 	});
 
 	/** An allowlist of every command the workflow runs, in order. A step that is not a `pnpm`
-	 * line is a step like any other here, which is the point: the job below it publishes. */
+	 * line is a step like any other here, which is the point: an added `npm publish` is a step. */
 	it("runs these commands and no others", () => {
 		expect(commands(release)).toStrictEqual([
 			"pnpm install --frozen-lockfile",
@@ -149,41 +159,29 @@ describe("the release workflow", () => {
 			"pnpm test:release",
 			"pnpm install --frozen-lockfile",
 			'pnpm check:release-tag "$GITHUB_REF_NAME" "$DIST_TAG"',
-			"pnpm build",
-			'npm publish --dry-run --provenance --access public --tag "$DIST_TAG"',
-			"pnpm install --frozen-lockfile",
-			"pnpm build",
-			"npm --version",
-			'npm publish --provenance --access public --tag "$DIST_TAG"',
-			'pnpm check:published-version "$DIST_TAG"',
 		]);
 	});
 
-	it("rehearses the publish before the gate is spent, and publishes only after it", () => {
-		expect(commands(job("version"))).toContain(
-			'npm publish --dry-run --provenance --access public --tag "$DIST_TAG"',
-		);
-		expect(commands(job("publish"))).toContain(
-			'npm publish --provenance --access public --tag "$DIST_TAG"',
-		);
+	/** The maintainer publishes and pushes the tag afterwards, so the workflow meets a version
+	 * already on the registry, where the npm it runs refuses even a dry run (E-2762). */
+	it("publishes nothing and rehearses no publish", () => {
+		expect(commands(release).filter((command) => command.startsWith("npm "))).toStrictEqual([]);
 		expect(release).not.toContain("DIST_TAG: next");
 		expect(release).not.toContain("DIST_TAG: latest");
-		expect(job("publish")).toContain("id-token: write");
 	});
 
-	it("resolves the published version back from the registry afterwards", () => {
-		expect(commands(job("verify"))).toStrictEqual(['pnpm check:published-version "$DIST_TAG"']);
-	});
+	/** The publish runs on the maintainer's machine so that no registry credential is stored on
+	 * GitHub, and a reference left in any workflow is a secret somebody would recreate to make
+	 * it work (E-2760). A rehearsal needs no credential and no OIDC token either. */
+	it.each(readdirSync(`${repositoryRoot}.github/workflows`))(
+		"names no registry credential and asks for no OIDC token in %s",
+		(name) => {
+			const source = workflow(name);
 
-	/** A credential named in a second place is a credential that survives the migration to
-	 * trusted publishing, which is the deletion of the first one (E-1416). */
-	it("names a credential in exactly one step, and never in a command", () => {
-		const references = [...release.matchAll(/secrets\.[A-Z_]+/g)].map((match) => match[0]);
-
-		expect(references).toStrictEqual(["secrets.NPM_TOKEN"]);
-		expect(release).toMatch(/NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
-		expect(release).not.toMatch(/^\s+(?:- )?run: .*(NODE_AUTH_TOKEN|NPM_TOKEN)/m);
-	});
+			expect(source).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|registry-url|id-token/);
+			expect(source).not.toMatch(/secrets\./);
+		},
+	);
 
 	/**
 	 * `${{ needs.dist-tag.outputs.value }}` is not a property access: an Actions expression parses
@@ -242,6 +240,35 @@ describe("the release workflow", () => {
 		expect(commands(job("tiers"))).toContain("./tools/start-dex.sh");
 	});
 
+	/**
+	 * The case above names two workflows, and the nightly tier ran the acceptance case without a
+	 * provider every night because it was the third (E-2900). This one reads every workflow, finds
+	 * every job that runs a script whose vitest call includes the unit project, and requires the
+	 * provider to be started earlier in that same job.
+	 */
+	it.each(readdirSync(`${repositoryRoot}.github/workflows`))(
+		"starts the provider before the unit project in every job of %s",
+		(name) => {
+			for (const [jobName, region] of jobRegions(workflow(name))) {
+				const steps = commands(region);
+				const firstSuiteRun = steps.findIndex(runsTheUnitProject);
+				if (firstSuiteRun === -1) {
+					continue;
+				}
+				expect(
+					steps.slice(0, firstSuiteRun),
+					`${name} job ${jobName} runs the unit project before starting the provider`,
+				).toContain("./tools/start-dex.sh");
+			}
+		},
+	);
+
+	it("recognises every script that runs the unit project", () => {
+		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).toContain("test");
+		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).toContain("test:nightly");
+		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).not.toContain("test:release");
+	});
+
 	it("names only scripts package.json declares", () => {
 		const invoked = commands(release)
 			.filter((command) => command.startsWith("pnpm "))
@@ -254,7 +281,7 @@ describe("the release workflow", () => {
 			)
 			.filter((script) => script !== "install");
 
-		expect(invoked.length).toBeGreaterThanOrEqual(7);
+		expect(invoked.length).toBeGreaterThanOrEqual(5);
 		expect(invoked.filter((script) => manifest.scripts[script] === undefined)).toStrictEqual([]);
 	});
 });

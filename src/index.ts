@@ -131,4 +131,4 @@ export function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<
 	return assembleVelveAuth(config, SYSTEM_CLOCK, warnOnTheConsole);
 }
 
-export const VELVE_AUTH_VERSION = "1.1.0";
+export const VELVE_AUTH_VERSION = "2.0.0";

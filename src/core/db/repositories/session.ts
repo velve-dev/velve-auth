@@ -75,8 +75,11 @@ export interface SessionRepository {
 	listSessionsOfUser(input: { readonly userId: string }): Promise<Session[]>;
 	//deadlines are ignored so a hook is told exactly the rows a revocation removes (E-765)
 	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
-	//the session id is the whole predicate as revoking a session is given no owner
-	deleteSessionById(input: { readonly sessionId: string }): Promise<RemovedSession | null>;
+	//the owner read before the announcement stands in the predicate so only the announced row goes (S-OWNER-2)
+	deleteSessionById(input: {
+		readonly sessionId: string;
+		readonly ownerReadBefore: string;
+	}): Promise<number>;
 	//the owner is read before the row goes so the revoke hook can still refuse (E-640)
 	findUserIdOfSession(input: { readonly sessionId: string }): Promise<string | null>;
 	deleteSessionOwnedBy(input: {
@@ -84,6 +87,7 @@ export interface SessionRepository {
 		readonly actor: Actor;
 	}): Promise<number>;
 	deleteEverySessionOwnedBy(input: { readonly actor: Actor }): Promise<number>;
+	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
 	deleteEveryOtherSessionOwnedBy(input: {
 		readonly actor: Actor;
 		readonly keptSessionId: string;
@@ -223,11 +227,6 @@ function deleteByTokenHashStatement(table: string): string {
 	WHERE token_sha256 = $1 RETURNING id, user_id`;
 }
 
-function deleteByIdStatement(table: string): string {
-	return `DELETE FROM ${table} /* no owner predicate: S-OWNER-7, 3.15 G hands a plugin a session id and no owner to bind it to */
-	WHERE id = $1 RETURNING id, user_id`;
-}
-
 function findUserIdStatement(table: string): string {
 	return `SELECT user_id FROM ${table} WHERE id = $1`;
 }
@@ -284,7 +283,6 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const resolveSql = resolveStatement(table, users);
 	const extendSql = extendIdleDeadlineStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
-	const deleteByIdSql = deleteByIdStatement(table);
 	const findUserIdSql = findUserIdStatement(table);
 	const deleteOwnedSql = deleteOwnedStatement(table);
 	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
@@ -309,6 +307,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			tokenHash,
 		]);
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
+	}
+
+	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
+		const rows = await options.driver.query<{ id: string }>(deleteEveryOwnedSql, [actor]);
+		return rows.map((row) => row.id);
 	}
 
 	return {
@@ -337,11 +340,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			return rows.map((row) => toSession(row, NOT_LISTED));
 		},
 
-		async deleteSessionById({ sessionId }) {
-			const [row] = await options.driver.query<{ id: string; user_id: string }>(deleteByIdSql, [
-				sessionId,
-			]);
-			return row === undefined ? null : { id: row.id, userId: row.user_id };
+		async deleteSessionById({ sessionId, ownerReadBefore }) {
+			const rows = await options.driver.query(deleteOwnedSql, [sessionId, ownerReadBefore]);
+			return rows.length;
 		},
 
 		async findUserIdOfSession({ sessionId }) {
@@ -372,9 +373,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		},
 
 		async deleteEverySessionOwnedBy({ actor }) {
-			const rows = await options.driver.query(deleteEveryOwnedSql, [actor]);
-			return rows.length;
+			return (await deleteEverySessionOwnedByReturningIds(actor)).length;
 		},
+
+		deleteEverySessionOwnedByReturningIds: ({ actor }) =>
+			deleteEverySessionOwnedByReturningIds(actor),
 
 		async deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
 			const rows = await options.driver.query(deleteEveryOtherOwnedSql, [actor, keptSessionId]);

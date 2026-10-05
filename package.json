@@ -1,6 +1,6 @@
 {
 	"name": "@velve/auth",
-	"version": "1.1.0",
+	"version": "2.0.0",
 	"description": "The European authentication library for TypeScript and PostgreSQL. Answers exactly one question: who is signed in.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -54,18 +54,6 @@
 			"types": "./dist/pg.d.mts",
 			"default": "./dist/pg.mjs"
 		},
-		"./postgres-js": {
-			"types": "./dist/postgres-js.d.mts",
-			"default": "./dist/postgres-js.mjs"
-		},
-		"./neon": {
-			"types": "./dist/neon.d.mts",
-			"default": "./dist/neon.mjs"
-		},
-		"./import": {
-			"types": "./dist/import.d.mts",
-			"default": "./dist/import.mjs"
-		},
 		"./schema": {
 			"types": "./dist/schema.d.mts",
 			"default": "./dist/schema.mjs"
@@ -88,6 +76,7 @@
 		"check:log-append": "node tools/check-log-append.mjs",
 		"check:published-version": "node tools/check-published-version.mjs",
 		"check:release-tag": "node tools/check-release-tag.mjs",
+		"check:release-tier": "node tools/check-release-tier.mjs",
 		"check:reviewable": "node tools/check-reviewable-text.mjs",
 		"check:session-owner": "node tools/check-session-owner-update.mjs",
 		"check:skill-version": "node tools/check-skill-version.mjs",
@@ -135,5 +124,12 @@
 		"tsdown": "^0.15.6",
 		"typescript": "^5.9.2",
 		"vitest": "^4.1.11"
+	},
+	"pnpm": {
+		"auditConfig": {
+			"ignoreGhsas": [
+				"GHSA-vfj7-8cjw-p6xm"
+			]
+		}
 	}
 }

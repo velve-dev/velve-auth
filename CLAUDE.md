@@ -27,9 +27,18 @@ identifiers, commit messages, pull requests, `README.md`, `DOCUMENTATION.md`,
 
 `docs/decisions/log.md` was German until this rule changed. It is being migrated to
 English in a single central pass, so that the migration does not collide with
-the feature branches appending to it. Until that pass has run the file holds
-both languages. A German entry still in it is outstanding work, not a permitted
-exception, and no entry written from now on may be German.
+the feature branches appending to it.
+
+**The central pass is this one change, carried by one branch, and nothing else
+(E-2990).** It translates the 167 German entries — E-01 … E-71, E-80 … E-101,
+E-110 … E-131, E-140 … E-148, E-190 … E-212 and E-250 … E-269 — together with
+the file's German header and its German section headings. It is the single
+sanctioned exception to *an entry that existed at the merge base is never
+edited* (§6), and §6 fixes the shape a translated entry takes and the rules its
+text obeys. Until that pass has merged the file holds both languages, and a
+German entry still in it is outstanding work, not a permitted exception. Once it
+has merged, no German entry, no German heading and no German form remains, and
+no entry written from now on may be German.
 
 That pass rewrites the file's own header too.
 
@@ -224,7 +233,8 @@ repair anything itself.
   cites is defined in the specification or the decision log
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
-  base, and the branch has added at least one (§6, E-538)
+  base except a German entry, header or section heading the central translation
+  pass replaced, and the branch has added at least one (§6, E-538, E-2991)
 - `pnpm check:skill-version` — a skill file changed against the merge base raises
   the version it states, and both skill files state the same one (§6)
 - `pnpm check:codex-skill` — `CODEX-SKILL.md` is byte-identical to what
@@ -333,11 +343,45 @@ An entry looks exactly like this:
   `**Context.**`, `**Rejected.**`, `**Reason.**`, `**Price.**`. An entry with
   nothing rejected still writes `**Rejected.**` and says so.
 
-Until the migration in §1 has run, the file also holds the old German form —
+The central pass of §1 gives each German entry exactly this shape:
+
+```
+<a id="e-01"></a>
+
+### <the German bold decision sentence, translated, without the trailing full stop>
+`E-01` · architecture · translated from the German original
+
+**Context.** …
+**Rejected.** …
+**Reason.** …
+**Price.** …
+```
+
+- The anchor stays exactly as it was.
+- `*Kontext:*` becomes `**Context.**`, `*Verworfen:*` becomes `**Rejected.**`,
+  `*Grund:*` becomes `**Reason.**` and `*Preis:*` becomes `**Price.**`. Any
+  other italic field label the German used is translated in place, in the same
+  position.
+- The owner is the one the range table below gives the number, and is never
+  chosen: E-01 … E-46 `architecture`, E-47 … E-58 `scaffold`, E-59 … E-71
+  `keys`, E-80 … E-101 `db`, E-110 … E-131 `http`, E-140 … E-148 `gate and
+  infrastructure`, E-190 … E-212 `identity`, E-250 … E-269 `token`.
+- The tag is always `translated from the German original`. It says where the
+  text came from and supplies no reason the writer did not give, and no entry
+  outside the pass carries it.
+- E-01 … E-46 are taken verbatim from section 7 of `VELVE-AUTH-ARCHITECTURE.md`,
+  the existing translation, and are only reshaped into this format, not
+  translated a second time (E-1970).
+- *Translating an entry* below applies to the pass in full: the translation is
+  faithful, and a translated entry that reads better than the original is a
+  defect.
+
+Once the pass has merged, no entry in the old German form remains —
 `**E-nn — Entscheidung.**` followed by `*Kontext:*`, `*Verworfen:*`, `*Grund:*`,
-`*Preis:*`. `test/decision-log.test.ts` accepts both, and only both. A heading
-that is neither is a fault, not an entry, and the test says so rather than
-skipping it.
+`*Preis:*` — and `test/decision-log.test.ts` accepts the English form only. It
+still recognises the German one, but only to name an entry left in it as a
+fault. A heading that is neither is a fault, not an entry, and the test says so
+rather than skipping it.
 
 ### Translating an entry
 
@@ -364,6 +408,13 @@ one, never in the old entry's text.
 
 **On your own branch, before merge, a measurement may be restated in place; a
 reason may not. An entry that existed at the merge base is never edited.**
+
+**The central pass of §1 is the single exception, and it is sanctioned once.**
+It replaces each German entry, the German file header and the German section
+headings with their translation in the shape *The entry format* fixes, and does
+nothing else: it edits no English entry, restates no measurement and corrects no
+reason. A fault the translator finds in an original is reported in a new entry
+and not repaired in the translation.
 
 **A measurement is a number or a count the entry states about the work** — `ten
 of thirteen cases`, `six plants`, `40 of 60`. Everything else in an entry is a
@@ -402,7 +453,11 @@ a sentence, and a reader reconciles them by picking whichever half suits them
 
 What a script can read is the second sentence, and `pnpm check:log-append` reads
 it: `git diff <merge-base>...HEAD --numstat -- docs/decisions/log.md` must report zero
-deletions. The **three-dot** form is the form. Run `pnpm check:log-append` on
+deletions, apart from the lines the central pass replaces. A deleted line is
+excused only when, at the merge base, it belongs to a German-form entry whose
+anchor HEAD carries directly over an English entry of the same number tagged
+`translated from the German original`, or to the German file header or a German
+section heading; every other deletion still fails. The **three-dot** form is the form. Run `pnpm check:log-append` on
 the merge commit itself, before committing anything on top of it — or do not
 lean on it and read `pnpm test`'s decision-log failure instead.
 
@@ -414,8 +469,8 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 
 | Range | Belongs to |
 |---|---|
-| E-01 … E-46 | the architecture's own log, section 7 — never extended here |
-| E-47 … E-58 | wave 0: the scaffold, the banner and the positioning line |
+| E-01 … E-46 | `architecture` — the architecture's own log, section 7, never extended here |
+| E-47 … E-58 | wave 0 · `scaffold` — the scaffold, the banner and the positioning line |
 | E-59 … E-79 | wave 1 · `keys` |
 | E-80 … E-109 | wave 1 · `db` |
 | E-110 … E-139 | wave 1 · `http` |
@@ -498,6 +553,18 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2610 … E-2639 | outside the waves · `dos-memory-bound` — the KDF memory bound stated against the import ceiling. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 | E-2640 … E-2669 | outside the waves · `plugin-login` — plugin SQL over a connection that logs in as the plugin role. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
 | E-2670 … E-2699 | outside the waves · `rate-defaults` — the new rate-limit defaults, the recommended presets, and weakenings and route alarms made visible without a log sink. Reserved together before the follow-ups start, counted over the rows standing at da4e632 |
+| E-2700 … E-2729 | outside the waves · `password-set-race` — two password.set calls on one account at the same time. Reserved together before the 1.2.0 follow-ups start, counted over the rows standing at 623dd53 |
+| E-2730 … E-2759 | outside the waves · `specfix`, third range — the revoke reason the S-LINK-4 sweep lacks and the wording of T-CSRF-1. Reserved together before the 1.2.0 follow-ups start, counted over the rows standing at 623dd53 |
+| E-2760 … E-2789 | gate and infrastructure, fifteenth range — the publish taken out of the release workflow and run from the maintainer's machine, so no registry credential lives on GitHub. Reserved together before the 1.2.0 follow-ups start, counted over the rows standing at 623dd53 |
+| E-2790 … E-2829 | outside the waves · `signin-hooks` — the sign-in and sign-up hooks of 3.11 called on the password, passkey and magic-link paths, not only on OAuth. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2830 … E-2869 | outside the waves · `server-surface` — the stated server methods held to 3.15 B and to the pipeline 3.11 puts in front of direct server calls. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2870 … E-2899 | outside the waves · `small-fixes` — the owner predicate of a plugin's revokeSession, the TOTP confirmation race, the unique-violation races, the session and token lifetime bounds, and two weak tests. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2900 … E-2929 | gate and infrastructure, sixteenth range — the nightly tier that never started its provider, and the reference gaps an audit found in DOCUMENTATION.md. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2930 … E-2959 | outside the waves · `specfix`, fourth range — the specification defects reported and never repaired. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2960 … E-2989 | outside the waves · `release-1-2-0`, second range — the 1.2.0 release notes brought into step with the follow-ups. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2990 … E-3019 | outside the waves · `log-migration` — the German entries of docs/decisions/log.md translated into English in the one central pass §1 promises, and the rule change that pass needs. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
+| E-3020 … E-3049 | outside the waves · `release-2-0-0` — the release cut as 2.0.0 instead of 1.2.0, the empty subpaths removed and the deprecated lookup dropped. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
+| E-3050 … E-3079 | outside the waves · `webauthn-counter` — the stored WebAuthn signature counter kept at the highest value seen. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -580,7 +647,9 @@ pnpm test:nightly
                  high-repetition cases section 6 puts on a nightly schedule
 pnpm test:release
                  vitest run over the release project — the cases section 6 puts
-                 before every release; a version tag runs it
+                 before every release; release-tier.yml runs it on every push to
+                 main, and the publish waits for that run on the commit it
+                 publishes
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL.
@@ -611,7 +680,9 @@ pnpm check:sql-collapse
                  comment
 pnpm check:log-append
                  no line docs/decisions/log.md had at the merge base is deleted or
-                 rewritten, and the branch has added at least one.
+                 rewritten, except a German entry, header or section heading
+                 the central translation pass replaced, the entry under its
+                 own anchor; and the branch has added at least one.
 pnpm check:skill-version
                  a skill file that changed since the merge base states a higher
                  version than it did there, and both skill files state the same
@@ -627,13 +698,18 @@ pnpm check:release-tag
                  the tag a release is cut from names the version package.json
                  states, that version is a semantic one, and a prerelease is not
                  about to be published under latest.
+pnpm check:release-tier <commit>
+                 GitHub's public API has a successful release-tier.yml run on
+                 that commit; exit 1 when it has none, exit 2 when it could not
+                 be asked. Run by the maintainer before publishing.
 pnpm run release-dist-tag
                  prints the dist-tag the version in package.json is published
                  under: latest for a stable version, next for a prerelease.
 pnpm check:published-version
                  the registry resolves the version package.json states, the
-                 dist-tag points at that version, latest does not point at any
-                 prerelease, and it carries a provenance attestation.
+                 dist-tag points at that version, and latest does not point at
+                 any prerelease. Run by the maintainer after publishing from
+                 their own machine; no workflow publishes.
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

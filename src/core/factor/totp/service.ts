@@ -90,6 +90,15 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		}
 	}
 
+	//a secret replaced by a concurrent start was never proved so the code counts as wrong
+	async function refuseAnUnconfirmedEnrolment(actor: Actor): Promise<never> {
+		const current = await credentials.findCredential({ actor });
+		if (current !== null && current.confirmedAt !== null) {
+			throw new VelveError("factor_already_enrolled");
+		}
+		throw new ConcealedError("totp_code_wrong");
+	}
+
 	return {
 		enroll: {
 			async start({ actor, accountName }) {
@@ -131,8 +140,8 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				rejectAReplayedStep(
 					await credentials.claimTimeStep({ actor, timeStep: step, retentionSeconds }),
 				);
-				if (!(await credentials.confirmCredential({ actor }))) {
-					throw new VelveError("factor_already_enrolled");
+				if (!(await credentials.confirmCredential({ actor, secretEnc: credential.secretEnc }))) {
+					await refuseAnUnconfirmedEnrolment(actor);
 				}
 			},
 		},

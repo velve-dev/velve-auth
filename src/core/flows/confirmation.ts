@@ -4,6 +4,8 @@ import { qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
 import { createSessionRepository } from "../db/repositories/session.js";
 import { ConcealedError } from "../http/error-map.js";
+import type { PluginRuntime } from "../plugin/registry.js";
+import { announceEachRevocation } from "../plugin/revocation.js";
 import { createPasswordProvenance } from "./credential.js";
 
 interface ConfirmationOutcome {
@@ -15,6 +17,7 @@ interface ConfirmationOutcome {
 interface AddressConfirmation {
 	readonly transaction: Driver;
 	readonly schema: string;
+	readonly pluginRuntime: PluginRuntime;
 	readonly actor: Actor;
 	readonly confirmingSessionId: string | null;
 	readonly newEmail: string | null;
@@ -40,6 +43,18 @@ WHERE owned.id = $1
 RETURNING owned.id`;
 }
 
+const UNIQUE_VIOLATION = "23505";
+
+//an address another change took after the check must answer as a taken one does (S-ENUM-5)
+function refuseAnAddressTakenMeanwhile(cause: unknown): never {
+	const fields = typeof cause === "object" && cause !== null ? cause : {};
+	const { code, sqlState } = fields as { readonly code?: unknown; readonly sqlState?: unknown };
+	if (code === UNIQUE_VIOLATION || sqlState === UNIQUE_VIOLATION) {
+		throw new ConcealedError("email_taken_on_change");
+	}
+	throw cause;
+}
+
 //the deletion is unconditional as a guard would spare a pre-registered account (S-LINK-4)
 export async function confirmAddress(input: AddressConfirmation): Promise<ConfirmationOutcome> {
 	//the account row is locked first to order this against a password replacement (E-1602)
@@ -50,10 +65,9 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 	const wasTheFirstConfirmation = marked.length === 1;
 
 	if (input.newEmail !== null) {
-		const moved = await input.transaction.query(moveAddressStatement(input.schema), [
-			input.actor,
-			input.newEmail,
-		]);
+		const moved = await input.transaction
+			.query(moveAddressStatement(input.schema), [input.actor, input.newEmail])
+			.catch(refuseAnAddressTakenMeanwhile);
 		if (moved.length !== 1) {
 			throw new ConcealedError("email_taken_on_change");
 		}
@@ -73,10 +87,20 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 		return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount: 0 };
 	}
 
-	const revokedSessionCount = await createSessionRepository({
-		driver: input.transaction,
-		schema: input.schema,
-	}).deleteEverySessionOwnedBy({ actor: input.actor });
+	const sessionRows = createSessionRepository({ driver: input.transaction, schema: input.schema });
+	//a refusal must roll the redemption and the deleted password back with it (E-2730)
+	if (input.pluginRuntime.listensTo("beforeSessionRevoke")) {
+		await announceEachRevocation(
+			input.pluginRuntime,
+			{
+				userId: input.actor,
+				sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: input.actor }),
+				reason: "email_verified",
+			},
+			input.transaction,
+		);
+	}
+	const revokedSessionCount = await sessionRows.deleteEverySessionOwnedBy({ actor: input.actor });
 
 	return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount };
 }

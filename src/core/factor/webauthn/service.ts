@@ -140,8 +140,15 @@ function descriptorOf(credential: StoredWebAuthnCredential): CredentialDescripto
 }
 
 //an authenticator may keep no counter so only a counter that falls back has regressed
-function countHasRegressed(stored: number, reported: number): boolean {
-	return stored > 0 && reported <= stored;
+function countHasRegressed(counts: {
+	readonly readBefore: number;
+	readonly reported: number;
+	readonly storedAfter: number;
+}): boolean {
+	const fellBelowTheRead = counts.readBefore > 0 && counts.reported <= counts.readBefore;
+	//a higher count written between the read and this write is a fall as well (E-3050)
+	const fellBelowTheStoredCounter = counts.storedAfter > counts.reported;
+	return fellBelowTheRead || fellBelowTheStoredCounter;
 }
 
 //the verifier's cause is never inspected and the outside learns one thing (E-457)
@@ -235,19 +242,23 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 		const { newCounter, credentialBackedUp, credentialDeviceType } =
 			verification.authenticationInfo;
-		const credential = await credentials.recordAssertion({
+		const recorded = await credentials.recordAssertion({
 			verified: input.stored,
 			signCount: newCounter,
 			isBackupEligible: credentialDeviceType === "multiDevice",
 			isCurrentlyBackedUp: credentialBackedUp,
 		});
-		if (credential === null) {
+		if (recorded === null) {
 			throw new ConcealedError("credential_unknown");
 		}
 		return {
 			userId: input.stored.userId,
-			credential,
-			signCountRegressed: countHasRegressed(input.stored.signCount, newCounter),
+			credential: recorded.presented,
+			signCountRegressed: countHasRegressed({
+				readBefore: input.stored.signCount,
+				reported: newCounter,
+				storedAfter: recorded.signCount,
+			}),
 		};
 	}
 

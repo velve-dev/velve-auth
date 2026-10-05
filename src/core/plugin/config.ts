@@ -11,7 +11,8 @@ export type RevokeReason =
 	| "revoked_by_user"
 	| "password_changed"
 	| "password_reset"
-	| "identity_linked";
+	| "identity_linked"
+	| "email_verified";
 
 export interface SignInEvent {
 	readonly method: "password" | "passkey" | "oauth" | "magic_link";
