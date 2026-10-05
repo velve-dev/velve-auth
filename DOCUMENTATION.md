@@ -55,20 +55,15 @@ The package is ESM only and exposes the following subpaths.
 | `@velve/auth/http` | `toWebHandler()` — `(Request) => Promise<Response>` |
 | `@velve/auth/client` | the typed client, derived from the same route declaration |
 | `@velve/auth/pg` | driver for `node-postgres` |
-| `@velve/auth/postgres-js` | reserved for a `postgres.js` driver; exports nothing yet |
-| `@velve/auth/neon` | reserved for a `@neondatabase/serverless` driver; exports nothing yet |
-| `@velve/auth/import` | reserved for the import module of architecture 4.1; exports nothing yet |
 | `@velve/auth/schema` | the generated SQL and the migration runner |
 | `@velve/auth/testing` | test helpers — clock control only |
 
 There is no default export from any subpath.
 
-**Three of the subpaths resolve and export nothing.** `@velve/auth/postgres-js`,
-`@velve/auth/neon` and `@velve/auth/import` are declared in `package.json` and
-each builds to a module with no export, so an import of a name from them fails
-to type-check and an import of the module itself does nothing. They are kept
-because removing a published subpath is a breaking change, and they are not yet
-filled (E-2902). Until they are:
+**What the package does not ship.** Versions 1.x declared
+`@velve/auth/postgres-js`, `@velve/auth/neon` and `@velve/auth/import`, and each
+built to a module with no export (E-2902). 2.0.0 removed all three, so an import
+of any of them no longer resolves (E-3021). There is one driver, and:
 
 - **`postgres.js`** — write a `Driver` over it as [the driver
   interface](#the-driver-interface) describes, with `createNodePostgresDriver` as
@@ -2503,8 +2498,7 @@ The only two ways a PHC string crosses the column boundary. `sealPhc` returns
 `{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
 that puts a cleartext string into the column, and the import module
 architecture 4.0.3 describes is to use these same two functions rather than a
-path of its own. That module does not ship yet: `@velve/auth/import` exports
-nothing (E-2902).
+path of its own. That module does not ship (E-3021).
 
 `openPhc` throws `KeyError("key_version_unknown")` when the row names a key
 version that has left the ring, and `KeyError("authentication_failed")` when the
@@ -3496,8 +3490,7 @@ of every driver under [the driver interface](#the-driver-interface) above, but i
 is a requirement on the implementation and not something the types carry:
 `Driver` is two method signatures. `createNodePostgresDriver` satisfies it, so
 the rollback of section 3.15 A.7 holds for `@velve/auth/pg` — the only driver
-that currently ships, since `@velve/auth/postgres-js` and `@velve/auth/neon`
-export nothing. A driver written elsewhere has to satisfy it too.
+the package ships. A driver written elsewhere has to satisfy it too.
 
 Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
 code on it rather than one class per failure.
@@ -4733,9 +4726,8 @@ Architecture 4.1 e has the import module write both as `false` when a
 credential is imported from a system that does not export them, which marks a
 synchronised passkey as device-bound and would mislead exactly such a policy.
 That is why the import is specified to import no passkeys by default. The
-module does not ship yet — `@velve/auth/import` exports nothing (E-2902) — so
-every row this library writes today carries the flags the authenticator
-reported.
+module does not ship (E-3021), so every row this library writes today carries
+the flags the authenticator reported.
 
 ### The challenge
 
@@ -7587,12 +7579,11 @@ today has no such role.
 
 **What it costs.** One plugin statement becomes four round trips — `BEGIN`,
 `SET LOCAL ROLE`, the statement, `COMMIT` — and holds a pooled connection for
-all four. Of the three driver entry points only `@velve/auth/pg` ships a driver;
-`@velve/auth/postgres-js` and `@velve/auth/neon` export nothing yet. A driver
-for either must implement `transaction` as one connection held across
-statements, which this option relies on: a driver that sends each statement on
-whatever connection is free would set the role on one connection and run the
-statement on another. Neon's HTTP query function sends a transaction as one
+all four. The package ships one driver, `@velve/auth/pg`. A driver an
+application writes for `postgres.js` or Neon must implement `transaction` as one
+connection held across statements, which this option relies on: a driver that
+sends each statement on whatever connection is free would set the role on one
+connection and run the statement on another. Neon's HTTP query function sends a transaction as one
 batch and cannot run a statement that depends on the one before, so an
 application on Neon builds the driver on Neon's WebSocket `Pool`, which speaks
 the `pg` interface. A pooler in transaction mode keeps `SET LOCAL` correct,

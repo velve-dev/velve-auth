@@ -1,40 +1,86 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * `@velve/auth/postgres-js`, `/neon` and `/import` are declared and export nothing (E-2902), so a
- * paragraph or a table row that names one of them has to say so, or it promises a module that is
- * not there.
+ * `@velve/auth/postgres-js`, `/neon` and `/import` were declared and exported nothing (E-2902), and
+ * 2.0.0 removes them (E-3021). A paragraph or a table row that still names one of them has to say
+ * that it is gone, or it promises a module that is not there.
  */
-const RESERVED_SUBPATH = /(?:@velve\/auth)?\/(?:postgres-js|neon|import)\b/;
-const SAYS_IT_IS_EMPTY = /\b(?:reserved|exports? nothing|export nothing|does not ship)\b/i;
+const REMOVED_SUBPATH = /(?:@velve\/auth|`)\/(?:postgres-js|neon|import)(?![\w-])/;
+const SAYS_IT_IS_GONE = /\b(?:removed|removes|entfernt)\b/i;
+const REMOVED = ["postgres-js", "neon", "import"] as const;
 
-function passagesNamingAReservedSubpath(markdown: string): string[] {
+function readFromRoot(file: string): string {
+	return readFileSync(`${repositoryRoot}${file}`, "utf8");
+}
+
+function passagesOfferingARemovedSubpath(markdown: string): string[] {
 	return markdown
 		.split(/\n\s*\n/)
 		.flatMap((paragraph) =>
 			paragraph.trimStart().startsWith("|") ? paragraph.split("\n") : [paragraph],
 		)
-		.filter((passage) => RESERVED_SUBPATH.test(passage))
-		.filter((passage) => !SAYS_IT_IS_EMPTY.test(passage));
+		.filter((passage) => REMOVED_SUBPATH.test(passage))
+		.filter((passage) => !SAYS_IT_IS_GONE.test(passage));
 }
 
-describe("the three empty subpaths are never offered as working", () => {
-	it.each(["README.md", "DOCUMENTATION.md", "docs/releases/1.2.0.md"])("%s", (file) => {
-		const markdown = readFileSync(`${repositoryRoot}${file}`, "utf8");
+/** section 7 is the architecture's own decision log and states the reasons it was taken on */
+function specificationBeforeItsDecisionLog(file: string, heading: string): string {
+	const text = readFromRoot(file);
+	const decisionLog = text.indexOf(`\n${heading}`);
+	expect(decisionLog).toBeGreaterThan(0);
+	return text.slice(0, decisionLog);
+}
 
-		expect(passagesNamingAReservedSubpath(markdown)).toStrictEqual([]);
+describe("the three empty subpaths are gone (E-3021)", () => {
+	it("are not exported by package.json", () => {
+		const manifest = JSON.parse(readFromRoot("package.json")) as {
+			exports: Record<string, unknown>;
+		};
+
+		for (const subpath of REMOVED) {
+			expect(Object.keys(manifest.exports)).not.toContain(`./${subpath}`);
+		}
+	});
+
+	it("are not built by tsdown", () => {
+		const config = readFromRoot("tsdown.config.ts");
+
+		for (const subpath of REMOVED) {
+			expect(config).not.toContain(`src/${subpath}/`);
+		}
+	});
+
+	it("have no source directory", () => {
+		for (const subpath of REMOVED) {
+			expect(existsSync(`${repositoryRoot}src/${subpath}`)).toBe(false);
+		}
+	});
+});
+
+describe("no document offers one of the three removed subpaths", () => {
+	it.each(["README.md", "DOCUMENTATION.md", "docs/releases/1.2.0.md"])("%s", (file) => {
+		expect(passagesOfferingARemovedSubpath(readFromRoot(file))).toStrictEqual([]);
+	});
+
+	it.each([
+		["VELVE-AUTH-ARCHITEKTUR.md", "## 7. Entscheidungsprotokoll"],
+		["VELVE-AUTH-ARCHITECTURE.md", "## 7. Decision log"],
+	])("%s before section 7", (file, heading) => {
+		expect(
+			passagesOfferingARemovedSubpath(specificationBeforeItsDecisionLog(file, heading)),
+		).toStrictEqual([]);
 	});
 
 	it("reads a passage that offers one as a finding", () => {
 		expect(
-			passagesNamingAReservedSubpath("| `database` | the driver from `/pg` or `/neon` |\n"),
+			passagesOfferingARemovedSubpath("| `database` | the driver from `/pg` or `/neon` |\n"),
 		).toHaveLength(1);
 		expect(
-			passagesNamingAReservedSubpath("| `@velve/auth/neon` | reserved; exports nothing yet |\n"),
+			passagesOfferingARemovedSubpath("- `@velve/auth/neon` is removed in 2.0.0\n"),
 		).toStrictEqual([]);
 	});
 });

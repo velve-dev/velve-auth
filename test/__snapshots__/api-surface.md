@@ -2823,12 +2823,6 @@ export {
 	toWebHandler,
 };
 
-## import.d.mts
-
-export {
-
-};
-
 ## index.d.mts
 
 import { EntityId, IdentityId, ProviderId, SessionId, UserId, WebAuthnCredentialId, toEntityId } from "./core/db/entity-id.mjs";
@@ -2992,12 +2986,6 @@ export {
 	toEntityId,
 };
 
-## neon.d.mts
-
-export {
-
-};
-
 ## pg.d.mts
 
 import { Driver } from "./core/db/driver.mjs";
@@ -3026,12 +3014,6 @@ export {
 	NodePostgresQueryConfig,
 	NodePostgresResult,
 	createNodePostgresDriver,
-};
-
-## postgres-js.d.mts
-
-export {
-
 };
 
 ## schema.d.mts

@@ -54,18 +54,6 @@
 			"types": "./dist/pg.d.mts",
 			"default": "./dist/pg.mjs"
 		},
-		"./postgres-js": {
-			"types": "./dist/postgres-js.d.mts",
-			"default": "./dist/postgres-js.mjs"
-		},
-		"./neon": {
-			"types": "./dist/neon.d.mts",
-			"default": "./dist/neon.mjs"
-		},
-		"./import": {
-			"types": "./dist/import.d.mts",
-			"default": "./dist/import.mjs"
-		},
 		"./schema": {
 			"types": "./dist/schema.d.mts",
 			"default": "./dist/schema.mjs"

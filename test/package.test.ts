@@ -26,11 +26,8 @@ describe("package manifest", () => {
 			".",
 			"./client",
 			"./http",
-			"./import",
-			"./neon",
 			"./package.json",
 			"./pg",
-			"./postgres-js",
 			"./schema",
 			"./testing",
 		]);
