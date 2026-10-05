@@ -2,14 +2,17 @@ import type { EmailConfig } from "../auth/config.js";
 import type { SignInResult } from "../auth/results.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
+import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
-	accountOfRedemption,
+	A_DISABLED_ACCOUNT,
+	accountOrDisabledOfRedemption,
 	type FlowEnvironment,
 	mailerOf,
 	observedIn,
 	readUserOrRefuse,
+	refuseADisabledAccount,
 	sessionIdOfCaller,
 } from "./environment.js";
 
@@ -55,6 +58,10 @@ export async function redeemMagicLink(
 	input: { readonly token: string },
 ): Promise<SignInResult> {
 	const { driver, schema, sessions, pending } = environment.services;
+	const hooks = environment.services.pluginRuntime.hooks;
+	const observed = observedIn(context);
+	//a veto must come before the token is spent so the link can still be used
+	await askBeforeSignIn(hooks, "magic_link", observed);
 	const confirmingSessionId = await sessionIdOfCaller(environment, context);
 
 	const account = await driver.transaction(async (transaction) => {
@@ -62,7 +69,11 @@ export async function redeemMagicLink(
 			token: input.token,
 			purpose: "magic_link",
 		});
-		const resolved = await accountOfRedemption(environment, transaction, redeemed);
+		const resolved = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
+		//a link presented for a disabled account stays spent once it is enabled again (E-2880)
+		if (resolved === A_DISABLED_ACCOUNT) {
+			return resolved;
+		}
 		await confirmAddress({
 			transaction,
 			schema,
@@ -73,6 +84,9 @@ export async function redeemMagicLink(
 		});
 		return resolved;
 	});
+	if (account === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
+	}
 
 	//a link as the first factor must not skip the second factor (E-735)
 	const begun = await pending.begin({ userId: account.user.id, factorsCompleted: [] });
@@ -82,17 +96,24 @@ export async function redeemMagicLink(
 	}
 
 	await pending.consume(begun.token);
-	const issued = await sessions.issueReplacingPresented({
-		presentedToken: context.sessionToken,
-		userId: account.user.id,
-		factors: [],
-		observed: observedIn(context),
-	});
+	const issued = await createSessionUnderHooks(
+		hooks,
+		{ userId: account.user.id, factors: [] },
+		() =>
+			sessions.issueReplacingPresented({
+				presentedToken: context.sessionToken,
+				userId: account.user.id,
+				factors: [],
+				observed,
+			}),
+	);
+	const user = await readUserOrRefuse(environment, driver, account.user.id);
+	await tellAfterSignIn(hooks, { method: "magic_link", observed, session: issued.session });
 	context.cookies.setSession(issued.token);
 	return {
 		status: "signed_in",
 		sessionToken: issued.token,
 		session: issued.session,
-		user: await readUserOrRefuse(environment, driver, account.user.id),
+		user,
 	};
 }

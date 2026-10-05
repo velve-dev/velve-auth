@@ -55,13 +55,33 @@ The package is ESM only and exposes the following subpaths.
 | `@velve/auth/http` | `toWebHandler()` — `(Request) => Promise<Response>` |
 | `@velve/auth/client` | the typed client, derived from the same route declaration |
 | `@velve/auth/pg` | driver for `node-postgres` |
-| `@velve/auth/postgres-js` | driver for `postgres.js` |
-| `@velve/auth/neon` | driver for `@neondatabase/serverless` |
-| `@velve/auth/import` | the migration module; its heavier dependencies load only here |
 | `@velve/auth/schema` | the generated SQL and the migration runner |
-| `@velve/auth/testing` | test helpers — clock control, deterministic randomness |
+| `@velve/auth/testing` | test helpers — clock control only |
 
 There is no default export from any subpath.
+
+**What the package does not ship.** Versions 1.x declared
+`@velve/auth/postgres-js`, `@velve/auth/neon` and `@velve/auth/import`, and each
+built to a module with no export (E-2902). 2.0.0 removed all three, so an import
+of any of them no longer resolves (E-3021). There is one driver, and:
+
+- **`postgres.js`** — write a `Driver` over it as [the driver
+  interface](#the-driver-interface) describes, with `createNodePostgresDriver` as
+  the reference implementation.
+- **`@neondatabase/serverless`** — Neon's WebSocket `Pool` follows the
+  `node-postgres` interface, and `createNodePostgresDriver` is typed structurally
+  against that interface rather than against `pg`, so the `Pool` is what a Neon
+  application builds its driver on. This repository does not test it against
+  Neon. Neon's HTTP query function sends a transaction as one batch and cannot
+  run a statement that depends on the one before, so it cannot satisfy
+  `transaction`.
+- **Importing an estate** — no import function ships. The columns an import
+  fills (`imported_from`, `imported_at`, the passkey flags) and the verifiers for
+  the seven legacy schemes in [Passwords](#passwords) are in place, so a hash
+  that reaches `password_credential` is verified and rehashed as described
+  there, but the package provides no supported way of putting it there.
+- **Deterministic randomness** — not in `@velve/auth/testing`; [its
+  section](#velve-authtesting) says why.
 
 ### `VELVE_AUTH_VERSION`
 
@@ -93,8 +113,10 @@ release tier has to have passed on that exact commit, on its push to `main`;
 after it, the tag's push runs the whole gate and both release tiers over the
 same commit in the Release workflow.
 
-The release notes for 1.2.0, including what an operator upgrading from 1.1.0
-has to do, are in [docs/releases/1.2.0.md](docs/releases/1.2.0.md).
+The release notes for 2.0.0, including every breaking change and what an
+operator upgrading from 1.1.0 has to do, are in
+[docs/releases/2.0.0.md](docs/releases/2.0.0.md). 1.x gets no further releases
+(E-3020).
 
 ### PostgreSQL versions
 
@@ -139,6 +161,27 @@ Constraints: `user_email_normalized` (the address equals its own lowercase),
 `user_username_normalized` (same for `username_key`), `user_username_pairing`
 (`username` and `username_key` are set together or not at all). Migration 2 adds
 `user_identity_mode`, the check that materialises the configured identity mode.
+
+The row reaches a caller as `User`, exported from `@velve/auth`, every field
+`readonly`:
+
+| Field | Type | From |
+|---|---|---|
+| `id` | `string` | `id` |
+| `createdAt`, `updatedAt` | `Date` | `created_at`, `updated_at` |
+| `email` | `string \| null` | `email` |
+| `emailVerifiedAt` | `Date \| null` | `email_verified_at` |
+| `username` | `string \| null` | `username`, the display form; `username_key` is not on it |
+| `disabledAt` | `Date \| null` | `disabled_at` |
+| `hasPassword` | `boolean` | whether a `velve.password_credential` row exists, read in the same statement rather than stored |
+| `importedFrom` | `ImportSource \| null` | `imported_from` |
+
+`ImportSource` is `"supabase" | "clerk" | "auth0" | "firebase" | "nextauth"`,
+the five values the column is documented to hold. The column has no `CHECK`, so
+a row written by hand with another value is possible, and reading it as a
+`User` throws a `TypeError` rather than handing on a value outside the type.
+Nothing in the package writes the column yet: no import module ships (E-2902),
+so `importedFrom` is `null` for every account the library created.
 
 ### `velve.password_credential`
 
@@ -391,9 +434,20 @@ Returns the shipped plan for one identity mode: `"email"`, `"username"` or
 | `migrations` | `readonly Migration[]` | — | the plan; core migrations plus any a plugin contributes |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema to migrate |
 
+The options object has the exported type `MigrationRunnerOptions` — `{ driver:
+Driver; migrations: readonly RunnableMigration[]; schema?: string }`, every field
+`readonly`. `RunnableMigration` is not exported; it is a `Migration` or a
+plugin's migration, which adds `owner` and `createsTables` to it and is
+recorded in the plugin ledger rather than the core one.
+
 A `Migration` is `{ version: number; name: string; sql: string }`. The checksum
 is taken over the SQL as shipped, so the same migration in two differently named
 schemas hashes the same.
+
+`AppliedMigration` is one row of the ledger as the runner and the status read it
+back — `{ version: number; name: string; checksum: string }`, every field
+`readonly`, with `applied_at` left out. No exported function returns it; it is
+the type for code that reads `velve.schema_migration` itself.
 
 `schema` must be a lowercase unquoted identifier of at most 63 bytes and may not
 be a PostgreSQL reserved key word; anything else raises `InvalidIdentifierError`
@@ -491,7 +545,14 @@ The version contract between the package and the database (F35, F37). Both take
 the same options as `runMigrations` and neither writes anything — a database
 that has never been migrated stays untouched and reports version 0.
 
-`readSchemaStatus` returns:
+The options object has the exported type `SchemaStatusOptions` — `{ driver:
+Driver; migrations: readonly Migration[]; schema?: string }`, every field
+`readonly`, `schema` defaulting to `"velve"`. Both read only the core ledger,
+`velve.schema_migration`, so the plan to pass is the core one,
+`coreMigrations(identityMode)`.
+
+`readSchemaStatus` returns a `SchemaStatus`, exported under that name, every
+field `readonly`:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -653,7 +714,10 @@ rejected shape would be a second answer beside "no row".
 import { createOwnedRowRepository } from "@velve/auth";
 ```
 
-Builds a repository over one table whose rows belong to a user.
+Builds a repository over one table whose rows belong to a user. It takes an
+`OwnedRowRepositoryOptions` and returns an `OwnedRowRepository<Row>`, both
+exported from `@velve/auth` under those names; `Row` is the row shape the caller
+declares, and the repository does not check it against the table.
 
 | Option | Type | Default | Meaning |
 |---|---|---|---|
@@ -1090,6 +1154,11 @@ answers 404 to every one of them.
 | `options.basePath` | `string` | `""` | Where the handler is mounted. Compared segment by segment; a request outside it is a 404. Never derived from a header. |
 | `options.connectionAddress` | `(request: Request) => string \| null` | `() => null` | The address the connection came from. A `Request` carries none, so the adapter supplies it. The handler passes it through `resolveClientAddress` together with `X-Forwarded-For` and the configured `trustedProxies`, so the header counts where — and only where — the configuration says it may (S-RATE-3). Without this option every request shares one bucket per route. |
 
+`options` has the type `WebHandlerOptions`, which `@velve/auth/http` exports
+beside `toWebHandler` — `{ readonly basePath?: string; readonly
+connectionAddress?: (request: Request) => string | null }`. Both fields are
+optional, and leaving `options` out is the same as passing `{}`.
+
 Every response carries `Cache-Control: no-store` and `Vary: Cookie`, set by the
 handler and not by the application (L-6). A response with a body carries
 `Content-Type: application/json`; the library never produces HTML.
@@ -1155,7 +1224,7 @@ them, and a `cookieName` equal to either of them is refused at startup, since
 one cookie would otherwise be read as two. The names come from the enumeration
 in `src/core/http/cookies.ts` — `cookieNamesWithSession` puts the configured
 session name into it — which is also what a response is checked against before
-it is sent. Before 1.2.0 the option was validated at startup and then ignored,
+it is sent. Before 2.0.0 the option was validated at startup and then ignored,
 and the session cookie was always `__Host-velve_session` (E-2550). Both the name and the value are checked against a token
 charset first, so no name and no value can end a `Set-Cookie` field early and
 append an attribute of its own.
@@ -1246,6 +1315,10 @@ that declaration; the client is derived from the same types.
 | `originCheck` | `"checked" \| "exempt"` | `exempt` exists for the OAuth callback, which has no `Origin` header by protocol. |
 | `rateLimit` | `{ perIpAddress: BucketRule \| "none"; perAccount: BucketRule \| "none" }` | The buckets this route consumes. |
 | `handler` | `(input, context) => Promise<Output>` | Returns the output, or nothing for a 204. |
+
+The types of `caller` and `originCheck` are exported from `@velve/auth` under
+their own names: `CallerRequirement` is `"anonymous" | "session" | "pending" |
+"server_only"`, and `OriginRequirement` is `"checked" | "exempt"`.
 
 The order in front of the handler is fixed and cannot be reordered by a caller or
 a plugin: origin check, per-address rate limit, input parse, caller resolution,
@@ -1363,6 +1436,7 @@ shape is checked and the contents are not.
 | `ipAddress` | `string \| null` | The address the rate limiter counts: `options.connectionAddress` resolved against `X-Forwarded-For` and `trustedProxies`. |
 | `userAgent` | `string \| null` | From the `User-Agent` header. |
 | `cookies` | `CookieWriter` | `setSession`, `clearSession`, `setPending`, `clearPending`, `setOAuthState`, `clearOAuthState` — a role, never a name, so no unenumerated cookie can be written. |
+| `plugin` | `FrozenContext` | The frozen context of the plugin that registered the route, from `pluginContextOf` below; a core route gets the core context, which carries no tables of its own. See [`FrozenContext`](#frozencontext). |
 | `enforceAccountRateLimit(normalisedIdentifier)` | `Promise<void>` | Consumes the per-account bucket. The identifier must already be normalised (L-5). A route that declares `perAccount` and reaches its handler without calling this writes a warning naming the route, whether the handler returned or threw; where the declaration says `perAccount: "none"` the call does nothing. |
 
 `Session` and `PendingAuthentication` are the records of architecture 3.15 C. A
@@ -1394,6 +1468,7 @@ Freshness is measured against `createdAt`, never against `lastUsedAt` (3.5).
 | `sessionCookieMaximumAgeInSeconds` | `number` | `Max-Age` of the session cookie: a whole number of seconds, at most 400 days. |
 | `freshnessWindowInSeconds` | `number` | Measured against `session.createdAt`. |
 | `callers` | `CallerResolver` | `resolveSession` returns the `Session`, `resolvePending` the `ResolvedPendingAuthentication`; both throw, and the error map decides what the caller sees. |
+| `pluginContextOf` | `(route: RouteMetadata) => FrozenContext` | The frozen context a route's handler receives as `context.plugin`: the registering plugin's for a plugin route, the core one — with no tables of its own — for a route nobody registered. Required; the instance builds it from its plugin registry. |
 | `rateLimiter` | `RateLimiter` | See below. |
 | `clock` | `Clock` | |
 | `log` | `(level, message, fields?) => void` | Where the true reason of every concealed failure is written. |
@@ -1728,6 +1803,25 @@ writes `a route is taking more requests than its alert threshold` as a `warn`
 line, with `routeName`, `requestsInLastMinute` and `observedAt`, at most once a
 minute per route (E-2672). An application that gives its own `onAlert` gets
 every alert itself and no default line.
+
+`onAlert` receives a `RateAlert`, exported from `@velve/auth`:
+
+```ts
+interface RateAlert {
+  readonly routeName: string
+  readonly requestsInLastMinute: number
+  readonly observedAt: Date
+}
+```
+
+`routeName` is the dotted route name and `observedAt` the instance clock's time
+of the request that sounded the alarm. **`requestsInLastMinute` is not a count
+over the last minute.** It is the alarm's `addressChecksObserved`, carried
+across under the name 3.15 A.6 gives it: the address checks this route has
+taken on this instance since the instance started. For the first alarm of a
+flood that starts with the instance it is the threshold to within one refill,
+which is what E-356 measured; for any later alarm it also counts every request
+before the flood (E-2903).
 
 **A weaker value is reported, not refused.** A `capacity` or a `refillPerSecond`
 above the default, in either bucket, produces one `warn` line at start,
@@ -2404,8 +2498,9 @@ risk class as a pepper.
 
 The only two ways a PHC string crosses the column boundary. `sealPhc` returns
 `{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
-that puts a cleartext string into the column, and the import module uses these
-same two functions rather than a path of its own (architecture 4.0.3).
+that puts a cleartext string into the column, and the import module
+architecture 4.0.3 describes is to use these same two functions rather than a
+path of its own. That module does not ship (E-3021).
 
 `openPhc` throws `KeyError("key_version_unknown")` when the row names a key
 version that has left the ring, and `KeyError("authentication_failed")` when the
@@ -2715,12 +2810,14 @@ mailbox to send to. A user who forgets a password with no recovery codes has
 lost the account, so the specification makes `identity: { mode: "username" }`
 without `recoveryCodes` refuse to start, and a compile error before that, via a
 `RecoveryCodesRequirement<Mode>` on the instance options (architecture 3.4 and
-3.15 A.3, E-18). **Neither is built yet.** Both belong to the options type of
-`createVelveAuth`, which no feature has written; `core/identity` sees a mode, not
-the instance options, and cannot state a requirement about `recoveryCodes` from
-there. Until the feature that builds `createVelveAuth` carries it, choosing
-`username` without issuing recovery codes at registration is a mistake the
-library does not catch. This is a recorded hand-off, not an oversight (E-207).
+3.15 A.3, E-18). Both are built, on the options of `createVelveAuth` rather
+than in `core/identity`, which sees a mode and not the instance options:
+`VelveAuthConfig<M>` is `BaseConfig<M> & RecoveryCodesRequirement<M>`, which
+makes `recoveryCodes` a required property in `"username"`, and a JavaScript
+caller the type does not reach is refused at start with `VelveStartupError`,
+code `recovery_codes_required`, when `recoveryCodes` is absent (S-DEFAULT-4).
+The type is described under `createVelveAuth(config)` and the refusal under
+[What refuses to start](#what-refuses-to-start).
 
 ```ts
 type IdentityConfiguration<Mode extends IdentityMode = IdentityMode>
@@ -2885,6 +2982,33 @@ the result types are what the functions return.
 
 `IdentityMode` is not one of them: it comes from the migration that materialises
 it, `src/core/db/migrations/identity-mode.ts` (E-190).
+
+### Types that follow the mode
+
+Four type helpers that `@velve/auth` exports beside the instance type, for code
+that has to change shape with the identity mode `M` the way the instance does.
+None of them exists at run time.
+
+```ts
+type IdentityFields<M extends IdentityMode>
+// "email" → { email: string }
+// "username" → { username: string }
+// "username_email" → { email: string; username: string }
+
+type ModeHasEmail<M extends IdentityMode>     // true for "email" and "username_email", else false
+type ModeHasUsername<M extends IdentityMode>  // true for "username" and "username_email", else false
+
+type OnlyWhen<Condition extends boolean, Surface> // Surface when Condition is true, else never
+```
+
+`IdentityFields<M>` is the set of sign-in names a new account carries in mode
+`M`; it is what sign-up takes beside the password. `ModeHasUsername<M>` is what
+removes `auth.username` from the instance type in the `email` mode.
+`ModeHasEmail<M>` and `OnlyWhen` are not used by the library's own declarations;
+they are exported for an application that writes a type of its own conditioned
+on the mode. A member typed `OnlyWhen<false, …>` is `never`, which makes it
+impossible to supply rather than absent, so it fits a property that must not be
+set in that mode.
 
 ### The comparison form
 
@@ -3368,8 +3492,7 @@ of every driver under [the driver interface](#the-driver-interface) above, but i
 is a requirement on the implementation and not something the types carry:
 `Driver` is two method signatures. `createNodePostgresDriver` satisfies it, so
 the rollback of section 3.15 A.7 holds for `@velve/auth/pg` — the only driver
-that currently ships, since `@velve/auth/postgres-js` and `@velve/auth/neon`
-export nothing. A driver written elsewhere has to satisfy it too.
+the package ships. A driver written elsewhere has to satisfy it too.
 
 Every refusal it raises is an `OneTimeTokenError` with a `code`, one class and a
 code on it rather than one class per failure.
@@ -3613,17 +3736,20 @@ name of the option it refused:
 - a deadline longer than 8640000000000000 milliseconds — the end of the range a
   `Date` holds, and the point past which the deadline asked for is not the deadline
   given back,
+- `absoluteTimeout` longer than 400 days — the longest `Max-Age` the session
+  cookie can state,
 - `idleTimeout` longer than `absoluteTimeout` — the idle deadline could never be reached,
 - `idleWriteInterval` longer than `idleTimeout` — the deadline would expire before it was ever written,
 - `freshnessWindow` longer than `absoluteTimeout` — a session could never stop being fresh,
 - `cookieName` equal to `__Host-velve_pending` or `__Host-velve_oauth_state` — one cookie would be read as two.
 
 The session cookie's `Max-Age` is `absoluteTimeout`, so the cookie cannot
-outlive the one deadline nothing extends. **`absoluteTimeout` above 400 days is
-accepted at startup and cannot be served over HTTP**: the cookie writer refuses a
-`Max-Age` above 34,560,000 seconds, so the first sign-in that would write the
-cookie raises `internal_error` instead. That is a limit, not a refusal — it is not
-checked when the block is read (E-1578).
+outlive the one deadline nothing extends. The cookie writer refuses a `Max-Age`
+above 34,560,000 seconds, 400 days, so **`absoluteTimeout` above 400 days is
+refused at startup** rather than started and then answered with `internal_error`
+on the first sign-in, which it was until E-2878 (E-1578). Every other duration is
+held at or below `absoluteTimeout`, so 400 days bounds all four, and the `Date`
+range above is reached only as a refusal.
 
 Deadlines are computed by the database as `now() + make_interval(secs => …)` and
 never from an interval literal. PostgreSQL 14 caps an interval literal's
@@ -3783,6 +3909,17 @@ observedAt }`. It is the only value in the library from which an `Actor` can be
 obtained (S-OWNER-7), and it is produced here and nowhere else. `observedAt` is
 the database's clock at the moment it answered, and every deadline this module
 decides after the fact is measured against it.
+
+The resolution stays inside the library. What `GET /session`, `POST
+/session/refresh` and the instance's `auth.session.resolve` and
+`auth.session.refresh` hand out is a `ResolvedSessionView`, exported from
+`@velve/auth`: `{ readonly session: Session; readonly user: User }`, the session
+record and the account it belongs to, read after the session resolved. It
+carries no `Actor` and cannot be turned into one. `GET /session` and
+`auth.session.resolve` answer `null` where no session resolves; the refresh
+route declares `caller: "session"` and fails with `session_required` instead.
+Each of them answers `null` when the account row is gone by the time it is
+read.
 
 #### Issuing and re-issuing
 
@@ -4006,6 +4143,13 @@ Verifies `code` against the unconfirmed secret, claims the time step it
 matched, and sets `confirmed_at`. Raises `factor_not_enrolled` when no
 enrolment was started, `factor_already_enrolled` when one is already
 confirmed, and `invalid_factor_code` when the code does not match.
+
+Only the secret the code was matched against is confirmed: the update carries
+that ciphertext in its predicate. A `start` that replaces the secret between
+the check and the confirmation leaves the new secret unconfirmed, and `finish`
+answers `invalid_factor_code`, because the code proved a secret that is no
+longer stored. The new secret is confirmed by a code from it, as any enrolment
+is (E-2871).
 
 The confirming code is written into `velve.totp_used_step` like any accepted
 code. RFC 6238 §5.2 asks that an accepted code be refused for the rest of its
@@ -4473,10 +4617,27 @@ running and did not rise: equality counts, because a counter in use has to
 increase. An authenticator that keeps no counter reports zero every time and is
 never reported as regressed.
 
-The value stored afterwards is the one the authenticator reported, not the
-higher of the two. Keeping the maximum would report the fall on every subsequent
-sign-in until the authenticator caught up, and a field that is always set is a
-field nobody reads (E-462).
+The value stored afterwards is the highest counter the credential has reported,
+as WebAuthn Level 2 §7.2 step 21 keeps it: a sign-in raises it and never lowers
+it. The comparison is made by the `UPDATE` itself
+(`sign_count = GREATEST(sign_count, $n)`), so two assertions that read the same
+row cannot write the lower counter over the higher one. The report is made
+against the counter read before verification and against the counter the write
+left behind, so an assertion whose write lands after a higher one is reported
+too.
+
+What that means for an application:
+
+- A copy of an authenticator used after the original is reported on **every**
+  use, including after the original stops being used, because its counter stays
+  below the stored one.
+- An authenticator whose counter was reset legitimately — after a factory reset,
+  for instance — is reported on every sign-in until its counter passes the
+  stored value. Nothing is refused in either case; the sign-in succeeds and the
+  field is set.
+
+This reverses E-462, which stored the reported value so a fall was reported once;
+the change is the owner's ruling (E-3050).
 
 ### Listing, renaming and removing
 
@@ -4531,7 +4692,7 @@ interface WebAuthnCredential {
 | Field | What it is |
 |---|---|
 | `id` | the row's `uuid`; what `rename` and `remove` take |
-| `label` | what the user called this device. Empty for a credential that arrived through the import module, which carries no label |
+| `label` | what the user called this device. Empty for a row whose `label` is `NULL`, which the schema reserves for imported credentials; no import module ships yet, so the library writes no such row (E-2902) |
 | `transports` | how the browser said the authenticator can be reached — a hint, never a decision |
 | `aaguid` | the authenticator model, or `null` when it declined to name one |
 | `isBackupEligible` | the `BE` flag: `true` means a synchronised passkey, `false` means device-bound |
@@ -4563,10 +4724,12 @@ An application that wants "a second factor must be device-bound" filters on
 watches `isCurrentlyBackedUp`. Neither is expressible in the configuration, on
 purpose: the library does not know what the application's risk model is.
 
-The import module writes both as `false` when a credential is imported from a
-system that does not export them (architecture 4.1 e), which marks a
+Architecture 4.1 e has the import module write both as `false` when a
+credential is imported from a system that does not export them, which marks a
 synchronised passkey as device-bound and would mislead exactly such a policy.
-That is why the import defaults to importing no passkeys at all.
+That is why the import is specified to import no passkeys by default. The
+module does not ship (E-3021), so every row this library writes today carries
+the flags the authenticator reported.
 
 ### The challenge
 
@@ -4600,7 +4763,7 @@ unusable before that.
 | `user_id` | `uuid` | `ON DELETE CASCADE` |
 | `credential_id` | `bytea` | the WebAuthn credential ID, globally unique. Never leaves the process |
 | `public_key` | `bytea` | COSE. Never leaves the process |
-| `sign_count` | `bigint` | last reported counter. Never leaves the process; it appears only as `signCountRegressed` |
+| `sign_count` | `bigint` | the highest counter reported, never lowered (E-3050). Never leaves the process; it appears only as `signCountRegressed` |
 | `transports` | `text[]` | stored and read as JSON rather than through a delimiter, because the values are the browser's words (E-473) |
 | `aaguid` | `uuid` | `NULL` when the authenticator reported all zeros |
 | `backup_eligible`, `backup_state` | `boolean` | `BE` and `BS`, rewritten on every sign-in |
@@ -4844,6 +5007,10 @@ An expired token, a spent one, an invented one, a token minted for another
 purpose and a token belonging to a disabled account are one answer:
 `invalid_token`, byte for byte.
 
+A token presented for a disabled account is spent all the same: it does not
+sign in after `user.enable`, because whoever presented it may be the reason the
+account was disabled (E-2880).
+
 ### The first confirmation of an address (`S-LINK-4`, L-12)
 
 This is the rule the chapter exists for, and it runs on both routes that confirm
@@ -4915,6 +5082,10 @@ the account as it now stands. Runs the first-confirmation rule above, so a
 caller redeeming it in the session that signed up keeps its password and its
 session, and a caller redeeming it anywhere else does not.
 
+A token presented for a disabled account answers `invalid_token`, byte for byte
+as an invented token does, confirms nothing, and is spent all the same: it stays
+unusable after `user.enable` (E-2880).
+
 ### `auth.email.requestChange(input)`
 
 | Parameter | Type |
@@ -4942,6 +5113,10 @@ Moves the address and sets `email_verified_at` to now — redeeming the link is
 the proof that the new address is reachable. If the address has been taken since
 the token was minted, **nothing changes and the answer is `invalid_token`**,
 byte for byte the answer an invented token gets.
+
+A token presented for a disabled account answers the same way and moves
+nothing, and it is spent all the same: it stays unusable after `user.enable`
+(E-2880).
 
 ### `auth.password.requestReset(input)`
 
@@ -4978,6 +5153,10 @@ so a password the policy refuses does not burn the link.
 The count is every session, not every session but the caller's: a reset is not
 made from a session, so there is none to exclude.
 
+A token presented for a disabled account answers `invalid_token`, byte for byte
+as an invented token does, and it is spent all the same: it stays unusable after
+`user.enable`, as a recovery code does (E-2872, E-2879).
+
 ### `auth.password.redeemResetWithRecoveryCode(input)`
 
 | Parameter | Type | Notes |
@@ -4993,8 +5172,16 @@ its place — that is `factor.recovery.generate`.
 
 Everything that can fail answers `invalid_recovery_code`: a wrong code, an
 identifier that names no account, an account that never generated codes, an
-account whose codes were all spent, and a disabled account. As with the mailed
-reset, every session is revoked and a new one is issued.
+account whose codes were all spent, and a disabled account. A right code for a
+disabled account is spent all the same: it stays unusable after `user.enable`,
+because whoever presented it may be the reason the account was disabled
+(E-2872). As with the mailed reset, every session is revoked and a new one is
+issued.
+
+Both resets run a plugin's `beforeSessionCreate` inside their transaction and
+`afterSessionCreate` after it commits. A plugin that refuses the session refuses
+the reset: the answer is the plugin's code, the old password stays, and the
+token or code is not spent (E-2796).
 
 The per-account bucket is keyed by the identifier in the comparison form sign-in
 uses — trimmed, NFKC-normalised and case-folded — so `Owner@Example.com`,
@@ -5256,6 +5443,22 @@ no default on purpose — `"sub"` is convenient and, in the one case where it is
 wrong, an account-takeover bug. A dot reaches into a nested claim, as in
 `bot.owner.user.id`.
 
+The types behind this, all exported from `@velve/auth`:
+
+| Type | What it is |
+|---|---|
+| `KnownProvider` | the union of the fourteen built-in ids below |
+| `ProviderCredentials` | the table above, every field `readonly`; only `clientId` and `clientSecret` are required |
+| `GenericProviderConfig` | `ProviderCredentials` with `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` required, and `emailClaim` and `emailVerifiedClaim` optional, all `string` |
+| `OAuthPrompt` | `"select_account" \| "consent" \| "login" \| "none"` |
+| `OAuthResponseMode` | `"query" \| "form_post"` |
+
+`providers` is typed as `ProviderCredentials` for a `KnownProvider` key and as
+`ProviderCredentials | GenericProviderConfig` for any other key. So the
+compiler accepts an unknown id with credentials alone, and the start refuses it
+with `oauth_provider_incomplete`; writing such an entry as
+`GenericProviderConfig` moves that refusal to compile time.
+
 Every endpoint the server calls itself must be an absolute `https` URL, checked
 while the instance is built. A provider configured with neither `jwksUri` nor
 `userInfoEndpoint` starts, and every sign-in through it answers
@@ -5441,6 +5644,13 @@ interface Identity {
 No token is in it, and no method of this library returns one. `profile` is the
 provider's raw claims, overwritten on every sign-in; the library writes them and
 never reads them.
+
+`tokenExpiresAt` is the instant the provider's access token expires, computed at
+sign-in from the `expires_in` of the token answer. It is `null` when
+`storeTokens` is off, when the provider sent no `expires_in` or one that does
+not read as a number, and when it sent one outside 1 second … 365 days
+(31,536,000 seconds): such a value is stored as no deadline rather than clamped
+to one the provider did not state (E-2875).
 
 ### What the callback does, in order
 
@@ -5681,7 +5891,7 @@ compile (E-349).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `database` | `Driver` | — | the driver from `@velve/auth/pg`, `/postgres-js` or `/neon`; the only way a connection enters |
+| `database` | `Driver` | — | the driver from `@velve/auth/pg`, the one driver that ships, or one the application writes over another client as [the driver interface](#the-driver-interface) describes; the only way a connection enters |
 | `identity` | `IdentityConfig<M>` | — | which sign-in names exist; decides the CHECK constraint and the instance type |
 | `keys` | `KeyProvider` | — | the root key and the ring; all six purpose keys are derived from it |
 | `origins` | `readonly string[]` | — | the allowed origins; an empty list is a start error, not a blanket permission |
@@ -5816,6 +6026,13 @@ if (auth.weakenings.length > 0) {
 }
 ```
 
+Both shapes are exported from `@velve/auth`. A row of `SECURITY_OPTIONS` is a
+`SecurityOption` — `{ readonly option; readonly safeDefault: string; readonly
+weakenedBy: string }` — and an entry of `auth.weakenings` is a `ChosenWeakening`
+— `{ readonly option; readonly chosen: string }`. In both, `option` is
+`keyof VelveAuthConfig<IdentityMode>`, a key of the configuration type; the
+`OptionKey` the code block above names is that union, and is not exported.
+
 What counts as weaker, option by option:
 
 | Option | Logged when |
@@ -5908,10 +6125,10 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | Namespace | Methods |
 |---|---|
 | `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
-| `auth.session` | `resolve`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
-| `auth.pending` | `resolve`, `cancel` |
-| `auth.user` | `findById`, `findByEmail`, `disable`, `enable`, `delete` |
-| `auth.username` | `isAvailable` — present only in `"username"` and `"username_email"` |
+| `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
+| `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
+| `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
+| `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 
 Every method reached through a route takes the six call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
@@ -5919,6 +6136,93 @@ input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
 optional because a security field that may be omitted is omitted; the origin
 check runs on the direct server call exactly as it runs on the HTTP path
 (S-CSRF-1).
+
+`auth.pending.cancel` is one of them. It is the server method of
+`POST /pending/cancel`, built from that route's declaration, so it takes
+`pendingToken` and the call fields, is refused with `origin_not_allowed` for a
+foreign or a `null` origin, and counts against the route's per-address bucket
+under `ipAddress`:
+
+```ts
+await auth.pending.cancel({ pendingToken, origin: request.headers.get("Origin"), ipAddress });
+```
+
+Up to 1.1 it took `{ pendingToken }` alone and reached the pending row with
+neither check in front of it, which 3.11 does not allow (E-2830). A 1.1 caller
+that passes no `origin` no longer compiles, and at runtime is refused.
+
+#### The namespace types
+
+The four hand-written namespaces after `signOut` have exported types, so an
+application can name what it passes around — a helper that takes `auth.session`
+takes a `SessionNamespace`. All four are exported from `@velve/auth` as types
+only; `UserNamespaceInEveryMode`, which `UserNamespace` extends, is not. As
+shipped in `dist/core/auth/instance.d.mts`:
+
+```ts
+interface SessionNamespace {
+  resolve(input: { sessionToken: string } & ServerCallFields): Promise<ResolvedSessionView | null>;
+  resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>;
+  list(input: ServerCallFields): Promise<Session[]>;
+  revoke(input: { targetSessionId: string } & ServerCallFields): Promise<void>;
+  revokeAllOther(input: ServerCallFields): Promise<{ revokedCount: number }>;
+  revokeAll(input: ServerCallFields): Promise<{ revokedCount: number }>;
+  refresh(input: ServerCallFields): Promise<ResolvedSessionView | null>;
+}
+
+interface PendingNamespace {
+  resolve(token: PendingToken): Promise<PendingAuthentication | null>;
+  resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
+  cancel(input: { pendingToken: PendingToken } & ServerCallFields): Promise<void>;
+}
+
+interface UserNamespaceInEveryMode {
+  findById(input: { userId: string }): Promise<User | null>;
+  disable(input: { userId: string; reason: string }): Promise<void>;
+  enable(input: { userId: string }): Promise<void>;
+  delete(input: { userId: string }): Promise<void>;
+}
+
+interface UserNamespace extends UserNamespaceInEveryMode {
+  findByEmail(input: { email: string }): Promise<User | null>;
+}
+
+interface UsernameNamespace {
+  isAvailable(input: { username: string } & ServerCallFields): Promise<UsernameAvailabilityAnswer>;
+  change(input: { newUsername: string } & ServerCallFields): Promise<{ readonly user: User }>;
+}
+```
+
+| Type | Where it is | What the identity mode changes |
+|---|---|---|
+| `SessionNamespace` | `auth.session`, in every mode | nothing |
+| `PendingNamespace` | `auth.pending`, in every mode | nothing |
+| `UserNamespace` | `auth.user`, in `"email"` and `"username_email"` | in `"email"` `auth.user` is exactly this type; in `"username_email"` it is this type plus `findByUsername(input: { username: string }): Promise<User \| null>`; in `"username"` it is this type without `findByEmail` and with `findByUsername` (E-3022) |
+| `UsernameNamespace` | `auth.username` | present only in `"username"` and `"username_email"`, absent from the type and the object in `"email"` |
+
+`ServerCallFields` is the six call fields named above: `origin: string | null`,
+required, and `sessionToken`, `pendingToken`, `oauthStateToken`, `ipAddress` and
+`userAgent`, optional. A method whose input carries them runs through its
+route's pipeline, origin check first. A method whose input does not —
+`session.resolveFromHeaders`, `pending.resolve`, `pending.resolveFromHeaders`
+and every method of `auth.user` — has no origin check and no rate limit.
+
+- **`session.resolve` and `session.resolveFromHeaders`** answer a
+  `ResolvedSessionView` — `{ session, user }` — or `null`, and throw
+  `account_disabled` for a valid token on a disabled account (L-4). Neither is
+  rate limited (3.15 B.9). The second is described below.
+- **`pending.resolve(token)`** takes the token itself rather than an object and
+  answers the factors still open, or `null`.
+- **`pending.cancel({ pendingToken, ...callFields })`** is refused with
+  `origin_not_allowed` for a foreign or a `null` origin, and counts against the
+  per-address bucket of `POST /pending/cancel` under `ipAddress`, answering
+  `rate_limited` once that bucket is spent. Past both it deletes the row the token
+  names, if there is one, and resolves to nothing either way.
+- **`user.findByUsername`** exists in `"username"` and `"username_email"` only,
+  and **`user.findByEmail`** in `"email"` and `"username_email"` only; both are
+  described under the result types below.
+- **`username.isAvailable`** answers a `UsernameAvailabilityAnswer` —
+  `{ available: boolean; reason?: string }`.
 
 #### Namespaces nobody writes by hand
 
@@ -5975,7 +6279,9 @@ sign-in: `undefined` means "not applicable", never "no" (L-9).
 `Identity` is the record of 3.15 C — `id`, `provider`, `subject`, `createdAt`,
 `providerEmail`, `providerEmailVerified`, `profile`, `scopes`, `tokenExpiresAt`.
 `profile` is `unknown` because the library does not read these claims and cannot
-promise a shape the provider changes tomorrow. The linking branch re-issues the
+promise a shape the provider changes tomorrow. `tokenExpiresAt: null` means the
+provider stated no usable lifetime — no `expires_in`, or one outside 1 second …
+365 days — or `storeTokens` is off (E-2875). The linking branch re-issues the
 session, because a new identity changes the trust level.
 
 `OAuthRedirect.stateCookie` is the one place a server method mentions a cookie:
@@ -5996,9 +6302,57 @@ the log and never stored — an audit log is out of scope — and it leaves the
 session rows standing, so each of them ends at its next resolution with
 `account_disabled`.
 
+`auth.user.findByUsername({ username })` answers the account whose
+`username_key` equals the comparison form of `username` — trimmed, NFKC,
+lower-cased per code point, as 3.4 fixes it — or `null`. It does not apply the
+configured `UsernameRules`, so an account whose name the rules would refuse
+today, because the rules changed or the account was imported, is still found.
+It exists in `"username"` and `"username_email"` and is absent in `"email"`, on
+the type and on the object. `findByEmail` compares the address as given, with
+no normalisation.
+
+`findByEmail` exists in `"email"` and `"username_email"` and is absent in
+`"username"`, on the type and on the object, as 3.15 B.3 has it. Version 1
+shipped it in every mode; 2.0.0 removed it from `"username"` (E-2834, E-3022).
+Use `findByUsername` in that mode.
+
 `auth.pending.resolve` names only the factors still open and never any user
 data, and it mints no actor: the intermediate state is structurally unable to
 become a session.
+
+#### `auth.session.resolveFromHeaders(headers)` and `auth.pending.resolveFromHeaders(headers)`
+
+```ts
+resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>      // session
+resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>    // pending
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `headers` | `Headers` | The headers of a request the application has already accepted, typically `request.headers` in a server-rendered page or in the application's own route. Only `Cookie` is read. |
+
+`session.resolveFromHeaders` reads the session cookie — under the name
+`session.cookieName` configures — and answers exactly as `session.resolve` does
+for that token: the session and its account, `null` without the cookie or for a
+token that names no live session, and a thrown `account_disabled` for a valid
+token on a disabled account (L-4). As a side effect it extends the idle deadline,
+at most once per `idleWriteInterval`, as `resolve` does.
+`pending.resolveFromHeaders` reads `__Host-velve_pending` and answers as
+`pending.resolve`: the factors still open, or `null`.
+
+Neither takes an `origin`, and neither is rate limited (3.15 B.2, B.9). The
+headers belong to a request the application has already accepted, and a link
+followed from another site arrives as a navigation without an `Origin` header the
+library would be allowed to compare, so a check there would refuse every visitor who arrives
+from elsewhere. A method that has no route is not a server method derived from a
+route declaration, which is what S-CSRF-1 covers. Whatever the application does
+next on the strength of the answer is the application's own route and its own
+CSRF question.
+
+A request carrying the same cookie twice throws `invalid_input`, as the HTTP path
+answers it (S-COOKIE-5). A failure is mapped and logged by the same code as a
+route's, under the method's name, so a caller learns nothing the HTTP path would
+not have told it.
 
 ### The intermediate state between password and second factor
 
@@ -6008,8 +6362,11 @@ token, and it lives five minutes. Exactly four routes accept it —
 `POST /factor/webauthn/authenticate/finish` and `POST /factor/recovery/verify` —
 and those four names are one constant, `PENDING_CALLER_ROUTES`, so the count a
 test reads and the list a route is named from cannot drift apart (S-CACHE-4).
-Every other route ignores the cookie completely, and answers a request carrying
-only it byte for byte as it answers a request carrying no cookie at all.
+Two more read the cookie without being authorised by it — `GET /pending`, which
+names the factors still open, and `POST /pending/cancel`, which deletes the row
+it points to. Every other route ignores the cookie completely, and answers a
+request carrying only it byte for byte as it answers a request carrying no
+cookie at all.
 
 ```ts
 createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationService
@@ -6143,8 +6500,12 @@ and its rate-limit rules apply. A hook can refuse by throwing and observe by
 returning; it cannot replace the answer, because every one of them returns
 `Promise<void>`.
 
-**A hook point only fires if an operation reaches it, and most of the operations
-are not built yet.** `beforeSessionRevoke` runs today on every revocation a
+**A hook point only fires if an operation reaches it.** The four sign-in and
+session points run on every sign-in — password, passkey, magic link, OAuth, and
+the completion of any of them by a second factor — and the two user-create
+points on every sign-up, with the address, without a password and through OAuth;
+[which operations reach which point](#the-sign-in-session-and-user-points) says
+in what order and what a refusal leaves behind. `beforeSessionRevoke` runs on every revocation a
 `RevokeReason` names — sign-out, the three revocation routes, a password change
 or first password set, both resets, an identity link, the first confirmation of
 an address that removes a password set in another session, and a revocation a
@@ -6661,7 +7022,7 @@ route has no such row (E-2212, E-2214).
 
 **Upgrading from 1.1.0.** A plugin that started on 1.1.0 with
 `perIpAddress: "none"` on a route, or with a `rateLimitRules` entry writing it,
-refuses to start from 1.2.0 on. Declare an address bucket for that route —
+refuses to start from 2.0.0 on. Declare an address bucket for that route —
 `{ capacity, refillPerSecond }` — instead (E-2214).
 
 ### One reading of the declaration
@@ -6719,18 +7080,18 @@ answers `500 internal_error` without the plugin's text.
 #### Which points have a producer
 
 The dispatcher runs all seven and the paragraph above describes all seven, but a
-point only fires if an operation reaches it, and most of the operations are not
-built. **This table is the one place that says which do**, and a plugin
-registering a point that does not is told nothing at start.
+point only fires if an operation reaches it. **This table is the one place that
+says which do**, and a plugin registering a point that does not is told nothing
+at start.
 
 | Point | Has a producer |
 |---|---|
-| `beforeSignIn` | no |
-| `afterSignIn` | no |
-| `beforeSessionCreate` | no |
-| `afterSessionCreate` | no |
-| `beforeUserCreate` | no |
-| `afterUserCreate` | no |
+| `beforeSignIn` | **yes** |
+| `afterSignIn` | **yes** |
+| `beforeSessionCreate` | **yes** |
+| `afterSessionCreate` | **yes** |
+| `beforeUserCreate` | **yes** |
+| `afterUserCreate` | **yes** |
 | `beforeSessionRevoke` | **yes** |
 
 Which operations reach a point is stated in the chapter of the feature that
@@ -6738,6 +7099,129 @@ built them; `beforeSessionRevoke`'s are named below. **The cell is a yes or
 a no and never a list**, so a feature that gives a point its first producer flips
 one cell, and a second feature reaching the same point finds it already flipped
 and edits nothing. A list would have made that a collision (E-776).
+
+#### The sign-in, session and user points
+
+Every way in calls the same points in the same order, so a plugin that refuses a
+sign-in refuses it whichever credential is presented (E-2790):
+
+| Operation | Points, in order |
+|---|---|
+| `signIn.password` | `beforeSignIn`, then, when it ends in a session, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `signIn.passkey.finish` | `beforeSignIn`, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `signIn.magicLink.redeem` | `beforeSignIn`, then, when it ends in a session, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| the OAuth callback signing in | `beforeSignIn`, `beforeUserCreate` and `afterUserCreate` when it creates the account, then, when it ends in a session, `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `factor.totp.verify`, `factor.webauthn.authenticate.finish`, `factor.recovery.verify` | `beforeSessionCreate`, `afterSessionCreate`, `afterSignIn` |
+| `signUp.withPassword`, `signUp.withoutPassword` | `beforeUserCreate`, `afterUserCreate`, `beforeSessionCreate`, `afterSessionCreate` |
+| the OAuth callback finishing a link | `beforeSessionCreate`, `afterSessionCreate` |
+
+**`beforeSignIn` runs before any credential is examined and never names the
+account.** Its `userId` is always `null`: on a password sign-in it runs after the
+rate limit and before the account is looked up, on a passkey before the
+assertion is judged, on a magic link before the token is redeemed, on OAuth
+before the code is exchanged. So a hook at this point runs alike for an existing
+and a missing account and cannot add a timing or an answer that tells them apart
+(S-TIM-1, E-2791). A refusal here spends neither the mailed link nor the passkey
+challenge; only the rate-limit tokens the request already took are gone. A
+plugin that refuses by account — a ban — refuses at `beforeSessionCreate`, which
+names it.
+
+**A sign-in that stops at a second factor runs `beforeSignIn` once, at the first
+factor**, and nothing else until the factor is completed. The completion is the
+same sign-in, so it does not run `beforeSignIn` again; it runs
+`beforeSessionCreate` after the factor is judged and before the transaction that
+consumes the pending state and writes the session, then `afterSessionCreate` and
+`afterSignIn` (E-2792). `afterSignIn` names the method of the first factor —
+`password`, `oauth` or `magic_link` — and `factors` carries both. A refusal at
+`beforeSessionCreate` leaves the pending state standing, but the TOTP step or the
+recovery code it was judged on is already spent.
+
+**`beforeSessionCreate` runs before the transaction that writes the session
+opens, and `afterSessionCreate` after it commits**, on every sign-in. A refusal
+at `beforeSessionCreate` writes no session and does not remove the session the
+browser presented. On a magic link it comes after the redemption has committed,
+so the link is spent and the address confirmed, together with what that first
+confirmation removed. `afterSignIn` runs after
+`afterSessionCreate` and before the cookie is set. Both `after` points run once
+the session is committed, so a throw there answers with the plugin's code and
+sets no cookie, but the session row stays until it expires or is revoked.
+
+**A sign-up runs all four of its points, and a sign-up on a taken address runs
+them too.** `beforeUserCreate` runs once, with the identifiers the caller sent,
+after the username check and before the address is looked up. The other three run
+inside the registration's transaction, after the account row is written,
+because a taken address is answered by a registration on a drawn cover address
+that is then rolled back (3.13, S-ENUM-3): the cover runs the same three points
+in the same places, its events carry the address the caller sent and not the
+drawn one, and its `userId` names a row that is rolled back afterwards. A
+refusal at any of the four leaves no account and no session (E-2793).
+
+The three points inside the transaction run on its connection, with the lent
+context a reset's `beforeSessionRevoke` gets: `findUserById`,
+`listSessionsForUser`, `revokeSession` and `ownTables.query` run on the
+registration's own connection, so a hook finds the account it is told was
+created, never asks the pool for a second connection, and as many concurrent
+sign-ups as the pool has connections all finish. What the hook writes to its own
+tables rolls back with a cover or a refused registration, and the context ends
+when the hook returns (E-2795). A `revokeSession` from that context announces
+its revocation to `beforeSessionRevoke` on the same connection. With
+`pluginDatabase` set, `ownTables.query` goes to the plugin login as described
+below for a reset, so its writes commit at once and stay when a cover rolls back.
+That login cannot see the account row the registration has written and not yet
+committed, so a row with a foreign key to `velve.user` for the `userId` a hook
+is told about is refused with `23503`: the hook throws, the registration rolls
+back, and every sign-up answers 500 `internal_error`. Under `pluginDatabase` a
+plugin keys such a row without a foreign key to the account, or writes it from
+a point after the registration has committed. No hook of a sign-up runs there:
+that point is a later sign-in's `afterSessionCreate` or `afterSignIn`, or the
+application once the sign-up has answered.
+
+Two consequences: the hooks run while the registration's transaction is open, so a
+slow hook holds the new account row and its unique index entries for its
+duration; and on a taken address a plugin is told about an account that never
+commits, which is the price of not telling the hook, and through it the caller,
+which addresses are taken. A sign-up does not run `beforeSignIn` or
+`afterSignIn`, because `SignInEvent` names four ways in and a registration is
+none of them; neither `UserCreateEvent` nor `SessionCreateEvent` carries the
+caller's address, so a plugin that refuses by network address has no point at
+which to refuse a sign-up.
+
+**An OAuth callback that creates an account runs its two user points on the
+callback's transaction too.** It learns that it is creating an account only
+inside the transaction that looks the provider identity up, so `beforeUserCreate`
+and `afterUserCreate` both run there, with the same lent context: a hook finds
+the account `afterUserCreate` names, never asks the pool for a second
+connection, and as many concurrent OAuth sign-ups as the pool has connections
+all finish. A refusal at either point, or a later failure in the callback's
+transaction, rolls back the account, the identity and whatever the hook wrote to
+its own tables, unless `pluginDatabase` sends `ownTables.query` to the plugin
+login as above (E-2797). Under `pluginDatabase` the same refusal holds: the
+plugin login cannot see the uncommitted account, so an `afterUserCreate` that
+writes a row with a foreign key to `velve.user` for it is refused with `23503`
+and the callback answers 500 `internal_error`; such a row is keyed without that
+foreign key or written from `afterSessionCreate` or `afterSignIn`, which run
+after the account has committed. The session points that follow run after that
+transaction has committed, as on every sign-in.
+
+**The password operations that issue a session run the two session points
+too** (E-2796):
+
+| Operation | Points, in order |
+|---|---|
+| `password.redeemReset`, `password.redeemResetWithRecoveryCode` | `beforeSessionCreate` inside the reset's transaction, `beforeSessionRevoke` for each session it removes, then `afterSessionCreate` after the commit |
+| `password.set`, `password.change` | `beforeSessionCreate` before the transaction opens, `beforeSessionRevoke` for each session it removes, then `afterSessionCreate` after the commit |
+
+A reset learns its account only by redeeming its token or code, so its
+`beforeSessionCreate` runs inside that transaction, after the account row is
+locked, with the lent context described below for `beforeSessionRevoke`. A
+refusal there answers with the plugin's code, as it does on a sign-in, and rolls
+the whole reset back: no session is written, the old password stays, and the
+mailed token or the recovery code is not spent and can be redeemed again. On
+`password.set` and `password.change` the account is known from the session, so
+the point runs before the transaction, as on a sign-in; a refusal there changes
+nothing. Both `after` points run once the transaction has committed and before
+the cookie is set, so a throw there answers with the plugin's code and sets no
+cookie, but the new password and the new session stay.
 
 `beforeSessionRevoke` fires **once per session about to go**, and always before
 the rows go, so a hook that throws leaves them standing and the caller gets
@@ -7100,12 +7584,11 @@ today has no such role.
 
 **What it costs.** One plugin statement becomes four round trips — `BEGIN`,
 `SET LOCAL ROLE`, the statement, `COMMIT` — and holds a pooled connection for
-all four. Of the three driver entry points only `@velve/auth/pg` ships a driver;
-`@velve/auth/postgres-js` and `@velve/auth/neon` export nothing yet. A driver
-for either must implement `transaction` as one connection held across
-statements, which this option relies on: a driver that sends each statement on
-whatever connection is free would set the role on one connection and run the
-statement on another. Neon's HTTP query function sends a transaction as one
+all four. The package ships one driver, `@velve/auth/pg`. A driver an
+application writes for `postgres.js` or Neon must implement `transaction` as one
+connection held across statements, which this option relies on: a driver that
+sends each statement on whatever connection is free would set the role on one
+connection and run the statement on another. Neon's HTTP query function sends a transaction as one
 batch and cannot run a statement that depends on the one before, so an
 application on Neon builds the driver on Neon's WebSocket `Pool`, which speaks
 the `pg` interface. A pooler in transaction mode keeps `SET LOCAL` correct,
@@ -7264,7 +7747,7 @@ the route's name.
 
 ### Not built here
 
-- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. Six of the seven are still waiting for the operation that fires them; nothing is said at start about registering one, because a plugin that registers it is not wrong to have done so.
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All seven have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
 - **A plugin cannot roll a migration back.** There is no `down`, and removing a
   plugin from the configuration leaves its tables and its ledger rows standing.
   Dropping them is the application's to do, by hand — or the plugin's, in a
@@ -7944,11 +8427,69 @@ auth.username.change({ sessionToken, newUsername })        // { user }
 Every one of them also takes `origin`, which the origin check reads on the direct
 server call exactly as it reads the header over HTTP (`S-CSRF-1`).
 
+The four objects under those two namespaces have exported types, from
+`@velve/auth` as types only. As shipped in `dist/core/factor/routes.d.mts`, with `ServerCallFields` the call
+fields of [The namespace types](#the-namespace-types):
+
+```ts
+interface TotpNamespace {
+  readonly enroll: {
+    start(input: ServerCallFields): Promise<TotpEnrollment>;
+    finish(input: { code: string } & ServerCallFields): Promise<void>;
+  };
+  verify(input: { code: string } & ServerCallFields): Promise<SignInResult>;
+  remove(input: { code: string } & ServerCallFields): Promise<void>;
+}
+
+interface RecoveryNamespace {
+  generate(input: ServerCallFields): Promise<{ codes: readonly string[] }>;
+  verify(input: { code: string } & ServerCallFields): Promise<SignInResult>;
+  remaining(input: ServerCallFields): Promise<{ remainingCount: number }>;
+}
+
+interface WebAuthnNamespace {
+  readonly register: {
+    start(input: ServerCallFields): Promise<WebAuthnRegistrationChallenge>;
+    finish(input: { challengeToken: string; response: AuthenticatorResponse; label: string }
+      & ServerCallFields): Promise<{ credential: WebAuthnCredential }>;
+  };
+  readonly authenticate: {
+    start(input: ServerCallFields): Promise<WebAuthnAuthenticationChallenge>;
+    finish(input: { challengeToken: string; response: AuthenticatorResponse }
+      & ServerCallFields): Promise<SignInResult>;
+  };
+  list(input: ServerCallFields): Promise<WebAuthnCredential[]>;
+  rename(input: { credentialId: string; label: string } & ServerCallFields):
+    Promise<{ credential: WebAuthnCredential }>;
+  remove(input: { credentialId: string } & ServerCallFields): Promise<void>;
+}
+
+interface SignInPasskeyNamespace {
+  start(input: ServerCallFields): Promise<WebAuthnAuthenticationChallenge>;
+  finish(input: { challengeToken: string; response: AuthenticatorResponse }
+    & ServerCallFields): Promise<SignInResult>;
+}
+```
+
+| Type | Where it is |
+|---|---|
+| `TotpNamespace` | `auth.factor.totp` |
+| `RecoveryNamespace` | `auth.factor.recovery` |
+| `WebAuthnNamespace` | `auth.factor.webauthn` — on the type always, on the object only with `webauthn` configured (below) |
+| `SignInPasskeyNamespace` | `auth.signIn.passkey` |
+
+Which token a method reads — `sessionToken` or `pendingToken` — is the caller
+column of [The rows](#the-rows); both are optional fields of `ServerCallFields`,
+so the type does not say which one a method needs, and a missing one is refused
+as the HTTP path refuses it.
+
 `response` is the authenticator's answer, passed through as the browser produced
 it. It is checked for being an object and not for its contents: WebAuthn
 extension outputs are open-ended, the library reads none of them, and what judges
 the answer is the verifier rather than a validator that would need widening for
 every extension a browser adds.
+Its type is `AuthenticatorResponse`, exported from `@velve/auth` under that
+name, which is `Record<string, unknown>` for the same reason.
 
 **`auth.factor.webauthn` is declared on the instance type whether or not
 `webauthn` is configured, and is absent at run time where it is not.** 3.15 B

@@ -1,6 +1,6 @@
 {
 	"name": "@velve/auth",
-	"version": "1.2.0",
+	"version": "2.0.0",
 	"description": "The European authentication library for TypeScript and PostgreSQL. Answers exactly one question: who is signed in.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -53,18 +53,6 @@
 		"./pg": {
 			"types": "./dist/pg.d.mts",
 			"default": "./dist/pg.mjs"
-		},
-		"./postgres-js": {
-			"types": "./dist/postgres-js.d.mts",
-			"default": "./dist/postgres-js.mjs"
-		},
-		"./neon": {
-			"types": "./dist/neon.d.mts",
-			"default": "./dist/neon.mjs"
-		},
-		"./import": {
-			"types": "./dist/import.d.mts",
-			"default": "./dist/import.mjs"
 		},
 		"./schema": {
 			"types": "./dist/schema.d.mts",
@@ -136,5 +124,12 @@
 		"tsdown": "^0.15.6",
 		"typescript": "^5.9.2",
 		"vitest": "^4.1.11"
+	},
+	"pnpm": {
+		"auditConfig": {
+			"ignoreGhsas": [
+				"GHSA-vfj7-8cjw-p6xm"
+			]
+		}
 	}
 }

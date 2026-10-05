@@ -56,7 +56,7 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 	plugin_field_unknown:
 		"a plugin carries a field the interface does not enumerate; the extension points are enumerated and the security middleware is not one of them (S-CSRF-6)",
 	plugin_route_reads_a_core_cookie:
-		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes that read __Host-velve_pending and a plugin route is not one of them',
+		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes __Host-velve_pending authorises and the two that read it, and a plugin route is none of them',
 	plugin_route_exempts_the_origin_check:
 		'a plugin route declares an originCheck other than "checked"; S-CSRF-1 leaves the OAuth callback as the only route without it, and exempting one is how a plugin bypasses it (S-CSRF-6)',
 	plugin_route_without_address_rate_limit:

@@ -19,7 +19,9 @@ import type { RedirectPath } from "../http/redirect.js";
 import { identityColumns } from "../identity/columns.js";
 import { removeSignInMethod } from "../identity/sign-in-methods.js";
 import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
+import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
 import { type ProviderAccount, providerAccountOf } from "./claims.js";
@@ -92,6 +94,10 @@ interface ResolvedAccount {
 	readonly identity: Identity;
 }
 
+interface IdentityLinkWritten extends IssuedSession {
+	readonly identity: Identity;
+}
+
 interface LinkedSession {
 	readonly account: ConsumedOAuthFlow;
 	readonly previousSessionId: string;
@@ -101,6 +107,18 @@ interface LinkedSession {
 function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {
 		throw new ConcealedError("link_session_gone");
+	}
+	throw cause;
+}
+
+const UNIQUE_VIOLATION = "23505";
+
+//an identifier another sign-up took after the check must end the flow as a taken one does (E-2874)
+function refuseAnIdentifierTakenMeanwhile(cause: unknown): never {
+	const fields = typeof cause === "object" && cause !== null ? cause : {};
+	const { code, sqlState } = fields as { readonly code?: unknown; readonly sqlState?: unknown };
+	if (code === UNIQUE_VIOLATION || sqlState === UNIQUE_VIOLATION) {
+		throw new VelveError("oauth_flow_invalid");
 	}
 	throw cause;
 }
@@ -286,17 +304,23 @@ export function createOAuthService(input: {
 		) {
 			throw new VelveError("oauth_flow_invalid");
 		}
-		await services.pluginRuntime.hooks.beforeUserCreate({
+		//a hook must see the uncommitted account and not ask the pool for a connection (E-2797)
+		const hooks = hooksOnTheTransaction(services.pluginRuntime.hooks, transaction);
+		await hooks.beforeUserCreate({
 			email: columns.value.email,
 			username: columns.value.username,
 		});
-		const created = await users.createUser({
-			...columns.value,
-			//a provider claim verifies an address only where the operator trusts it (E-558)
-			emailVerifiedAt:
-				account.emailVerified && provider.trustedForAutomaticLinking ? services.clock.now() : null,
-		});
-		await services.pluginRuntime.hooks.afterUserCreate({
+		const created = await users
+			.createUser({
+				...columns.value,
+				//a provider claim verifies an address only where the operator trusts it (E-558)
+				emailVerifiedAt:
+					account.emailVerified && provider.trustedForAutomaticLinking
+						? services.clock.now()
+						: null,
+			})
+			.catch(refuseAnIdentifierTakenMeanwhile);
+		await hooks.afterUserCreate({
 			email: created.email,
 			username: created.username,
 			userId: created.id,
@@ -340,13 +364,11 @@ export function createOAuthService(input: {
 		userId: string,
 		issue: () => Promise<IssuedSession>,
 	): Promise<{ readonly issued: IssuedSession; readonly user: User }> {
-		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
-		const issued = await issue();
-		await services.pluginRuntime.hooks.afterSessionCreate({
-			userId,
-			factors: issued.session.factors,
-			sessionId: issued.session.id,
-		});
+		const issued = await createSessionUnderHooks(
+			services.pluginRuntime.hooks,
+			{ userId, factors: OAUTH_FACTORS },
+			issue,
+		);
 		const user = await services.users.findUserById(userId);
 		if (user === null) {
 			throw new VelveError("internal_error");
@@ -402,11 +424,25 @@ export function createOAuthService(input: {
 		readonly account: ProviderAccount;
 		readonly facts: IdentityFacts;
 		readonly observed: ObservedRequest;
-	}): Promise<{ readonly identity: Identity; readonly issued: IssuedSession }> {
+	}): Promise<IdentityLinkWritten> {
 		const userId = input.linked.account.userId;
 		await announceTheReplacedSession(input.linked);
-		await services.pluginRuntime.hooks.beforeSessionCreate({ userId, factors: OAUTH_FACTORS });
-		const written = await driver.transaction(async (transaction) => {
+		return createSessionUnderHooks(
+			services.pluginRuntime.hooks,
+			{ userId, factors: OAUTH_FACTORS },
+			() => linkInOneTransaction(userId, input),
+		);
+	}
+
+	async function linkInOneTransaction(
+		userId: string,
+		input: {
+			readonly linked: LinkedSession;
+			readonly facts: IdentityFacts;
+			readonly observed: ObservedRequest;
+		},
+	): Promise<IdentityLinkWritten> {
+		return driver.transaction(async (transaction) => {
 			//identity and session are both written below, so the account row is locked first
 			await lockAccountRow(transaction, schema, userId);
 			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
@@ -425,14 +461,8 @@ export function createOAuthService(input: {
 					observed: input.observed,
 				})
 				.catch(refuseAFlowWhoseSessionIsGone);
-			return { identity, issued };
+			return { identity, token: issued.token, session: issued.session };
 		});
-		await services.pluginRuntime.hooks.afterSessionCreate({
-			userId,
-			factors: written.issued.session.factors,
-			sessionId: written.issued.session.id,
-		});
-		return written;
 	}
 
 	async function verifierOf(flow: {
@@ -493,12 +523,7 @@ export function createOAuthService(input: {
 
 			const linked = linkedSessionOf(flow);
 			if (linked === null) {
-				await services.pluginRuntime.hooks.beforeSignIn({
-					method: "oauth",
-					userId: null,
-					ipAddress: arrival.observed.ipAddress,
-					userAgent: arrival.observed.userAgent,
-				});
+				await askBeforeSignIn(services.pluginRuntime.hooks, "oauth", arrival.observed);
 			}
 
 			const tokens = await exchangeAuthorizationCode({
@@ -515,7 +540,7 @@ export function createOAuthService(input: {
 
 			//whether a flow links is the flow row's statement and not the callback's to make
 			if (linked !== null) {
-				const { identity, issued } = await linkIdentityAndReissue({
+				const { identity, token, session } = await linkIdentityAndReissue({
 					linked,
 					account,
 					facts,
@@ -524,8 +549,8 @@ export function createOAuthService(input: {
 				return {
 					status: "identity_linked",
 					identity,
-					sessionToken: issued.token,
-					session: issued.session,
+					sessionToken: token,
+					session,
 					redirectToPath,
 				};
 			}
@@ -533,13 +558,10 @@ export function createOAuthService(input: {
 			const resolved = await accountForSignIn(provider, account, facts);
 			const result = await signInOrAskForTheSecondFactor(resolved.userId, arrival);
 			if (result.status === "signed_in") {
-				await services.pluginRuntime.hooks.afterSignIn({
+				await tellAfterSignIn(services.pluginRuntime.hooks, {
 					method: "oauth",
-					userId: resolved.userId,
-					ipAddress: arrival.observed.ipAddress,
-					userAgent: arrival.observed.userAgent,
-					sessionId: result.session.id,
-					factors: result.session.factors,
+					observed: arrival.observed,
+					session: result.session,
 				});
 			}
 			return { ...result, redirectToPath };

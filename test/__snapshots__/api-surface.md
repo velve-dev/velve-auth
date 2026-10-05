@@ -505,6 +505,7 @@ interface SessionNamespace {
   resolve(input: {
     sessionToken: string;
   } & ServerCallFields): Promise<ResolvedSessionView | null>;
+  resolveFromHeaders(headers: Headers): Promise<ResolvedSessionView | null>;
   list(input: ServerCallFields): Promise<Session[]>;
   revoke(input: {
     targetSessionId: string;
@@ -520,17 +521,15 @@ interface SessionNamespace {
 /** the intermediate state names the factors still open and never any user data */
 interface PendingNamespace {
   resolve(token: PendingToken): Promise<PendingAuthentication | null>;
+  resolveFromHeaders(headers: Headers): Promise<PendingAuthentication | null>;
   cancel(input: {
     pendingToken: PendingToken;
-  }): Promise<void>;
+  } & ServerCallFields): Promise<void>;
 }
-/** what the application calls in its own process after its own authorization decision */
-interface UserNamespace {
+/** the methods of the user namespace that every identity mode carries */
+interface UserNamespaceInEveryMode {
   findById(input: {
     userId: string;
-  }): Promise<User | null>;
-  findByEmail(input: {
-    email: string;
   }): Promise<User | null>;
   disable(input: {
     reason: string;
@@ -543,6 +542,25 @@ interface UserNamespace {
     userId: string;
   }): Promise<void>;
 }
+/** what the application calls in its own process after its own authorization decision */
+interface UserNamespace extends UserNamespaceInEveryMode {
+  findByEmail(input: {
+    email: string;
+  }): Promise<User | null>;
+}
+/** the lookup by name, offered in the two modes that have a username */
+interface UserNamespaceWithUsernames extends UserNamespace {
+  findByUsername(input: {
+    username: string;
+  }): Promise<User | null>;
+}
+/** mode `username` finds an account by name and has no lookup by address */
+interface UserNamespaceInUsernameMode extends UserNamespaceInEveryMode {
+  findByUsername(input: {
+    username: string;
+  }): Promise<User | null>;
+}
+type UserNamespaceOf<M extends IdentityMode> = M extends "email" ? UserNamespace : M extends "username" ? UserNamespaceInUsernameMode : UserNamespaceWithUsernames;
 interface UsernameNamespace {
   isAvailable(input: {
     username: string;
@@ -574,7 +592,7 @@ type VelveAuth<M extends IdentityMode> = AuthInternals & SeamSurface<M> & {
   signOut(input: ServerCallFields): Promise<void>;
   readonly pending: PendingNamespace;
   readonly session: SessionNamespace;
-  readonly user: UserNamespace;
+  readonly user: UserNamespaceOf<M>;
 } & (ModeHasUsername<M> extends true ? {
   readonly username: UsernameNamespace;
 } : Record<never, never>);
@@ -2808,12 +2826,6 @@ export {
 	toWebHandler,
 };
 
-## import.d.mts
-
-export {
-
-};
-
 ## index.d.mts
 
 import { EntityId, IdentityId, ProviderId, SessionId, UserId, WebAuthnCredentialId, toEntityId } from "./core/db/entity-id.mjs";
@@ -2851,7 +2863,7 @@ import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, crea
 
 //#region src/index.d.ts
 declare function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M>;
-declare const VELVE_AUTH_VERSION = "1.2.0";
+declare const VELVE_AUTH_VERSION = "2.0.0";
 //#endregion
 export {
 	type Actor,
@@ -2977,12 +2989,6 @@ export {
 	toEntityId,
 };
 
-## neon.d.mts
-
-export {
-
-};
-
 ## pg.d.mts
 
 import { Driver } from "./core/db/driver.mjs";
@@ -3011,12 +3017,6 @@ export {
 	NodePostgresQueryConfig,
 	NodePostgresResult,
 	createNodePostgresDriver,
-};
-
-## postgres-js.d.mts
-
-export {
-
 };
 
 ## schema.d.mts

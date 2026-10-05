@@ -5,11 +5,13 @@ import { normaliseEmail } from "../identity/normalise.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
-	accountOfRedemption,
+	A_DISABLED_ACCOUNT,
+	accountOrDisabledOfRedemption,
 	type FlowEnvironment,
 	mailerOf,
 	readAccountOfSession,
 	readUserOrRefuse,
+	refuseADisabledAccount,
 	sessionIdOfCaller,
 } from "./environment.js";
 import type { ChangedUser } from "./results.js";
@@ -64,7 +66,11 @@ export async function redeemVerification(
 			token: input.token,
 			purpose: "email_verify",
 		});
-		const account = await accountOfRedemption(environment, transaction, redeemed);
+		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
+		//a token presented for a disabled account stays spent once it is enabled again (E-2880)
+		if (account === A_DISABLED_ACCOUNT) {
+			return account;
+		}
 		//the confirmation link is one of the two ways an address is first confirmed (S-LINK-4)
 		await confirmAddress({
 			transaction,
@@ -76,6 +82,9 @@ export async function redeemVerification(
 		});
 		return account.user.id;
 	});
+	if (userId === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
+	}
 
 	return { user: await readUserOrRefuse(environment, driver, userId) };
 }
@@ -128,7 +137,11 @@ export async function redeemChange(
 			token: input.token,
 			purpose: "email_change",
 		});
-		const account = await accountOfRedemption(environment, transaction, redeemed);
+		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
+		//a token presented for a disabled account stays spent once it is enabled again (E-2880)
+		if (account === A_DISABLED_ACCOUNT) {
+			return account;
+		}
 		//redeeming proves the new address and a collision must leave both changes undone
 		await confirmAddress({
 			transaction,
@@ -140,6 +153,9 @@ export async function redeemChange(
 		});
 		return account.user.id;
 	});
+	if (userId === A_DISABLED_ACCOUNT) {
+		refuseADisabledAccount();
+	}
 
 	return { user: await readUserOrRefuse(environment, driver, userId) };
 }

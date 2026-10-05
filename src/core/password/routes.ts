@@ -14,6 +14,7 @@ import { object, string } from "../http/validators.js";
 import type { IdentityConfiguration } from "../identity/configuration.js";
 import { comparisonFormOf } from "../identity/fold.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
+import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import type { SessionResolution } from "../session/service.js";
 import { createPasswordEnvironmentReader, type PasswordEnvironmentReader } from "./environment.js";
 import { acceptSubmittedPassword } from "./policy.js";
@@ -114,16 +115,21 @@ async function signedIn(
 	}
 
 	await services.pending.consume(begun.token);
-	const issued = await services.sessions.issueReplacingPresented({
-		presentedToken: context.sessionToken,
-		userId,
-		factors: ["password"],
-		observed: observedIn(context),
-	});
+	const observed = observedIn(context);
+	const hooks = services.pluginRuntime.hooks;
+	const issued = await createSessionUnderHooks(hooks, { userId, factors: ["password"] }, () =>
+		services.sessions.issueReplacingPresented({
+			presentedToken: context.sessionToken,
+			userId,
+			factors: ["password"],
+			observed,
+		}),
+	);
 	const user = await services.users.findUserById(userId);
 	if (user === null) {
 		throw new ConcealedError("user_not_found");
 	}
+	await tellAfterSignIn(hooks, { method: "password", observed, session: issued.session });
 	context.cookies.setSession(issued.token);
 	return { status: "signed_in", sessionToken: issued.token, session: issued.session, user };
 }
@@ -146,6 +152,7 @@ export function passwordRoutes(services: RouteServices) {
 			const identifier = lookupIn(input);
 			//the rate limit token is spent first so even the cheapest attempt costs something (E-1196)
 			await context.enforceAccountRateLimit(comparisonFormOf(identifier));
+			await askBeforeSignIn(services.pluginRuntime.hooks, "password", observedIn(context));
 
 			//an unusable password resolves no account and runs no KDF either way (S-DOS-2)
 			if (acceptSubmittedPassword(input.password, services.password) === null) {

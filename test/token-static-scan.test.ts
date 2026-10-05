@@ -25,7 +25,7 @@ const repositoryPath = `${coreDirectory}/db/repositories/token.ts`;
 /** Every scan in this file reads statements, markers and raised errors. A comment carries none of
  * those, and reading whole file text let one comment stand in for the consume statement and redden
  * three cases about S-REPLAY-2, S-TOKEN-4 and S-RACE-2 at once (E-1653). Markers survive: the
- * seventeen of them live inside statements, which this keeps verbatim. */
+ * sixteen of them live inside statements, which this keeps verbatim. */
 function sourceTextOf(path: string): string {
 	return withoutComments(readFileSync(path, "utf8"));
 }
@@ -176,16 +176,17 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of seventeen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of sixteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
 		// Five more since wave 5, from two features: the flow row is reached by its state hash and
 		// the identity row by the pair that identifies it (E-565), and a first confirmation is
 		// reached by the account it is about, which is the owned row itself (E-607). No owner
-		// predicate could narrow any of them. The seventeenth is `updateUsername`, on the same
+		// predicate could narrow any of them. Another is `updateUsername`, on the same
 		// rule the two address writes beside it carry: `velve.user` is the owned row and `id` is
-		// its owner column, so `WHERE id = $1` already is the ownership predicate (E-1246).
+		// its owner column, so `WHERE id = $1` already is the ownership predicate (E-1246). A
+		// plugin's revocation lost its marker when it began to bind the owner it read (E-2870).
 		const perFile = sources
 			.map((source) => ({
 				path: source.path,
@@ -196,7 +197,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 			.join("\n");
 		const declaring = statements.filter((statement) => /no owner predicate/.test(statement));
 
-		expect(markers, perFile).toHaveLength(17);
+		expect(markers, perFile).toHaveLength(16);
 		expect(
 			carrying.map((source) => source.path),
 			perFile,

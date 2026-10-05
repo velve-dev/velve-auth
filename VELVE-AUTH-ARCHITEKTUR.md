@@ -39,7 +39,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 | Migration | fünf Anleitungen, drei davon mit bcrypt-Umstellung | Kernfunktion, fünf Quellen, Trockenlauf verpflichtend |
 | Laufzeit | scrypt über Export-Bedingung | reines TypeScript, austauschbare Rechenmaschine |
 
-**Der Umfang.** Von 618 Funktionen werden 111 übernommen, 157 anders gelöst, **322 weggelassen** und 28 übertroffen. Die Weglassungen sind keine Sparmaßnahme: 133 entfallen auf Autorisierung und die Rolle als Identitätsanbieter — ein eigenes Produkt —, 32 auf Sitzungsvarianten, die dem Widerrufsversprechen widersprechen, 28 auf Datenbankabstraktion, die mit der Festlegung auf PostgreSQL entfällt. **36 Fähigkeiten** haben in Better Auth kein Gegenstück.
+**Der Umfang.** Von 618 Funktionen werden 110 übernommen, 157 anders gelöst, **323 weggelassen** und 28 übertroffen. Die Weglassungen sind keine Sparmaßnahme: 133 entfallen auf Autorisierung und die Rolle als Identitätsanbieter — ein eigenes Produkt —, 32 auf Sitzungsvarianten, die dem Widerrufsversprechen widersprechen, 28 auf Datenbankabstraktion, die mit der Festlegung auf PostgreSQL entfällt. **36 Fähigkeiten** haben in Better Auth kein Gegenstück.
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
@@ -91,7 +91,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | A7 Passwort-Hashing (scrypt) | scrypt N=16384, r=16, p=1, dkLen=64 als einziges Verfahren (`crypto/password.ts:8-23` re-exportiert nur; Parameter und Format belegt in `crypto/password.test.ts:68-80` und `@better-auth/utils@0.5.0 dist/password.node.mjs:3-30`) | Übertreffen | Argon2id (m=19456, t=2, p=1) ist Standard; scrypt bleibt als Prüfverfahren erhalten. Es gibt nicht ein Verfahren, sondern eine Weiche über sechs Präfixfamilien (Abschnitt 3.3). |
 | A8 Runtime-Auswahl der scrypt-Implementierung | `node:crypto` auf Node/Bun/Deno, `@noble/hashes` sonst (`crypto/password.ts:1-6`) | Anders lösen | `@noble/hashes` ist der Pflichtpfad, damit das Verhalten überall identisch ist. `hash-wasm` ist eine optionale Peer-Abhängigkeit als Beschleuniger mit bitgleicher Ausgabe; ein Wechsel erfordert keine Migration (Abschnitt 2.1). |
 | A9 Hash-Speicherformat `salt:hex` | 161-Zeichen-String ohne Algorithmus-, Parameter- oder Versionskennung (`crypto/password.test.ts:11`) | Übertreffen | Kanonischer PHC-String mit Verfahren und Parametern, in der Spalte AES-256-GCM-verschlüsselt unter dem Zweck `password-enc` (L-2). Eine Parameteränderung entwertet keine Bestände mehr, sondern erzeugt nur `needsRehash`. |
-| A10 Austauschbares Hashing | `password.hash` / `.verify` ersetzen die Vorgabe vollständig (`create-context.ts:368-376`) | Weglassen | Niemand übernimmt das, und das ist richtig: ein austauschbarer Verifier hebelt Verfahrensweiche, Rehash-Politik, Dummy-Hash-Zeitverhalten und den Semaphor über die KDF-Aufrufe zugleich aus. Ein Plugin darf den Passwort-Verifier nicht ersetzen (Abschnitt 3.11). Fremde Bestände kommen über `@velve/auth/import` in PHC-Form herein. |
+| A10 Austauschbares Hashing | `password.hash` / `.verify` ersetzen die Vorgabe vollständig (`create-context.ts:368-376`) | Weglassen | Niemand übernimmt das, und das ist richtig: ein austauschbarer Verifier hebelt Verfahrensweiche, Rehash-Politik, Dummy-Hash-Zeitverhalten und den Semaphor über die KDF-Aufrufe zugleich aus. Ein Plugin darf den Passwort-Verifier nicht ersetzen (Abschnitt 3.11). Fremde Bestände kommen über das Migrationsmodul (Abschnitt 4) in PHC-Form herein. |
 | A11 Anmeldung mit Kennwort | `POST /sign-in/email` (`api/routes/sign-in.ts:406-620`) | Übernehmen | `auth.signIn.password()`; in der Konfiguration `username_email` akzeptiert dieselbe Route beide Anmeldenamen. |
 | A12 Form-CSRF auf Credential-Routen | Fetch-Metadata-Schutz auf `/sign-in/email` und `/sign-up/email` (`api/middlewares/origin-check.ts:303-375`) | Anders lösen | Eine einzige Origin-/Fetch-Metadata-Prüfung vor der Routendeklaration, nicht als Sonderfall für zwei Routen — und sie läuft auch bei direkten Serveraufrufen. Bei Better Auth sehen `middlewares`/`onRequest` den Pfad `auth.api.*` nicht (`api/to-auth-endpoints.ts:88-116`). |
 | A13 Dummy-Hash bei unbekanntem Nutzer | Rechnet trotzdem einen Hash (`sign-in.ts:536-556`) | Übernehmen | Dummy-PHC mit den **konfigurierten** Standardparametern, derselbe Codepfad, derselbe Semaphor (Abschnitt 3.3, Schritt 2). |
@@ -281,7 +281,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | D13 Backup-Code einlösen | `POST /two-factor/verify-backup-code`, Compare-and-Set (`backup-codes/index.ts:384-405`) | Übernehmen | Konsum per `DELETE … RETURNING` auf `(user_id, code_hmac)` — ein Index-Treffer statt eines Durchlaufs über alle Codes. |
 | D14 Backup-Codes anzeigen | `viewBackupCodes`, serverOnly — nur möglich, weil verschlüsselt gespeichert (`backup-codes/index.ts:552-590`) | Weglassen | Niemand, und das ist der Punkt: Codes liegen als `HMAC-SHA256(pepper, code)` vor und sind nicht wieder darstellbar. Wer sie verliert, erzeugt neue. |
 | D15 Backup-Code-Speicherstrategie | `encrypted` (Vorgabe), `plain` oder Custom (`backup-codes/index.ts:44-55`) | Übertreffen | Keine Strategie, sondern genau ein Format: HMAC mit Pepper. Better Auths Vorgabe ist umkehrbar, damit D14 funktioniert — eine Funktion erzwingt dort die schwächere Speicherform. |
-| D16 Zwischenzustand nach Kennwortprüfung | Session wird gelöscht, Verification-Record + signiertes `two_factor`-Cookie (`two-factor/index.ts:533-563`) | Übertreffen | Eigenes Artefakt `velve.pending_authentication` mit `factors_completed` und `attempts`, eigenes kurzlebiges Cookie `__Host-velve_pending` (5 min), und genau **vier** Routen akzeptieren es (TOTP, WebAuthn `start`/`finish`, Wiederherstellungscode); jede andere ignoriert es vollständig (Abschnitt 3.6 und 3.15, Abweichung 5). Der Zwischenzustand ist damit strukturell keine Sitzung und kann auch nicht versehentlich zu einer werden. |
+| D16 Zwischenzustand nach Kennwortprüfung | Session wird gelöscht, Verification-Record + signiertes `two_factor`-Cookie (`two-factor/index.ts:533-563`) | Übertreffen | Eigenes Artefakt `velve.pending_authentication` mit `factors_completed` und `attempts`, eigenes kurzlebiges Cookie `__Host-velve_pending` (5 min), und genau **vier** Routen akzeptieren es (TOTP, WebAuthn `start`/`finish`, Wiederherstellungscode); zwei weitere lesen es, ohne von ihm autorisiert zu werden (`GET /pending`, `POST /pending/cancel`), und jede andere ignoriert es vollständig (Abschnitt 3.6 und 3.15, Abweichung 5). Der Zwischenzustand ist damit strukturell keine Sitzung und kann auch nicht versehentlich zu einer werden. |
 | D17 `twoFactorRedirect`-Antwort | `{twoFactorRedirect:true, twoFactorMethods:[…]}` statt einer Session (`two-factor/index.ts:594-597`) | Übernehmen | Stabiler Fehlercode plus die Liste der für diesen Nutzer verfügbaren Faktoren. |
 | D18 Client-seitiger 2FA-Redirect | Fetch-Plugin fängt die Antwort ab und navigiert (`two-factor/client.ts:57-83`) | Weglassen | Die Anwendung übernimmt. Der Client navigiert nicht selbst; ein Fetch-Plugin, das Antworten abfängt und Seitenwechsel auslöst, ist Kontrollfluss an der Anwendung vorbei. |
 | D19 Challenge-Lebensdauer | `twoFactorCookieMaxAge`, Vorgabe 10 min (`two-factor/constant.ts`) | Anders lösen | Feste 5 Minuten am `pending_authentication`-Artefakt. Die Frist steht in der Datenbankzeile, nicht in der Cookie-Lebensdauer — ein Cookie mit längerer Laufzeit kann so keinen abgelaufenen Zustand wiederbeleben. |
@@ -329,7 +329,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 |---|---|---|---|
 | E1 Kern-Usermodell | `id`, `name`, `email`, `emailVerified`, `image`, `createdAt`, `updatedAt` (`core/src/db/get-tables.ts:198-246`) | Anders lösen | `velve.user` führt `id`, `email`, `email_verified_at`, `username`, `username_key`, `disabled_at`, `imported_from`, `imported_at` und Zeitstempel — kein `name`, kein `image`. Profildaten sind ausdrücklich nicht Aufgabe der Bibliothek (Abschnitt 3.14). Statt eines Booleans steht der Zeitpunkt der Verifikation in der Zeile. |
 | E2 E-Mail als Pflichtfeld | `email` ist `NOT NULL UNIQUE` (`get-tables.ts:208-216`); Doku: „Better Auth currently requires an email address on every user record" (`docs/…/concepts/oauth.mdx:409`, Issue #9124) | Übertreffen | `email` ist nullable; welche Felder Pflicht sind, entscheidet die gewählte Identitätskonfiguration und wird als CHECK-Constraint in der Migration materialisiert (Abschnitt 3.4). Das ist die Voraussetzung dafür, überhaupt ohne erfundene Adressen auszukommen. |
-| E3 Platzhalter-E-Mail-Generator | `createPlaceholderEmail` → `<id>@<ns>.placeholder.invalid`, an neun Stellen in acht Modulen im Produktionscode aufgerufen (definiert in `core/src/utils/email.ts:24`) | Weglassen | Niemand, und das ist der Punkt. Meldet ein Anbieter keine E-Mail, bleibt `user.email` NULL (Abschnitt 3.10). Erfundene Adressen brechen jedes E-Mail-abhängige Verhalten — Bestätigung, Reset, Wechsel — und sind in der Datenbank nicht von echten zu unterscheiden. |
+| E3 Platzhalter-E-Mail-Generator | `createPlaceholderEmail` → `<id>@<ns>.placeholder.invalid`, an neun Stellen in acht Modulen im Produktionscode aufgerufen (definiert in `core/src/utils/email.ts:24`) | Weglassen | Niemand, und das ist der Punkt. Meldet ein Anbieter keine E-Mail, bleibt `user.email` NULL, wo die Konfiguration ein Konto ohne Adresse zulässt, und sonst entsteht kein Konto (Abschnitt 3.10). Erfundene Adressen brechen jedes E-Mail-abhängige Verhalten — Bestätigung, Reset, Wechsel — und sind in der Datenbank nicht von echten zu unterscheiden. |
 | E4 E-Mail-Normalisierung | `.toLowerCase()` verstreut über mehr als 30 Aufrufstellen (`internal-adapter.ts:241,279,1045,1096`) | Übertreffen | Trimmen, NFKC und `lower()` an genau einer Stelle, und die Datenbank prüft es per `CONSTRAINT user_email_normalized CHECK (email = lower(email))` nach. Eine vergessene Aufrufstelle kann keine zweite Schreibweise derselben Adresse anlegen. |
 | E5 `user.additionalFields` | Eigene User-Spalten mit `input`/`returned`/`transform` (`get-tables.ts:243`) | Weglassen | Die Anwendung übernimmt, in einer eigenen Tabelle mit `user_id`-Fremdschlüssel. Fremdfelder in der Nutzerzeile sind bei Better Auth per Vorgabe `input: true` und damit über generische Routen beschreibbar — im Code selbst als Problem markiert (`db/schema.ts:43-47`). |
 | E6 `session.additionalFields` | Analog für die Session-Tabelle (`get-tables.ts:191`) | Weglassen | Wie E5; Plugins bekommen eigene Tabellen mit Präfix, keine Spalten an Kerntabellen (Abschnitt 3.11). |
@@ -344,7 +344,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | E15 ID-Strategie: `"serial"` | `integer GENERATED BY DEFAULT AS IDENTITY`, im Typ trotzdem `string` (`get-migration.ts:921-922`) | Weglassen | Niemand. Fortlaufende IDs sind aufzählbar, und der Typbruch zwischen Spalte und Anwendungstyp ist eine Fehlerquelle ohne Gegenwert. |
 | E16 ID-Strategie: `false` | Datenbank erzeugt die ID (`get-id-field.ts:62-63`) | Übernehmen | Das ist genau das Verhalten von Velve Auth — nur nicht als eine von vier Optionen, sondern als das Verhalten. |
 | E17 Adapter-`customIdGenerator` | Adapter-eigener ID-Generator, nur von Mongo genutzt (`db/adapter/index.ts:287`) | Weglassen | Niemand. Die Option existiert, weil MongoDB `ObjectId` statt Strings erzeugt; in PostgreSQL erzeugt die Datenbank die `uuid` selbst (E12), also braucht kein Treiber einen eigenen Generator. |
-| E18 `forceAllowId` | Erlaubt ausnahmsweise das Mitgeben einer ID beim `create` (`db/adapter/factory.ts:884-906`) | Anders lösen | Nur `@velve/auth/import` darf IDs mitbringen, damit ein Bestand seine Fremdschlüssel behält; im normalen Betrieb existiert der Pfad nicht. Die Herkunft steht danach in `imported_from`/`imported_at`. |
+| E18 `forceAllowId` | Erlaubt ausnahmsweise das Mitgeben einer ID beim `create` (`db/adapter/factory.ts:884-906`) | Anders lösen | Nur das Migrationsmodul (Abschnitt 4) darf IDs mitbringen, damit ein Bestand seine Fremdschlüssel behält; im normalen Betrieb existiert der Pfad nicht. Die Herkunft steht danach in `imported_from`/`imported_at`. |
 | E19 Username als zusätzlicher Identifier | `user.username` (unique) + `user.displayUsername` per Plugin (`plugins/username/schema.ts:6-58`) | Übertreffen | Benutzername ist eine der drei Kern-Identitätskonfigurationen, nicht ein Plugin, das eine Spalte an die Nutzertabelle hängt. `username` hält die Anzeigeform, `username_key` die Vergleichsform, beide mit eigenem partiellem Unique-Index und CHECK-Paarungsregel (Abschnitt 3.2 und 3.4). |
 | E20 Anmeldung per Username | `POST /sign-in/username` mit Dummy-Hash-Zeitverhalten-Schutz (`plugins/username/index.ts:353-560`) | Übernehmen | Im Kern, über dieselbe Route wie die Kennwortanmeldung; Dummy-PHC und Semaphor sind dieselben wie bei E-Mail. |
 | E21 Username-Verfügbarkeit prüfen | `POST /is-username-available`, abschaltbar (`username/index.ts:569`) | Übernehmen | Wird angeboten, hart begrenzt und in der Dokumentation ausdrücklich als aufzählbar bezeichnet, statt sie als geschützt darzustellen (Abschnitt 3.4). |
@@ -363,7 +363,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 
 | Funktion | Better Auth | Velve Auth | Begründung |
 |---|---|---|---|
-| F1 Kysely-Adapter (PostgreSQL) | `pg.Pool`-Erkennung, Transaktionen an (`packages/kysely-adapter/src/dialect.ts:116`) | Anders lösen | Kein Kysely und keine Query-Abstraktion: drei schmale Treiber (`@velve/auth/pg`, `/postgres-js`, `/neon`) hinter einer Schnittstelle mit genau zwei Methoden (`query`, `transaction`), alles SQL von Hand für PostgreSQL geschrieben (Abschnitt 3.2). |
+| F1 Kysely-Adapter (PostgreSQL) | `pg.Pool`-Erkennung, Transaktionen an (`packages/kysely-adapter/src/dialect.ts:116`) | Anders lösen | Kein Kysely und keine Query-Abstraktion: ein schmaler Treiber (`@velve/auth/pg`) hinter einer Schnittstelle mit genau zwei Methoden (`query`, `transaction`), gegen die eine Anwendung jeden anderen Treiber selbst schreibt (E-3021), alles SQL von Hand für PostgreSQL geschrieben (Abschnitt 3.2). |
 | F2 Kysely-Adapter (MySQL) | `mysql2`-Erkennung (`dialect.ts:109`) | Weglassen | Niemand. Genau eine Datenbank: PostgreSQL ≥ 14 (Abschnitt 3.2). Partielle Indizes, `inet`, `text[]`, `jsonb`, `ON CONFLICT … RETURNING`, CHECK-Constraints und Trigger sind tragende Teile des Entwurfs — Eindeutigkeit, Konsum, Ratenbegrenzung und Fixierungsschutz stehen in der Datenbank, nicht im Anwendungscode. Ein zweites Zielsystem müsste jede dieser Zusicherungen entweder nachbauen oder auf den kleinsten gemeinsamen Nenner senken; Better Auths Adapter-API zeigt, was dann übrig bleibt (F23, F48, F54, F55). |
 | F3 Kysely-Adapter (better-sqlite3) | Erkennung über `aggregate` (`dialect.ts:103`) | Weglassen | Wie F2. SQLite kennt weder `inet`, `text[]`, `timestamptz` noch `gen_random_uuid()`; Fristenprädikate, IP-Normalisierung und ID-Erzeugung müssten in den Anwendungscode wandern. |
 | F4 Kysely-Adapter (Bun SQLite) | Erkennung über `fileControl` (`bun-sqlite-dialect.ts`) | Weglassen | Wie F2; dieselbe SQLite-Grenze wie F3, nur über die Bun-Laufzeit erreicht. |
@@ -566,7 +566,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H26 Custom Schemes | `myapp://`, `chrome-extension://`, `exp://**` per String-Zerlegung statt `new URL()` (`trusted-origins.ts:32-73`) | Anders lösen | Nicht-HTTP-Schemata werden als vollständige, exakte Origin eingetragen und als solche verglichen; keine eigene String-Zerlegung und kein `**`. Ein selbstgebauter URL-Parser neben dem eingebauten ist ein Parser-Differential (vgl. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect-URL-Validierung | Lehnt `//`, `\`, Steuerzeichen, `%2f` ab (`trusted-origins.ts:14-105`) | Anders lösen | Es werden gar keine vollständigen URLs entgegengenommen: `redirect_path` ist ein Pfad, serverseitig gehalten (Abschnitt 3.10). Was man nicht annimmt, muss man nicht validieren — fünf Advisories dieser Klasse (Nr. 1, 3, 4, 5, 25 im Sicherheitsbericht) hätten so nicht entstehen können. |
 | H28 `originCheckMiddleware` | Origin/Referer-Prüfung auf allen nicht-GET-Routen mit Cookie (`origin-check.ts:67-151`) | Übernehmen | Übernommen und verschärft: sie läuft auch bei direkten Serveraufrufen und ist nicht abschaltbar. |
-| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Übernehmen | Unverändert; notwendig für Redirect-Ketten und Sandbox-Frames. |
+| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Weglassen | Nicht übernommen: Ein `Origin: null` wird wie jede nicht erlaubte Origin mit `origin_not_allowed` abgelehnt, auch bei `Sec-Fetch-Site: same-origin`, und T-CSRF-3 führt `null` als abzulehnende Variante. Einen fehlenden `Origin`-Kopf lässt die Prüfung nur bei den sieben lesenden `GET`-Routen zu, wenn die Anfrage über den HTTP-Handler kommt und `Sec-Fetch-Site: same-origin` trägt (S-CSRF-1). |
 | H30 Callback-URL-Validierung | `callbackURL`, `redirectTo`, `errorCallbackURL`, `newUserCallbackURL` gegen `trustedOrigins` (`origin-check.ts:83-150`) | Anders lösen | Vier Parameter mit URL-Semantik werden zu einem Pfadparameter (H27). Jeder zusätzliche URL-Parameter ist eine weitere Stelle, an der die Validierung vergessen werden kann — CVE-2024-56734 war genau das. |
 | H31 `advanced.disableCSRFCheck` | Schaltet die CSRF-Prüfung ab (`create-context.ts:397`) | Weglassen | Niemand. Die Prüfung ist Teil der festen Kette vor jeder Route (Abschnitt 3.11) und kennt keinen Schalter. Wer sie abschalten will, hat in der Praxis einen fehlenden Origin in der Liste — das wird dort behoben, nicht an der Prüfung; und ein Schalter, der in der Entwicklung umgelegt wird, bleibt in der Produktion umgelegt. |
 | H32 `advanced.disableOriginCheck` | Schaltet die URL-Validierung ab, und aus Kompatibilität auch CSRF (`create-context.ts:398-403`) | Weglassen | Niemand. Eine Option, die zwei Prüfungen zugleich abschaltet, obwohl ihr Name nur eine nennt, ist der Grund, warum es sie nicht geben darf. |
@@ -594,9 +594,9 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H54 22 mitgelieferte Sprachen | ar, bn, de, en, es, fa, fr, hi, id, it, ja, ko, nl, pl, pt, ru, sv, th, tr, uk, vi, zh (`packages/i18n/src/locales/`) | Weglassen | Die Anwendung übernimmt. Übersetzungen, die eine Bibliothek mitliefert, altern mit ihrer Version, nicht mit dem Produkt. |
 | H55 Locale-Erkennung | `header`, `cookie`, `session`, `callback` (`packages/i18n/src/index.ts:118-148`) | Weglassen | Die Anwendung übernimmt; sie kennt ihre Sprachwahl ohnehin. |
 | H56 Test-Helfer im Kontext | Login-, Cookie- und Factory-Helfer als Plugin (`plugins/test-utils/`) | Anders lösen | `@velve/auth/testing` als eigener Subpfad-Export mit Uhrkontrolle und deterministischem Zufall, kein Plugin, das sich in den Produktionskontext hängen kann. |
-| H57 CLI-Befehle (11) | `init`, `generate`, `migrate`, `secret`, `create-admin`, `info`, `upgrade`, `ai`, `login`, `logout`, `mcp` (`packages/cli/src/index.ts:24-36`) | Anders lösen | Kein CLI. Was gebraucht wird, sind Programmierschnittstellen: `@velve/auth/schema` (Migrationsläufer, Statusabfrage) und `@velve/auth/import`. Von den elf Befehlen entfallen `create-admin` mangels Rollenmodell, `login`/`logout`/`mcp`/`ai` binden an den kostenpflichtigen Dienst, `generate`/`migrate` werden zur Bibliotheksfunktion, `secret` ist ein Einzeiler mit `crypto.getRandomValues`. |
+| H57 CLI-Befehle (11) | `init`, `generate`, `migrate`, `secret`, `create-admin`, `info`, `upgrade`, `ai`, `login`, `logout`, `mcp` (`packages/cli/src/index.ts:24-36`) | Anders lösen | Kein CLI. Was gebraucht wird, sind Programmierschnittstellen: `@velve/auth/schema` (Migrationsläufer, Statusabfrage) und das Migrationsmodul (Abschnitt 4). Von den elf Befehlen entfallen `create-admin` mangels Rollenmodell, `login`/`logout`/`mcp`/`ai` binden an den kostenpflichtigen Dienst, `generate`/`migrate` werden zur Bibliotheksfunktion, `secret` ist ein Einzeiler mit `crypto.getRandomValues`. |
 
-**H: Übernehmen 17 · Anders lösen 15 · Weglassen 20 · Übertreffen 5**
+**H: Übernehmen 16 · Anders lösen 15 · Weglassen 21 · Übertreffen 5**
 
 ---
 
@@ -890,7 +890,7 @@ Fehlen belegt ist — Quelltext, Advisory oder Issue.
 | `__Host-`-Cookie-Präfix | Die Konstante existiert, wird aber nie gesetzt (`cookies/cookie-utils.ts:34-35`; `createCookieGetter` setzt nur `__Secure-`, Inventur N3-22) | `__Host-velve_session` (standardmäßig, oder so, wie `session.cookieName` ihn konfiguriert) und `__Host-velve_pending`: `Secure` erzwungen, `Domain` verboten, `Path=/`. Cookie-Tossing aus einer Subdomain ist strukturell ausgeschlossen. |
 | Kennwort-Reset widerruft Sitzungen per Vorgabe | `revokeSessionsOnPasswordReset` ist per Vorgabe **aus** (`api/routes/password.ts:328-330`); dasselbe bei `/change-password` (Inventur N3-20) | Reset und Änderung widerrufen alle anderen Sitzungen. Kein Schalter (Abschnitt 3.5). |
 | Zweite Frist (absolutes Ablaufdatum) | Es gibt genau eine `expiresAt`, die per Sliding Window unbegrenzt verlängert wird (`create-context.ts:313`, `session.ts:324-412`) | `idle_expires_at` (verlängerbar, höchstens stündlich geschrieben) und `absolute_expires_at` (nie verlängert). Beide stehen im Prädikat der Auflösung. |
-| Zwischenzustand für 2FA als eigenes Artefakt | Der Zustand ist ein generischer Verification-Record plus signiertes Cookie im Plugin (`two-factor/index.ts:533-563`); der Cookie-Cache konnte ihn zur Sitzung machen (GHSA-xg6x-h9c9-2m83, CVSS 9.1) | `velve.pending_authentication` mit `factors_completed` und `attempts`, eigenes Cookie mit 5 Minuten Laufzeit, akzeptiert von genau vier Routen; jede andere ignoriert es vollständig (Abschnitt 3.6). |
+| Zwischenzustand für 2FA als eigenes Artefakt | Der Zustand ist ein generischer Verification-Record plus signiertes Cookie im Plugin (`two-factor/index.ts:533-563`); der Cookie-Cache konnte ihn zur Sitzung machen (GHSA-xg6x-h9c9-2m83, CVSS 9.1) | `velve.pending_authentication` mit `factors_completed` und `attempts`, eigenes Cookie mit 5 Minuten Laufzeit, akzeptiert von genau vier Routen und ohne Befugnis gelesen von zwei weiteren; jede andere ignoriert es vollständig (Abschnitt 3.6). |
 | `factors` an der Sitzung | Es gibt kein Feld, das festhält, womit authentifiziert wurde; der eigene OIDC-Provider gibt nur `acr_values_supported: ["0"]` aus (`oauth-provider/src/metadata.ts:181`, Inventur N3-34) | `session.factors text[]` mit `password`, `totp`, `webauthn`, `recovery`, `oauth`. Keine Berechtigung, sondern Teil der Antwort auf „wer ist angemeldet, und wie sicher". |
 | Passkey-Unterscheidung gerätegebunden / synchronisiert | `deviceType`/`backedUp` werden zwar gespeichert, aber `requireUserVerification: false` an beiden Verifikationsstellen macht Passkeys dort ohnehin nicht zum Faktor (`packages/passkey/src/routes.ts:658,909`, Inventur N3-33) | `backup_eligible` und `backup_state` werden getrennt aus den Authenticator-Daten gespeichert und bei jeder Anmeldung aktualisiert; `userVerification: "required"`. Die Anwendung kann darauf eine Richtlinie stützen, die Bibliothek erzwingt keine. |
 | Passkey als eigener Anmeldeweg mit `factors` | Ein Passkey-Login umgeht erzwungene 2FA, weil der 2FA-`after`-Hook nur `/sign-in/email\|username\|phone-number` matched (`two-factor/index.ts:434-439`, Inventur N3-32) | Passkey-Anmeldung ergibt `factors = {webauthn}` ohne Kennwort; als zweiter Faktor ergibt sie `{password, webauthn}`. Beides im Kern, deshalb gibt es keinen Pfad, der an einem Hook vorbeiläuft. |
@@ -929,15 +929,17 @@ Keine Fähigkeit, aber eine Haltung, die zu den 36 Zeilen gehört: Die Grenzen s
 | E | Identität und Benutzermodell | 27 | 5 | 5 | 14 | 3 |
 | F | Datenbank | 58 | 7 | 20 | 28 | 3 |
 | G | Erweiterbarkeit | 41 | 8 | 10 | 19 | 4 |
-| H | Betrieb und Querschnitt | 57 | 17 | 15 | 20 | 5 |
+| H | Betrieb und Querschnitt | 57 | 16 | 15 | 21 | 5 |
 | I | Autorisierung und Organisationen | 71 | 0 | 0 | 71 | 0 |
 | J | Als Identitätsanbieter auftreten | 62 | 0 | 0 | 62 | 0 |
 | K | Framework-Integrationen | 26 | 0 | 24 | 2 | 0 |
 | L | Kommerzielle Zusätze | 21 | 0 | 0 | 21 | 0 |
 | M | Bezahl-/Abo-Plugins | 9 | 0 | 0 | 9 | 0 |
-| | **Summe** | **618** | **111** | **157** | **322** | **28** |
+| | **Summe** | **618** | **110** | **157** | **323** | **28** |
 
-Anteile: Übernehmen 18,0 % · Anders lösen 25,4 % · Weglassen 52,1 % · Übertreffen 4,5 %.
+Anteile: Übernehmen 17,8 % · Anders lösen 25,4 % · Weglassen 52,3 % · Übertreffen 4,5 %.
+
+E-36 nennt mit 322 und 268 den Stand vor der Umstufung von H29 (E-2931).
 
 **Getrennte Zählung — Plugin-Entscheidungen (G.2):** 38 Pakete (26 im Hauptpaket, 12 extern) —
 Übernehmen 2, Anders lösen 7, Weglassen 29. Diese Zeilen sind Entscheidungen über Pakete; die
@@ -950,8 +952,8 @@ gar nicht erst betritt (SAML-IdP, LDAP, PAR/CIBA, mTLS, SCIM-Client, Multi-Colum
 #### Was die Verteilung über das Produkt sagt
 
 Etwas mehr als die Hälfte der Funktionen entfällt, und der Löwenanteil davon liegt in drei Blöcken: Autorisierung und Organisationen (71),
-Identitätsanbieter-Rolle (62) und kommerzielle Zusätze plus Bezahlung (30). Das sind 163 der 322 weggelassenen Funktionen — mehr als die Hälfte — und
-sie fallen nicht aus Zeitgründen weg, sondern weil sie andere Fragen beantworten als „wer ist angemeldet". Zieht man sie ab, bleiben 159 Weglassungen
+Identitätsanbieter-Rolle (62) und kommerzielle Zusätze plus Bezahlung (30). Das sind 163 der 323 weggelassenen Funktionen — mehr als die Hälfte — und
+sie fallen nicht aus Zeitgründen weg, sondern weil sie andere Fragen beantworten als „wer ist angemeldet". Zieht man sie ab, bleiben 160 Weglassungen
 über die eigentlichen Authentifizierungsabschnitte hinweg, und die verteilen sich fast vollständig auf drei Muster: abschaltbare Sicherheitsprüfungen
 (`disableCSRFCheck`, `skipStateCookieCheck`, `disableKeyHashing`), zweite Wahrheiten über den Zustand (Cookie-Cache, Secondary Storage, stateless
 Sessions) und Konfigurationsflächen, die nur existieren, weil eine Entwurfsentscheidung offengelassen wurde (Namensmapping, vier ID-Strategien, drei
@@ -963,7 +965,7 @@ Aussage dieser Auswertung: Velve Auth streitet Better Auth kaum eine Fähigkeit 
 Änderung darin, eine Option durch ein Verhalten zu ersetzen — `revokeSessionsOnPasswordReset` wird zur Regel, `requireLocalEmailVerified` zur
 Bedingung, `pathMethods` zur Deklaration, `encryptOAuthTokens` zur Voreinstellung „gar nicht speichern".
 
-Die 111 übernommenen Funktionen sind der Beleg dafür, dass Better Auth den Zuschnitt der Kernoperationen weitgehend richtig getroffen hat:
+Die 110 übernommenen Funktionen sind der Beleg dafür, dass Better Auth den Zuschnitt der Kernoperationen weitgehend richtig getroffen hat:
 Registrierung, Anmeldung, Verifikation, Reset, E-Mail-Wechsel, Kontolöschung, Sitzungsverwaltung, OAuth-Mechanik und die atomaren Konsum-Primitive
 werden unverändert übernommen. Die 28 Übertreffungen sind dagegen auffällig ungleich verteilt: sie liegen fast alle dort, wo Better Auth ein Advisory
 hatte — Kennwortpfad (A7, A9, A34), Sitzungsspeicherung (B2), Verknüpfungsregel (C86), Zweitfaktor-Zwischenzustand (D16, D33), Cookie-Präfix (H19),
@@ -1091,12 +1093,14 @@ Cross-Paket-Versionsdrift.
 @velve/auth/http         toWebHandler(): (Request) => Promise<Response>
 @velve/auth/client       typisierter Client, aus derselben Routendeklaration abgeleitet
 @velve/auth/pg           Treiber für node-postgres
-@velve/auth/postgres-js  Treiber für postgres.js
-@velve/auth/neon         Treiber für @neondatabase/serverless
-@velve/auth/import       Migrationsmodul (schwere Abhängigkeiten nur hier)
 @velve/auth/schema       generiertes SQL, Migrationsläufer
 @velve/auth/testing      Prüf-Helfer (Uhr-Kontrolle, deterministischer Zufall)
 ```
+
+Einen Treiber für einen anderen Client als node-postgres schreibt die Anwendung selbst gegen
+die Treiberschnittstelle aus 3.2. Das Migrationsmodul aus Abschnitt 4 hat keinen Subpfad; es
+kommt als eigener Subpfad hinzu, wenn es entsteht. Version 2.0.0 hat die drei Subpfade
+`@velve/auth/postgres-js`, `/neon` und `/import` entfernt, die nichts exportierten (E-3021).
 
 Interner Modulschnitt:
 
@@ -1465,7 +1469,9 @@ Der Moment zwischen korrektem Kennwort und zweitem Faktor ist **keine Sitzung**.
 Er ist eine Zeile in `velve.pending_authentication`, das Token liegt in einem
 eigenen kurzlebigen Cookie (`__Host-velve_pending`, 5 Minuten), und genau **vier**
 Routen akzeptieren es: `POST /factor/totp/verify`, `/factor/webauthn/authenticate/start`,
-`/factor/webauthn/authenticate/finish` und `POST /factor/recovery/verify`. Jede
+`/factor/webauthn/authenticate/finish` und `POST /factor/recovery/verify`. Zwei
+weitere lesen es, ohne von ihm autorisiert zu werden: `GET /pending` nennt die noch offenen
+Faktoren, und `POST /pending/cancel` löscht die Zeile, auf die es zeigt. Jede
 andere Route ignoriert es vollständig. Ein Zwischenzustand erlaubt höchstens
 fünf Versuche; danach wird die Zeile gelöscht, und der Vorgang beginnt beim
 Kennwort von vorn (L-8).
@@ -1596,7 +1602,8 @@ Anbieter ersetzt die erste, und die zweite ist über
 ist dasselbe Muster auf dem Magic-Link-Weg; dort schließt L-12 die Lücke.
 
 **Kein Konto ohne E-Mail-Zwang:** Meldet der Anbieter keine E-Mail, bleibt
-`user.email` in den Konfigurationen `username`/`username_email` NULL. Es werden
+`user.email` in der Konfiguration `username` NULL; in `username_email` verlangt der
+CHECK-Constraint aus 3.2 eine Adresse, und es entsteht kein Konto. Es werden
 **keine Platzhalter-Adressen erfunden** — Better Auth tut das mit
 `createPlaceholderEmail` (`packages/core/src/utils/email.ts:24`) an neun
 Stellen in acht Modulen des Produktionscodes und bricht damit jedes
@@ -1779,17 +1786,16 @@ type VelveAuthConfig<M extends IdentityMode> = BaseConfig<M> & RecoveryCodesRequ
 ```
 
 Felder mit Vorgabe sind in der Konfiguration optional; die Typen in A.4 bis A.8 zeigen die
-aufgelöste Form. `Driver` (3.2) kommt aus einer der drei Treiberfabriken:
+aufgelöste Form. `Driver` (3.2) kommt aus der Treiberfabrik von `@velve/auth/pg` oder aus
+einem Treiber, den die Anwendung gegen die Schnittstelle aus 3.2 selbst schreibt (3.1):
 
 ```ts
 declare function pg(pool: import("pg").Pool): Driver                       // @velve/auth/pg
-declare function postgresJs(sql: import("postgres").Sql): Driver           // @velve/auth/postgres-js
-declare function neon(pool: import("@neondatabase/serverless").Pool): Driver  // @velve/auth/neon
 ```
 
 | Feld von `BaseConfig<M>` | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `database` | `Driver` | — | Treiber aus `@velve/auth/pg`, `/postgres-js`, `/neon`; einzige Stelle, an der eine Verbindung hereinkommt. |
+| `database` | `Driver` | — | Treiber aus `@velve/auth/pg` oder ein eigener nach 3.2; einzige Stelle, an der eine Verbindung hereinkommt. |
 | `identity` | `IdentityConfig<M>` | — | Welche Anmeldenamen es gibt; bestimmt CHECK-Constraint und Instanztyp. |
 | `keys` | `KeyProvider` | — | Wurzelschlüssel und Ring; alle sechs Zweckschlüssel (3.8) entstehen daraus per HKDF-SHA256. |
 | `origins` | `readonly string[]` | — | Erlaubte Ursprünge; eine leere Liste ist ein Startfehler, kein stiller Freibrief. |
@@ -2076,6 +2082,14 @@ einer fremden Sitzung liegt dem Aufrufer nicht vor und soll ihm nicht vorliegen;
 ist auch bei fehlender oder fremder Zeile `void`, sonst wäre die Methode eine Auskunft über
 fremde Sitzungs-IDs.
 
+`resolveFromHeaders` liest aus den übergebenen Kopfzeilen nur das Sitzungscookie und antwortet
+wie `resolve`, mit demselben `null` und demselben `account_disabled`; ein doppeltes Cookie ist
+`invalid_input` (S-COOKIE-5). Eine Origin-Prüfung läuft dort nicht: Die Kopfzeilen gehören zu
+einer Anfrage, die die Anwendung selbst angenommen hat, und eine Navigation von einer fremden
+Seite trägt keinen `Origin`-Kopf, den die Bibliothek vergleichen dürfte. S-CSRF-1 erfasst die
+aus einer Routendeklaration erzeugten Servermethoden, und `resolveFromHeaders` hat keine Route.
+Dasselbe gilt für `pending.resolveFromHeaders` mit dem Zwischenzustandscookie (B.7).
+
 ##### B.3 `user` (6, ohne HTTP-Routen)
 
 ```ts
@@ -2098,6 +2112,11 @@ mit `account_disabled` (L-4, 3.5), bis `enable` das Konto freigibt oder die Fris
 `enable` existiert, weil eine Deaktivierung ohne Gegenstück nur per direktem SQL rückgängig zu
 machen wäre. `reason` wird nicht gespeichert (3.14 schließt ein Audit-Log aus), sondern
 protokolliert, und zwingt den Aufrufer, den Grund am Aufrufort zu formulieren.
+`findByUsername` vergleicht über `username_key`, die Vergleichsform aus 3.4, und findet ein
+Konto auch dann, wenn sein Name den heute konfigurierten Regeln nicht mehr genügt.
+Version 1 hat `findByEmail` abweichend von der Signatur oben in jedem Modus ausgeliefert, weil
+eine Entfernung innerhalb der Hauptversion Aufrufer bräche (E-2834); Version 2.0.0 hat es im
+Modus `username` entfernt, wie die Signatur es vorsieht (E-3022).
 
 **Kein `user.update`:** `velve.user` hat außer den Anmeldenamen keine veränderlichen Felder,
 und beide haben eigene Namensräume mit Bestätigungsabläufen; ein `user.update` wäre entweder
@@ -2252,6 +2271,12 @@ Sitzung und nur über das eigene Konto auftreten.
 Der Zwischenzustand ist keine Sitzung und wird von `session.resolve` nie gefunden;
 `pending.resolve` nennt nur die zur Wahl stehenden Faktoren, keine Nutzerdaten. `cancel` ist
 der Abbrechen-Knopf; ohne ihn bliebe ein halbfertiger Versuch fünf Minuten gültig.
+`cancel` ist die Servermethode der Route `POST /pending/cancel` und entsteht wie jede andere aus
+deren Deklaration: Sie nimmt neben `pendingToken` die Felder, die jede aus einer
+Routendeklaration erzeugte Servermethode an Stelle der Anfrage nimmt, darunter `origin` und
+`ipAddress`, und durchläuft Origin-Prüfung und Ratenbegrenzung je IP-Adresse wie die Route
+(3.11, S-CSRF-1). `resolve` und `resolveFromHeaders` lesen nur und sind, wie B.9 sagt, nicht
+ratenbegrenzt.
 
 ##### B.8 `auth.admin` existiert nicht
 
@@ -2295,7 +2320,8 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `username.isAvailable` | — | — | IP (eng) | — |
 | `username.change` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `username_taken`, `username_invalid` |
 | `factor.totp.enroll.start` | session | **ja** | IP | `session_required`, `freshness_required`, `factor_already_enrolled` |
-| `factor.totp.enroll.finish`, `factor.totp.remove` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
+| `factor.totp.enroll.finish` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled`, `factor_already_enrolled` |
+| `factor.totp.remove` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
 | `factor.totp.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_factor_code`, `too_many_factor_attempts` |
 | `factor.webauthn.register.start` | session | **ja** | IP | `session_required`, `freshness_required` |
 | `factor.webauthn.register.finish` | session | **ja** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected` |
@@ -2307,8 +2333,9 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `factor.recovery.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_recovery_code`, `too_many_factor_attempts` |
 | `identity.link.start` | session | **ja** | IP | `session_required`, `freshness_required`, `provider_not_configured` |
 
-`session.resolve` und `pending.resolve` sind nicht ratenbegrenzt: Sie laufen bei jeder Anfrage
-der Anwendung, ein Zähler darauf wäre eine Selbstblockade.
+`session.resolve` und `pending.resolve` sind nicht ratenbegrenzt, ebenso wenig
+`session.resolveFromHeaders` und `pending.resolveFromHeaders`: Sie laufen bei jeder Anfrage der
+Anwendung, ein Zähler darauf wäre eine Selbstblockade.
 
 ---
 
@@ -2603,8 +2630,10 @@ Tabelle: Er ist eine Rückleitung des Anbieters und hat in beiden Formen systemb
 C50 und C70). Beide Zeilen tragen daher `originCheck: "exempt"`, und es sind genau zwei; seine
 Absicherung ist der serverseitige `state` in `velve.oauth_flow`, dessen Zeiger im Cookie liegt.
 Die vier Routen mit
-`caller: "pending"` sind die aus 3.6; nur sie lesen `__Host-velve_pending`, jede andere Route
-ignoriert es vollständig, und die Anzahl ist am Deklarationstyp ablesbar.
+`caller: "pending"` sind die aus 3.6; nur sie werden von `__Host-velve_pending` autorisiert.
+Gelesen wird es außerdem von `GET /pending` und `POST /pending/cancel`, die seinen Wert ohne
+jede Befugnis bekommen, jede andere Route ignoriert es vollständig, und die Anzahl der
+autorisierten ist am Deklarationstyp ablesbar.
 
 ---
 
@@ -2865,7 +2894,7 @@ export function signInLogPlugin(): VelvePlugin<"sign_in_log"> {
       },
     },
     routes: [
-      defineRoute({
+      {
         name: "sign_in_log.listOwn",
         path: "/x/sign_in_log/list-own",
         method: "GET",
@@ -2882,7 +2911,7 @@ export function signInLogPlugin(): VelvePlugin<"sign_in_log"> {
                ORDER BY occurred_at DESC LIMIT 50`,
             [requestContext.session.userId],
           ),
-      }),
+      },
     ],
   }
 }
@@ -3018,7 +3047,7 @@ Damit umfasst das Schema **sechzehn Tabellen**. Zum Vergleich: Better Auth kommt
 
 ## 4. Migrationsmodul
 
-Das Migrationsmodul liegt im Subpfad `@velve/auth/import` (Abschnitt 3.1). Nur dort dürfen schwere Abhängigkeiten stehen — CSV-Parser, PGP-Entschlüsselung, Quelltreiber. Der Kern kennt das Modul nicht; er kennt nur das Ergebnis: Zeilen im Schema `velve` und kanonische PHC-Strings nach Abschnitt 3.3. Der Importer erzeugt den PHC-String, schreibt ihn aber nie selbst in `velve.password_credential.phc`: Die Spalte hält nach L-2 (Abschnitt 3.16) den AES-256-GCM-verschlüsselten String unter dem Schlüsselzweck `password-enc`, und der Importer benutzt dafür denselben Verschlüsselungspfad wie der Kern beim Registrieren; `key_version` ist die aktuelle Version dieses Schlüssels. Dasselbe gilt für `velve.recovery_code.key_version` (L-3), sollte ein projektspezifischer Hook Wiederherstellungscodes liefern — keine der fünf Quellen tut das.
+Das Migrationsmodul hat noch keinen Subpfad und kommt als eigener hinzu, wenn es entsteht (Abschnitt 3.1). Nur dort dürfen schwere Abhängigkeiten stehen — CSV-Parser, PGP-Entschlüsselung, Quelltreiber. Der Kern kennt das Modul nicht; er kennt nur das Ergebnis: Zeilen im Schema `velve` und kanonische PHC-Strings nach Abschnitt 3.3. Der Importer erzeugt den PHC-String, schreibt ihn aber nie selbst in `velve.password_credential.phc`: Die Spalte hält nach L-2 (Abschnitt 3.16) den AES-256-GCM-verschlüsselten String unter dem Schlüsselzweck `password-enc`, und der Importer benutzt dafür denselben Verschlüsselungspfad wie der Kern beim Registrieren; `key_version` ist die aktuelle Version dieses Schlüssels. Dasselbe gilt für `velve.recovery_code.key_version` (L-3), sollte ein projektspezifischer Hook Wiederherstellungscodes liefern — keine der fünf Quellen tut das.
 
 Grundhaltung: Eine Migration ist kein Skript, sondern ein Verfahren mit Vorprüfung, Trockenlauf, Wiederholbarkeit und einem Verlustbericht. Alles, was nicht mitkommt, wird benannt.
 
@@ -4135,7 +4164,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 - **S-LINK-2:** Eine automatische Verknüpfung mit einem bestehenden Konto findet nur statt, wenn der Anbieter die E-Mail als verifiziert meldet **und** das lokale Konto `email_verified_at IS NOT NULL` trägt **und** der Anbieter in `trustedProviders` steht; fehlt eine der drei Bedingungen, entsteht ein neues Konto oder es bleibt bei einer ausdrücklichen Verknüpfung in einer bestehenden Sitzung. *(Abschnitt 3.10, Verknüpfungsregel, Bedingungen 1–3)*
 - **S-LINK-3:** `velve.identity.subject` enthält die stabile Anbieterkennung und niemals eine E-Mail-Adresse. *(Abschnitt 3.2, Schema: `subject text NOT NULL, -- die stabile ID beim Anbieter, nie die E-Mail`)*
 - **S-LINK-4:** Wird eine E-Mail-Adresse erstmals bestätigt — per Magic Link oder Bestätigungslink — und wurde das vorhandene Kennwort in einer anderen Sitzung gesetzt als der bestätigenden, dann werden die Kennwortanmeldung gelöscht und alle bestehenden Sitzungen widerrufen; wurde das Kennwort in derselben Sitzung gesetzt, die jetzt bestätigt, bleibt es bestehen. Ein Magic Link verknüpft keine Anbieteridentität. *(Abschnitt 3.16, L-12; Abschnitt 3.10: „Die E-Mail ist niemals ein Verknüpfungsschlüssel")*
-- **S-LINK-5:** Meldet ein Anbieter keine E-Mail-Adresse, bleibt `velve.user.email` in den Konfigurationen `username` und `username_email` NULL; die Bibliothek erzeugt keine Platzhalteradresse. *(Abschnitt 3.10, „Kein Konto ohne E-Mail-Zwang")*
+- **S-LINK-5:** Meldet ein Anbieter keine E-Mail-Adresse, bleibt `velve.user.email` in der Konfiguration `username` NULL; in `username_email` verlangt der CHECK-Constraint aus 3.2 an jedem Konto eine Adresse, und die Anmeldung über diesen Anbieter legt dort kein Konto an. Die Bibliothek erzeugt in keiner Konfiguration eine Platzhalteradresse. *(Abschnitt 3.10, „Kein Konto ohne E-Mail-Zwang")*
 - **S-LINK-6:** Der Zustand `provider_email_verified` wird pro Identität gespeichert und bei jeder Anmeldung aus den Anbieterclaims aktualisiert; der Wert einer Identität überträgt sich nicht auf eine andere Identität desselben Nutzers. *(Abschnitt 3.2, Schema: `provider_email_verified boolean NOT NULL DEFAULT false` auf `velve.identity`)*
 - **S-LINK-7:** Die Verknüpfung einer weiteren Identität mit einem bestehenden Konto ist ein Wechsel der Vertrauensstufe und erzeugt daher eine neue Sitzungszeile mit neuem Token. *(Abschnitt 3.5: „Neuvergabe bei jedem Ereignis, das die Vertrauensstufe ändert: … Verknüpfung einer neuen Identität")*
 
@@ -4152,7 +4181,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 - **S-CACHE-1:** Der Kern beantwortet die Frage „wer ist angemeldet" bei jeder Anfrage mit einer Datenbankabfrage; es existiert kein Cookie-Cache, kein Prozess-Cache und kein externer Cache für Sitzungen oder Sitzungsdaten, und jede HTTP-Antwort trägt `Cache-Control: no-store` und `Vary: Cookie`, damit auch kein vorgelagerter HTTP-Cache eine Antwort wiederverwendet. *(Abschnitt 3.5: „Kein Cookie-Cache im Kern. Autorisierungsentscheidungen werden nie aus einem Cache beantwortet"; Abschnitt 3.16, L-6)*
 - **S-CACHE-2:** Die Sitzungsauflösung ist genau eine Abfrage mit Join auf `velve.user`, gefiltert nach `token_sha256 = $1 AND idle_expires_at > now() AND absolute_expires_at > now()`, wobei `u.disabled_at` in derselben Abfrage gelesen wird und, wenn gesetzt, `account_disabled` statt einer Sitzung ergibt (L-4); jede dieser vier Bedingungen wirkt bei jeder Anfrage. *(Abschnitt 3.5, Auflösungsabsatz)*
 - **S-CACHE-3:** Eine Kontodeaktivierung (`disabled_at`) wirkt auf die nächste Anfrage jeder bestehenden Sitzung, ohne dass eine Lebensdauer abgewartet werden muss. *(Abschnitt 3.5: „`u.disabled_at` wird in derselben Abfrage gelesen"; Abschnitt 3.16, L-4)*
-- **S-CACHE-4:** Der Zwischenzustand aus `velve.pending_authentication` wird an keiner Stelle in eine Sitzungsdarstellung überführt, bevor der zweite Faktor geprüft ist; genau die vier Routen mit `caller: "pending"` — `POST /factor/totp/verify`, `POST /factor/webauthn/authenticate/start`, `POST /factor/webauthn/authenticate/finish`, `POST /factor/recovery/verify` — werten das Zwischenzustandscookie aus, jede andere Route ignoriert es vollständig. *(Abschnitt 3.6; Abschnitt 3.15 D.3: „nur sie lesen `__Host-velve_pending`, jede andere Route ignoriert es vollständig")*
+- **S-CACHE-4:** Der Zwischenzustand aus `velve.pending_authentication` wird an keiner Stelle in eine Sitzungsdarstellung überführt, bevor der zweite Faktor geprüft ist; genau die vier Routen mit `caller: "pending"` — `POST /factor/totp/verify`, `POST /factor/webauthn/authenticate/start`, `POST /factor/webauthn/authenticate/finish`, `POST /factor/recovery/verify` — werten das Zwischenzustandscookie als Ausweis aus; `GET /pending` und `POST /pending/cancel` lesen es, ohne von ihm autorisiert zu werden, und jede andere Route ignoriert es vollständig. *(Abschnitt 3.6; Abschnitt 3.15 D.3: „nur sie werden von `__Host-velve_pending` autorisiert. Gelesen wird es außerdem von `GET /pending` und `POST /pending/cancel`")*
 - **S-CACHE-5:** Ein Plugin kann keine Zwischenschicht einziehen, die die Sitzungsauflösung ersetzt oder ihr Ergebnis zwischenspeichert. *(Abschnitt 3.11, „Was ein Plugin nicht darf": „Den Passwort-Verifier, die Session-Auflösung oder die Origin-Prüfung ersetzen.")*
 
 ---
@@ -4171,7 +4200,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 - **S-REDIR-4:** Kein `Location`-Kopfeintrag und kein Query-String einer von der Bibliothek erzeugten Weiterleitung enthält jemals einen Einmal-Token, einen Sitzungstoken oder einen PKCE-Verifier. *(Abschnitt 3.5, „Das Klartext-Token verlässt den Prozess nur im Cookie")*
 - **S-REDIR-5:** Wo ein Ursprung geprüft wird, ist die Prüfung ein Gleichheitsvergleich auf `new URL(x).origin` gegen die Liste `origins`; die Bibliothek enthält keinen Musterabgleich, keinen Platzhalter und keinen Präfixvergleich auf Ursprüngen. *(Abschnitt 3.12, `origins: ["https://app.example.com"]`)*
 - **S-REDIR-6:** Anbieter-Endpunkt-URLs (Autorisierung, Token, JWKS, Userinfo) stammen ausschließlich aus der Konfiguration bei der Initialisierung; keine Route registriert oder ändert eine Endpunkt-URL, die der Server anschließend selbst aufruft. *(Abschnitt 3.10, feste Anbieterliste plus `genericOAuth`; Abschnitt 3.12, Initialisierung)*
-- **S-REDIR-7:** Jede Antwort der Bibliothek mit Körper trägt den Inhaltstyp `application/json`; es gibt keine HTML-Antwort und keinen Antwortkörper, der einen Eingabewert des Anfragenden wiedergibt. *(Abschnitt 3.12, „Ausgabe-Typ, Fehlercodes" je Route; Abschnitt 3.15 D.3, Statuscodes je Route)*
+- **S-REDIR-7:** Jede Antwort der Bibliothek mit Körper trägt den Inhaltstyp `application/json`; es gibt keine HTML-Antwort und keinen Antwortkörper, der einen Eingabewert des Anfragenden wiedergibt. Ausgenommen sind genau vier Antworten, die laut 3.15 D.3 den gespeicherten Datensatz des Aufrufers zurückgeben: `user.email` und `user.username` aus `POST /sign-up` und `POST /sign-up/passwordless`, `user.username` aus `POST /username/change` und `credential.label` aus `POST /factor/webauthn/rename`. Das ist die eigene Eingabe nach Prüfung und Speicherung, als JSON mit dem deklarierten Typ, und keine Rückspiegelung. *(Abschnitt 3.12, „Ausgabe-Typ, Fehlercodes" je Route; Abschnitt 3.15 D.3, Statuscodes je Route)*
 
 ---
 
@@ -4489,14 +4518,14 @@ wird nicht genommen.
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
 | T-OWNER-1 | S-OWNER-1 | Statisch | `ts-morph`: aus `information_schema` die Tabellen mit `user_id`-Spalte lesen, jede Repository-Methode ermitteln, die auf eine davon zugreift, und prüfen, ob ihre Signatur einen `actor` trägt. | **0 Methoden ohne `actor`**; der Test schlägt auch fehl, wenn eine neue Tabelle mit `user_id` ohne zugehöriges Repository auftaucht | CI bei jedem Commit |
-| T-OWNER-2 | S-OWNER-2 | Statisch | AST-Scan aller SQL-Literale, die auf einer nutzergebundenen Tabelle `DELETE` oder `UPDATE` ausführen: jedes muss `user_id` im `WHERE` enthalten. Ergänzend: kein `SELECT` auf dieselbe Tabelle unmittelbar davor in derselben Funktion. | **0 Literale ohne `user_id`-Prädikat**; **0 Vorab-`SELECT`** | CI bei jedem Commit |
+| T-OWNER-2 | S-OWNER-2 | Statisch | AST-Scan aller SQL-Literale, die auf einer nutzergebundenen Tabelle `DELETE` oder `UPDATE` ausführen: jedes muss `user_id` im `WHERE` enthalten. Ergänzend: keine Funktion, die in einem Aufruf `user_id` aus einer nutzergebundenen Tabelle liest und in einem späteren Aufruf eine Zeile derselben Tabelle allein über ihre Kennung und ohne Eigentümerprädikat ändert; ein Paar innerhalb eines einzigen Aufrufs und eine Änderung, die über einen Hash oder ein Geheimnis gebunden ist, zählen nicht. | **0 Literale ohne `user_id`-Prädikat**; **0 Vorab-`SELECT`** in dieser Form | CI bei jedem Commit |
 | T-OWNER-3 | S-OWNER-3 | Integration | Nutzer A und B legen je zwei WebAuthn-Zugangsdatensätze an (damit `last_sign_in_method` nicht greift). B ruft `POST /factor/webauthn/remove` mit A's `credentialId` auf; danach mit einer frei erfundenen UUID. | **2/2 abgelehnt**, Antworten **byteweise identisch**; `SELECT count(*)` auf A's Datensatz vor/nach **unverändert** | CI bei jedem Commit |
 | T-OWNER-4 | S-OWNER-4 | Integration | B ruft `POST /session/revoke` mit A's `targetSessionId` auf; anschließend mit einer erfundenen Kennung. | **2/2 Antworten 204 und byteweise identisch**; A's Sitzung bleibt gültig; **0 Zeilenänderungen** in `velve.session` | CI bei jedem Commit |
 | T-OWNER-5 | S-OWNER-5 | Integration | B löst A's Identitätsverknüpfung. | Abgelehnt; `velve.identity` **0 Zeilenänderungen**; Antwort identisch zur Antwort auf eine erfundene Kennung | CI bei jedem Commit |
 | T-OWNER-6 | S-OWNER-6 | Integration, generiert | Für jede Route mit einem Parameter, der in mehr als einer Quelle stehen könnte: Anfrage mit widersprüchlichen Werten in Query und Körper. | **HTTP 400 auf allen betroffenen Routen**; nie wird einer der beiden Werte gewählt | CI bei jedem Commit |
 | T-OWNER-7 | S-OWNER-7 | Statisch | AST-Scan: keine Zuweisung aus `req.body`, `req.query` oder einem Kopfeintrag an eine Variable vom Typ `UserId` oder `Actor`. | **0 Treffer** | CI bei jedem Commit |
 | T-OWNER-8 | S-OWNER-8 | Integration, generiert | Für jede Route mit Objektkennung: einmal mit fremder, einmal mit erfundener Kennung aufrufen und die Antworten byteweise vergleichen. | **0 abweichende Bytes** über alle Routenpaare | CI bei jedem Commit |
-| T-OWNER-9 | S-OWNER-9 | Statisch | Migrationsartefakt gegen `information_schema` prüfen: keine Spalte vom Typ `serial`, `bigserial`, `integer` oder `bigint` ist Primärschlüssel einer nutzergebundenen Tabelle. | **0 fortlaufende Primärschlüssel** | CI bei jedem Commit |
+| T-OWNER-9 | S-OWNER-9 | Statisch | Migrationsartefakt gegen `information_schema` prüfen: keine Spalte vom Typ `serial`, `bigserial`, `integer` oder `bigint` ist alleiniger Primärschlüssel einer nutzergebundenen Tabelle; eine ganzzahlige Spalte in einem zusammengesetzten Schlüssel mit `user_id`, wie `time_step` in `velve.totp_used_step`, ist ein Zähler der Uhr und keine Objektkennung. | **0 fortlaufende Primärschlüssel** | CI bei jedem Commit |
 | T-OWNER-10 | S-OWNER-10 | Integration | Testplugin versucht (i) direkten `INSERT` in `velve.session` über den Treiber aus dem Kontext, (ii) `ctx.repositories = …`. | (i) Der Kontext bietet keinen rohen Treiber — kompiliert nicht; (ii) wirft `TypeError` (eingefrorenes Objekt): **2/2** | CI bei jedem Commit |
 | T-OWNER-11 | S-OWNER-11 | Integration | Testplugin registriert eine Route mit dem Pfad einer Kernroute; zweites Testplugin kollidiert mit dem ersten. | **2/2 führen zu einem Startfehler**; die Fehlermeldung nennt beide Beitragenden | CI bei jedem Commit |
 | T-OWNER-12 | S-OWNER-12 | Integration | Testplugin-Hook gibt einen Antwortkörper zurück und versucht, den Verifier zu ersetzen. | Der Rückgabewert des Hooks **beeinflusst die Antwort nicht**; das Ersetzen kompiliert nicht; ein werfender Hook lehnt die Operation ab: **3/3** | CI bei jedem Commit |
@@ -4511,7 +4540,7 @@ wird nicht genommen.
 | T-LINK-2 | S-LINK-2 | Integration, Zustandsmatrix | 3 lokale Zustände (nicht vorhanden, vorhanden unverifiziert, vorhanden verifiziert) × 2 Anbieterzustände (`email_verified` true/false) × 2 (`trustedProviders` enthält den Anbieter / nicht) = **12 Fälle**, Erwartungstabelle als Fixture. | **12/12 laut Erwartung**; insbesondere führt (lokal unverifiziert, Anbieter verifiziert, vertrauenswürdig) **nicht** zu einer stillen Verknüpfung | CI bei jedem Commit |
 | T-LINK-3 | S-LINK-3 | Integration + Statisch | Anbieterattrappe liefert eine E-Mail-Adresse als `sub`. AST-Scan: die Zuweisung an `subject` stammt aus dem `sub`-Claim, nie aus `email`. | Gespeicherter `subject` ist der `sub`-Wert; **0 AST-Treffer** | CI bei jedem Commit |
 | T-LINK-4 | S-LINK-4 | Integration | Angreiferpfad nachstellen: Konto mit Kennwort registrieren (unverifiziert), Magic Link an dieselbe Adresse einlösen, danach mit dem ursprünglichen Kennwort anmelden. Gegenprobe: Konto mit Kennwort registrieren und in derselben Sitzung den Bestätigungslink einlösen. Dritter Fall: Magic Link, während eine Anbieteridentität mit derselben E-Mail existiert. | Angreiferpfad: `email_verified_at` gesetzt, `password_credential` **0 Zeilen**, alle vor der Bestätigung erzeugten Sitzungen widerrufen (**0 Zeilen**), Anmeldung mit dem ursprünglichen Kennwort scheitert mit `invalid_credentials`. Gegenprobe: `password_credential` **1 Zeile**, Sitzung bleibt gültig. Dritter Fall: `velve.identity` **0 neue Zeilen** | CI bei jedem Commit |
-| T-LINK-5 | S-LINK-5 | Integration + Statisch | Anbieterattrappe liefert keine E-Mail. AST-Scan: keine Zeichenkettenverkettung, die eine E-Mail-Adresse aus einer Kennung erzeugt (`@`-Literal in einer Zuweisung an `email`). | `user.email IS NULL`; **0 AST-Treffer** | CI bei jedem Commit |
+| T-LINK-5 | S-LINK-5 | Integration + Statisch | Anbieterattrappe liefert keine E-Mail, in den Konfigurationen `username` und `username_email`. AST-Scan: keine Zeichenkettenverkettung, die eine E-Mail-Adresse aus einer Kennung erzeugt (`@`-Literal in einer Zuweisung an `email`). | `user.email IS NULL` in `username`; in `username_email` **0 Zeilen** in `velve.user`, `velve.identity` und `velve.session`; **0 AST-Treffer** | CI bei jedem Commit |
 | T-LINK-6 | S-LINK-6 | Integration | Nutzer mit zwei Identitäten; Anbieter 1 meldet `email_verified: true`, Anbieter 2 `false`. | `provider_email_verified` ist **je Zeile korrekt**; eine Änderung an Zeile 1 lässt Zeile 2 unverändert | CI bei jedem Commit |
 | T-LINK-7 | S-LINK-7 | Integration | In bestehender Sitzung eine zweite Identität verknüpfen, Token vorher und nachher vergleichen. | `T2 ≠ T1`; alte Zeile **0 Treffer** in `velve.session` | CI bei jedem Commit |
 
@@ -4524,7 +4553,7 @@ wird nicht genommen.
 | T-CACHE-1 | S-CACHE-1 | Integration + Statisch | Zählender Treiber: für *n* aufeinanderfolgende Anfragen mit demselben Cookie die Zahl der Auflösungsabfragen zählen. AST-Scan nach `Map`, `LRU`, `WeakMap` in `core/session/`. Antwort-Abfangfunktion über die gesamte Integrationssuite prüft `Cache-Control` und `Vary`. | **n Abfragen bei n Anfragen** (Verhältnis exakt 1,0); **0 Cache-Strukturen** im Modul; **100 %** der Antworten tragen `Cache-Control: no-store` und `Vary: Cookie` | CI bei jedem Commit |
 | T-CACHE-2 | S-CACHE-2 | Integration + Statisch | Vier Negativfälle: unbekannter Token, `idle_expires_at` in der Vergangenheit, `absolute_expires_at` in der Vergangenheit, `disabled_at` gesetzt. Zusätzlich SQL-Literal gegen ein Fixture vergleichen. | **4/4 abgelehnt** (dreimal `null`, bei `disabled_at` `account_disabled`); das Auflösungs-SQL ist **byteweise gleich** dem Fixture (jede Änderung ist eine bewusste Entscheidung) | CI bei jedem Commit |
 | T-CACHE-3 | S-CACHE-3 | Integration | Sitzung anlegen, geschützte Route aufrufen (Erfolg), `disabled_at` setzen, sofort erneut aufrufen. | Ablehnung bei der **ersten** Folgeanfrage, gemessene Latenz zwischen Sperre und Wirkung **< 100 ms** | CI bei jedem Commit |
-| T-CACHE-4 | S-CACHE-4 | Integration, exhaustiv | Im Zwischenzustand (nur `__Host-velve_pending`) **jede** registrierte Route aufrufen. | **Genau 4 Routen** verhalten sich anders als bei einer Anfrage ohne jedes Cookie, und es sind genau die mit `caller: "pending"`; alle übrigen liefern die **byteweise identische** Antwort | CI bei jedem Commit |
+| T-CACHE-4 | S-CACHE-4 | Integration, exhaustiv | Im Zwischenzustand (nur `__Host-velve_pending`) **jede** registrierte Route aufrufen. | **Genau 6 Routen** verhalten sich in Antwort oder Wirkung auf den Zwischenzustand anders als bei einer Anfrage ohne jedes Cookie, und es sind die vier mit `caller: "pending"` sowie `GET /pending` und `POST /pending/cancel`; alle übrigen liefern die **byteweise identische** Antwort | CI bei jedem Commit |
 | T-CACHE-5 | S-CACHE-5 | Integration | Testplugin versucht, `resolveSession` zu überschreiben und einen eigenen Auflösungs-Hook zu registrieren. | Kompiliert nicht bzw. **Startfehler**; die Zahl der Auflösungsabfragen bleibt bei Verhältnis 1,0 | CI bei jedem Commit |
 
 ---
@@ -4539,7 +4568,7 @@ wird nicht genommen.
 | T-REDIR-4 | S-REDIR-4 | Integration, global | Dieselbe Abfangfunktion durchsucht `Location` und alle Query-Strings nach den in diesem Testlauf erzeugten Token-Klartexten. | **0 Treffer** über die gesamte Suite | CI bei jedem Commit |
 | T-REDIR-5 | S-REDIR-5 | Statisch | AST-Scan über `core/http/`: kein `startsWith`, `includes`, `endsWith`, `RegExp` und kein Platzhalterzeichen in einem Origin-Vergleich. | **0 Treffer** | CI bei jedem Commit |
 | T-REDIR-6 | S-REDIR-6 | Statisch + Integration | AST-Scan: jede ausgehende Anfrage-URL stammt aus dem Konfigurationsobjekt. Integration: Anbieterattrappe liefert im Discovery-Dokument abweichende Endpunkte. | **0 URLs aus Anfragedaten**; die abweichenden Endpunkte werden **nicht** aufgerufen | CI bei jedem Commit |
-| T-REDIR-7 | S-REDIR-7 | Integration, global | Über die gesamte Suite `Content-Type` jeder Antwort prüfen; zusätzlich jeden Antwortkörper nach einem Kanarienwert durchsuchen, der zuvor in jedes Eingabefeld geschrieben wurde. | **100 % `application/json`**; **0 Kanarientreffer** in Antwortkörpern | CI bei jedem Commit |
+| T-REDIR-7 | S-REDIR-7 | Integration, global | Über die gesamte Suite `Content-Type` jeder Antwort prüfen; zusätzlich jeden Antwortkörper nach einem Kanarienwert durchsuchen, der zuvor in jedes Eingabefeld geschrieben wurde. | **100 % `application/json`**; **0 Kanarientreffer** in Antwortkörpern außerhalb der Felder, die S-REDIR-7 in den vier dort genannten Antworten nennt | CI bei jedem Commit |
 
 ---
 
@@ -4712,7 +4741,7 @@ Für jedes unterstützte Hash-Verfahren müssen bekannte Vektoren durchlaufen, b
 
 ### 6.23 Abdeckungsziel
 
-**Die Zahl: 90 % Zweigabdeckung im Verzeichnis `core/`, gemessen mit V8-Coverage über Vitest, als blockierende Schwelle bei jedem Commit.** Für die Unterverzeichnisse `core/password/`, `core/session/`, `core/token/` und `core/keys/` gilt zusätzlich **100 % Zweigabdeckung**. Für `core/db/`, `core/http/` und `core/plugin/` gilt dieselbe Schwelle von 90 %. Für `@velve/auth/import` gilt **85 %**, weil dort viele Zweige seltene Fremdformate behandeln, die nur über Testvektoren erreichbar sind.
+**Die Zahl: 90 % Zweigabdeckung im Verzeichnis `core/`, gemessen mit V8-Coverage über Vitest, als blockierende Schwelle bei jedem Commit.** Für die Unterverzeichnisse `core/password/`, `core/session/`, `core/token/` und `core/keys/` gilt zusätzlich **100 % Zweigabdeckung**. Für `core/db/`, `core/http/` und `core/plugin/` gilt dieselbe Schwelle von 90 %. Für das Migrationsmodul (Abschnitt 4) gilt **85 %**, weil dort viele Zweige seltene Fremdformate behandeln, die nur über Testvektoren erreichbar sind.
 
 **Warum Zweige und nicht Zeilen.** Zeilenabdeckung ist in diesem Codebestand fast bedeutungslos. Der Prüfpfad aus Abschnitt 3.3 besteht aus wenigen Zeilen mit sehr vielen Zustandskombinationen; eine einzige Anmeldung deckt jede Zeile ab und trotzdem keinen einzigen der Fehlerfälle. Zweigabdeckung zählt genau das, was hier zählt: dass jede Bedingung in beide Richtungen ausgeführt wurde. Der Unterschied ist bei S-ENUM-2 (fünf Kontozustände, eine Antwort) und bei S-LINK-2 (zwölf Zustandskombinationen, eine Regel) am größten.
 

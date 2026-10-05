@@ -1,16 +1,18 @@
 # Working method — velve-auth
 
-This file holds the explanations, measurements and histories behind the rules in `CLAUDE.md`, moved here word for word so that the rules file states rules. `CLAUDE.md` binds; nothing here adds a rule, and where the two seem to disagree, `CLAUDE.md` is right.
+This file holds the explanations, measurements and histories behind the rules in `CLAUDE.md`, moved here word for word so that the rules file states rules. Where a moved paragraph began by pointing back at a sentence that stayed in the rules file, the subject of that sentence is now named in front of it, and a count the move left stale says what it was counted against (E-2905). `CLAUDE.md` binds; nothing here adds a rule, and where the two seem to disagree, `CLAUDE.md` is right.
 
 ## From the preamble — the translation check
 
-`test/architecture-translation.test.ts` compares their structure and their identifiers so that a divergence of that kind fails rather than waits to be noticed.
+The German specification and its English translation can differ on a number, an identifier, a threshold or a requirement. `test/architecture-translation.test.ts` compares their structure and their identifiers so that a divergence of that kind fails rather than waits to be noticed.
 
 ## From §1 — language
 
-The header states the language and the entry format of everything below it, and a translation that leaves it standing leaves the file describing itself wrongly — in German, and in the old `Kontext · Verworfen · Grund · Preis` shape §6 has replaced.
+The migration pass rewrites the header of `docs/decisions/log.md` as well as its entries. The header states the language and the entry format of everything below it, and a translation that leaves it standing leaves the file describing itself wrongly — in German, and in the old `Kontext · Verworfen · Grund · Preis` shape §6 has replaced.
 
 How a translation must read is fixed in §6, and it is the one place where the no-retroactive-rationalisation rule is easiest to break by accident.
+
+The pass could not run under the rules as they stood: `check:log-append` refused every deleted line, the English format asks for an owner and a tag the German entries never had, and an entry that existed at the merge base may not be edited. §1 and §6 now sanction this one pass and nothing else, fix the owner from the range table and the tag as `translated from the German original`, and `check:log-append` excuses a deleted line only where the merge base shows it German and HEAD carries the translation under the same anchor (E-2990).
 
 The package is a public Apache-2.0 library on npm; its readers are not assumed to read German.
 
@@ -25,31 +27,31 @@ The tree scan cannot see text a later commit removed; the diff scan cannot see t
 
 ## From §5 — parallelism and file ownership
 
-**This one is enforced by the reviewer noticing, not by a check.** Nothing reads the structure of `DOCUMENTATION.md`: a number outside a reserved range fails in `test/decision-log.test.ts` on the branch that took it, but a paragraph written into a neighbour's chapter fails nowhere. The two bullets look alike and are not equally enforced, and the second is worth exactly what the reviewer checking it is worth.
+The partition of `DOCUMENTATION.md` by chapter is the second of the two bullets in the rules file. **This one is enforced by the reviewer noticing, not by a check.** Nothing reads the structure of `DOCUMENTATION.md`: a number outside a reserved range fails in `test/decision-log.test.ts` on the branch that took it, but a paragraph written into a neighbour's chapter fails nowhere. The two bullets look alike and are not equally enforced, and the second is worth exactly what the reviewer checking it is worth.
 
-It fell to three of eleven entries before this rule existed, because chapters were added by whoever wrote them and the index was owned by nobody.
+The `## Contents` index belongs to the stub cut. It fell to three of eleven entries before this rule existed, because chapters were added by whoever wrote them and the index was owned by nobody.
 
-All three exceptions rest on the partition existing **beforehand**. Until wave 3 there was no chapter partition, and the contradiction between this rule and item 3 of the definition of done was resolved by editing `DOCUMENTATION.md` anyway; all four wave-2 features did. That merged cleanly by luck, not by construction — four writers appending at end of file land on the same line, and four writers appending into four disjoint stubs cannot.
+All three exceptions — the decision log, `DOCUMENTATION.md` and `README.md`, which the rules file no longer partitions (E-2090) — rest on the partition existing **beforehand**. Until wave 3 there was no chapter partition, and the contradiction between this rule and item 3 of the definition of done was resolved by editing `DOCUMENTATION.md` anyway; all four wave-2 features did. That merged cleanly by luck, not by construction — four writers appending at end of file land on the same line, and four writers appending into four disjoint stubs cannot.
 
 ## From §5 — the main gate
 
-It buys the announcement and not the refusal, because re-recording is one command. What it does **not** cover is listed at the check and is longer than this line: it normalises member order and string-literal-union order in **45 of the 79 files**, wherever they occur and not only where the build is unstable; it records more than the public surface; it reads the last build rather than the tree; it says nothing about `dist/*.mjs`; and it does not reach a type resolved from a dependency (E-1376, E-1378, E-1383, E-1384)
+`test/api-surface.test.ts` compares every shipped `dist/**/*.d.mts` against a committed copy. It buys the announcement and not the refusal, because re-recording is one command. What it does **not** cover is listed at the check and is longer than this line: it normalises member order and string-literal-union order in **45 of the 79 files**, wherever they occur and not only where the build is unstable; it records more than the public surface; it reads the last build rather than the tree; it says nothing about `dist/*.mjs`; and it does not reach a type resolved from a dependency (E-1376, E-1378, E-1383, E-1384)
 
-Three of this repository's checks were written so it could not — a scan reporting success because it matched no files, a shell condition testing a pipeline that exits zero on empty input, an exclusion that deleted the text it was meant to examine. Each looked green.
+A check must be able to tell found nothing from found a fault. Three of this repository's checks were written so it could not — a scan reporting success because it matched no files, a shell condition testing a pipeline that exits zero on empty input, an exclusion that deleted the text it was meant to examine. Each looked green.
 
 ## From §6 — documentation duty
 
-What that means is the opposite of what it means for the three above, so read the subsection below before touching it; a reader who takes "keep it current" at face value breaks the file by helping.
+`CLAUDE-SKILL.md`, and `CODEX-SKILL.md` generated from it, are kept current in their method and never in their content. What that means is the opposite of what it means for the three above — `README.md`, `DOCUMENTATION.md` and the decision log — so read the subsection below before touching it; a reader who takes "keep it current" at face value breaks the file by helping.
 
 The log is written during the build so that the reasons are the actual ones and not the reconstructed ones.
 
-It exists because §1 makes this repository English and the specification was the one holdout, and because the agent skill below points readers at it.
+`VELVE-AUTH-ARCHITECTURE.md`, the English translation of the specification, exists because §1 makes this repository English and the specification was the one holdout, and because the agent skill below points readers at it.
 
-`tools/codex-skill.mjs` is that transform and is therefore this file's definition; `pnpm check:codex-skill` regenerates it and fails on any difference, so a hand-edit of it does not survive the gate.
+`CODEX-SKILL.md` is produced from `CLAUDE-SKILL.md` rather than written. `tools/codex-skill.mjs` is that transform and is therefore the definition of `CODEX-SKILL.md`; `pnpm check:codex-skill` regenerates it and fails on any difference, so a hand-edit of it does not survive the gate.
 
 ## From §6 — keeping the skill current
 
-It carries no fact about the library on purpose — no feature list, no count, no "not built yet", no published version — because it reads the live documents at the moment it answers, and any fact copied into it is a copy with an expiry date nobody writes down. Its own §1 states that as a rule about itself.
+The skill carries no fact about the library on purpose — no feature list, no count, no "not built yet", no published version — because it reads the live documents at the moment it answers, and any fact copied into it is a copy with an expiry date nobody writes down. Its own §1 states that as a rule about itself.
 
 So a change to the library is a reason to **check** that the skill still navigates this repository correctly, and it is almost never a reason to change a sentence of it. What is kept current is the **method**: the sources it names, the URLs it fetches, the shape of the tree it walks, the paths it installs to, the identifiers it teaches a reader to cite. If a release looks as though it requires a sentence of the skill to change, read that sentence again — a fact has almost certainly leaked in, and the repair is to delete the fact, not to update it.
 
@@ -91,8 +93,6 @@ The sharp edge is the honest half. The same latitude covers rewriting a **reason
 
 **The syntactic property is necessary and not sufficient either, and it is loose in three ways.** A writer can insert a complete, well-formed note at a proper boundary that **contradicts** the reason above it, and the result satisfies every clause of the property. A **measurement** restated in place is a deletion this section allows, so a deletion-bearing edit is not thereby a violation. And both of those presuppose what the third does not — that the original survives as a readable claim at all, which an insertion inside a sentence and an insertion that suppresses the original from rendering each defeat. What the property buys is that the reader is shown both claims; whether the second is fair is not something any of this decides.
 
-
-
 **The last clause carries weight the property does not, and is not a restatement of it.** A note appended as a near-duplicate of the sentence it corrects — identical but for one word — satisfies every clause of the property and defeats what the property is for: both claims render, neither is modified, and a reader still cannot tell which is the original or that a correction happened at all. Saying what changed is the only thing that separates them. So the imperative does **not** remove the *was it true when written* judgement — nothing here does — but it guarantees a reader can answer it, because both claims are in front of them **and labelled** (E-1142, E-1147).
 
 **Nothing enforces the property, and no script is proposed here.** It is stated so that a reviewer can apply it. `check:log-append` counts lines with `--numstat` and a log paragraph is one long line, so an insertion into a standing paragraph reads to it as `−1 +1`; finer granularity does not rescue it, because the counterexample above removes zero tokens at word granularity too. A check for this would have to compare **rendered blocks** rather than diff hunks. Whether one belongs in `pnpm gate`, in §5's reviewer checklist or nowhere is a decision with its own cost and is left open as a hand-off in E-1143.
@@ -131,7 +131,7 @@ Wave 3 is cut against that ratio instead of against a round thirty.
 - **`rate` gets twenty-five.** It is the narrowest feature of the wave: one statement, three counters and the seam the HTTP layer already declares.
 - **Gate and infrastructure gets a second block of twenty, and needs it now.** Its first block is **full** — all twenty of E-140 … E-159 are used — so the second block is not a precaution against wave 3's demand, it is the only source of gate numbers that exists. That block is where every broken-check finding lands; there are already thirty-eight of those in the log, running at roughly four per feature, and wave 3 runs four features at once.
 
-Wave 3 has merged, so the ratio has a second measurement. Counted against `CASE-STUDY.md` on `main`, wave 3 used `auth-core` **40 of 60**, `rate` **17 of 25**, `factor-totp` **27 of 45**, `factor-webauthn` **35 of 45**, the gate's second range **11 of 20** and its third range **24 of 25**.
+Wave 3 has merged, so the ratio has a second measurement. Counted against `CASE-STUDY.md` on `main`, which then held the whole decision log and now holds a selection of it (E-1970), wave 3 used `auth-core` **40 of 60**, `rate` **17 of 25**, `factor-totp` **27 of 45**, `factor-webauthn` **35 of 45**, the gate's second range **11 of 20** and its third range **24 of 25**.
 
 Two things fall out of that, and they point in opposite directions. Every **feature** range came in between sixty and eighty per cent, so cutting wave 3 against the ratio rather than against a round thirty was right and none of those four needed a second row. Every **gate** range that was actually worked ran to its edge: the first block is exhausted at twenty of twenty, and the third stopped one number short. The second block reads as slack and is not — it was cut for the wave-3 preparation and the relicensing, the seam cut ran beside it and had to take a disjoint range, and its nine unused numbers are the gap §6 says a range leaves behind, not headroom anyone can reach for.
 
