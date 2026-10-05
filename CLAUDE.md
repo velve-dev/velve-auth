@@ -233,7 +233,8 @@ repair anything itself.
   cites is defined in the specification or the decision log
 - `pnpm check:sql-collapse` — no line comment swallows the rest of its statement
 - `pnpm check:log-append` — the decision log deletes no line it had at the merge
-  base, and the branch has added at least one (§6, E-538)
+  base except a German entry, header or section heading the central translation
+  pass replaced, and the branch has added at least one (§6, E-538, E-2991)
 - `pnpm check:skill-version` — a skill file changed against the merge base raises
   the version it states, and both skill files state the same one (§6)
 - `pnpm check:codex-skill` — `CODEX-SKILL.md` is byte-identical to what
