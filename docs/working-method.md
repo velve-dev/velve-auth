@@ -12,6 +12,8 @@ The migration pass rewrites the header of `docs/decisions/log.md` as well as its
 
 How a translation must read is fixed in §6, and it is the one place where the no-retroactive-rationalisation rule is easiest to break by accident.
 
+The pass could not run under the rules as they stood: `check:log-append` refused every deleted line, the English format asks for an owner and a tag the German entries never had, and an entry that existed at the merge base may not be edited. §1 and §6 now sanction this one pass and nothing else, fix the owner from the range table and the tag as `translated from the German original`, and `check:log-append` excuses a deleted line only where the merge base shows it German and HEAD carries the translation under the same anchor (E-2990).
+
 The package is a public Apache-2.0 library on npm; its readers are not assumed to read German.
 
 ## From §3 — the comment rule as it stood before the plain-sentence form
