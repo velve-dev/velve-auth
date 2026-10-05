@@ -369,17 +369,34 @@ describe("the sign counter and the backup flags", () => {
 		expect(second.signCountRegressed).toBe(false);
 	});
 
-	it("takes the reported counter rather than keeping the higher one, so the report is made once", async () => {
+	/** The stored counter is the highest one seen, as WebAuthn Level 2 §7.2 step 21 keeps it, so a
+	 * copy used after the original is reported on every use even once the original is put away. */
+	it("keeps the highest counter seen, so a copy used after the original is reported every time", async () => {
+		const account = await createAccount(fixture);
+		const { authenticator } = await enrol(fixture, account, "copied");
+
+		const reported: boolean[] = [];
+		const stored: number[] = [];
+		for (const signCount of [30, 2, 3, 4]) {
+			reported.push((await signInWith(account, authenticator, { signCount })).signCountRegressed);
+			stored.push((await backupFlagsOf(fixture, account)).signCount);
+		}
+
+		expect(reported).toStrictEqual([false, true, true, true]);
+		expect(stored).toStrictEqual([30, 30, 30, 30]);
+	});
+
+	it("leaves the report standing until a reset authenticator passes the stored counter", async () => {
 		const account = await createAccount(fixture);
 		const { authenticator } = await enrol(fixture, account, "reset");
 
-		await signInWith(account, authenticator, { signCount: 30 });
-		const fallen = await signInWith(account, authenticator, { signCount: 2 });
-		const afterwards = await signInWith(account, authenticator, { signCount: 3 });
+		const reported: boolean[] = [];
+		for (const signCount of [30, 1, 30, 31]) {
+			reported.push((await signInWith(account, authenticator, { signCount })).signCountRegressed);
+		}
 
-		expect(fallen.signCountRegressed).toBe(true);
-		expect(afterwards.signCountRegressed).toBe(false);
-		expect((await backupFlagsOf(fixture, account)).signCount).toBe(3);
+		expect(reported).toStrictEqual([false, true, true, false]);
+		expect((await backupFlagsOf(fixture, account)).signCount).toBe(31);
 	});
 
 	/** L-9: a counter that falls is reported and never refused, so a copy of an authenticator used
