@@ -1625,189 +1625,235 @@ The same measurement refuted the second of the two ways out that originally stoo
 
 <a id="e-190"></a>
 
-**E-190 — `IdentityMode` bleibt bei der Migration, das Identitätsmodul importiert ihn.**
-*Kontext:* `src/core/db/migrations/identity-mode.ts` definiert den Typ bereits, weil die Migration 2 anhand des Modus eines von drei CHECK-Constraints auswählt. Das Identitätsmodul braucht denselben Typ.
-*Verworfen:* Den Typ nach `core/identity/` verschieben und die Migration von dort importieren lassen.
-*Grund:* Zwei Gründe, und der zweite ist der ehrlichere. Erstens kehrte der Umzug die Schichtung um: Welle 1 hat die Datenbank gebaut und ist zusammengeführt, Welle 2 baut darauf auf; ein Import aus `core/identity/` in einer Migration hieße, dass die untere Schicht die obere braucht. Der Typ steht außerdem genau dort, wo er wirkt — neben dem SQL, das er auswählt. Zweitens: Der Dateibesitz dieses Features endet bei `src/core/identity/**`, und ein Umzug hätte zwei fremde Dateien angefasst. Der erste Grund trägt auch ohne den zweiten, aber der zweite hat entschieden.
-*Preis:* Das Identitätsmodul importiert seinen zentralsten Typ aus einem Migrationsordner. Von außen sieht das nach der falschen Richtung aus und braucht diesen Eintrag als Erklärung.
+### `IdentityMode` stays with the migration, the identity module imports it
+`E-190` · identity · translated from the German original
+
+**Context.** `src/core/db/migrations/identity-mode.ts` already defines the type, because migration 2 selects one of three CHECK constraints by the mode. The identity module needs the same type.
+**Rejected.** Moving the type to `core/identity/` and having the migration import it from there.
+**Reason.** Two reasons, and the second is the more honest one. First, the move would invert the layering: wave 1 built the database and is merged, wave 2 builds on it; an import from `core/identity/` in a migration would mean that the lower layer needs the upper one. The type also stands exactly where it takes effect — next to the SQL it selects. Second: this feature's file ownership ends at `src/core/identity/**`, and a move would have touched two files belonging to others. The first reason holds even without the second, but the second decided it.
+**Price.** The identity module imports its most central type from a migrations folder. From the outside that looks like the wrong direction and needs this entry as an explanation.
 
 <a id="e-191"></a>
 
-**E-191 — Die Zeichen-Erlaubnisliste gilt für die Vergleichsform, nicht für die Anzeigeform.**
-*Kontext:* Die Vorgabe ist `/^[a-z0-9_-]+$/` (3.15 A.3), und die Anzeigeform behält die Schreibweise des Nutzers (E-17).
-*Verworfen:* (a) Die Liste auf die Anzeigeform anwenden. (b) Beide Formen prüfen.
-*Grund:* (a) verbietet jeden Großbuchstaben, weil die Vorgabe nur Kleinbuchstaben nennt — `Alice` wäre abgelehnt, und die getrennte Anzeigeform aus E-17 hätte nichts mehr zu erhalten. (b) ist wirkungslos: Die Vergleichsform **ist** die kleingeschriebene Anzeigeform, eine zweite Prüfung prüft dasselbe noch einmal. Entschieden wird auf der Form, die im eindeutigen Index steht — was verglichen wird, muss auch geprüft werden.
-*Preis:* Die Anzeigeform kann theoretisch ein Zeichen tragen, das die Liste nicht nennt, solange es beim Falten in ein erlaubtes fällt. Praktisch sind das die Großbuchstaben A–Z; alles andere fällt vorher bei NFKC oder beim Falten heraus.
+### The character allowlist applies to the comparison form, not to the display form
+`E-191` · identity · translated from the German original
+
+**Context.** The default is `/^[a-z0-9_-]+$/` (3.15 A.3), and the display form keeps the user's spelling (E-17).
+**Rejected.** (a) Applying the list to the display form. (b) Checking both forms.
+**Reason.** (a) forbids every capital letter, because the default names only lowercase letters — `Alice` would be rejected, and the separate display form from E-17 would have nothing left to preserve. (b) is without effect: the comparison form **is** the lowercased display form, a second check checks the same thing once more. The decision is made on the form that stands in the unique index — what is compared must also be checked.
+**Price.** The display form can theoretically carry a character the list does not name, as long as it falls into an allowed one on folding. In practice these are the capital letters A–Z; everything else drops out beforehand at NFKC or at folding.
 
 <a id="e-192"></a>
 
-**E-192 — Zeichen werden vor der Länge geprüft.**
-*Kontext:* Ein Benutzername kann gleichzeitig zu kurz sein und ein verbotenes Zeichen tragen; `T-ENUM-8` schickt einen Platzhalter (`*`, `%`) an `GET /username/available` und erwartet `reason: "invalid_characters"`.
-*Verworfen:* Länge zuerst, weil sie billiger zu prüfen ist.
-*Grund:* Ein einzelnes `*` ist beides — ein Zeichen zu wenig und ein Zeichen zu viel. Mit der Länge zuerst käme `too_short` heraus, und der Prüffall wäre nicht erfüllt. Die Reihenfolge ist damit keine Geschmacksfrage, sondern Teil der Anforderung.
-*Preis:* Die Reihenfolge steht nur im Code und in der Referenz; ein Umstellen bricht einen Test, der von außen wie ein Detail aussieht.
+### Characters are checked before length
+`E-192` · identity · translated from the German original
+
+**Context.** A username can be too short and carry a forbidden character at the same time; `T-ENUM-8` sends a wildcard (`*`, `%`) to `GET /username/available` and expects `reason: "invalid_characters"`.
+**Rejected.** Length first, because it is cheaper to check.
+**Reason.** A single `*` is both — one character too few and one character too many. With length first, `too_short` would come out, and the test case would not be met. The order is therefore not a matter of taste but part of the requirement.
+**Price.** The order stands only in the code and in the reference; reordering breaks a test that from the outside looks like a detail.
 
 <a id="e-193"></a>
 
-**E-193 — Die Erlaubnisliste ist ein `RegExp`, und ihre gefährlichen Formen sind ein Startfehler.**
-*Kontext:* 3.15 A.3 schreibt `allowedCharacters: RegExp` vor. Ein Aufrufer übergibt damit ein Objekt mit Zustand.
-*Verworfen:* (a) Eine Zeichenmenge statt eines Musters. (b) Das Muster ungeprüft übernehmen.
-*Grund:* (a) widerspricht der Vorgabe und nimmt Bereiche weg, die ein Muster mühelos ausdrückt. (b) hat zwei Löcher, die beide still sind: Ein unverankertes Muster prüft einen Teil des Namens und lässt den Rest ungesehen durch — aus einer Erlaubnisliste wird eine Enthält-Prüfung. Und ein Muster mit `g` oder `y` führt `lastIndex` zwischen zwei Aufrufen mit, akzeptiert denselben Namen einmal und lehnt ihn beim nächsten Mal ab. Beides fällt beim Start auf oder gar nicht.
-*Preis:* Zwei Regeln, die ein Aufrufer nicht erwartet, und eine Fehlermeldung, die sie erklären muss.
+### The allowlist is a `RegExp`, and its dangerous forms are a start error
+`E-193` · identity · translated from the German original
+
+**Context.** 3.15 A.3 prescribes `allowedCharacters: RegExp`. A caller thereby hands over an object with state.
+**Rejected.** (a) A character set instead of a pattern. (b) Taking over the pattern unchecked.
+**Reason.** (a) contradicts the specification and takes away ranges that a pattern expresses effortlessly. (b) has two holes, both of them silent: an unanchored pattern checks part of the name and lets the rest through unseen — an allowlist becomes a contains check. And a pattern with `g` or `y` carries `lastIndex` along between two calls, accepts the same name once and rejects it the next time. Both are noticed at start or not at all.
+**Price.** Two rules a caller does not expect, and an error message that has to explain them.
 
 <a id="e-194"></a>
 
-**E-194 — E-Mail-Adressen werden strukturell geprüft, obwohl die Vorgabe keine Regel nennt.**
-*Kontext:* 3.4 verlangt für E-Mail nur trimmen, NFKC und `lower()`. Eine Syntaxregel steht nirgends.
-*Verworfen:* (a) Gar nicht prüfen und alles speichern, was normalisiert werden kann. (b) Eine vollständige RFC-5322-Grammatik.
-*Grund:* (a) schreibt `"   "` oder `"alice"` als Adresse in eine Spalte, die jedes nachgelagerte System für eine Adresse hält — dieselbe Fehlerklasse wie die erfundenen Platzhalter aus E-16, nur ohne Absicht. (b) ist die bekannte Falle: Jede vollständige Umsetzung lehnt irgendwann gültige Adressen ab, und ob eine Adresse existiert, beantwortet ohnehin erst der Bestätigungslink. Geprüft wird deshalb genau so viel, wie eine Adresse von etwas anderem unterscheidet: genau ein `@`, beide Seiten nicht leer, kein unsichtbares oder trennendes Zeichen, höchstens 254 Byte.
-*Preis:* Eine Regel, die die Vorgabe nicht kennt. Sie steht in der Referenz, und sie kann eine exotische, aber gültige Adresse ablehnen.
+### Email addresses are checked structurally, although the specification names no rule
+`E-194` · identity · translated from the German original
+
+**Context.** 3.4 requires for email only trimming, NFKC and `lower()`. A syntax rule stands nowhere.
+**Rejected.** (a) Not checking at all and storing everything that can be normalised. (b) A complete RFC-5322 grammar.
+**Reason.** (a) writes `"   "` or `"alice"` as an address into a column that every downstream system takes for an address — the same class of fault as the invented placeholders from E-16, only without intent. (b) is the known trap: every complete implementation sooner or later rejects valid addresses, and whether an address exists is answered only by the confirmation link anyway. So exactly as much is checked as distinguishes an address from something else: exactly one `@`, both sides non-empty, no invisible or separating character, at most 254 bytes.
+**Price.** A rule the specification does not know. It stands in the reference, and it can reject an exotic but valid address.
 
 <a id="e-195"></a>
 
-**E-195 — Laufzeit und CHECK werden gegeneinander bewiesen, nicht aus einer Quelle erzeugt.**
-*Kontext:* Migration 2 legt je Konfiguration ein CHECK-Constraint an. Dieselbe Regel muss in der Laufzeit gelten, bevor ein `INSERT` scheitert.
-*Verworfen:* (a) Das SQL der Migration aus einer Tabelle des Identitätsmoduls erzeugen. (b) Das SQL zur Laufzeit lesen und die Regel daraus ableiten.
-*Grund:* (a) wäre die einzige Quelle gewesen und ist die richtige Form, aber sie hätte die Migration umgeschrieben — eine Datei, die diesem Feature nicht gehört und deren Prüfsumme im Migrationsläufer steht. (b) macht eine Sicherheitsregel von einem Textmuster in einer Zeichenkette abhängig; wer das SQL umformatiert, ändert stillschweigend das Verhalten. Geblieben ist eine Tabelle in `columns.ts` und ein Test, der die geforderten Bezeichner aus dem ausgelieferten SQL herausliest, mit ihr vergleicht und zusätzlich gegen eine laufende Datenbank prüft, dass keine erzeugte Spaltenbelegung vom Constraint abgelehnt wird.
-*Preis:* Zwei Stellen, die dieselbe Regel nennen, und ein Test als einzige Klammer. Fällt der Test weg, driften sie.
+### Runtime and CHECK are proven against each other, not generated from one source
+`E-195` · identity · translated from the German original
+
+**Context.** Migration 2 creates one CHECK constraint per configuration. The same rule has to hold in the runtime before an `INSERT` fails.
+**Rejected.** (a) Generating the migration's SQL from a table in the identity module. (b) Reading the SQL at runtime and deriving the rule from it.
+**Reason.** (a) would have been the single source and is the right form, but it would have rewritten the migration — a file that does not belong to this feature and whose checksum stands in the migration runner. (b) makes a security rule depend on a text pattern in a string; whoever reformats the SQL silently changes the behaviour. What remained is a table in `columns.ts` and a test that reads the required identifiers out of the shipped SQL, compares them with it, and additionally checks against a running database that no generated column assignment is rejected by the constraint.
+**Price.** Two places that name the same rule, and a test as the only clamp. If the test goes away, they drift.
 
 <a id="e-196"></a>
 
-**E-196 — Die Auflösung fragt die Datenbank auch dann, wenn kein Bezeichner gültig ist.**
-*Kontext:* `findUserByIdentifier` normalisiert die Eingabe als Adresse und als Benutzernamen; scheitert beides, kann es keinen Treffer geben.
-*Verworfen:* Früh `null` zurückgeben und die Abfrage sparen.
-*Grund:* Genau dieses frühe `return` ist das Orakel aus 5.1: Eine Eingabe, die die Erlaubnisliste ablehnt, wäre messbar schneller beantwortet als eine, die ein Konto nennt. Ein Angreifer misst damit nicht Kennwörter, sondern reduziert eine Liste. Also läuft immer dieselbe Anweisung mit denselben zwei Parametern, notfalls beide `NULL` — was nie trifft, weil `NULL = x` in SQL nicht wahr wird.
-*Preis:* Eine Abfrage, die sicher leer ausgeht, bei jeder Anfrage mit unsinniger Eingabe. Der Test hält die Anzahl der Anweisungen und ihren Wortlaut fest, damit die Ersparnis nicht später „aufgeräumt" wird.
+### Resolution queries the database even when no identifier is valid
+`E-196` · identity · translated from the German original
+
+**Context.** `findUserByIdentifier` normalises the input as an address and as a username; if both fail, there can be no match.
+**Rejected.** Returning `null` early and saving the query.
+**Reason.** Exactly this early `return` is the oracle from 5.1: an input the allowlist rejects would be answered measurably faster than one that names an account. With it an attacker does not measure passwords but reduces a list. So the same statement always runs with the same two parameters, if need be both `NULL` — which never matches, because `NULL = x` does not become true in SQL.
+**Price.** A query that is certain to come up empty, on every request with nonsensical input. The test fixes the number of statements and their wording, so that the saving is not "tidied up" later.
 
 <a id="e-197"></a>
 
-**E-197 — Der aufgelöste Nutzer trägt Wahrheitswerte statt Zeitstempel.**
-*Kontext:* `velve.user` hat `email_verified_at` und `disabled_at` als `timestamptz`. Die Auflösung gibt eine Zeile an den Anmeldepfad weiter.
-*Verworfen:* Beide Spalten als `Date | null` durchreichen.
-*Grund:* Der Treiber ist ein Parameter und kein Import (Abschnitt 2). Ob `timestamptz` als `Date`, als Zeichenkette oder als etwas Drittes in JavaScript ankommt, entscheidet der Treiber; ein Feld vom Typ `Date | null` wäre eine Zusage, die die Bibliothek nicht halten kann. `IS NOT NULL` in SQL liefert `boolean`, und `boolean` dekodiert jeder Treiber gleich.
-*Preis:* Wer den Zeitpunkt braucht, liest die Spalte selbst. Für die zwei Fragen des Anmeldepfads — bestätigt, deaktiviert — reicht der Wahrheitswert.
+### The resolved user carries booleans instead of timestamps
+`E-197` · identity · translated from the German original
+
+**Context.** `velve.user` has `email_verified_at` and `disabled_at` as `timestamptz`. Resolution hands a row on to the sign-in path.
+**Rejected.** Passing both columns through as `Date | null`.
+**Reason.** The driver is a parameter and not an import (section 2). Whether `timestamptz` arrives in JavaScript as a `Date`, as a string or as something third is decided by the driver; a field of type `Date | null` would be a promise the library cannot keep. `IS NOT NULL` in SQL yields `boolean`, and every driver decodes `boolean` the same way.
+**Price.** Whoever needs the point in time reads the column themselves. For the two questions of the sign-in path — verified, disabled — the boolean is enough.
 
 <a id="e-198"></a>
 
-**E-198 — `assertSignInMethodRemains` sperrt die Nutzerzeile, statt nur zu zählen.**
-*Kontext:* L-13 verlangt, dass immer ein Anmeldeweg bleibt. Zwei Wege lassen sich gleichzeitig entfernen.
-*Verworfen:* Nur zählen und darauf vertrauen, dass niemand zweimal gleichzeitig entfernt.
-*Grund:* Ein Nutzer mit Kennwort und einer Identität, der beide gleichzeitig entfernt, liest zweimal „zwei Wege, einer bleibt" und löscht zweimal — danach ist keiner übrig, und L-13 ist ohne einen einzigen Fehler verletzt. `SELECT … FOR UPDATE` auf `velve.user` serialisiert die Entfernungen je Konto; die zweite zählt erst, nachdem die erste festgeschrieben ist, und wird mit `last_sign_in_method` abgelehnt.
-*Preis:* Die Funktion verlangt eine Transaktion und nicht irgendeinen Treiber, und sie serialisiert alle Entfernungen eines Kontos. Der Parameter heißt deshalb `transaction`. Die erste Fassung des Tests bewies die Sperre nicht: Zwei Transaktionen über `Promise.allSettled` liefen in der Praxis nacheinander und der Test blieb grün, als die Sperre versuchsweise entfernt wurde. Er prüft jetzt mit `FOR UPDATE NOWAIT` aus einer zweiten Verbindung und scheitert ohne die Sperre.
+### `assertSignInMethodRemains` locks the user row instead of only counting
+`E-198` · identity · translated from the German original
+
+**Context.** L-13 requires that a sign-in method always remains. Two methods can be removed at the same time.
+**Rejected.** Only counting and trusting that nobody removes twice at the same time.
+**Reason.** A user with a password and one identity who removes both at the same time reads "two methods, one remains" twice and deletes twice — afterwards none is left, and L-13 is violated without a single error. `SELECT … FOR UPDATE` on `velve.user` serialises the removals per account; the second counts only after the first is committed, and is rejected with `last_sign_in_method`.
+**Price.** The function requires a transaction and not just any driver, and it serialises all removals of an account. The parameter is therefore called `transaction`. The first version of the test did not prove the lock: two transactions over `Promise.allSettled` ran one after the other in practice, and the test stayed green when the lock was removed as an experiment. It now checks with `FOR UPDATE NOWAIT` from a second connection and fails without the lock.
 
 <a id="e-199"></a>
 
-**E-199 — Die Zählung nimmt die zu entfernende Zeile über ihre Kennung aus, statt eine Eins abzuziehen.**
-*Kontext:* Gezählt wird, was nach dem Entfernen bleibt.
-*Verworfen:* Alles zählen und vom Ergebnis eins abziehen.
-*Grund:* Abziehen setzt voraus, dass die Zeile existiert und dem Konto gehört. Ist sie schon weg oder gehört sie jemand anderem, wird die Zahl zu klein, und die Bibliothek lehnt eine Entfernung ab, die zulässig gewesen wäre — ein Nutzer, der sich nicht erklären kann, warum er nicht darf. Ein `AND id <> $n` in derselben Abfrage kennt die Wahrheit.
-*Preis:* Drei Parameter statt einem, und ein `NOT $2::boolean` für den Kennwortfall, der keine eigene Kennung hat.
+### The count excludes the row to be removed by its identifier instead of subtracting one
+`E-199` · identity · translated from the German original
+
+**Context.** What is counted is what remains after the removal.
+**Rejected.** Counting everything and subtracting one from the result.
+**Reason.** Subtracting presupposes that the row exists and belongs to the account. If it is already gone or belongs to someone else, the number becomes too small, and the library rejects a removal that would have been permissible — a user who cannot explain to himself why he may not. An `AND id <> $n` in the same query knows the truth.
+**Price.** Three parameters instead of one, and a `NOT $2::boolean` for the password case, which has no identifier of its own.
 
 <a id="e-200"></a>
 
-**E-200 — Die Verfügbarkeitsprüfung fragt die Datenbank nicht, wenn die Schreibweise schon scheitert.**
-*Kontext:* `usernameAvailability` beantwortet eine Frage, deren Antwort per Vorgabe die Existenz verrät (3.4, E-19).
-*Verworfen:* Auch hier immer abfragen, wie bei der Auflösung.
-*Grund:* Gleichförmigkeit schützt ein Geheimnis. Hier gibt es keines: Der Endpunkt sagt ausdrücklich, ob ein Name vergeben ist. Eine Abfrage, die nichts verbirgt, kostet nur eine Anfrage an die Datenbank — und dieser Endpunkt ist der, den ein Aufzähler in Schleife ruft. Die Grenze zieht seine Rate, nicht seine Laufzeit.
-*Preis:* Zwei Funktionen mit gegensätzlicher Regel, einen Absatz auseinander in derselben Datei. Die Referenz nennt den Unterschied ausdrücklich, weil er sonst wie eine Unachtsamkeit aussieht.
+### The availability check does not query the database when the spelling already fails
+`E-200` · identity · translated from the German original
+
+**Context.** `usernameAvailability` answers a question whose answer reveals existence by specification (3.4, E-19).
+**Rejected.** Always querying here too, as with resolution.
+**Reason.** Uniformity protects a secret. Here there is none: the endpoint says expressly whether a name is taken. A query that hides nothing only costs a request to the database — and this endpoint is the one an enumerator calls in a loop. The limit is drawn by its rate, not by its running time.
+**Price.** Two functions with opposite rules, one paragraph apart in the same file. The reference names the difference expressly, because otherwise it looks like carelessness.
 
 <a id="e-201"></a>
 
-**E-201 — Das Identitätsmodul hat keine Sammel-Datei und erscheint noch nicht im öffentlichen Schnappschuss.**
-*Kontext:* `src/index.ts` und `test/__snapshots__/api-surface.md` gehören nicht zu diesem Feature; die Fläche wird von späteren Wellen zusammengesetzt.
-*Verworfen:* (a) Ein `index.ts` im Modul anlegen. (b) Die Exporte schon jetzt in `src/index.ts` eintragen.
-*Grund:* (b) hätte zwei fremde Dateien geändert, darunter den Schnappschuss, dessen Zweck es ist, eine unangekündigte Änderung der öffentlichen Fläche zu melden. (a) wäre eine Datei, die niemand importiert; `knip` meldet sie zu Recht. Die Tests importieren die Module unmittelbar, und `knip` sieht damit jeden Export als benutzt.
-*Preis:* Bis eine spätere Welle das Modul verdrahtet, ist es nur über die Tests erreichbar. Zwölf Typen sind ausschließlich deshalb in Tests benannt, weil sonst `knip` sie als ungenutzt meldet — das ist der sichtbare Teil dieses Preises.
+### The identity module has no barrel file and does not yet appear in the public snapshot
+`E-201` · identity · translated from the German original
+
+**Context.** `src/index.ts` and `test/__snapshots__/api-surface.md` do not belong to this feature; the surface is assembled by later waves.
+**Rejected.** (a) Creating an `index.ts` in the module. (b) Entering the exports in `src/index.ts` already now.
+**Reason.** (b) would have changed two files belonging to others, among them the snapshot, whose purpose is to report an unannounced change of the public surface. (a) would be a file nobody imports; `knip` rightly reports it. The tests import the modules directly, and with that `knip` sees every export as used.
+**Price.** Until a later wave wires up the module, it is reachable only through the tests. Twelve types are named in tests solely because otherwise `knip` reports them as unused — that is the visible part of this price.
 
 <a id="e-202"></a>
 
-**E-202 — Die Vergleichsform wird je Codepunkt gefaltet, nicht über die ganze Zeichenkette.**
-*Kontext:* 3.4 schreibt für `username_key` NFKC und `toLowerCase()` vor. Über eine ganze Zeichenkette angewandt greift dabei die Unicode-Regel Final_Sigma: `ΟΔΟΣ` wird zu `οδος`, PostgreSQLs `lower()` liefert `οδοσ`.
-*Verworfen:* (a) Beim Wortlaut der Vorgabe bleiben und die Abweichung nur dokumentieren. (b) Eine eigene Falttabelle nach Unicode CaseFolding.txt mitliefern.
-*Grund:* Unter einer erweiterten Erlaubnisliste tragen zwei Konten das, was die Datenbank für einen Namen hält, und nichts fällt auf — die einzige Bedingung im Schema, `username_key = lower(username_key)`, ist für beide Schreibweisen erfüllt. (a) hieße, eine Kontoübernahme zu dokumentieren statt sie zu schließen. (b) wäre eine siebte Abhängigkeit oder eine mitgeführte Tabelle, die mit jeder Unicode-Version veraltet. Die Faltung je Codepunkt nimmt der Regel den Kontext, den sie liest, und trifft damit genau das Verhalten von `lower()`.
-*Preis:* Eine bewusste Abweichung vom Wortlaut der Vorgabe — dieselbe Funktion, anders angewandt. Und die Übereinstimmung endet an der Unicode-Version: Der Abgleich über **ganz Unicode**, 1.111.758 Vergleichsformen durch beide Normalisierer, findet genau eine Abweichung — U+038D, einen in JavaScripts Unicode-Daten unbelegten Platz, den die C-Bibliothek zu `ύ` faltet. Nicht JavaScript weicht dort ab, sondern glibc. *(Korrektur: Die erste Fassung dieses Eintrags nannte den Bereich unter U+30000, weil ich nur so weit gemessen hatte; der Review hat den Rest gemessen und dasselbe Ergebnis bekommen.)*
+### The comparison form is folded per code point, not over the whole string
+`E-202` · identity · translated from the German original
+
+**Context.** 3.4 prescribes NFKC and `toLowerCase()` for `username_key`. Applied over a whole string, the Unicode rule Final_Sigma takes effect: `ΟΔΟΣ` becomes `οδος`, PostgreSQL's `lower()` yields `οδοσ`.
+**Rejected.** (a) Staying with the wording of the specification and only documenting the deviation. (b) Shipping a folding table of our own after Unicode CaseFolding.txt.
+**Reason.** Under an extended allowlist, two accounts carry what the database takes for one name, and nothing is noticed — the only condition in the schema, `username_key = lower(username_key)`, is met for both spellings. (a) would mean documenting an account takeover instead of closing it. (b) would be a seventh dependency or a carried-along table that goes stale with every Unicode version. Folding per code point takes away from the rule the context it reads, and with that matches exactly the behaviour of `lower()`.
+**Price.** A deliberate deviation from the wording of the specification — the same function, applied differently. And the agreement ends at the Unicode version: the cross-check over **all of Unicode**, 1,111,758 comparison forms through both normalisers, finds exactly one deviation — U+038D, a slot unassigned in JavaScript's Unicode data, which the C library folds to `ύ`. It is not JavaScript that deviates there, but glibc. *(Correction: the first version of this entry named the range below U+30000, because I had measured only that far; the review measured the rest and got the same result.)*
 
 <a id="e-203"></a>
 
-**E-203 — Eine Zusage im Referenzhandbuch, die für keine Eingabe greift, wird gestrichen und nicht umformuliert.**
-*Kontext:* Die erste Fassung der Referenz versprach, dass ein Auseinanderlaufen von JavaScript-Faltung und `lower()` beim Einfügen an einer Bedingung scheitert, „statt einen falschen Wert zu speichern". Der Review hat jeden Codepunkt durchgemessen: Es gibt keine Eingabe, für die diese Bedingung anschlägt.
-*Verworfen:* Die Zusage vorsichtiger formulieren („kann scheitern").
-*Grund:* Die Zusage war nie geprüft, sondern aus der Existenz der CHECK-Bedingung abgeleitet — und die prüft etwas anderes, nämlich nur die Idempotenz von `lower()`. Eine vorsichtigere Formulierung hätte denselben Fehler behalten: Wer die Erlaubnisliste erweitert, liest ein Sicherheitsnetz und verlässt sich darauf. Eine benannte Lücke ist besser als eine erfundene Absicherung. Die Zusage ist weg; an ihrer Stelle steht, was tatsächlich hält (E-202), und getrennt davon, was nicht hält.
-*Preis:* Die Referenz ist an dieser Stelle länger und unbequemer zu lesen. Und der Eintrag hält fest, dass die Zusage von mir stammt und nicht gemessen war, bevor sie geschrieben wurde.
+### A promise in the reference manual that takes effect for no input is struck and not reworded
+`E-203` · identity · translated from the German original
+
+**Context.** The first version of the reference promised that a divergence between JavaScript folding and `lower()` fails at a condition on insertion, "instead of storing a wrong value". The review measured through every code point: there is no input for which this condition triggers.
+**Rejected.** Wording the promise more cautiously ("can fail").
+**Reason.** The promise was never checked but derived from the existence of the CHECK condition — and that checks something else, namely only the idempotence of `lower()`. A more cautious wording would have kept the same fault: whoever extends the allowlist reads a safety net and relies on it. A named gap is better than an invented safeguard. The promise is gone; in its place stands what actually holds (E-202), and separately from it, what does not hold.
+**Price.** The reference is longer and less comfortable to read at this point. And the entry records that the promise came from me and was not measured before it was written.
 
 <a id="e-204"></a>
 
-**E-204 — Die Prüfung der Erlaubnisliste liest die Struktur des Musters, nicht sein erstes und letztes Zeichen.**
-*Kontext:* E-193 verlangt, dass `allowedCharacters` den ganzen Namen prüft. Die erste Fassung sah nach `^` am Anfang und `$` am Ende der Quelle.
-*Verworfen:* (a) Das Muster ungeprüft in `^(?:…)$` einwickeln und damit ohne Fehlermeldung reparieren. (b) Einen vollständigen Parser für reguläre Ausdrücke schreiben.
-*Grund:* `/^[a-z]+|[0-9]+$/` besteht die Zeichenprüfung, verankert aber nur einen Zweig und lässt den anderen überall greifen — es akzeptiert `abc***123`. Genau das, wogegen die Prüfung eingeführt wurde, eine Alternation tief. (a) verbirgt einen Konfigurationsfehler, statt ihn zu melden, und ändert stillschweigend, was der Aufrufer geschrieben hat. (b) ist zu viel für drei Regeln. Geblieben ist ein Durchgang, der Escapes und Zeicheninhalte zu Punkten reduziert, und zwei Prüfungen über das Ergebnis: keine Alternation auf oberster Ebene, `^` nur am Anfang, `$` nur am Ende. Dazu kommt das Flag `m`, das aus den Ankern Zeilenanker macht: `/^[a-z0-9_-]+$/m` nimmt `alice\n***evil` an, und ein Zeilenumbruch in der Mitte wird von `trim()` nie berührt.
-*Preis:* Ein zulässiges, aber ungewöhnlich geschriebenes Muster kann abgelehnt werden — etwa eines, das seine Alternation nicht klammert, obwohl beide Zweige verankert wären.
+### The allowlist check reads the structure of the pattern, not its first and last character
+`E-204` · identity · translated from the German original
+
+**Context.** E-193 requires that `allowedCharacters` checks the whole name. The first version looked for `^` at the start and `$` at the end of the source.
+**Rejected.** (a) Wrapping the pattern unchecked in `^(?:…)$` and thereby repairing it without an error message. (b) Writing a complete parser for regular expressions.
+**Reason.** `/^[a-z]+|[0-9]+$/` passes the character check, but anchors only one branch and lets the other match anywhere — it accepts `abc***123`. Exactly what the check was introduced against, one alternation deep. (a) hides a configuration fault instead of reporting it, and silently changes what the caller wrote. (b) is too much for three rules. What remained is one pass that reduces escapes and character contents to dots, and two checks over the result: no alternation at the top level, `^` only at the start, `$` only at the end. Added to that is the flag `m`, which turns the anchors into line anchors: `/^[a-z0-9_-]+$/m` accepts `alice\n***evil`, and a line break in the middle is never touched by `trim()`.
+**Price.** A permissible but unusually written pattern can be rejected — for instance one that does not parenthesise its alternation although both branches would be anchored.
 
 <a id="e-205"></a>
 
-**E-205 — Die Prüfung des letzten Anmeldewegs entfernt selbst und öffnet notfalls ihre eigene Transaktion.**
-*Kontext:* Der Parameter hieß `transaction`, war aber vom Typ `Driver`. Wer einen gewöhnlichen Treiber übergab, bekam die Sperre für die Dauer einer einzigen Anweisung; beide gleichzeitigen Entfernungen zählten zwei Wege, beide löschten, das Konto blieb ohne Weg zurück, und es wurde nirgends ein Fehler gemeldet.
-*Verworfen:* (a) Den Parameter auf einen eigenen Transaktionstyp verengen. (b) Nur prüfen und die Reihenfolge weiter in Prosa verlangen. (c) Eine zweite Funktion daneben stellen, die Transaktion und Entfernung übernimmt.
-*Grund:* (a) ist die sauberste Form und war der erste Entwurf; sie hätte die Tests des Prüfers nicht mehr übersetzt, und die beiden Funktionen, die das später aufrufen, hätten sich den Typ trotzdem beschaffen müssen. (b) ist die Lage, aus der der Befund kommt — eine Namenskonvention ist keine Schnittstelle. (c) hätte zwei Wege gelassen, von denen einer weiterhin falsch ist. Prüfung und Entfernung lassen sich ohnehin nicht trennen: Zwischen die Prüfung des Aufrufers und sein `DELETE` passt eine zweite Entfernung, gleich wie die Sperre genommen wird. Also nimmt der Aufruf die Sperre, zählt, was bliebe, und löscht — in einer Reihenfolge, die niemand mehr aufbrechen kann. Ob die Sperre überhaupt trägt, beantwortet die Datenbank: Eine Zeilensperre vergibt eine Transaktions-ID, und außerhalb eines Transaktionsblocks ist sie mit der nächsten Anweisung verschwunden. Ist sie das, wird die ganze Folge in einer eigenen Transaktion wiederholt; geschrieben wurde bis dahin nichts.
-*Preis:* Ein zusätzlicher Umlauf zur Datenbank für die Frage, ob die Sperre hält.
+### The last-sign-in-method check removes by itself and opens its own transaction if need be
+`E-205` · identity · translated from the German original
 
-*Korrektur:* Die erste Fassung dieses Preises lautete, eine Funktion namens `assert…` schreibe nun, und umbenennen sei nicht möglich, ohne die Tests des Prüfers zu brechen. Der zweite Teil war falsch, und der erste war deshalb ein hingenommener Mangel, der keiner sein musste: Zwei Testdateien nannten das Symbol — die des Prüfers und meine eigene —, und die des Prüfers hätte er umgeschrieben. Ich habe die Reichweite einer fremden Datei als feststehend behandelt, statt zu fragen. Die Funktion heißt jetzt `removeSignInMethod`, ihr Anfragetyp `SignInMethodRemovalRequest`, und das erste Feld `driver` statt `transaction` — eine Transaktion ist gerade das, was sie nicht mehr verlangt. Der dreizeilige Kommentar, dessen einzige Aufgabe es war zu sagen, dass die Funktion löscht, ist mit dem Namen verschwunden, der ihn brauchte; genau das meint Abschnitt 3 mit einem Namen, der einen Kommentar nötig hat.
+**Context.** The parameter was called `transaction` but was of type `Driver`. Whoever passed an ordinary driver got the lock for the duration of a single statement; both concurrent removals counted two methods, both deleted, the account was left without a method, and no error was reported anywhere.
+**Rejected.** (a) Narrowing the parameter to a transaction type of its own. (b) Only checking and continuing to require the order in prose. (c) Putting a second function beside it that takes over transaction and removal.
+**Reason.** (a) is the cleanest form and was the first draft; under it the reviewer's tests would no longer have compiled, and the two functions that call this later would have had to obtain the type anyway. (b) is the situation the finding comes from — a naming convention is not an interface. (c) would have left two ways, one of which is still wrong. Check and removal cannot be separated anyway: between the caller's check and its `DELETE` a second removal fits, however the lock is taken. So the call takes the lock, counts what would remain, and deletes — in an order nobody can break open any more. Whether the lock holds at all is answered by the database: a row lock assigns a transaction ID, and outside a transaction block it is gone with the next statement. If it is, the whole sequence is repeated in a transaction of its own; nothing has been written up to then.
+**Price.** One additional round trip to the database for the question whether the lock holds.
+
+*Correction:* The first version of this price read that a function named `assert…` now writes, and that renaming was not possible without breaking the reviewer's tests. The second part was wrong, and the first was therefore an accepted defect that did not have to be one: two test files named the symbol — the reviewer's and my own — and the reviewer would have rewritten his. I treated the reach of another's file as fixed instead of asking. The function is now called `removeSignInMethod`, its request type `SignInMethodRemovalRequest`, and the first field `driver` instead of `transaction` — a transaction is precisely what it no longer requires. The three-line comment whose only task was to say that the function deletes has disappeared with the name that needed it; that is exactly what section 3 means by a name that needs a comment.
 
 <a id="e-206"></a>
 
-**E-206 — Die Obergrenze wird vor dem Muster geprüft, die Untergrenze danach.**
-*Kontext:* E-192 legt fest, dass Zeichen vor Länge geprüft werden, weil `T-ENUM-8` für einen einzelnen Platzhalter `invalid_characters` erwartet. `allowedCharacters` ist ein Muster des Aufrufers und lief auf beliebig langer Eingabe.
-*Verworfen:* Eine feste absolute Schranke neben `maximumLength` einführen.
-*Grund:* Der Grund in E-192 betraf immer nur die Untergrenze: Ein Platzhalter ist ein Zeichen zu wenig **und** ein verbotenes Zeichen, ein zu langer Name ist schlicht zu lang. Die Obergrenze vor das Muster zu ziehen ändert also keinen Fall, den E-192 meint, und nimmt einem erweiterten Muster mit Rücksetzverhalten die unbegrenzte Eingabe. Eine zweite, feste Schranke wäre eine zweite Zahl gewesen, die dasselbe sagt wie `maximumLength`.
-*Preis:* Die Obergrenze steht zweimal im Code — einmal gegen die NFKC-Form vor dem Muster, einmal gegen die Vergleichsform danach, weil das Falten einen Namen verlängern kann.
+### The upper bound is checked before the pattern, the lower bound after it
+`E-206` · identity · translated from the German original
+
+**Context.** E-192 lays down that characters are checked before length, because `T-ENUM-8` expects `invalid_characters` for a single wildcard. `allowedCharacters` is a pattern of the caller's and ran on input of arbitrary length.
+**Rejected.** Introducing a fixed absolute bound beside `maximumLength`.
+**Reason.** The reason in E-192 only ever concerned the lower bound: a wildcard is one character too few **and** a forbidden character, a name that is too long is simply too long. Pulling the upper bound in front of the pattern therefore changes no case E-192 means, and takes unbounded input away from an extended pattern with backtracking behaviour. A second, fixed bound would have been a second number saying the same as `maximumLength`.
+**Price.** The upper bound stands twice in the code — once against the NFKC form before the pattern, once against the comparison form after it, because folding can lengthen a name.
 
 <a id="e-207"></a>
 
-**E-207 — `RecoveryCodesRequirement` gehört zu `createVelveAuth` und wird hier nicht gebaut (S-DEFAULT-4, T-DEFAULT-4).**
-*Kontext:* Anforderung **S-DEFAULT-4** und Prüffall **T-DEFAULT-4**; 3.4 und 3.15 A.3 verlangen, dass `identity: { mode: "username" }` ohne `recoveryCodes` ein Startfehler ist und über `RecoveryCodesRequirement<M>` schon ein Kompilierfehler. Der Typ steht im selben Block wie `IdentityConfig` und existiert nirgends.
-*Verworfen:* (a) Ihn in `core/identity/` bauen. (b) Ihn schweigend auslassen.
-*Grund:* (a) geht nicht: Die Bedingung ist eine Aussage über die **Instanzoptionen** — sie verknüpft `identity.mode` mit `recoveryCodes`, und `core/identity` sieht nur den Modus. Ein Typ, der hier stünde, könnte nur eine Hülle sein, die niemand anwendet, und eine Hülle, die den Anschein erweckt, die Regel sei umgesetzt, ist schlimmer als keine. (b) ist die Form, die diese Entscheidung verhindert. Der Träger ist die Optionsschnittstelle von `createVelveAuth`, die keine Welle bisher gebaut hat; dieser Eintrag hält fest, dass die Anforderung dort ankommen muss.
-*Preis:* Bis dahin ist die Konfiguration `username` ohne Wiederherstellungscodes ein Fehler, den die Bibliothek nicht abfängt — genau die Lücke, die E-18 schließen sollte. Die Referenz sagt es an der Stelle, an der jemand die Konfiguration wählt. Wer `S-DEFAULT-4` oder `T-DEFAULT-4` im Repository sucht, findet außerhalb der Spezifikation diesen Eintrag und sonst nichts; das ist Absicht und der Grund, warum beide Kennungen hier stehen.
+### `RecoveryCodesRequirement` belongs to `createVelveAuth` and is not built here (S-DEFAULT-4, T-DEFAULT-4)
+`E-207` · identity · translated from the German original
+
+**Context.** Requirement **S-DEFAULT-4** and test case **T-DEFAULT-4**; 3.4 and 3.15 A.3 require that `identity: { mode: "username" }` without `recoveryCodes` is a start error, and through `RecoveryCodesRequirement<M>` already a compile error. The type stands in the same block as `IdentityConfig` and exists nowhere.
+**Rejected.** (a) Building it in `core/identity/`. (b) Silently leaving it out.
+**Reason.** (a) does not work: the condition is a statement about the **instance options** — it links `identity.mode` with `recoveryCodes`, and `core/identity` sees only the mode. A type that stood here could only be a shell nobody applies, and a shell that gives the appearance that the rule is implemented is worse than none. (b) is the form this decision prevents. The carrier is the options interface of `createVelveAuth`, which no wave has built so far; this entry records that the requirement has to arrive there.
+**Price.** Until then, the configuration `username` without recovery codes is a fault the library does not catch — exactly the gap E-18 was meant to close. The reference says so at the place where someone chooses the configuration. Whoever searches the repository for `S-DEFAULT-4` or `T-DEFAULT-4` finds, outside the specification, this entry and nothing else; that is intentional and the reason why both identifiers stand here.
 
 <a id="e-208"></a>
 
-**E-208 — Die Auflösung ordnet ihr Ergebnis, statt dem Planer die Wahl zu lassen.**
-*Kontext:* `WHERE email = $1 OR username_key = $2 LIMIT 1` ohne `ORDER BY`.
-*Verworfen:* Es dabei zu belassen, weil unter der Vorgabe-Erlaubnisliste kein Bezeichner beide Spalten treffen kann.
-*Grund:* Das stimmt nur, solange `@` kein Benutzernamenzeichen ist, und die Erlaubnisliste ist konfigurierbar. Erweitert sie jemand, trifft ein Bezeichner ein Konto über die Adresse und ein zweites über den Benutzernamen, und welches zurückkommt, entscheidet der Ausführungsplan — also die Statistiken der Tabelle, also nichts, worauf man sich verlassen kann. Die Adresse gewinnt vor dem Benutzernamen und die ältere Zeile vor der jüngeren, und das steht in der Anweisung.
-*Preis:* Eine Sortierung auf einem Pfad, der genau eine Zeile will. Sie ändert die Anweisung nicht in ihrer Form — ein Text, zwei Parameter — und der Fall, den sie regelt, tritt nur bei erweiterter Erlaubnisliste überhaupt auf.
+### Resolution orders its result instead of leaving the choice to the planner
+`E-208` · identity · translated from the German original
+
+**Context.** `WHERE email = $1 OR username_key = $2 LIMIT 1` without `ORDER BY`.
+**Rejected.** Leaving it at that, because under the default allowlist no identifier can match both columns.
+**Reason.** That is true only as long as `@` is not a username character, and the allowlist is configurable. If someone extends it, an identifier matches one account via the address and a second via the username, and which one comes back is decided by the execution plan — that is, by the table's statistics, that is, by nothing one can rely on. The address wins over the username and the older row over the younger, and that stands in the statement.
+**Price.** A sort on a path that wants exactly one row. It does not change the statement in its form — one text, two parameters — and the case it governs arises at all only with an extended allowlist.
 
 <a id="e-209"></a>
 
-**E-209 — Eine Datei außerhalb des eigenen Bereichs angefasst, um das eigene Tor zu entsperren.**
-*Kontext:* Nach dem Zusammenführen von `main` meldete die neue Eigentümer-Prädikat-Prüfung meine Zeilensperre `SELECT id FROM velve.user WHERE id = $1 FOR UPDATE` als schreibende Anweisung ohne Eigentümerfilter — `FOR UPDATE` enthält das Wort `UPDATE`. Die Prüfung steht in `test/db-static-sql.test.ts`, einer Datei, die diesem Feature nicht gehört.
-*Verworfen:* (a) Anhalten und melden, wie Abschnitt 5 es verlangt. (b) Die Sperre so umschreiben, dass das Wort nicht vorkommt.
-*Grund:* (b) geht nicht — `FOR SHARE` und `FOR KEY SHARE` sind untereinander verträglich und serialisieren nichts, und eine aus Teilen zusammengesetzte Anweisung ist genau das Verstecken vor dem Werkzeug, das `main` an anderer Stelle ausdrücklich rügt. Ich habe deshalb (a) verworfen und die fremde Prüfung repariert, im eigenen Commit und mit offengelegtem Befund. Das war falsch: Abschnitt 5 sagt „hält an und meldet **statt** die Datei zu ändern"; von Zurücknehmen steht dort nichts. Dass `main` kurz darauf dieselbe Stelle besser reparierte und ich seine Fassung vollständig übernahm, macht den Endzustand sauber, aber nicht den Weg dorthin.
-*Preis:* Der Griff ist fast unsichtbar. `git log -- test/db-static-sql.test.ts` zeigt den Commit nicht, weil die Verlaufsvereinfachung ihn als für den Endzustand folgenlos verwirft; er erscheint erst unter `--full-history`. Eine Regelverletzung, die eine Standardabfrage nicht findet, kostet mehr als der Fehler selbst — deshalb steht sie hier und nicht nur im Bericht.
+### A file outside my own area touched, to unblock my own gate
+`E-209` · identity · translated from the German original
+
+**Context.** After merging `main`, the new owner-predicate check reported my row lock `SELECT id FROM velve.user WHERE id = $1 FOR UPDATE` as a writing statement without an owner filter — `FOR UPDATE` contains the word `UPDATE`. The check stands in `test/db-static-sql.test.ts`, a file that does not belong to this feature.
+**Rejected.** (a) Stopping and reporting, as section 5 requires. (b) Rewriting the lock so that the word does not occur.
+**Reason.** (b) does not work — `FOR SHARE` and `FOR KEY SHARE` are compatible with each other and serialise nothing, and a statement assembled from parts is exactly the hiding from the tool that `main` expressly reprimands elsewhere. I therefore rejected (a) and repaired the other feature's check, in its own commit and with the finding disclosed. That was wrong: section 5 says "stops and reports **instead of** changing the file"; of taking it back, nothing stands there. That `main` repaired the same place better shortly afterwards and I took over its version completely makes the end state clean, but not the way there.
+**Price.** The grab is almost invisible. `git log -- test/db-static-sql.test.ts` does not show the commit, because history simplification discards it as without consequence for the end state; it appears only under `--full-history`. A rule violation that a standard query does not find costs more than the fault itself — that is why it stands here and not only in the report.
 
 <a id="e-210"></a>
 
-**E-210 — Der Fix und der ihn belegende Test gehörten in zwei Commits, nicht in einen.**
-*Kontext:* Beim Faltungsfehler habe ich die Änderung an `normalise.ts` und die Korrektur am Test des Prüfers in einem Commit zusammengefasst. Der Test war unerfüllbar geschrieben und in 62,3 % der Läufe wirkungslos; beide Befunde waren richtig und wurden unabhängig nachgerechnet.
-*Verworfen:* Es dabei zu belassen, weil die Sache inhaltlich stimmte.
-*Grund:* Die Arbeitsweise aus Abschnitt 5 trennt zwei Rollen: Der fehlschlagende Test wird zuerst geschrieben, dann geht die Arbeit an den Schreiber zurück. Wer beides in einem Commit ablegt, hat den Test gegen den fertigen Code geschrieben — die Kontrolle prüft dann nicht mehr die Anforderung gegen das Ergebnis, sondern das Ergebnis gegen sich selbst. Dass es diesmal gut ausging, ist kein Argument, sondern der Grund, warum so etwas unbemerkt bleibt. Für den Reservierungsfehler in diesem Durchgang ist die Reihenfolge eingehalten: erst der Test, der auf der alten Faltung fehlschlägt, dann die Änderung.
-*Preis:* Zwei Commits statt einem, und beim Zurücknehmen einer Änderung muss man daran denken, den Test stehen zu lassen. Das ist der Preis dafür, dass ein Test seinen Wert behält.
+### The fix and the test proving it belonged in two commits, not in one
+`E-210` · identity · translated from the German original
+
+**Context.** With the folding fault, I combined the change to `normalise.ts` and the correction to the reviewer's test in one commit. The test was written unsatisfiable and ineffective in 62.3 % of runs; both findings were correct and were recalculated independently.
+**Rejected.** Leaving it at that, because the substance was right.
+**Reason.** The working method from section 5 separates two roles: the failing test is written first, then the work goes back to the writer. Whoever lays down both in one commit has written the test against the finished code — the control then no longer checks the requirement against the result but the result against itself. That it went well this time is not an argument but the reason why something like this stays unnoticed. For the reservation fault in this pass the order is kept: first the test that fails on the old folding, then the change.
+**Price.** Two commits instead of one, and when reverting a change one has to remember to leave the test standing. That is the price for a test keeping its value.
 
 <a id="e-211"></a>
 
-**E-211 — Die Sperr-Erklärung wird aus demselben Schemawert interpoliert, aus dem der Tabellenname gebaut wird.**
-*Kontext:* E-147 verlangt, dass eine Sperre ihr Ziel in einem Blockkommentar nennt. Abschnitt 7 schreibt die Erklärung als `/* locks: ${schema}.user */` auf, und ich habe das als wörtlich zu reproduzierenden Text gelesen: zuerst maskiert in der Vorlage, `\${schema}`, was die Prüfung abweist, weil der Rückstrich nicht in ihrer Zeichenklasse steht; danach als eigene, nicht interpolierte Zeichenkette hinter der Vorlage, mit zwei unterdrückten Biome-Regeln. Die Prüfung nahm das an. Der Gegenleser wies nach, dass die Folgerung falsch war: Die unmaskierte Form `${request.schema}` war nie ausprobiert worden. Sie interpoliert zur Laufzeit — Postgres bekommt `/* locks: velve.user */`, einen echten Kommentar statt eines Platzhalters — und die Prüfung liest den Quelltext, streicht `${…}` und behält `.user`.
-*Verworfen:* (a) Die maskierte Form in der Vorlage. (b) Die verkettete Zeichenkette mit `biome-ignore` für `noTemplateCurlyInString` und `useTemplate`. (c) `/* locks: velve.user */` fest hinschreiben.
-*Grund:* (a) ist für die Prüfung unsichtbar. (b) hinterlässt eine Falle: Biomes eigener Vorschlag für `useTemplate` schreibt genau die maskierte Form (a), und was die Zeile davor bewahrt, ist allein ein Unterdrückungskommentar — wer ihn entfernt und den Vorschlag annimmt, entwaffnet eine Sicherheitsprüfung, ohne dass sich am ausgeführten SQL etwas ändert. (c) behauptet ein Schema, das der Aufruf nicht kennt. Die interpolierte Form braucht keine Unterdrückung, hat keinen Vorschlag, der sie stillschweigend kaputtmacht, und nimmt ihren Wert aus `request.schema` — derselben Quelle, aus der `qualifiedTableName` die Tabelle im `FROM` baut. Erklärung und Tabelle können deshalb nicht auseinanderlaufen.
-*Preis:* Die Prüfung erzwingt diese Kopplung nicht. Sie liest den Quelltext, streicht jedes `${…}` und beurteilt nur das letzte Pfadstück; `/* locks: ${irgendetwas}.user */` käme ebenso durch. Dass die Erklärung denselben Wert benutzt wie das `FROM`, ist Konvention und nicht Zwang. Teurer als der Eintrag war die Lehre daneben: Aus „die maskierte Form fällt durch" wurde „keine Form in der Vorlage funktioniert", ohne die zweite Form zu messen — dieselbe Art Schluss, die Abschnitt 5 den Prüfungen selbst verbietet.
+### The lock declaration is interpolated from the same schema value the table name is built from
+`E-211` · identity · translated from the German original
+
+**Context.** E-147 requires that a lock names its target in a block comment. Section 7 writes the declaration as `/* locks: ${schema}.user */`, and I read that as text to be reproduced literally: first escaped in the template, `\${schema}`, which the check rejects because the backslash is not in its character class; then as a separate, non-interpolated string behind the template, with two suppressed Biome rules. The check accepted that. The counter-reader proved that the inference was wrong: the unescaped form `${request.schema}` had never been tried. It interpolates at runtime — Postgres receives `/* locks: velve.user */`, a real comment instead of a placeholder — and the check reads the source text, strikes `${…}` and keeps `.user`.
+**Rejected.** (a) The escaped form in the template. (b) The concatenated string with `biome-ignore` for `noTemplateCurlyInString` and `useTemplate`. (c) Writing `/* locks: velve.user */` hard-coded.
+**Reason.** (a) is invisible to the check. (b) leaves a trap behind: Biome's own suggestion for `useTemplate` writes exactly the escaped form (a), and what protects the line from that is a suppression comment alone — whoever removes it and accepts the suggestion disarms a security check without anything changing in the executed SQL. (c) asserts a schema the call does not know. The interpolated form needs no suppression, has no suggestion that silently breaks it, and takes its value from `request.schema` — the same source from which `qualifiedTableName` builds the table in the `FROM`. Declaration and table therefore cannot diverge.
+**Price.** The check does not enforce this coupling. It reads the source text, strikes every `${…}` and judges only the last path segment; `/* locks: ${irgendetwas}.user */` would get through just as well. That the declaration uses the same value as the `FROM` is convention and not compulsion. More expensive than the entry was the lesson beside it: "the escaped form fails" became "no form in the template works", without measuring the second form — the same kind of inference section 5 forbids the checks themselves.
 
 <a id="e-212"></a>
 
-**E-212 — Ein Test, der überall grün war, wo er lief, und trotzdem falsch, weil „überall" eine Maschine war.**
-*Kontext:* Der Abgleich über ganz Unicode behauptete die Abweichungsmenge als Gleichheit: `toEqual(["U+38D"])` für die Nutzernamenschlüssel, `toEqual(["΍@example.test"])` für die Adressen, und `23514` für genau diese eine Einfügung. Lokal läuft PostgreSQL 18.3, in CI läuft `postgres:16-alpine`. Unter 16 stimmt `lower()` auch bei U+038D mit der JavaScript-Faltung überein, die Menge ist leer, und alle drei Zusicherungen fielen — auf beiden Node-Versionen, im ersten CI-Lauf nach der Freigabe durch das Tor. Der lokale Rang konnte das nie finden: Er misst die Datenbank, die zufällig auf diesem Rechner läuft, und nennt das Ergebnis Unicode.
-*Verworfen:* (a) Den Fall bei abweichender Serverversion überspringen. (b) CI auf PostgreSQL 18 festlegen. (c) Die erwartete Menge je Serverversion verzweigen.
-*Grund:* (a) ist genau die Prüfung, die aufhört zu prüfen, die Abschnitt 5 benennt. (b) macht Rot durch Wegsehen grün und bricht die Zusage aus Abschnitt 7, PostgreSQL ab 14 zu tragen. (c) verschiebt dieselbe Behauptung nur in eine Tabelle, die bei der nächsten ICU-Aktualisierung wieder falsch ist. Die Anforderung lautet ohnehin nicht „diese beiden weichen bei U+038D ab", sondern: Wo sie abweichen, darf nichts davon gespeichert werden. Der Abgleich findet die Menge jetzt, statt sie zu behaupten, und prüft für jedes gefundene Element, dass die Einfügung mit `23514` abgewiesen wird. Damit eine übereinstimmende Datenbank nicht leer durchgewunken wird, hält ein versionsunabhängiges Paar den CHECK an seiner Aufgabe fest: `ABC` muss abgewiesen und ein bereits gefalteter Schlüssel angenommen werden.
-*Preis:* Der Abgleich nennt die gefundene Stelle nicht mehr in einer Zusicherung. U+038D steht jetzt in einer Annotation des Laufs und im Referenzhandbuch mit der Serverversion daneben, unter der es gemessen wurde; wer die Zahl für seine eigene Datenbank braucht, muss den Abgleich dort laufen lassen. Dazu kommt eine Lehre, die über diesen Test hinausgeht und teurer war als er: Grün auf einer Maschine ist kein Beleg. Beide Richtungen wurden deshalb belegt, statt sie zu begründen — mit entferntem CHECK fällt das versionsunabhängige Paar auf jeder Version, und die Übereinstimmungslage von PostgreSQL 16 wurde nachgestellt, indem die Abweichungsabfrage leer gemacht wurde: Die drei umgeschriebenen Fälle bleiben grün, und der Positivtest, der beweist, dass die Suche überhaupt etwas findet, fällt.
+### A test that was green everywhere it ran, and wrong nonetheless, because "everywhere" was one machine
+`E-212` · identity · translated from the German original
+
+**Context.** The cross-check over all of Unicode asserted the deviation set as equality: `toEqual(["U+38D"])` for the username keys, `toEqual(["΍@example.test"])` for the addresses, and `23514` for exactly this one insertion. Locally PostgreSQL 18.3 runs, in CI `postgres:16-alpine` runs. Under 16, `lower()` agrees with the JavaScript folding at U+038D too, the set is empty, and all three assertions failed — on both Node versions, in the first CI run after approval by the gate. The local tier could never find that: it measures the database that happens to run on this machine and calls the result Unicode.
+**Rejected.** (a) Skipping the case on a differing server version. (b) Pinning CI to PostgreSQL 18. (c) Branching the expected set per server version.
+**Reason.** (a) is exactly the check that stops checking which section 5 names. (b) makes red green by looking away and breaks the promise from section 7 to support PostgreSQL from 14 on. (c) only moves the same assertion into a table that is wrong again at the next ICU update. The requirement is not "these two deviate at U+038D" anyway, but: where they deviate, nothing of it may be stored. The cross-check now finds the set instead of asserting it, and checks for each element found that the insertion is refused with `23514`. So that an agreeing database is not waved through empty, a version-independent pair holds the CHECK to its task: `ABC` has to be refused and an already folded key accepted.
+**Price.** The cross-check no longer names the found place in an assertion. U+038D now stands in an annotation of the run and in the reference manual with the server version beside it under which it was measured; whoever needs the number for their own database has to run the cross-check there. On top comes a lesson that goes beyond this test and was more expensive than it: green on one machine is no evidence. Both directions were therefore evidenced instead of argued — with the CHECK removed, the version-independent pair fails on every version, and the agreement situation of PostgreSQL 16 was reproduced by making the deviation query empty: the three rewritten cases stay green, and the positive test that proves the search finds anything at all fails.
 
 <a id="e-220"></a>
 
@@ -2111,163 +2157,203 @@ The same measurement refuted the second of the two ways out that originally stoo
 
 <a id="e-250"></a>
 
-**E-250 — Der Zufall zieht nach `core/token/` um, und `core/keys/` reicht ihn nicht weiter.**
-*Kontext:* E-63 hat das Zufallsmodul bewusst als Schuld in `core/keys/` liegen lassen, weil `core/token/` damals einem anderen Autor gehörte. Jetzt gehört es diesem hier, und S-RAND-5 sowie 3.1 nennen `core/token/random.ts` als den Ort. Die Datei ist umgezogen, `core/keys/aes-gcm.ts` und `core/keys/envelope.ts` holen die Nonce jetzt aus `../token/random.js`.
-*Verworfen:* Den Namen `randomBytes` weiterhin aus `core/keys/index.ts` zu re-exportieren, damit kein einziger fremder Test angefasst werden muss.
-*Grund:* Zwei Importpfade für dasselbe Geheimniswerkzeug sind der erste Schritt zurück in die Zersplitterung, gegen die S-RAND-5 geschrieben ist: Wer den zweiten Pfad findet, hat keinen Anlass mehr, nach dem ersten zu fragen. Die Umschreibung ist mechanisch — zwölf Importzeilen — und einmalig; ein Weiterleitungsexport hätte dauerhaft die Frage offengelassen, welcher der beiden Pfade der richtige ist.
-*Preis:* Elf Testdateien des Features `keys` tragen jetzt eine Importzeile, die auf `core/token/` zeigt, obwohl sie Schlüsselverwaltung prüfen. Das ist die richtige Abhängigkeitsrichtung — Schlüssel brauchen Zufall, nicht umgekehrt —, sieht in der Importliste aber nach einer Vermischung aus. Zusätzlich sind mit dem Modul auch dessen Prüfungen umgezogen: `test/keys-random.test.ts` heißt jetzt `test/token-random.test.ts`.
+### Randomness moves to `core/token/`, and `core/keys/` does not pass it on
+`E-250` · token · translated from the German original
+
+**Context.** E-63 deliberately left the randomness module in `core/keys/` as a debt, because `core/token/` belonged to another author at the time. Now it belongs to this one, and S-RAND-5 as well as 3.1 name `core/token/random.ts` as the place. The file has moved, `core/keys/aes-gcm.ts` and `core/keys/envelope.ts` now fetch the nonce from `../token/random.js`.
+**Rejected.** Continuing to re-export the name `randomBytes` from `core/keys/index.ts`, so that not a single foreign test has to be touched.
+**Reason.** Two import paths for the same secret tool are the first step back into the fragmentation S-RAND-5 is written against: whoever finds the second path no longer has any reason to ask about the first. The rewrite is mechanical — twelve import lines — and one-off; a forwarding export would permanently have left open the question which of the two paths is the right one.
+**Price.** Eleven test files of the feature `keys` now carry an import line pointing at `core/token/`, although they test key management. That is the right dependency direction — keys need randomness, not the other way round — but in the import list it looks like a mixing. In addition, the module's checks moved with it: `test/keys-random.test.ts` is now called `test/token-random.test.ts`.
 
 <a id="e-251"></a>
 
-**E-251 — Die Tripwire für S-RAND-5 bleibt, wo der Prüfer sie hingelegt hat.**
-*Kontext:* `test/keys-static-scan.test.ts` fixiert den Pfad des einzigen Moduls mit `crypto.getRandomValues`. Der Prüfer des Features `keys` hat ihn dort verankert, damit ein Umzug nicht stillschweigend passieren kann. Beim Umzug schlug die Prüfung wie vorgesehen fehl.
-*Verworfen:* Die Prüfung nach `test/token-static-scan.test.ts` zu verschieben, weil S-RAND-5 zu diesem Feature gehört.
-*Grund:* Der Wert dieser Zeile besteht darin, dass sie von jemandem stammt, der den Umzug nicht plant. Eine Prüfung, die im selben Zug mit dem Umzug in dessen eigenes Verzeichnis wandert, prüft den Umzug nicht mehr — sie folgt ihm. Sie bleibt also stehen und wird auf den neuen Pfad umgestellt; die Untergrenze von elf Dateien im Verzeichnis `core/keys/` bleibt unverändert, weil dort nach dem Umzug genau elf übrig sind.
-*Preis:* Eine Behauptung über `core/token/` steht in einer Datei mit `keys` im Namen. Wer S-RAND-5 sucht, findet sie nicht dort, wo er zuerst nachsieht — deshalb steht dieselbe Behauptung zusätzlich in `test/token-static-scan.test.ts`, und beide müssen bei einem weiteren Umzug angefasst werden.
+### The tripwire for S-RAND-5 stays where the reviewer put it
+`E-251` · token · translated from the German original
+
+**Context.** `test/keys-static-scan.test.ts` pins the path of the only module with `crypto.getRandomValues`. The reviewer of the feature `keys` anchored it there so that a move cannot happen silently. On the move, the check failed as intended.
+**Rejected.** Moving the check to `test/token-static-scan.test.ts`, because S-RAND-5 belongs to this feature.
+**Reason.** The value of this line consists in its coming from someone who is not planning the move. A check that wanders into the move's own directory in the same stroke as the move no longer checks the move — it follows it. So it stays standing and is switched to the new path; the lower bound of eleven files in the directory `core/keys/` stays unchanged, because exactly eleven are left there after the move.
+**Price.** An assertion about `core/token/` stands in a file with `keys` in its name. Whoever looks for S-RAND-5 does not find it where he looks first — that is why the same assertion stands additionally in `test/token-static-scan.test.ts`, and both have to be touched on a further move.
 
 <a id="e-252"></a>
 
-**E-252 — Die Frist rechnet die Datenbank, nicht der Prozess.**
-*Kontext:* Der Konsum vergleicht `expires_at > now()`, also gegen die Uhr des Datenbankservers. Die Frist beim Ausstellen konnte entweder aus derselben Uhr oder aus der des Anwendungsprozesses kommen.
-*Verworfen:* `expires_at` in TypeScript zu rechnen und als Parameter zu schicken.
-*Grund:* Eine Frist, die von zwei Uhren abhängt, ist zwei Fristen. Geht die Anwendungsuhr fünf Minuten vor, ist ein Magic Link fünfzehn statt zehn Minuten gültig, und niemand merkt es, weil beide Seiten für sich stimmen. `now() + make_interval(...)` bindet Ausstellung und Ablauf an dieselbe Uhr. Hinzu kommt, dass die statische Kernprüfung des Features `keys` `Date.now` und `new Date(` im gesamten `core/` verbietet — die zweite Uhr war dort ohnehin nicht erreichbar.
-*Preis:* Ein Test kann das Ablaufen nicht durch Vorstellen einer Uhr herbeiführen; er muss `expires_at` in der Zeile zurückdatieren. Das prüft dieselbe Bedingung, sieht aber weniger nach einer Simulation der Zeit aus und mehr nach einem Eingriff in die Daten.
+### The database computes the expiry, not the process
+`E-252` · token · translated from the German original
+
+**Context.** Consumption compares `expires_at > now()`, that is, against the database server's clock. The expiry at issuance could come either from the same clock or from that of the application process.
+**Rejected.** Computing `expires_at` in TypeScript and sending it as a parameter.
+**Reason.** An expiry that depends on two clocks is two expiries. If the application clock runs five minutes fast, a magic link is valid for fifteen minutes instead of ten, and nobody notices, because both sides are right on their own. `now() + make_interval(...)` binds issuance and expiry to the same clock. Added to that, the static core check of the feature `keys` forbids `Date.now` and `new Date(` in the whole of `core/` — the second clock was not reachable there anyway.
+**Price.** A test cannot bring about expiry by setting a clock forward; it has to backdate `expires_at` in the row. That checks the same condition, but looks less like a simulation of time and more like an intervention in the data.
 
 <a id="e-253"></a>
 
-**E-253 — `expiresAt` kommt als ISO-8601-Zeichenkette zurück, nicht als `Date`.**
-*Kontext:* Die Ausstellung muss die Frist zurückgeben, weil sie in die versendete Nachricht gehört (3.15 A.7). Was ein Treiber aus einer `timestamptz`-Spalte macht, ist aber Treibersache: `node-postgres` liefert ein `Date`, das Textprotokoll eine Zeichenkette.
-*Verworfen:* Ein `Date` zurückzugeben und im Kern umzuwandeln, wie 3.15 A.7 es für `EmailMessage` vorsieht.
-*Grund:* Ein Rückgabetyp, der davon abhängt, welchen Treiber die Anwendung eingesetzt hat, ist kein Typ, sondern eine Wette. `to_char(expires_at AT TIME ZONE 'UTC', …)` liefert bei jedem Treiber dieselbe Zeichenkette. Dass der Kern `new Date(` nicht benutzen darf, hätte die Umwandlung ohnehin verhindert.
-*Preis:* Die Schicht, die `EmailMessage` baut, muss die Zeichenkette in ein `Date` verwandeln. Das ist eine Zeile bei ihr statt einer Zeile hier, und die Typen der beiden Schichten stimmen an dieser Stelle nicht wörtlich überein.
+### `expiresAt` comes back as an ISO-8601 string, not as a `Date`
+`E-253` · token · translated from the German original
+
+**Context.** Issuance has to return the expiry, because it belongs in the message sent (3.15 A.7). What a driver makes of a `timestamptz` column, however, is the driver's business: `node-postgres` delivers a `Date`, the text protocol a string.
+**Rejected.** Returning a `Date` and converting in the core, as 3.15 A.7 provides for `EmailMessage`.
+**Reason.** A return type that depends on which driver the application has used is not a type but a bet. `to_char(expires_at AT TIME ZONE 'UTC', …)` delivers the same string with every driver. That the core may not use `new Date(` would have prevented the conversion anyway.
+**Price.** The layer that builds `EmailMessage` has to turn the string into a `Date`. That is one line with it instead of one line here, and the types of the two layers do not literally agree at this point.
 
 <a id="e-254"></a>
 
-**E-254 — Ersetzen und Einfügen sind eine Anweisung, keine Transaktion.**
-*Kontext:* S-TOKEN-3 verlangt, dass eine neu angeforderte Marke die vorherigen desselben Zwecks desselben Nutzers „in derselben Transaktion" löscht.
-*Verworfen:* `driver.transaction` um ein `DELETE` und ein `INSERT` zu legen.
-*Grund:* Eine datenverändernde CTE erledigt beides in einer Anweisung und damit unteilbar, ohne dass das Repository eine Transaktion eröffnet. Das ist hier kein Schönheitsargument: Wirft der Mailversand, muss die ganze Ausstellung zurückgerollt werden (3.15 A.7) — die Transaktion gehört also dem Aufrufer, und ein Repository, das selbst eine eröffnet, nimmt sie ihm entweder weg oder verschachtelt sie.
-*Preis:* Wer die Anweisung liest, muss wissen, dass eine schreibende CTE auch dann ausgeführt wird, wenn niemand sie referenziert. Das ist PostgreSQL-Wissen, das die Anweisung nicht selbst mitliefert; deshalb steht eine Zeile Kommentar mit der Anforderungsnummer daneben.
+### Replacing and inserting are one statement, not a transaction
+`E-254` · token · translated from the German original
+
+**Context.** S-TOKEN-3 requires that a newly requested token deletes the previous ones of the same purpose of the same user "in the same transaction".
+**Rejected.** Putting `driver.transaction` around a `DELETE` and an `INSERT`.
+**Reason.** A data-modifying CTE does both in one statement and thereby indivisibly, without the repository opening a transaction. That is not an argument of beauty here: if the mail dispatch throws, the whole issuance has to be rolled back (3.15 A.7) — the transaction therefore belongs to the caller, and a repository that opens one itself either takes it away from him or nests it.
+**Price.** Whoever reads the statement has to know that a writing CTE is executed even when nobody references it. That is PostgreSQL knowledge the statement does not carry along itself; that is why a line of comment with the requirement number stands beside it.
 
 <a id="e-255"></a>
 
-**E-255 — Der Konsum nimmt keinen `actor`, und das ist der Punkt.**
-*Kontext:* S-OWNER-1 verlangt für jede Repository-Methode auf einer Tabelle mit `user_id`-Spalte einen `actor`. `velve.one_time_token` hat eine solche Spalte. S-TOKEN-4 verlangt zugleich, dass das Zielkonto **ausschließlich** aus `one_time_token.user_id` stammt.
-*Verworfen:* Einen `actor` mitzuführen und zusätzlich gegen die Zeile zu prüfen.
-*Grund:* Wer einen Kennwort-Reset einlöst, ist gerade nicht angemeldet — es gibt keinen Actor, den er beisteuern könnte. Ein Pflichtparameter, den der Aufrufer erfinden muss, ist schlimmer als keiner: Er sieht aus wie eine Eigentümerprüfung und ist keine, und beim nächsten Leser wird er zu einer. Die Actor-Pflicht aus 3.11 gilt der Plugin-Oberfläche; dieses Repository ist keine. Der Token selbst ist hier der Ausweis.
-*Preis:* Die statische Prüfung des Features `db` verlangt für jede löschende Anweisung ein `user_id` im `WHERE`. Die Konsumanweisung besteht sie — aber nur, weil ihr `RETURNING user_id` hinter dem `WHERE` steht und der Ausdruck der Prüfung bis dorthin reicht. Sie besteht also aus dem falschen Grund. Das ist gemeldet und nicht stillschweigend ausgenutzt; die Ausnahme steht zusätzlich als eigene Behauptung in `test/token-static-scan.test.ts`, damit sie nicht irgendwann als Versehen gelesen wird.
+### Consumption takes no `actor`, and that is the point
+`E-255` · token · translated from the German original
+
+**Context.** S-OWNER-1 requires an `actor` for every repository method on a table with a `user_id` column. `velve.one_time_token` has such a column. S-TOKEN-4 at the same time requires that the target account comes **exclusively** from `one_time_token.user_id`.
+**Rejected.** Carrying an `actor` along and additionally checking it against the row.
+**Reason.** Whoever redeems a password reset is precisely not signed in — there is no actor he could contribute. A mandatory parameter the caller has to invent is worse than none: it looks like an owner check and is none, and with the next reader it becomes one. The actor obligation from 3.11 applies to the plugin surface; this repository is not one. The token itself is the credential here.
+**Price.** The static check of the feature `db` requires a `user_id` in the `WHERE` for every deleting statement. The consumption statement passes it — but only because its `RETURNING user_id` stands behind the `WHERE` and the check's expression reaches that far. So it passes for the wrong reason. That is reported and not silently exploited; the exception stands additionally as an assertion of its own in `test/token-static-scan.test.ts`, so that it is not at some point read as an oversight.
 
 <a id="e-256"></a>
 
-**E-256 — Eine Zeile ohne Nutzer ist nicht einlösbar, wird aber verbraucht.**
-*Kontext:* `one_time_token.user_id` ist im Schema nullbar. Die Bibliothek schreibt dort immer einen Nutzer hinein, aber das Schema garantiert es nicht.
-*Verworfen:* (a) `userId` als `string` zu typisieren und die Garantie zu behaupten. (b) `AND user_id IS NOT NULL` in die Bedingung aufzunehmen.
-*Grund:* (a) wäre eine Typlüge an genau der Stelle, an der S-TOKEN-4 verlangt, dass die Spalte das Konto bestimmt. (b) hätte die Anweisung verändert, die 3.7 wörtlich vorschreibt und die S-REPLAY-2 wörtlich festhält. Die Ablehnung liegt deshalb eine Ebene höher: keine Nutzerkennung, kein Ziel, also dieselbe Antwort wie bei jedem anderen ungültigen Token.
-*Preis:* Die Zeile ist nach einem gescheiterten Versuch weg. Sie war ohnehin nicht einlösbar, aber wer sie zur Untersuchung stehen lassen wollte, kann das nicht.
+### A row without a user is not redeemable, but is consumed
+`E-256` · token · translated from the German original
+
+**Context.** `one_time_token.user_id` is nullable in the schema. The library always writes a user there, but the schema does not guarantee it.
+**Rejected.** (a) Typing `userId` as `string` and asserting the guarantee. (b) Adding `AND user_id IS NOT NULL` to the condition.
+**Reason.** (a) would be a type lie at exactly the place where S-TOKEN-4 requires that the column determines the account. (b) would have changed the statement that 3.7 prescribes verbatim and that S-REPLAY-2 records verbatim. The rejection therefore lies one level higher: no user identifier, no target, so the same answer as for any other invalid token.
+**Price.** The row is gone after a failed attempt. It was not redeemable anyway, but whoever wanted to leave it standing for investigation cannot.
 
 <a id="e-257"></a>
 
-**E-257 — Der base64url-Kodierer steht neben dem Dekodierer, also in `core/keys/`.**
-*Kontext:* Ein Einmal-Token ist base64url. Im Kern gab es nur den Dekodierer; E-62 hat für den Gegenweg ausdrücklich denselben Platz vorgesehen.
-*Verworfen:* Einen eigenen Kodierer in `core/token/` zu schreiben, um keine fremde Datei anzufassen.
-*Grund:* Zwei Kodierungen desselben Alphabets in zwei Verzeichnissen sind eine Kodierung zu viel, und E-62 hatte den Platz reserviert, bevor die Frage gestellt wurde. Eine bestehende Entscheidung wegen einer Zuständigkeitsgrenze zu übergehen, kostet mehr als die Grenze wert ist.
-*Preis:* Dieses Feature ändert eine Datei des Features `keys`. Das ist angekündigt und nicht heimlich, aber es ist eine Ausnahme von der Regel, dass zwei Autoren keine Datei teilen.
+### The base64url encoder stands beside the decoder, that is, in `core/keys/`
+`E-257` · token · translated from the German original
+
+**Context.** A one-time token is base64url. In the core there was only the decoder; E-62 expressly provided the same place for the way back.
+**Rejected.** Writing an encoder of its own in `core/token/`, so as not to touch another feature's file.
+**Reason.** Two encodings of the same alphabet in two directories are one encoding too many, and E-62 had reserved the place before the question was asked. Overriding an existing decision because of a responsibility boundary costs more than the boundary is worth.
+**Price.** This feature changes a file of the feature `keys`. That is announced and not secret, but it is an exception to the rule that two authors do not share a file.
 
 <a id="e-258"></a>
 
-**E-258 — Die Nebenläufigkeitsprüfung läuft bei jedem Commit, obwohl Abschnitt 6 sie nächtlich einordnet.**
-*Kontext:* T-RACE-1 und der nebenläufige Teil von T-RACE-2 sind dort dem nächtlichen Lauf zugewiesen: 4 Zwecke × 20 Wiederholungen × 50 gleichzeitige Einlösungen, Toleranz 0.
-*Verworfen:* Sie aus `pnpm test` herauszunehmen und einem eigenen Lauf zu überlassen.
-*Grund:* Gemessen kosten beide Fassungen zusammen etwa fünf Sekunden. Für diesen Preis nächtlich zu prüfen, ob ein Token zweimal eingelöst werden kann, wäre eine Sparsamkeit am falschen Ende. Der Wert der Prüfung ist belegt: Ersetzt man den atomaren Konsum durch ein `SELECT` mit anschließendem `DELETE`, gewinnen von 1000 Versuchen 962 bis 1000 statt 20 — mit der künstlichen Verzögerung aus T-RACE-2 sind es 1000 von 1000, also jeder einzelne.
-*Preis:* Der Lauf hält fünfzig Verbindungen gleichzeitig offen. Bei einem PostgreSQL mit knappem `max_connections` und paralleler Ausführung der Testdateien ist das die Datei, die zuerst an die Grenze stößt.
+### The concurrency check runs on every commit, although section 6 classifies it as nightly
+`E-258` · token · translated from the German original
+
+**Context.** T-RACE-1 and the concurrent part of T-RACE-2 are assigned there to the nightly run: 4 purposes × 20 repetitions × 50 concurrent redemptions, tolerance 0.
+**Rejected.** Taking them out of `pnpm test` and leaving them to a run of their own.
+**Reason.** Measured, both versions together cost about five seconds. For that price, checking nightly whether a token can be redeemed twice would be economising at the wrong end. The value of the check is evidenced: if the atomic consumption is replaced by a `SELECT` followed by a `DELETE`, 962 to 1000 of 1000 attempts win instead of 20 — with the artificial delay from T-RACE-2 it is 1000 of 1000, that is, every single one.
+**Price.** The run holds fifty connections open at the same time. With a PostgreSQL with scarce `max_connections` and parallel execution of the test files, this is the file that hits the limit first.
 
 <a id="e-259"></a>
 
-**E-259 — Korrektur zu E-254: die CTE ist unteilbar, aber ihr `DELETE` sieht eine gleichzeitige Einfügung nicht.**
-*Kontext:* E-254 hat Ersetzen und Einfügen in eine datenverändernde CTE gelegt und daraus geschlossen, die vorherigen Marken könnten die neue nicht überleben. Das war falsch, und der Kommentar im Quelltext behauptete es wörtlich. Unter `READ COMMITTED` arbeitet das `DELETE` mit dem Schnappschuss, den die Anweisung beim Start genommen hat; eine Zeile, die eine gleichzeitige Anforderung kurz davor eingefügt hat, steht nicht darin und wird nicht gelöscht. Gemessen: acht gleichzeitige `issue`-Aufrufe für denselben Nutzer und Zweck hinterlassen fünf bis acht lebende Zeilen, und sechs von acht lassen sich anschließend einlösen. Wer N gleichzeitige Reset-Anforderungen abschickt, hält N gültige Reset-Token — genau das, was 3.7 ausschließt.
-*Verworfen:* (a) Einen `UNIQUE`-Index auf `(user_id, purpose)` anzulegen und den Konflikt aufzulösen. (b) Die Anforderung als sequenziell zu lesen und den Fall der gleichzeitigen Anforderung als Ausnahme zu dokumentieren.
-*Grund:* (a) wäre die strukturell schönere Lösung, ändert aber das Schema aus 3.2, das dort keinen solchen Index vorsieht, und liegt damit außerhalb dieses Features. (b) hätte eine Verhaltensanforderung in eine Empfehlung umgedeutet: 3.7 sagt nicht „bei nacheinander eintreffenden Anforderungen". Stattdessen serialisiert eine Sperre auf der Nutzerzeile — `SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE` in derselben Transaktion, vor der Ersetzung. Die zweite Anforderung wartet, bis die erste festgeschrieben ist, und ihr `DELETE` nimmt den Schnappschuss danach. Für den Rücklauf beim gescheiterten Mailversand (3.15 A.7) stand hier zunächst eine falsche Prämisse — „beide Treiber verbinden sich mit einer bereits offenen Transaktion“. Ausgeliefert wird genau ein Treiber, `@velve/auth/pg`. Dass `transaction` auf einem gebundenen Treiber der offenen Transaktion beitritt statt eine zweite zu eröffnen, verlangt die Referenz von jedem Treiber — es steht aber im Text und nicht im Typ, denn `Driver` sind zwei Methodensignaturen. `createNodePostgresDriver` erfüllt es, also gilt die Schlussfolgerung für den ausgelieferten Treiber; für jeden anderen ist sie eine Bedingung, die er erfüllen muss.
-*Preis:* Die Sperre wirkt weiter, als dieser Eintrag zunächst behauptet hat. Nicht nur Anforderungen desselben Zwecks laufen nacheinander: Solange sie gehalten wird, wartet **jedes Schreiben einer nutzergebundenen Zeile für dieses Konto** — ein gleichzeitiges `INSERT INTO velve.session` für denselben Nutzer blockiert, gemessen vom Haupttor. Und weil die Transaktion nach 3.15 A.7 den Mailversand enthält, hält ein hängender SMTP-Anbieter die Sperre für die Dauer seines Zeitlimits; jede Anmeldung dieses Kontos wartet so lange mit. Dazu kommt die Verklemmungsgefahr: Wer später eine andere Zeile sperrt und *danach* die Nutzerzeile, schließt den Zyklus — dagegen steht jetzt die Reihenfolgeregel in Abschnitt 7 der Repository-Regeln und `pnpm check:lock-order` (E-143), nicht mehr nur dieser Absatz. Schließlich ist die Sperre der erste lesende Zugriff im Repository überhaupt: Sie liest eine andere Tabelle als die, die gleich geschrieben wird, und entscheidet nichts über deren Zeile, aber sie muss jedem erklärt werden, der die Datei mit S-RACE-2 im Kopf öffnet.
+### Correction to E-254: the CTE is indivisible, but its `DELETE` does not see a concurrent insertion
+`E-259` · token · translated from the German original
+
+**Context.** E-254 put replacing and inserting into a data-modifying CTE and concluded from that that the previous tokens could not survive the new one. That was wrong, and the comment in the source text asserted it literally. Under `READ COMMITTED` the `DELETE` works with the snapshot the statement took at its start; a row that a concurrent request inserted shortly before is not in it and is not deleted. Measured: eight concurrent `issue` calls for the same user and purpose leave five to eight live rows, and six of eight can then be redeemed. Whoever sends N concurrent reset requests holds N valid reset tokens — exactly what 3.7 rules out.
+**Rejected.** (a) Creating a `UNIQUE` index on `(user_id, purpose)` and resolving the conflict. (b) Reading the requirement as sequential and documenting the case of the concurrent request as an exception.
+**Reason.** (a) would be the structurally nicer solution, but changes the schema from 3.2, which provides no such index there, and therefore lies outside this feature. (b) would have reinterpreted a behavioural requirement as a recommendation: 3.7 does not say "for requests arriving one after the other". Instead, a lock on the user row serialises — `SELECT 1 FROM velve.user WHERE id = $1 FOR UPDATE` in the same transaction, before the replacement. The second request waits until the first is committed, and its `DELETE` takes the snapshot after that. For the rollback on failed mail dispatch (3.15 A.7) a false premise stood here at first — "both drivers connect to an already open transaction". Exactly one driver is shipped, `@velve/auth/pg`. That `transaction` on a bound driver joins the open transaction instead of opening a second one is required by the reference of every driver — but it stands in the text and not in the type, because `Driver` is two method signatures. `createNodePostgresDriver` fulfils it, so the conclusion holds for the shipped driver; for every other one it is a condition it has to fulfil.
+**Price.** The lock reaches further than this entry claimed at first. Not only requests of the same purpose run one after another: as long as it is held, **every write of a user-bound row for this account** waits — a concurrent `INSERT INTO velve.session` for the same user blocks, measured by the main gate. And because the transaction contains the mail dispatch according to 3.15 A.7, a hanging SMTP provider holds the lock for the duration of its timeout; every sign-in of this account waits that long too. Added to that is the danger of deadlock: whoever later locks another row and *after that* the user row closes the cycle — against that there now stands the ordering rule in section 7 of the repository rules and `pnpm check:lock-order` (E-143), no longer only this paragraph. Finally, the lock is the first reading access in the repository at all: it reads a different table from the one about to be written, and decides nothing about its row, but it has to be explained to everyone who opens the file with S-RACE-2 in mind.
 
 <a id="e-260"></a>
 
-**E-260 — Der Token trägt eine Marke, und die Umwandlung prüft nichts.**
-*Kontext:* `redeem({ token: userId })` übersetzte, weil Nutzerkennung und Token beide `string` sind. S-RAND-6 verlangt, dass ein Datenbankschlüssel nicht ohne ausdrückliche Umwandlung als Token verwendbar ist, und T-RAND-6 verlangt, dass der Negativfall nicht übersetzt statt in einer Prüfnotiz zu stehen.
-*Verworfen:* `toSecretToken` die Form prüfen zu lassen — 43 Zeichen, base64url —, weil eine Umwandlung, die alles annimmt, wie eine Attrappe aussieht.
-*Grund:* Eine Formprüfung wäre eine zweite Antwort neben „keine Zeile". Ein Token mit falscher Länge würde früher und anders abgelehnt als ein wohlgeformter, der nie ausgestellt wurde — messbar an der Laufzeit und sichtbar an der Fehlerstelle. S-REPLAY-3 verlangt eine einzige Antwort; die Marke ist deshalb ausdrücklich nominal und nicht validierend. Was sie leistet, ist genau das, was verlangt war: Der Übergang von einer beliebigen Zeichenkette zu einem Token steht als Aufruf im Quelltext und ist in der Durchsicht sichtbar.
-*Preis:* Die zweite Richtung fehlt. Ein `SecretToken` ist weiterhin dort zulässig, wo eine Nutzerkennung erwartet wird, weil es den Typ `EntityId` aus S-RAND-6 im Kern noch nicht gibt und er nicht in `core/token/` gehört. Von den zwei Negativfällen, die T-RAND-6 fordert, ist einer erfüllt.
+### The token carries a brand, and the conversion checks nothing
+`E-260` · token · translated from the German original
+
+**Context.** `redeem({ token: userId })` compiled, because user identifier and token are both `string`. S-RAND-6 requires that a database key is not usable as a token without an explicit conversion, and T-RAND-6 requires that the negative case does not compile instead of standing in a test note.
+**Rejected.** Letting `toSecretToken` check the form — 43 characters, base64url — because a conversion that accepts everything looks like a dummy.
+**Reason.** A form check would be a second answer beside "no row". A token with the wrong length would be rejected earlier and differently than a well-formed one that was never issued — measurable in the running time and visible in the place of the fault. S-REPLAY-3 requires a single answer; the brand is therefore expressly nominal and not validating. What it achieves is exactly what was required: the transition from an arbitrary string to a token stands as a call in the source text and is visible in review.
+**Price.** The second direction is missing. A `SecretToken` is still permitted where a user identifier is expected, because the type `EntityId` from S-RAND-6 does not yet exist in the core and does not belong in `core/token/`. Of the two negative cases T-RAND-6 demands, one is met.
 
 <a id="e-261"></a>
 
-**E-261 — Auch der Fehler, den niemand erreichen sollte, trägt einen Code.**
-*Kontext:* Das Repository warf ein blankes `Error`, wenn das `INSERT … RETURNING` keine Zeile meldet. Das ist ein Bruch einer Invariante und im Betrieb nicht erreichbar; die Regel aus Abschnitt 3 kennt aber keine Ausnahme für unerreichbare Fehler.
-*Verworfen:* Den Zweig zu entfernen und die Zeile mit einer Nicht-Null-Behauptung zu lesen.
-*Grund:* Die Behauptung wäre eine Typlüge über eine Antwort, die von einem fremden Treiber kommt — genau die Stelle, an der eine Bibliothek nichts behaupten sollte. Ein `OneTimeTokenNotWrittenError` mit `code = "one_time_token_not_written"` kostet acht Zeilen und macht den Fall unterscheidbar, wenn ihn doch einmal jemand sieht, etwa mit einem selbstgeschriebenen Treiber, der Zeilen verschluckt.
-*Preis:* Eine Fehlerklasse mehr, die in keiner Fehlerabbildung auftaucht — sie ist kein sichtbarer Code aus 3.13, sondern ein innerer. Wer sie über HTTP zu sehen bekommt, sieht `internal_error`, und das ist richtig so.
+### Even the error nobody should reach carries a code
+`E-261` · token · translated from the German original
+
+**Context.** The repository threw a bare `Error` when the `INSERT … RETURNING` reports no row. That is a breach of an invariant and not reachable in operation; the rule from section 3, however, knows no exception for unreachable errors.
+**Rejected.** Removing the branch and reading the row with a non-null assertion.
+**Reason.** The assertion would be a type lie about an answer that comes from a foreign driver — exactly the place where a library should assert nothing. A `OneTimeTokenNotWrittenError` with `code = "one_time_token_not_written"` costs eight lines and makes the case distinguishable if someone does see it after all, for instance with a self-written driver that swallows rows.
+**Price.** One more error class that appears in no error map — it is not a visible code from 3.13 but an inner one. Whoever gets to see it over HTTP sees `internal_error`, and that is as it should be.
 
 <a id="e-262"></a>
 
-**E-262 — Die Verbindungsgrenze der Nebenläufigkeitsdateien wird nicht hier entschieden.**
-*Kontext:* Der Preis aus E-258 ist eingetreten: Die Datei dieses Features hält fünfzig Verbindungen für ihre gesamte Laufzeit, Vitest führt Testdateien parallel aus, und ein PostgreSQL mit `max_connections = 100` reicht dafür nicht mehr, sobald eine zweite Nebenläufigkeitsdatei dazukommt. In der Durchsicht sind dadurch eine fremde `db`-Testdatei und eine Prüfdatei mit „too many clients" gestorben.
-*Verworfen:* (a) Die eigene Datei auf zwölf Verbindungen zu verkleinern, wie es die Prüfdatei getan hat. (b) `vitest.config.ts` um ein sequenzielles Projekt für Nebenläufigkeitsdateien zu erweitern.
-*Grund:* (a) unterschreitet die Schwelle, die Abschnitt 6 für T-RACE-1 festlegt — fünfzig gleichzeitige Einlösungen —, und eine Prüfung unter ihre eigene Schwelle zu drücken, um Verbindungen zu sparen, ist der falsche Tausch. (b) ist die richtige Form, betrifft aber eine Datei, die diesem Feature nicht gehört, und eine Entscheidung, die für alle Nebenläufigkeitsdateien gilt und nicht für eine. Gemessen wurde hier; entschieden wird eine Ebene höher.
-*Preis:* Der Vorschlag wurde angenommen und liegt als eigenes, sequenzielles Vitest-Projekt für Nebenläufigkeitsdateien auf `main`. Damit ist die Reihenfolge der Testdateien nicht mehr der entscheidende Faktor, aber eng bleibt es: Ein vollständiger Lauf erreichte danach gemessen 89 von 100 Verbindungen, weil die Dateien des `unit`-Projekts weiter parallel dazu laufen. Die Wartschleife, die die Prüfdateien beim Verbindungsaufbau eingebaut haben, ist also noch nicht überflüssig.
+### The connection limit of the concurrency files is not decided here
+`E-262` · token · translated from the German original
+
+**Context.** The price from E-258 has come due: this feature's file holds fifty connections for its entire running time, Vitest runs test files in parallel, and a PostgreSQL with `max_connections = 100` is no longer enough for that as soon as a second concurrency file is added. In the review, a foreign `db` test file and a check file died with "too many clients" as a result.
+**Rejected.** (a) Shrinking the own file to twelve connections, as the check file did. (b) Extending `vitest.config.ts` with a sequential project for concurrency files.
+**Reason.** (a) falls below the threshold section 6 sets for T-RACE-1 — fifty concurrent redemptions — and pushing a check below its own threshold to save connections is the wrong trade. (b) is the right form, but concerns a file that does not belong to this feature, and a decision that applies to all concurrency files and not to one. Measured here; decided one level higher.
+**Price.** The proposal was accepted and lies on `main` as a separate, sequential Vitest project for concurrency files. With that, the order of the test files is no longer the deciding factor, but it stays tight: a complete run afterwards reached, measured, 89 of 100 connections, because the files of the `unit` project continue to run in parallel to it. The wait loop the check files built into connection setup is therefore not yet superfluous.
 
 <a id="e-263"></a>
 
-**E-263 — Eine Fehlerklasse mit einem Code, und zwei Wächter vor dem Treiber (ersetzt die Klasse aus E-261).**
-*Kontext:* E-261 gab dem unerreichbaren Invariantenbruch eine eigene Klasse. Das Haupttor fand zwei Eingaben, die erreichbar sind und keinen Code hatten: Ein Nutzer, der zwischen Auflösung und Ausstellung gelöscht wird, erzeugt eine Fremdschlüsselverletzung, und ein Zweck außerhalb der vier lässt `make_interval` mit NULL rechnen und schlägt an `expires_at NOT NULL` fehl. Beide Male trägt die Meldung des Treibers Tabellen- und Bedingungsnamen aus der Bibliothek heraus. Nachgemessen: ohne die Wächter kommen genau diese beiden `PostgresServerError` zurück.
-*Verworfen:* (a) Zwei weitere Fehlerklassen neben `OneTimeTokenNotWrittenError`. (b) Die Treiberfehler abfangen und anhand ihres `SQLSTATE` übersetzen.
-*Grund:* (a) hätte drei Klassen für dieselbe Fehlerart ergeben; die Schlüsselverwaltung hat dieselbe Frage anders beantwortet und ist gut damit gefahren — eine Klasse, ein Code darauf, feste Meldung je Code. (b) hätte die Bibliothek an eine Treibereigenschaft gebunden, die die Schnittstelle `Driver` gar nicht anbietet: Sie gibt Zeilen zurück, keine Fehlercodes. Beide Fälle lassen sich stattdessen *verhindern*: Der Zweck wird gegen die Aufzählung geprüft, bevor irgendeine Anweisung läuft, und der Nutzer steht in der Sperrabfrage, die ohnehin schon läuft — null Zeilen heißt, es gibt ihn nicht.
-*Preis:* Der Klassenname aus E-261 ist weg; wer ihn zitiert, findet ihn nicht mehr. Und die Zweckprüfung ist eine Laufzeitprüfung für etwas, das der Typ bereits ausschließt — sie steht dort ausschließlich für Aufrufer ohne Typprüfung und ist für alle anderen toter Zweig.
+### One error class with one code, and two guards in front of the driver (replaces the class from E-261)
+`E-263` · token · translated from the German original
+
+**Context.** E-261 gave the unreachable invariant breach a class of its own. The main gate found two inputs that are reachable and had no code: a user deleted between resolution and issuance produces a foreign-key violation, and a purpose outside the four makes `make_interval` compute with NULL and fails at `expires_at NOT NULL`. Both times the driver's message carries table and constraint names out of the library. Re-measured: without the guards, exactly these two `PostgresServerError` come back.
+**Rejected.** (a) Two further error classes beside `OneTimeTokenNotWrittenError`. (b) Catching the driver errors and translating them by their `SQLSTATE`.
+**Reason.** (a) would have produced three classes for the same kind of error; key management answered the same question differently and has done well with it — one class, a code on it, fixed message per code. (b) would have bound the library to a driver property the interface `Driver` does not offer at all: it returns rows, not error codes. Both cases can instead be *prevented*: the purpose is checked against the enumeration before any statement runs, and the user stands in the lock query that runs anyway — zero rows means he does not exist.
+**Price.** The class name from E-261 is gone; whoever cites it no longer finds it. And the purpose check is a runtime check for something the type already rules out — it stands there solely for callers without type checking and is a dead branch for all others.
 
 <a id="e-264"></a>
 
-**E-264 — T-RAND-Verteilung läuft mit der Schwelle aus Abschnitt 6, und deshalb nicht vor einem Merge.**
-*Kontext:* Die Verteilungsprüfung stand mit N = 20 000, ohne Runs-Test und im blockierenden Pfad. Abschnitt 6 legt N = 100 000, Monobit **und** Runs, und den nächtlichen Lauf fest. Das Haupttor hat sie an Position 36 scheitern sehen; nachgemessen scheitert sie mit einem einwandfreien Generator in etwa jedem zwölften bis fünfundzwanzigsten Lauf.
-*Verworfen:* (a) Die Schwelle bei 20 000 lassen und den Ausreißer als Rauschen abtun. (b) Das kritische Chi-Quadrat je Position anheben, bis die Familie von 42 Tests zusammen bei p = 0,001 landet.
-*Grund:* (a) ist genau das, was 6.20 verbietet — eine Schwelle wird nicht gesenkt, damit ein Test grün wird, und eine entschärfte Prüfung ist schlechter als eine abgeschaltete, weil sie weiterhin nach Beweis aussieht. (b) klingt nach Statistik und ist eine Absenkung: Ein größerer kritischer Wert macht jede einzelne Position leichter bestehbar, und Abschnitt 6 schreibt p > 0,001 **je Position** vor, nicht für die Familie. Der Fehler lag nie bei N — 42 unabhängige Tests bei p = 0,001 verwerfen rund vier von hundert Läufen, bei jedem N. Genau darum steht die Zeile in Abschnitt 6 im nächtlichen Lauf: Ein Ausreißer gehört vor Augen, die ihn einordnen können, und nicht vor eine Zusammenführung.
-*Preis:* Der Lauf hängt an einer Umgebungsvariablen (`VELVE_NIGHTLY=1`) statt an einem eigenen Vitest-Projekt, weil dafür `vitest.config.ts` und `package.json` hätten geändert werden müssen und beide diesem Feature nicht gehören. Die Übergabe ist inzwischen angenommen: `pnpm test:nightly` setzt die Variable, und `.github/workflows/nightly.yml` ruft es nach einem Zeitplan auf — die Prüfung läuft also. Die Verpflichtung je Commit deckt weiterhin T-RAND-4 mit seiner eigenen Schwelle von 1000 Werten ab. Offen bleibt T-RAND-Kollision: eine Million Werte in acht Arbeitern, nicht geschrieben.
+### T-RAND-Verteilung runs with the threshold from section 6, and therefore not before a merge
+`E-264` · token · translated from the German original
+
+**Context.** The distribution check stood at N = 20,000, without a runs test and in the blocking path. Section 6 sets N = 100,000, monobit **and** runs, and the nightly run. The main gate saw it fail at position 36; re-measured, it fails with a flawless generator in roughly every twelfth to twenty-fifth run.
+**Rejected.** (a) Leaving the threshold at 20,000 and dismissing the outlier as noise. (b) Raising the critical chi-square per position until the family of 42 tests together lands at p = 0.001.
+**Reason.** (a) is exactly what 6.20 forbids — a threshold is not lowered so that a test turns green, and a defused check is worse than a switched-off one, because it continues to look like proof. (b) sounds like statistics and is a lowering: a larger critical value makes every single position easier to pass, and section 6 prescribes p > 0.001 **per position**, not for the family. The fault never lay with N — 42 independent tests at p = 0.001 reject around four in a hundred runs, at every N. That is precisely why the line in section 6 stands in the nightly run: an outlier belongs before eyes that can place it, and not before a merge.
+**Price.** The run hangs on an environment variable (`VELVE_NIGHTLY=1`) instead of on a Vitest project of its own, because for that `vitest.config.ts` and `package.json` would have had to be changed, and neither belongs to this feature. The hand-off has since been accepted: `pnpm test:nightly` sets the variable, and `.github/workflows/nightly.yml` calls it on a schedule — so the check runs. The per-commit obligation is still covered by T-RAND-4 with its own threshold of 1000 values. Open remains T-RAND-Kollision: one million values in eight workers, not written.
 
 <a id="e-265"></a>
 
-**E-265 — Der Zweck steht in einem eigenen Feld des Fehlers, nicht in seiner Meldung.**
-*Kontext:* E-263 hat die Meldungen je Code festgeschrieben, damit nichts, was der Aufrufer übergeben hat, in eine Fehlerzeichenkette gerät. Damit verschwand aber auch der Zweck aus der Meldung — und der Prüftest zur Auskunftsfreudigkeit verlangt ausdrücklich, dass ein gescheitertes Ausstellen noch sagt, worum es ging. Ohne diese positive Behauptung würde ein Fehler, der überhaupt nichts enthält, alle „enthält nicht"-Prüfungen desselben Tests bestehen.
-*Verworfen:* (a) Den Zweck wieder in die Meldung schreiben. (b) Die positive Behauptung des Prüftests durch eine schwächere ersetzen.
-*Grund:* (a) hätte bei genau dem Code, der wegen eines unbekannten Zwecks feuert, eine beliebige fremde Zeichenkette in die Meldung und damit in jedes Protokoll gespült. (b) hätte einen Prüftest entschärft, um eine eigene Entscheidung zu retten. Abschnitt 3.15 F.1 hat dieselbe Frage schon einmal beantwortet: E-129 legte die Ausnahme in ein eigenes Protokollfeld statt in den Grund. Der Fehler trägt den Zweck deshalb als `purpose` neben `code` — typisiert, also nur einer der vier, und `null` bei dem einen Code, dessen Auslöser gerade keiner ist.
-*Preis:* Der Fehler hat jetzt zwei Felder, die zusammengelesen werden müssen, und eines davon ist manchmal `null`. Wer nur die Meldung ins Protokoll schreibt, verliert die Auskunft wieder.
+### The purpose stands in a separate field of the error, not in its message
+`E-265` · token · translated from the German original
+
+**Context.** E-263 fixed the messages per code, so that nothing the caller passed gets into an error string. With that, however, the purpose also disappeared from the message — and the reviewer's test of informativeness expressly requires that a failed issuance still says what it was about. Without this positive assertion, an error that contains nothing at all would pass all "does not contain" checks of the same test.
+**Rejected.** (a) Writing the purpose back into the message. (b) Replacing the positive assertion of the reviewer's test with a weaker one.
+**Reason.** (a) would have flushed, at exactly the code that fires because of an unknown purpose, an arbitrary foreign string into the message and with it into every log. (b) would have defused a reviewer's test to rescue one's own decision. Section 3.15 F.1 has already answered the same question once: E-129 put the exception into a log field of its own instead of into the reason. The error therefore carries the purpose as `purpose` beside `code` — typed, so only one of the four, and `null` for the one code whose trigger is precisely not one.
+**Price.** The error now has two fields that have to be read together, and one of them is sometimes `null`. Whoever writes only the message into the log loses the information again.
 
 <a id="e-266"></a>
 
-**E-266 — Die Markierung ist ein Blockkommentar, und eine Prüfung faltet jede Anweisung auf eine Zeile.**
-*Kontext:* Die Ausnahme aus E-142 stand als `-- no owner predicate: S-TOKEN-4` in einer eigenen Zeile über dem `WHERE` der Einlöseanweisung. Ein Zeilenkommentar reicht bis zum Zeilenende — fällt der Zeilenumbruch weg, was jeder Logger, jeder Formatierer und jeder vorgelagerte Proxy tun darf, lautet die Anweisung `DELETE FROM velve.one_time_token`. Ohne Bedingung. Jeder Einmal-Token der Tabelle. Die Prüfung wäre grün geblieben, weil auch die gefaltete Zeile eine gültige Markierung enthält.
-*Verworfen:* (a) Die Markierung ans Ende der Anweisung schieben, wo hinter ihr nichts mehr steht. (b) Auf die Markierung verzichten und zur Ausnahmeliste zurückkehren.
-*Grund:* (a) hätte den Einzelfall entschärft und die Form stehen lassen: Der Nächste schreibt sie wieder in die Mitte, und dann ist es eine andere Tabelle. (b) hätte das Problem aus E-142 zurückgeholt. Ein Blockkommentar ist gegen jede Normalisierung von Leerraum unempfindlich, weil sein Ende im Text steht und nicht im Zeilenumbruch. Dazu kommt die Prüfung, die den Fehler überhaupt hätte finden können: Jede Anweisung des Repositorys wird auf eine Zeile gefaltet, und das Entfernen der Kommentare muss vorher wie nachher dieselbe Anweisung ergeben. Gepflanzt wird dieselbe Markierung in beiden Kommentarformen — die Zeilenform scheitert, die Blockform besteht —, damit ein grüner Lauf belegt, dass die Prüfung die beiden unterscheidet und nicht alles durchlässt.
-*Preis:* Die Anweisung stimmt nicht mehr Zeichen für Zeichen mit dem SQL-Block aus 3.7 überein; der Vergleich in `test/token-static-scan.test.ts` entfernt vorher die Kommentare und musste dafür auch Blockkommentare kennen. Und die Faltprüfung ist eine Prüfung über eine Eigenschaft, die keine Anforderung dieses Berichts nennt — sie steht hier, weil der Fehler hier passiert ist.
+### The marker is a block comment, and a check folds every statement onto one line
+`E-266` · token · translated from the German original
+
+**Context.** The exception from E-142 stood as `-- no owner predicate: S-TOKEN-4` on a line of its own above the `WHERE` of the redemption statement. A line comment reaches to the end of the line — if the line break drops out, which every logger, every formatter and every upstream proxy may do, the statement reads `DELETE FROM velve.one_time_token`. Without a condition. Every one-time token in the table. The check would have stayed green, because the folded line also contains a valid marker.
+**Rejected.** (a) Pushing the marker to the end of the statement, where nothing stands behind it any more. (b) Doing without the marker and returning to the exception list.
+**Reason.** (a) would have defused the single case and left the form standing: the next person writes it into the middle again, and then it is a different table. (b) would have brought back the problem from E-142. A block comment is insensitive to every normalisation of whitespace, because its end stands in the text and not in the line break. Added to that is the check that could have found the fault at all: every statement of the repository is folded onto one line, and removing the comments has to yield the same statement before as after. The same marker is planted in both comment forms — the line form fails, the block form passes — so that a green run proves that the check tells the two apart and does not let everything through.
+**Price.** The statement no longer agrees character for character with the SQL block from 3.7; the comparison in `test/token-static-scan.test.ts` removes the comments beforehand and had to know block comments as well for that. And the folding check is a check over a property that no requirement of this report names — it stands here because the fault happened here.
 
 <a id="e-267"></a>
 
-**E-267 — Korrektur zu E-250: `core/keys/` und `core/token/` hängen wechselseitig voneinander ab, und ein neutraler Ort wird zurückgestellt.**
-*Kontext:* E-250 hielt fest, die Richtung stimme — „Schlüssel brauchen Zufall, nicht umgekehrt". Das war beim Schreiben wahr und ist es seit E-257 nicht mehr. Heute gilt beides zugleich: `core/keys/aes-gcm.ts` und `core/keys/envelope.ts` holen `randomBytes` aus `../token/random.js`, und `core/token/secret-token.ts` holt `encodeBase64Url` aus `../keys/base64url.js`. Auf Verzeichnisebene ist das ein Zyklus. Auf Modulebene ist es keiner — beide Blattdateien importieren nichts —, also meldet ihn kein Werkzeug, und die Kante von `keys` nach `token` verlangt T-RAND-5 zusammen mit 3.1 ausdrücklich. Falsch ist nicht der Umzug, falsch ist der Satz im Protokoll.
-*Verworfen:* Ein neutrales Modul, das keinem der beiden Features gehört — etwa `core/bytes/` — mit `randomBytes` und `encodeBase64Url` darin. Beides sind kontextfreie Grundfunktionen ohne eigene Importe und ohne Fachwissen, und beide liegen heute in dem Feature, das sie *weniger* braucht.
-*Grund:* **Zurückgestellt, nicht abgelehnt.** Abschnitt 3.1 nennt für die Erzeugung von Geheimnissen den Modulschnitt `core/token/`, und T-RAND-5 wird in Abschnitt 6 an genau diesem Pfad gemessen; die Architektur schlägt das lokale Urteil, also kann `randomBytes` hier nicht umziehen, so gut das Argument auch ist. Ein Umzug nur für `encodeBase64Url` löste die Hälfte und ließe den Zyklus stehen. Ein neutraler Ort für beide ist deshalb eine Änderung an 3.1 und an der Prüfzeile T-RAND-5 und gehört an die Stelle, die beide ändern darf — nicht in einen Feature-Zweig, der die eine Hälfte davon besitzt.
-*Preis:* Bis dahin bleibt der Zyklus stehen, und er ist unsichtbar: Kein `knip`, kein Bündler und keine Prüfung dieses Berichts meldet ihn, weil auf Dateiebene keiner existiert. Wer später eines der beiden Verzeichnisse für sich allein ausschneiden will — ein eigenes Paket, ein Testdoppel, eine Abhängigkeitsgrenze —, findet die Kante erst dabei. Und E-250 bleibt wie geschrieben stehen, mit einem Satz, der heute falsch ist; die Reihenfolge der Einträge zeigt, was wann geglaubt wurde, und das ist mehr wert als ein nachträglich geglätteter Eintrag.
+### Correction to E-250: `core/keys/` and `core/token/` depend on each other mutually, and a neutral place is deferred
+`E-267` · token · translated from the German original
+
+**Context.** E-250 recorded that the direction was right — "keys need randomness, not the other way round". That was true when written and has not been since E-257. Today both hold at once: `core/keys/aes-gcm.ts` and `core/keys/envelope.ts` fetch `randomBytes` from `../token/random.js`, and `core/token/secret-token.ts` fetches `encodeBase64Url` from `../keys/base64url.js`. At directory level that is a cycle. At module level it is none — both leaf files import nothing — so no tool reports it, and the edge from `keys` to `token` is expressly required by T-RAND-5 together with 3.1. What is wrong is not the move; what is wrong is the sentence in the log.
+**Rejected.** A neutral module that belongs to neither feature — for instance `core/bytes/` — with `randomBytes` and `encodeBase64Url` in it. Both are context-free primitives without imports of their own and without domain knowledge, and both lie today in the feature that needs them *less*.
+**Reason.** **Deferred, not rejected.** Section 3.1 names the module cut `core/token/` for the generation of secrets, and T-RAND-5 is measured in section 6 against exactly this path; the architecture beats local judgement, so `randomBytes` cannot move here, however good the argument is. A move only for `encodeBase64Url` would solve half and leave the cycle standing. A neutral place for both is therefore a change to 3.1 and to the test row T-RAND-5, and belongs at the place that may change both — not in a feature branch that owns one half of it.
+**Price.** Until then the cycle stays standing, and it is invisible: no `knip`, no bundler and no check of this report reports it, because none exists at file level. Whoever later wants to cut out one of the two directories on its own — a package of its own, a test double, a dependency boundary — finds the edge only while doing so. And E-250 stays standing as written, with a sentence that is wrong today; the order of the entries shows what was believed when, and that is worth more than an entry smoothed after the fact.
 
 <a id="e-268"></a>
 
-**E-268 — Die Ausnahme der Migrationsmodule fällt weg: sie war aus einer Eigenschaft begründet, die der Code nicht hat.**
-*Kontext:* Die Faltprüfung aus E-266 nahm `src/core/db/migrations/` aus, mit der Begründung, dort stünden ganze Skripte und der Läufer zerlege sie ohnehin an `;`, bevor irgendetwas den Treiber erreicht. Das Haupttor hat `splitStatements` gelesen: Die Funktion **entfernt keine Kommentare**. Sie erkennt einen `--`-Bereich, hängt ihn wörtlich an (`current += region.text`), und der abschließende Zeilenumbruch liegt *innerhalb* des Bereichs, weil `endOfLineComment` `newline + 1` zurückgibt. Jede Anweisung, die der Läufer an `tx.query()` reicht, trägt ihre Zeilenkommentare also weiterhin und hängt weiterhin an Zeilenumbrüchen. Über die 34 Anweisungen der ersten Migration gelaufen, meldete dieselbe Eigenschaft vier Treffer, und keiner davon verliert nur eine Klausel — es bleibt jeweils **nichts** übrig: die `CREATE TABLE` des Migrationsprotokolls, `velve.password_credential`, `velve.recovery_code` und `CREATE FUNCTION velve.reject_session_owner_update()`, also ausgerechnet der Trigger, der E-23 und S-FIX-2 durchsetzt. Weil `coreMigrations` zur öffentlichen Oberfläche gehört, ist `migration.sql` außerdem eine Zeichenkette, die Anwendungen protokollieren, ausgeben oder in ein Werkzeug einfügen — genau der Weg, für den die Prüfung überhaupt existiert.
-*Verworfen:* (a) Die Ausnahme behalten und den Zähler ehrlicher machen, also Anweisungen statt Module zählen. (b) Die Ausnahme behalten und die vier Kommentare zusätzlich reparieren.
-*Grund:* (a) hätte die Zahl korrigiert und das Loch gelassen; ein sichtbarer Zähler neben einer ungeprüften Stelle ist kein Ausgleich, sondern eine Beruhigung. (b) hätte die Reparatur an eine Ausnahme geheftet, die den nächsten Zeilenkommentar an derselben Stelle wieder durchlässt. Die vier Kommentare sind jetzt Blockkommentare, in `src/core/db/migrations/initial-schema.ts` und in der ausgelieferten `migrations/0001_initial_schema.sql`, und die Ausnahme ist ersatzlos weg. Die Prüfung zerlegt Skripte an `;` außerhalb von Zeichenketten, Kommentaren und Dollar-Anführung — dieselben Bereiche, die auch `boundaryAt` in `schema-rewrite.ts` kennt — und misst jede Anweisung einzeln, also genau die Einheit, die ein Treiber erhält.
-*Preis:* Der Text der ersten Migration ändert sich, also ändert sich ihre Prüfsumme (`958cda8e…` zu `75d3e849…`), und der Läufer weist eine Migration ab, deren Prüfsumme von der eingetragenen abweicht. Für eine Datenbank, in der Migration 1 bereits gelaufen wäre, ist das ein Bruch; das Paket steht bei 0.0.0 und ist nicht veröffentlicht, also trifft es niemanden — aber es ist der Grund, warum genau diese Reparatur später nicht mehr billig gewesen wäre. Und der eigentliche Preis liegt davor: Die Begründung der Ausnahme war von Anfang an nachprüfbar. `splitStatements` steht in diesem Repository, dreiundzwanzig Zeilen lang, und die Behauptung „der Läufer zerlegt vorher" wurde aufgeschrieben, ohne sie zu lesen. Die vier Kommentare sind älter als dieser Zweig; die Ausnahme, die sie verdeckt und dabei behauptet, sie sichtbar zu halten, ist es nicht. Derselbe Fehler noch einmal, eine Nummer kleiner: Der Satz „dieselben Bereiche, die auch `boundaryAt` kennt“ war geprüft an der *Menge* der Bereichsarten und nicht an ihren Zweigen. Drei wichen ab — verschachtelte Blockkommentare (PostgreSQL zählt die Tiefe, die Prüfung nahm das erste schließende Zeichenpaar), Rückwärtsschrägstriche in `E'…'`, und eine nicht geschlossene Dollar-Anführung, deren Ende aus `indexOf` mit `-1` *hinter* dem Öffner lag, sodass der Läufer rückwärts sprang und nie endete. Keiner der drei war erreichbar, und die neuen Prüfungen deckten jede erweiterte Eigenschaft ab und keine der drei. Sie sind jetzt Zweig für Zweig nachgebildet und werden nicht behauptet, sondern gegen `splitStatements` selbst gemessen — an acht gegnerischen Eingaben und an jedem SQL-Literal, das dieses Paket ausliefert. Und ein drittes Mal, wieder eine Nummer kleiner: Der Zähler für verschachtelte Blockkommentare war für SQL richtig und wurde für TypeScript weiterverwendet, wo Blockkommentare nicht verschachteln — dieselbe Funktion, eine Sprache weiter, und ihre zentrale Annahme dort falsch. Was daraus folgt, steht in E-269, weil es eine eigene Entscheidung ist und nicht nur derselbe Befund noch einmal.
+### The migration modules' exception falls away: it was justified from a property the code does not have
+`E-268` · token · translated from the German original
+
+**Context.** The folding check from E-266 excluded `src/core/db/migrations/`, on the grounds that whole scripts stand there and the runner splits them at `;` anyway before anything reaches the driver. The main gate read `splitStatements`: the function **does not remove comments**. It recognises a `--` region, appends it verbatim (`current += region.text`), and the terminating line break lies *inside* the region, because `endOfLineComment` returns `newline + 1`. Every statement the runner hands to `tx.query()` therefore still carries its line comments and still hangs on line breaks. Run over the 34 statements of the first migration, the same property reported four hits, and none of them loses only a clause — in each case **nothing** is left: the `CREATE TABLE` of the migration log, `velve.password_credential`, `velve.recovery_code` and `CREATE FUNCTION velve.reject_session_owner_update()`, that is, of all things the trigger that enforces E-23 and S-FIX-2. Because `coreMigrations` belongs to the public surface, `migration.sql` is moreover a string that applications log, print or paste into a tool — exactly the path the check exists for in the first place.
+**Rejected.** (a) Keeping the exception and making the counter more honest, that is, counting statements instead of modules. (b) Keeping the exception and additionally repairing the four comments.
+**Reason.** (a) would have corrected the number and left the hole; a visible counter beside an unchecked place is not a compensation but a reassurance. (b) would have pinned the repair to an exception that lets the next line comment at the same place through again. The four comments are now block comments, in `src/core/db/migrations/initial-schema.ts` and in the shipped `migrations/0001_initial_schema.sql`, and the exception is gone without replacement. The check splits scripts at `;` outside strings, comments and dollar quoting — the same regions `boundaryAt` in `schema-rewrite.ts` also knows — and measures each statement on its own, that is, exactly the unit a driver receives.
+**Price.** The text of the first migration changes, so its checksum changes (`958cda8e…` to `75d3e849…`), and the runner rejects a migration whose checksum differs from the recorded one. For a database in which migration 1 would already have run, that is a break; the package stands at 0.0.0 and is not published, so it hits nobody — but it is the reason why exactly this repair would not have been cheap later. And the actual price lies before that: the justification of the exception was checkable from the start. `splitStatements` stands in this repository, twenty-three lines long, and the claim "the runner splits beforehand" was written down without reading it. The four comments are older than this branch; the exception that covers them while claiming to keep them visible is not. The same fault once more, one size smaller: the sentence "the same regions `boundaryAt` also knows" was checked against the *set* of region kinds and not against their branches. Three deviated — nested block comments (PostgreSQL counts the depth, the check took the first closing character pair), backslashes in `E'…'`, and an unclosed dollar quote whose end from `indexOf` with `-1` lay *behind* the opener, so that the runner jumped backwards and never ended. None of the three was reachable, and the new checks covered every extended property and none of the three. They are now reproduced branch by branch and are not asserted but measured against `splitStatements` itself — on eight adversarial inputs and on every SQL literal this package ships. And a third time, again one size smaller: the counter for nested block comments was right for SQL and was reused for TypeScript, where block comments do not nest — the same function, one language further, and its central assumption wrong there. What follows from that stands in E-269, because it is a decision of its own and not merely the same finding once more.
 
 <a id="e-269"></a>
 
-**E-269 — Die Prüfung bekommt eine Prüfung darüber, ob sie überhaupt gelesen hat.**
-*Kontext:* Eigener Eintrag und nicht ein Anhang zu E-268, weil es um etwas anderes geht: E-268 betrifft eine Ausnahme, die aus einer falschen Eigenschaft begründet war; hier geht es um eine Prüfung, die still weniger liest, als sie meldet. Der Auslöser war ein TypeScript-Blockkommentar, in dessen Text die zwei Zeichen `/*` vorkommen. Der Läufer sucht dann — mit dem für SQL richtigen Tiefenzähler — nach einem zweiten Abschluss und überspringt alles bis dorthin oder bis zum Dateiende. Das dahinterstehende Literal wurde nie gelesen, `literalsIn` gab `[]` zurück, und die Prüfung meldete eine plausible Zahl und beendete sich mit 0. Die vorhandene Korpusprüfung konnte das nicht sehen, weil **beide** Seiten des Vergleichs durch `literalsIn` gehen: Sie verlieren dieselben Literale gemeinsam und sind sich einig über Quelltext, den keine von beiden gelesen hat. Und `statementsScanned === 0` schlägt nur bei Totalverlust an, nie bei Teilverlust.
-*Verworfen:* (a) Nur den Läufer reparieren und sich auf den benannten Testfall verlassen. (b) Die beiden Seiten des Korpusvergleichs durch zwei verschiedene Literal-Extraktoren schicken.
-*Grund:* (a) prüft genau den einen Quelltext, den jemand als Testfall aufgeschrieben hat, und die nächste Blindstelle sieht anders aus. (b) hätte einen zweiten Extraktor gebraucht, also einen zweiten Ort mit eigenen Fehlern, und der Vergleich hätte gemeldet, dass zwei Werkzeuge sich uneinig sind, ohne zu sagen, welches recht hat. Stattdessen prüft die Prüfung eine Eigenschaft ihres eigenen Durchlaufs: Ein TypeScript-Blockkommentar endet an seinem ersten Abschluss, also enthält ein korrekt erkannter niemals einen weiteren in sich. Tut er es doch, ist der Läufer über das Ende hinausgelaufen — und alles, worüber er dabei hinweggegangen ist, wurde ungelesen gezählt. Dazu kommt eine zweite Zählung, die mit dem Läufer nichts teilt als die Bedeutung von `//`: Eine Datei, deren Backticks nicht alle in Zeilenkommentaren stehen, enthält ein Template-Literal, und wer dort keines findet, hat eines übersprungen. Beide laufen über `src/`, `test/` und `tools/`. Die zwei Blockkommentar-Läufer bleiben getrennt, mit einem Satz an der Trennstelle, weil die nächste Leserin die Verdopplung sonst für ein Versehen hält und sie zusammenlegt.
-*Preis:* Die Selbstprüfung ist bei korrektem Läufer eine Tautologie — sie kann nur anschlagen, wenn der Läufer falsch ist, und sie schlägt auch dann erst an, wenn irgendwo im Baum eine Quelle steht, die den Fehler auslöst. Gemessen: Mit dem wieder eingebauten Fehler und ohne solche Quelle bleibt die Prüfung grün; mit dem Fehler und einem verschachtelten `/*` in einer echten Datei weist sie ab und nennt Datei und Kommentar. Das ist ehrlicher, als es klingt, aber es heißt auch: Diese Prüfung findet den Fehler nicht am Tag, an dem er eingebaut wird, sondern am Tag, an dem ihn jemand auslöst. Und der wahrscheinlichste Auslöser ist, wer dieses Werkzeug dokumentiert — in genau diesem Zweig ist ein `*/` in einem Blockkommentar schon einmal aus Versehen entstanden.
+### The check gets a check on whether it has read at all
+`E-269` · token · translated from the German original
+
+**Context.** An entry of its own and not an appendix to E-268, because it is about something else: E-268 concerns an exception that was justified from a wrong property; here it is about a check that silently reads less than it reports. The trigger was a TypeScript block comment in whose text the two characters `/*` occur. The runner then searches — with the depth counter that is right for SQL — for a second terminator and skips everything up to there or up to the end of the file. The literal standing behind it was never read, `literalsIn` returned `[]`, and the check reported a plausible number and exited with 0. The existing corpus check could not see that, because **both** sides of the comparison go through `literalsIn`: they lose the same literals together and agree about source text neither of them has read. And `statementsScanned === 0` triggers only on total loss, never on partial loss.
+**Rejected.** (a) Only repairing the runner and relying on the named test case. (b) Sending the two sides of the corpus comparison through two different literal extractors.
+**Reason.** (a) checks exactly the one source text someone wrote down as a test case, and the next blind spot looks different. (b) would have needed a second extractor, that is, a second place with faults of its own, and the comparison would have reported that two tools disagree without saying which is right. Instead the check checks a property of its own pass: a TypeScript block comment ends at its first terminator, so a correctly recognised one never contains a further one inside it. If it does, the runner has run past the end — and everything it passed over in doing so was counted unread. Added to that is a second count that shares nothing with the runner except the meaning of `//`: a file whose backticks do not all stand in line comments contains a template literal, and whoever finds none there has skipped one. Both run over `src/`, `test/` and `tools/`. The two block-comment runners stay separate, with a sentence at the point of separation, because the next reader would otherwise take the duplication for an oversight and merge them.
+**Price.** With a correct runner the self-check is a tautology — it can only trigger if the runner is wrong, and even then it triggers only once somewhere in the tree a source stands that triggers the fault. Measured: with the fault built back in and without such a source, the check stays green; with the fault and a nested `/*` in a real file, it rejects and names file and comment. That is more honest than it sounds, but it also means: this check does not find the fault on the day it is built in, but on the day someone triggers it. And the most likely trigger is whoever documents this tool — on exactly this branch a `*/` in a block comment has already come about once by accident.
 
 <a id="e-300"></a>
 
