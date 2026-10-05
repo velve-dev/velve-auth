@@ -512,11 +512,13 @@ that were taken while building.
 
 <a id="e-47"></a>
 
-**E-47 — Englisch als Repository-Sprache, `CASE-STUDY.md` als einzige Ausnahme.**
-*Kontext:* Der Bauauftrag verlangt, sich einmal festzulegen und dabei zu bleiben. Die Zielarchitektur und der Auftrag sind auf Deutsch, das Paket ist ein öffentliches MIT-Paket auf npm.
-*Verworfen:* Durchgehend Deutsch, passend zur Vorlage.
-*Grund:* Die Leser des Pakets sind nicht die Leser des Entwurfs. Wer `@velve/auth` installiert, findet Bezeichner, Fehlercodes und `DOCUMENTATION.md` vor; deutschsprachige Bezeichner in einer öffentlichen Bibliothek schließen ohne Gegenwert aus. `CASE-STUDY.md` ist ausgenommen, weil der Auftrag die wörtliche Übernahme von E-01 bis E-46 vorschreibt — eine Übersetzung wäre eine Änderung, und die Fortschreibung muss im selben Format und derselben Sprache weiterlaufen wie der Bestand.
-*Preis:* Das Repository ist zweisprachig. Wer die Gründe sucht, liest Deutsch; wer die Bibliothek benutzt, liest Englisch.
+### English as the repository language, `CASE-STUDY.md` as the only exception
+`E-47` · scaffold · translated from the German original
+
+**Context.** The build brief requires settling once and sticking to it. The target architecture and the brief are in German, the package is a public MIT package on npm.
+**Rejected.** German throughout, matching the template.
+**Reason.** The readers of the package are not the readers of the design. Whoever installs `@velve/auth` finds identifiers, error codes and `DOCUMENTATION.md`; German identifiers in a public library exclude without any return. `CASE-STUDY.md` is exempt because the brief prescribes taking over E-01 to E-46 verbatim — a translation would be a change, and the continuation has to run on in the same format and the same language as the existing stock.
+**Price.** The repository is bilingual. Whoever looks for the reasons reads German; whoever uses the library reads English.
 
 **Licence addendum.** The *Kontext* above says MIT because that is what the
 package was when this entry was written, and it stays that way. The package is
@@ -527,393 +529,485 @@ what the entry said and what is true now, which the edit would not have.
 
 <a id="e-48"></a>
 
-**E-48 — Node ab 20.19 ist Bauvoraussetzung, nicht nur Laufzeitvoraussetzung.**
-*Kontext:* Abschnitt 2.5 nennt Node 20.19 als Laufzeituntergrenze, abgeleitet aus `@noble/hashes` 2.x und den globalen Web-Crypto-Objekten. Beim Aufsetzen des Gerüsts stellte sich heraus, dass dieselbe Grenze schon für das Bauwerkzeug gilt: Die native Bindung von Rolldown, auf der `tsdown` aufsetzt, fordert `^20.19.0 || >=22.12.0`.
-*Verworfen:* Ein Bundler ohne native Bindung, um unterhalb von 20.19 bauen zu können.
-*Grund:* Der Fehler war zunächst unsichtbar — pnpm überspringt eine optionale Abhängigkeit, deren `engines`-Bedingung die laufende Node-Version verfehlt, ohne Warnung; sichtbar wurde nur ein fehlendes Modul zur Bauzeit. Ein Ausweichen auf ein anderes Werkzeug hätte die Untergrenze verdeckt, die ohnehin für die Laufzeit gilt. Zwei Untergrenzen, von denen die niedrigere nur für das Bauen gilt, sind eine Fehlerquelle ohne Nutzen.
-*Preis:* Zwei Zahlen, die auseinanderlaufen dürfen und es tun: `engines` nennt mit `>=20.19` die Untergrenze, die das Paket seinen Nutzern zusagt, `.node-version` nennt die Fassung, mit der am Paket gearbeitet wird. Sie sind nicht dasselbe und sollen es nicht sein — deshalb prüft CI beide, die zugesagte Untergrenze und die aktuelle Fassung. Ohne diese Matrix wäre die Zusage in `engines` unbelegt.
+### Node from 20.19 is a build requirement, not only a runtime requirement
+`E-48` · scaffold · translated from the German original
+
+**Context.** Section 2.5 names Node 20.19 as the runtime lower bound, derived from `@noble/hashes` 2.x and the global Web Crypto objects. While setting up the scaffold it turned out that the same bound already applies to the build tool: the native binding of Rolldown, on which `tsdown` builds, demands `^20.19.0 || >=22.12.0`.
+**Rejected.** A bundler without a native binding, so as to be able to build below 20.19.
+**Reason.** The fault was invisible at first — pnpm skips an optional dependency whose `engines` condition misses the running Node version, without a warning; all that became visible was a missing module at build time. Switching to another tool would have hidden the lower bound that applies to the runtime anyway. Two lower bounds, of which the lower one applies only to building, are a source of faults without benefit.
+**Price.** Two numbers that may drift apart and do: `engines` names with `>=20.19` the lower bound the package promises its users, `.node-version` names the version the package is worked on with. They are not the same and are not meant to be — that is why CI checks both, the promised lower bound and the current version. Without this matrix the promise in `engines` would be unsupported.
 
 <a id="e-49"></a>
 
-**E-49 — Der npm-Name bleibt `@velve/auth`, obwohl das Repository `velve-dev/velve-auth` heißt.**
-*Kontext:* Abschnitt 3.1 legt `@velve/auth` fest. Die GitHub-Organisation heißt `velve-dev`, das Repository `velve-auth` — beim Aufsetzen kam die Frage auf, ob das Paket dem Repository folgen sollte.
-*Verworfen:* (a) `@velve-dev/velve-auth`, exakt wie der GitHub-Pfad. (b) `@velve-dev/auth`. (c) `velve-auth` ohne Scope.
-*Grund:* Paketname und Repositoryname müssen nicht übereinstimmen und tun es bei Scoped Packages selten. `@velve-dev/velve-auth` wiederholt „velve" in jeder Importzeile, und das Paket hat neun Subpfade — die Wiederholung steht damit neunmal in jeder Einbindung und in jedem Beispiel der Dokumentation. Der Scope ist die Marke, das Paket ist das Produkt; `-dev` in einem Scope liest sich zudem wie ein Vorabkanal, was es nicht ist. Ohne Scope wäre der Namensraum für spätere Velve-Pakete verschenkt.
-*Preis:* Die npm-Organisation `velve` musste beanspruchbar sein, und ob ein Organisationsname frei ist, zeigt npm erst beim Anlegen. Der Vorbehalt ist aufgelöst: Die Organisation ist angelegt, der Name steht. Wäre er vergeben gewesen, wäre `@velve-dev/auth` die Rückfallebene gewesen — die Entscheidung gegen die doppelte Nennung von „velve" wäre davon unberührt geblieben.
+### The npm name stays `@velve/auth`, although the repository is called `velve-dev/velve-auth`
+`E-49` · scaffold · translated from the German original
+
+**Context.** Section 3.1 fixes `@velve/auth`. The GitHub organisation is called `velve-dev`, the repository `velve-auth` — during setup the question came up whether the package should follow the repository.
+**Rejected.** (a) `@velve-dev/velve-auth`, exactly like the GitHub path. (b) `@velve-dev/auth`. (c) `velve-auth` without a scope.
+**Reason.** Package name and repository name do not have to match and rarely do with scoped packages. `@velve-dev/velve-auth` repeats "velve" in every import line, and the package has nine subpaths — so the repetition stands nine times in every integration and in every example of the documentation. The scope is the brand, the package is the product; `-dev` in a scope moreover reads like a pre-release channel, which it is not. Without a scope the namespace for later Velve packages would be given away.
+**Price.** The npm organisation `velve` had to be claimable, and whether an organisation name is free npm shows only on creation. The reservation is resolved: the organisation is created, the name stands. Had it been taken, `@velve-dev/auth` would have been the fallback — the decision against naming "velve" twice would have remained unaffected by that.
 
 <a id="e-50"></a>
 
-**E-50 — Die sechs Kernabhängigkeiten stehen von Anfang an in `package.json` und sind bis zu ihrer ersten Verwendung von `knip` ausgenommen.**
-*Kontext:* Das Gerüst deklariert die sechs Abhängigkeiten aus Abschnitt 2.5, benutzt aber noch keine. `knip` meldet sie als unbenutzt und blockiert damit das Tor.
-*Verworfen:* Jedes Feature fügt die Abhängigkeit hinzu, die es zuerst braucht.
-*Grund:* Das wäre ehrlicher gegenüber `knip`, würde aber `package.json` zu einer Datei machen, die sich acht Features teilen — genau der geteilte Schreibzugriff, den die Konfliktregel des Bauauftrags ausschließt. Eine Datei mit einem Eigentümer und einer befristeten Ausnahme ist billiger als acht Features, die um dieselbe Datei konkurrieren.
-*Preis:* Eine Prüfung ist vorübergehend abgeschaltet, und abgeschaltete Prüfungen werden vergessen. Gegenmaßnahme: Das Freigabetor in Welle 6 leert `ignoreDependencies` und lässt `knip` ohne Ausnahme laufen; bleibt dort eine Abhängigkeit übrig, ist sie tatsächlich unbenutzt und fliegt raus.
+### The six core dependencies are in `package.json` from the start and are exempted from `knip` until their first use
+`E-50` · scaffold · translated from the German original
+
+**Context.** The scaffold declares the six dependencies from section 2.5, but uses none yet. `knip` reports them as unused and so blocks the gate.
+**Rejected.** Each feature adds the dependency it needs first.
+**Reason.** That would be more honest towards `knip`, but would make `package.json` a file eight features share — exactly the shared write access the conflict rule of the build brief rules out. A file with one owner and a time-limited exception is cheaper than eight features competing for the same file.
+**Price.** A check is temporarily switched off, and switched-off checks get forgotten. Countermeasure: the release gate in wave 6 empties `ignoreDependencies` and lets `knip` run without exception; if a dependency is left over there, it really is unused and gets thrown out.
 
 <a id="e-51"></a>
 
-**E-51 — Die Attributionsprüfung nimmt die Regeldatei aus, statt die Muster zu entschärfen.**
-*Kontext:* Der CI-Auftrag, der AI-Attribution ablehnt, schlug beim ersten Lauf auf `CLAUDE.md` an — dort stehen die verbotenen Begriffe, weil die Regel sie benennen muss. Eine Prüfung, die ein regelkonformes Repository ablehnt, ist keine Prüfung.
-*Verworfen:* (a) Die Muster so verengen, dass der Regeltext nicht mehr trifft. (b) Nur den Diff prüfen statt des Baums.
-*Grund:* Ein verengtes Muster hätte genau die Formulierungen freigegeben, die es fangen soll — der Regeltext und eine echte Attribution sind derselbe Wortlaut, unterschieden nur durch die Datei, in der sie stehen. Also unterscheidet die Prüfung nach Datei: Spezifikation, Prüfung und Regel dürfen die Begriffe nennen, alles andere nicht. Zugleich wurde die Prüfung erweitert, weil der Main-Gate-Agent zu Recht anmerkte, dass sie die eigene Regel nicht durchsetzte: Eine Urheberschaftsbehauptung in einem gewöhnlichen Zeilenkommentar wäre durchgelaufen, weil nur `Co-Authored-By`-Zeilen erfasst waren. Jetzt gibt es zwei Muster, Marker und Urheberschaftsbehauptung, beide gegen Commit-Verlauf und Baum.
-*Preis:* Drei Dateien sind von der Prüfung ausgenommen und müssen von Hand gelesen werden. Für `CLAUDE.md` ist das vertretbar, weil der Main-Gate-Agent sie ohnehin jedes Mal ganz liest.
+### The attribution check exempts the rules file instead of defusing the patterns
+`E-51` · scaffold · translated from the German original
+
+**Context.** The CI job that rejects AI attribution fired on its first run on `CLAUDE.md` — the forbidden terms stand there, because the rule has to name them. A check that rejects a rule-conforming repository is not a check.
+**Rejected.** (a) Narrowing the patterns so that the rule text no longer matches. (b) Checking only the diff instead of the tree.
+**Reason.** A narrowed pattern would have let through exactly the wordings it is meant to catch — the rule text and a real attribution are the same wording, distinguished only by the file they stand in. So the check distinguishes by file: specification, check and rule may name the terms, everything else may not. At the same time the check was extended, because the main-gate agent rightly remarked that it did not enforce its own rule: an authorship claim in an ordinary line comment would have passed, because only `Co-Authored-By` lines were covered. Now there are two patterns, marker and authorship claim, both against commit history and tree.
+**Price.** Three files are exempt from the check and have to be read by hand. For `CLAUDE.md` that is defensible, because the main-gate agent reads it in full every time anyway.
 
 <a id="e-52"></a>
 
-**E-52 — Der API-Schnappschuss entsteht in Welle 0, nicht wenn es eine Oberfläche gibt.**
-*Kontext:* Das Main-Gate verlangt einen Vergleich der öffentlichen Oberfläche gegen einen Schnappschuss. In Welle 0 besteht die Oberfläche aus einer Konstanten — es gäbe nichts zu vergleichen.
-*Verworfen:* Den Schnappschuss einführen, sobald die erste echte Oberfläche entsteht.
-*Grund:* Ein Torpunkt ohne Umsetzung ist ein Torpunkt, der beim ersten Feature vergessen wird, und dann ist die erste echte Oberfläche genau die, die ungeprüft durchgeht. Der Schnappschuss liest die gebauten `.d.mts`-Dateien aller neun Subpfade; er ist heute fast leer und wächst mit. Dass er heute nichts fängt, ist kein Argument gegen ihn, sondern der Grund, warum er heute billig einzuführen ist.
-*Preis:* Jede beabsichtigte Änderung der Oberfläche verlangt ein bewusstes Aktualisieren des Schnappschusses. Das ist der Zweck.
+### The API snapshot is created in wave 0, not when there is a surface
+`E-52` · scaffold · translated from the German original
+
+**Context.** The main gate requires a comparison of the public surface against a snapshot. In wave 0 the surface consists of one constant — there would be nothing to compare.
+**Rejected.** Introducing the snapshot as soon as the first real surface comes into being.
+**Reason.** A gate item without an implementation is a gate item that is forgotten at the first feature, and then the first real surface is exactly the one that passes unchecked. The snapshot reads the built `.d.mts` files of all nine subpaths; it is almost empty today and grows along. That it catches nothing today is not an argument against it, but the reason why it is cheap to introduce today.
+**Price.** Every intended change of the surface requires a deliberate update of the snapshot. That is the purpose.
 
 <a id="e-53"></a>
 
-**E-53 — Die Fallstudie umschreibt die verbotenen Formulierungen, statt sich von der Prüfung ausnehmen zu lassen.**
-*Kontext:* E-51 beschrieb den Befund und zitierte dabei die Formulierung, die er betrifft. Damit schlug die Prüfung auf `CASE-STUDY.md` an — derselbe Fehler wie zuvor auf `CLAUDE.md`, eine Datei später.
-*Verworfen:* `CASE-STUDY.md` zur vierten Ausnahme erklären.
-*Grund:* Jede Ausnahme ist ein Loch, und dieses wäre das größte gewesen: Die Fallstudie ist die längste Datei des Repositories und wächst mit jedem Feature, also hätte sich echte Attribution dort am leichtesten versteckt. Eine Beschreibung ist ohne Verlust möglich — die Fallstudie muss sagen, welche *Art* von Formulierung durchrutschte, nicht deren Wortlaut.
-*Preis:* Die Fallstudie ist an dieser Stelle eine Spur abstrakter als nötig. Das ist der billigere der beiden Preise.
+### The case study paraphrases the forbidden wordings instead of having itself exempted from the check
+`E-53` · scaffold · translated from the German original
+
+**Context.** E-51 described the finding and in doing so quoted the wording it concerns. With that the check fired on `CASE-STUDY.md` — the same fault as before on `CLAUDE.md`, one file later.
+**Rejected.** Declaring `CASE-STUDY.md` the fourth exception.
+**Reason.** Every exception is a hole, and this one would have been the biggest: the case study is the longest file of the repository and grows with every feature, so real attribution would have hidden there most easily. A description is possible without loss — the case study has to say what *kind* of wording slipped through, not its wording.
+**Price.** The case study is at this point a touch more abstract than necessary. That is the cheaper of the two prices.
 
 <a id="e-54"></a>
 
-**E-54 — Die Attributionsprüfung liest Baum *und* Diff, nicht eines von beiden.**
-*Kontext:* E-51 verwarf „nur den Diff prüfen statt des Baums". Der Main-Gate-Agent zeigte, dass die Umkehrung dieselbe Lücke hat: Text, der in einem Commit hinzugefügt und in einem späteren entfernt wird, steht nicht mehr im Baum, aber weiterhin im Verlauf und in der Diff-Ansicht des Pull Requests. Ein gepflanzter Fall lief durch.
-*Verworfen:* Sich für eine der beiden Prüfungen entscheiden.
-*Grund:* Die beiden Prüfungen decken verschiedene Zeiträume ab und nicht verschiedene Gründlichkeitsgrade. Der Baum sieht, was vor dem Branch schon dastand; der Diff sieht, was während des Branches kurz dastand. Die Wahl zwischen ihnen ist keine Abwägung, sondern ein Denkfehler — sie kostet zusammen eine Zeile mehr.
-*Preis:* Der Diff-Durchlauf wird bei langen Branches langsam, weil er jeden Commit-Inhalt einmal liest.
+### The attribution check reads tree *and* diff, not one of the two
+`E-54` · scaffold · translated from the German original
+
+**Context.** E-51 rejected "checking only the diff instead of the tree". The main-gate agent showed that the reverse has the same gap: text that is added in one commit and removed in a later one no longer stands in the tree, but still in the history and in the diff view of the pull request. A planted case passed.
+**Rejected.** Deciding on one of the two checks.
+**Reason.** The two checks cover different time spans and not different degrees of thoroughness. The tree sees what already stood there before the branch; the diff sees what stood there briefly during the branch. The choice between them is not a trade-off but a reasoning error — together they cost one line more.
+**Price.** The diff pass gets slow on long branches, because it reads every commit's content once.
 
 <a id="e-55"></a>
 
-**E-55 — Die Prüfung ist case-insensitiv, weil die wahrscheinlichste Schreibweise die großgeschriebene ist.**
-*Kontext:* Die erste Fassung suchte kleingeschrieben. Der Main-Gate-Agent pflanzte vier Varianten, die alle durchliefen: satzinitiale Großschreibung in einem Kommentar und die Form `@author`.
-*Verworfen:* Die Schreibweisen einzeln aufzählen.
-*Grund:* Ein Kommentar beginnt üblicherweise mit einem Großbuchstaben, und `@author` ist nach `Co-Authored-By` die verbreitetste Urheberschaftsangabe in einer Quelldatei. Eine Prüfung, die genau die häufigste Form verfehlt, prüft nichts. Die Aufzählung wäre zudem immer unvollständig gewesen — die Fehlerklasse ist „Schreibweise", nicht „diese vier Schreibweisen".
-*Preis:* Mehr Fehlalarme. Die drei ausgenommenen Dateien fangen sie ab; wäre die Liste länger, wäre der Preis zu hoch.
+### The check is case-insensitive, because the most likely spelling is the capitalised one
+`E-55` · scaffold · translated from the German original
+
+**Context.** The first version searched in lower case. The main-gate agent planted four variants that all passed: sentence-initial capitalisation in a comment and the form `@author`.
+**Rejected.** Enumerating the spellings one by one.
+**Reason.** A comment usually begins with a capital letter, and `@author` is, after `Co-Authored-By`, the most widespread authorship statement in a source file. A check that misses exactly the most frequent form checks nothing. The enumeration would moreover always have been incomplete — the fault class is "spelling", not "these four spellings".
+**Price.** More false alarms. The three exempted files catch them; were the list longer, the price would be too high.
 
 <a id="e-56"></a>
 
-**E-56 — `pnpm test` baut vorher, damit der Schnappschuss nicht gegen ein veraltetes `dist/` grün wird.**
-*Kontext:* Der API-Schnappschuss aus E-52 liest die gebauten Deklarationen. Wer die Quelle ändert und `pnpm test` ohne vorherigen Build aufruft, bekommt grün auf einem alten Stand.
-*Verworfen:* Sich darauf verlassen, dass `pnpm gate` und CI ohnehin vorher bauen.
-*Grund:* Beide tun das, und das Tor war nie gefährdet. Gefährdet war die Person, die während der Arbeit `pnpm test` aufruft und daraus schließt, die Oberfläche sei unverändert. Ein Schnappschuss, dem man nur in einer bestimmten Aufrufreihenfolge trauen kann, ist ein Schnappschuss, dem man nicht traut.
-*Preis:* Jeder Testlauf baut, auch wenn sich nichts geändert hat. Bei rund 300 ms ist das der billigere Preis.
+### `pnpm test` builds first, so that the snapshot does not go green against a stale `dist/`
+`E-56` · scaffold · translated from the German original
+
+**Context.** The API snapshot from E-52 reads the built declarations. Whoever changes the source and calls `pnpm test` without a build first gets green on an old state.
+**Rejected.** Relying on `pnpm gate` and CI building first anyway.
+**Reason.** Both do that, and the gate was never at risk. At risk was the person who calls `pnpm test` while working and concludes from it that the surface is unchanged. A snapshot you can trust only in a particular calling order is a snapshot you do not trust.
+**Price.** Every test run builds, even when nothing has changed. At around 300 ms that is the cheaper price.
 
 <a id="e-57"></a>
 
-**E-57 — Der Slogan nennt die Herkunft, nicht den Umfang.**
-*Kontext:* Better Auth wirbt mit „The most comprehensive authentication framework". Für das Banner und die README wurde eine Zeile in derselben Form gebraucht.
-*Verworfen:* (a) „Everything you need to know who is signed in" — dieselbe Wortwahl wie der Wettbewerber, aber auf die eine Frage bezogen. (b) „Authentication that never leaves your database". (c) „The authentication library that never phones home".
-*Grund:* Auf dem Feld Umfang ist gegen 618 Funktionen nicht zu gewinnen, und es wäre auch gelogen — Abschnitt 3.14 streicht Rollen, Organisationen, SCIM, SAML und Bezahlmodule ausdrücklich. Die tragfähige Position ist die Herkunft: Auth0, Clerk, Supabase und Firebase sind US-Dienste, und eine Bibliothek, die im Prozess des Betreibers läuft und keinen Dritten beteiligt, ist deren Gegenentwurf. „European" sagt das in einem Wort.
-*Preis:* Die Zeile verspricht mehr, als die Bibliothek allein halten kann. Wo die Daten liegen, entscheidet der Betreiber, nicht das Paket — die Bibliothek macht Souveränität möglich, sie garantiert sie nicht. Die verworfene Variante (b) wäre in diesem Punkt genauer gewesen, weil sie eine technische Eigenschaft nennt statt einer Herkunft. Der Fließtext der README trägt die Einschränkung deshalb nach: „no third-party service is involved at any point".
+### The slogan names the origin, not the scope
+`E-57` · scaffold · translated from the German original
+
+**Context.** Better Auth advertises with "The most comprehensive authentication framework". For the banner and the README a line in the same form was needed.
+**Rejected.** (a) "Everything you need to know who is signed in" — the same choice of words as the competitor, but related to the one question. (b) "Authentication that never leaves your database". (c) "The authentication library that never phones home".
+**Reason.** On the field of scope there is no winning against 618 features, and it would also be a lie — section 3.14 expressly strikes roles, organisations, SCIM, SAML and payment modules. The tenable position is the origin: Auth0, Clerk, Supabase and Firebase are US services, and a library that runs in the operator's process and involves no third party is their counter-design. "European" says that in one word.
+**Price.** The line promises more than the library can keep on its own. Where the data lies is decided by the operator, not the package — the library makes sovereignty possible, it does not guarantee it. The rejected variant (b) would have been more precise on this point, because it names a technical property instead of an origin. The body text of the README therefore adds the qualification: "no third-party service is involved at any point".
 
 <a id="e-58"></a>
 
-**E-58 — Das Banner wird verlustfrei komprimiert und von Hand neu geblockt.**
-*Kontext:* Das gelieferte Banner wog 1,2 MB, was eine npm-Seite spürbar verlangsamt.
-*Verworfen:* Palettenquantisierung mit `pngquant` (36 KB statt 274 KB).
-*Grund:* Die Quantisierung erzeugte sichtbare Ringe im violetten Verlauf hinter dem Logo — genau die Artefaktklasse, für die weiche Verläufe anfällig sind. Rund 240 KB Ersparnis sind ein sichtbar beschädigtes Hero-Bild nicht wert. Verlustfrei bleiben 274 KB.
+### The banner is compressed losslessly and re-chunked by hand
+`E-58` · scaffold · translated from the German original
 
-Die Begründung dafür stand hier zweimal falsch, und beide Fassungen bleiben stehen, weil der Weg zur richtigen Zahl der eigentliche Inhalt dieses Eintrags ist. Zuerst notiert war, der Gewinn komme daher, dass `oxipng` den durchgehend deckenden Alphakanal entfernen kann. Der Prüflauf dagegen war keiner: `oxipng` reduziert den Farbtyp standardmäßig, also entfernte auch der vermeintliche Kontrolllauf das Alpha und lieferte erwartungsgemäß dasselbe Ergebnis — eine Kontrolle, die nichts kontrollierte. Mit `--nc`, das die Farbtypreduktion abschaltet, ergibt sich die tatsächliche Aufteilung: 1208 KB roh, 320 KB nach reiner Neukomprimierung unter Beibehaltung des Alphakanals, 274 KB nach zusätzlichem Wegfall desselben. Die Neukomprimierung mit erschöpfender Filtersuche trägt also rund 95 Prozent der Ersparnis, der Alphakanal rund 5. Die gelieferte Datei war schlicht schwach komprimiert.
-*Preis:* Ein Zwischenschritt, der nicht offensichtlich ist: `oxipng` schrieb die Bilddaten als einen einzigen 280-KB-`IDAT`-Block, und daran verschluckte sich der Bildbetrachter von macOS — die Datei lud endlos, ohne Fehlermeldung. Derselbe Datenstrom, wieder in Blöcke zu 64 KB geteilt, öffnet normal. Ein gültiges PNG ist nicht dasselbe wie ein PNG, das jeder Decoder mag.
+**Context.** The delivered banner weighed 1.2 MB, which noticeably slows down an npm page.
+**Rejected.** Palette quantisation with `pngquant` (36 KB instead of 274 KB).
+**Reason.** The quantisation produced visible rings in the violet gradient behind the logo — exactly the artefact class soft gradients are prone to. Around 240 KB of savings are not worth a visibly damaged hero image. Lossless leaves 274 KB.
+
+The reasoning for it stood here wrongly twice, and both versions stay standing, because the path to the right number is the actual content of this entry. First noted was that the gain comes from `oxipng` being able to remove the fully opaque alpha channel. The check run, by contrast, was none: `oxipng` reduces the colour type by default, so the supposed control run also removed the alpha and, as expected, delivered the same result — a control that controlled nothing. With `--nc`, which switches off the colour type reduction, the actual split emerges: 1208 KB raw, 320 KB after pure recompression keeping the alpha channel, 274 KB after additionally dropping it. The recompression with exhaustive filter search therefore carries around 95 percent of the savings, the alpha channel around 5. The delivered file was simply weakly compressed.
+**Price.** An intermediate step that is not obvious: `oxipng` wrote the image data as a single 280 KB `IDAT` chunk, and the macOS image viewer choked on that — the file loaded endlessly, without an error message. The same data stream, split again into chunks of 64 KB, opens normally. A valid PNG is not the same as a PNG every decoder likes.
 
 <a id="e-59"></a>
 
-**E-59 — Der Zweck bestimmt den Schlüsseltyp, nicht der Aufrufer.**
-*Kontext:* S-KEY-2 verlangt, dass ein unter einem Zweck erzeugter Wert unter einem anderen Zweck nicht lesbar ist. Naheliegend wäre gewesen, alle sechs Zweckschlüssel gleich zu importieren und die Trennung allein der HKDF-Ableitung zu überlassen.
-*Verworfen:* Sechs identisch importierte Rohschlüssel, Trennung nur über den Ableitungskontext.
-*Grund:* Die Ableitung trennt die Bytes, aber nicht die Verwendung — ein Programmierfehler hätte den `cookie-sig`-Schlüssel zum Verschlüsseln benutzen können, und das wäre erst im Betrieb aufgefallen. `rootKeyProvider` importiert die beiden Signierzwecke deshalb als HMAC-Schlüssel und die vier Verschlüsselungszwecke als AES-GCM-Schlüssel. Damit lehnt Web Crypto den falschen Zweck ab, bevor eine Zeile dieser Bibliothek läuft. Die Anforderung wird zur Eigenschaft der Laufzeit statt zur Sorgfaltspflicht des Lesers.
-*Preis:* Der `KeyProvider` muss wissen, welcher Zweck welcher Art ist — eine Tabelle, die bei einem siebten Zweck mitgepflegt werden müsste. Da die Zwecke ein geschlossener Satz sind, ist das kein Wachstumspfad.
+### The purpose determines the key type, not the caller
+`E-59` · keys · translated from the German original
+
+**Context.** S-KEY-2 requires that a value produced under one purpose is not readable under another purpose. The obvious thing would have been to import all six purpose keys the same way and leave the separation to the HKDF derivation alone.
+**Rejected.** Six identically imported raw keys, separation only via the derivation context.
+**Reason.** The derivation separates the bytes, but not the use — a programming error could have used the `cookie-sig` key to encrypt, and that would only have been noticed in operation. `rootKeyProvider` therefore imports the two signing purposes as HMAC keys and the four encryption purposes as AES-GCM keys. With that, Web Crypto rejects the wrong purpose before a line of this library runs. The requirement becomes a property of the runtime instead of a duty of care of the reader.
+**Price.** The `KeyProvider` has to know which purpose is of which kind — a table that would have to be maintained along with a seventh purpose. Since the purposes are a closed set, that is not a growth path.
 
 <a id="e-60"></a>
 
-**E-60 — Die Verschlüsselungsschlüssel sind exportierbar, damit die Rückfallebene überhaupt existieren kann.**
-*Kontext:* E-03 hält `@noble/ciphers` als Rückfall für Laufzeiten ohne vollständige Web-Crypto-Implementierung bereit. Der Rückfall rechnet auf Rohbytes, die Schnittstelle aus 3.8 liefert aber einen `CryptoKey`.
-*Verworfen:* (a) Die Rohbytes zusätzlich in einer `WeakMap` neben dem `CryptoKey` halten. (b) Den Rückfall streichen und E-03 dabei belassen, dass er „vorgesehen" ist.
-*Grund:* Die `WeakMap` wäre ein zweiter, unsichtbarer Aufbewahrungsort für Schlüsselmaterial gewesen, der an der Schnittstelle vorbeiführt — genau die Art Nebenweg, die später niemand mehr findet. Ein Rückfall, der nur auf dem Papier steht, ist keiner. Also holt der Rückfall die Bytes über `crypto.subtle.exportKey`, und `rootKeyProvider` importiert die vier Verschlüsselungszwecke als `extractable`. Die beiden Signierzwecke bleiben nicht exportierbar, weil sie den Rückfall nicht brauchen.
-*Preis:* Wer eine eigene `KeyProvider`-Implementierung schreibt und auf einer Laufzeit ohne AES-GCM landet, muss exportierbare Schlüssel liefern; sonst kommt `key_material_not_exportable`. Und ehrlich benannt: eine Laufzeit, deren `crypto.subtle` gar keinen AES-GCM-Schlüssel importieren kann, kann auch keinen `CryptoKey` erzeugen — dort hilft nur eine eigene Implementierung der Schnittstelle. Die Rückfallebene deckt die Lücke zwischen „kann importieren" und „kann verschlüsseln", nicht mehr.
+### The encryption keys are exportable, so that the fallback can exist at all
+`E-60` · keys · translated from the German original
+
+**Context.** E-03 keeps `@noble/ciphers` ready as a fallback for runtimes without a complete Web Crypto implementation. The fallback computes on raw bytes, but the interface from 3.8 delivers a `CryptoKey`.
+**Rejected.** (a) Holding the raw bytes additionally in a `WeakMap` beside the `CryptoKey`. (b) Striking the fallback and leaving E-03 at saying it is "provided for".
+**Reason.** The `WeakMap` would have been a second, invisible storage place for key material that leads past the interface — exactly the kind of side path nobody finds any more later. A fallback that stands only on paper is none. So the fallback fetches the bytes via `crypto.subtle.exportKey`, and `rootKeyProvider` imports the four encryption purposes as `extractable`. The two signing purposes stay non-exportable, because they do not need the fallback.
+**Price.** Whoever writes their own `KeyProvider` implementation and lands on a runtime without AES-GCM has to deliver exportable keys; otherwise `key_material_not_exportable` comes. And named honestly: a runtime whose `crypto.subtle` cannot import an AES-GCM key at all cannot produce a `CryptoKey` either — there only an implementation of the interface of one's own helps. The fallback covers the gap between "can import" and "can encrypt", no more.
 
 <a id="e-61"></a>
 
-**E-61 — Die Wahl der AES-GCM-Rechenmaschine fällt durch einen Versuch, nicht durch eine Abfrage.**
-*Kontext:* Es gibt keine verlässliche Möglichkeit, eine Laufzeit zu fragen, ob ihr `crypto.subtle` AES-GCM beherrscht.
-*Verworfen:* Auf das Vorhandensein von `globalThis.crypto.subtle` prüfen und daraus schließen.
-*Grund:* Genau dieser Schluss ist der Fehler, den die Rückfallebene abfangen soll: Die problematischen Laufzeiten haben ein `subtle`-Objekt, nur eben ein unvollständiges. Also wird einmal ein leerer Wert unter einem Wegwerfschlüssel verschlüsselt; gelingt das, bleibt es bei `crypto.subtle`, sonst übernimmt `@noble/ciphers`. Das Ergebnis wird für den Prozess gemerkt.
-*Preis:* Eine zusätzliche Verschlüsselung beim ersten Aufruf. Der Test, dass beide Rechenmaschinen bytegleiche Ausgaben erzeugen und die Ausgabe der jeweils anderen lesen, ist dafür die Absicherung, die E-02 für Argon2id hat.
+### The choice of the AES-GCM engine is made by an attempt, not by a query
+`E-61` · keys · translated from the German original
+
+**Context.** There is no reliable way to ask a runtime whether its `crypto.subtle` masters AES-GCM.
+**Rejected.** Checking for the presence of `globalThis.crypto.subtle` and concluding from that.
+**Reason.** Exactly this conclusion is the fault the fallback is meant to catch: the problematic runtimes have a `subtle` object, just an incomplete one. So an empty value is encrypted once under a throwaway key; if that succeeds, it stays with `crypto.subtle`, otherwise `@noble/ciphers` takes over. The result is remembered for the process.
+**Price.** One additional encryption on the first call. The test that both engines produce byte-identical outputs and read each other's output is the safeguard for it that E-02 has for Argon2id.
 
 <a id="e-62"></a>
 
-**E-62 — base64url wird selbst dekodiert.**
-*Kontext:* Der Wurzelschlüssel kommt nach 3.15 A.8 als base64url-Zeichenkette in die Konfiguration.
-*Verworfen:* `atob`.
-*Grund:* Abschnitt 2.6 zählt die Annahmen der Bibliothek auf und sagt ausdrücklich „und keine weiteren". `atob` steht nicht darin. Der Dekodierer ist knapp dreißig Zeilen und macht die Liste nicht länger. Dass `atob` faktisch überall existiert, ist ein Argument dafür, es zu benutzen, und kein Argument dafür, die Annahmeliste stillschweigend zu erweitern.
-*Preis:* Dreißig Zeilen, die woanders schon stehen. Und eine offene Frage: Sitzungstoken werden nach 3.5 base64url kodiert, brauchen also den Gegenweg — der Kodierer gehört dann in dasselbe Modul und nicht in ein zweites.
+### base64url is decoded by the library itself
+`E-62` · keys · translated from the German original
+
+**Context.** According to 3.15 A.8 the root key comes into the configuration as a base64url string.
+**Rejected.** `atob`.
+**Reason.** Section 2.6 enumerates the assumptions of the library and says expressly "and no others". `atob` is not in it. The decoder is just under thirty lines and does not make the list longer. That `atob` in fact exists everywhere is an argument for using it, and not an argument for silently extending the list of assumptions.
+**Price.** Thirty lines that already stand elsewhere. And an open question: session tokens are base64url-encoded according to 3.5, so they need the reverse direction — the encoder then belongs in the same module and not in a second one.
 
 <a id="e-63"></a>
 
-**E-63 — Der Zufall liegt vorerst in `core/keys/`, obwohl S-RAND-5 ihn in `core/token/` verortet.**
-*Kontext:* Die Umschlagverschlüsselung braucht eine Nonce. S-RAND-5 verlangt, dass die Erzeugung von Geheimnissen in genau einem Modul gekapselt ist, und 3.1 nennt dafür `core/token/`. Dieses Verzeichnis gehört in dieser Welle einem anderen Autor.
-*Verworfen:* Die Nonce an Ort und Stelle aus `crypto.getRandomValues` ziehen.
-*Grund:* Das wäre der Anfang genau der Zersplitterung, die S-RAND-5 verhindert: Jedes Modul zieht sich seinen Zufall selbst, und beim vierten ist niemand mehr sicher, ob alle vier dieselbe Quelle benutzen. Ein Modul mit der richtigen Regel am falschen Ort ist billiger zu verschieben als vier verstreute Aufrufe zusammenzusuchen.
-*Preis:* Eine Datei liegt am falschen Ort und muss umziehen, sobald `core/token/` existiert. Das ist ausdrücklich eine Schuld, keine Entscheidung — sie wird beim Zusammenführen fällig.
+### Randomness lives in `core/keys/` for now, although S-RAND-5 places it in `core/token/`
+`E-63` · keys · translated from the German original
+
+**Context.** The envelope encryption needs a nonce. S-RAND-5 requires that the generation of secrets is encapsulated in exactly one module, and 3.1 names `core/token/` for that. In this wave that directory belongs to another author.
+**Rejected.** Drawing the nonce on the spot from `crypto.getRandomValues`.
+**Reason.** That would be the start of exactly the fragmentation S-RAND-5 prevents: every module draws its own randomness, and by the fourth nobody is sure any more whether all four use the same source. A module with the right rule in the wrong place is cheaper to move than gathering up four scattered calls.
+**Price.** A file lies in the wrong place and has to move as soon as `core/token/` exists. That is expressly a debt, not a decision — it falls due at merging.
 
 <a id="e-64"></a>
 
-**E-64 — Der Ableitungskontext trägt den Zweck, aber nicht die Version.**
-*Kontext:* HKDF bekommt Salz und `info`. Es lag nahe, die Schlüsselversion in `info` mitzuführen.
-*Verworfen:* `info` aus Zweck und Version zusammensetzen.
-*Grund:* Der Ring bildet Version auf einen *eigenen* Wurzelschlüssel ab, nicht auf denselben. Die Versionen sind also bereits durch unterschiedliches Schlüsselmaterial getrennt, und S-KEY-1 verlangt wörtlich „genau einen Ableitungskontext je Zweck". Die Version zusätzlich hineinzurechnen hätte nichts getrennt, was nicht schon getrennt war, und die Anforderung wörtlich verletzt.
-*Preis:* Wer zwei Versionen versehentlich mit demselben Wurzelschlüssel bestückt, bekommt für beide dieselben Zweckschlüssel. Das ist ein Konfigurationsfehler, den die Bibliothek nicht erkennen kann, und er ist folgenlos, solange die Version nur zum Auffinden des Schlüssels dient.
+### The derivation context carries the purpose, but not the version
+`E-64` · keys · translated from the German original
+
+**Context.** HKDF gets salt and `info`. It was tempting to carry the key version along in `info`.
+**Rejected.** Composing `info` from purpose and version.
+**Reason.** The ring maps a version to a root key *of its own*, not to the same one. The versions are therefore already separated by different key material, and S-KEY-1 literally requires "exactly one derivation context per purpose". Additionally computing the version into it would have separated nothing that was not already separated, and violated the requirement literally.
+**Price.** Whoever accidentally equips two versions with the same root key gets the same purpose keys for both. That is a configuration fault the library cannot detect, and it is without consequence as long as the version serves only to find the key.
 
 <a id="e-65"></a>
 
-**E-65 — Der Umschlagkopf ist die Additional Data jeder AES-GCM-Operation.**
-*Kontext:* Der Kopf trug das Algorithmus-Präfix und die Schlüsselversion, aber außerhalb der Authentifizierung. Der Prüfer hielt fest, dass das heute nicht ausnutzbar ist: Wer die Version umschreibt, bekommt einen anderen Schlüssel, und der Tag schlägt fehl.
-*Verworfen:* Es dabei belassen, weil der Tag den Umschreibversuch ohnehin fängt.
-*Grund:* Das Argument stimmt genau so lange, wie es nur ein Algorithmus-Präfix gibt. Sobald ein zweites existiert — und das Präfix steht ausdrücklich dafür da, dass es eines geben wird —, ist die Herabstufung ein Eingabewert, den das Format nicht authentifiziert, und der Angreifer wählt ihn. Entscheidend ist aber der Zeitpunkt: Additional Data lässt sich nachträglich nicht einführen. Jeder verschlüsselte PHC-String, jedes TOTP-Geheimnis, jedes fremde OAuth-Token und jeder PKCE-Verifier in jeder Installation würde beim Wechsel unlesbar. Solange noch nichts gespeichert ist, kostet die Änderung nichts; einen Tag nach der ersten Auslieferung kostet sie eine Migration, die niemand fahren will. Das ist keine Abwägung zwischen Sicherheit und Aufwand, sondern zwischen „jetzt umsonst" und „später gar nicht".
-*Preis:* Die Spaltenform trägt die Additional Data mit, obwohl ihre Version in einer eigenen Spalte steht — sie wird aus der Version rekonstruiert. Dafür ist `key_version` dort jetzt ebenfalls authentifiziert, was vorher nicht galt.
+### The envelope header is the additional data of every AES-GCM operation
+`E-65` · keys · translated from the German original
+
+**Context.** The header carried the algorithm prefix and the key version, but outside the authentication. The reviewer noted that this is not exploitable today: whoever rewrites the version gets a different key, and the tag fails.
+**Rejected.** Leaving it at that, because the tag catches the rewrite attempt anyway.
+**Reason.** The argument holds exactly as long as there is only one algorithm prefix. As soon as a second exists — and the prefix is there expressly for there to be one —, the downgrade is an input value the format does not authenticate, and the attacker chooses it. What is decisive, though, is the timing: additional data cannot be introduced afterwards. Every encrypted PHC string, every TOTP secret, every foreign OAuth token and every PKCE verifier in every installation would become unreadable at the switch. As long as nothing is stored yet, the change costs nothing; a day after the first release it costs a migration nobody wants to run. That is not a trade-off between security and effort, but between "now for free" and "later not at all".
+**Price.** The column form carries the additional data along, although its version stands in a column of its own — it is reconstructed from the version. In return `key_version` is now authenticated there as well, which did not hold before.
 
 <a id="e-66"></a>
 
-**E-66 — Nur vier der sechs Zwecke kommen überhaupt an die Verschlüsselung heran.**
-*Kontext:* `sealEnvelope(keys, "cookie-sig", …)` ließ sich übersetzen und scheiterte erst zur Laufzeit — mit einer `DOMException: InvalidAccessError` aus Web Crypto, die keinen Code trägt. Die Regeln dieses Repositories verlangen an jedem Fehler einen stabilen maschinenlesbaren Code.
-*Verworfen:* Den Web-Crypto-Fehler abfangen und in einen `KeyError` umhüllen.
-*Grund:* Das Umhüllen hätte den Code nachgeliefert und den Fehler stehen lassen. Die beiden Teilmengen stehen ohnehin schon im Typ — `EncryptionKeyPurpose` und `SigningKeyPurpose` werden aus demselben Tupel abgeleitet, aus dem `KeyPurpose` kommt, es wird also nichts doppelt aufgezählt. Damit übersetzt der Missbrauch nicht mehr. Der Laufzeitwächter bleibt trotzdem, weil die Bibliothek auch aus JavaScript ohne Typen aufgerufen wird; dort liefert er `purpose_cannot_encrypt` statt der uncodierten Ausnahme.
-*Preis:* Vier Testdateien mussten den Missbrauch, den sie absichtlich erzeugen, über eine einzige Hilfsfunktion führen, die den Typ aushebelt. Das ist der richtige Ort dafür: Genau eine Stelle im Prüfbestand darf das, und sie ist benannt.
+### Only four of the six purposes get at the encryption at all
+`E-66` · keys · translated from the German original
+
+**Context.** `sealEnvelope(keys, "cookie-sig", …)` compiled and failed only at runtime — with a `DOMException: InvalidAccessError` from Web Crypto that carries no code. The rules of this repository require a stable machine-readable code on every error.
+**Rejected.** Catching the Web Crypto error and wrapping it in a `KeyError`.
+**Reason.** Wrapping would have supplied the code and left the fault standing. The two subsets are in the type anyway — `EncryptionKeyPurpose` and `SigningKeyPurpose` are derived from the same tuple `KeyPurpose` comes from, so nothing is enumerated twice. With that the misuse no longer compiles. The runtime guard stays nevertheless, because the library is also called from JavaScript without types; there it delivers `purpose_cannot_encrypt` instead of the uncoded exception.
+**Price.** Four test files had to route the misuse they produce on purpose through a single helper function that undermines the type. That is the right place for it: exactly one place in the test suite may do that, and it is named.
 
 <a id="e-67"></a>
 
-**E-67 — base64url wird nur in seiner kanonischen Schreibweise gelesen.**
-*Kontext:* Ein 32-Byte-Schlüssel endet auf einem Zeichen, dessen letzte zwei Bit zu keinem Byte gehören. Der Dekodierer warf sie weg.
-*Verworfen:* Die überzähligen Bits weiter ignorieren, wie `atob` und die meisten Dekodierer es tun.
-*Grund:* Vier verschiedene Zeichenketten ergaben denselben Wurzelschlüssel. Wer sich beim letzten Zeichen vertippt, bekommt mit drei von vier Fehlern stillschweigend den richtigen Schlüssel — und merkt beim vierten nicht, dass die Ursache dieselbe war. Bei einem Wert, dessen Verlust alle Kennwörter kostet, ist „fast richtig wird angenommen" die falsche Voreinstellung.
-*Preis:* Wer seinen Wurzelschlüssel mit einem nachlässigen Kodierer erzeugt hat, muss ihn neu kodieren. Base64url-Kodierer erzeugen die kanonische Form; die Nachlässigkeit sitzt praktisch immer auf der Leseseite.
+### base64url is read only in its canonical spelling
+`E-67` · keys · translated from the German original
+
+**Context.** A 32-byte key ends on a character whose last two bits belong to no byte. The decoder threw them away.
+**Rejected.** Continuing to ignore the surplus bits, as `atob` and most decoders do.
+**Reason.** Four different strings yielded the same root key. Whoever mistypes the last character silently gets the right key with three of four faults — and does not notice at the fourth that the cause was the same. For a value whose loss costs all passwords, "almost right is accepted" is the wrong default.
+**Price.** Whoever generated their root key with a sloppy encoder has to re-encode it. Base64url encoders produce the canonical form; the sloppiness practically always sits on the reading side.
 
 <a id="e-68"></a>
 
-**E-68 — Eine Fehlerklasse mit Code, nicht eine Klasse je Fehler.**
-*Kontext:* Der Prüfplan nennt den Fehler bei einer nicht mehr vorhandenen Schlüsselversion `KeyVersionUnavailable`. Umgesetzt ist er als `KeyError` mit `code: "key_version_unknown"`.
-*Verworfen:* Eine eigene Ausnahmeklasse je Fehlerfall, wie der Prüfplan sie benennt.
-*Grund:* Die Regeln dieses Repositories verlangen an jedem Fehler einen stabilen maschinenlesbaren Code und legen die Entscheidung, was ein Aufrufer erfährt, an genau eine Stelle. Ein Baum von Klassen bringt beides durcheinander: Der Name wird zur Schnittstelle, und jede neue Fehlerursache erweitert die öffentliche Oberfläche. Mit einem Code bleibt die Oberfläche eine Klasse und eine Aufzählung von Zeichenketten, und `instanceof` trennt weiterhin die Absage dieses Moduls von einem Fehler der Laufzeit darunter. Der Name aus dem Prüfplan ist damit erfüllt, nur eben als Code statt als Klasse.
-*Preis:* Wer nach `KeyVersionUnavailable` sucht, findet nichts. Deshalb steht der Unterschied hier und nicht nur im Kopf des Autors.
+### One error class with a code, not one class per error
+`E-68` · keys · translated from the German original
+
+**Context.** The test plan calls the error for a key version that is no longer present `KeyVersionUnavailable`. It is implemented as `KeyError` with `code: "key_version_unknown"`.
+**Rejected.** An exception class of its own per error case, as the test plan names them.
+**Reason.** The rules of this repository require a stable machine-readable code on every error and put the decision what a caller learns in exactly one place. A tree of classes mixes the two up: the name becomes the interface, and every new error cause extends the public surface. With a code the surface stays one class and an enumeration of strings, and `instanceof` still separates the refusal of this module from a fault of the runtime below it. The name from the test plan is thereby satisfied, just as a code instead of as a class.
+**Price.** Whoever searches for `KeyVersionUnavailable` finds nothing. That is why the difference stands here and not only in the author's head.
 
 <a id="e-69"></a>
 
-**E-69 — `equalsInConstantTime` und `KEY_PURPOSES` bleiben, obwohl `src/` sie nicht aufruft.**
-*Kontext:* Beide werden derzeit nur von Tests benutzt; `knip` bleibt still, weil die Testdateien seine Einstiegspunkte sind.
-*Verworfen:* Beide entfernen und wiederherstellen, wenn der erste Aufrufer kommt.
-*Grund:* Sie sind nicht übrig geblieben, sondern vorausgesetzt. Abschnitt 2.7 führt den zeitkonstanten Vergleich als eigenes Primitiv der Bibliothek auf; die Aufrufer sind Sitzungstoken, Einmal-Token und Wiederherstellungscodes, also Welle 2 — und die Alternative ist nicht „später hinzufügen", sondern „jedes Modul schreibt seine eigene Schleife", genau der Zustand, den E-63 beim Zufall verhindert. `KEY_PURPOSES` ist zusätzlich tragend, ohne aufgerufen zu werden: `KeyPurpose`, `EncryptionKeyPurpose` und `SigningKeyPurpose` werden daraus abgeleitet, und der statische Prüftest liest es als die verbindliche Aufzählung aus 3.8. Ein Wert, aus dem drei Typen entstehen, ist kein toter Code.
-*Preis:* Zwei Ausfuhren, die bis Welle 2 nur der Prüfbestand benutzt. Wenn dort kein Aufrufer entsteht, gehören sie entfernt — das ist eine Prüfung für das Ende von Welle 2, nicht für heute.
+### `equalsInConstantTime` and `KEY_PURPOSES` stay, although `src/` does not call them
+`E-69` · keys · translated from the German original
+
+**Context.** Both are currently used only by tests; `knip` stays quiet because the test files are its entry points.
+**Rejected.** Removing both and restoring them when the first caller comes.
+**Reason.** They are not left over but presupposed. Section 2.7 lists the constant-time comparison as a primitive of the library in its own right; the callers are session tokens, one-time tokens and recovery codes, so wave 2 — and the alternative is not "add later" but "every module writes its own loop", exactly the state E-63 prevents for randomness. `KEY_PURPOSES` is additionally load-bearing without being called: `KeyPurpose`, `EncryptionKeyPurpose` and `SigningKeyPurpose` are derived from it, and the static check test reads it as the binding enumeration from 3.8. A value from which three types arise is not dead code.
+**Price.** Two exports that until wave 2 only the test suite uses. If no caller arises there, they belong removed — that is a check for the end of wave 2, not for today.
 
 <a id="e-70"></a>
 
-**E-70 — Eine Stelle beantwortet, ob ein Zweck verschlüsselt.**
-*Kontext:* Nach E-66 gab es die Antwort dreimal: `purpose.ts` leitete sie aus dem Namen ab, der Umschlagwächter prüfte den Namen erneut, und der Schlüsselring zählte die vier Namen ein drittes Mal in einer Menge auf. Alle drei stimmten überein, und keine der drei wusste von den anderen.
-*Verworfen:* Es dabei belassen, weil der Zwecksatz geschlossen ist und die drei Fassungen also nie auseinanderlaufen können.
-*Grund:* Der Satz ist geschlossen, bis jemand ihn öffnet, und genau dann fällt die Falle zu: Ein siebter Zweck `session-enc` im Tupel wird vom Typ angenommen, vom Umschlagwächter durchgewinkt und vom Schlüsselring in den `else`-Zweig geschoben, wo er einen HMAC-Schlüssel bekommt. Das Ergebnis ist die uncodierte `DOMException`, die E-66 gerade beseitigt hat — im einzigen Modul, in dem ein falscher Schlüsseltyp am teuersten ist. Der Fehler wäre laut und schnell aufgefallen; das ändert nichts daran, dass er vermeidbar war, solange die Antwort noch an einer Stelle steht. `isEncryptionPurpose` steht jetzt neben dem Typ, auf den es verengt, und Ring wie Umschlag fragen es.
-*Preis:* Die Aufteilung hängt am Namen: Ein Verschlüsselungszweck muss auf `-enc` enden. Das ist eine Konvention und keine Zusicherung, deshalb prüft der statische Test sie ausdrücklich mit — dass die sechs Namen sich zwei zu vier teilen, dass die Funktion einmal existiert, dass beide Aufrufer sie benutzen und dass der Schlüsselring keinen Zwecknamen mehr selbst schreibt.
+### One place answers whether a purpose encrypts
+`E-70` · keys · translated from the German original
+
+**Context.** After E-66 the answer existed three times: `purpose.ts` derived it from the name, the envelope guard checked the name again, and the key ring enumerated the four names a third time in a set. All three agreed, and none of the three knew of the others.
+**Rejected.** Leaving it at that, because the purpose set is closed and the three versions can therefore never drift apart.
+**Reason.** The set is closed until somebody opens it, and exactly then the trap snaps shut: a seventh purpose `session-enc` in the tuple is accepted by the type, waved through by the envelope guard and pushed by the key ring into the `else` branch, where it gets an HMAC key. The result is the uncoded `DOMException` that E-66 has just removed — in the only module in which a wrong key type is most expensive. The fault would have been noticed loudly and quickly; that changes nothing about it having been avoidable as long as the answer still stands in one place. `isEncryptionPurpose` now stands beside the type it narrows to, and ring and envelope both ask it.
+**Price.** The split hangs on the name: an encryption purpose has to end in `-enc`. That is a convention and not a guarantee, which is why the static test checks it expressly as well — that the six names split two to four, that the function exists once, that both callers use it and that the key ring no longer writes a purpose name itself.
 
 <a id="e-71"></a>
 
-**E-71 — Auch der fehlgeschlagene Authentifizierungs-Tag bekommt einen Code.**
-*Kontext:* E-68 begründet, dass der Code die Schnittstelle ist. Ausgerechnet der sicherheitsrelevanteste Fehler des Moduls hatte keinen: Ein falscher Zweck, ein falscher Schlüssel, ein gekipptes Bit oder ein umgeschriebener Kopf verließen das Modul als `DOMException` oder als schlichter `Error`. Wer das naheliegende `if (error instanceof KeyError) … else throw` schreibt, wirft die uncodierte Ausnahme genau bei der Eingabe weiter, auf die es ankommt.
-*Verworfen:* Die Zusage in der Dokumentation auf „jeder Fehler, den dieses Modul selbst auslöst" einzuschränken.
-*Grund:* Die Einschränkung wäre wahr gewesen und hätte das Problem beim Aufrufer gelassen. „Entschlüsselung fehlgeschlagen" ist die eine Bedingung, die jeder Aufrufer behandeln muss; sie darf nicht davon abhängen, auf welcher Laufzeit die Chiffre gelaufen ist — auf der Rückfallebene wäre es ohnehin ein anderer Ausnahmetyp gewesen als auf `crypto.subtle`. Ein `KeyError` der Rechenmaschine behält seinen eigenen Code, damit `key_material_not_exportable` aus E-60 nicht verschluckt wird.
-*Preis:* Ein echter Ausfall der Laufzeit beim Entschlüsseln — ein `crypto.subtle`, das mitten im Betrieb aufhört zu funktionieren — wird jetzt als `authentication_failed` gemeldet und sieht damit aus wie ein Angriff. Das Verschlüsseln bleibt deshalb unverpackt: Dort gibt es nach E-66 keinen gegnerisch auslösbaren Fehler mehr, also darf ein Laufzeitfehler dort als er selbst nach oben.
+### The failed authentication tag gets a code too
+`E-71` · keys · translated from the German original
+
+**Context.** E-68 argues that the code is the interface. Of all things, the most security-relevant error of the module had none: a wrong purpose, a wrong key, a flipped bit or a rewritten header left the module as a `DOMException` or as a plain `Error`. Whoever writes the obvious `if (error instanceof KeyError) … else throw` rethrows the uncoded exception exactly on the input that matters.
+**Rejected.** Narrowing the promise in the documentation to "every error this module raises itself".
+**Reason.** The narrowing would have been true and would have left the problem with the caller. "Decryption failed" is the one condition every caller has to handle; it must not depend on which runtime the cipher ran on — on the fallback it would have been a different exception type than on `crypto.subtle` anyway. A `KeyError` of the engine keeps its own code, so that `key_material_not_exportable` from E-60 is not swallowed.
+**Price.** A real failure of the runtime while decrypting — a `crypto.subtle` that stops working in the middle of operation — is now reported as `authentication_failed` and so looks like an attack. Encrypting therefore stays unwrapped: there, after E-66, there is no adversarially triggerable error any more, so a runtime error may go up there as itself.
 
 <a id="e-80"></a>
 
-**E-80 — Das ausgelieferte SQL steht zweimal im Repository, und ein Test hält beide Fassungen gleich.**
-*Kontext:* Abschnitt 7 der Regeln verbietet `node:fs` auf dem Pflichtpfad, E-08 verlangt, dass der Betreiber das SQL lesen und mit eigenem Werkzeug anwenden kann. Die Datei auf der Platte kann also nicht die Quelle sein, aus der der Läufer liest.
-*Verworfen:* (a) Nur `.sql`-Dateien und zur Laufzeit lesen. (b) Nur eine TypeScript-Konstante, kein lesbares SQL. (c) Die Konstante beim Bauen aus der Datei erzeugen.
-*Grund:* (a) bricht die Zusage, dass die Bibliothek ohne Dateisystem läuft, und damit die serverlose Ausführung. (b) nimmt dem Betreiber die Prüfbarkeit, die E-08 ausdrücklich als Vorteil gegenüber der Laufzeitableitung nennt. (c) wäre die richtige Lösung; sie hätte `tsdown.config.ts` gebraucht, eine Datei, die diesem Feature nicht gehört. Der ehrliche Grund für die Doppelung ist damit nicht technisch, sondern organisatorisch.
-*Preis:* Zwei Fassungen desselben Textes, die auseinanderlaufen können. Gegenmaßnahme ist ein Test, der sie byteweise vergleicht; er ist billig, aber er ersetzt eine Erzeugung durch eine Verabredung. Sobald ein Feature `tsdown.config.ts` besitzt, sollte (c) das hier ablösen.
+### The shipped SQL stands twice in the repository, and a test keeps both versions equal
+`E-80` · db · translated from the German original
+
+**Context.** Section 7 of the rules forbids `node:fs` on the required path, E-08 requires that the operator can read the SQL and apply it with their own tooling. The file on disk can therefore not be the source the runner reads from.
+**Rejected.** (a) Only `.sql` files, read at runtime. (b) Only a TypeScript constant, no readable SQL. (c) Generating the constant from the file at build time.
+**Reason.** (a) breaks the promise that the library runs without a file system, and with it serverless execution. (b) takes from the operator the reviewability that E-08 expressly names as an advantage over runtime derivation. (c) would be the right solution; it would have needed `tsdown.config.ts`, a file that does not belong to this feature. The honest reason for the duplication is therefore not technical, but organisational.
+**Price.** Two versions of the same text that can drift apart. The countermeasure is a test that compares them byte by byte; it is cheap, but it replaces a generation with an agreement. As soon as a feature owns `tsdown.config.ts`, (c) should replace this.
 
 <a id="e-81"></a>
 
-**E-81 — Die Identitätsbedingung ist Migration 2 in drei Fassungen, nicht Teil von Migration 1.**
-*Kontext:* Abschnitt 3.2 verlangt, dass die Migration genau eine von drei `CHECK`-Bedingungen auf `velve.user` anlegt; 3.17 verlangt, dass Migration 1 alle Tabellen unmittelbar in der Endform anlegt. Die Bedingung hängt von der Konfiguration ab, die Tabellen nicht.
-*Verworfen:* Migration 1 aus dem Modus erzeugen und je Modus eine eigene Prüfsumme führen.
-*Grund:* Dann wäre die ausgelieferte Datei `0001_initial_schema.sql` nicht mehr die Anweisung, die tatsächlich läuft — genau die Trennung, die E-80 gerade vermeidet. Eine Migration, deren Text von der Konfiguration abhängt, ist außerdem eine Migration, deren Prüfsummenwächter beim Lesen der Konfiguration Alarm schlägt statt beim Ändern des Schemas.
-*Preis:* Ein Moduswechsel nach der Migration meldet sich als geänderte Prüfsumme von Version 2. Die Meldung nennt die Prüfsumme, nicht den Modus — sie ist richtig, aber sie erklärt dem Betreiber nicht, was er getan hat.
+### The identity constraint is migration 2 in three versions, not part of migration 1
+`E-81` · db · translated from the German original
+
+**Context.** Section 3.2 requires that the migration creates exactly one of three `CHECK` constraints on `velve.user`; 3.17 requires that migration 1 creates all tables directly in their final form. The constraint depends on the configuration, the tables do not.
+**Rejected.** Generating migration 1 from the mode and keeping a checksum of its own per mode.
+**Reason.** Then the shipped file `0001_initial_schema.sql` would no longer be the statement that actually runs — exactly the separation that E-80 is just avoiding. A migration whose text depends on the configuration is moreover a migration whose checksum guard raises the alarm when the configuration is read instead of when the schema is changed.
+**Price.** A mode change after the migration reports itself as a changed checksum of version 2. The message names the checksum, not the mode — it is right, but it does not explain to the operator what they did.
 
 <a id="e-82"></a>
 
-**E-82 — Die Migrationssperre ist transaktionsgebunden, nicht sitzungsgebunden.**
-*Kontext:* E-08 verlangt eine eigene Transaktion je Schritt. Die Treiberschnittstelle aus 3.2 sagt nichts darüber, ob zwei aufeinanderfolgende `query()`-Aufrufe dieselbe Verbindung sehen; bei einem Pool sehen sie es nicht.
-*Verworfen:* `pg_advisory_lock` einmal über den gesamten Lauf, freigegeben am Ende.
-*Grund:* Eine Sitzungssperre über `query()` ist bei jedem Pool-Treiber unbestimmt, und eine Sperre, die auf einer anderen Verbindung freigegeben wird als sie genommen wurde, wird nie freigegeben. `pg_advisory_xact_lock` innerhalb der ohnehin nötigen Transaktion braucht keine Zusage, die die Schnittstelle nicht macht, und ein Absturz gibt sie mit der Transaktion frei.
-*Preis:* Die Sperre wird je Migration neu genommen. Zwei gleichzeitig gestartete Prozesse können sich beim Anwenden abwechseln — jede Migration läuft genau einmal, aber nicht notwendig alle im selben Prozess. Der Bericht eines Laufs nennt deshalb nur, was *dieser* Lauf angewandt hat, und liest den Endstand danach neu aus dem Verzeichnis.
+### The migration lock is transaction-bound, not session-bound
+`E-82` · db · translated from the German original
+
+**Context.** E-08 requires a transaction of its own per step. The driver interface from 3.2 says nothing about whether two consecutive `query()` calls see the same connection; with a pool they do not.
+**Rejected.** `pg_advisory_lock` once over the whole run, released at the end.
+**Reason.** A session lock over `query()` is indeterminate with every pool driver, and a lock that is released on a different connection than the one it was taken on is never released. `pg_advisory_xact_lock` inside the transaction that is needed anyway needs no promise the interface does not make, and a crash releases it with the transaction.
+**Price.** The lock is taken anew per migration. Two processes started at the same time can take turns while applying — every migration runs exactly once, but not necessarily all in the same process. The report of a run therefore names only what *this* run applied, and afterwards reads the final state anew from the register.
 
 <a id="e-83"></a>
 
-**E-83 — Die Cascade-Pflicht wird am Katalog geprüft, nicht am Text der Migration.**
-*Kontext:* S-TOKEN-6 verlangt, dass der Läufer eine Migration abweist, die eine Tabelle mit Verweis auf `velve.user` ohne `ON DELETE CASCADE` anlegt.
-*Verworfen:* Ein Muster über den SQL-Text der Migration.
-*Grund:* Ein Textmuster prüft, was dasteht, nicht was entsteht. Ein `CREATE TABLE` ohne Fremdschlüssel plus ein späteres `ALTER TABLE … ADD CONSTRAINT` in derselben Migration wäre durchgelaufen, und ein Plugin, das seine Tabelle in einer Funktion erzeugt, ohnehin. Die Abfrage auf `pg_constraint` sieht das Ergebnis; sie läuft in derselben Transaktion, also nimmt der Rückzug die Tabelle mit.
-*Preis:* Zwei Katalogabfragen nach jeder einzelnen Migration, auch nach denen, die keine Tabelle anlegen. Das ist messbar, aber nur beim Migrieren.
+### The cascade duty is checked against the catalogue, not against the text of the migration
+`E-83` · db · translated from the German original
+
+**Context.** S-TOKEN-6 requires that the runner rejects a migration that creates a table with a reference to `velve.user` without `ON DELETE CASCADE`.
+**Rejected.** A pattern over the SQL text of the migration.
+**Reason.** A text pattern checks what stands there, not what comes into being. A `CREATE TABLE` without a foreign key plus a later `ALTER TABLE … ADD CONSTRAINT` in the same migration would have passed, and a plugin that creates its table in a function would anyway. The query on `pg_constraint` sees the result; it runs in the same transaction, so the rollback takes the table with it.
+**Price.** Two catalogue queries after every single migration, even after those that create no table. That is measurable, but only when migrating.
 
 <a id="e-84"></a>
 
-**E-84 — Der Schemaname wird als Bezeichner geprüft, und im ausgelieferten SQL wird `velve` textuell ersetzt.**
-*Kontext:* `schema` ist konfigurierbar (Vorgabe `velve`), das ausgelieferte SQL nennt aber einen festen Namen.
-*Verworfen:* (a) Ein Platzhalter `{{schema}}` in den `.sql`-Dateien. (b) Bezeichner in Anführungszeichen setzen statt sie zu prüfen.
-*Grund:* (a) macht die ausgelieferte Datei für `psql` unbrauchbar und nimmt ihr genau den Zweck, den E-08 ihr gibt. (b) würde Namen erlauben, die Groß- und Kleinschreibung unterscheiden oder Sonderzeichen tragen; die Bibliothek hat für keinen davon eine Verwendung, und jeder von ihnen ist eine Stelle, an der später jemand das Zitieren vergisst. Geprüft wird gegen `^[a-z_][a-z0-9_$]*$` und 63 Byte; alles andere ist ein Startfehler.
-*Preis:* Eine textuelle Ersetzung über SQL — die Art von Umgang mit SQL, die dieses Projekt sonst meidet. **Der hier ursprünglich behauptete Preis war falsch:** Die erste Fassung ersetzte jedes Vorkommen des Wortes `velve`, nicht den Bezeichner, also auch in Zeichenkettenliteralen und in Spaltennamen. In einem Schema mit anderem Namen hätte eine Plugin-Migration mit dem Literal `'velve'` einen anderen Wert eingefügt als geschrieben, und eine Spalte namens `velve` wäre umbenannt worden. Der unabhängige Review hat das gefunden und mit zwei fehlschlagenden Tests festgehalten; die Behebung steht in E-90.
+### The schema name is checked as an identifier, and in the shipped SQL `velve` is replaced textually
+`E-84` · db · translated from the German original
+
+**Context.** `schema` is configurable (default `velve`), but the shipped SQL names a fixed name.
+**Rejected.** (a) A placeholder `{{schema}}` in the `.sql` files. (b) Putting identifiers in quotation marks instead of checking them.
+**Reason.** (a) makes the shipped file unusable for `psql` and takes from it exactly the purpose E-08 gives it. (b) would allow names that distinguish upper and lower case or carry special characters; the library has a use for none of them, and each of them is a place where somebody later forgets the quoting. It is checked against `^[a-z_][a-z0-9_$]*$` and 63 bytes; everything else is a start error.
+**Price.** A textual replacement over SQL — the kind of handling of SQL this project otherwise avoids. **The price originally claimed here was wrong:** the first version replaced every occurrence of the word `velve`, not the identifier, so also in string literals and in column names. In a schema with another name a plugin migration with the literal `'velve'` would have inserted a different value than written, and a column named `velve` would have been renamed. The independent review found that and recorded it with two failing tests; the fix is in E-90.
 
 <a id="e-85"></a>
 
-**E-85 — `pg` wird auch im Testbaum nicht installiert; der Treiber ist gegen einen Strukturtyp geschrieben.**
-*Kontext:* `@velve/auth/pg` darf `pg` nicht zur Laufzeitabhängigkeit des Kerns machen — der Aufrufer bringt den Pool mit. Für einen Test gegen den echten Treiber bräuchte es `pg` als devDependency und damit eine Änderung an `package.json`, einer Datei, die diesem Feature nicht gehört (E-50).
-*Verworfen:* `pg` als devDependency aufnehmen.
-*Grund:* Die Konfliktregel des Bauauftrags erlaubt keinem Feature, eine fremde Datei zu ändern; der Weg wäre gewesen, es zu melden und zu warten. Der ehrliche Zusatz: hätte ich `package.json` ändern dürfen, hätte ich `pg` genommen und mir die Handarbeit aus E-86 gespart.
-*Preis:* Der Treiber wird gegen eine Attrappe geprüft, die den Strukturtyp erfüllt, nicht gegen `node-postgres`. Dass ein echter `Pool` den Typ erfüllt, ist damit **unbewiesen** — die Überladungen der `pg`-Typdeklarationen sind der wahrscheinlichste Ort, an dem es klemmt. Das muss ein Lauf mit installiertem `pg` zeigen, bevor das Paket veröffentlicht wird.
+### `pg` is not installed even in the test tree; the driver is written against a structural type
+`E-85` · db · translated from the German original
+
+**Context.** `@velve/auth/pg` must not make `pg` a runtime dependency of the core — the caller brings the pool. A test against the real driver would need `pg` as a devDependency and with that a change to `package.json`, a file that does not belong to this feature (E-50).
+**Rejected.** Adding `pg` as a devDependency.
+**Reason.** The conflict rule of the build brief allows no feature to change another's file; the way would have been to report it and wait. The honest addition: had I been allowed to change `package.json`, I would have taken `pg` and spared myself the manual work from E-86.
+**Price.** The driver is checked against a mock that satisfies the structural type, not against `node-postgres`. That a real `Pool` satisfies the type is therefore **unproven** — the overloads of the `pg` type declarations are the most likely place where it jams. A run with `pg` installed has to show that before the package is published.
 
 <a id="e-86"></a>
 
-**E-86 — Die Testsuite bringt einen eigenen Postgres-Client mit.**
-*Kontext:* Schema, Trigger und Migrationsläufer lassen sich nur gegen einen echten Server zeigen, und nach E-85 gibt es keinen Client im Baum.
-*Verworfen:* (a) `psql` als langlebiger Unterprozess je Verbindung. (b) Auf Integrationstests verzichten und alles gegen eine Attrappe prüfen.
-*Grund:* (a) hätte Parameterbindung über `\bind` gebraucht, das erst ab `psql` 16 existiert, und hätte die Suite von einem Programm abhängig gemacht, das im CI-Abbild vorhanden sein muss, aber nicht zugesagt ist; die Alternative wäre gewesen, Parameter selbst in den Text zu setzen. (b) hätte genau die Aussagen nicht geprüft, die dieses Feature schuldet — dass der Trigger greift, dass `ON DELETE CASCADE` alle dreizehn Tabellen leert, dass zwei Läufer sich nicht ins Gehege kommen. Der Client spricht das Frontend-Protokoll direkt: Start, Trust, Klartext und SCRAM-SHA-256, einfache und erweiterte Abfrage, und darüber die `Driver`-Schnittstelle, damit die Tests dasselbe treiben wie die Anwendung.
-*Preis:* Rund vierhundert Zeilen Testinfrastruktur, die niemand ausliefert und die trotzdem gepflegt werden muss. SCRAM ist gegen den Vektor aus RFC 7677 geprüft, aber gegen keinen Server, der es verlangt — lokal steht `pg_hba` auf `trust`. Der erste echte Beweis läuft in CI.
+### The test suite brings its own Postgres client
+`E-86` · db · translated from the German original
+
+**Context.** Schema, trigger and migration runner can only be shown against a real server, and after E-85 there is no client in the tree.
+**Rejected.** (a) `psql` as a long-lived subprocess per connection. (b) Doing without integration tests and checking everything against a mock.
+**Reason.** (a) would have needed parameter binding via `\bind`, which exists only from `psql` 16, and would have made the suite dependent on a program that has to be present in the CI image, but is not promised; the alternative would have been to put parameters into the text oneself. (b) would not have checked exactly the statements this feature owes — that the trigger takes hold, that `ON DELETE CASCADE` empties all thirteen tables, that two runners do not get in each other's way. The client speaks the frontend protocol directly: startup, trust, cleartext and SCRAM-SHA-256, simple and extended query, and on top of that the `Driver` interface, so that the tests drive the same thing as the application.
+**Price.** Around four hundred lines of test infrastructure that nobody ships and that has to be maintained all the same. SCRAM is checked against the vector from RFC 7677, but against no server that demands it — locally `pg_hba` is set to `trust`. The first real proof runs in CI.
 
 <a id="e-87"></a>
 
-**E-87 — Der Trigger schlägt bei jedem `UPDATE` zu, das `user_id` nennt, auch bei einer Zuweisung ohne Änderung.**
-*Kontext:* E-23 verlangt, dass `UPDATE session SET user_id` nicht existiert und durch einen Trigger verhindert wird.
-*Verworfen:* `WHEN (OLD.user_id IS DISTINCT FROM NEW.user_id)`, also nur bei tatsächlicher Änderung auslösen.
-*Grund:* Die `WHEN`-Fassung lässt `SET user_id = user_id` durch. Das ändert nichts, aber es ist die Formulierung, die beim nächsten Refactoring zu `SET user_id = $1` wird, und dann greift der Trigger erst, wenn der Fehler schon geschrieben ist. Der Trigger soll die *Formulierung* verbieten, nicht nur ihre Wirkung.
-*Preis:* Ein `UPDATE`, das `user_id` mitschreibt, ohne es zu ändern, schlägt fehl, obwohl es harmlos wäre. Diese Anweisung schreibt niemand absichtlich; wer sie schreibt, hat den Eigentümer im Sinn.
+### The trigger fires on every `UPDATE` that names `user_id`, even on an assignment without a change
+`E-87` · db · translated from the German original
+
+**Context.** E-23 requires that `UPDATE session SET user_id` does not exist and is prevented by a trigger.
+**Rejected.** `WHEN (OLD.user_id IS DISTINCT FROM NEW.user_id)`, so firing only on an actual change.
+**Reason.** The `WHEN` version lets `SET user_id = user_id` through. That changes nothing, but it is the wording that at the next refactoring becomes `SET user_id = $1`, and then the trigger takes hold only when the fault is already written. The trigger is meant to forbid the *wording*, not only its effect.
+**Price.** An `UPDATE` that writes `user_id` along without changing it fails, although it would be harmless. Nobody writes this statement on purpose; whoever writes it has the owner in mind.
 
 <a id="e-88"></a>
 
-**E-88 — Eine verschachtelte `transaction()` tritt der offenen bei, statt einen Sicherungspunkt zu setzen.**
-*Kontext:* Der `pg`-Treiber gibt dem Rumpf einen Treiber, der an dieselbe Verbindung gebunden ist. Ruft der Rumpf darauf wieder `transaction()` auf, muss etwas passieren.
-*Verworfen:* `SAVEPOINT` je verschachtelter Transaktion, mit `ROLLBACK TO` im Fehlerfall.
-*Grund:* Die Bibliothek braucht keine Teilrücknahme. Jede Stelle, die eine Transaktion verlangt (3.5 Neuvergabe, 3.7 Konsum, der Migrationsläufer), will Alles-oder-nichts. Sicherungspunkte hätten eine Semantik eingeführt, auf die sich später jemand verlässt, ohne dass sie irgendwo gefordert ist.
-*Preis:* Ein Fehler im inneren Rumpf lässt sich nicht abfangen und weiterarbeiten — PostgreSQL bricht die Transaktion nach einer fehlgeschlagenen Anweisung ohnehin ab, aber die Schnittstelle sieht so aus, als könnte man es. Wer das braucht, schreibt den Sicherungspunkt von Hand.
+### A nested `transaction()` joins the open one instead of setting a savepoint
+`E-88` · db · translated from the German original
+
+**Context.** The `pg` driver gives the body a driver that is bound to the same connection. If the body calls `transaction()` on it again, something has to happen.
+**Rejected.** `SAVEPOINT` per nested transaction, with `ROLLBACK TO` in case of error.
+**Reason.** The library needs no partial rollback. Every place that requires a transaction (3.5 reissue, 3.7 consumption, the migration runner) wants all-or-nothing. Savepoints would have introduced a semantics that somebody later relies on without it being required anywhere.
+**Price.** An error in the inner body cannot be caught and worked on past — PostgreSQL aborts the transaction after a failed statement anyway, but the interface looks as though one could. Whoever needs that writes the savepoint by hand.
 
 <a id="e-89"></a>
 
-**E-89 — Der API-Schnappschuss wurde von diesem Feature aktualisiert, obwohl die Datei nicht in seiner Liste steht.**
-*Kontext:* `@velve/auth/pg` bekommt eine öffentliche Oberfläche, und `test/__snapshots__/api-surface.md` (E-52) vergleicht genau die. Ohne Aktualisierung ist `pnpm test` rot; die Datei gehört aber keinem der Features dieser Welle ausdrücklich.
-*Verworfen:* Die Änderung melden und den roten Test stehen lassen.
-*Grund:* Der Schnappschuss ist kein Quelltext, sondern die Bekanntgabe einer Oberflächenänderung — ihn nicht zu aktualisieren hieße, die Änderung nicht anzukündigen. Der Zweck aus E-52 ist erfüllt, wenn die Aktualisierung bewusst und im selben Zweig geschieht.
-*Preis:* Zwei Features derselben Welle, die beide eine Oberfläche beitragen, ändern dieselbe Datei und stoßen beim Zusammenführen zusammen. Der Konflikt ist auflösbar, weil die Datei erzeugt ist — aber er wird auftreten, und die Regel „kein Feature ändert eine fremde Datei" ist hier gebrochen worden, nicht umgangen.
+### The API snapshot was updated by this feature, although the file is not on its list
+`E-89` · db · translated from the German original
+
+**Context.** `@velve/auth/pg` gets a public surface, and `test/__snapshots__/api-surface.md` (E-52) compares exactly that. Without an update `pnpm test` is red; but the file does not expressly belong to any of the features of this wave.
+**Rejected.** Reporting the change and leaving the red test standing.
+**Reason.** The snapshot is not source text, but the announcement of a surface change — not updating it would mean not announcing the change. The purpose from E-52 is satisfied when the update happens deliberately and in the same branch.
+**Price.** Two features of the same wave that both contribute a surface change the same file and collide at merging. The conflict is resolvable, because the file is generated — but it will occur, and the rule "no feature changes another's file" has been broken here, not circumvented.
 
 <a id="e-90"></a>
 
-**E-90 — Aus dem Wortersetzer wurde ein Abtaster.**
-*Kontext:* E-84 ersetzte `\bvelve\b` im Text der Migration. Der Review zeigte an zwei Fällen, dass das falsch ist: `INSERT … VALUES ('velve')` schrieb in einem umbenannten Schema einen anderen Wert, und `CREATE TABLE velve.t (velve text)` benannte die Spalte um.
-*Verworfen:* (a) Die Ersetzung auf `velve.` verengen, also nur mit folgendem Punkt. (b) Einen echten SQL-Parser einbinden.
-*Grund:* (a) hätte die beiden gemeldeten Fälle erschlagen, aber nicht `'velve.user'` in einem Literal und nicht `CREATE SCHEMA IF NOT EXISTS velve`, das gar keinen Punkt hat. (b) wäre eine siebte Abhängigkeit für eine Aufgabe, die kein Verständnis der Grammatik braucht, sondern nur das Wissen, wo Text *kein* Bezeichner ist. Der Abtaster überspringt Zeilen- und Blockkommentare, Zeichenketten, zitierte Bezeichner und Dollar-Quoting und ersetzt in genau zwei Stellungen: vor einem Punkt und als Name hinter `CREATE`/`DROP`/`ALTER SCHEMA`.
-*Preis:* Etwa neunzig Zeilen Abtaster, die SQL-Lexik nachbilden, ohne SQL zu verstehen. Kommentare bleiben unverändert — in einem umbenannten Schema erwähnt der Kommentar weiter `velve.user`. Das ist eine bewusste Wahl: Kommentare sind Prosa, und eine Umbenennung, die Prosa mitschreibt, behauptet mehr Wissen, als der Abtaster hat.
+### The word replacer became a scanner
+`E-90` · db · translated from the German original
+
+**Context.** E-84 replaced `\bvelve\b` in the text of the migration. The review showed with two cases that this is wrong: `INSERT … VALUES ('velve')` wrote a different value in a renamed schema, and `CREATE TABLE velve.t (velve text)` renamed the column.
+**Rejected.** (a) Narrowing the replacement to `velve.`, that is only with a following dot. (b) Bringing in a real SQL parser.
+**Reason.** (a) would have knocked out the two reported cases, but not `'velve.user'` in a literal and not `CREATE SCHEMA IF NOT EXISTS velve`, which has no dot at all. (b) would be a seventh dependency for a task that needs no understanding of the grammar, only the knowledge of where text is *not* an identifier. The scanner skips line and block comments, strings, quoted identifiers and dollar quoting and replaces in exactly two positions: before a dot and as the name after `CREATE`/`DROP`/`ALTER SCHEMA`.
+**Price.** About ninety lines of scanner that imitate SQL lexing without understanding SQL. Comments stay unchanged — in a renamed schema the comment still mentions `velve.user`. That is a deliberate choice: comments are prose, and a renaming that rewrites prose along with it claims more knowledge than the scanner has.
 
 <a id="e-91"></a>
 
-**E-91 — Die Statusabfrage schreibt nichts, auch nicht die Tabelle, aus der sie liest.**
-*Kontext:* F35 und F37 verlangen neben dem Läufer eine Statusabfrage, damit eine Versionsabweichung ein Startfehler wird. Der Rückgabewert von `runMigrations` ist das nicht: wer ihn hat, hat schon migriert.
-*Verworfen:* Die Statusabfrage das Verzeichnis anlegen lassen, wie der Läufer es tut.
-*Grund:* Eine Abfrage, die beim Start läuft und dabei ein Schema anlegt, migriert nebenbei. Auf einer Datenbank ohne Rechte zum Anlegen wäre sie außerdem ein Fehler statt einer Antwort. `to_regclass` beantwortet „gibt es das Verzeichnis" ohne Ausnahme und ohne Schreibzugriff; fehlt es, ist die Antwort Version 0.
-*Preis:* Zwei Wege, die dasselbe Verzeichnis lesen — der Läufer über seine eigene Abfrage, der Status über `to_regclass`. Sie könnten auseinanderlaufen; sie tun es nur, wenn jemand den Tabellennamen an einer Stelle ändert.
+### The status query writes nothing, not even the table it reads from
+`E-91` · db · translated from the German original
+
+**Context.** F35 and F37 require a status query beside the runner, so that a version mismatch becomes a start error. The return value of `runMigrations` is not that: whoever has it has already migrated.
+**Rejected.** Letting the status query create the register, as the runner does.
+**Reason.** A query that runs at start and creates a schema in doing so migrates on the side. On a database without the right to create it would moreover be an error instead of an answer. `to_regclass` answers "does the register exist" without an exception and without write access; if it is missing, the answer is version 0.
+**Price.** Two paths that read the same register — the runner via its own query, the status via `to_regclass`. They could drift apart; they do so only if somebody changes the table name in one place.
 
 <a id="e-92"></a>
 
-**E-92 — Reservierte Schlüsselwörter sind als Schemaname verboten, als Tabellenname erlaubt.**
-*Kontext:* Der Review fand, dass `assertIdentifier("user")` durchging und der Fehler dann als Syntaxfehler von PostgreSQL kam statt als `invalid_identifier`.
-*Verworfen:* Reservierte Wörter überall verbieten.
-*Grund:* Genau das ginge nicht: Die Kerntabelle **heißt** `user`, und sie darf so heißen, weil `velve.user` hinter dem Punkt gültig ist (E-07). Verboten werden muss das Wort nur dort, wo es unqualifiziert in ein Statement gerät — und das ist ausschließlich der Schemaname, in `CREATE SCHEMA` und als linke Seite jeder Qualifizierung. Also gibt es zwei Prüfungen: `assertIdentifier` prüft die Gestalt, `assertSchemaName` zusätzlich die Wortliste.
-*Preis:* Eine Liste von rund hundert Schlüsselwörtern aus Anhang C der PostgreSQL-Dokumentation, fest im Quelltext. Sie wächst mit PostgreSQL-Versionen, und niemand wird daran denken. Der Schaden bei einem fehlenden Wort ist ein Syntaxfehler statt einer klaren Meldung — also derselbe Zustand wie vorher, nicht schlimmer.
+### Reserved keywords are forbidden as a schema name, allowed as a table name
+`E-92` · db · translated from the German original
+
+**Context.** The review found that `assertIdentifier("user")` passed and the error then came as a syntax error from PostgreSQL instead of as `invalid_identifier`.
+**Rejected.** Forbidding reserved words everywhere.
+**Reason.** Exactly that would not work: the core table **is called** `user`, and it may be called that, because `velve.user` is valid after the dot (E-07). The word has to be forbidden only where it gets into a statement unqualified — and that is exclusively the schema name, in `CREATE SCHEMA` and as the left-hand side of every qualification. So there are two checks: `assertIdentifier` checks the shape, `assertSchemaName` additionally the word list.
+**Price.** A list of around a hundred keywords from appendix C of the PostgreSQL documentation, fixed in the source. It grows with PostgreSQL versions, and nobody will think of it. The damage from a missing word is a syntax error instead of a clear message — so the same state as before, not worse.
 
 <a id="e-93"></a>
 
-**E-93 — `ResolvedSession` wird hier definiert, aber noch nicht verlangt.**
-*Kontext:* Der Review hielt fest, dass `actorOfResolvedSession({ userId })` strukturell typisiert ist. Die Marke auf `Actor` verhindert, dass eine nackte Zeichenkette als Aktor durchgeht, und der Konstruktor gibt dieselbe Lücke eine Zeile später zurück: `actorOfResolvedSession({ userId: req.body.userId })` übersetzt.
-*Verworfen:* Den Parameter sofort auf den nominalen Typ ziehen.
-*Grund:* Zwei Gründe, und der zweite ist der ehrlichere. Erstens kann dieses Feature keinen legitimen Erzeuger für `ResolvedSession` liefern — die Sitzungsauflösung gehört Welle 2, und ein `as ResolvedSession` hier hätte die Lücke nur eine Datei weiter geschoben. Zweitens hält ein Test des Reviews (`test/db-actor-provenance.test.ts`, „mints one from any object carrying a userId") genau die heutige Gestalt fest; ihn umzudrehen hieße, eine fremde Prüfdatei zu ändern, und die Regel dieses Bauauftrags verbietet das.
-*Was Welle 2 zu tun hat, wörtlich:* In `src/core/db/actor.ts` wird `actorOfResolvedSession(session: { readonly userId: string })` zu `actorOfResolvedSession(session: ResolvedSession)`. Danach muss `actorOfResolvedSession({ userId: "…" })` ein Übersetzungsfehler sein; der genannte Test hält dann die falsche Aussage fest und wird zu `@ts-expect-error` umgedreht. Der einzige Erzeuger von `ResolvedSession` ist die Sitzungsauflösung, und ihre Rückgabe ist die einzige Stelle im Paket, an der die Marke gesetzt werden darf.
-*Preis:* Bis dahin ist S-OWNER-7 typseitig nur halb durchgesetzt: der Aktor kann nicht aus einer Zeichenkette entstehen, wohl aber aus einem selbstgebauten Objekt. Bis Welle 2 gibt es keinen Aufrufer außerhalb der Tests, also ist das Fenster leer — aber es ist offen, und das steht hier, damit es nicht vergessen wird.
+### `ResolvedSession` is defined here, but not yet required
+`E-93` · db · translated from the German original
+
+**Context.** The review noted that `actorOfResolvedSession({ userId })` is structurally typed. The brand on `Actor` prevents a bare string from passing as an actor, and the constructor gives back the same gap one line later: `actorOfResolvedSession({ userId: req.body.userId })` compiles.
+**Rejected.** Pulling the parameter onto the nominal type immediately.
+**Reason.** Two reasons, and the second is the more honest one. First, this feature cannot deliver a legitimate producer for `ResolvedSession` — session resolution belongs to wave 2, and an `as ResolvedSession` here would only have pushed the gap one file further. Second, a test of the review (`test/db-actor-provenance.test.ts`, "mints one from any object carrying a userId") records exactly today's shape; turning it around would mean changing someone else's test file, and the rule of this build brief forbids that.
+*What wave 2 has to do, verbatim:* In `src/core/db/actor.ts`, `actorOfResolvedSession(session: { readonly userId: string })` becomes `actorOfResolvedSession(session: ResolvedSession)`. After that, `actorOfResolvedSession({ userId: "…" })` has to be a compile error; the named test then records the wrong statement and is turned around to `@ts-expect-error`. The only producer of `ResolvedSession` is session resolution, and its return is the only place in the package at which the brand may be set.
+**Price.** Until then S-OWNER-7 is only half enforced on the type side: the actor cannot arise from a string, but it can from a self-built object. Until wave 2 there is no caller outside the tests, so the window is empty — but it is open, and that stands here so that it is not forgotten.
 
 <a id="e-94"></a>
 
-**E-94 — S-FIX-2 wird derzeit von einem Test getragen, nicht von einer Lint-Regel.**
-*Kontext:* S-FIX-2 verlangt wörtlich „eine Lint-Regel weist einen solchen Aufruf im Quelltext zurück **und** ein Datenbank-Trigger weist ein `UPDATE` zur Laufzeit ab". Der Trigger steht (E-23, E-87). Die statische Hälfte leistet `test/db-static-sql.test.ts`, das alle SQL-Literale des Quelltextes abtastet. `biome.json` gehört diesem Feature nicht.
-*Verworfen:* Die Testfassung als gleichwertig zu erklären und die Anforderung als erfüllt abzuhaken.
-*Grund:* Sie ist nicht gleichwertig, und zwar in beide Richtungen. Der Test kann etwas, das eine Lint-Regel nicht kann: er prüft zuerst, dass er überhaupt Literale findet (`length > 5`), und schlägt damit fehl, wenn die Suche ins Leere greift — eine Lint-Regel, die nichts findet, ist von einer abgeschalteten nicht zu unterscheiden. Die Lint-Regel kann etwas, das der Test nicht kann: sie meldet sich im Editor beim Schreiben, nicht erst im Testlauf, und genau dort entsteht der Fehler. Beides ist zu haben, und die Anforderung nennt ausdrücklich die Regel.
-*Was gebraucht wird:* ein Biome-Plugin (GritQL) auf Zeichenketten- und Template-Literalen mit dem Muster `UPDATE` … `session` … `SET` … `user_id`, als `error` eingehängt in `biome.json`. Falls die Plugin-Fähigkeit dafür nicht reicht, tut es ein eigenes Skript im Tor, das dieselbe Suche über den Baum fährt — die Regel muss vor dem Testlauf greifen, nicht notwendig in Biome.
-*Preis:* Bis das eingehängt ist, wird die statische Hälfte von S-FIX-2 von einem Test gehalten, der im selben Lauf grün wird wie alles andere. Das ist mehr als nichts und weniger als gefordert.
+### S-FIX-2 is currently carried by a test, not by a lint rule
+`E-94` · db · translated from the German original
+
+**Context.** S-FIX-2 literally requires "a lint rule rejects such a call in the source **and** a database trigger rejects an `UPDATE` at runtime". The trigger stands (E-23, E-87). The static half is done by `test/db-static-sql.test.ts`, which scans all SQL literals of the source. `biome.json` does not belong to this feature.
+**Rejected.** Declaring the test version equivalent and ticking the requirement off as satisfied.
+**Reason.** It is not equivalent, and in both directions. The test can do something a lint rule cannot: it first checks that it finds literals at all (`length > 5`), and thereby fails when the search reaches into nothing — a lint rule that finds nothing cannot be told apart from a switched-off one. The lint rule can do something the test cannot: it reports in the editor while writing, not only in the test run, and that is exactly where the fault arises. Both are to be had, and the requirement expressly names the rule.
+*What is needed:* a Biome plugin (GritQL) on string and template literals with the pattern `UPDATE` … `session` … `SET` … `user_id`, hooked into `biome.json` as `error`. If the plugin capability does not suffice for that, a script of its own in the gate does it, running the same search over the tree — the rule has to take hold before the test run, not necessarily in Biome.
+**Price.** Until that is hooked in, the static half of S-FIX-2 is held by a test that goes green in the same run as everything else. That is more than nothing and less than required.
 
 <a id="e-95"></a>
 
-**E-95 — `src/index.ts` wurde von diesem Feature geändert, obwohl es ihm nicht gehört.**
-*Kontext:* Die Eigentumsregel wurde nach dem Review erweitert: `src/schema/index.ts` gehört jetzt diesem Feature. `src/index.ts` ausdrücklich nicht. Die Prüfdatei `test/db-package-reach.test.ts` verlangt aber `actorOfResolvedSession` und `createOwnedRowRepository` aus dem Wurzelpfad `@velve/auth`, nicht aus `@velve/auth/schema`.
-*Verworfen:* (a) Die beiden über `@velve/auth/schema` ausliefern und die Prüfung als falsch melden. (b) Die Prüfung stehen lassen und rot melden.
-*Grund:* (a) wäre falsch am Ziel vorbei: Der Aktor und die Repository-Fabrik sind Kernbegriffe, keine Migrationswerkzeuge; Abschnitt 3.1 gibt dem Wurzelpfad „alle Kernoperationen". (b) hätte das Tor blockiert, ohne dass jemand etwas gelernt hätte. Geändert wurden zwei Zeilen, beide additiv, `VELVE_AUTH_VERSION` bleibt unberührt.
-*Preis:* Das Feature, dem `src/index.ts` gehört, findet dort zwei Zeilen vor, die es nicht geschrieben hat, und muss sie beim Aufbau der eigentlichen Oberfläche einsortieren. Das ist die zweite Abweichung dieser Art nach E-89; beide entstehen an derselben Stelle — dort, wo eine Datei allen gehört, weil sie die Oberfläche ist.
+### `src/index.ts` was changed by this feature, although it does not belong to it
+`E-95` · db · translated from the German original
+
+**Context.** The ownership rule was extended after the review: `src/schema/index.ts` now belongs to this feature. `src/index.ts` expressly not. But the test file `test/db-package-reach.test.ts` requires `actorOfResolvedSession` and `createOwnedRowRepository` from the root path `@velve/auth`, not from `@velve/auth/schema`.
+**Rejected.** (a) Shipping the two via `@velve/auth/schema` and reporting the test as wrong. (b) Leaving the test standing and reporting red.
+**Reason.** (a) would have been wrongly wide of the mark: the actor and the repository factory are core concepts, not migration tools; section 3.1 gives the root path "all core operations". (b) would have blocked the gate without anybody having learned anything. Two lines were changed, both additive, `VELVE_AUTH_VERSION` stays untouched.
+**Price.** The feature that owns `src/index.ts` finds two lines there it did not write, and has to sort them in when building the actual surface. That is the second deviation of this kind after E-89; both arise at the same place — where a file belongs to everyone because it is the surface.
 
 <a id="e-96"></a>
 
-**E-96 — Der Cascade-Wächter ist eine Torprüfung, keine Überwachung.**
-*Kontext:* Der Review hielt fest, dass die Prüfung aus E-83 nur läuft, wenn tatsächlich eine Migration angewandt wird. Ein Fremdschlüssel, den jemand später von Hand ohne `ON DELETE CASCADE` neu setzt, fällt bis zur nächsten Migration niemandem auf.
-*Verworfen:* Die Prüfung bei jedem Lauf ausführen, auch wenn nichts anzuwenden ist, oder sie in die Statusabfrage hängen.
-*Grund:* Beides verschiebt die Grenze, statt sie zu ziehen. Eine Prüfung bei jedem Start, die eine bestehende Datenbank ablehnt, weil ein Betreiber vor Monaten etwas geändert hat, ist ein Startfehler ohne Handlungsweg — und die Statusabfrage soll nach E-91 nichts tun außer antworten. S-TOKEN-6 verlangt, dass der Läufer eine *Migration* abweist; genau das tut er. Wer eine Bedingung hinter dem Rücken des Läufers fallen lässt, hat das Schema geändert, ohne es zu migrieren, und dagegen schützt kein Wächter, sondern nur der Entzug des Rechts dazu.
-*Preis:* Die Zusage ist schmaler, als sie beim Lesen von S-TOKEN-6 klingt: geprüft wird, was Migrationen anlegen, nicht, was in der Datenbank steht. Das steht jetzt in der Dokumentation, damit niemand die Prüfung für eine Überwachung hält. Dasselbe gilt für ihren Umfang — sie liest nur das konfigurierte Schema, also sieht sie eine Tabelle in einem anderen Schema nicht, die auf `velve.user` verweist.
+### The cascade guard is a gate check, not monitoring
+`E-96` · db · translated from the German original
+
+**Context.** The review noted that the check from E-83 runs only when a migration is actually applied. A foreign key that somebody later sets again by hand without `ON DELETE CASCADE` is noticed by nobody until the next migration.
+**Rejected.** Running the check on every run, even when there is nothing to apply, or hanging it into the status query.
+**Reason.** Both shift the boundary instead of drawing it. A check at every start that rejects an existing database because an operator changed something months ago is a start error without a course of action — and the status query, according to E-91, is meant to do nothing except answer. S-TOKEN-6 requires that the runner rejects a *migration*; that is exactly what it does. Whoever drops a constraint behind the runner's back has changed the schema without migrating it, and against that no guard protects, only the withdrawal of the right to do it.
+**Price.** The promise is narrower than it sounds when reading S-TOKEN-6: what is checked is what migrations create, not what stands in the database. That now stands in the documentation, so that nobody takes the check for monitoring. The same holds for its scope — it reads only the configured schema, so it does not see a table in another schema that references `velve.user`.
 
 <a id="e-97"></a>
 
-**E-97 — Eine Migration mit Schemanamen im Dollar-Quoting wird abgewiesen, nicht umgeschrieben.**
-*Kontext:* E-90 lässt den Abtaster Dollar-Quoting überspringen und begründet das damit, dass ein Funktionsrumpf beliebiger Code ist. Was dort nicht gewogen wurde, hat das Freigabetor live nachgewiesen: Eine Plugin-Migration mit `$$ … velve.user … $$` wird in einem umbenannten Schema **angewandt**, der Läufer meldet Erfolg, und erst der erste Aufruf der Funktion scheitert mit `relation "velve.user" does not exist`. Die Kernmigration entgeht dem nur, weil ihr eigener Trigger-Rumpf zufällig keine Tabelle nennt.
-*Verworfen:* (a) Doch im Rumpf ersetzen. (b) Jede Migration mit Dollar-Quoting ablehnen. (c) Es als Einschränkung dokumentieren und weiter anwenden.
-*Grund:* (a) ist genau der Fehler, den E-90 gerade behoben hat, eine Ebene tiefer — der Rumpf kann PL/pgSQL sein, aber auch Python oder JavaScript, und ein Wortersetzer darin ist unbelegbar. (b) trifft auch Rümpfe, die gar kein Schema nennen, und damit die eigene Migration 1. (c) lässt die stille Fehlfunktion stehen, und still ist die einzige Eigenschaft, die hier nicht verhandelbar ist. Also wird genau der Fall abgewiesen, der bricht: ein Rumpf, in dem der Abtaster einen Qualifizierer fände. Die Prüfung läuft vor der Transaktion.
-*Preis:* Ein Plugin, das eine Funktion mit fest qualifizierten Namen ausliefern will, kann das nur für den Standard-Schemanamen. Das ist eine echte Einschränkung, und sie steht jetzt in der Dokumentation statt in einem Fehlerbild Wochen später.
+### A migration with a schema name inside dollar quoting is rejected, not rewritten
+`E-97` · db · translated from the German original
 
-*Korrektur an der ersten Fassung dieses Eintrags. Gemessen am gebauten Paket, nicht überlegt.*
+**Context.** E-90 lets the scanner skip dollar quoting and justifies that with a function body being arbitrary code. What was not weighed there, the release gate demonstrated live: a plugin migration with `$$ … velve.user … $$` is **applied** in a renamed schema, the runner reports success, and only the first call of the function fails with `relation "velve.user" does not exist`. The core migration escapes this only because its own trigger body happens to name no table.
+**Rejected.** (a) Replacing in the body after all. (b) Rejecting every migration with dollar quoting. (c) Documenting it as a limitation and applying it anyway.
+**Reason.** (a) is exactly the fault E-90 has just fixed, one level deeper — the body can be PL/pgSQL, but also Python or JavaScript, and a word replacer in it cannot be substantiated. (b) also hits bodies that name no schema at all, and with that our own migration 1. (c) leaves the silent malfunction standing, and silent is the one property that is not negotiable here. So exactly the case that breaks is rejected: a body in which the scanner would find a qualifier. The check runs before the transaction.
+**Price.** A plugin that wants to ship a function with hard-qualified names can do so only for the default schema name. That is a real limitation, and it now stands in the documentation instead of in a failure picture weeks later.
 
-Die erste Fassung nannte einen Rumpf, der `velve.` in einer Zeichenkette führt, als **Falsch-Positiv**. Es ist das Gegenteil: Genau dieser Fall ist das **Falsch-Negativ** und kommt durch, weil der Regionen-Abtaster auch innerhalb des Rumpfes Zeichenketten überspringt.
+*Correction to the first version of this entry. Measured against the built package, not reasoned out.*
+
+The first version named a body that carries `velve.` in a string as a **false positive**. It is the opposite: exactly this case is the **false negative** and gets through, because the region scanner skips strings inside the body as well.
 
 ```
-EXECUTE 'SELECT count(*) FROM velve.user' INTO n;   -- wird angewandt, bricht beim ersten Aufruf
+EXECUTE 'SELECT count(*) FROM velve.user' INTO n;   -- is applied, breaks on the first call
 ```
 
-Das ist dieselbe stille Fehlfunktion, gegen die dieser Eintrag geschrieben wurde, eine Anführungsebene tiefer. Falsch-**positiv** ist stattdessen Attributzugriff, den der Abtaster nicht als solchen lesen kann: ein plpython-Rumpf mit einem Objekt namens `velve` wird abgewiesen, obwohl er kein Schema meint. Die Asymmetrie bleibt trotzdem, wie sie ist — eine Ablehnung ist laut und hat einen dokumentierten Ausweg, eine angenommene kaputte Funktion ist still.
+That is the same silent malfunction this entry was written against, one quoting level deeper. False **positive** instead is attribute access that the scanner cannot read as such: a plpython body with an object named `velve` is rejected, although it does not mean a schema. The asymmetry stays as it is nevertheless — a rejection is loud and has a documented way out, an accepted broken function is silent.
 
-Dieselbe Messung hat den zweiten der beiden Auswege widerlegt, die hier ursprünglich standen: `SET search_path = velve` an der Funktion wird **ebenfalls nicht** umgeschrieben, weil `velve` dort weder vor einem Punkt noch hinter `CREATE SCHEMA` steht. Der Rat, den Rumpf unqualifiziert zu lassen und den Suchpfad zu setzen, war also falsch und ist gestrichen. Übrig bleibt genau ein Weg, und er ist deshalb **verpflichtend**, nicht empfohlen: Wer aus einem Funktionsrumpf auf die Tabellen der Bibliothek zugreift, baut den Namen zur Laufzeit aus einem Schemawert, der dort vorliegt — in einer Triggerfunktion `TG_TABLE_SCHEMA`, sonst ein Argument des Aufrufers — und setzt ihn mit `format('%I.user', …)` zusammen. Wer das nicht kann, liefert die Migration nur für den Standard-Schemanamen aus.
+The same measurement refuted the second of the two ways out that originally stood here: `SET search_path = velve` on the function is **also not** rewritten, because `velve` there stands neither before a dot nor after `CREATE SCHEMA`. The advice to leave the body unqualified and to set the search path was therefore wrong and is struck. Exactly one way is left, and it is therefore **mandatory**, not recommended: whoever accesses the tables of the library from a function body builds the name at runtime from a schema value that is available there — in a trigger function `TG_TABLE_SCHEMA`, otherwise an argument of the caller — and assembles it with `format('%I.user', …)`. Whoever cannot do that ships the migration only for the default schema name.
 
 <a id="e-98"></a>
 
-**E-98 — Der Läufer zerlegt die Migration in Anweisungen, statt den Vertrag der Treiberschnittstelle zu dehnen.**
-*Kontext:* `Driver.query` ist als „eine Anweisung" dokumentiert, und der Läufer übergab den ganzen Migrationsrumpf. Das Freigabetor hat den Grund gefunden, warum das überhaupt lief: `pg`s `requiresPreparation()` endet mit `return this.values.length > 0`, ein leeres Parameterfeld fällt also in den einfachen Abfrageweg. Mit `values: [1]` scheitert dieselbe Anweisung. Zusätzlich liefert `pg` in diesem Fall ein *Feld* von Ergebnissen, dessen `rows` es nicht gibt — der Treiber gab `undefined` zurück und versprach `T[]`.
-*Verworfen:* (a) Den Mehr-Anweisungs-Fall in den Vertrag aufnehmen. (b) Eine zweite Methode `execute` an `Driver` hängen.
-*Grund:* (a) hätte jeden künftigen Treiberautor verpflichtet, den einfachen Abfrageweg zu unterstützen — bei einem Treiber auf dem erweiterten Protokoll schlägt dann jede Migration fehl, und zwar bei ihm, nicht bei uns. (b) ist die sauberere Schnittstelle und war der Vorschlag des Tores, hätte aber die Schnittstelle aus Abschnitt 3.2 um eine dritte Methode erweitert, die dort nicht steht, und drei Treiber betroffen, von denen zwei anderen Features gehören. Das Zerlegen braucht keine der beiden Änderungen: Der Abtaster aus E-90 weiß bereits, wo ein Semikolon kein Trenner ist, und die Atomarität hängt an der Transaktion, nicht am Protokoll.
-*Preis:* Statt einem Round-Trip je Migration nun einer je Anweisung — bei Migration 1 sind das vierunddreißig statt einer. Das läuft einmal beim Aufsetzen. Dafür hängt kein Verhalten mehr an einer nicht dokumentierten Zeile in `pg`; die Risikonotiz, die hier sonst gestanden hätte, ist gegenstandslos geworden.
+### The runner splits the migration into statements instead of stretching the contract of the driver interface
+`E-98` · db · translated from the German original
+
+**Context.** `Driver.query` is documented as "one statement", and the runner passed the whole migration body. The release gate found the reason why that ran at all: `pg`'s `requiresPreparation()` ends with `return this.values.length > 0`, so an empty parameter array falls into the simple query path. With `values: [1]` the same statement fails. In addition, `pg` in this case delivers an *array* of results whose `rows` does not exist — the driver returned `undefined` and promised `T[]`.
+**Rejected.** (a) Taking the multi-statement case into the contract. (b) Hanging a second method `execute` onto `Driver`.
+**Reason.** (a) would have obliged every future driver author to support the simple query path — with a driver on the extended protocol every migration then fails, and at that author's end, not ours. (b) is the cleaner interface and was the gate's proposal, but would have extended the interface from section 3.2 by a third method that does not stand there, and affected three drivers, two of which belong to other features. Splitting needs neither of the two changes: the scanner from E-90 already knows where a semicolon is not a separator, and atomicity hangs on the transaction, not on the protocol.
+**Price.** Instead of one round trip per migration, now one per statement — for migration 1 that is thirty-four instead of one. That runs once at setup. In return no behaviour hangs on an undocumented line in `pg` any more; the risk note that would otherwise have stood here has become moot.
 
 <a id="e-99"></a>
 
-**E-99 — Die Prüfung auf Zeichenkettenliterale war eine Behauptung, bis das Tor sie geprüft hat.**
-*Kontext:* E-90 behauptet, der Abtaster überspringe Zeichenkettenliterale. Für `E'…\'…'` stimmte das nicht: PostgreSQLs Escape-Strings beenden das Literal mit `\'` nicht, mein Abtaster schon. Und weil `$` als Bezeichnerzeichen zählte, las er `AS$$` als ein Wort und den folgenden Funktionsrumpf als Code, während `AS $$` richtig lief.
-*Verworfen:* Die beiden Fälle einzeln nachbessern.
-*Grund:* Beide Fehler haben dieselbe Ursache: Der Abtaster entschied zeichenweise und hielt den Zustand „wo bin ich gerade" in Kontrollfluss statt in Daten. Jetzt zerlegt er die Anweisung zuerst in Regionen und läuft nur über die Code-Regionen; ob vor einem Dollar-Quoting ein Leerzeichen steht, ist damit keine Frage mehr, und dieselbe Zerlegung trägt zusätzlich das Anweisungs-Zerlegen aus E-98 und die Rumpfprüfung aus E-97.
-*Preis:* Die Zerlegung baut die gesamte Anweisung ein zweites Mal als Zeichenkette auf. Bei Migrationen ist das folgenlos; auf einem heißen Pfad läge sie falsch, und dort läuft sie auch nicht.
+### The check for string literals was a claim until the gate checked it
+`E-99` · db · translated from the German original
+
+**Context.** E-90 claims the scanner skips string literals. For `E'…\'…'` that was not true: PostgreSQL's escape strings do not end the literal with `\'`, my scanner did. And because `$` counted as an identifier character, it read `AS$$` as one word and the following function body as code, while `AS $$` ran correctly.
+**Rejected.** Patching the two cases individually.
+**Reason.** Both faults have the same cause: the scanner decided character by character and held the state "where am I right now" in control flow instead of in data. Now it first splits the statement into regions and runs only over the code regions; whether a space stands before a dollar quote is thereby no longer a question, and the same split additionally carries the statement splitting from E-98 and the body check from E-97.
+**Price.** The split builds up the whole statement a second time as a string. For migrations that is without consequence; on a hot path it would be wrong, and it does not run there either.
 
 <a id="e-100"></a>
 
-**E-100 — Ein rohes NUL-Byte machte eine Prüfdatei für die Attributionsprüfung unsichtbar.**
-*Kontext:* Ein Prüffall benutzte `"velve\0"` als feindlichen Schemanamen, und meine Testverbindung verglich den Feldabschluss einer Fehlermeldung mit demselben Byte. Git stuft eine Datei mit NUL als binär ein; `git grep -I` überspringt sie und `git log -p` zeigt `Bin`. Das Tor hat einen Attributionsmarker in die Prüfdatei gepflanzt und den CI-Auftrag wörtlich laufen lassen: kein Treffer.
-*Verworfen:* Die Prüfung um ein `--text` erweitern und die Dateien lassen.
-*Grund:* Das Tor hat beides getan, und das ist richtig so — aber die Datei bleibt auch dann ein Diff, den niemand liest. Der Wert des Bytes ist im Test nicht der Punkt, nur seine Wirkung; `String.fromCharCode(0)` erzeugt denselben Namen, und der Byte-Vergleich in der Testverbindung war ohnehin klarer als Zahl zu schreiben.
-*Preis:* Der Commit, der das behebt, zeigt für die Prüfdatei weiterhin `Bin`, weil eine Seite des Vergleichs der alte binäre Blob ist. Erst der nächste Commit auf diese Datei ist wieder lesbar. Rückwirkend wäre nur Historienumschreiben, und das ist der teurere Preis. Das Tor hat stattdessen alle 137 historischen Blobs als Rohbytes durchsucht: der gesamte je unlesbare Inhalt ist eine Zeile — das Literal `"velve\0"` selbst —, und ein Marker steht nirgends.
+### A raw NUL byte made a test file invisible to the attribution check
+`E-100` · db · translated from the German original
 
-*Zwei Korrekturen an der ersten Fassung dieses Eintrags. Beide sind gemessen, nicht geschlossen.*
+**Context.** A test case used `"velve\0"` as a hostile schema name, and my test connection compared the field terminator of an error message with the same byte. Git classifies a file with NUL as binary; `git grep -I` skips it and `git log -p` shows `Bin`. The gate planted an attribution marker in the test file and ran the CI job verbatim: no hit.
+**Rejected.** Extending the check with a `--text` and leaving the files.
+**Reason.** The gate did both, and that is right — but the file stays, even then, a diff nobody reads. The value of the byte is not the point in the test, only its effect; `String.fromCharCode(0)` produces the same name, and the byte comparison in the test connection was clearer written as a number anyway.
+**Price.** The commit that fixes this still shows `Bin` for the test file, because one side of the comparison is the old binary blob. Only the next commit to this file is readable again. Retroactively there would only be history rewriting, and that is the more expensive price. The gate instead searched all 137 historical blobs as raw bytes: the entire content that was ever unreadable is one line — the literal `"velve\0"` itself —, and a marker stands nowhere.
 
-*(a) Die Ursache.* Die erste Fassung schrieb, der Formatierer habe die Escape-Sequenz in ein echtes NUL umgeschrieben. **Das ist falsch.** Es war eine Rekonstruktion, die als Beobachtung dastand: Ich habe die naheliegende Erklärung genommen, statt sie zu prüfen, und damit die Frage geschlossen. Das Tor hat sie mit der Biome-Fassung und der Konfiguration dieses Repositories vierfach gemessen — eine Datei mit `"velve "`, eine mit einem Leerzeichen und eine mit einem bereits vorhandenen rohen NUL kommen sowohl aus `biome format --write` als auch aus `biome check --write --unsafe` unverändert heraus; `tsdown` schreibt nur nach `dist/`, `vitest` nur nach `test/__snapshots__/`, und Bauen, Formatieren, unsicheres Beheben und Testen ließen jede versionierte Datei bytegleich. Kein Werkzeug dieser Kette kann das Byte erzeugen. **Die Datei wurde so geschrieben.** Die Richtung ist der Punkt: Der Wächter schützt gegen einen Autor, nicht gegen einen Unfall, und eine Regel muss sagen, gegen welchen von beiden.
+*Two corrections to the first version of this entry. Both are measured, not inferred.*
 
-*(b) Die Reichweite.* Der Titel der ersten Fassung sprach von zwei unsichtbaren Dateien. Nur eine war je binär. Das NUL in `test/db-postgres-connection.ts` stand an Byte 13735 und damit jenseits des 8000-Byte-Fensters, in dem Git auf Binärdaten prüft; diese Datei war durchgehend lesbar und wurde durchgehend geprüft. Der Commit, der beide behebt, behauptet in seinem Rumpf dasselbe zu weit — er ist gepusht und wird nicht umgeschrieben, diese Zeile ist die Korrektur dazu.
+*(a) The cause.* The first version wrote that the formatter had rewritten the escape sequence into a real NUL. **That is wrong.** It was a reconstruction that stood there as an observation: I took the obvious explanation instead of checking it, and with that closed the question. The gate measured it four times over with the Biome version and the configuration of this repository — a file with `"velve "`, one with a space and one with an already present raw NUL come out unchanged from both `biome format --write` and `biome check --write --unsafe`; `tsdown` writes only to `dist/`, `vitest` only to `test/__snapshots__/`, and building, formatting, unsafe fixing and testing left every versioned file byte-identical. No tool of this chain can produce the byte. **The file was written that way.** The direction is the point: the guard protects against an author, not against an accident, and a rule has to say against which of the two.
+
+*(b) The reach.* The title of the first version spoke of two invisible files. Only one was ever binary. The NUL in `test/db-postgres-connection.ts` stood at byte 13735 and thus beyond the 8000-byte window in which Git checks for binary data; this file was readable throughout and was checked throughout. The commit that fixes both claims the same too broadly in its body — it is pushed and will not be rewritten, this line is the correction to it.
 
 <a id="e-101"></a>
 
-**E-101 — Die Fallstudie und die Dokumentation bekamen einen Prüfsatz, der über die Behauptung hinausgeht.**
-*Kontext:* Drei Befunde dieses Durchgangs — der Wortersetzer (E-90), die Zeichenkettenprüfung (E-99) und das Dollar-Quoting (E-97) — hatten dieselbe Gestalt: Die Dokumentation beschrieb eine Eigenschaft, die der Code nur ungefähr hatte, und niemand hat den Unterschied bemerkt, weil die Beschreibung plausibel war.
-*Verworfen:* Sorgfältiger schreiben.
-*Grund:* Das ist kein Verfahren. Was hilft, ist eine Prüfung, die die Behauptung derselben Datei entnimmt: `test/db-documented-imports.test.ts` liest jede `@velve/auth`-Einbindung aus `DOCUMENTATION.md` und lädt sie aus dem gebauten Paket. Für die Sätze über den Abtaster gibt es kein Äquivalent — sie sind Prosa —, aber jeder von ihnen hat jetzt einen Testfall neben sich, der genau die Eingabe fährt, die der Satz beschreibt.
-*Preis:* Die Prosa in `DOCUMENTATION.md` bleibt ungeprüft, und dieser Eintrag behauptet nicht, dass das gelöst wäre. Er hält fest, dass drei von drei Befunden dieses Durchgangs in der Lücke zwischen einem plausiblen Satz und dem Code lagen.
+### The case study and the documentation got a set of checks that goes beyond the claim
+`E-101` · db · translated from the German original
+
+**Context.** Three findings of this pass — the word replacer (E-90), the string check (E-99) and the dollar quoting (E-97) — had the same shape: the documentation described a property the code had only approximately, and nobody noticed the difference, because the description was plausible.
+**Rejected.** Writing more carefully.
+**Reason.** That is not a procedure. What helps is a check that takes the claim from the same file: `test/db-documented-imports.test.ts` reads every `@velve/auth` import from `DOCUMENTATION.md` and loads it from the built package. For the sentences about the scanner there is no equivalent — they are prose —, but each of them now has a test case beside it that drives exactly the input the sentence describes.
+**Price.** The prose in `DOCUMENTATION.md` stays unchecked, and this entry does not claim that this is solved. It records that three of three findings of this pass lay in the gap between a plausible sentence and the code.
 
 <a id="e-110"></a>
 
