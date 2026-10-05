@@ -507,6 +507,9 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2900 … E-2929 | gate and infrastructure, sixteenth range — the nightly tier that never started its provider, and the reference gaps an audit found in DOCUMENTATION.md. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
 | E-2930 … E-2959 | outside the waves · `specfix`, fourth range — the specification defects reported and never repaired. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
 | E-2960 … E-2989 | outside the waves · `release-1-2-0`, second range — the 1.2.0 release notes brought into step with the follow-ups. Reserved together before the 1.2.0 follow-ups on feature/release-1-2-0-followups start, counted over the rows standing at e97434b |
+| E-2990 … E-3019 | outside the waves · `log-migration` — the German entries of docs/decisions/log.md translated into English in the one central pass §1 promises, and the rule change that pass needs. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
+| E-3020 … E-3049 | outside the waves · `release-2-0-0` — the release cut as 2.0.0 instead of 1.2.0, the empty subpaths removed and the deprecated lookup dropped. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
+| E-3050 … E-3079 | outside the waves · `webauthn-counter` — the stored WebAuthn signature counter kept at the highest value seen. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
