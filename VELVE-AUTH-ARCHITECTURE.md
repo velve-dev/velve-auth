@@ -2111,10 +2111,9 @@ SQL. `reason` is not stored (3.14 rules out an audit log) but
 logged, and forces the caller to formulate the reason at the call site.
 `findByUsername` compares by `username_key`, the comparison form from 3.4, and finds an
 account even when its name no longer satisfies the rules configured today.
-Departing from the signature above, `findByEmail` stays in version 1 in mode `username` too
-and is marked deprecated there, because version 1.0 shipped it in every mode and removing it
-within the major version would break callers; the next major version removes it there, as the
-signature provides.
+Version 1 shipped `findByEmail` in every mode, departing from the signature above, because
+removing it within the major version would break callers (E-2834); version 2.0.0 removed it in
+mode `username`, as the signature provides (E-3022).
 
 **No `user.update`:** apart from the sign-in names `velve.user` has no mutable fields,
 and both have their own namespaces with confirmation flows; a `user.update` would be either

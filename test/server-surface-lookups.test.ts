@@ -9,9 +9,9 @@ import { mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures
 
 /**
  * 3.15 B.2, B.3 and B.7 name three methods the instance did not carry: the two `resolveFromHeaders`
- * and `user.findByUsername`. B.3 also names `findByEmail` for the two modes with an address only,
- * and the instance keeps it in mode `username` until the next major version (E-2832, E-2833,
- * E-2834).
+ * and `user.findByUsername`. B.3 also names `findByEmail` for the two modes with an address only;
+ * the instance kept it in mode `username` through 1.x and 2.0.0 drops it there (E-2832, E-2833,
+ * E-2834, E-3022).
  */
 
 const FOREIGN_ORIGIN = "https://evil.example.com";
@@ -137,9 +137,13 @@ describe("user.findByUsername (3.15 B.3)", () => {
 		expect(carried).not.toContain("findByUsername");
 		expect(carried).toContain("findByEmail");
 	});
+
+	it("keeps findByEmail in mode username_email", () => {
+		expect(Object.keys(widest.auth.user)).toContain("findByEmail");
+	});
 });
 
-describe("user in mode username (3.15 B.3, E-2834)", () => {
+describe("user in mode username (3.15 B.3, E-3022)", () => {
 	let connection: TestConnection;
 	let schema: string;
 	let auth: VelveAuth<"username">;
@@ -161,7 +165,7 @@ describe("user in mode username (3.15 B.3, E-2834)", () => {
 		await connection.close();
 	});
 
-	it("finds an account by name, and keeps findByEmail so no 1.x caller breaks", async () => {
+	it("finds an account by name, and carries no lookup by address", async () => {
 		const [row] = await connection.query<{ id: string }>(
 			`INSERT INTO ${schema}.user (username, username_key, email)
 			 VALUES ('Named', 'named', 'named@example.com') RETURNING id`,
@@ -169,6 +173,8 @@ describe("user in mode username (3.15 B.3, E-2834)", () => {
 		);
 
 		expect((await auth.user.findByUsername({ username: "NAMED" }))?.id).toBe(row?.id);
-		expect((await auth.user.findByEmail({ email: "named@example.com" }))?.id).toBe(row?.id);
+		expect(Object.keys(auth.user)).not.toContain("findByEmail");
+		// @ts-expect-error the mode has no lookup by address, on the type as on the object.
+		expect(auth.user.findByEmail).toBeUndefined();
 	});
 });

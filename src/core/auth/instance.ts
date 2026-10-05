@@ -100,13 +100,17 @@ export interface PendingNamespace {
 	cancel(input: { pendingToken: PendingToken } & ServerCallFields): Promise<void>;
 }
 
-/** what the application calls in its own process after its own authorization decision */
-export interface UserNamespace {
+/** the methods of the user namespace that every identity mode carries */
+interface UserNamespaceInEveryMode {
 	findById(input: { userId: string }): Promise<User | null>;
-	findByEmail(input: { email: string }): Promise<User | null>;
 	disable(input: { userId: string; reason: string }): Promise<void>;
 	enable(input: { userId: string }): Promise<void>;
 	delete(input: { userId: string }): Promise<void>;
+}
+
+/** what the application calls in its own process after its own authorization decision */
+export interface UserNamespace extends UserNamespaceInEveryMode {
+	findByEmail(input: { email: string }): Promise<User | null>;
 }
 
 /** the lookup by name, offered in the two modes that have a username */
@@ -114,10 +118,9 @@ interface UserNamespaceWithUsernames extends UserNamespace {
 	findByUsername(input: { username: string }): Promise<User | null>;
 }
 
-//removing the lookup by address in mode username would break a 1.x caller (E-2834)
-interface UserNamespaceInUsernameMode extends UserNamespaceWithUsernames {
-	/** @deprecated mode `username` finds an account by `findByUsername`, and the next major version removes this here */
-	findByEmail(input: { email: string }): Promise<User | null>;
+/** mode `username` finds an account by name and has no lookup by address */
+interface UserNamespaceInUsernameMode extends UserNamespaceInEveryMode {
+	findByUsername(input: { username: string }): Promise<User | null>;
 }
 
 type UserNamespaceOf<M extends IdentityMode> = M extends "email"
@@ -511,7 +514,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 
 		user: {
 			findById: ({ userId }) => users.findUserById(userId),
-			findByEmail: ({ email }) => users.findUserByEmail(email),
 			//the reason is logged and never stored, as the library keeps no audit log (E-37)
 			disable: async ({ userId, reason }) => {
 				log("warn", "account disabled", { userId, reason });
@@ -519,6 +521,12 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			},
 			enable: ({ userId }) => users.setDisabledAt({ userId, disabled: false }),
 			delete: ({ userId }) => users.deleteUser(userId),
+			...(identity.mode === "username"
+				? {}
+				: {
+						//mode username has no lookup by address (E-3022)
+						findByEmail: ({ email }: { email: string }) => users.findUserByEmail(email),
+					}),
 			...(identity.mode === "email"
 				? {}
 				: {
@@ -526,7 +534,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 						findByUsername: ({ username }: { username: string }) =>
 							users.findUserByUsernameKey(comparisonFormOf(username)),
 					}),
-		} satisfies UserNamespace,
+		} satisfies UserNamespaceInEveryMode,
 
 		...(usernameTable === null
 			? {}

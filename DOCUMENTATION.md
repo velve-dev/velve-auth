@@ -6125,7 +6125,7 @@ reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 | `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
 | `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
 | `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
-| `auth.user` | `findById`, `findByEmail`, `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
+| `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
 | `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 
 Every method reached through a route takes the six call fields beside its own
@@ -6154,7 +6154,8 @@ that passes no `origin` no longer compiles, and at runtime is refused.
 The four hand-written namespaces after `signOut` have exported types, so an
 application can name what it passes around — a helper that takes `auth.session`
 takes a `SessionNamespace`. All four are exported from `@velve/auth` as types
-only. As shipped in `dist/core/auth/instance.d.mts`:
+only; `UserNamespaceInEveryMode`, which `UserNamespace` extends, is not. As
+shipped in `dist/core/auth/instance.d.mts`:
 
 ```ts
 interface SessionNamespace {
@@ -6173,12 +6174,15 @@ interface PendingNamespace {
   cancel(input: { pendingToken: PendingToken } & ServerCallFields): Promise<void>;
 }
 
-interface UserNamespace {
+interface UserNamespaceInEveryMode {
   findById(input: { userId: string }): Promise<User | null>;
-  findByEmail(input: { email: string }): Promise<User | null>;
   disable(input: { userId: string; reason: string }): Promise<void>;
   enable(input: { userId: string }): Promise<void>;
   delete(input: { userId: string }): Promise<void>;
+}
+
+interface UserNamespace extends UserNamespaceInEveryMode {
+  findByEmail(input: { email: string }): Promise<User | null>;
 }
 
 interface UsernameNamespace {
@@ -6191,7 +6195,7 @@ interface UsernameNamespace {
 |---|---|---|
 | `SessionNamespace` | `auth.session`, in every mode | nothing |
 | `PendingNamespace` | `auth.pending`, in every mode | nothing |
-| `UserNamespace` | `auth.user`, in every mode | in `"email"` `auth.user` is exactly this type; in `"username"` and `"username_email"` it is this type plus `findByUsername(input: { username: string }): Promise<User \| null>`, and in `"username"` its `findByEmail` is marked `@deprecated` |
+| `UserNamespace` | `auth.user`, in `"email"` and `"username_email"` | in `"email"` `auth.user` is exactly this type; in `"username_email"` it is this type plus `findByUsername(input: { username: string }): Promise<User \| null>`; in `"username"` it is this type without `findByEmail` and with `findByUsername` (E-3022) |
 | `UsernameNamespace` | `auth.username` | present only in `"username"` and `"username_email"`, absent from the type and the object in `"email"` |
 
 `ServerCallFields` is the six call fields named above: `origin: string | null`,
@@ -6213,8 +6217,8 @@ and every method of `auth.user` — has no origin check and no rate limit.
   `rate_limited` once that bucket is spent. Past both it deletes the row the token
   names, if there is one, and resolves to nothing either way.
 - **`user.findByUsername`** exists in `"username"` and `"username_email"` only,
-  and **`user.findByEmail`** is deprecated in `"username"`; both are described
-  under the result types below.
+  and **`user.findByEmail`** in `"email"` and `"username_email"` only; both are
+  described under the result types below.
 - **`username.isAvailable`** answers a `UsernameAvailabilityAnswer` —
   `{ available: boolean; reason?: string }`.
 
@@ -6305,11 +6309,10 @@ It exists in `"username"` and `"username_email"` and is absent in `"email"`, on
 the type and on the object. `findByEmail` compares the address as given, with
 no normalisation.
 
-In `"username"`, 3.15 B.3 has no `findByEmail`, but 1.0 shipped it in every
-mode, so it stays there for the whole of version 1 and is marked `@deprecated`
-on the type of that mode; an editor strikes it through. An account in that mode
-can carry an address a provider reported, so the method can still find one. The
-next major version removes it from `"username"`. Use `findByUsername` there.
+`findByEmail` exists in `"email"` and `"username_email"` and is absent in
+`"username"`, on the type and on the object, as 3.15 B.3 has it. Version 1
+shipped it in every mode; 2.0.0 removed it from `"username"` (E-2834, E-3022).
+Use `findByUsername` in that mode.
 
 `auth.pending.resolve` names only the factors still open and never any user
 data, and it mints no actor: the intermediate state is structurally unable to
