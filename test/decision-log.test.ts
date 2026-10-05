@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 /** The complete log; CASE-STUDY.md is a curated selection of it and a citation site like any other. */
 const DECISION_LOG = "docs/decisions/log.md";
-const caseStudy = readFileSync(`${repositoryRoot}/${DECISION_LOG}`, "utf8");
+const logText = readFileSync(`${repositoryRoot}/${DECISION_LOG}`, "utf8");
 const rules = readFileSync(`${repositoryRoot}/CLAUDE.md`, "utf8");
 
 /** The specification is the source E-01 to E-46 were taken from, not a citation site. */
@@ -16,8 +16,9 @@ const BINARY_DIRECTORY = /^assets\//;
 const CITATION = /\bE[-‐-―−](\d+)\b/g;
 const RANGE_ROW = /^\| E-(\d+) … E-(\d+) \| (.+?) \|$/gm;
 
-/** CLAUDE.md §1 made the log English; every entry is still German until the migration
- * pass runs, so both forms are accepted until it has. */
+/** CLAUDE.md §1 made the log English and the central pass translates every German entry (E-2990).
+ * The German form is still parsed so that an entry left in it is named by the count below rather
+ * than reported only as a heading nothing could read. */
 const GERMAN_ENTRY = /^\*\*E-(\d+) — (.+?)\*\*/gm;
 const ENGLISH_ENTRY = /^### (.+?)\n`E-(\d+)` · ([^·\n]+) · (.+?)$/gm;
 const GERMAN_PARTS = ["*Kontext:*", "*Verworfen:*", "*Grund:*", "*Preis:*"];
@@ -29,15 +30,31 @@ const OPENS_A_BLOCK = /^(?:#{1,6}[ \t]|[ \t]*$)/;
 const CLAIM_LINE =
 	/^[ \t]*(?:[#>]+[ \t]*|[-*+][ \t]+|\*{1,2}|`)*E-\d+(?:`|\*{1,2})?[ \t]*(?:$|[—–\-:·])/;
 
-/** Entries written in the German format, from before CLAUDE.md §1 made the log English. They
- * name no owner, so not one of them can be attributed; the count is here so that a new entry
- * written without an owner fails instead of joining a set nothing looks at. It only comes down. */
-const ENTRIES_THAT_NAME_NO_OWNER = 167;
+/** Entries in the German format name no owner, so not one of them can be attributed. The count
+ * stood at 167 and only came down; the central pass brings it to 0, which is its final value, so
+ * an entry still German or a new entry written without an owner fails (E-2990). It goes green
+ * only once every translation of the pass has landed on the branch that carries it. */
+const ENTRIES_THAT_NAME_NO_OWNER = 0;
+
+/** The tag CLAUDE.md §6 fixes for an entry of the central pass; it supplies no reason. */
+const TRANSLATION_TAG = "translated from the German original";
+/** The 167 entries the pass translates, each with the owner the range table gives its number. */
+const TRANSLATED_BY_THE_PASS: { first: number; last: number; owner: string }[] = [
+	{ first: 1, last: 46, owner: "architecture" },
+	{ first: 47, last: 58, owner: "scaffold" },
+	{ first: 59, last: 71, owner: "keys" },
+	{ first: 80, last: 101, owner: "db" },
+	{ first: 110, last: 131, owner: "http" },
+	{ first: 140, last: 148, owner: "gate and infrastructure" },
+	{ first: 190, last: 212, owner: "identity" },
+	{ first: 250, last: 269, owner: "token" },
+];
 
 type Heading = {
 	number: number;
 	title: string;
 	owner: string | null;
+	tag: string | null;
 	parts: string[];
 	start: number;
 	numberLineStart: number;
@@ -48,18 +65,20 @@ function label(entry: { number: number; title: string }): string {
 }
 
 function headings(): Heading[] {
-	const german = [...caseStudy.matchAll(GERMAN_ENTRY)].map((match) => ({
+	const german = [...logText.matchAll(GERMAN_ENTRY)].map((match) => ({
 		number: Number(match[1]),
 		title: String(match[2]),
 		owner: null,
+		tag: null,
 		parts: GERMAN_PARTS,
 		start: Number(match.index),
 		numberLineStart: Number(match.index),
 	}));
-	const english = [...caseStudy.matchAll(ENGLISH_ENTRY)].map((match) => ({
+	const english = [...logText.matchAll(ENGLISH_ENTRY)].map((match) => ({
 		number: Number(match[2]),
 		title: String(match[1]),
 		owner: String(match[3]).trim(),
+		tag: String(match[4]).trim(),
 		parts: ENGLISH_PARTS,
 		start: Number(match.index),
 		numberLineStart: Number(match.index) + String(match[1]).length + "### \n".length,
@@ -71,7 +90,7 @@ function entries(): (Heading & { body: string })[] {
 	const found = headings();
 	return found.map((heading, index) => ({
 		...heading,
-		body: caseStudy.slice(heading.start, found[index + 1]?.start ?? caseStudy.length),
+		body: logText.slice(heading.start, found[index + 1]?.start ?? logText.length),
 	}));
 }
 
@@ -103,6 +122,31 @@ function ownersDeclaredBy(row: string): string[] {
 	return words.map((_, index) => words.slice(0, index + 1).join(" "));
 }
 
+function misattributed(log: { number: number; title: string; owner: string | null }[]): string[] {
+	const ranges = reservedRanges();
+	return log
+		.filter((entry) => entry.owner !== null)
+		.filter((entry) => {
+			const range = ranges.find((r) => entry.number >= r.first && entry.number <= r.last);
+			return range === undefined || !ownersDeclaredBy(range.owner).includes(entry.owner ?? "");
+		})
+		.map((entry) => `${label(entry)} claims ${entry.owner}, which does not reserve it`);
+}
+
+function faultsOfThePassIn(entry: Heading): string[] {
+	const pass = TRANSLATED_BY_THE_PASS.find(
+		(r) => entry.number >= r.first && entry.number <= r.last,
+	);
+	if (pass === undefined) {
+		return entry.tag === TRANSLATION_TAG ? [`${label(entry)} is tagged but not of the pass`] : [];
+	}
+	if (entry.owner === null) return [];
+	const faults: string[] = [];
+	if (entry.tag !== TRANSLATION_TAG) faults.push(`${label(entry)} carries "${entry.tag}"`);
+	if (entry.owner !== pass.owner) faults.push(`${label(entry)} names ${entry.owner}`);
+	return faults;
+}
+
 function everyTrackedFile(): string[] {
 	// `--others --exclude-standard` as well as the index: a citation in a file that is written but
 	// not yet added is a citation, and reading only the index skipped one beside four it reported
@@ -120,7 +164,7 @@ function everyTrackedFile(): string[] {
 }
 
 function claimedHeadings(): { offset: number; line: number; text: string }[] {
-	const lines = caseStudy.split("\n");
+	const lines = logText.split("\n");
 	const claims: { offset: number; line: number; text: string }[] = [];
 	let offset = 0;
 	for (const [index, line] of lines.entries()) {
@@ -183,15 +227,33 @@ describe("decision log", () => {
 	// password's second range and, renumbered to 295, in session's, and a test that asks only
 	// whether a range contains the number passes both ways round (E-159).
 	it("keeps every decision inside a range reserved for the owner it names", () => {
-		const ranges = reservedRanges();
-		const misattributed = log
-			.filter((entry) => entry.owner !== null)
-			.filter((entry) => {
-				const range = ranges.find((r) => entry.number >= r.first && entry.number <= r.last);
-				return range === undefined || !ownersDeclaredBy(range.owner).includes(entry.owner ?? "");
-			})
-			.map((entry) => `${label(entry)} claims ${entry.owner}, which does not reserve it`);
-		expect(misattributed).toEqual([]);
+		expect(misattributed(log)).toEqual([]);
+	});
+
+	it("refuses a translated entry that names an owner its range does not declare", () => {
+		const planted = [
+			{ number: 1, title: "Pure TypeScript", owner: "keys" },
+			{ number: 47, title: "English as the repository language", owner: "architecture" },
+			{ number: 140, title: "The check reads the built package", owner: "infrastructure" },
+		];
+		expect(misattributed(planted)).toHaveLength(planted.length);
+		const declared = planted.map((entry, index) => ({
+			...entry,
+			owner: ["architecture", "scaffold", "gate and infrastructure"][index] ?? "",
+		}));
+		expect(misattributed(declared)).toEqual([]);
+	});
+
+	// The tag says only that the entry came through the pass, so it may stand on no other entry,
+	// and an entry of the pass names the owner the range table gives its number (E-2990).
+	it("tags exactly the entries of the central pass, each with its table owner", () => {
+		const faults = log.flatMap(faultsOfThePassIn);
+		expect(faults).toEqual([]);
+		const numbers = new Set(log.map((entry) => entry.number));
+		const missing = TRANSLATED_BY_THE_PASS.flatMap((r) =>
+			Array.from({ length: r.last - r.first + 1 }, (_, i) => r.first + i),
+		).filter((number) => !numbers.has(number));
+		expect(missing).toEqual([]);
 	});
 
 	// A check that steps over what it cannot read reports success for it. This one says how many
