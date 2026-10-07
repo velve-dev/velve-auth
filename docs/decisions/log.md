@@ -15978,3 +15978,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Adding the statement to `createNodePostgresDriver` alone, which covers one driver and not the drivers applications write. Adding it at each of the library's call sites of `transaction`, which a new call site would forget.
 **Reason.** An isolation guarantee that depends on a setting outside the library is not the library's guarantee.
 **Price.** One more round trip per transaction. The lower-level exports that take an application's own `Driver` (the migration runner, the owned-row repository, the schema status) are not wrapped; none of them seals.
+
+<a id="e-3311"></a>
+
+### The reviewer's guard tests are kept, each after failing on its plant
+`E-3311` · security-state · tests, specification, settled
+
+**Context.** The sixth review's second reviewer planted faults the committed suite did not notice and wrote the tests that would. Each was run here against its plant before it was kept. `test/keys-integrity-mac-guards.test.ts` holds that a stored MAC is compared only through `equalsInConstantTime`: a naive byte comparison failed it, plant P1. It also holds that no MAC is taken under a current version no column holds, failed by removing that guard, and that an unstorable stored version is answered as unknown without asking the provider, failed by removing that guard. `test/keys-integrity-migrate-wiring.test.ts` reaches both start probes through `migrate()`; removing the purpose probe call (W1) or the stored-version probe call (W2) from the instance failed it. `test/security-state-table-checks.test.ts` holds migration 3's `octet_length(digest) = 32` and `key_version >= 1`; removing either check failed it. The case in `test/keys-integrity-mac.test.ts` titled "without asking the provider" now spies on `byVersion` and asserts it was not asked (B-L2). `test/security-state-attempt-budget.test.ts` gains the control the reviewer wrote (B-L1): today a writer who resets `attempts` gets more answered guesses than the budget, so the `it.fails` placeholder fails for that reason and not because its setup throws. The control goes red when the token branch binds the counter, and that branch deletes it with the flip. S-INTEG-4 now requires constant-time comparison of every stored MAC in both languages (B-M5), which no requirement said before.
+**Rejected.** Folding the plants into permanent mutation tests, which would edit source files from a test.
+**Reason.** A guard that no test can see removed is a guard by intention only.
+**Price.** The mock of `constant-time.js` in the guard file couples the case to that module's name.
