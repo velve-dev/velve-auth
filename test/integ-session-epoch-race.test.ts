@@ -7,6 +7,7 @@ import type { TokenBindingRefusal } from "../src/core/token/binding.js";
 import { openConnectionPool } from "./connection-pool-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { aFreshEpochOtherThan } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 /**
@@ -63,9 +64,9 @@ async function revokeEverySession(driver: Driver, userId: string): Promise<void>
 		await tx.query(lockAccountRowStatement(schema), [userId]);
 		await tx.query(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
 		await tx.query(
-			`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1, version = version + 1
+			`UPDATE ${schema}.security_state SET session_epoch = $2, version = version + 1
 			 WHERE user_id = $1`,
-			[userId],
+			[userId, aFreshEpochOtherThan(1)],
 		);
 	});
 }
@@ -94,8 +95,8 @@ describe("a sign-in racing a mass revocation (section 3.18 point 3, T-INTEG-3)",
 		await revoker.query(lockAccountRowStatement(schema), [userId]);
 		await revoker.query(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
 		await revoker.query(
-			`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1 WHERE user_id = $1`,
-			[userId],
+			`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
+			[userId, aFreshEpochOtherThan(1)],
 		);
 		const issuing = sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
 		const finishedBeforeCommit = await Promise.race([
@@ -175,10 +176,10 @@ describe("a writer who changes the account's state between the epoch read and th
 		const userId = await sealedAccount();
 
 		const outcome = await issueAround(userId, () =>
-			revoker.query(
-				`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1 WHERE user_id = $1`,
-				[userId],
-			),
+			revoker.query(`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`, [
+				userId,
+				aFreshEpochOtherThan(1),
+			]),
 		);
 
 		expect(outcome).toMatchObject({ reason: "session_not_found" });

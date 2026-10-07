@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
 import type { SessionInsert } from "../src/core/db/repositories/session.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
@@ -173,4 +174,38 @@ export async function rebindSessionsOf(
 			[row.id, tokenMac, tokenMacKeyVersion],
 		);
 	}
+}
+
+const LARGEST_EPOCH = 2 ** 53 - 1;
+
+/**
+ * An epoch drawn the way section 3.18 draws one at every raise: uniformly from 1 … 2^53 − 1 and
+ * different from the one given, so a test never relies on epochs rising or being near the version.
+ */
+export function aFreshEpochOtherThan(current: number | null = null): number {
+	for (;;) {
+		const bytes = randomBytes(8);
+		const epoch = Number(bytes.readBigUInt64BE() % BigInt(LARGEST_EPOCH)) + 1;
+		if (epoch !== current) {
+			return epoch;
+		}
+	}
+}
+
+/** Raises an account's epoch as a mass revocation does: to a fresh random value, never by one. */
+export async function raiseEpochOf(
+	driver: Driver,
+	schema: string,
+	userId: string,
+): Promise<number> {
+	const [row] = await driver.query<{ epoch: string }>(
+		`SELECT session_epoch::text AS epoch FROM ${schema}.security_state WHERE user_id = $1`,
+		[userId],
+	);
+	const fresh = aFreshEpochOtherThan(row === undefined ? null : Number(row.epoch));
+	await driver.query(`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`, [
+		userId,
+		fresh,
+	]);
+	return fresh;
 }

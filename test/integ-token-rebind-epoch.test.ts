@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionService } from "../src/core/session/service.js";
 import { rebindTokenRowsUnderCurrentKey } from "../src/core/token/rebind.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import { aFreshEpochOtherThan } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 // S-KEY-5 with S-INTEG-9: a session of an account above epoch 1 that resolves under a newer key
@@ -39,8 +40,8 @@ describe("a rebound session keeps the epoch it was issued under", () => {
 		const userId = await createUser(migrated.connection, schema);
 		await migrated.connection.query(
 			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
-			 VALUES ($1, 3, $2, 1, 3)`,
-			[userId, randomBytes(32)],
+			 VALUES ($1, 3, $2, 1, $3)`,
+			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
 		);
 		const issued = await before.issue({ userId, factors: ["password"], observed: NO_REQUEST });
 

@@ -14,6 +14,7 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { aFreshEpochOtherThan } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 // Section 3.18 point 3: issuing a session takes the account lock before it reads the epoch, on
@@ -125,8 +126,8 @@ describe("every path that inserts a session waits for the account lock and binds
 		await holder.query("BEGIN", []);
 		await holder.query(lockAccountRowStatement(schema), [userId]);
 		await holder.query(
-			`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1 WHERE user_id = $1`,
-			[userId],
+			`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
+			[userId, aFreshEpochOtherThan(1)],
 		);
 
 		const running = run();

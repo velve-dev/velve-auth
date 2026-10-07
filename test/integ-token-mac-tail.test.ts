@@ -15,6 +15,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
+import { aFreshEpochOtherThan } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 // S-INTEG-9: the whole 32-byte MAC is compared. A row whose MAC differs in a late byte only, and
@@ -117,8 +118,8 @@ describe("the session list of an account whose epoch is above 1", () => {
 		);
 		const old = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
 		await migrated.connection.query(
-			`UPDATE ${schema}.security_state SET session_epoch = 2 WHERE user_id = $1`,
-			[userId],
+			`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
+			[userId, aFreshEpochOtherThan(1)],
 		);
 		const current = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
 

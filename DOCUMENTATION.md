@@ -8937,7 +8937,7 @@ hold here as stated:
 - A row is proved to be the library's, not to be its latest version. A writer
   who saved a row can write it back with its MAC of that time: a session revoked
   on its own (`session.revoke`, `signOut`) becomes valid again as long as the
-  account's `session_epoch` has not risen since; a consumed one-time token becomes
+  account's `session_epoch` has not changed since; a consumed one-time token becomes
   redeemable again within its deadline; a pending row gets its older attempt
   budget back ([The attempt budget](#the-attempt-budget)). A session ended by a
   mass revocation does not come back this way, because its MAC binds an epoch the
@@ -8972,9 +8972,13 @@ no session (`session_required`), and its existing sessions resolve to nothing. T
 instance passes `"migrating"` until the `securityState.sealing` configuration
 exists, because nothing writes a seal row before the seal branch does. A
 resolve checks the MAC over the account's current epoch, so a session issued under
-an older one — a row a writer saved and wrote back after a mass revocation raised
-the epoch — is answered as no session. Rebinding under a new key version never lifts
-a session into a newer epoch, because such a session never resolves. The lock costs
+any other — a row a writer saved and wrote back after a mass revocation drew a new
+epoch — is answered as no session. Epochs are compared for equality only: a mass
+revocation draws a fresh random epoch from 1 to 2^53 − 1, different from the
+current one, so nothing here assumes that epochs rise or relates them to the seal's
+version. Rebinding under a new key version keeps the epoch a session was issued
+under and never moves it to another, because a session under any epoch but the
+current one never resolves. The lock costs
 one statement per issued session: measured at 0.73 to 0.78 ms on a local PostgreSQL
 16, against 2.8 to 3.3 ms for the whole issue.
 
@@ -8999,7 +9003,7 @@ current key by a compare-and-set on the MAC it read, before the others go. A kep
 row that fails its check, or that a writer changed between the read and the
 rebinding, goes with the others: the caller is signed out too, and the refusal
 report receives `occasion: "change"` for the missed rebinding. The seal branch
-raises the epoch in the same transaction, and the rebinding is where the kept
+draws the new epoch in the same transaction, and the rebinding is where the kept
 session moves to the epoch the revocation leaves.
 
 **Consumed first, asked about second.** A redemption learns its account from the

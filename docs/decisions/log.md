@@ -16099,6 +16099,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A guarantee that depends on a later branch is a dependency, and a dependency nobody writes down as blocking ships without it.
 **Price.** Until the integration lands, a release cut from this branch alone would carry both gaps; this entry is the record that it must not be cut.
 
+<a id="e-3270"></a>
+
+### This branch's tests raise an epoch to a fresh random value and compare epochs for equality only
+`E-3270` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** The merged specification has every mass revocation, and every reseal, draw a new `session_epoch` from a CSPRNG over 1 … 2^53 − 1, different from the current one, and compares epochs for equality only. It had been an increment of one and, after a reseal, the new version. This branch's code never raised an epoch and checked only that a stored epoch is an exact integer of at least 1, so it needed no change. Its tests standing in for a mass revocation did assume the old rule. They set `session_epoch = session_epoch + 1`, or fixed epochs at 2 and 3 beside a version of the same number. They now draw the new epoch through `aFreshEpochOtherThan` and `raiseEpochOf` in `test/session-fixtures.ts`, uniformly from the same range and different from the current one. The chapter now says equality is the only comparison and that a rebinding keeps a session's epoch rather than moving it.
+**Rejected.** Leaving the increments in the tests, which would let a check that orders epochs pass by accident.
+**Reason.** A test that stands in for the seal branch's raise has to raise the way that branch will.
+**Price.** The epochs in these tests differ on every run.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

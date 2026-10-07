@@ -40,7 +40,13 @@ import {
 } from "./db-fixtures.js";
 import { openTestConnection } from "./db-postgres-connection.js";
 import { decodingJsonb } from "./jsonb-decoding-driver.js";
-import { rebindSessionsOf, SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
+import {
+	aFreshEpochOtherThan,
+	raiseEpochOf as raiseEpochTo,
+	rebindSessionsOf,
+	SESSION_FIXTURE_KEYS,
+	sessionInsertFor,
+} from "./session-fixtures.js";
 import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
 /**
@@ -570,10 +576,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 
 	//the seal branch raises the epoch with a reseal, and this stands in for it
 	async function raiseEpochOf(userId: string): Promise<void> {
-		await sql(
-			`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1 WHERE user_id = $1`,
-			[userId],
-		);
+		await raiseEpochTo(migrated.connection, schema, userId);
 	}
 
 	async function savedRow(sessionId: string): Promise<Record<string, unknown>> {
@@ -629,8 +632,8 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
 		await sql(
 			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
-			 VALUES ($1, 1, $2, 1, 2)`,
-			[userId, randomBytes(32)],
+			 VALUES ($1, 1, $2, 1, $3)`,
+			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
 		);
 		expect(await sessions.resolve(issued.token)).toBeNull();
 		expectOneRefusal("session_resolve", userId);
