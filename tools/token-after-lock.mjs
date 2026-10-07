@@ -16,7 +16,8 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const TAKES_THE_ACCOUNT_ROW = /\block(?:AccountRow|AccountRowStatement)\s*\(/g;
 
 /** The table, the two repository methods, and the flows' mint helper that writes through it. */
-const REACHES_THE_TOKEN_TABLE = /\bone_time_token\b|\b(?:replace|consume)OneTimeToken\s*\(|\bmintArtefact\s*\(/g;
+const REACHES_THE_TOKEN_TABLE =
+	/\bone_time_token\b|\b(?:replace|consume)OneTimeToken\s*\(|\bmintArtefact\s*\(/g;
 
 /** An import names a symbol without calling it, and every import precedes every call. */
 const IMPORT_STATEMENT = /^\s*import\s[\s\S]*?from\s*["'][^"']*["'];?\s*$/gm;

@@ -16588,3 +16588,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A requirement that cannot be parsed cannot be tested against.
 **Price.** None.
+
+<a id="e-3372"></a>
+
+### Commit 08486c5 fails the lint step on its own
+`E-3372` · security-state · history, settled
+
+**Context.** Commit `08486c5` widened the pattern in `tools/token-after-lock.mjs` to recognise `mintArtefact`. It made the line longer than the formatter allows, and the file was not run through `biome` before that commit, so `pnpm lint` fails on it and on every commit up to the one that formats the line. History is not rewritten, so this entry names it, as E-3106 does for the earlier ones, and the next commit applies the formatter's line break without changing the pattern.
+**Rejected.** Amending the commit, which CLAUDE.md §4 forbids.
+**Reason.** A bisect that lands on these commits should find the reason here.
+**Price.** The commits from `08486c5` to the fix fail `pnpm gate` at the lint step.
