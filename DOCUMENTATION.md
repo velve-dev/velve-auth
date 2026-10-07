@@ -8678,7 +8678,15 @@ shares a key with `token-pepper` or `cookie-sig`, which use the same algorithm.
 They add no secret and no configuration entry. A `KeyProvider` of an
 application's own must answer both with a key that can take an HMAC, or `migrate()` refuses the
 start with `keys_unusable`; the start takes one probe HMAC under each to find
-out.
+out, and requires the key to be HMAC with SHA-256 and the output to be 32 bytes.
+`migrate()` also probes the `state-mac` key of every version a row of
+`velve.security_state` names, and refuses the start with `keys_unusable` if the ring
+answers one of them with a key that cannot take that MAC; a version the ring no
+longer holds is not a start error but a broken state of the accounts it seals.
+Both checks run in `migrate()` and nowhere else: a serving process that does
+not call `migrate()` itself, because a separate job migrates the schema, never
+probes its keys, and a key that cannot take the MAC shows up there only as
+accounts the check answers `key_unusable` for.
 
 `IntegrityKeyPurpose` is the part of `KeyPurpose` whose names end in `-mac`.
 It is internal and not exported from the package.
@@ -8706,10 +8714,31 @@ a `MacVerdict`:
 | `"valid"` | the MAC matches |
 | `"mismatch"` | it does not, including a stored MAC of another length |
 | `"key_version_unknown"` | the version is not a storable key version or has left the ring |
-| `"key_unusable"` | the provider answered the version with a key Web Crypto refuses to sign with |
+| `"key_unusable"` | the provider answered the version with a key that is not HMAC-SHA256, or that Web Crypto refuses to sign with, or whose output is not 32 bytes |
 
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.
+
+### `keyTakesMac(key)`
+
+Internal, in `src/core/keys/mac.ts`. Resolves `true` when `key` is an HMAC key
+with hash SHA-256 that Web Crypto signs with and whose output is 32 bytes, and
+`false` otherwise; it never throws. The start probes and
+`verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
+key the check can use.
+
+### `isIntegrityPurpose(purpose)`
+
+Internal, in `src/core/keys/purpose.ts`. Narrows a `KeyPurpose` to
+`IntegrityKeyPurpose`, the names ending in `-mac`; `assertKeysAnswerForEveryPurpose`
+uses it to decide which purposes get the probe.
+
+### `assertStoredIntegrityKeysTakeMac({ driver, keys, schema })`
+
+Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
+every distinct `key_version` of `velve.security_state` and refuses the start with
+`keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects. A
+version the ring does not hold is skipped.
 
 ### The seal table
 
@@ -8719,9 +8748,10 @@ from `velve.user`, so deleting an account deletes its seal, and the cascade
 guard of the migration runner counts it among the user-owned tables. It has no
 deadline and no sweep index: a seal is never expired, only replaced.
 
-Nothing writes the table yet. Migration 4, the token MAC columns of section
-3.18, is reserved for the branch that writes those MACs, because its `NOT NULL`
-columns would refuse every session the code inserts until then.
+The table is written by the seal and read by every check; both are documented
+in [Security state: the seal](#security-state-the-seal). Migration 4, the token
+MAC columns of section 3.18, ships with the keyed token hashes and is documented
+in [Security state: keyed token hashes](#security-state-keyed-token-hashes).
 
 ## Security state: bound envelopes
 

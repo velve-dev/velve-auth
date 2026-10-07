@@ -15361,10 +15361,10 @@ One consequence of restating in place that the rule does not mention, and that s
 
 <a id="e-3106"></a>
 
-### Seven commits of this branch do not pass the gate on their own
+### Eight commits of this branch do not pass the gate on their own
 `E-3106` · security-state · history, settled
 
-**Context.** History on this branch is not rewritten, so what each commit fails stays in it, and this entry says which. `737f7ec`, the German specification, fails `test/architecture-translation.test.ts` until `9abde36` brings the English into step, as its own message says. `95890cb` through `512e0de` fail `pnpm knip` on two exported types of `src/core/keys/mac.ts` that nothing imported, until `9a8346f`. `b130ae3` fails `pnpm lint` on a line of `test/keys-cross-purpose.test.ts` until `b1dbb1a`, whose message calls the line a comment when it was the `SIGNING_PURPOSES` array. `512e0de` fails three cases of the concurrency and census tests until `f222206`. `21c536b`, the first commit fixing the review of the foundation, carried two of the reviewer's red tests by an `git add -A` that should have named its paths; one goes green in `578cdb8`, the other in `6abacf9`.
+**Context.** History on this branch is not rewritten, so what each commit fails stays in it, and this entry says which. `737f7ec`, the German specification, fails `test/architecture-translation.test.ts` until `9abde36` brings the English into step, as its own message says. `95890cb` through `512e0de` fail `pnpm knip` on two exported types of `src/core/keys/mac.ts` that nothing imported, until `9a8346f`. `b130ae3` fails `pnpm lint` on a line of `test/keys-cross-purpose.test.ts` until `b1dbb1a`, whose message calls the line a comment when it was the `SIGNING_PURPOSES` array. `512e0de` fails three cases of the concurrency and census tests until `f222206`. *Note added before merge: `9a8346f`, which fixed the knip finding, still carries those three failures and is the eighth; the heading's count was seven when written and is eight.* `21c536b`, the first commit fixing the review of the foundation, carried two of the reviewer's red tests by an `git add -A` that should have named its paths; one goes green in `578cdb8`, the other in `6abacf9`.
 **Rejected.** Squashing or amending, which CLAUDE.md §4 and the brief forbid.
 **Reason.** A bisect that lands on one of these commits should find the reason here rather than in a reviewer's report.
 **Price.** The branch's history cannot be bisected by the gate without this list.
@@ -15388,6 +15388,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A migration 4 or 5 for one column, for the same reason as in E-3092, and because 4 is the token branch's (E-3086).
 **Reason.** An unreleased migration is a draft, and a draft is edited.
 **Price.** Every database built from this branch's earlier migration 3, the parallel branches' test schemas included, refuses to start with `migration_checksum_changed` until it is recreated; the token and envelope branches must merge this commit before their gates run against a fresh schema.
+
+<a id="e-3109"></a>
+
+### The second review of the foundation is answered in a second range
+`E-3109` · security-state · process, settled
+
+**Context.** The second review of the foundation (4be78c6 … 6b8847b) reported three high, eight medium and seven low findings and six red tests. The foundation's range had one number left, E-3109, and the answers need about twenty. This entry uses that number to say where they are: the second range that begins at E-3190, reserved in the §6 table by `86c2f70`, as CLAUDE.md §6 prescribes for a feature that runs out.
+**Rejected.** Borrowing numbers from the four branch ranges, which §6 forbids.
+**Reason.** A second range is a new row and not a widening, so nothing already cited moves.
+**Price.** The foundation's decisions are split across two blocks that are a hundred numbers apart.
 
 <a id="e-3130"></a>
 
@@ -15488,3 +15498,173 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) The retry of E-3134, for the replay above. (b) Pinning the exhausting delete as well, which would leave a row standing that a writer just reset.
 **Reason.** What was checked is what may be counted; anything written since is a writer's or a concurrent attempt's, and neither may move the budget.
 **Price.** Two legitimate attempts on one pending state at the same time now cost the slower one its attempt: it answers `too_many_factor_attempts` and reports a refusal, though the row stays and the next attempt counts normally. The case of E-3134 that counted concurrent attempts once each is replaced by one that shows the slower count refused. E-3134's description of the retry is superseded by this entry.
+
+<a id="e-3190"></a>
+
+### The integrity probe requires HMAC with SHA-256 and a 32-byte MAC
+`E-3190` · security-state · keys, startup, settled
+
+**Context.** E-3093's probe asked only whether Web Crypto signs with the key. An HMAC key under SHA-1 or SHA-512 signs, passes the start, and then produces a 20- or 64-byte MAC the seal table refuses and every stored 32-byte MAC compares as a mismatch — every sealed account would read as broken. A reviewer's test showed both hashes passing. `hmacUnderIfUsable` in `src/core/keys/mac.ts` now requires `key.algorithm` to be HMAC with hash SHA-256 and the output to be 32 bytes, and answers `null` otherwise; `keyTakesMac` and `verifyMacUnderKeyVersion` (`"key_unusable"`) inherit that. The reviewer's cases are committed in `test/keys-integrity-key-shape.test.ts`.
+**Rejected.** Checking the output length alone, which a future hash of 32 bytes other than SHA-256 would pass.
+**Reason.** Section 3.18 promises HMAC-SHA256, and the table's length check is only the last of its consequences.
+**Price.** A provider that wraps its keys so that `algorithm` does not report the hash is refused even if it computes HMAC-SHA256 underneath.
+
+<a id="e-3191"></a>
+
+### The start probes the state-mac versions stored seals name
+`E-3191` · security-state · keys, startup, settled
+
+**Context.** The review found that only the current version of each integrity purpose was probed, so an older ring version answered with an unusable key passed the start and made every account sealed under it read as broken. A `KeyProvider` cannot list its ring, so "every version in the ring" cannot be walked; walking 1 … current would make a date-like version number cost millions of calls. `migrate()` now runs `assertStoredIntegrityKeysTakeMac` from the new `src/core/auth/integrity-key-ring.ts`, which reads every distinct `key_version` of `velve.security_state` and refuses the start with `keys_unusable` if the ring answers one with a key the probe of E-3190 rejects. A version the ring no longer holds is not a start error: refusing it would let a writer stop the service by inserting one seal row, so it stays the per-account broken state `key_version_unknown`. The reviewer's ring case is adapted to store a seal under the old version, since only a stored version is ever read.
+**Rejected.** (a) Walking every version from 1 to the current one, for the cost above. (b) Refusing the start on an unknown stored version, as the password ring check does (E-179), for the denial of service above.
+**Reason.** A ring version matters exactly when a stored value names it, and the database says which do.
+**Price.** The token MAC versions are not probed yet: their columns arrive with migration 4, and the token branch extends this query. The check adds one query to `migrate()`, and a process that never calls `migrate()` (E-3192) never runs it.
+
+<a id="e-3192"></a>
+
+### The integrity probes run only where migrate() runs
+`E-3192` · security-state · keys, startup, settled
+
+**Context.** E-3093's Price says the start check is what keeps an unusable integrity key from being reachable. The review found that overstated: `assertKeysAnswerForEveryPurpose` and, since E-3191, `assertStoredIntegrityKeysTakeMac` run inside `migrate()`, and a deployment where a separate job migrates the schema and the serving processes never call `migrate()` runs neither probe in the processes that serve. There an unusable key is met first by a request, where `verifyMacUnderKeyVersion` answers `"key_unusable"` and the account reads as broken, and `macUnderCurrentKey` throws the platform error. E-3093 is not edited; this entry corrects its Price, and the *Security state* chapter now says where the probes run.
+**Rejected.** Moving the probes into `createVelveAuth`, which is synchronous and cannot await Web Crypto; making it asynchronous changes the start of every application, which is not this review's to decide.
+**Reason.** E-3093 stated a guarantee the deployment shape decides, and the reader needs to know which shape.
+**Price.** The guarantee holds only for a process that calls `migrate()`, which the README's start sequence does and a split deployment does not.
+
+<a id="e-3193"></a>
+
+### A sealing transaction reads one snapshot taken by its lock statement
+`E-3193` · security-state · specification, S-INTEG-3, settled
+
+**Context.** The review showed that *Sealing* could ratify a writer's row. The account lock is `FOR NO KEY UPDATE`, chosen so that a foreign key's `FOR KEY SHARE` does not wait on it (E-1604), so a writer can insert a passkey for the account while a legitimate change holds the lock. Under `READ COMMITTED` the recomputation at the end of the change reads that passkey, and the new seal covers it. The reviewer's test showed the insert committing and the second read seeing it. The orchestrator decided the remedy: the sealing transaction runs at `REPEATABLE READ` with the snapshot taken by the lock statement, check and recomputation read that snapshot plus the transaction's own writes, and a serialization failure is retried a bounded number of times and then refused, never sealed from a re-read. Section 3.18 and S-INTEG-3 say so, with three retries as the bound; T-INTEG-3 inserts a foreign passkey during a change and expects the new seal not to contain it and the next check to refuse with `seal_mismatch`. The reviewer's case is replaced by `test/security-state-seal-snapshot.test.ts`, which holds the premise under both isolation levels; the case against the sealing code is the seal branch's, which has the code.
+**Rejected.** (a) `FOR UPDATE` on the account row, which blocks the writer's insert but is the mode E-1604 removed because it deadlocks with every foreign-key insert. (b) `SERIALIZABLE`, which adds predicate locks the change does not need; the snapshot alone decides what the seal covers.
+**Reason.** What the seal covers must be what the check read, and only a snapshot makes the two the same without locking the writer out.
+**Price.** A change that loses a serialization race is retried, and after three losses the user's change is refused. The writer's row is not prevented, only kept out of the seal, so the account reads as broken at the next check — which is the detection the seal exists for.
+
+<a id="e-3194"></a>
+
+### The attempt count is conditional on the value and the MAC the resolution verified
+`E-3194` · security-state · specification, S-INTEG-9, settled
+
+**Context.** E-3091 bound `attempts` into the pending token MAC and had every counted attempt rewrite the MAC. The review showed that this launders a writer's reset: the count is `UPDATE … SET attempts = attempts + 1 … RETURNING`, which continues from whatever the row holds when the update runs, and a MAC recomputed over what it returns makes the writer's value legitimate. The reviewer's test held the row, set `attempts` to 0 while a fifth failure waited on it, and the count answered one attempt, not exhausted. The orchestrator decided the remedy: the count is conditional on the `attempts` value and the `token_mac` the resolution verified, in the same transaction, and a miss is a missing row with the alarm. Section 3.18 point 3 says so, and T-INTEG-9 adds a reset made while a counted attempt waits on the row (12 altered rows). The reviewer's case is committed as `test/security-state-attempt-count.test.ts` with `it.fails`, expecting the miss; the token branch builds the conditional count, changes how the verified values reach `countFailedAttempt`, adapts the case and turns it into a plain one.
+**Rejected.** Recomputing the MAC over the stored value before the update, in a separate statement, which leaves the same window between the read and the update.
+**Reason.** A count that does not check what it counts from proves nothing about the row, and the condition in the `WHERE` is the same pattern S-RACE-2 uses for consumption.
+**Price.** A legitimate concurrent count on the same pending row now misses as well and ends the pending authentication with an alarm, where it used to count twice; two simultaneous wrong codes on one pending authentication are rare, and the alarm says so.
+
+<a id="e-3195"></a>
+
+### The administrator reseal sets the session epoch to the new version
+`E-3195` · security-state · specification, S-INTEG-7, settled
+
+**Context.** The review found that `maintenance.resealSecurityState` kept whatever `session_epoch` the row held. A writer who lowered the epoch and re-inserted a session row saved before a mass revocation breaks the seal, and the reseal that repairs the seal would then ratify the lowered epoch and bring the session back. The orchestrator decided the remedy: the reseal sets `session_epoch` to the new version. Every raise of the epoch is a resealing, so `session_epoch ≤ version` holds for every legitimate state, and the new version lies above every epoch the account had and above any a writer set lower. The reseal therefore signs the account out everywhere, which is intended after an incident. Section 3.18 *Resealing*, S-INTEG-7, T-INTEG-7 (a lowered epoch and a re-inserted session) and `SealedSecurityState`, which gains `sessionEpoch`, follow.
+**Rejected.** Keeping the stored epoch and raising it by one, which leaves a re-inserted row valid if the writer lowered the epoch by more than one.
+**Reason.** An administrator reseals after an incident, and after an incident no session of the account should survive.
+**Price.** A reseal ends every session of the account, the administrator's own included if they are its owner. The invariant holds only while every raise reseals, which the seal branch builds; a writer can store an epoch above the version, and the reseal lowers it to the new version, which still lies above every epoch a legitimate state reached.
+
+<a id="e-3196"></a>
+
+### The session-epoch placeholder is flipped by the seal branch, after the token branch
+`E-3196` · security-state · test, settled
+
+**Context.** `test/security-state-session-epoch.test.ts` (6b8847b) said the token branch turns its `it.fails` into a plain case. The review found that wrong: binding the epoch into the MAC is the token branch's, but raising the epoch is a resealing (E-3107), which is the seal branch's, and the placeholder's account has no seal row whose epoch anything could raise. E-3107's Context and the commit message of 6b8847b named only the token branch; neither is edited. Under the rule E-3197 states, an account without a seal row binds epoch 1 and a mass revocation on it first seals the account and then raises the epoch, so the case stays as written and turns green once both branches have landed. Its comment now names both and gives the flip to the seal branch, which merges after the token branch. The reviewer's three companion files are deleted: `review-foundation2-placeholder-epoch` and `review-foundation2-placeholder-attempts` were controls showing the two placeholders fail for the reasons they state, which was checked before deleting them, and `review-foundation2-epoch-owner` asserted that issuing a session creates a seal row, which E-3197 rules out for an unsealed account in mode `"migrating"`.
+**Rejected.** Sealing the account in the test before issuing the session, which needs the seal branch's code and would make the case fail on setup until then.
+**Reason.** A placeholder that names the wrong branch is flipped by nobody, or by a branch that cannot make it pass.
+**Price.** The case depends on two branches' order of merging.
+
+<a id="e-3197"></a>
+
+### An account without a seal row has epoch 1
+`E-3197` · security-state · specification, S-INTEG-9, settled
+
+**Context.** E-3107 put the epoch into the seal row and said nothing of an account that has none, which exists in mode `"migrating"` until the maintenance step or a first change seals it. The review asked what such a session binds and what a mass revocation on such an account raises. The orchestrator decided: a session of an account without a seal row binds epoch 1 and is checked against 1; a mass revocation on it first performs the first seal of E-3094 and then raises the epoch like any other; the first seal by the maintenance step keeps the epoch at 1 so that signed-in users keep working; the administrator reseal sets it to the new version (E-3195). Section 3.18 *The missing seal row* says so, and *The limits* name what is left: in `"migrating"`, a writer who deletes a seal row and lets the account be first-sealed again resets the epoch to 1 and gets every mass-revoked session back, until the mode is `"required"`.
+**Rejected.** Starting the maintenance step's first seal at a fresh epoch above 1, which would sign out every user of the estate during the upgrade.
+**Reason.** Epoch 1 is what every session issued before the upgrade was bound under, so it is the only value that keeps them working through the maintenance step.
+**Price.** The limit above, which adds to the one E-3083 already names for `"migrating"`.
+
+<a id="e-3198"></a>
+
+### A key that cannot take the MAC is a broken state with its own alarm reason
+`E-3198` · security-state · specification, S-INTEG-4, settled
+
+**Context.** E-3093 and E-3190 made `verifyMacUnderKeyVersion` answer `"key_unusable"` for a key of the stored version that is not HMAC-SHA256 or does not sign, and section 3.18 had no reason for it: the verdict had nowhere to go. The orchestrator decided it is a named broken state with its own alarm reason. *Checking* now lists it beside the unknown key version, S-INTEG-4 says "unknown or unusable key version", *The alarm* lists `key_unusable`, and the `reason` union of `SecurityStateAlarm` in A.8 gains it.
+**Rejected.** Folding it into `key_version_unknown`, which would send an operator looking for a lost ring version when the ring holds a key of the wrong kind.
+**Reason.** An alarm's reason is what the operator acts on, and the two causes have different remedies.
+**Price.** One more reason in a public union, which an exhaustive switch in an application's callback has to handle.
+
+<a id="e-3199"></a>
+
+### E-3107's reason is wrong without an anchor
+`E-3199` · security-state · specification, settled
+
+**Context.** E-3107 gave as its reason that "a counter the seal covers is the one thing a writer cannot roll back without breaking the seal". The review showed that false. A mass revocation changes only the epoch and the version of the seal row, so a writer who saved the seal row and a session row before it can put both back: the old seal row matches every unchanged component, the session's MAC matches the old epoch, and no check notices. The reason holds only with an anchor, whose floor the old row's version lies below. E-3107 is not edited, as CLAUDE.md §6 requires for a reason that was wrong when written; this entry corrects it. Section 3.18 *The limits* now say in both languages, in bold, that without an anchor the old seal row suffices to undo a mass revocation, and T-INTEG-9 plays the seal row back once without an anchor (accepted, the documented limit) and once with one (refused with `version_below_anchor`).
+**Rejected.** Nothing; the reason was wrong.
+**Reason.** The epoch is a counter in the database, and a writer can restore any database row they once read; only something outside the database, the anchor, makes a rollback detectable.
+**Price.** The epoch protects a mass revocation against a writer who did not save the seal row beforehand, or against any writer where an anchor is configured, and against nobody else.
+
+<a id="e-3200"></a>
+
+### The same-work promise holds for password sign-in and not for the token paths
+`E-3200` · security-state · specification, S-INTEG-5, settled
+
+**Context.** E-3096 promised that a broken-state refusal does the work of the ordinary failure on every path. The review found it unmeetable on the token paths: a session, pending or one-time token that names no row costs one lookup, and one that names a row of a broken account costs the lookup and the seal check, and there is no stand-in state for a token that matches nothing. The orchestrator decided to narrow the promise. S-INTEG-5 and section 3.18 *Outwards* now promise identical answers on every path and identical work only on password sign-in, where the stand-in state exists, and name the token paths as a limit with the reason: whoever can present a token whose row belongs to a broken account already is the writer or holds the token. T-INTEG-5's thresholds already measured timing on password sign-in only and stand.
+**Rejected.** A dummy seal check for an unknown token, which would cost every request with a stale cookie a full state read for nothing.
+**Reason.** The timing channel matters where it reveals something the caller did not know; a token holder learning that the account behind it is broken learns about their own account or their own write.
+**Price.** E-3096's promise is withdrawn for three paths, and a reader of E-3096 alone believes it still holds.
+
+<a id="e-3201"></a>
+
+### Every alarm reason and every sealed column has a case
+`E-3201` · security-state · specification, test plan, settled
+
+**Context.** The review held the T-INTEG cases against the alarm reasons and the seal row's own columns. T-INTEG-2 did not tamper with `session_epoch` or the seal row's `key_version`, nor insert a `password_reset_required` row, although each changes what the check reads; no case raised `key_version_unknown`, `anchor_unavailable`, `envelope_binding_mismatch` or the new `key_unusable`; and T-INTEG-1's copies failed without saying whether they alarm. T-INTEG-2 now detects twenty changes; T-INTEG-4 adds one account per remaining reason and expects four refusals with an alarm of that reason each; T-INTEG-1's six copies alarm with `envelope_binding_mismatch` each. With these, every value of the `reason` union except `suppressed`, which T-INTEG-5 covers, has a case that raises it.
+**Rejected.** A separate test case for the reasons, which would need a requirement of its own under section 6's naming and has none.
+**Reason.** An alarm reason nothing raises in a test is a branch nothing proves reachable.
+**Price.** T-INTEG-4 needs an anchor plugin and a key provider of its own, beside the accounts per path.
+
+<a id="e-3202"></a>
+
+### Issuing a session inserts only under the epoch it read, and a miss is no alarm
+`E-3202` · security-state · specification, S-INTEG-9, settled
+
+**Context.** The review found a race the epoch introduced: a sign-in reads the epoch, a `session.revokeAll` of the same account raises it and commits, and the sign-in inserts its session bound to the old epoch; the next request refuses that session as a binding mismatch and raises the alarm, although nobody tampered with anything. The orchestrator decided the remedy: issuing reads the epoch in the inserting transaction and inserts conditionally (`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $2`, against epoch 1 for an unsealed account in `"migrating"`), and a miss retries once with the fresh epoch and never alarms. Section 3.18 point 3 says so, and T-INTEG-3 races 50 sign-ins against `session.revokeAll` with no alarm and every surviving session resolving. The token branch builds it.
+**Rejected.** Taking the account lock for every session issue, which would serialise sign-ins behind every change of the account.
+**Reason.** A false alarm teaches an operator to ignore the alarm, which is worse than the race it reports.
+**Price.** A sign-in that loses the race twice in a row — two mass revocations during one sign-in — fails, which this entry accepts without having measured how often it happens.
+
+<a id="e-3203"></a>
+
+### One counter per process carries every undelivered alarm
+`E-3203` · security-state · specification, S-INTEG-5, settled
+
+**Context.** E-3097 had every undelivered alarm counted and also had an evicted deduplication key pass "what it had counted" into the count, which reads as two counters and leaves open whether an alarm held back by a key is counted at once or at eviction. The review asked for one model. Section 3.18 *The alarm* now states it: one counter per process, raised at the moment any alarm is held back, by a key's deduplication or by the bound of 100; the next delivered alarm, the aggregate included, carries its value in `suppressed` and resets it to 0. An evicted key therefore loses nothing but its deduplication, because its alarms are already in the counter. The orchestrator's wording — evicted per-key counts added to the global counter — describes a model with per-key counts; with the count raised at once there is nothing to add, and the result is the same total.
+**Rejected.** Per-key counts folded in at eviction, which needs a second counter and can report an alarm minutes after it was held back.
+**Reason.** One counter raised at once cannot lose or double-count an alarm, whatever the table does.
+**Price.** `suppressed` does not say which accounts or reasons the held-back alarms were for.
+
+<a id="e-3204"></a>
+
+### The first byte tells the bound form apart in one direction only
+`E-3204` · security-state · specification, S-INTEG-1, settled
+
+**Context.** Section 3.18 point 2 said the bound envelope form can be told apart from the old one by its first byte. The branch that builds the bound envelopes reported that this holds one way only: the bound form begins with `0x02`, an old-form value begins with a random nonce byte, and one old value in 256 begins with `0x02` too. That branch opens a `0x02` value as bound first, which an old value passes only with a forged 128-bit GCM tag, and falls back to the old form where it is readable for that owner; in mode `"required"` such an old value is therefore refused as `authentication_failed` rather than `envelope_unbound`. The orchestrator asked for the sentence to say exactly that, and point 2 now does in both languages. The decision on the fallback and the error codes is that branch's, recorded in its own range; this entry only records that the specification follows it.
+**Rejected.** A marker longer than one byte, which shrinks the ambiguity without removing it and is that branch's decision, not this one's.
+**Reason.** The specification stated a property the format does not have.
+**Price.** One old-form value in 256 is refused in `"required"` under a code that says the value does not authenticate rather than that it is unbound, which an operator reading the code may misread.
+
+<a id="e-3205"></a>
+
+### The consume statement of section 3.7 returns the token MAC
+`E-3205` · security-state · specification, S-REPLAY-2, S-INTEG-9, settled
+
+**Context.** Section 3.7 and S-REPLAY-2 fix the one-time token's consume statement as `DELETE … RETURNING user_id, payload`. The token branch reported that S-INTEG-9 needs the row's MAC and its key version back from the same statement — a second read after the delete would find nothing — and that its code and `test/token-static-scan.test.ts` already return `token_mac, token_mac_key_version`. The SQL block of 3.7 and S-REPLAY-2 now return both. Since a returned row can now be invalid, 3.7 says a result whose MAC matches is valid and one with a wrong MAC is answered like none, and S-REPLAY-2 says the empty result set is the statement's only invalidity signal and a row with a wrong MAC is answered like it.
+**Rejected.** Verifying the MAC before the delete in a separate `SELECT`, which S-RACE-2 forbids: no read may precede the consumption.
+**Reason.** The consuming statement is the only place the row exists for the redemption, so it has to return everything the check needs.
+**Price.** A forged row is consumed by the attempt that discovers it, which removes the writer's evidence from the table; the alarm is the record.
+
+<a id="e-3206"></a>
+
+### The limits say plainly that an unsealed account is not bound in migrating mode
+`E-3206` · security-state · specification, S-INTEG-1, settled
+
+**Context.** The branches reported a limit section 3.18 implied and did not state: in mode `"migrating"` an account without a seal row has no binding at all, because its old-form envelopes carry no owner and no seal covers its factors, so a writer can copy an old-form ciphertext — their own password, for instance — into an unsealed victim account and sign in as the victim. E-3083 named the mode's weaker cousin, deleting a seal row; this one needs no deletion. *The limits* now say it in bold in both languages, that it ends for each account at its first seal and for all at `"required"`, and recommend running the maintenance step immediately after the upgrade and then switching to `"required"`.
+**Rejected.** Refusing old-form envelopes in `"migrating"` for accounts that already have a session, which a writer controls as well.
+**Reason.** The upgrade window is the weakest the design has, and an operator who does not know that keeps it open longer than needed.
+**Price.** None beyond the sentence; the exposure itself is E-3083's.

@@ -570,6 +570,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3130 … E-3149 | outside the waves · `security-state-tokens` — session, one-time and pending tokens stored with a keyed hash bound to owner and purpose (S-INTEG-9). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
 | E-3150 … E-3169 | outside the waves · `security-state-seal` — the seal over every sign-in method, its reseal on every change and its verification before use (S-INTEG-2 to S-INTEG-6). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
 | E-3170 … E-3189 | outside the waves · `security-state-administration` — the maintenance step that seals existing accounts and the administrator reseal (S-INTEG-7, S-INTEG-8). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
+| E-3190 … E-3219 | outside the waves · `security-state`, second range — the foundation's answers to its second review. Its first range, E-3080 … E-3109, was used up to E-3108 when the second review arrived; counted over the rows standing at 6b8847b |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not

@@ -27,8 +27,8 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	oauth_flow: "src/core/oauth/flow-repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
 	password_reset_required: "no repository: no module of the library reads or writes it",
-	//the session repository reads and raises the session epoch, and the seal branch adds the seal (E-3138)
-	security_state: "src/core/db/repositories/session.ts",
+	//the session repository reads the session epoch, the start probes key versions (E-3138, E-3191)
+	security_state: "src/core/db/repositories/session.ts, src/core/auth/integrity-key-ring.ts",
 };
 
 const NO_REPOSITORY = "no repository:";
@@ -135,6 +135,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/auth/maintenance.ts#sweepExpiredRows": "maintenance or start-up",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown": "maintenance or start-up",
+	"src/core/auth/integrity-key-ring.ts#assertStoredIntegrityKeysTakeMac": "maintenance or start-up",
 	"src/core/db/cascade-guard.ts#assertEveryUserReferenceCascades": "maintenance or start-up",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.listSessionsOfUser":
