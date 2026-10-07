@@ -15328,3 +15328,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Having the reseal refuse rows it cannot vouch for, which the library cannot do: it has no record of which rows were legitimate other than the seal that is broken. (b) Returning only counts, which do not let an administrator recognise a foreign credential.
 **Reason.** The library cannot tell a legitimate row from an inserted one once the seal is broken, so the decision is the administrator's, and it can only be made on what the call shows.
 **Price.** The result carries identifiers — credential ids, provider subjects, the address — that the application may log, where the library itself logs none of them. `SealedSecurityState` lists the recovery codes only by number, so an inserted code is visible only as a count that does not match.
+
+<a id="e-3103"></a>
+
+### T-KEY-3 counts the seal and the three token MACs
+`E-3103` · security-state · specification, test plan, settled
+
+**Context.** The specification commit widened S-KEY-3 to `security_state.key_version` and `token_mac_key_version` in `session`, `one_time_token` and `pending_authentication`, and left T-KEY-3 at five values, so the requirement named four versioned values its test case never reads. T-KEY-3 now creates the seal and a token MAC of each of the three kinds beside the five values it had, and its threshold is nine of nine. The four new values are written by the seal and token branches; until they merge no code produces them, and the case grows with them.
+**Rejected.** Leaving T-KEY-3 alone and relying on T-INTEG-3 and T-INTEG-9, which test the seal and the MACs but not that their stored version is the current one.
+**Reason.** A requirement and its test case are kept in step in the specification itself; section 6 says every requirement has a case meeting its threshold.
+**Price.** None beyond four more reads in an existing case.
