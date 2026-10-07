@@ -3,6 +3,7 @@ import type { StoredTokenMac } from "../../token/binding.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
+import { lockAccountRow } from "../lock.js";
 
 //an account without a seal row, which only "migrating" serves, is at the first epoch
 const FIRST_SESSION_EPOCH = 1;
@@ -47,15 +48,6 @@ export interface SessionInsert {
 	readonly absoluteTimeoutMs: number;
 	/** takes the token MAC over the session epoch the inserting statement's transaction reads */
 	bindUnderEpoch(sessionEpoch: number): Promise<StoredTokenMac>;
-}
-
-export class SessionEpochMovedError extends Error {
-	readonly code = "session_epoch_moved";
-
-	constructor() {
-		super("the session epoch moved twice while a session was being issued");
-		this.name = "SessionEpochMovedError";
-	}
 }
 
 export interface SessionWithOwner {
@@ -402,13 +394,23 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row;
 	}
 
-	//an epoch raised between the read and the insert is read once more and never alarms (E-3138)
-	async function insertSession(driver: Driver, insert: SessionInsert): Promise<Session> {
-		const row =
-			(await insertUnderCurrentEpoch(driver, insert)) ??
-			(await insertUnderCurrentEpoch(driver, insert));
+	//an issue waits on the lock a mass revocation holds and reads the epoch it leaves (E-3141)
+	function issuing<T>(
+		driver: Driver,
+		userId: string,
+		work: (tx: Driver) => Promise<T>,
+	): Promise<T> {
+		return driver.transaction(async (tx) => {
+			await lockAccountRow(tx, options.schema, userId);
+			return work(tx);
+		});
+	}
+
+	//under the account lock the epoch cannot move and the condition is a second guard (E-3141)
+	async function insertUnderAccountLock(tx: Driver, insert: SessionInsert): Promise<Session> {
+		const row = await insertUnderCurrentEpoch(tx, insert);
 		if (row === undefined) {
-			throw new SessionEpochMovedError();
+			throw new TypeError("the insert of a session returned no row");
 		}
 		return toSession(row, NOT_LISTED);
 	}
@@ -429,7 +431,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	}
 
 	return {
-		insertSession: (insert) => insertSession(options.driver, insert),
+		insertSession: (insert) =>
+			issuing(options.driver, insert.userId, (tx) => insertUnderAccountLock(tx, insert)),
 
 		async findSessionByTokenHash(tokenHash) {
 			const [row] = await options.driver.query<OwnedRowShape>(resolveSql, [tokenHash]);
@@ -503,7 +506,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 
 		//the new row and the removal of the old one are one transaction, never an update (S-FIX-1)
 		replaceSession({ previousTokenHash, insert }) {
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, insert.userId, async (tx) => {
 				const removed = await deleteSessionByTokenHash(tx, previousTokenHash);
 				//without the removal the caller would end up with two live sessions (E-239)
 				if (removed === null) {
@@ -512,17 +515,17 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				if (removed.userId !== insert.userId) {
 					throw new SessionOwnerMismatchError();
 				}
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 
 		//a sign-in removes the presented row in the transaction that inserts its successor (S-FIX-1)
 		replacePresentedSession({ presentedTokenHash, insert }) {
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, insert.userId, async (tx) => {
 				if (presentedTokenHash !== null) {
 					await deleteSessionByTokenHash(tx, presentedTokenHash);
 				}
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 
@@ -531,13 +534,13 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();
 			}
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, actor, async (tx) => {
 				const removed = await tx.query(deleteLiveOwnedSql, [previousSessionId, actor]);
 				//the count is checked here as only here can the insert still be undone (E-961)
 				if (removed.length === 0) {
 					throw new PreviousSessionMissingError();
 				}
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 
@@ -546,9 +549,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();
 			}
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, actor, async (tx) => {
 				await tx.query(deleteEveryOwnedSql, [actor]);
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 	};

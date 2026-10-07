@@ -1,9 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-	createSessionRepository,
-	SessionEpochMovedError,
-} from "../src/core/db/repositories/session.js";
+import { createSessionRepository } from "../src/core/db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -19,7 +16,6 @@ import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import {
-	bindToken,
 	canonicalPayloadOf,
 	encodeTokenBinding,
 	type TokenBinding,
@@ -618,37 +614,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		expect(stored?.version).toBe(1);
 	});
 
-	it("inserts only under the epoch it bound, and reads it once more when it moved", async () => {
-		const userId = await sealedAccount();
-		const repository = createSessionRepository({ driver: migrated.connection, schema });
-		const boundEpochs: number[] = [];
-		const token = chosenToken();
-
-		const inserted = await repository.insertSession(
-			sessionInsertFor(userId, {
-				tokenHash: sha256Of(token),
-				bindUnderEpoch: async (sessionEpoch) => {
-					boundEpochs.push(sessionEpoch);
-					if (boundEpochs.length === 1) {
-						await raiseEpochOf(userId);
-					}
-					return bindToken(keys, {
-						purpose: "session",
-						ownerId: userId,
-						tokenSha256: sha256Of(token),
-						content: { factors: ["password"], sessionEpoch },
-					});
-				},
-			}),
-		);
-		refusals = [];
-
-		expect(boundEpochs).toStrictEqual([1, 2]);
-		expect((await sessions.resolve(token))?.session.id).toBe(inserted.id);
-		expect(refusals).toStrictEqual([]);
-	});
-
-	it("gives up after the epoch moved a second time, and writes no row", async () => {
+	it("writes no row when the epoch it bound moved before the insert", async () => {
 		const userId = await sealedAccount();
 		const repository = createSessionRepository({ driver: migrated.connection, schema });
 		const token = chosenToken();
@@ -663,7 +629,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 					},
 				}),
 			),
-		).rejects.toThrow(SessionEpochMovedError);
+		).rejects.toThrow(TypeError);
 		const [row] = await migrated.connection.query<{ present: number }>(
 			`SELECT count(*)::int AS present FROM ${schema}.session WHERE user_id = $1`,
 			[userId],

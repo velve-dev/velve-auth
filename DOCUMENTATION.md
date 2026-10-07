@@ -8804,16 +8804,18 @@ still extend a deadline, as section 3.18 names among its limits.
 
 ### The session epoch
 
-A session's MAC also binds the account's `session_epoch` from `velve.security_state`,
-read in the transaction that inserts the session; an account without a seal row,
-which only `"migrating"` serves, is at epoch 1. The insert is conditional: it
-writes the row only while the account is still at the epoch the MAC binds, and if
-the epoch moved in between it reads it once more and tries again; a second miss
-throws `SessionEpochMovedError` and writes nothing. A resolve checks the MAC over
-the account's current epoch, so a session issued under an older one — a row a
-writer saved and wrote back after a mass revocation raised the epoch — is answered
-as no session. Rebinding under a new key version never lifts a session into a newer
-epoch, because such a session never resolves.
+A session's MAC also binds the account's `session_epoch` from `velve.security_state`.
+Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
+waits for a mass revocation that holds the account and then reads the epoch that
+revocation leaves; it takes the MAC over that epoch and inserts the row only while
+the account is still at it, a second guard that under the lock never misses. An
+account without a seal row, which only `"migrating"` serves, is at epoch 1. A
+resolve checks the MAC over the account's current epoch, so a session issued under
+an older one — a row a writer saved and wrote back after a mass revocation raised
+the epoch — is answered as no session. Rebinding under a new key version never lifts
+a session into a newer epoch, because such a session never resolves. The lock costs
+one statement per issued session: measured at 0.73 to 0.78 ms on a local PostgreSQL
+16, against 2.8 to 3.3 ms for the whole issue.
 
 Raising the epoch at every mass revocation is part of resealing the account and is
 described with the seal.

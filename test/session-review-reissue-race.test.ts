@@ -120,8 +120,15 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 			observed: NOWHERE,
 		});
 
-		//the select reads the session epoch the new row's MAC binds (S-INTEG-9)
-		expect(traced.log).toEqual(["BEGIN", "tx DELETE", "tx SELECT", "tx INSERT", "COMMIT"]);
+		//the account lock comes first and the select before the insert reads the epoch (S-INTEG-9, E-3141)
+		expect(traced.log).toEqual([
+			"BEGIN",
+			"tx SELECT",
+			"tx DELETE",
+			"tx SELECT",
+			"tx INSERT",
+			"COMMIT",
+		]);
 	});
 
 	it("does the same when every other session goes with it", async () => {
@@ -138,8 +145,15 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 			observed: NOWHERE,
 		});
 
-		//the select reads the session epoch the new row's MAC binds (S-INTEG-9)
-		expect(traced.log).toEqual(["BEGIN", "tx DELETE", "tx SELECT", "tx INSERT", "COMMIT"]);
+		//the account lock comes first and the select before the insert reads the epoch (S-INTEG-9, E-3141)
+		expect(traced.log).toEqual([
+			"BEGIN",
+			"tx SELECT",
+			"tx DELETE",
+			"tx SELECT",
+			"tx INSERT",
+			"COMMIT",
+		]);
 	});
 
 	it("leaves the previous row in place when the insert fails halfway", async () => {

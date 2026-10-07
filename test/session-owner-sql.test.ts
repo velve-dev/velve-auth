@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createSessionRepository } from "../src/core/db/repositories/session.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { reassignsSessionOwner } from "../tools/session-owner-update.mjs";
@@ -64,9 +65,17 @@ function assignedColumns(sql: string): string {
 	return /\bSET\b([\s\S]*?)\bWHERE\b/i.exec(sql)?.[1] ?? "";
 }
 
-/** An insert reads the account's session epoch first (S-INTEG-9), from its seal row and not a session. */
+/**
+ * Issuing a session locks the account and reads its session epoch first (S-INTEG-9, E-3141); those
+ * statements name the account and its seal row, not a session.
+ */
+const ACCOUNT_LOCK = lockAccountRowStatement(SCHEMA);
+
 function readsTheEpochAlone(sql: string): boolean {
-	return sql.includes(`${SCHEMA}.security_state`) && !sql.includes(`${SCHEMA}.session`);
+	return (
+		sql === ACCOUNT_LOCK ||
+		(sql.includes(`${SCHEMA}.security_state`) && !sql.includes(`${SCHEMA}.session`))
+	);
 }
 
 describe("the statements this repository actually runs (S-FIX-2, E-23)", () => {
@@ -89,7 +98,9 @@ describe("the statements this repository actually runs (S-FIX-2, E-23)", () => {
 	});
 
 	it("gives every row-changing statement an owner predicate or a declared reason", async () => {
-		const changing = (await statementsAsTheyRun()).filter((sql) => CHANGES_ROWS.test(sql));
+		const changing = (await statementsAsTheyRun())
+			.filter((sql) => sql !== ACCOUNT_LOCK)
+			.filter((sql) => CHANGES_ROWS.test(sql));
 		const unscoped = changing
 			.filter((sql) => !DECLARES_NO_ACTOR.test(sql))
 			.filter((sql) => {
