@@ -8847,7 +8847,14 @@ A session's MAC also binds the account's `session_epoch` from `velve.security_st
 Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
 waits for a mass revocation that holds the account and then reads the epoch that
 revocation leaves; it takes the MAC over that epoch and inserts the row only while
-the account is still at it, a second guard that under the lock never misses.
+the account is still at it. For an account with a seal row the insert is
+`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $10`;
+for one read without a seal row, only in `"migrating"` and only at epoch 1, it is
+`… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. The lock
+does not hold off a writer who changes `velve.security_state` directly, so an
+insert that writes nothing is a broken state: the issue is answered as no session
+(`session_required`), the refusal report receives `reason: "seal_mismatch"` with
+the occasion `sign_in`, and nothing is retried.
 Because the issue now takes the account row, a flow that mints a one-time token
 and issues a session in one transaction mints first: sign-up writes its
 verification token before it issues the session, so `velve.one_time_token` still
@@ -8907,9 +8914,9 @@ the rollback of the transaction that would have issued the session.
 | Field | Value |
 |---|---|
 | `userId` | the account the refused row names |
-| `occasion` | `session_resolve`, `factor_check` or `token_redemption` |
-| `reason` | always `token_binding_mismatch` |
-| `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with |
+| `occasion` | `sign_in` for a session insert that wrote nothing, `session_resolve`, `factor_check`, `token_redemption`, or `maintenance` for the rebinding pass |
+| `reason` | `token_binding_mismatch` for a row whose MAC does not match, or `seal_mismatch` for a state around a genuine row that is not what the library left |
+| `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |
 
 and nothing else: no token, no hash, no MAC. Whatever the report throws is
 swallowed, so it cannot change the refusal. The instance does not pass one yet;

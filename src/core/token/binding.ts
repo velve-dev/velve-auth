@@ -27,6 +27,7 @@ export interface StoredTokenMac {
 
 /** the place a refused token row was presented at */
 export type TokenBindingOccasion =
+	| "sign_in"
 	| "session_resolve"
 	| "factor_check"
 	| "token_redemption"
@@ -36,7 +37,8 @@ export type TokenBindingOccasion =
 export interface TokenBindingRefusal {
 	readonly userId: string;
 	readonly occasion: TokenBindingOccasion;
-	readonly reason: "token_binding_mismatch";
+	/** seal_mismatch where the row was the library's but the account's state around it was not */
+	readonly reason: "token_binding_mismatch" | "seal_mismatch";
 	readonly verdict: "mismatch" | "key_version_unknown" | "key_unusable";
 }
 
@@ -219,13 +221,27 @@ export async function reboundTokenMacIfStale(
 }
 
 //an alarm that throws must not turn a refusal into a different answer (S-INTEG-5)
+function reportSwallowingFailure(
+	report: TokenBindingRefusalReport | undefined,
+	refusal: TokenBindingRefusal,
+): void {
+	try {
+		report?.(refusal);
+	} catch {
+		return;
+	}
+}
+
 export function reportRefusedTokenRow(
 	report: TokenBindingRefusalReport | undefined,
 	refusal: Omit<TokenBindingRefusal, "reason">,
 ): void {
-	try {
-		report?.({ ...refusal, reason: "token_binding_mismatch" });
-	} catch {
-		return;
-	}
+	reportSwallowingFailure(report, { ...refusal, reason: "token_binding_mismatch" });
+}
+
+export function reportBrokenState(
+	report: TokenBindingRefusalReport | undefined,
+	refusal: Omit<TokenBindingRefusal, "verdict">,
+): void {
+	reportSwallowingFailure(report, { ...refusal, verdict: "mismatch" });
 }

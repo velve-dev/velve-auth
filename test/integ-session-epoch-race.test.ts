@@ -129,3 +129,75 @@ describe("a sign-in racing a mass revocation (section 3.18 point 3, T-INTEG-3)",
 		expect(refusals).toStrictEqual([]);
 	});
 });
+
+//the writer acts on its own connection right after the issue has read the epoch it will bind
+function writingAfterTheEpochRead(inner: Driver, write: () => Promise<unknown>): Driver {
+	return {
+		query: async (sql, params) => {
+			const rows = await inner.query(sql, params);
+			if (/^\s*SELECT\b.*\bsession_epoch\b.*\.security_state\b/s.test(sql) && !sql.includes("token_sha256")) {
+				await write();
+			}
+			return rows;
+		},
+		transaction: (work) => inner.transaction((tx) => work(writingAfterTheEpochRead(tx, write))),
+	};
+}
+
+describe("a writer who changes the account's state between the epoch read and the insert (section 3.18 point 3)", () => {
+	async function issueAround(userId: string, write: () => Promise<unknown>) {
+		refusals = [];
+		const racing = createSessionService({
+			sealing: "migrating",
+			driver: writingAfterTheEpochRead(migrated.connection, write),
+			keys: testKeyRing(1).providerAt(1),
+			schema,
+			reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
+		});
+		return racing
+			.issue({ userId, factors: ["password"], observed: NO_REQUEST })
+			.then(() => "issued")
+			.catch((failure: unknown) => failure);
+	}
+
+	async function sessionsOf(userId: string): Promise<number> {
+		const [row] = await revoker.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM ${schema}.session WHERE user_id = $1`,
+			[userId],
+		);
+		return row?.n ?? -1;
+	}
+
+	it("gets no session when the epoch rose, and raises seal_mismatch once", async () => {
+		const userId = await sealedAccount();
+
+		const outcome = await issueAround(userId, () =>
+			revoker.query(
+				`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1 WHERE user_id = $1`,
+				[userId],
+			),
+		);
+
+		expect(outcome).toMatchObject({ reason: "session_not_found" });
+		expect(await sessionsOf(userId)).toBe(0);
+		expect(refusals).toStrictEqual([
+			{ userId, occasion: "sign_in", reason: "seal_mismatch", verdict: "mismatch" },
+		]);
+	});
+
+	it("gets no session when a seal row appeared for an account read without one", async () => {
+		const userId = await createUser(migrated.connection, schema);
+
+		const outcome = await issueAround(userId, () =>
+			revoker.query(
+				`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
+				 VALUES ($1, 1, $2, 1)`,
+				[userId, randomBytes(32)],
+			),
+		);
+
+		expect(outcome).toMatchObject({ reason: "session_not_found" });
+		expect(await sessionsOf(userId)).toBe(0);
+		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["seal_mismatch"]);
+	});
+});

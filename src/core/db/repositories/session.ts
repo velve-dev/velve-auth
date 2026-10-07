@@ -2,7 +2,11 @@ import type { AuthenticationFactor, Session } from "../../http/caller.js";
 import { ConcealedError } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import { isLibrarySessionRow } from "../../session/binding.js";
-import type { StoredTokenMac, TokenBindingRefusalReport } from "../../token/binding.js";
+import {
+	reportBrokenState,
+	type StoredTokenMac,
+	type TokenBindingRefusalReport,
+} from "../../token/binding.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
@@ -16,10 +20,6 @@ const FIRST_SESSION_EPOCH = 1;
 
 export function epochOf(storedEpoch: string, sealing: SecurityStateSealing): string {
 	return sealing === "migrating" ? `COALESCE(${storedEpoch}, ${FIRST_SESSION_EPOCH})` : storedEpoch;
-}
-
-function epochOfAccount(states: string, sealing: SecurityStateSealing): string {
-	return epochOf(`(SELECT session_epoch FROM ${states} WHERE user_id = $1)`, sealing);
 }
 
 const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
@@ -83,6 +83,11 @@ export interface SessionCandidate extends StoredTokenMac {
 export interface SessionOwner {
 	readonly userId: string;
 	readonly libraryRow: boolean;
+}
+
+interface IssuingEpoch {
+	readonly epoch: number;
+	readonly sealed: boolean;
 }
 
 export interface RemovedSession {
@@ -268,14 +273,25 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 	};
 }
 
+const INSERTED_VALUES = `$1, $2, now() + make_interval(secs => $3::double precision),
+		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9`;
+
+const INSERTED_COLUMNS = `(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip,
+		user_agent, token_mac, token_mac_key_version)`;
+
 //a session must be written only while the account is at the epoch its mac binds (S-INTEG-9)
-function insertStatement(table: string, states: string, sealing: SecurityStateSealing): string {
-	return `INSERT INTO ${table}
-		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent,
-			token_mac, token_mac_key_version)
-	SELECT $1, $2, now() + make_interval(secs => $3::double precision),
-		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9
-	WHERE ${epochOfAccount(states, sealing)} = $10::bigint
+function sealedInsertStatement(table: string, states: string): string {
+	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
+	SELECT ${INSERTED_VALUES}
+	FROM ${states} WHERE user_id = $1 AND session_epoch = $10::bigint
+	RETURNING ${SELECTED_COLUMNS}`;
+}
+
+//an account read without a seal row is issued at the first epoch only while it still has none (E-3142)
+function unsealedInsertStatement(table: string, states: string): string {
+	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
+	SELECT ${INSERTED_VALUES}
+	WHERE NOT EXISTS (SELECT 1 FROM ${states} WHERE user_id = $1)
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
@@ -334,15 +350,12 @@ function deleteLiveOwnedStatement(table: string, users: string): string {
 	RETURNING s.id`;
 }
 
-function currentEpochStatement(states: string, sealing: SecurityStateSealing): string {
-	return `SELECT ${epochOfAccount(states, sealing)}::text AS session_epoch`;
+function sealedEpochStatement(states: string): string {
+	return `SELECT session_epoch::text AS session_epoch FROM ${states} WHERE user_id = $1`;
 }
 
-//a bigint arrives as text and must be an exact epoch before it is used
-function toEpoch(value: string | null): number | null {
-	if (value === null) {
-		return null;
-	}
+//an epoch must be an exact integer before a mac binds it (S-INTEG-9)
+function epochFrom(value: string): number {
 	const epoch = Number(value);
 	if (!Number.isSafeInteger(epoch) || epoch < FIRST_SESSION_EPOCH) {
 		throw new TypeError("velve.security_state.session_epoch holds no epoch this library writes");
@@ -350,7 +363,10 @@ function toEpoch(value: string | null): number | null {
 	return epoch;
 }
 
-//a revocation counts and announces only rows the library wrote (S-INTEG-9)
+function toEpoch(value: string | null): number | null {
+	return value === null ? null : epochFrom(value);
+}
+
 function deleteEveryOwnedStatement(
 	table: string,
 	states: string,
@@ -433,9 +449,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const users = qualifiedTableName(options.schema, "user");
 	const states = qualifiedTableName(options.schema, "security_state");
 	const sealing = options.sealing ?? "required";
-	const insertSql = insertStatement(table, states, sealing);
+	const sealedInsertSql = sealedInsertStatement(table, states);
+	const unsealedInsertSql = unsealedInsertStatement(table, states);
 	const resolveSql = resolveStatement(table, users, states, sealing);
-	const currentEpochSql = currentEpochStatement(states, sealing);
+	const sealedEpochSql = sealedEpochStatement(states);
 	const extendSql = extendIdleDeadlineStatement(table);
 	const rebindSql = rebindStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
@@ -472,27 +489,27 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return libraryRowsAmong(await options.driver.query<ListedRowShape>(statement, [userId]));
 	}
 
-	async function currentEpochOf(driver: Driver, userId: string): Promise<number | null> {
-		const [row] = await driver.query<{ session_epoch: string | null }>(currentEpochSql, [userId]);
-		return toEpoch(row?.session_epoch ?? null);
+	async function issuingEpochOf(driver: Driver, userId: string): Promise<IssuingEpoch | null> {
+		const [row] = await driver.query<{ session_epoch: string }>(sealedEpochSql, [userId]);
+		if (row !== undefined) {
+			return { epoch: epochFrom(row.session_epoch), sealed: true };
+		}
+		return sealing === "migrating" ? { epoch: FIRST_SESSION_EPOCH, sealed: false } : null;
 	}
 
 	async function insertUnderCurrentEpoch(
 		driver: Driver,
 		insert: SessionInsert,
 	): Promise<SessionRowShape | undefined> {
-		const epoch = await currentEpochOf(driver, insert.userId);
-		//an account without an epoch has no seal row in "required" and gets no session (S-INTEG-4)
-		if (epoch === null) {
+		const issuing = await issuingEpochOf(driver, insert.userId);
+		if (issuing === null) {
 			throw new ConcealedError("session_not_found");
 		}
-		const mac = await insert.bindUnderEpoch(epoch);
-		const [row] = await driver.query<SessionRowShape>(insertSql, [
-			...insertParameters(insert),
-			mac.tokenMac,
-			mac.tokenMacKeyVersion,
-			epoch,
-		]);
+		const mac = await insert.bindUnderEpoch(issuing.epoch);
+		const parameters = [...insertParameters(insert), mac.tokenMac, mac.tokenMacKeyVersion];
+		const [row] = issuing.sealed
+			? await driver.query<SessionRowShape>(sealedInsertSql, [...parameters, issuing.epoch])
+			: await driver.query<SessionRowShape>(unsealedInsertSql, parameters);
 		return row;
 	}
 
@@ -508,11 +525,16 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		});
 	}
 
-	//under the account lock the epoch cannot move and the condition is a second guard (E-3141)
+	//a writer who moved the epoch past the lock leaves a broken state that is not retried (E-3256)
 	async function insertUnderAccountLock(tx: Driver, insert: SessionInsert): Promise<Session> {
 		const row = await insertUnderCurrentEpoch(tx, insert);
 		if (row === undefined) {
-			throw new TypeError("the insert of a session returned no row");
+			reportBrokenState(options.reportTokenBindingRefusal, {
+				userId: insert.userId,
+				occasion: "sign_in",
+				reason: "seal_mismatch",
+			});
+			throw new ConcealedError("session_not_found");
 		}
 		return toSession(row, NOT_LISTED);
 	}
