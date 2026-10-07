@@ -15588,3 +15588,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) A row lock around every attempt, which serialises the guesses but needs `FOR UPDATE` on a token row, a mode §7 bars. (b) Counting after evaluating, which lets every concurrent guess be evaluated before any is counted.
 **Reason.** Only a booking that happens before the evaluation bounds how many codes can be evaluated, and only a re-read can tell a racing legitimate attempt from a writer.
 **Price.** An attempt that loses the race re-reads and books again, so under load a guess costs up to five round trips. A writer who saved the fresh row still gets five guesses per playback.
+
+<a id="e-3209"></a>
+
+### A sealing change's snapshot is taken by its first statement, which may be a consumption
+`E-3209` · security-state · specification, S-INTEG-3, settled
+
+**Context.** E-3193 had the lock statement take the sealing transaction's snapshot "as its first statement". The third review pointed out that this cannot be built for the changes §7 and E-1616 make consume first: a password reset, an address confirmation or change, a second factor or an OAuth sign-in consumes its row before it reaches the account lock, and the reviewer's source scan showed `redeemReset` consuming before `replacePassword`. The orchestrator restated the rule: the snapshot is taken by the transaction's first statement, the consumption where §7 puts one first and the lock otherwise; check and recomputation read that snapshot and the transaction's own writes; a retry runs the whole transaction again, consumption included, which is safe because a rolled-back consumption did not remove its row. Section 3.18 and S-INTEG-3 now say so. `test/security-state-snapshot-order.test.ts` holds the order the rule now permits.
+**Rejected.** Taking the lock before the consumption, which reverses the order §7 fixes and reopens the deadlock E-1616 closed.
+**Reason.** A snapshot from an earlier statement of the same transaction is still one snapshot; what the seal needs is that check and recomputation read the same one.
+**Price.** The snapshot is a few statements older than the lock, so a writer's row committed between the consumption and the lock is excluded from the seal too, which is the intended effect, and the next check sees it.
