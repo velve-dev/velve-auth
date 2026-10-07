@@ -2,7 +2,7 @@ import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import type { KeyProvider } from "../keys/index.js";
 import { keyTakesMac } from "../keys/mac.js";
-import { VelveStartupError } from "./startup.js";
+import { storedIntegrityKeyUnusable } from "./startup.js";
 
 //a version no row names is never read so only the stored ones are probed (E-3191)
 export async function assertStoredIntegrityKeysTakeMac(options: {
@@ -19,7 +19,7 @@ export async function assertStoredIntegrityKeysTakeMac(options: {
 		const key = await options.keys.byVersion("state-mac", row.key_version);
 		//a version that left the ring is a broken state of those accounts and not a start error (E-3191)
 		if (key !== null && !(await keyTakesMac(key))) {
-			throw new VelveStartupError("keys_unusable");
+			throw storedIntegrityKeyUnusable(row.key_version);
 		}
 	}
 }

@@ -98,7 +98,12 @@ describe("the older ring versions stored seals still name", () => {
 
 		await expect(
 			assertStoredIntegrityKeysTakeMac({ driver: connection, keys: provider, schema }),
-		).rejects.toMatchObject({ code: "keys_unusable" });
+		).rejects.toMatchObject({
+			name: "VelveStartupError",
+			code: "keys_unusable",
+			message:
+				"keys answered state-mac version 1, which a stored seal names, with a key that cannot take HMAC-SHA256, so no seal under that version could be checked",
+		});
 	});
 
 	it("starts when a seal names a version the ring no longer holds, which is a broken state", async () => {

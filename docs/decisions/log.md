@@ -15788,3 +15788,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Matching on the SQLSTATE alone for the ceiling case, which a check constraint on any other column also produces.
 **Reason.** A premise test exists to say that the database does a specific thing, and an assertion that any failure will do says nothing about which.
 **Price.** The two message assertions depend on PostgreSQL's English message text and on the constraint's generated name; a server with another `lc_messages` or a renamed constraint fails them without a fault in the library.
+
+<a id="e-3289"></a>
+
+### The stored-version probe refuses with a message of its own
+`E-3289` · security-state · start-up, settled
+
+**Context.** E-3191 added the probe of every `state-mac` version a seal row names and had it refuse with `keys_unusable`. That code's one message reads "keys did not answer for every purpose, so no protected value could be written", which is the purpose probe's reason and false for this one: the ring answered every purpose, and what it cannot do is check a seal already written. The fourth review asked for a message of the probe's own under the same code. `storedIntegrityKeyUnusable(keyVersion)` in `src/core/auth/startup.ts`, next to the table of messages, builds the `VelveStartupError` with code `keys_unusable` and a message naming the stored version. `test/keys-integrity-key-shape.test.ts` asserts the message, and `DOCUMENTATION.md` says the two refusals share a code and differ in message.
+**Rejected.** A new code such as `keys_stored_version_unusable`, which changes the published `StartupErrorCode` union and the API surface for what is the same fault an operator repairs the same way. A third constructor parameter for a message, which changes the published constructor of `VelveStartupError` for one caller.
+**Reason.** The code says what to repair, the key provider; the message has to say which key, and a message that names the wrong probe sends the operator to look at the current keys, which are fine.
+**Price.** `keys_unusable` no longer has one message, so the table of messages is not the complete list of what a start refusal can say; the helper sits beside it so a reader of the table finds it.
