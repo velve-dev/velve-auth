@@ -15338,3 +15338,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving T-KEY-3 alone and relying on T-INTEG-3 and T-INTEG-9, which test the seal and the MACs but not that their stored version is the current one.
 **Reason.** A requirement and its test case are kept in step in the specification itself; section 6 says every requirement has a case meeting its threshold.
 **Price.** None beyond four more reads in an existing case.
+
+<a id="e-3104"></a>
+
+### Two stale details of the specification brought into step
+`E-3104` · security-state · specification, settled
+
+**Context.** A review found two details the specification commit left behind. Section 3.2 still said its block and 3.17's together make the schema of sixteen tables, while 3.18 adds the seventeenth; the sentence now points at 3.18 for the seal table and the token MAC columns. The SQL of migration 4 in 3.18 gave `token_mac` and `token_mac_key_version` no checks, while migration 3 checks the digest's length and the key version; the three tables now check `octet_length(token_mac) = 32` and `token_mac_key_version >= 1`. Migration 4 is not built yet; the token branch writes it to this SQL.
+**Rejected.** Nothing; both were omissions.
+**Reason.** A writer and a reader of the table cannot disagree about a length the table refuses.
+**Price.** None.

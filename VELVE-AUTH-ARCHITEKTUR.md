@@ -1143,7 +1143,7 @@ interface Driver {
 
 Das ist die Ausgangsform. Die Änderungen aus den Entscheidungen L-2 und L-3 und
 die beiden Tabellen des Migrationsmoduls stehen in 3.17; zusammen ergeben beide
-Blöcke das Schema mit sechzehn Tabellen.
+Blöcke das Schema mit sechzehn Tabellen; die siebzehnte, `velve.security_state`, und die Spalten der Token-MACs stehen in 3.18.
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS velve;
@@ -3141,14 +3141,14 @@ DELETE FROM velve.session;
 DELETE FROM velve.one_time_token;
 DELETE FROM velve.pending_authentication;
 ALTER TABLE velve.session
-  ADD COLUMN token_mac bytea NOT NULL,
-  ADD COLUMN token_mac_key_version integer NOT NULL;
+  ADD COLUMN token_mac bytea NOT NULL CHECK (octet_length(token_mac) = 32),
+  ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);
 ALTER TABLE velve.one_time_token
-  ADD COLUMN token_mac bytea NOT NULL,
-  ADD COLUMN token_mac_key_version integer NOT NULL;
+  ADD COLUMN token_mac bytea NOT NULL CHECK (octet_length(token_mac) = 32),
+  ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);
 ALTER TABLE velve.pending_authentication
-  ADD COLUMN token_mac bytea NOT NULL,
-  ADD COLUMN token_mac_key_version integer NOT NULL;
+  ADD COLUMN token_mac bytea NOT NULL CHECK (octet_length(token_mac) = 32),
+  ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);
 ```
 
 `digest` ist ein HMAC-SHA256 unter `state-mac` in der Version `key_version` über die kanonische Kodierung des Zustands. Die Kodierung beginnt mit dem Kontext `velve-auth/security-state/v1` und enthält in fester Reihenfolge:
