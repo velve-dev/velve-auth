@@ -15758,3 +15758,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the claim was wrong.
 **Reason.** A matrix claimed complete has to be checked against the encoding it covers, field by field, and E-3201 was checked against the components instead.
 **Price.** None beyond six more cases.
+
+<a id="e-3286"></a>
+
+### Treat a malformed anchor floor as a broken state
+`E-3286` · security-state · specification, test plan, settled
+
+**Context.** 3.18 said what happens when `minimumVersion` throws and when the stored version lies below its floor, and nothing about an answer that is neither a floor nor `null`. The fourth review found that such an answer fails open: `NaN` compares false against every stored version, so a check reading "stored below floor" lets the account through, and a fraction, a negative number or a number above `Number.MAX_SAFE_INTEGER` is a floor nobody meant. The orchestrator decided that anything other than `null` or a safe integer from 1 is a broken state with `anchor_unavailable`. Section 3.18 *Anchor*, 3.15 G and S-INTEG-6 say so in both languages, and T-INTEG-4 gains one account each for `NaN`, `1.5`, `-1`, `0` and `2 ** 53`.
+**Rejected.** Reading a malformed answer as `null`, which is the fail-open the review found under another name. Clamping it to the nearest valid floor, which invents a floor the anchor did not give.
+**Reason.** The anchor's answer is the only evidence against a rollback, so an answer the library cannot read has to refuse like an anchor it cannot reach. `0` is included although the review did not list it, because the rule says from 1 and the boundary needs its own case.
+**Price.** An anchor with a bug in its return value refuses every sign-in of the accounts it answers for until it is fixed, the same price a throwing anchor already had.
