@@ -8739,6 +8739,21 @@ purpose probe and has a message of its own, which names the stored version.
 It makes one `byVersion` call and at most one probe per distinct stored version,
 and how many distinct versions there are is up to whoever writes the table.
 
+### `withReadCommittedTransactions(driver)`
+
+Internal, in `src/core/db/read-committed.ts`. Returns a `Driver` whose `query` is
+the given one's and whose `transaction` runs `SET TRANSACTION ISOLATION LEVEL
+READ COMMITTED` as the first statement of every transaction before handing the
+bound driver to the work. `createVelveAuth` wraps the configured `database` with
+it, so every transaction the instance opens runs at READ COMMITTED even where the
+database or the role sets `default_transaction_isolation` to something else, which
+the sealing of section 3.18 relies on. A transaction joined from inside one, by
+calling `transaction` on the bound driver, is not given the statement again,
+because PostgreSQL accepts it only before the first query of the outer
+transaction. The lower-level exports that take a `Driver` of the application's
+own — the migration runner, the owned-row repository, the schema status — use
+that driver as given.
+
 ### The seal table
 
 Migration 3 creates `velve.security_state`, one row per account, documented

@@ -15968,3 +15968,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the count was wrong.
 **Reason.** The decision stands on the one reference E-3209 makes, which a rename would still leave pointing at nothing.
 **Price.** None.
+
+<a id="e-3310"></a>
+
+### The library states READ COMMITTED for every transaction it opens
+`E-3310` · security-state · db, specification, test plan, settled
+
+**Context.** E-3280 rests the sealing guarantees on READ COMMITTED, and *Sealing* said the transaction runs at READ COMMITTED, "PostgreSQL's default". The sixth review showed that the library never names an isolation level: `Driver.transaction` takes none and `src/core` had no ISOLATION clause, so on connections whose `default_transaction_isolation` is `repeatable read`, which a deployment may set for the database or the role, a mass revocation waiting on a session issue deleted nothing and the issued session survived. The review's case was red. As the orchestrator decided, the foundation owns the fix in `src/core/db`: `withReadCommittedTransactions` wraps a driver so that every transaction begins with `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` as its first statement, before any §7 consumption, and `assembleVelveAuth` wraps the configured `database` with it, so every transaction the instance opens is covered without touching the call sites. A transaction joined from inside one is not given the statement again, because PostgreSQL refuses it after the outer transaction's first query. *Sealing* says so in both languages, and T-INTEG-3 gains the revocation run on connections defaulting to repeatable read. `test/db-read-committed-transactions.test.ts` holds it, with the plain `BEGIN` of the underlying driver as control; with the statement removed, the case failed. `DOCUMENTATION.md` documents the wrapper in the Security state chapter.
+**Rejected.** Adding the statement to `createNodePostgresDriver` alone, which covers one driver and not the drivers applications write. Adding it at each of the library's call sites of `transaction`, which a new call site would forget.
+**Reason.** An isolation guarantee that depends on a setting outside the library is not the library's guarantee.
+**Price.** One more round trip per transaction. The lower-level exports that take an application's own `Driver` (the migration runner, the owned-row repository, the schema status) are not wrapped; none of them seals.
