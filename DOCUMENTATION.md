@@ -8712,6 +8712,27 @@ a `MacVerdict`:
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.
 
+### `keyTakesMac(key)`
+
+Internal, in `src/core/keys/mac.ts`. Resolves `true` when `key` is an HMAC key
+with hash SHA-256 that Web Crypto signs with and whose output is 32 bytes, and
+`false` otherwise; it never throws. The start probes and
+`verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
+key the check can use.
+
+### `isIntegrityPurpose(purpose)`
+
+Internal, in `src/core/keys/purpose.ts`. Narrows a `KeyPurpose` to
+`IntegrityKeyPurpose`, the names ending in `-mac`; `assertKeysAnswerForEveryPurpose`
+uses it to decide which purposes get the probe.
+
+### `assertStoredIntegrityKeysTakeMac({ driver, keys, schema })`
+
+Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
+every distinct `key_version` of `velve.security_state` and refuses the start with
+`keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects. A
+version the ring does not hold is skipped.
+
 ### The seal table
 
 Migration 3 creates `velve.security_state`, one row per account, documented
