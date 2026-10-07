@@ -16128,3 +16128,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Deleting the length check, which would leave the 32-byte requirement of the storage resting on the algorithm check alone.
 **Reason.** A guard that is kept although it is redundant has to say so, or the next reader looks for the input it catches.
 **Price.** One comparison per MAC that can never fail.
+
+<a id="e-3326"></a>
+
+### The stored-version probe is bounded by the number of accounts
+`E-3326` · security-state · keys, startup, settled
+
+**Context.** E-3216 said a writer could make the stored-version probe run over "up to two billion rows of distinct versions". The sixth review's second reviewer pointed out that the figure describes the range of the `key_version` column, not what a writer controls. `velve.security_state` has one row per account, keyed by `user_id` with a foreign key to `velve.user`, so the number of distinct versions is at most the number of seal rows, and that is at most the number of accounts. A writer raises that number only by inserting accounts, which the start cannot tell apart from real ones. So the bound is the account count, capped by the column's range of 2,147,483,647. E-3216 is not edited; its conclusion, that `migrate()` has no bound a writer cannot move, stands with the correct bound named.
+**Rejected.** Nothing; the figure was wrong.
+**Reason.** A cost claim has to name what a writer actually controls, or it overstates or understates the attack.
+**Price.** None.
