@@ -15268,3 +15268,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Checking the seal only on a successful password, which my first draft of 3.18 intended and which a password holder can time.
 **Reason.** The same reason S-TIM-1 gives: a difference in work is a difference in time, and time is an answer.
 **Price.** Every password attempt, including every failed and every unknown one, pays a state read and an HMAC.
+
+<a id="e-3097"></a>
+
+### The alarm has a global bound and counts what it does not deliver
+`E-3097` · security-state · specification, S-INTEG-5, settled
+
+**Context.** A review found three faults in *The alarm*. The deduplication was per process, account and reason only, so a writer who broke many accounts let an unauthenticated caller raise one alarm per account per minute; one path's alarm could hide another's on the same account for sixty seconds, because the occasion was not in the key; and what happened when the 10,000 entries were full, and to the log line, was not said. The orchestrator decided the shape: a global per-process bound, aggregation beyond it carried on the next delivered alarm or a periodic aggregate, never silent, eviction allowed only when it is counted, the occasion in the key, and the log following the same rule. Section 3.18 now keys deduplication by account, occasion and reason; delivers at most 100 alarms per process in 60 seconds; counts every undelivered alarm into `suppressed`, which the next delivered alarm carries; sends an aggregate alarm with `userId: null`, `occasion: "aggregate"` and `reason: "suppressed"` when counted alarms have waited 60 seconds; and passes an evicted entry's count into the total. `SecurityStateAlarm` in A.8 gains `suppressed` and the two aggregate values, and its `userId` becomes nullable. S-INTEG-5 and T-INTEG-5 state the bound and a case over 1000 broken accounts. The number 100 is the writer's choice and was measured against nothing.
+**Rejected.** (a) Dropping alarms over the bound, which makes a flood a way to hide the alarm that matters. (b) A bound per account only, which is the fault.
+**Reason.** An alarm exists to be read by a person, who can read a count and cannot read a flood.
+**Price.** An operator learns of the hundred-and-first broken account only as a number, without its id, until the window passes. A callback written for the first draft breaks on a nullable `userId`.
