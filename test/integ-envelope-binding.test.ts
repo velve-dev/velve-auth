@@ -6,7 +6,11 @@ import { inOneTransaction, type OpenTransaction } from "../src/core/auth/account
 import { sealRowPresenceOf, unboundReadingOf } from "../src/core/auth/security-state.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import type { Driver } from "../src/core/db/driver.js";
-import { encryptWithPurposeKey, type PurposeCiphertext } from "../src/core/keys/envelope.js";
+import {
+	decryptUnderAdditionalData,
+	encryptWithPurposeKey,
+	type PurposeCiphertext,
+} from "../src/core/keys/envelope.js";
 import {
 	type BoundColumn,
 	boundAdditionalData,
@@ -14,9 +18,11 @@ import {
 	type EnvelopeBinding,
 	encryptBound,
 	rebindEnvelope,
+	rowOfParts,
 } from "../src/core/keys/envelope-binding.js";
 import { KeyError } from "../src/core/keys/errors.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import type { EncryptionKeyPurpose } from "../src/core/keys/purpose.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -484,5 +490,117 @@ describe("a uuid in a binding is the whole value and not a part of it (S-INTEG-1
 		expect(() =>
 			boundAdditionalData({ column: "password_credential.phc", owner: wrap(owner), row: owner }, 1),
 		).toThrow(KeyError);
+	});
+});
+
+const NUL = String.fromCharCode(0);
+const SOH = String.fromCharCode(1);
+
+describe("the row of several columns is a canonical encoding (S-INTEG-1, E-3123)", () => {
+	it("gives two parts and one part holding the first part's framing different bytes", () => {
+		const separated = rowOfParts(["a", "b"]);
+		const forged = rowOfParts([`a${SOH}${NUL}${NUL}${NUL}${NUL}b`]);
+		const framed = rowOfParts([`a${SOH}${NUL}${NUL}${NUL}${String.fromCharCode(1)}b`]);
+
+		expect(hex(separated)).not.toBe(hex(forged));
+		expect(hex(separated)).not.toBe(hex(framed));
+	});
+
+	it("pins the layout the log freezes: type byte, four length bytes, then the bytes", () => {
+		expect(hex(rowOfParts(["ab"]))).toBe("010000000261" + "62");
+		expect(hex(rowOfParts([new Uint8Array([1, 2, 3])]))).toBe("03000000030102" + "03");
+		expect(hex(rowOfParts([null]))).toBe("0000000000");
+	});
+
+	it("tells an absent part from an empty text", () => {
+		expect(hex(rowOfParts([null]))).not.toBe(hex(rowOfParts([""])));
+	});
+
+	it("tells a text from the same bytes", () => {
+		expect(hex(rowOfParts(["a"]))).not.toBe(hex(rowOfParts([new Uint8Array([97])])));
+	});
+
+	it("does not drop an absent part", () => {
+		expect(hex(rowOfParts(["a", null, "b"]))).not.toBe(hex(rowOfParts(["a", "b"])));
+		expect(hex(rowOfParts([null, "a"]))).not.toBe(hex(rowOfParts(["a"])));
+	});
+});
+
+describe("the additional data has the frozen layout of E-3110 (S-INTEG-1)", () => {
+	it("starts with the context and the algorithm and carries the key version as four bytes", () => {
+		const owner = "11111111-2222-3333-4444-555555555555";
+		const written = hex(
+			boundAdditionalData({ column: "password_credential.phc", owner, row: owner }, 7),
+		);
+		const text = (value: string): string =>
+			`01${value.length.toString(16).padStart(8, "0")}${Buffer.from(value).toString("hex")}`;
+		const uuid = "11111111222233334444555555555555";
+
+		expect(written).toBe(
+			text("velve-auth/envelope/v2") +
+				text("A256GCM") +
+				"0400000004" +
+				"00000007" +
+				text("password_credential.phc") +
+				`0200000010${uuid}` +
+				`0200000010${uuid}`,
+		);
+	});
+
+	it("tells an absent owner from the all-zero uuid", () => {
+		const row = randomUUID();
+		const absent = boundAdditionalData(
+			{ column: "oauth_flow.pkce_verifier_enc", owner: null, row },
+			1,
+		);
+		const zero = boundAdditionalData(
+			{
+				column: "oauth_flow.pkce_verifier_enc",
+				owner: "00000000-0000-0000-0000-000000000000",
+				row,
+			},
+			1,
+		);
+
+		expect(hex(absent)).not.toBe(hex(zero));
+	});
+});
+
+describe("each column is encrypted under the key of its own purpose (S-INTEG-1, E-3110)", () => {
+	const keys = testKeyRing(1).providerAt(1);
+	const PURPOSES: readonly [BoundColumn, EncryptionKeyPurpose][] = [
+		["password_credential.phc", "password-enc"],
+		["totp_credential.secret_enc", "totp-enc"],
+		["identity.access_token_enc", "oauth-token-enc"],
+		["identity.refresh_token_enc", "oauth-token-enc"],
+		["identity.id_token_enc", "oauth-token-enc"],
+		["oauth_flow.pkce_verifier_enc", "pkce-enc"],
+	];
+	const ALL: readonly EncryptionKeyPurpose[] = [
+		"password-enc",
+		"totp-enc",
+		"oauth-token-enc",
+		"pkce-enc",
+	];
+
+	it.each(PURPOSES)("opens %s under %s alone", async (column, purpose) => {
+		const owner = randomUUID();
+		const binding: EnvelopeBinding = {
+			column,
+			owner,
+			row: column.startsWith("identity.") ? randomUUID() : owner,
+		};
+		const sealed = await encryptBound(keys, binding, new TextEncoder().encode("secret"));
+		const additionalData = boundAdditionalData(binding, sealed.keyVersion);
+		const stored = { keyVersion: sealed.keyVersion, ciphertext: sealed.ciphertext.subarray(1) };
+
+		for (const other of ALL) {
+			const attempt = decryptUnderAdditionalData(keys, other, stored, additionalData);
+			if (other === purpose) {
+				await expect(attempt).resolves.toBeDefined();
+			} else {
+				await expect(attempt).rejects.toBeInstanceOf(KeyError);
+			}
+		}
 	});
 });
