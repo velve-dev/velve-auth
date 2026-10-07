@@ -16448,3 +16448,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the read and exempting it from S-RACE-2, which would give a racing redemption the window S-RACE-2 closes.
 **Reason.** A rule added later has to fit the requirements already standing, and S-RACE-2 is the older and the more basic one.
 **Price.** A consuming path's transaction stays open across the anchor call, holding the consumed row's lock and a connection for as long as the application's store takes.
+
+<a id="e-3358"></a>
+
+### The specification follows what the token branch built
+`E-3358` · security-state · specification, settled
+
+**Context.** The token branch built migration 4, the token MACs and the rebind seam. Five details in its code are more specific than the specification or named differently. First, migration 4 adds an index on `token_mac_key_version` to all four token tables, so the rebind pass and the per-version count can step from version to version. Second, the rebind seam reports `rowsByKeyVersion`, where E-3335 had named the report field `underKeyVersion`. Third, the challenge MAC encodes its ceremony, the `purpose`, as a text field, and the session MAC encodes `created_at` in whole microseconds since the Unix epoch. Fourth, the address a mailed token binds is stored under the payload key `accountEmail`. Fifth, a missed session issue raises its alarm with the occasion `sign_in` or `change`, depending on what it completes, and a refusal in the maintenance run with `maintenance`. The migration 4 block, 3.15 B's report type, point 3 and *The alarm* now say so in both languages, with `SecurityStateReport`'s field renamed to `rowsByKeyVersion` and its shape kept. E-3335 is not edited.
+**Rejected.** Asking the token branch to rename its field to `underKeyVersion`, which would change built and tested code to match a name chosen one round earlier.
+**Reason.** The specification has to describe the encoding as built, because a second implementation that followed the old text would compute different MACs.
+**Price.** None.
