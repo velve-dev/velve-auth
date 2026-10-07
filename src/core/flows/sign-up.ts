@@ -111,6 +111,14 @@ async function register(
 			username: columns.username,
 			userId: created.id,
 		});
+		//the token must be minted before the session issue takes the account row (E-3254)
+		const artefact =
+			written.email === null
+				? null
+				: await mintArtefact(transaction, flow.environment.services, {
+						purpose: "email_verify",
+						subject: { userId: created.id },
+					});
 		const issued = await createSessionUnderHooks(hooks, { userId: created.id, factors }, () =>
 			sessions.boundTo(transaction).issue({
 				userId: created.id,
@@ -124,13 +132,6 @@ async function register(
 				{ userId: created.id, derived, setBySessionId: issued.session.id },
 			);
 		}
-		const artefact =
-			written.email === null
-				? null
-				: await mintArtefact(transaction, flow.environment.services, {
-						purpose: "email_verify",
-						subject: { userId: created.id },
-					});
 		return {
 			//the answer must name the address the caller sent and never the cover (S-ENUM-3)
 			result: {

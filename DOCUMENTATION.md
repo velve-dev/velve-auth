@@ -8848,6 +8848,12 @@ Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
 waits for a mass revocation that holds the account and then reads the epoch that
 revocation leaves; it takes the MAC over that epoch and inserts the row only while
 the account is still at it, a second guard that under the lock never misses.
+Because the issue now takes the account row, a flow that mints a one-time token
+and issues a session in one transaction mints first: sign-up writes its
+verification token before it issues the session, so `velve.one_time_token` still
+comes before `velve.user` in every transaction. `test/integ-token-order-trace.test.ts`
+traces the statements of the sign-up and of every email flow and fails on a
+token-table statement after the account lock.
 Whether an account without a seal row has an epoch is the sealing mode's to say:
 the session service takes `sealing`, `"required"` or `"migrating"`. In
 `"migrating"` such an account is at epoch 1. In `"required"`, and in a session

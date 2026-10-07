@@ -15808,3 +15808,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Refusing a non-canonical spelling at issue, which turns a spelling PostgreSQL accepts into an error of this library's own. (b) Canonicalising at each caller, which is five places to forget one.
 **Reason.** What the MAC binds has to be what the row reads back as, or a genuine row fails its own check.
 **Price.** The encoding's owner field is no longer the caller's text byte for byte. For the spelling every stored row already has, the change is nothing.
+
+<a id="e-3254"></a>
+
+### Sign-up mints its verification token before it issues its session
+`E-3254` · security-state-tokens · CLAUDE.md §7, lock order, settled
+
+**Context.** E-3141 made every session issue take the account lock, and its price recorded that sign-up then took the lock on its new account row before minting the `email_verify` token, "the order CLAUDE.md §7 describes as never taken". It called that harmless because the row is the transaction's own uncommitted insert. That reason was wrong when it was written. CLAUDE.md §7 states the ordering for every transaction, `check:token-after-lock` is built on it holding everywhere, and an exception that holds only by reasoning about who can see a row is the kind E-1616 found held "by a reading and by nothing else". A traced sign-up showed the account lock followed by the insert into `velve.one_time_token` in one transaction. Sign-up now mints the token after creating the account and before issuing the session, in the same transaction, for the registration and its cover alike. `test/integ-token-order-trace.test.ts` wraps the instance's driver, records the statements of every transaction, and refuses one that reaches `.one_time_token` after a `FOR NO KEY UPDATE`. It runs the sign-up, the verification, the magic link, the address change and the reset. On the old order it fails on the sign-up alone.
+**Rejected.** (a) Teaching `check:token-after-lock` to follow calls across files, which needs a call graph the check does not have and would still miss a lock taken behind a service. (b) Leaving the exception standing with its reason, which is the reasoning E-1616 asks to replace with a check.
+**Reason.** An ordering that is promised everywhere is checked by what the transactions do, and the trace sees the lock wherever it is written.
+**Price.** The test covers the flows it runs and no others. A flow added later that mints and issues in one transaction is caught only once a case runs it. The sign-up's statement order changed, which S-TIM-6's cover follows because both run the same function.
