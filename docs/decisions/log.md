@@ -16408,3 +16408,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reading the session row in a separate statement first to learn the account, which breaks S-CACHE-2 and reopens the two-statement race E-3299 closed.
 **Reason.** The anchor can only be ahead of a legitimate state by a reseal that committed after the read, and one re-read sees that reseal.
 **Price.** A resolution that meets a rollback costs two queries before it refuses.
+
+<a id="e-3354"></a>
+
+### An account holds at most twenty passkeys and ten identities
+`E-3354` · security-state · specification, S-INTEG-10, test plan, settled
+
+**Context.** Every check of the seal reads and encodes every passkey and identity of the account, and since E-3299 every session resolution does so too. The eighth review found nothing that bounds how many of either an account holds, so one account holder could make every resolution and change of their account arbitrarily expensive. The cost paragraph of *The limits* still carried an unmeasured estimate. As decided, a configurable maximum per account is added: `limits.passkeysPerAccount`, default 20, and `limits.identitiesPerAccount`, default 10. It is enforced under the account lock at registration and linking, and exceeding it answers the new stable codes `passkey_limit_reached` and `identity_limit_reached`, which `src/core/http/error-map.ts` decides. The decision suggested `factor_limit_reached` as one possible name; `passkey_limit_reached` was chosen so the code says which limit it is. A.2 gains the `limits` row, the config types gain `LimitsConfig`, F gains both codes and their table rows, 5.21 gains S-INTEG-10 and 6.24 T-INTEG-10, and the estimate is replaced by the bound and the rule that the seal branch measures the cost at it. All of it is in both languages. `test/requirement-coverage.test.ts` lists S-INTEG-10 as stated ahead of its code. `test/security-state-spec-anchor.test.ts` holds this bound together with the table counts of E-3350 and the anchor statements of E-3351 to E-3353, against the German text. It builds the requirement identifiers it reads instead of spelling them, so it is not counted as covering them.
+**Rejected.** A bound fixed in code, which leaves an application with a legitimate need for more passkeys no option.
+**Reason.** A cost an account holder can raise without limit is a denial of service against their own account and the process serving it.
+**Price.** A user with more than twenty authenticators has to remove one before adding another. The two new codes and the `limits` option are additions to the unreleased 2.0.0 surface.
