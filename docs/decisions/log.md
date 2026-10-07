@@ -15988,3 +15988,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Folding the plants into permanent mutation tests, which would edit source files from a test.
 **Reason.** A guard that no test can see removed is a guard by intention only.
 **Price.** The mock of `constant-time.js` in the guard file couples the case to that module's name.
+
+<a id="e-3312"></a>
+
+### A mailed one-time token binds the address it was mailed to
+`E-3312` · security-state · specification, S-INTEG-9, test plan, settled
+
+**Context.** Section 3.18 lists among the threats a writer who sets `velve.user.email` to their own address and diverts the password reset. The sixth review showed that the seal does not close it: *Checking* runs at sign-in, factor check, session resolution and token redemption, never when a mailed token is issued, and a reset or magic-link token binds its owner, not its address. A writer flips the address, requests the link, which is mailed to them, restores the address, so the seal is valid again, and redeems. The review's case was red against the magic link. As the orchestrator decided, every one-time token mailed to an address — reset, magic link, address confirmation and its resend — carries that address in `one_time_token.payload` and so under its MAC. The confirmation link of an address change carries the old and the new address. At redemption the bound address, for an address change the old one, must equal the sealed `user.email`, read in the same statement as the seal; a mismatch is a broken state, answered like a missing token with the alarm `seal_mismatch`. Point 3 and S-INTEG-9 say so in both languages, and T-INTEG-4 gains the four flows. The payload binding belongs to the token branch and the seal read at redemption to the seal branch. `test/security-state-transient-email.test.ts` holds the magic-link case as an `it.fails` placeholder for the branch that completes the pair, with the control that today the redemption succeeds.
+**Rejected.** Checking the seal when the link is requested, which the writer passes by flipping the address and the seal together, or which a valid seal at request time does not refute when the writer restores before redemption.
+**Reason.** The address a link went to is the fact the redemption has to vouch for, and only the token can carry it from the moment of mailing to the moment of redemption.
+**Price.** A user whose address legitimately changes between request and redemption, by a confirmed address change, loses the outstanding link and requests another; the alarm raised then is a false one in that one case. The seal read at redemption has to include `user.email`, which it already does.
