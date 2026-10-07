@@ -16548,3 +16548,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A stated count is a measurement the text makes about itself, and it has to change with what it counts.
 **Price.** None.
+
+<a id="e-3368"></a>
+
+### S-KEY-3 and T-KEY-3 count the challenge's token MAC
+`E-3368` · security-state · specification, S-KEY-3, test plan, settled
+
+**Context.** E-3314 gave `velve.webauthn_challenge` a token MAC with its own `token_mac_key_version`, which makes it a generated protected value carrying its key version. S-KEY-3 lists every column that carries one, and T-KEY-3 creates every such value. The ninth review found that both still stopped at the three other token tables. S-KEY-3 now names `webauthn_challenge`, and T-KEY-3 creates the challenge's MAC too and expects 10/10, in both languages.
+**Rejected.** Nothing.
+**Reason.** A list that claims to be every protected value has to grow with the values.
+**Price.** None.
