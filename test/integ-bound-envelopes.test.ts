@@ -11,6 +11,7 @@ import {
 	type BoundColumn,
 	decryptBound,
 	type EnvelopeBinding,
+	encryptBound,
 	rowOfParts,
 } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
@@ -773,6 +774,26 @@ async function unboundTokensOf(identity: { userId: string; identityId: string })
 	}
 }
 
+//every statement of a transaction opened on this pool passes through, and the one matching a compare-and-swap is preceded by a foreign write
+function writingBefore(
+	statement: RegExp,
+	foreignWrite: (transaction: Driver) => Promise<unknown>,
+): Driver {
+	const intercepting = (transaction: Driver): Driver => ({
+		async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
+			if (statement.test(sql.trim())) {
+				await foreignWrite(transaction);
+			}
+			return transaction.query<T>(sql, parameters);
+		},
+		transaction: (work) => transaction.transaction(work),
+	});
+	return {
+		query: (sql, parameters) => connection.query(sql, parameters),
+		transaction: (work) => connection.transaction((transaction) => work(intercepting(transaction))),
+	};
+}
+
 const STORED_PHC = `$argon2id$v=19$m=19456,t=2,p=1$${"c2FsdA".repeat(4)}$${"aGFzaA".repeat(7)}`;
 
 describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account runs first (S-INTEG-1, E-3117)", () => {
@@ -965,24 +986,12 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		await writePhc(account.userId, unbound);
 		const replacement = await readPhc(other.userId);
 
-		//every statement of the transaction passes through, and the rewrite's compare-and-swap is preceded by a foreign write
-		const interceptingTheSwap = (transaction: Driver): Driver => ({
-			async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
-				if (/^UPDATE \S+\.password_credential SET phc = \$2/.test(sql.trim())) {
-					await transaction.query(
-						`UPDATE ${schema}.password_credential SET phc = $2 WHERE user_id = $1`,
-						[account.userId, replacement.ciphertext],
-					);
-				}
-				return transaction.query<T>(sql, parameters);
-			},
-			transaction: (work) => transaction.transaction(work),
-		});
-		const pool: Driver = {
-			query: (sql, parameters) => connection.query(sql, parameters),
-			transaction: (work) =>
-				connection.transaction((transaction) => work(interceptingTheSwap(transaction))),
-		};
+		const pool = writingBefore(/^UPDATE \S+\.password_credential SET phc = \$2/, (transaction) =>
+			transaction.query(`UPDATE ${schema}.password_credential SET phc = $2 WHERE user_id = $1`, [
+				account.userId,
+				replacement.ciphertext,
+			]),
+		);
 
 		const attempt = inOneTransaction(pool, (transaction) =>
 			rebindEnvelopesOfAccount({
@@ -999,6 +1008,79 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 			Buffer.from((await readPhc(account.userId)).ciphertext).equals(
 				Buffer.from(unbound.ciphertext),
 			),
+		).toBe(true);
+	});
+
+	it("fails rather than reporting success when the TOTP secret changed under the rewrite", async () => {
+		const account = await signUp();
+		const other = await signUp();
+		await enrolTotp(account);
+		await enrolTotp(other);
+		const unbound = await encryptWithPurposeKey(
+			beforeRotation,
+			"totp-enc",
+			account.totpSecret as Uint8Array<ArrayBuffer>,
+		);
+		await writeTotpSecret(account.userId, unbound);
+		const foreign = await readTotpSecret(other.userId);
+		const pool = writingBefore(/^UPDATE \S+\.totp_credential SET secret_enc = \$3/, (transaction) =>
+			transaction.query(`UPDATE ${schema}.totp_credential SET secret_enc = $2 WHERE user_id = $1`, [
+				account.userId,
+				foreign.ciphertext,
+			]),
+		);
+
+		await expect(
+			inOneTransaction(pool, (transaction) =>
+				rebindEnvelopesOfAccount({
+					driver: transaction,
+					schema,
+					keys: beforeRotation,
+					actor: actorOfTestUser(account.userId),
+					sealing: "migrating",
+				}),
+			),
+		).rejects.toMatchObject({ code: "internal_error" });
+		expect(
+			Buffer.from((await readTotpSecret(account.userId)).ciphertext).equals(
+				Buffer.from(unbound.ciphertext),
+			),
+		).toBe(true);
+	});
+
+	it("fails rather than reporting success when an identity's tokens changed under the rewrite", async () => {
+		const identity = await signInThroughOAuth(`swap-${accountNumber}`);
+		await unboundTokensOf(identity);
+		const before = await readToken(identity.identityId, "identity.access_token_enc");
+		const replacement = await encryptBound(
+			beforeRotation,
+			tokenBinding("identity.access_token_enc", identity),
+			new TextEncoder().encode("a token written meanwhile"),
+		);
+		const pool = writingBefore(
+			/^UPDATE \S+\.identity\s+SET access_token_enc = \$3/,
+			(transaction) =>
+				transaction.query(`UPDATE ${schema}.identity SET access_token_enc = $2 WHERE id = $1`, [
+					identity.identityId,
+					replacement.ciphertext,
+				]),
+		);
+
+		await expect(
+			inOneTransaction(pool, (transaction) =>
+				rebindEnvelopesOfAccount({
+					driver: transaction,
+					schema,
+					keys: beforeRotation,
+					actor: actorOfTestUser(identity.userId),
+					sealing: "migrating",
+				}),
+			),
+		).rejects.toMatchObject({ code: "internal_error" });
+		expect(
+			Buffer.from(
+				(await readToken(identity.identityId, "identity.access_token_enc")).ciphertext,
+			).equals(Buffer.from(before.ciphertext)),
 		).toBe(true);
 	});
 });
