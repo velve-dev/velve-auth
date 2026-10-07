@@ -8979,11 +8979,12 @@ the security-state alarm of section 3.18 is what it is there for.
 Every insert takes the MAC under the current `token-mac` version in the
 statement that writes the row. A session that resolves under an older version is
 rebound under the current one by a compare-and-set on the stored MAC, and a
-concurrent rebinding is not overwritten. A pending authentication is rebound only
-by its booking, which writes the raised counter with a MAC under the current
-version; a booking that finds the row rebound by another at the same count under
-a newer version books over it without a report. Every statement runs at `READ
-COMMITTED`; none of this opens a `REPEATABLE READ` transaction.
+concurrent rebinding is not overwritten. Outside maintenance a pending
+authentication is rebound only by its booking, which writes the raised counter
+with a MAC under the current version; a booking that finds the row rebound by the
+maintenance at the same count under a newer version books over it without a
+report. Every statement runs at `READ COMMITTED`; none of this opens a `REPEATABLE
+READ` transaction.
 
 A row that is never resolved while two versions are in the ring keeps the old
 version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
@@ -8994,17 +8995,24 @@ out. The step it calls is internal:
 
 ```ts
 rebindTokenRowsUnderCurrentKey({ driver, schema, keys, sealing, table, batchSize, reportTokenBindingRefusal? })
-  : Promise<{ rebound: number; refused: number }>
+  : Promise<{ rebound: number; refused: number; rowsByKeyVersion: Record<number, number> }>
 ```
 
-in `src/core/token/rebind.ts`. For `session` or `one_time_token` it visits every row not
-under the current `token-mac` version, `batchSize` at a time in token-hash order,
-checks it under its own version and rebinds it by a compare-and-set on the stored
-MAC. A row that fails its check keeps its version, is counted as `refused` and
-reported with the occasion `maintenance`; a one-time token without an owner, which
-nothing redeems, is not visited. It takes no account lock: each row is its own
-compare-and-set. Pending authentications are not visited; they live five minutes
-and are rebound by their bookings.
+in `src/core/token/rebind.ts`, for `table` one of `session`, `one_time_token`,
+`pending_authentication` and `webauthn_challenge`. It visits every row not under
+the current `token-mac` version, `batchSize` at a time in hash order, including a
+one-time token or a challenge without an owner, and recomputes and checks its MAC
+under the row's own version over everything the MAC binds: a session against the
+account's current epoch and its `created_at`, a pending authentication over its
+stored `attempts`, a one-time token over its payload with the bound address, a
+challenge over its ceremony. A row that passes is rebound by a compare-and-set on
+the MAC it read, and a pending row also on the `attempts` it read; a row that
+changed in between is left for the next pass. A row that fails is not rebound and
+not deleted: it keeps its version, stays unusable, is counted as `refused` and is
+reported with the occasion `maintenance`. It takes no account lock: each row is its
+own compare-and-set. `rowsByKeyVersion` counts the rows each version still holds
+in the table after the pass; remove a version from the ring only after a final
+pass over all four tables reports no row under it, refused rows included.
 
 ### The attempt budget
 

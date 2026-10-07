@@ -1,6 +1,7 @@
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 import { epochOf, type SecurityStateSealing } from "../db/repositories/session.js";
+import { pendingBinding } from "../factor/pending/binding.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { sessionBinding } from "../session/binding.js";
 import {
@@ -10,108 +11,156 @@ import {
 	storedPayloadOf,
 	type TokenBinding,
 	type TokenBindingRefusalReport,
-	type TokenBindingVerdict,
 } from "./binding.js";
 import type { OneTimeTokenPurpose } from "./purpose.js";
 
-/** the tables whose token MACs maintenance rebinds, a pending row being rebound only by its booking */
-export type TokenTable = "session" | "one_time_token";
+/** the tables whose rows carry a token MAC, every one of which the maintenance pass rebinds */
+export type TokenTable =
+	| "session"
+	| "one_time_token"
+	| "pending_authentication"
+	| "webauthn_challenge";
 
-/** what one rebinding pass over a table did */
+/** what one rebinding pass over a table did, and how many rows each key version still holds after it */
 interface TokenRebinding {
 	readonly rebound: number;
 	readonly refused: number;
+	/** a version may leave the ring only once a pass reports no row under it */
+	readonly rowsByKeyVersion: Readonly<Record<number, number>>;
 }
 
 interface StoredTokenRow {
-	readonly token_sha256: Uint8Array;
-	readonly user_id: string;
+	readonly token_hash: Uint8Array;
+	readonly user_id: string | null;
 	readonly token_mac: Uint8Array;
 	readonly token_mac_key_version: number;
 	readonly factor_names?: string;
 	readonly session_epoch?: string | null;
 	readonly created_at_us?: string;
-	readonly purpose?: OneTimeTokenPurpose;
+	readonly attempts?: number;
+	readonly purpose?: string;
 	readonly payload?: unknown;
+}
+
+/** how one table stores what its MAC is taken over */
+interface TableShape {
+	readonly hashColumn: string;
+	readonly contentColumns: (states: string, sealing: SecurityStateSealing) => string;
+	readonly guardsAttempts: boolean;
+	readonly bindingOf: (row: StoredTokenRow, tokenHash: Uint8Array) => TokenBinding | null;
 }
 
 const TOKEN_MAC_PURPOSE = "token-mac";
 
 const FIRST_TOKEN_HASH = new Uint8Array(0);
 
-function contentColumns(table: TokenTable, states: string, sealing: SecurityStateSealing): string {
-	if (table === "session") {
-		return `array_to_json(t.factors)::text AS factor_names,
-		(extract(epoch FROM t.created_at) * 1000000)::bigint::text AS created_at_us,
-		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`;
-	}
-	return "t.purpose, t.payload";
-}
-
-//a row is visited once per pass, in token hash order, whether it could be rebound or not
-function staleRowsStatement(table: string, columns: string): string {
-	return `SELECT t.token_sha256, t.user_id, t.token_mac, t.token_mac_key_version, ${columns}
-	FROM ${table} t
-	WHERE t.token_mac_key_version <> $1 AND t.token_sha256 > $2 AND t.user_id IS NOT NULL
-	ORDER BY t.token_sha256
-	LIMIT $3`;
-}
-
-//a row written since it was read keeps what was written (S-KEY-5)
-function rebindStatement(table: string): string {
-	return `UPDATE ${table} SET token_mac = $4, token_mac_key_version = $5
-	WHERE token_sha256 = $1 AND user_id = $2 AND token_mac = $3
-	RETURNING token_sha256`;
-}
-
 function namesOf(json: string | undefined): readonly string[] | null {
 	const names: unknown = json === undefined ? null : JSON.parse(json);
 	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;
 }
 
-//a row whose content cannot be read has no binding and is refused like a forged one
-function bindingOf(table: TokenTable, row: StoredTokenRow): TokenBinding | null {
-	const tokenHash = new Uint8Array(row.token_sha256);
-	if (table === "one_time_token") {
-		const stored = storedPayloadOf(row.payload);
-		return row.purpose === undefined || stored === null
-			? null
-			: {
-					purpose: row.purpose,
-					ownerId: row.user_id,
-					tokenSha256: tokenHash,
-					content: { payload: stored.payload },
-				};
-	}
-	const names = namesOf(row.factor_names);
-	if (names === null) {
-		return null;
-	}
-	const epoch =
-		row.session_epoch === null || row.session_epoch === undefined
-			? null
-			: Number(row.session_epoch);
-	return epoch === null || row.created_at_us === undefined
-		? null
-		: sessionBinding(row.user_id, tokenHash, names, {
-				sessionEpoch: epoch,
-				createdAtMicros: Number(row.created_at_us),
-			});
+function exactIntegerOf(text: string | null | undefined): number | null {
+	const value = text === null || text === undefined ? Number.NaN : Number(text);
+	return Number.isSafeInteger(value) ? value : null;
 }
 
-function verdictOf(
-	keys: KeyProvider,
-	binding: TokenBinding,
-	row: StoredTokenRow,
-): Promise<TokenBindingVerdict> {
-	return checkTokenBinding(keys, binding, {
-		tokenMac: row.token_mac,
-		tokenMacKeyVersion: row.token_mac_key_version,
-	});
+function sessionBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
+	const names = namesOf(row.factor_names);
+	const sessionEpoch = exactIntegerOf(row.session_epoch);
+	const createdAtMicros = exactIntegerOf(row.created_at_us);
+	if (row.user_id === null || names === null || sessionEpoch === null || createdAtMicros === null) {
+		return null;
+	}
+	return sessionBinding(row.user_id, tokenHash, names, { sessionEpoch, createdAtMicros });
+}
+
+function pendingBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
+	const names = namesOf(row.factor_names);
+	if (row.user_id === null || names === null || row.attempts === undefined) {
+		return null;
+	}
+	return pendingBinding(row.user_id, tokenHash, names, row.attempts);
+}
+
+function oneTimeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
+	const stored = storedPayloadOf(row.payload);
+	if (row.purpose === undefined || stored === null) {
+		return null;
+	}
+	return {
+		purpose: row.purpose as OneTimeTokenPurpose,
+		ownerId: row.user_id,
+		tokenSha256: tokenHash,
+		content: { payload: stored.payload },
+	};
+}
+
+function challengeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
+	if (row.purpose === undefined) {
+		return null;
+	}
+	return {
+		purpose: "webauthn_challenge",
+		ownerId: row.user_id,
+		tokenSha256: tokenHash,
+		content: { ceremony: row.purpose },
+	};
+}
+
+const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
+	session: {
+		hashColumn: "token_sha256",
+		contentColumns: (states, sealing) => `array_to_json(t.factors)::text AS factor_names,
+		(extract(epoch FROM t.created_at) * 1000000)::bigint::text AS created_at_us,
+		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`,
+		guardsAttempts: false,
+		bindingOf: sessionBindingOf,
+	},
+	one_time_token: {
+		hashColumn: "token_sha256",
+		contentColumns: () => "t.purpose, t.payload",
+		guardsAttempts: false,
+		bindingOf: oneTimeBindingOf,
+	},
+	pending_authentication: {
+		hashColumn: "token_sha256",
+		contentColumns: () => "array_to_json(t.factors_completed)::text AS factor_names, t.attempts",
+		guardsAttempts: true,
+		bindingOf: pendingBindingOf,
+	},
+	webauthn_challenge: {
+		hashColumn: "challenge_sha256",
+		contentColumns: () => "t.purpose",
+		guardsAttempts: false,
+		bindingOf: challengeBindingOf,
+	},
+};
+
+function staleRowsStatement(table: string, shape: TableShape, columns: string): string {
+	return `SELECT t.${shape.hashColumn} AS token_hash, t.user_id, t.token_mac, t.token_mac_key_version,
+		${columns}
+	FROM ${table} t
+	WHERE t.token_mac_key_version <> $1 AND t.${shape.hashColumn} > $2
+	ORDER BY t.${shape.hashColumn}
+	LIMIT $3`;
+}
+
+//a row written since it was read keeps what was written and a pending counter must not move (S-KEY-5)
+function rebindStatement(table: string, shape: TableShape): string {
+	return `UPDATE ${table} SET token_mac = $4, token_mac_key_version = $5
+	WHERE ${shape.hashColumn} = $1 AND user_id IS NOT DISTINCT FROM $2::uuid AND token_mac = $3
+		${shape.guardsAttempts ? "AND attempts = $6" : ""}
+	RETURNING ${shape.hashColumn}`;
+}
+
+function rowsByKeyVersionStatement(table: string): string {
+	return `SELECT token_mac_key_version, count(*)::int AS rows FROM ${table}
+	GROUP BY token_mac_key_version ORDER BY token_mac_key_version`;
 }
 
 interface RebindingPass {
 	readonly input: RebindingInput;
+	readonly shape: TableShape;
 	readonly updateSql: string;
 }
 
@@ -131,9 +180,15 @@ async function rebindRow(
 	pass: RebindingPass,
 	row: StoredTokenRow,
 ): Promise<"rebound" | "refused" | "left"> {
-	const { input } = pass;
-	const binding = bindingOf(input.table, row);
-	const verdict = binding === null ? "mismatch" : await verdictOf(input.keys, binding, row);
+	const { input, shape } = pass;
+	const binding = shape.bindingOf(row, new Uint8Array(row.token_hash));
+	const verdict =
+		binding === null
+			? "mismatch"
+			: await checkTokenBinding(input.keys, binding, {
+					tokenMac: row.token_mac,
+					tokenMacKeyVersion: row.token_mac_key_version,
+				});
 	if (binding === null || verdict !== "valid") {
 		reportRefusedTokenRow(input.reportTokenBindingRefusal, {
 			userId: row.user_id,
@@ -144,13 +199,25 @@ async function rebindRow(
 	}
 	const next = await bindToken(input.keys, binding);
 	const written = await input.driver.query(pass.updateSql, [
-		row.token_sha256,
+		row.token_hash,
 		row.user_id,
 		row.token_mac,
 		next.tokenMac,
 		next.tokenMacKeyVersion,
+		...(shape.guardsAttempts ? [row.attempts] : []),
 	]);
 	return written.length === 1 ? "rebound" : "left";
+}
+
+async function rowsByKeyVersionOf(
+	driver: Driver,
+	table: string,
+): Promise<Readonly<Record<number, number>>> {
+	const rows = await driver.query<{ token_mac_key_version: number; rows: number }>(
+		rowsByKeyVersionStatement(table),
+		[],
+	);
+	return Object.fromEntries(rows.map((row) => [row.token_mac_key_version, row.rows]));
 }
 
 /**
@@ -163,8 +230,9 @@ export async function rebindTokenRowsUnderCurrentKey(
 	const schema = assertSchemaName(input.schema);
 	const table = qualifiedTableName(schema, input.table);
 	const states = qualifiedTableName(schema, "security_state");
-	const selectSql = staleRowsStatement(table, contentColumns(input.table, states, input.sealing));
-	const pass: RebindingPass = { input, updateSql: rebindStatement(table) };
+	const shape = SHAPES[input.table];
+	const selectSql = staleRowsStatement(table, shape, shape.contentColumns(states, input.sealing));
+	const pass: RebindingPass = { input, shape, updateSql: rebindStatement(table, shape) };
 	const { version } = await input.keys.current(TOKEN_MAC_PURPOSE);
 	let after: Uint8Array = FIRST_TOKEN_HASH;
 	let rebound = 0;
@@ -182,8 +250,8 @@ export async function rebindTokenRowsUnderCurrentKey(
 		}
 		const last = rows.at(-1);
 		if (last === undefined || rows.length < input.batchSize) {
-			return { rebound, refused };
+			return { rebound, refused, rowsByKeyVersion: await rowsByKeyVersionOf(input.driver, table) };
 		}
-		after = last.token_sha256;
+		after = last.token_hash;
 	}
 }
