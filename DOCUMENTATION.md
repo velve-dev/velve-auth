@@ -8779,7 +8779,7 @@ accounts and still open.
 | `identity.access_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
 | `identity.refresh_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
 | `identity.id_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
-| `oauth_flow.pkce_verifier_enc` | `pkce-enc` | `link_to_user_id`, or none | `state_sha256`, `provider`, `nonce`, `redirect_path` and `link_from_session_id` |
+| `oauth_flow.pkce_verifier_enc` | `pkce-enc` | `link_to_user_id`, or none | `state_sha256`, `provider`, `nonce`, `redirect_path`, `link_from_session_id` and `expires_at` |
 
 The three token columns share one purpose key, so the column in the additional
 data is what keeps an access token from opening as a refresh token. The column
@@ -8791,11 +8791,15 @@ tokens only to the row whose id they are bound to, and a row replaced between
 the lookup and the refresh fails the flow as an unknown state (E-3113).
 
 The row of a flow is more than its key: every column that steers the flow —
-the provider, the nonce an ID token is checked against, the redirect path and
-the session a link replaces — is part of it, so a writer who rewrites any of
-them makes the verifier unreadable and the callback answers as for an unknown
-state. This binds more than the table of section 3.18 names, which gives
-`state_sha256` alone (E-3123).
+the provider, the nonce an ID token is checked against, the redirect path, the
+session a link replaces and the deadline — is part of it, so a writer who
+rewrites any of them makes the verifier unreadable and the callback answers as
+for an unknown state. The deadline is drawn from the database clock before the
+insert, truncated to milliseconds, and bound as its epoch milliseconds. The
+callback opens the verifier straight after it consumes the row and checks its
+provider, before it reads whether the flow links and before any plugin hook,
+so no column of a rewritten row is acted on. This binds more than the table of
+section 3.18 names, which gives `state_sha256` alone (E-3123, E-3128).
 
 The identity repository takes the key ring (`createOAuthIdentityRepository({
 driver, schema, keys })`) and encrypts the tokens itself once owner and row are
@@ -8837,7 +8841,8 @@ A uuid is read in either case and written as its bytes, so the same account
 spelled in upper or lower case binds the same way. An owner or a row that is
 not a uuid is refused with `KeyError` code `envelope_binding_malformed`. The
 row of a flow is written by `rowOfParts([state_sha256, provider, nonce,
-redirect_path, link_from_session_id])` as fields of the same kind — `0x03`
+redirect_path, link_from_session_id, expires_at in epoch milliseconds])` as
+fields of the same kind — `0x03`
 bytes, `0x01` text, `0x00` absent — and that encoding is the row field's
 bytes. The
 schema is not part of the binding: changing `schema` in the configuration does
@@ -8899,6 +8904,14 @@ with `VelveStartupError` code `security_state_sealing_unknown`. The upgrade runs
 in `"migrating"` until the maintenance step has rewritten every account, and
 then in `"required"` (section 3.18 point 5).
 
+The start check and the resolution of the mode live in
+`src/core/auth/security-state.ts`: `isStartableSecurityState(value)` answers
+whether a configured `securityState` names one of the two modes, which
+`assertConfigurationIsStartable` turns into `security_state_sealing_unknown`;
+`sealingOf(securityState)` resolves an absent option to `DEFAULT_SEALING`,
+`"required"`; and `sealRowPresenceOf(sealed)` reads the selected `EXISTS` as
+`"present"` only from an explicit `true`.
+
 ### What the readers do with a value that does not open
 
 | Path | Answer |
@@ -8934,6 +8947,24 @@ the old form and `unbound` is `"readable"`. Throws `KeyError`:
 `envelope_unbound` for an old value where `unbound` is `"refused"`,
 `key_version_unknown` for a version that left the ring, `ciphertext_malformed`
 below the length of a nonce and a tag.
+
+### `boundAdditionalData(binding, keyVersion)`
+
+Internal, same module. Returns the additional data of the table above for a
+binding under a key version: the bytes `encryptBound` and `decryptBound` pass
+to AES-GCM. Exported for the tests that check the encoding is unambiguous.
+
+### `encryptUnderAdditionalData(keys, purpose, additionalDataFor, plaintext)` and `decryptUnderAdditionalData(keys, purpose, stored, additionalData)`
+
+Internal, in `src/core/keys/envelope.ts`. The AES-256-GCM step both forms share:
+the first encrypts under the current key of `purpose` with the additional data
+`additionalDataFor(keyVersion)` yields for the version it chose, and returns `{
+keyVersion, ciphertext }` with the nonce in front; the second decrypts such a
+value under its stored version with the given additional data, with the error
+codes of `decryptWithPurposeKey`. Only `envelope.ts` and the binding module may
+name them, or `decryptWithPurposeKey`, and only `envelope.ts` the unbound
+writers; `test/integ-envelope-binding.test.ts` scans `src/` for it and is shown
+failing on planted modules (E-3124, E-3129).
 
 ### `rebindEnvelope(keys, binding, stored, unbound)`
 
@@ -8972,7 +9003,7 @@ administrator recovers (E-3117).
 
 | Field of `input` | Type | Meaning |
 |---|---|---|
-| `driver` | `Driver` | the open transaction |
+| `driver` | `OpenTransaction` | the open transaction, from `inOneTransaction` |
 | `schema` | `string` | the schema |
 | `keys` | `KeyProvider` | the ring |
 | `actor` | `Actor` | the account |
@@ -8986,13 +9017,13 @@ The repository methods it is built on — password `rebindOwnedBy`, TOTP
 `replaceSecretIfUnchanged`, identity `rebindTokensOwnedBy` — answer a
 `RebindOutcome`: `"rebound"`, `"current"`, `"absent"` or `"lost"`.
 
-### Seams waiting for their callers
+### `inOneTransaction(driver, work)`
 
-`rebindEnvelopesOfAccount`, the three repository methods above, and the
-`"migrating"` branch of the readers have no production caller on this branch:
-the seal branch calls the account rewrite before a change on an unsealed
-account, and the administration branch calls it from the maintenance step
-(E-3125).
+Internal, in `src/core/auth/account-envelopes.ts`. Opens a transaction on
+`driver` and hands `work` its driver as an `OpenTransaction`, a `Driver` branded
+by this function alone. `rebindEnvelopesOfAccount` takes nothing else, so a
+caller cannot pass the pool, on which the account lock would end with the
+statement that took it (E-3129).
 
 ### Rotation
 
