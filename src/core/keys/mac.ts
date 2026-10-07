@@ -20,12 +20,28 @@ async function hmacUnder(
 	return new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
 }
 
-//a provider of its own can hand over a key web crypto refuses to sign with (E-3093)
+const MAC_BYTES = 32;
+
+interface NamedHashAlgorithm {
+	readonly name?: string;
+	readonly hash?: { readonly name?: string };
+}
+
+function isHmacSha256(key: CryptoKey): boolean {
+	const algorithm: NamedHashAlgorithm = key.algorithm;
+	return algorithm.name === "HMAC" && algorithm.hash?.name === "SHA-256";
+}
+
+//a provider of its own can hand over a key that signs with another hash or not at all (E-3190)
 async function hmacUnderIfUsable(
 	key: CryptoKey,
 	message: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer> | null> {
-	return hmacUnder(key, message).catch(() => null);
+	if (!isHmacSha256(key)) {
+		return null;
+	}
+	const mac = await hmacUnder(key, message).catch(() => null);
+	return mac?.length === MAC_BYTES ? mac : null;
 }
 
 export async function keyTakesMac(key: CryptoKey): Promise<boolean> {

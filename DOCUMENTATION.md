@@ -8671,7 +8671,11 @@ shares a key with `token-pepper` or `cookie-sig`, which use the same algorithm.
 They add no secret and no configuration entry. A `KeyProvider` of an
 application's own must answer both with a key that can take an HMAC, or `migrate()` refuses the
 start with `keys_unusable`; the start takes one probe HMAC under each to find
-out.
+out, and requires the key to be HMAC with SHA-256 and the output to be 32 bytes.
+`migrate()` also probes the `state-mac` key of every version a row of
+`velve.security_state` names, and refuses the start with `keys_unusable` if the ring
+answers one of them with a key that cannot take that MAC; a version the ring no
+longer holds is not a start error but a broken state of the accounts it seals.
 
 `IntegrityKeyPurpose` is the part of `KeyPurpose` whose names end in `-mac`.
 It is internal and not exported from the package.
@@ -8699,7 +8703,7 @@ a `MacVerdict`:
 | `"valid"` | the MAC matches |
 | `"mismatch"` | it does not, including a stored MAC of another length |
 | `"key_version_unknown"` | the version is not a storable key version or has left the ring |
-| `"key_unusable"` | the provider answered the version with a key Web Crypto refuses to sign with |
+| `"key_unusable"` | the provider answered the version with a key that is not HMAC-SHA256, or that Web Crypto refuses to sign with, or whose output is not 32 bytes |
 
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.

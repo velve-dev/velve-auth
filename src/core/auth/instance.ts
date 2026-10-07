@@ -54,6 +54,7 @@ import { type SessionSettings, sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
+import { assertStoredIntegrityKeysTakeMac } from "./integrity-key-ring.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeAlarmReportedTo, routeFloodWatchOf } from "./rate-limiting.js";
 import {
@@ -473,6 +474,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				});
 			}
 			await assertKeysAnswerForEveryPurpose(config.keys);
+			await assertStoredIntegrityKeysTakeMac({ driver, keys: config.keys, schema });
 			//a dead key version is reported once at startup and not on the sign-in path (E-179)
 			await assertStoredKeyVersionsAreKnown({ driver, keys: config.keys, schema });
 			//totp-enc and token-pepper hide a dead key version harder and need the same report (E-428)

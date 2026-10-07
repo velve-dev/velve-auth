@@ -15388,3 +15388,33 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A migration 4 or 5 for one column, for the same reason as in E-3092, and because 4 is the token branch's (E-3086).
 **Reason.** An unreleased migration is a draft, and a draft is edited.
 **Price.** Every database built from this branch's earlier migration 3, the parallel branches' test schemas included, refuses to start with `migration_checksum_changed` until it is recreated; the token and envelope branches must merge this commit before their gates run against a fresh schema.
+
+<a id="e-3109"></a>
+
+### The second review of the foundation is answered in a second range
+`E-3109` · security-state · process, settled
+
+**Context.** The second review of the foundation (4be78c6 … 6b8847b) reported three high, eight medium and seven low findings and six red tests. The foundation's range had one number left, E-3109, and the answers need about twenty. This entry uses that number to say where they are: E-3190 … E-3219, the second range reserved in the §6 table by `86c2f70`, as CLAUDE.md §6 prescribes for a feature that runs out.
+**Rejected.** Borrowing numbers from the four branch ranges, which §6 forbids.
+**Reason.** A second range is a new row and not a widening, so nothing already cited moves.
+**Price.** The foundation's decisions are split across two blocks that are a hundred numbers apart.
+
+<a id="e-3190"></a>
+
+### The integrity probe requires HMAC with SHA-256 and a 32-byte MAC
+`E-3190` · security-state, second range · keys, startup, settled
+
+**Context.** E-3093's probe asked only whether Web Crypto signs with the key. An HMAC key under SHA-1 or SHA-512 signs, passes the start, and then produces a 20- or 64-byte MAC the seal table refuses and every stored 32-byte MAC compares as a mismatch — every sealed account would read as broken. A reviewer's test showed both hashes passing. `hmacUnderIfUsable` in `src/core/keys/mac.ts` now requires `key.algorithm` to be HMAC with hash SHA-256 and the output to be 32 bytes, and answers `null` otherwise; `keyTakesMac` and `verifyMacUnderKeyVersion` (`"key_unusable"`) inherit that. The reviewer's cases are committed in `test/keys-integrity-key-shape.test.ts`.
+**Rejected.** Checking the output length alone, which a future hash of 32 bytes other than SHA-256 would pass.
+**Reason.** Section 3.18 promises HMAC-SHA256, and the table's length check is only the last of its consequences.
+**Price.** A provider that wraps its keys so that `algorithm` does not report the hash is refused even if it computes HMAC-SHA256 underneath.
+
+<a id="e-3191"></a>
+
+### The start probes the state-mac versions stored seals name
+`E-3191` · security-state, second range · keys, startup, settled
+
+**Context.** The review found that only the current version of each integrity purpose was probed, so an older ring version answered with an unusable key passed the start and made every account sealed under it read as broken. A `KeyProvider` cannot list its ring, so "every version in the ring" cannot be walked; walking 1 … current would make a date-like version number cost millions of calls. `migrate()` now runs `assertStoredIntegrityKeysTakeMac` from the new `src/core/auth/integrity-key-ring.ts`, which reads every distinct `key_version` of `velve.security_state` and refuses the start with `keys_unusable` if the ring answers one with a key the probe of E-3190 rejects. A version the ring no longer holds is not a start error: refusing it would let a writer stop the service by inserting one seal row, so it stays the per-account broken state `key_version_unknown`. The reviewer's ring case is adapted to store a seal under the old version, since only a stored version is ever read.
+**Rejected.** (a) Walking every version from 1 to the current one, for the cost above. (b) Refusing the start on an unknown stored version, as the password ring check does (E-179), for the denial of service above.
+**Reason.** A ring version matters exactly when a stored value names it, and the database says which do.
+**Price.** The token MAC versions are not probed yet: their columns arrive with migration 4, and the token branch extends this query. The check adds one query to `migrate()`, and a process that never calls `migrate()` (E-3192) never runs it.
