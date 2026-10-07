@@ -9,7 +9,6 @@ import type { KeyProvider } from "../../keys/provider.js";
 import {
 	bindToken,
 	checkTokenBinding,
-	reboundTokenMacIfStale,
 	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBinding,
@@ -151,20 +150,17 @@ export function createPendingAuthenticationService(
 		return { binding: bindingOf(tokenHash, candidate), decoded: candidate.decode() };
 	}
 
-	function checkedRow(
-		candidate: PendingCandidate<unknown>,
-		mac: StoredTokenMac,
-	): CheckedPendingRow {
+	function checkedRow(candidate: PendingCandidate<unknown>): CheckedPendingRow {
 		return {
 			userId: candidate.userId,
 			factorNames: candidate.storedFactorNames ?? [],
 			attempts: candidate.attempts,
-			tokenMac: mac.tokenMac,
-			tokenMacKeyVersion: mac.tokenMacKeyVersion,
+			tokenMac: candidate.tokenMac,
+			tokenMacKeyVersion: candidate.tokenMacKeyVersion,
 		};
 	}
 
-	//a booking must be pinned to the row this check passed (E-3140)
+	//a booking must be pinned to the row this check passed, which only a booking rebinds (E-3149)
 	async function checkedRowOf(tokenHash: Uint8Array): Promise<{
 		readonly row: CheckedPendingRow;
 		readonly found: PendingAuthenticationWithOwner;
@@ -174,19 +170,7 @@ export function createPendingAuthenticationService(
 		if (checked === null || candidate === null) {
 			return null;
 		}
-		const rebound = await reboundTokenMacIfStale(options.keys, checked.binding, candidate);
-		const reboundStored =
-			rebound !== null &&
-			(await repository.rebindPendingTokenMac({
-				tokenHash,
-				userId: candidate.userId,
-				previous: candidate,
-				next: rebound,
-			}));
-		return {
-			row: checkedRow(candidate, reboundStored ? rebound : candidate),
-			found: checked.decoded,
-		};
+		return { row: checkedRow(candidate), found: checked.decoded };
 	}
 
 	//a missed booking must tell a concurrent attempt from a writer (E-3140)
@@ -207,7 +191,7 @@ export function createPendingAuthenticationService(
 			reportRefusal(reread.userId, verdict === "valid" ? "mismatch" : verdict);
 			return "missing";
 		}
-		return checkedRow(reread, reread);
+		return checkedRow(reread);
 	}
 
 	async function exhaust(tokenHash: Uint8Array): Promise<{ readonly outcome: "exhausted" }> {

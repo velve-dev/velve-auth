@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { pendingBinding } from "../src/core/factor/pending/binding.js";
 import {
 	createPendingAuthenticationService,
 	MAXIMUM_PENDING_ATTEMPTS,
@@ -6,10 +7,10 @@ import {
 	type PendingToken,
 } from "../src/core/factor/pending/index.js";
 import { hashPendingToken } from "../src/core/factor/pending/token.js";
-import type { TokenBindingRefusal } from "../src/core/token/binding.js";
+import { bindToken, type TokenBindingRefusal } from "../src/core/token/binding.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { failOneAttempt, testKeyProvider } from "./totp-fixtures.js";
+import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
 // A writer who holds a pending row changes it while a booked attempt waits on the row lock.
 // Section 3.18 point 3 makes the booking conditional on the attempts value and the MAC the
@@ -23,6 +24,8 @@ let observer: TestConnection;
 let schema: string;
 let refusals: TokenBindingRefusal[];
 let pending: PendingAuthenticationService;
+//two versions, so a row can be rebound under the newer one while a booking waits on it
+const ring = testKeyRing(2);
 
 beforeAll(async () => {
 	const migrated = await openMigratedSchema("review_attempt_carry");
@@ -32,7 +35,7 @@ beforeAll(async () => {
 	observer = await openTestConnection();
 	pending = createPendingAuthenticationService({
 		driver: owner,
-		keys: testKeyProvider(),
+		keys: ring.providerAt(2, [1, 2]),
 		schema,
 		reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
 	});
@@ -135,5 +138,34 @@ describe("a booked attempt and a writer who changes the row during the booking",
 		expect(outcome).toBe("missing");
 		expect(await attemptsOf(userId)).toBe(1);
 		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
+	});
+});
+
+describe("a booked attempt and a legitimate rebinding during the booking (E-3149)", () => {
+	it("re-pins to the row rebound at an equal count under a newer version, without an alarm", async () => {
+		const userId = await createUser(owner, schema);
+		const older = createPendingAuthenticationService({
+			driver: owner,
+			keys: ring.providerAt(1, [1]),
+			schema,
+		});
+		const { token } = await older.begin({ userId, factorsCompleted: ["password"] });
+		const rebound = await bindToken(
+			ring.providerAt(2, [1, 2]),
+			pendingBinding(userId, hashPendingToken(token), ["password"], 0),
+		);
+		refusals = [];
+
+		const outcome = await bookingWhileTheWriter(userId, token, async () => {
+			await writer.query(
+				`UPDATE ${schema}.pending_authentication
+				 SET token_mac = $2, token_mac_key_version = $3 WHERE user_id = $1`,
+				[userId, rebound.tokenMac, rebound.tokenMacKeyVersion],
+			);
+		});
+
+		expect(outcome).toBe("booked");
+		expect(await attemptsOf(userId)).toBe(1);
+		expect(refusals).toStrictEqual([]);
 	});
 });

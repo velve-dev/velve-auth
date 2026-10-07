@@ -13,7 +13,8 @@ import { testKeyRing } from "./totp-fixtures.js";
 
 /**
  * S-KEY-5 and section 3.18 point 3: the maintenance step rebinds the token rows no resolve has
- * rebound before the old token-mac version leaves the ring. This is the seam it calls (E-3148).
+ * rebound before the old token-mac version leaves the ring. This is the seam it calls (E-3148);
+ * a pending row is rebound only by its booking (E-3149).
  */
 
 const NO_REQUEST = { ipAddress: null, userAgent: null };
@@ -69,10 +70,11 @@ afterAll(async () => {
 });
 
 describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
-	it("rebinds every row of the three tables in batches, refuses a forged one, and survives the old version leaving", async () => {
+	it("rebinds sessions and one-time tokens in batches, refuses a forged row, and survives the old version leaving", async () => {
 		const ring = testKeyRing(2);
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const rotatedKeys = ring.providerAt(2, [1, 2]);
+		const rotated = servicesUnder(rotatedKeys);
 		const after = servicesUnder(ring.providerAt(2, [2]));
 		const userId = await createUser(migrated.connection, schema);
 		const sessionTokens = [];
@@ -97,14 +99,12 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 
 		const results = {
 			session: await rebind(rotatedKeys, "session"),
-			pending: await rebind(rotatedKeys, "pending_authentication"),
 			oneTime: await rebind(rotatedKeys, "one_time_token"),
 			again: await rebind(rotatedKeys, "session"),
 		};
 
 		expect(results).toStrictEqual({
 			session: { rebound: 3, refused: 1 },
-			pending: { rebound: 1, refused: 0 },
 			oneTime: { rebound: 1, refused: 0 },
 			again: { rebound: 0, refused: 1 },
 		});
@@ -116,6 +116,8 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		for (const token of sessionTokens) {
 			expect((await after.sessions.resolve(token))?.userId).toBe(userId);
 		}
+		//a pending row is rebound only by the booking that writes its counter (E-3149)
+		expect((await rotated.pending.bookAttempt(pendingToken)).outcome).toBe("booked");
 		expect((await after.pending.resolve(pendingToken))?.userId).toBe(userId);
 		expect(
 			await after.tokens.redeem({ token: toSecretToken(oneTime), purpose: "magic_link" }),

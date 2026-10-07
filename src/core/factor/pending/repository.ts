@@ -63,13 +63,6 @@ export interface PendingAuthenticationRepository {
 	findPendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
 	): Promise<PendingCandidate<PendingAuthenticationWithOwner> | null>;
-	//a concurrent rebinding must not be overwritten (S-KEY-5)
-	rebindPendingTokenMac(input: {
-		readonly tokenHash: Uint8Array;
-		readonly userId: string;
-		readonly previous: StoredTokenMac;
-		readonly next: StoredTokenMac;
-	}): Promise<boolean>;
 	//an attempt must be booked only over the counter and mac that were checked (S-INTEG-9)
 	bookAttempt(input: {
 		readonly tokenHash: Uint8Array;
@@ -252,13 +245,6 @@ function deleteStatement(table: string): string {
 		token_mac, token_mac_key_version`;
 }
 
-function rebindStatement(table: string): string {
-	return `UPDATE ${table}
-	SET token_mac = $3, token_mac_key_version = $4
-	WHERE token_sha256 = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5
-	RETURNING attempts`;
-}
-
 export function createPendingAuthenticationRepository(
 	options: PendingAuthenticationRepositoryOptions,
 ): PendingAuthenticationRepository {
@@ -276,7 +262,6 @@ export function createPendingAuthenticationRepository(
 	);
 	const countAttemptSql = countAttemptStatement(table);
 	const deleteSql = deleteStatement(table);
-	const rebindSql = rebindStatement(table);
 
 	async function removeByTokenHash(
 		driver: Driver,
@@ -316,18 +301,6 @@ export function createPendingAuthenticationRepository(
 						userDisabledAt: toOptionalDate(row.disabled_at),
 						observedAt: toDate(row.observed_at),
 					}));
-		},
-
-		async rebindPendingTokenMac({ tokenHash, userId, previous, next }) {
-			const rows = await options.driver.query(rebindSql, [
-				tokenHash,
-				previous.tokenMac,
-				next.tokenMac,
-				next.tokenMacKeyVersion,
-				previous.tokenMacKeyVersion,
-				userId,
-			]);
-			return rows.length === 1;
 		},
 
 		async bookAttempt({ tokenHash, checked, next }) {

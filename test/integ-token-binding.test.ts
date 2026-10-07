@@ -501,7 +501,7 @@ describe("what a row the library wrote keeps (S-INTEG-9)", () => {
 });
 
 describe("a row under an older key version (S-KEY-5)", () => {
-	it("is rebound under the current version on a successful resolve", async () => {
+	it("rebinds a session on a resolve and a pending row only on its booking (E-3149)", async () => {
 		const owner = await createUser(migrated.connection, schema);
 		const ring = testKeyRing(2);
 		const before = servicesUnder(ring.providerAt(1, [1]));
@@ -517,14 +517,17 @@ describe("a row under an older key version (S-KEY-5)", () => {
 
 		expect((await rotated.sessions.resolve(session))?.userId).toBe(owner);
 		expect((await rotated.pending.resolve(pendingToken))?.userId).toBe(owner);
-		const versions = await migrated.connection.query<{ version: number }>(
-			`SELECT token_mac_key_version AS version FROM ${schema}.session WHERE token_sha256 = $1
+		const versionsOf = () =>
+			migrated.connection.query<{ version: number }>(
+				`SELECT token_mac_key_version AS version FROM ${schema}.session WHERE token_sha256 = $1
 			 UNION ALL
 			 SELECT token_mac_key_version FROM ${schema}.pending_authentication WHERE token_sha256 = $2`,
-			[sha256Of(session), sha256Of(pendingToken)],
-		);
+				[sha256Of(session), sha256Of(pendingToken)],
+			);
 
-		expect(versions.map((row) => row.version)).toStrictEqual([2, 2]);
+		expect((await versionsOf()).map((row) => row.version)).toStrictEqual([2, 1]);
+		expect((await rotated.pending.bookAttempt(pendingToken)).outcome).toBe("booked");
+		expect((await versionsOf()).map((row) => row.version)).toStrictEqual([2, 2]);
 		expect((await retired.sessions.resolve(session))?.userId).toBe(owner);
 		expect((await retired.pending.resolve(pendingToken))?.userId).toBe(owner);
 		expect(refusals).toStrictEqual([]);

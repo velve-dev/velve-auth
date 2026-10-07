@@ -1,7 +1,6 @@
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 import { epochOf, type SecurityStateSealing } from "../db/repositories/session.js";
-import { pendingBinding } from "../factor/pending/binding.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { sessionBinding } from "../session/binding.js";
 import {
@@ -14,8 +13,8 @@ import {
 } from "./binding.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
 
-/** the tables whose rows carry a token MAC */
-export type TokenTable = "session" | "one_time_token" | "pending_authentication";
+/** the tables whose token MACs maintenance rebinds, a pending row being rebound only by its booking */
+export type TokenTable = "session" | "one_time_token";
 
 /** what one rebinding pass over a table did */
 interface TokenRebinding {
@@ -30,7 +29,6 @@ interface StoredTokenRow {
 	readonly token_mac_key_version: number;
 	readonly factor_names?: string;
 	readonly session_epoch?: string | null;
-	readonly attempts?: number;
 	readonly purpose?: OneTimeTokenPurpose;
 	readonly payload?: unknown;
 }
@@ -43,9 +41,6 @@ function contentColumns(table: TokenTable, states: string, sealing: SecurityStat
 	if (table === "session") {
 		return `array_to_json(t.factors)::text AS factor_names,
 		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`;
-	}
-	if (table === "pending_authentication") {
-		return "array_to_json(t.factors_completed)::text AS factor_names, t.attempts";
 	}
 	return "t.purpose, t.payload";
 }
@@ -94,9 +89,6 @@ function bindingOf(table: TokenTable, row: StoredTokenRow): TokenBinding | null 
 	const names = namesOf(row.factor_names);
 	if (names === null) {
 		return null;
-	}
-	if (table === "pending_authentication") {
-		return pendingBinding(row.user_id, tokenHash, names, row.attempts ?? -1);
 	}
 	const epoch =
 		row.session_epoch === null || row.session_epoch === undefined

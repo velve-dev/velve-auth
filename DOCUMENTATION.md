@@ -8896,9 +8896,13 @@ the security-state alarm of section 3.18 is what it is there for.
 ### Writing and rebinding
 
 Every insert takes the MAC under the current `token-mac` version in the
-statement that writes the row. A session or pending authentication that
-resolves under an older version is rebound under the current one by a
-compare-and-set on the stored MAC, so a concurrent rebinding is not overwritten.
+statement that writes the row. A session that resolves under an older version is
+rebound under the current one by a compare-and-set on the stored MAC, and a
+concurrent rebinding is not overwritten. A pending authentication is rebound only
+by its booking, which writes the raised counter with a MAC under the current
+version; a booking that finds the row rebound by another at the same count under
+a newer version books over it without a report. Every statement runs at `READ
+COMMITTED`; none of this opens a `REPEATABLE READ` transaction.
 
 A row that is never resolved while two versions are in the ring keeps the old
 version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
@@ -8912,12 +8916,14 @@ rebindTokenRowsUnderCurrentKey({ driver, schema, keys, sealing, table, batchSize
   : Promise<{ rebound: number; refused: number }>
 ```
 
-in `src/core/token/rebind.ts`. For one of the three tables it visits every row not
+in `src/core/token/rebind.ts`. For `session` or `one_time_token` it visits every row not
 under the current `token-mac` version, `batchSize` at a time in token-hash order,
 checks it under its own version and rebinds it by a compare-and-set on the stored
 MAC. A row that fails its check keeps its version, is counted as `refused` and
 reported with the occasion `maintenance`; a one-time token without an owner, which
-nothing redeems, is not visited.
+nothing redeems, is not visited. It takes no account lock: each row is its own
+compare-and-set. Pending authentications are not visited; they live five minutes
+and are rebound by their bookings.
 
 ### The attempt budget
 
