@@ -1,9 +1,11 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
 import { ConcealedError } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
-import { isLibrarySessionRow, type SessionIssue } from "../../session/binding.js";
+import { isLibrarySessionRow, type SessionIssue, sessionBinding } from "../../session/binding.js";
 import {
+	bindToken,
 	reportBrokenState,
+	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBindingRefusalReport,
 } from "../../token/binding.js";
@@ -393,8 +395,24 @@ function deleteEveryOwnedStatement(
 	return `DELETE FROM ${table} s WHERE s.user_id = $1 RETURNING ${verifiedColumns(states, sealing)}`;
 }
 
-function deleteEveryOtherOwnedStatement(table: string): string {
-	return `DELETE FROM ${table} WHERE user_id = $1 AND id <> $2 RETURNING id`;
+function deleteEveryOtherOwnedStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `DELETE FROM ${table} s WHERE s.user_id = $1 AND s.id <> $2
+	RETURNING ${verifiedColumns(states, sealing)}`;
+}
+
+function keptRowStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${verifiedColumns(states, sealing)} FROM ${table} s WHERE s.id = $1 AND s.user_id = $2`;
+}
+
+//a kept session is rebound only where it still holds the mac read under the lock (S-INTEG-9)
+function keptRebindStatement(table: string): string {
+	return `UPDATE ${table} SET token_mac = $4, token_mac_key_version = $5
+	WHERE id = $1 AND user_id = $2 AND token_mac = $3
+	RETURNING id`;
 }
 
 //a row that is counted or announced must be checkable first (S-INTEG-9)
@@ -481,7 +499,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const deleteOwnedSql = deleteOwnedStatement(table);
 	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table, states, sealing);
-	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
+	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table, states, sealing);
+	const keptRowSql = keptRowStatement(table, states, sealing);
+	const keptRebindSql = keptRebindStatement(table);
 	const listOwnedSql = listOwnedStatement(table, states, sealing);
 	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
 
@@ -580,6 +600,36 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
+	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
+		const sessionEpoch = toEpoch(kept.session_epoch);
+		if (sessionEpoch === null || !(await isLibraryRow(kept))) {
+			return false;
+		}
+		const tokenHash = new Uint8Array(kept.token_sha256);
+		const next = await bindToken(
+			options.keys,
+			sessionBinding(kept.user_id, tokenHash, storedNamesOf(kept.factor_names) ?? [], {
+				sessionEpoch,
+				createdAtMicros: microsFrom(kept.created_at_us),
+			}),
+		);
+		const rebound = await tx.query(keptRebindSql, [
+			kept.id,
+			kept.user_id,
+			kept.token_mac,
+			next.tokenMac,
+			next.tokenMacKeyVersion,
+		]);
+		if (rebound.length === 0) {
+			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+				userId: kept.user_id,
+				occasion: "change",
+				verdict: "mismatch",
+			});
+		}
+		return rebound.length === 1;
+	}
+
 	//a forged row goes with the others and is neither counted nor returned (S-INTEG-9)
 	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
 		const rows = await options.driver.query<VerifiedRowShape>(deleteEveryOwnedSql, [actor]);
@@ -658,9 +708,19 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		deleteEverySessionOwnedByReturningIds: ({ actor }) =>
 			deleteEverySessionOwnedByReturningIds(actor),
 
-		async deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
-			const rows = await options.driver.query(deleteEveryOtherOwnedSql, [actor, keptSessionId]);
-			return rows.length;
+		//the kept row is checked and rebound under the lock or it goes with the others (E-3260)
+		deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
+			return issuing(options.driver, actor, async (tx) => {
+				const [kept] = await tx.query<VerifiedRowShape>(keptRowSql, [keptSessionId, actor]);
+				const removed = await tx.query<VerifiedRowShape>(deleteEveryOtherOwnedSql, [
+					actor,
+					keptSessionId,
+				]);
+				if (kept !== undefined && !(await keptAfterRebinding(tx, kept))) {
+					await tx.query(deleteOwnedSql, [keptSessionId, actor]);
+				}
+				return (await libraryRowsAmong(removed)).length;
+			});
 		},
 
 		//the new row and the removal of the old one are one transaction, never an update (S-FIX-1)

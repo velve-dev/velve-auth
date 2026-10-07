@@ -36,6 +36,7 @@ export type TokenBindingOccasion =
 	| "session_resolve"
 	| "factor_check"
 	| "token_redemption"
+	| "change"
 	| "maintenance";
 
 /** what a refused token row tells the security-state alarm, and never the token or a hash */

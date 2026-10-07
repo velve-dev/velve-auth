@@ -4035,7 +4035,7 @@ a session the caller could not use is not a device that is still signed in.
 |---|---|---|
 | `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
 | `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way, and also for a `targetSessionId` that is not spelled as a `uuid`, which names no session (E-2242) |
-| `revokeEveryOther({ resolved })` | required | removes all but the calling session |
+| `revokeEveryOther({ resolved })` | required | removes all but the calling session, under the account lock; the calling session is checked again there and rebound by a compare-and-set on its MAC, and goes with the others if it fails ([Security state: keyed token hashes](#security-state-keyed-token-hashes)) |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
 | `listEveryIdOwnedBy({ resolved })` | required | the ids of every row the four revocations above can remove |
@@ -8902,6 +8902,15 @@ before anything in the row is used:
 | pending resolve, every failed attempt, and the consume that completes a sign-in | `PendingAuthenticationService` | as no pending authentication (`pending_not_found`, `pending_consumed`) |
 | redemption of an email verification, a reset, an address change or a magic link | `OneTimeTokens.redeem` | as no token (`invalid_token`) |
 
+`session.revokeEveryOther` takes the account lock first, reads the session it
+keeps and the account's epoch under it, checks that row and rebinds it under the
+current key by a compare-and-set on the MAC it read, before the others go. A kept
+row that fails its check, or that a writer changed between the read and the
+rebinding, goes with the others: the caller is signed out too, and the refusal
+report receives `occasion: "change"` for the missed rebinding. The seal branch
+raises the epoch in the same transaction, and the rebinding is where the kept
+session moves to the epoch the revocation leaves.
+
 A revocation removes a session row whether or not it passes, but counts,
 returns and announces only the rows that do: `revokedOtherSessionsCount` of a
 password change or reset, `revokedCount` of `session.revokeAll`, the count of a
@@ -8927,7 +8936,7 @@ the rollback of the transaction that would have issued the session.
 | Field | Value |
 |---|---|
 | `userId` | the account the refused row names |
-| `occasion` | `sign_in` for a session insert that wrote nothing, `session_resolve`, `factor_check`, `token_redemption`, or `maintenance` for the rebinding pass |
+| `occasion` | `sign_in` for a session insert that wrote nothing, `session_resolve`, `factor_check`, `token_redemption`, `change` for a kept session whose rebinding missed, or `maintenance` for the rebinding pass |
 | `reason` | `token_binding_mismatch` for a row whose MAC does not match, or `seal_mismatch` for a state around a genuine row that is not what the library left |
 | `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |
 
