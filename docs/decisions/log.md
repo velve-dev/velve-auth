@@ -16298,3 +16298,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Exempting the two 1.x purposes from the check, which would keep the cross-purpose forgery the check exists to stop.
 **Reason.** A price that falls on upgraders has to be written down where the upgrade is planned.
 **Price.** Applications with such a provider derive separate keys before upgrading.
+
+<a id="e-3343"></a>
+
+### The issue-miss premise shows the writer unblocked by measurement, not by a timer
+`E-3343` · security-state · tests, settled
+
+**Context.** `test/security-state-issue-condition-miss.test.ts` showed that a writer's `UPDATE` of `velve.security_state` commits while the session issue holds the account lock, by racing it against a two-second timer. The seventh review's second reviewer asked for a proof that does not rest on timing. The suggested plant was `FOR UPDATE` in `src/core/db/lock.ts` turning the case red. Run here, that plant left the case green, as expected: no lock mode on the `velve.user` row blocks an update of a `security_state` row that does not change its key, so `FOR UPDATE` and `FOR NO KEY UPDATE` behave the same for this premise. The case now gives the writer's connection a `lock_timeout` of 200 ms. It expects the `security_state` update to commit and, as a control under the same lock, an update of the locked `velve.user` row to fail with 55P03. That shows the measurement can tell a blocked writer from an unblocked one. Removing the lock clause from the lock statement turned both cases red. The file's comment is reduced to one `//` sentence (B-F10).
+**Rejected.** Keeping the timer, which a slow machine turns into a false "blocked".
+**Reason.** A premise test has to be able to fail, and a lock-timeout probe fails exactly when the lock blocks.
+**Price.** The case depends on `lock_timeout`, a session setting the test connection must accept.

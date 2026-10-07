@@ -3,14 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 point 3: the session issue takes the account lock, reads the epoch and inserts
-// only while that epoch still holds. The lock is FOR NO KEY UPDATE on velve.user, and an UPDATE of
-// velve.security_state by a database writer takes no lock there, so the writer commits between
-// the epoch read and the conditional insert and the insert inserts nothing. The specification
-// therefore no longer says the condition cannot miss; a miss is a broken state, answered like a
-// missing row with the alarm seal_mismatch and not retried (E-3298). This case holds the premise
-// the rule rests on, and the control that the same statements insert one row when nobody writes.
-// The issuing code that answers the miss is the token branch's.
+//a writer's update of security_state is not blocked by the account lock while an update of the locked user row is, so a missed conditional insert is a broken state (E-3298, E-3343)
 
 let signer: TestConnection;
 let writerConnection: TestConnection;
@@ -21,6 +14,7 @@ beforeAll(async () => {
 	signer = migrated.connection;
 	schema = migrated.schema;
 	writerConnection = await openTestConnection();
+	await writerConnection.query("SET lock_timeout = '200ms'", []);
 });
 
 afterAll(async () => {
@@ -29,13 +23,11 @@ afterAll(async () => {
 	await writerConnection.close();
 });
 
-function withinTwoSeconds<T>(work: Promise<T>): Promise<T | "blocked by the account lock"> {
-	return Promise.race([
-		work,
-		new Promise<"blocked by the account lock">((resolve) =>
-			setTimeout(() => resolve("blocked by the account lock"), 2_000),
-		),
-	]);
+function writerUpdate(sql: string, userId: string): Promise<string> {
+	return writerConnection
+		.query(sql, [userId])
+		.then(() => "committed")
+		.catch((error: { sqlState?: string }) => error.sqlState ?? "no SQLSTATE");
 }
 
 async function issueUnderTheLock(writerChangesTheEpoch: boolean) {
@@ -53,14 +45,15 @@ async function issueUnderTheLock(writerChangesTheEpoch: boolean) {
 			[userId],
 		);
 		const writer = writerChangesTheEpoch
-			? await withinTwoSeconds(
-					writerConnection
-						.query(`UPDATE ${schema}.security_state SET session_epoch = 7 WHERE user_id = $1`, [
-							userId,
-						])
-						.then(() => "committed"),
+			? await writerUpdate(
+					`UPDATE ${schema}.security_state SET session_epoch = 7 WHERE user_id = $1`,
+					userId,
 				)
 			: "did not write";
+		const lockedRow = await writerUpdate(
+			`UPDATE ${schema}.user SET updated_at = now() WHERE id = $1`,
+			userId,
+		);
 		const inserted = await signer.query(
 			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
 			 SELECT s.user_id, decode(md5(random()::text) || md5(random()::text), 'hex'),
@@ -69,7 +62,7 @@ async function issueUnderTheLock(writerChangesTheEpoch: boolean) {
 			 RETURNING id`,
 			[userId, Number(state?.epoch)],
 		);
-		return { writer, inserted: inserted.length };
+		return { writer, lockedRow, inserted: inserted.length };
 	} finally {
 		await signer.query("ROLLBACK", []).catch(() => undefined);
 	}
@@ -77,10 +70,18 @@ async function issueUnderTheLock(writerChangesTheEpoch: boolean) {
 
 describe("premise: the session issue's conditional insert under the account lock (section 3.18 point 3)", () => {
 	it("misses when a writer changes the epoch under the lock, which is why a miss is a broken state", async () => {
-		expect(await issueUnderTheLock(true)).toStrictEqual({ writer: "committed", inserted: 0 });
+		expect(await issueUnderTheLock(true)).toStrictEqual({
+			writer: "committed",
+			lockedRow: "55P03",
+			inserted: 0,
+		});
 	});
 
 	it("control: the same statements insert the session when nobody writes", async () => {
-		expect(await issueUnderTheLock(false)).toStrictEqual({ writer: "did not write", inserted: 1 });
+		expect(await issueUnderTheLock(false)).toStrictEqual({
+			writer: "did not write",
+			lockedRow: "55P03",
+			inserted: 1,
+		});
 	});
 });
