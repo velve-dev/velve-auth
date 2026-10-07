@@ -344,20 +344,79 @@ describe("securityState.sealing decides whether the unbound form is read (S-INTE
 	});
 });
 
-describe("no module writes the unbound form (S-INTEG-1, E-3124)", () => {
+//the old form is reached only through the binding module, which applies the sealing policy (E-3129)
+const UNBOUND_WRITERS = /\b(?:encryptWithPurposeKey|sealEnvelope|openEnvelope)\b/;
+const UNBOUND_PRIMITIVES =
+	/\b(?:decryptWithPurposeKey|encryptUnderAdditionalData|decryptUnderAdditionalData)\b/;
+const ENVELOPE_MODULE = "core/keys/envelope.ts";
+const BINDING_MODULE = "core/keys/envelope-binding.ts";
+
+interface Source {
+	readonly path: string;
+	readonly text: string;
+}
+
+function modulesReachingTheUnboundForm(sources: readonly Source[]): string[] {
+	return sources
+		.filter(
+			(source) =>
+				source.path !== ENVELOPE_MODULE &&
+				(UNBOUND_WRITERS.test(source.text) ||
+					(source.path !== BINDING_MODULE && UNBOUND_PRIMITIVES.test(source.text))),
+		)
+		.map((source) => source.path);
+}
+
+describe("no module reaches the unbound form but the binding module (S-INTEG-1, E-3124)", () => {
 	const sourceRoot = fileURLToPath(new URL("../src", import.meta.url));
-	const sources = readdirSync(sourceRoot, { recursive: true, withFileTypes: true })
+	const sources: Source[] = readdirSync(sourceRoot, { recursive: true, withFileTypes: true })
 		.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
-		.map((entry) => `${entry.parentPath}/${entry.name}`);
+		.map((entry) => `${entry.parentPath}/${entry.name}`)
+		.map((path) => ({
+			path: path.replace(`${sourceRoot}/`, ""),
+			text: readFileSync(path, "utf8"),
+		}));
 
-	it("names the old-form writers in the envelope module alone", () => {
-		const naming = sources
-			.filter((path) =>
-				/\b(?:encryptWithPurposeKey|sealEnvelope|openEnvelope)\b/.test(readFileSync(path, "utf8")),
-			)
-			.map((path) => path.replace(`${sourceRoot}/`, ""));
-
+	it("finds no module of src/ that names an unbound writer or primitive outside its place", () => {
 		expect(sources.length).toBeGreaterThan(100);
-		expect(naming).toStrictEqual(["core/keys/envelope.ts"]);
+		expect(sources.some((source) => source.path === BINDING_MODULE)).toBe(true);
+		expect(modulesReachingTheUnboundForm(sources)).toStrictEqual([]);
+	});
+
+	it.each([
+		[
+			"reads the old form with no policy",
+			`import { decryptWithPurposeKey } from "../keys/envelope.js";
+export const open = (keys, version, value) => decryptWithPurposeKey(keys, "totp-enc", version, value);`,
+		],
+		[
+			"writes a value bound to nothing",
+			`import { encryptUnderAdditionalData } from "../keys/envelope.js";
+export const seal = (keys, value) => encryptUnderAdditionalData(keys, "totp-enc", () => new Uint8Array(0), value);`,
+		],
+		[
+			"decrypts with additional data of its own",
+			`import { decryptUnderAdditionalData } from "../keys/envelope.js";
+export const open = (keys, stored) => decryptUnderAdditionalData(keys, "totp-enc", stored, new Uint8Array(0));`,
+		],
+		[
+			"writes the old form",
+			`import { encryptWithPurposeKey } from "../keys/envelope.js";
+export const seal = (keys, value) => encryptWithPurposeKey(keys, "totp-enc", value);`,
+		],
+	])("catches a planted module that %s", (_name, text) => {
+		expect(
+			modulesReachingTheUnboundForm([...sources, { path: "core/planted.ts", text }]),
+		).toStrictEqual(["core/planted.ts"]);
+	});
+
+	it("catches the binding module itself naming an unbound writer", () => {
+		const planted = sources.map((source) =>
+			source.path === BINDING_MODULE
+				? { ...source, text: `${source.text}\nexport { sealEnvelope } from "./envelope.js";` }
+				: source,
+		);
+
+		expect(modulesReachingTheUnboundForm(planted)).toStrictEqual([BINDING_MODULE]);
 	});
 });
