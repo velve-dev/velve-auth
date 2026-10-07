@@ -1,6 +1,8 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
 import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
+import { keyTakesMac } from "../keys/mac.js";
+import { isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
 
@@ -238,6 +240,9 @@ export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promis
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);
 		if (current === null || !Number.isInteger(current.version) || current.version < 1) {
+			throw new VelveStartupError("keys_unusable");
+		}
+		if (isIntegrityPurpose(purpose) && !(await keyTakesMac(current.key))) {
 			throw new VelveStartupError("keys_unusable");
 		}
 	}

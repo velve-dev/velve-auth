@@ -5,18 +5,14 @@ import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// Reviewer test for E-3088 and the Security state chapter: a custom KeyProvider that answers
-// state-mac with a key HMAC cannot use passes the start check, and the MAC module then throws a
-// raw platform error on the request path instead of the start refusing. The chapter also says
-// verifyMacUnderKeyVersion never throws for a stored value.
+// A provider of its own can answer an integrity purpose with a key HMAC cannot use. The start
+// refuses it, and a stored MAC checked under such a key is answered with a verdict rather than a
+// platform exception (E-3093).
 
 const genuine = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
 async function aesKey(): Promise<CryptoKey> {
-	return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
-		"encrypt",
-		"decrypt",
-	]);
+	return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
 
 function providerAnsweringStateMacWith(key: CryptoKey): KeyProvider {
@@ -30,7 +26,7 @@ function providerAnsweringStateMacWith(key: CryptoKey): KeyProvider {
 	};
 }
 
-describe("the start check for the integrity purposes (E-3088)", () => {
+describe("the start check for the integrity purposes (E-3093)", () => {
 	it("refuses a provider whose state-mac key cannot take an HMAC", async () => {
 		const provider = providerAnsweringStateMacWith(await aesKey());
 
@@ -39,12 +35,35 @@ describe("the start check for the integrity purposes (E-3088)", () => {
 		});
 	});
 
-	it("answers a stored MAC under an unusable key without throwing, as the chapter states", async () => {
+	it("answers a stored MAC under an unusable key with key_unusable", async () => {
 		const taken = await macUnderCurrentKey(genuine, "state-mac", new Uint8Array(8));
 		const provider = providerAnsweringStateMacWith(await aesKey());
 
 		await expect(
 			verifyMacUnderKeyVersion(provider, "state-mac", taken, new Uint8Array(8)),
-		).resolves.toBeTypeOf("string");
+		).resolves.toBe("key_unusable");
+	});
+
+	it("accepts the provider the library ships", async () => {
+		await expect(assertKeysAnswerForEveryPurpose(genuine)).resolves.toBeUndefined();
+	});
+
+	it("refuses a token-mac key that verifies but cannot sign", async () => {
+		const verifyOnly = await crypto.subtle.importKey(
+			"raw",
+			new Uint8Array(32),
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["verify"],
+		);
+		const provider: KeyProvider = {
+			current: async (purpose) =>
+				purpose === "token-mac" ? { version: 1, key: verifyOnly } : genuine.current(purpose),
+			byVersion: (purpose, version) => genuine.byVersion(purpose, version),
+		};
+
+		await expect(assertKeysAnswerForEveryPurpose(provider)).rejects.toMatchObject({
+			code: "keys_unusable",
+		});
 	});
 });

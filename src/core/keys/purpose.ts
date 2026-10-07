@@ -19,8 +19,13 @@ export type SigningKeyPurpose = Exclude<KeyPurpose, EncryptionKeyPurpose>;
 export type IntegrityKeyPurpose = Extract<KeyPurpose, `${string}-mac`>;
 
 const ENCRYPTION_PURPOSE_NAME = /-enc$/;
+const INTEGRITY_PURPOSE_NAME = /-mac$/;
 
 //one function answers whether a purpose encrypts so ring and envelope cannot disagree (E-70)
 export function isEncryptionPurpose(purpose: KeyPurpose): purpose is EncryptionKeyPurpose {
 	return ENCRYPTION_PURPOSE_NAME.test(purpose);
+}
+
+export function isIntegrityPurpose(purpose: KeyPurpose): purpose is IntegrityKeyPurpose {
+	return INTEGRITY_PURPOSE_NAME.test(purpose);
 }

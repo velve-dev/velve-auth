@@ -5960,7 +5960,7 @@ nothing else would tell you.
 | `code` | Raised when |
 |---|---|
 | `keys_missing` | `keys` is absent or is not a `KeyProvider` (S-KEY-6) |
-| `keys_unusable` | the provider answers for no purpose, so nothing protected could be written |
+| `keys_unusable` | the provider has no current key for some purpose, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written |
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
@@ -8668,8 +8668,9 @@ as an HMAC-SHA256 key of its own. `state-mac` authenticates the seal of an
 account; `token-mac` binds a stored token hash to its owner and purpose. Neither
 shares a key with `token-pepper` or `cookie-sig`, which use the same algorithm.
 They add no secret and no configuration entry. A `KeyProvider` of an
-application's own must answer both, or `migrate()` refuses the start with
-`keys_unusable`.
+application's own must answer both with a key that can take an HMAC, or `migrate()` refuses the
+start with `keys_unusable`; the start takes one probe HMAC under each to find
+out.
 
 `IntegrityKeyPurpose` is the part of `KeyPurpose` whose names end in `-mac`.
 It is internal and not exported from the package.
@@ -8697,6 +8698,7 @@ a `MacVerdict`:
 | `"valid"` | the MAC matches |
 | `"mismatch"` | it does not, including a stored MAC of another length |
 | `"key_version_unknown"` | the version is not a storable key version or has left the ring |
+| `"key_unusable"` | the provider answered the version with a key Web Crypto refuses to sign with |
 
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.
