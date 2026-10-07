@@ -3,7 +3,7 @@ import type { Driver } from "../db/driver.js";
 import type { SessionService } from "./service.js";
 
 /** the session rows a flow announces or revokes in its own transaction, each one checked first */
-export interface SessionRows {
+interface SessionRows {
 	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
 	deleteEverySessionOwnedBy(input: { readonly actor: Actor }): Promise<number>;
 	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
