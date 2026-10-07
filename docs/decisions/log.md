@@ -15348,3 +15348,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; both were omissions.
 **Reason.** A writer and a reader of the table cannot disagree about a length the table refuses.
 **Price.** None.
+
+<a id="e-3105"></a>
+
+### The cost of a check is marked as an estimate
+`E-3105` · security-state · specification, settled
+
+**Context.** Section 3.18's limits stated that every check costs one query and one HMAC per request, as a fact, and nothing had been measured; the plan asks for the extra cost per sign-in to be measured and recorded. The sentence is now marked `SCHÄTZUNG` in German and `ESTIMATE` in English, the way the specification marks its other unmeasured claims, and says the measurement replaces it. The measurement belongs to the seal branch, which builds the check.
+**Rejected.** Removing the sentence until a number exists, which hides the cost from a reader deciding whether to upgrade.
+**Reason.** The specification separates what it measured from what it guessed, and this was a guess.
+**Price.** None.
