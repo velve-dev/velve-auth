@@ -16118,3 +16118,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Comparing the `CryptoKey` objects by identity, which misses the same key bytes imported twice.
 **Reason.** Domain separation between purposes is a property of the keys, and a provider of its own can break it without the library noticing unless the start checks it.
 **Price.** One HMAC per HMAC purpose at start.
+
+<a id="e-3325"></a>
+
+### The probe's output-length check is redundant, and E-3190's reason for it was not a reason
+`E-3325` · security-state · keys, settled
+
+**Context.** E-3190 made `keyTakesMac` check that the key is HMAC with SHA-256, that Web Crypto signs with it, and that the MAC is 32 bytes. It rejected checking the length alone because "a future hash of 32 bytes other than SHA-256 would pass". The sixth review's second reviewer pointed out that the three checks overlap. HMAC with SHA-256 always yields 32 bytes, so once the algorithm check passes, no input reaches the length check. And the "future hash" reason argues for the algorithm check, not for keeping the length check beside it. Nothing in the code or the tests can exercise that case, so it was no reason. E-3190 is not edited. The length check stays as defence in depth on the 32 bytes that the seal table and the token columns require, and `DOCUMENTATION.md` now says it is redundant and why it is kept.
+**Rejected.** Deleting the length check, which would leave the 32-byte requirement of the storage resting on the algorithm check alone.
+**Reason.** A guard that is kept although it is redundant has to say so, or the next reader looks for the input it catches.
+**Price.** One comparison per MAC that can never fail.
