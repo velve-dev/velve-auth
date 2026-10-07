@@ -15288,3 +15288,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** An injected clock advanced past the window between paths, which the review offered; it tests the window rather than the paths and needs a clock seam the alarm does not have yet.
 **Reason.** One account per path makes each alarm attributable without depending on the deduplication rule at all.
 **Price.** The two cases create about twenty accounts each.
+
+<a id="e-3099"></a>
+
+### The INTEG test cases cover the whole attacker matrix of the plan
+`E-3099` · security-state · specification, test plan, settled
+
+**Context.** A review held the T-INTEG cases against the plan's attacker matrix and found gaps. No case tampered with the migration state. T-INTEG-2 did not toggle `totp_credential.confirmed_at`, insert a recovery code or delete the password row, all three of which change the seal. T-INTEG-4 left out the redemption of an address confirmation and of an address change, and the passkey and the recovery code as second factor, all four of which S-INTEG-4 names by their kind. T-INTEG-2 now detects seventeen changes; T-INTEG-4 refuses eleven paths and T-INTEG-5 compares eleven pairs; T-INTEG-8 puts an old-form ciphertext into a sealed account during the run, deletes a seal row after it and restarts in `"required"`, and deletes migration 3's ledger row and calls `migrate()`, expecting the runner to fail on the table that already exists rather than leave a seal changed. That last expectation is the writer's reading of the runner and was not run.
+**Rejected.** Folding the migration-state cases into T-INTEG-4, which is about the paths a request takes and not about the maintenance step.
+**Reason.** A matrix the plan lists case by case is met case by case, or the gap is a finding again at the next review.
+**Price.** T-INTEG-8 becomes the longest case of the class.
