@@ -157,8 +157,10 @@ async function openFlowVerifier(mounted: MountedAuth, keys: KeyProvider, state: 
 		nonce: string | null;
 		redirect_path: string | null;
 		link_from_session_id: string | null;
+		expires_ms: string;
 	}>(
-		`SELECT pkce_verifier_enc, key_version, provider, nonce, redirect_path, link_from_session_id
+		`SELECT pkce_verifier_enc, key_version, provider, nonce, redirect_path, link_from_session_id,
+		 (extract(epoch from expires_at) * 1000)::bigint::text AS expires_ms
 		 FROM ${mounted.schema}.oauth_flow WHERE state_sha256 = $1`,
 		[createHash("sha256").update(state, "utf8").digest()],
 	);
@@ -177,6 +179,7 @@ async function openFlowVerifier(mounted: MountedAuth, keys: KeyProvider, state: 
 				row.nonce,
 				row.redirect_path,
 				row.link_from_session_id,
+				row.expires_ms,
 			]),
 		},
 		{ keyVersion: row.key_version, ciphertext: Uint8Array.from(row.pkce_verifier_enc) },

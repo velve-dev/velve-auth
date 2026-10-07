@@ -119,7 +119,8 @@ const COLUMNS: readonly EncryptedColumn[] = [
 		wrongPurpose: "oauth-token-enc",
 		select: (schema) =>
 			`SELECT pkce_verifier_enc AS stored, key_version, link_to_user_id AS owner, NULL::text AS row_uuid,
-			  state_sha256 AS row_bytes, provider, nonce, redirect_path, link_from_session_id::text
+			  state_sha256 AS row_bytes, provider, nonce, redirect_path, link_from_session_id::text,
+			  (extract(epoch from expires_at) * 1000)::bigint::text AS expires_ms
 			  FROM ${schema}.oauth_flow`,
 		input: () => Buffer.from(driven.secrets.find((s) => s.name === "PKCE verifier")?.value ?? ""),
 	},
@@ -166,6 +167,7 @@ async function storedOf(column: EncryptedColumn): Promise<StoredValue> {
 		nonce?: string | null;
 		redirect_path?: string | null;
 		link_from_session_id?: string | null;
+		expires_ms?: string;
 	}>(column.select(driven.mounted.schema), []);
 	const [row] = rows;
 	if (rows.length !== 1 || row === undefined || row.stored === null) {
@@ -185,6 +187,7 @@ async function storedOf(column: EncryptedColumn): Promise<StoredValue> {
 					row.nonce ?? null,
 					row.redirect_path ?? null,
 					row.link_from_session_id ?? null,
+					row.expires_ms ?? null,
 				]),
 		},
 	};

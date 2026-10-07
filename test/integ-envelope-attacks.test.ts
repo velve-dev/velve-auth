@@ -248,6 +248,7 @@ describe("a flow whose steering columns a database writer rewrote", () => {
 		["the nonce", "nonce = NULL"],
 		["the redirect path", "redirect_path = '/elsewhere'"],
 		["the provider", "provider = 'stubby2'"],
+		["the deadline", "expires_at = now() + interval '30 days'"],
 	])(
 		"refuses the callback after %s was rewritten, as for an unknown state",
 		async (_label, change) => {
