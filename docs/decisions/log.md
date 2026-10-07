@@ -15468,3 +15468,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Sealing the account in the test before issuing the session, which needs the seal branch's code and would make the case fail on setup until then.
 **Reason.** A placeholder that names the wrong branch is flipped by nobody, or by a branch that cannot make it pass.
 **Price.** The case depends on two branches' order of merging.
+
+<a id="e-3197"></a>
+
+### An account without a seal row has epoch 1
+`E-3197` · security-state, second range · specification, S-INTEG-9, settled
+
+**Context.** E-3107 put the epoch into the seal row and said nothing of an account that has none, which exists in mode `"migrating"` until the maintenance step or a first change seals it. The review asked what such a session binds and what a mass revocation on such an account raises. The orchestrator decided: a session of an account without a seal row binds epoch 1 and is checked against 1; a mass revocation on it first performs the first seal of E-3094 and then raises the epoch like any other; the first seal by the maintenance step keeps the epoch at 1 so that signed-in users keep working; the administrator reseal sets it to the new version (E-3195). Section 3.18 *The missing seal row* says so, and *The limits* name what is left: in `"migrating"`, a writer who deletes a seal row and lets the account be first-sealed again resets the epoch to 1 and gets every mass-revoked session back, until the mode is `"required"`.
+**Rejected.** Starting the maintenance step's first seal at a fresh epoch above 1, which would sign out every user of the estate during the upgrade.
+**Reason.** Epoch 1 is what every session issued before the upgrade was bound under, so it is the only value that keeps them working through the maintenance step.
+**Price.** The limit above, which adds to the one E-3083 already names for `"migrating"`.
