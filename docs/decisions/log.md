@@ -15938,3 +15938,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reporting the stale passages for their owners to fix, which leaves the reference wrong in the release that changes the code.
 **Reason.** CLAUDE.md §5 counts the documentation of every changed function as part of being done.
 **Price.** Six passages outside the chapter this branch owns, which a reviewer of those chapters has to read again.
+
+<a id="e-3268"></a>
+
+### Five entries and eleven commit messages of this branch name a part played in the review, and that wording is withdrawn
+`E-3268` · security-state-tokens · documentation, settled
+
+**Context.** E-3137, E-3140, E-3142 and E-3149 attribute a decision or a report to a participant of this branch's review by the part they played in it. E-3141 cites a review finding by its identifier, which no document defines. E-3267's price speaks of a reader of the other chapters by the same kind of name. Eleven commit messages from `9a3f1b8` onward open with "Review finding" and an identifier, and one with the same attribution as E-3149. Nothing in the repository may name such a part or such an identifier. The decisions those entries record are this branch's, taken while it was reviewed, and their reasons stand as written. Where E-3137 says the specification's constraints were reported by a participant, read that the specification was being amended to carry them. Where E-3140, E-3142 and E-3149 say a participant decided, read that the decision was taken during the review of this branch. Where E-3141 cites the finding, read E-3141 itself. Where E-3267 names a reader by role, read anyone who reads those chapters. The entries are not edited, because they existed before this correction (CLAUDE.md §6), and the commit messages stay, because history is not rewritten. From here on, no entry, comment or message of this branch names such a part or cites such an identifier; each names the decision and cites `E-`, `S-` and `T-` identifiers only.
+**Rejected.** Editing the five entries, which the rules forbid for entries that are standing, and which for E-3267 would rewrite text inside a standing sentence.
+**Reason.** A log is read by people who were not in the review, and a reference to a part in it or to one of its identifiers points at something they cannot see.
+**Price.** A reader of E-3137, E-3140, E-3141, E-3142, E-3149 or E-3267 has to come here to read them as intended, and `git log` still carries the identifiers.
+
+<a id="e-3269"></a>
+
+### The fixed sealing mode and the unwired refusal report block the integration
+`E-3269` · security-state-tokens · S-INTEG-4, S-INTEG-9, blocking, open until the seal branch merges
+
+**Context.** E-3132 records that the instance passes no `reportTokenBindingRefusal`, so a refusal on this branch is silent. E-3142 records that the instance passes the constant `SEALING_UNTIL_IT_IS_CONFIGURED`, set to `"migrating"`, until `securityState.sealing` exists. Both entries describe these as the state until the seal branch merges. Neither says that the integration cannot ship in that state. It cannot. With the constant, an operator who configures `"required"` gets `"migrating"`, which serves every account without a seal row and is a weakening the start does not report. Without the wiring, every `token_binding_mismatch` and `seal_mismatch` that section 3.18 raises as an alarm is reported to nobody. Since E-3256, E-3262 and E-3264 the same report also carries the session insert that wrote nothing, the forged ownerless row and the moved address. The integration of the seal branch with this one must replace the constant with the configured mode in all three places of `src/core/auth/instance.ts` and pass the alarm's report to the session service, the session repository, the second-factor completion, the pending service, the one-time tokens, the WebAuthn challenge store and the maintenance pass. The read-first step of section 3.18 has no hook in the instance either, and is a third item for the same integration.
+**Rejected.** Wiring a provisional log line here, which would be a second alarm path beside the seal branch's.
+**Reason.** A guarantee that depends on a later branch is a dependency, and a dependency nobody writes down as blocking ships without it.
+**Price.** Until the integration lands, a release cut from this branch alone would carry both gaps; this entry is the record that it must not be cut.
