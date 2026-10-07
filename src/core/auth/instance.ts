@@ -3,6 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
+import { withReadCommittedTransactions } from "../db/read-committed.js";
 import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
@@ -316,7 +317,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 ): VelveAuth<M> {
 	assertConfigurationIsStartable(config);
 
-	const driver: Driver = config.database;
+	const driver: Driver = withReadCommittedTransactions(config.database);
 	const schema = config.schema ?? DEFAULT_SCHEMA;
 	const clock = config.clock ?? defaultClock;
 	const log = config.log ?? NO_SINK;
@@ -342,7 +343,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const pluginConnection =
 		config.pluginDatabase === undefined
 			? undefined
-			: createPluginConnection({ driver: config.pluginDatabase, schema, clock });
+			: createPluginConnection({
+					driver: withReadCommittedTransactions(config.pluginDatabase),
+					schema,
+					clock,
+				});
 	const frozenContextServices: FrozenContextServices = {
 		clock,
 		identityMode: identity.mode,

@@ -22,14 +22,22 @@ async function hmacUnder(
 
 const MAC_BYTES = 32;
 
+const MINIMUM_KEY_BITS = 256;
+
 interface NamedHashAlgorithm {
 	readonly name?: string;
 	readonly hash?: { readonly name?: string };
+	readonly length?: number;
 }
 
-function isHmacSha256(key: CryptoKey): boolean {
+//a key shorter than the derived 32 bytes would carry every seal and token mac (E-3296)
+function isHmacSha256OfFullLength(key: CryptoKey): boolean {
 	const algorithm: NamedHashAlgorithm = key.algorithm;
-	return algorithm.name === "HMAC" && algorithm.hash?.name === "SHA-256";
+	return (
+		algorithm.name === "HMAC" &&
+		algorithm.hash?.name === "SHA-256" &&
+		(algorithm.length ?? 0) >= MINIMUM_KEY_BITS
+	);
 }
 
 //a provider of its own can hand over a key that signs with another hash or not at all (E-3190)
@@ -37,7 +45,7 @@ async function hmacUnderIfUsable(
 	key: CryptoKey,
 	message: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer> | null> {
-	if (!isHmacSha256(key)) {
+	if (!isHmacSha256OfFullLength(key)) {
 		return null;
 	}
 	const mac = await hmacUnder(key, message).catch(() => null);
@@ -46,6 +54,20 @@ async function hmacUnderIfUsable(
 
 export async function keyTakesMac(key: CryptoKey): Promise<boolean> {
 	return (await hmacUnderIfUsable(key, new Uint8Array(0))) !== null;
+}
+
+const SAME_KEY_PROBE = new TextEncoder().encode("velve-auth/same-key-probe/v1");
+
+//two purposes answered with one hmac key give the same output for one message (E-3324)
+export async function sameKeyFingerprintOf(key: CryptoKey): Promise<string | null> {
+	const algorithm: NamedHashAlgorithm = key.algorithm;
+	if (algorithm.name !== "HMAC" || !key.usages.includes("sign")) {
+		return null;
+	}
+	const mac = await hmacUnder(key, SAME_KEY_PROBE).catch(() => null);
+	return mac === null
+		? null
+		: Array.from(mac, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export async function macUnderCurrentKey(

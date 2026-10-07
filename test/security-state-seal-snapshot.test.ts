@@ -3,14 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Sealing* runs a change at READ COMMITTED under the account lock, reads every seal
-// component in one statement after the lock, and computes the new seal from that read and its own
-// change, never from a second read. The account lock does not keep out a writer whose foreign key
-// takes FOR KEY SHARE (E-1604). These cases hold what that rule rests on: the writer's commit
-// goes through during the change, the read the seal is computed from does not contain it, a
-// second read inside the change would, and the next check's read does, so the check detects it.
-// The REPEATABLE READ rule this replaced is recorded in E-3280; T-INTEG-3's case against the
-// sealing code itself belongs to the seal branch.
+//a writer's row committed during a change stays out of the seal computed from the one read (E-3280)
 
 let owner: TestConnection;
 let writer: TestConnection;
@@ -73,7 +66,7 @@ async function readsAcrossAWriterCommit(): Promise<{
 	}
 }
 
-describe("the account lock and a writer's insert during a change (section 3.18, Sealing)", () => {
+describe("premise: the account lock and a writer's insert during a change (section 3.18, Sealing)", () => {
 	it("keeps the insert out of the one read the seal is computed from, and shows it to the next check", async () => {
 		const reads = await readsAcrossAWriterCommit();
 		expect({ sealedFrom: reads.sealedFrom, nextCheck: reads.nextCheck }).toStrictEqual({

@@ -5,9 +5,7 @@ import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// A provider of its own can answer an integrity purpose with a key HMAC cannot use. The start
-// refuses it, and a stored MAC checked under such a key is answered with a verdict rather than a
-// platform exception (E-3093).
+//the start refuses an integrity key hmac cannot use and one key shared by two purposes (E-3093)
 
 const genuine = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
@@ -65,5 +63,34 @@ describe("the start check for the integrity purposes (E-3093)", () => {
 		await expect(assertKeysAnswerForEveryPurpose(provider)).rejects.toMatchObject({
 			code: "keys_unusable",
 		});
+	});
+});
+
+function providerAnsweringStateMacWithTheKeyOf(other: "token-mac" | "cookie-sig"): KeyProvider {
+	return {
+		async current(purpose) {
+			return purpose === "state-mac" ? genuine.current(other) : genuine.current(purpose);
+		},
+		async byVersion(purpose, version) {
+			return genuine.byVersion(purpose === "state-mac" ? other : purpose, version);
+		},
+	};
+}
+
+describe("the start check against one key answering two purposes (E-3324)", () => {
+	it.each([
+		["token-mac", "state-mac and token-mac"],
+		["cookie-sig", "cookie-sig and state-mac"],
+	] as const)("refuses a provider that answers state-mac with the %s key", async (other, pair) => {
+		await expect(
+			assertKeysAnswerForEveryPurpose(providerAnsweringStateMacWithTheKeyOf(other)),
+		).rejects.toMatchObject({
+			code: "keys_unusable",
+			message: `keys answered ${pair} with the same key, so a value taken for one purpose would verify for the other`,
+		});
+	});
+
+	it("starts with the derived keys, which differ for every purpose", async () => {
+		await expect(assertKeysAnswerForEveryPurpose(genuine)).resolves.toBeUndefined();
 	});
 });

@@ -2,8 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
-// The seal's version reaches the application as a number (section 3.15 B and G), so the column
-// must not hold one that a JavaScript number cannot represent exactly (E-3092).
+//the seal version and epoch stay within what a javascript number holds exactly (E-3092)
 
 let connection: TestConnection;
 let schema: string;

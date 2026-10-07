@@ -2,12 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Resealing*: a writer who stores the largest version the column accepts leaves the
-// administrator reseal no higher version to write, and the call refuses with
-// security_state_version_exhausted. This case holds the premise that the table itself refuses the
-// next version; the reseal that names the refusal is the administration branch's (E-3213). Only the
-// version is raised, so the refusal can come from no other constraint, and the case names the one
-// it expects.
+//the seal table refuses a version above the largest a javascript number holds (E-3288)
 
 let connection: TestConnection;
 let schema: string;
@@ -21,7 +16,7 @@ afterAll(async () => {
 	await connection.close();
 });
 
-describe("a seal row at the largest storable version (section 3.18, Resealing)", () => {
+describe("premise: a seal row at the largest storable version (section 3.18, Resealing)", () => {
 	it("refuses any version above it, so a reseal has nothing left to write", async () => {
 		const userId = await createUser(connection, schema);
 		await connection.query(

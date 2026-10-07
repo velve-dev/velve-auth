@@ -1,7 +1,8 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
-import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
-import { keyTakesMac } from "../keys/mac.js";
+import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
+import { isStorableKeyVersion } from "../keys/key-version.js";
+import { keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
@@ -247,22 +248,47 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertSealingModeIsKnown(config.securityState);
 }
 
-//the stored-version probe gives its own reason under the code the purpose probe uses (E-3289)
+//an operator must learn which stored version made the start refuse (E-3289)
 export function storedIntegrityKeyUnusable(keyVersion: number): VelveStartupError {
 	const refusal = new VelveStartupError("keys_unusable");
 	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with a key that cannot take HMAC-SHA256, so no seal under that version could be checked`;
 	return refusal;
 }
 
+export function storedStateMacKeySharedWith(
+	keyVersion: number,
+	purpose: string,
+): VelveStartupError {
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with the current ${purpose} key`;
+	return refusal;
+}
+
+function keySharedByTwoPurposes(first: KeyPurpose, second: KeyPurpose): VelveStartupError {
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered ${first} and ${second} with the same key, so a value taken for one purpose would verify for the other`;
+	return refusal;
+}
+
 //a key provider that answers for no purpose protects nothing and must refuse the start
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
+	const purposeByFingerprint = new Map<string, KeyPurpose>();
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);
-		if (current === null || !Number.isInteger(current.version) || current.version < 1) {
+		//a version no key_version column holds would refuse every write under it (E-3329)
+		if (current === null || !isStorableKeyVersion(current.version)) {
 			throw new VelveStartupError("keys_unusable");
 		}
 		if (isIntegrityPurpose(purpose) && !(await keyTakesMac(current.key))) {
 			throw new VelveStartupError("keys_unusable");
+		}
+		const fingerprint = await sameKeyFingerprintOf(current.key);
+		const sharedWith = fingerprint === null ? undefined : purposeByFingerprint.get(fingerprint);
+		if (sharedWith !== undefined) {
+			throw keySharedByTwoPurposes(sharedWith, purpose);
+		}
+		if (fingerprint !== null) {
+			purposeByFingerprint.set(fingerprint, purpose);
 		}
 	}
 }

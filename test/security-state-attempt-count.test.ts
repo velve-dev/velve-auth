@@ -6,14 +6,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { beginPendingState, pendingAuthenticationsOn } from "./totp-fixtures.js";
 
-// A writer who holds a pending row sets attempts to 0 while an attempt waits on it. Section 3.18
-// point 3 books every attempt by compare-and-set against the verified row before the code is
-// evaluated; the writer's reset makes the booking miss, the re-read finds a count not above the
-// pinned one with a MAC that does not match, and the row is answered as missing with the alarm.
-// The booking is the token branch's (security-state-tokens), which also changes how the pinned
-// values reach the repository; it adapts the call, turns the expected failure into a plain case
-// and removes the control, which holds today's behaviour so that the expected failure cannot pass
-// for a reason other than the one stated (E-3208).
+//a reset counter met by a waiting booking must answer as a missing row once the token branch binds it (E-3208)
 
 let owner: TestConnection;
 let writer: TestConnection;

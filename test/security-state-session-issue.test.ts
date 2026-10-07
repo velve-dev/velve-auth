@@ -3,10 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 point 3: issuing a session takes the account lock before it reads the epoch, and
-// inserts conditionally as a second guard. These cases hold the premise against PostgreSQL with
-// the statements the specification names; the session code that runs them is the token branch's,
-// whose T-INTEG-3 case races sign-ins against session.revokeAll (E-3207).
+//a session issue takes the account lock before it reads the epoch and inserts conditionally (E-3207)
 
 let revoker: TestConnection;
 let signer: TestConnection;
@@ -73,7 +70,7 @@ async function beginMassRevocation(userId: string): Promise<void> {
 	await revoker.query(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
 }
 
-describe("a session issued while a mass revocation raises the epoch (section 3.18 point 3)", () => {
+describe("premise: a session issued while a mass revocation raises the epoch (section 3.18 point 3)", () => {
 	it("control: without the lock, an insert under the epoch read before the raise survives it", async () => {
 		const userId = await sealedAccount();
 		await beginMassRevocation(userId);
@@ -106,7 +103,7 @@ describe("a session issued while a mass revocation raises the epoch (section 3.1
 	});
 });
 
-describe("a session of an account without a seal row (section 3.18 point 3, migrating)", () => {
+describe("premise: a session of an account without a seal row (section 3.18 point 3, migrating)", () => {
 	function insertForUnsealed(userId: string): Promise<number> {
 		return signer
 			.query(

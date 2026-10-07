@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
 import { macUnderCurrentKey, verifyMacUnderKeyVersion } from "../src/core/keys/mac.js";
+import type { KeyProvider } from "../src/core/keys/provider.js";
 import { generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
 
 const utf8 = new TextEncoder();
@@ -83,15 +84,23 @@ describe("a MAC under the state-mac purpose (S-KEY-1)", () => {
 		"answers an unstorable version %s as unknown without asking the provider",
 		async (keyVersion) => {
 			const taken = await macUnderCurrentKey(beforeRotation, "state-mac", MESSAGE);
+			const asked: number[] = [];
+			const watched: KeyProvider = {
+				current: (purpose) => beforeRotation.current(purpose),
+				byVersion: async (purpose, version) => {
+					asked.push(version);
+					return beforeRotation.byVersion(purpose, version);
+				},
+			};
 
-			expect(
-				await verifyMacUnderKeyVersion(
-					beforeRotation,
-					"state-mac",
-					{ ...taken, keyVersion },
-					MESSAGE,
-				),
-			).toBe("key_version_unknown");
+			const verdict = await verifyMacUnderKeyVersion(
+				watched,
+				"state-mac",
+				{ ...taken, keyVersion },
+				MESSAGE,
+			);
+
+			expect({ verdict, asked }).toStrictEqual({ verdict: "key_version_unknown", asked: [] });
 		},
 	);
 
