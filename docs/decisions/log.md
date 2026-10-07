@@ -16228,3 +16228,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Having the library refuse to remove a version itself, which it cannot, since the ring is the application's configuration.
 **Reason.** The precondition for removing a key is a fact about the database, and only a count over the database can show it.
 **Price.** `SecurityStateReport` changes shape in the unreleased 2.0.0, and the maintenance step counts rows per version after each run.
+
+<a id="e-3336"></a>
+
+### A broken state on a factor path spends the budget like a rejected factor
+`E-3336` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** E-3316 had the three factor paths copy their rejected factor and left open whether the factor check fails before the factor is evaluated, so that the counterpart would be an unknown pending authentication. Its Price named the consequence: a refusal that copies a rejected factor must also leave the pending row as a rejected factor does, or the next request tells them apart. The seventh review asked for that to be settled. The orchestrator confirmed E-3316's reading. A factor check that meets a broken state books the attempt and removes the row at the budget, exactly as a rejected factor does, so the sequence of answers over many requests matches that of wrong factors, including the final `too_many_factor_attempts`. *Outwards* says so in both languages. T-INTEG-5 gains, per factor path, six requests against a broken account and six wrong factors against an intact one, with equal answer sequences 3/3.
+**Rejected.** Answering a broken state as an unknown pending authentication, which differs from a wrong factor on the first request.
+**Reason.** Indistinguishability holds over a sequence of requests or not at all, because an attacker can always send the second one.
+**Price.** A broken account's pending authentication is used up by the refusals, as a wrong factor would use it up.
