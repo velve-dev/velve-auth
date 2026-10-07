@@ -16208,3 +16208,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Inventing an owner for the key, such as the challenge hash, which would give a writer one undeduplicated alarm per inserted row.
 **Reason.** An alarm cannot name an account the row does not have, and its deduplication must not depend on values the writer chooses.
 **Price.** All ownerless alarms of one occasion and reason share one key, so within a minute a second such alarm is counted, not delivered.
+
+<a id="e-3334"></a>
+
+### The anchor's store has to be out of the writer's reach
+`E-3334` · security-state · specification, S-INTEG-6, settled
+
+**Context.** The anchor exists because a writer can play back an old seal row together with old factor rows. The seventh review pointed out that nothing said where the anchor's append-only store lives. A plugin storing it in its own tables in the `velve` schema, which the plugin model encourages, puts it within reach of the very writer it is meant to catch, who then resets the seal row and the anchor's record together. As the orchestrator decided, *Anchor*, *The limits* and S-INTEG-6 say in both languages that the store must not be writable by any role that can write the `velve` schema, that a plugin's own tables there do not qualify, and that an anchor stored where the writer can write gives no protection against rollback.
+**Rejected.** Enforcing it at start by probing the anchor's store, which the library cannot see; the anchor is the application's code.
+**Reason.** A guard the attacker can rewrite is not a guard against that attacker.
+**Price.** An application that wants rollback protection has to run a second store with separate credentials.
