@@ -72,13 +72,20 @@ export function createOneTimeTokens(
 			if (candidate === null) {
 				return null;
 			}
-			const binding: TokenBinding = {
-				purpose,
-				ownerId: candidate.userId,
-				tokenSha256,
-				content: { payload: candidate.payload },
-			};
-			const verdict = await checkTokenBinding(options.keys, binding, candidate);
+			const stored = candidate.storedPayload;
+			const verdict =
+				stored === null
+					? "mismatch"
+					: await checkTokenBinding(
+							options.keys,
+							{
+								purpose,
+								ownerId: candidate.userId,
+								tokenSha256,
+								content: { payload: stored.payload },
+							},
+							candidate,
+						);
 			if (verdict !== "valid") {
 				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
 					userId: candidate.userId,

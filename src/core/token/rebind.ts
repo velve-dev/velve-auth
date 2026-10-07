@@ -7,11 +7,12 @@ import {
 	bindToken,
 	checkTokenBinding,
 	reportRefusedTokenRow,
+	storedPayloadOf,
 	type TokenBinding,
 	type TokenBindingRefusalReport,
 	type TokenBindingVerdict,
 } from "./binding.js";
-import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
+import type { OneTimeTokenPurpose } from "./purpose.js";
 
 /** the tables whose token MACs maintenance rebinds, a pending row being rebound only by its booking */
 export type TokenTable = "session" | "one_time_token";
@@ -66,24 +67,18 @@ function namesOf(json: string | undefined): readonly string[] | null {
 	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;
 }
 
-function payloadOf(value: unknown): OneTimeTokenPayload | null {
-	if (value === null || value === undefined) {
-		return null;
-	}
-	return (typeof value === "string" ? JSON.parse(value) : value) as OneTimeTokenPayload;
-}
-
 //a row whose content cannot be read has no binding and is refused like a forged one
 function bindingOf(table: TokenTable, row: StoredTokenRow): TokenBinding | null {
 	const tokenHash = new Uint8Array(row.token_sha256);
 	if (table === "one_time_token") {
-		return row.purpose === undefined
+		const stored = storedPayloadOf(row.payload);
+		return row.purpose === undefined || stored === null
 			? null
 			: {
 					purpose: row.purpose,
 					ownerId: row.user_id,
 					tokenSha256: tokenHash,
-					content: { payload: payloadOf(row.payload) },
+					content: { payload: stored.payload },
 				};
 	}
 	const names = namesOf(row.factor_names);

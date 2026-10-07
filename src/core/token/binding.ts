@@ -119,6 +119,27 @@ function canonicalJsonOf(value: unknown): string {
 	return JSON.stringify(value);
 }
 
+/** a one-time token's payload as stored, or null where the column holds a value no issue writes */
+export type StoredPayload = { readonly payload: OneTimeTokenPayload | null } | null;
+
+function isContainerOrNull(value: unknown): value is OneTimeTokenPayload | null {
+	return typeof value === "object";
+}
+
+function parsedJsonOf(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+}
+
+//a jsonb value a writer chose must be refused and never thrown on (S-INTEG-9)
+export function storedPayloadOf(value: unknown): StoredPayload {
+	const decoded = typeof value === "string" ? parsedJsonOf(value) : (value ?? null);
+	return isContainerOrNull(decoded) ? { payload: decoded } : null;
+}
+
 //the payload must be taken in the form jsonb returns it in
 export function canonicalPayloadOf(payload: OneTimeTokenPayload | null): string | null {
 	return payload === null ? null : canonicalJsonOf(JSON.parse(JSON.stringify(payload)));

@@ -22,6 +22,7 @@ import {
 	type TokenBindingRefusal,
 } from "../src/core/token/binding.js";
 import { createOneTimeTokens, type OneTimeTokens } from "../src/core/token/one-time-token.js";
+import { rebindTokenRowsUnderCurrentKey } from "../src/core/token/rebind.js";
 import { toSecretToken } from "../src/core/token/secret-token.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
 import {
@@ -31,6 +32,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
+import { decodingJsonb } from "./jsonb-decoding-driver.js";
 import { SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
@@ -83,7 +85,7 @@ function servicesUnder(provider: KeyProvider) {
 			reportTokenBindingRefusal: report,
 		}),
 		oneTimeTokens: createOneTimeTokens(
-			createOneTimeTokenRepository({ driver: migrated.connection, schema }),
+			createOneTimeTokenRepository({ driver: decodingJsonb(migrated.connection), schema }),
 			{ keys: provider, reportTokenBindingRefusal: report },
 		),
 	};
@@ -956,5 +958,82 @@ describe("what the outside sees of a refused row (S-INTEG-9)", () => {
 
 		expect(refused.status).toBe(400);
 		expect(refused).toStrictEqual(await answerOf(redeem(chosenToken())));
+	});
+});
+
+describe("a one-time token row whose payload is a jsonb value no issue writes (S-INTEG-9)", () => {
+	async function insertedWithPayload(userId: string, token: string, payloadJson: string) {
+		await sql(
+			`INSERT INTO ${schema}.one_time_token
+			   (token_sha256, purpose, user_id, payload, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'magic_link', $2, $3::jsonb, now() + interval '1 hour', $4, 1)`,
+			[sha256Of(token), userId, payloadJson, randomBytes(32)],
+		);
+	}
+
+	it.each(['"not json"', "7", "true", '"{}"'])(
+		"is answered as a missing row with one alarm when its payload is %s",
+		async (payloadJson) => {
+			const userId = await createUser(migrated.connection, schema);
+			const token = chosenToken();
+			await insertedWithPayload(userId, token, payloadJson);
+			refusals = [];
+
+			const redeemed = await oneTimeTokens
+				.redeem({ token: toSecretToken(token), purpose: "magic_link" })
+				.catch((failure: unknown) => failure);
+
+			expect(redeemed).toBeNull();
+			expectOneRefusal("token_redemption", userId);
+		},
+	);
+
+	it("is answered the same through a driver that hands jsonb back as text", async () => {
+		const textual = createOneTimeTokens(
+			createOneTimeTokenRepository({ driver: migrated.connection, schema }),
+			{ keys, reportTokenBindingRefusal: report },
+		);
+		const userId = await createUser(migrated.connection, schema);
+		const token = chosenToken();
+		await insertedWithPayload(userId, token, '"not json"');
+		refusals = [];
+
+		const redeemed = await textual
+			.redeem({ token: toSecretToken(token), purpose: "magic_link" })
+			.catch((failure: unknown) => failure);
+
+		expect(redeemed).toBeNull();
+		expectOneRefusal("token_redemption", userId);
+	});
+
+	it("is refused, not thrown on, by the maintenance pass, which goes on past it", async () => {
+		const ring = testKeyRing(2);
+		const before = servicesUnder(ring.providerAt(1, [1]));
+		const userId = await createUser(migrated.connection, schema);
+		const genuine = await before.oneTimeTokens.issue({ purpose: "email_verify", userId });
+		await insertedWithPayload(userId, chosenToken(), '"not json"');
+		await sql(
+			`UPDATE ${schema}.one_time_token SET token_mac_key_version = 1 WHERE user_id = $1`,
+			[userId],
+		);
+		refusals = [];
+
+		const pass = await rebindTokenRowsUnderCurrentKey({
+			driver: decodingJsonb(migrated.connection),
+			schema,
+			keys: ring.providerAt(2, [1, 2]),
+			sealing: "migrating",
+			table: "one_time_token",
+			batchSize: 1,
+			reportTokenBindingRefusal: report,
+		});
+		const redeemed = await servicesUnder(ring.providerAt(2, [2])).oneTimeTokens.redeem({
+			token: genuine.token,
+			purpose: "email_verify",
+		});
+
+		expect(refusals.filter((refusal) => refusal.userId === userId)).toHaveLength(1);
+		expect(pass.refused).toBeGreaterThanOrEqual(1);
+		expect(redeemed?.userId).toBe(userId);
 	});
 });

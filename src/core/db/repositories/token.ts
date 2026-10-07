@@ -1,4 +1,4 @@
-import type { StoredTokenMac } from "../../token/binding.js";
+import { type StoredPayload, type StoredTokenMac, storedPayloadOf } from "../../token/binding.js";
 import {
 	ONE_TIME_TOKEN_LIFETIME_SECONDS,
 	ONE_TIME_TOKEN_PURPOSES,
@@ -38,7 +38,7 @@ type StoredOneTimeToken = RedeemedOneTimeToken & {
 /** a removed row whose MAC is still to be checked before its owner or payload is used */
 export interface OneTimeTokenCandidate extends StoredTokenMac {
 	readonly userId: string;
-	readonly payload: OneTimeTokenPayload | null;
+	readonly storedPayload: StoredPayload;
 	accept(): StoredOneTimeToken;
 }
 
@@ -101,17 +101,6 @@ function toDate(value: unknown): Date {
 //this is the only place where a redemption becomes evidence of an owner (E-93)
 function redeemedBy(userId: string, payload: OneTimeTokenPayload | null): StoredOneTimeToken {
 	return { userId: toEntityId<"user">(userId), payload } as StoredOneTimeToken;
-}
-
-//a driver may return jsonb decoded or as text so both are accepted
-function readPayload(value: unknown): OneTimeTokenPayload | null {
-	if (value === null || value === undefined) {
-		return null;
-	}
-	if (typeof value === "string") {
-		return JSON.parse(value) as OneTimeTokenPayload;
-	}
-	return value as OneTimeTokenPayload;
 }
 
 interface ConsumedRowShape {
@@ -196,13 +185,13 @@ RETURNING user_id, payload, token_mac, token_mac_key_version`;
 				return null;
 			}
 			const userId = row.user_id;
-			const payload = readPayload(row.payload);
+			const storedPayload = storedPayloadOf(row.payload);
 			return {
 				userId,
-				payload,
+				storedPayload,
 				tokenMac: row.token_mac,
 				tokenMacKeyVersion: row.token_mac_key_version,
-				accept: () => redeemedBy(userId, payload),
+				accept: () => redeemedBy(userId, storedPayload?.payload ?? null),
 			};
 		},
 	};
