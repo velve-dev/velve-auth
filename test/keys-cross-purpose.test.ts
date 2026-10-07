@@ -15,7 +15,12 @@ import { generateRootKey } from "./keys-fixtures.js";
 // sign and four encrypt, so "produce and consume" is spelled out for each combination rather than
 // only for the four encryption purposes.
 
-const SIGNING_PURPOSES: readonly KeyPurpose[] = ["cookie-sig", "token-pepper", "state-mac", "token-mac"];
+const SIGNING_PURPOSES: readonly KeyPurpose[] = [
+	"cookie-sig",
+	"token-pepper",
+	"state-mac",
+	"token-mac",
+];
 
 const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
