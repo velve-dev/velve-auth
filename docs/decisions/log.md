@@ -15928,3 +15928,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Deleting the test with the rule, which would drop the only check that the §7 order holds in the reset flow.
 **Reason.** A test whose title describes a rule nobody follows tells the next reader the rule still holds.
 **Price.** The file name still says "snapshot".
+
+<a id="e-3303"></a>
+
+### The booking premise test compares the MAC and waits on the winner
+`E-3303` · security-state · tests, settled
+
+**Context.** `test/security-state-booking-isolation.test.ts` held that a losing booking misses at READ COMMITTED, with REPEATABLE READ's 40001 as control. The fifth review found two gaps. Its compare-and-set left out `token_mac = $3`, which point 3 puts in the booking's condition, so the case could not show the MAC guard doing anything. And it never ran the interleaving that matters under load, where the losing booking waits on the winner's row lock and PostgreSQL re-checks the condition against the committed row. The case now books on `attempts` and `token_mac`. It adds the waiting interleaving, with the loser seen in `pg_blocking_pids` before the winner commits and the re-read seeing the winner's count, and a booking after a writer changed only the MAC, which misses. The planted fault is kept as a permanent control: the same booking without the MAC in its condition books over the writer's MAC. The `token_mac` column belongs to the token branch's migration, so the case adds it to its own schema when absent and holds the statement, not the code.
+**Rejected.** Waiting for the token branch's migration before testing the guard, which would leave the statement point 3 prescribes untested on this branch.
+**Reason.** A premise test that omits the clause the rule rests on proves the rule without it.
+**Price.** The column the case adds can drift from the one the token branch defines; if that migration makes the column `NOT NULL`, the fixture that creates pending rows has to supply it, which is that branch's change.
