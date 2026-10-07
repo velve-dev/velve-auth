@@ -15798,3 +15798,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Selecting `payload::text` so every driver returns text, which changes the consume statement section 3.7 prescribes (E-142). (b) Catching the `SyntaxError` at the redemption only, which leaves the maintenance pass and the next caller to find the same value.
 **Reason.** A value a writer chose is input, and a refusal of input is the answer S-INTEG-9 gives, not an exception.
 **Price.** A `jsonb` string whose text happens to be a JSON object is read as that object. That is harmless, because the row's MAC still has to match, and no issue writes a string.
+
+<a id="e-3253"></a>
+
+### The owner is bound in the spelling PostgreSQL hands back
+`E-3253` · security-state-tokens · S-INTEG-9, storage format, settled
+
+**Context.** The token MAC encoded the owner id exactly as the caller passed it. PostgreSQL reads `0F0E…`, `{0f0e…}` and `0f0e…` without hyphens as the same `uuid` and hands every one of them back lower-case and hyphenated. A session, one-time token or pending authentication issued with another spelling was therefore written with a MAC over a text the resolve never presents, and was refused as forged when its own owner used it. `encodeTokenBinding` now passes the owner through one function that lower-cases it and, when what remains without braces and hyphens is 32 hexadecimal digits, writes it in the 8-4-4-4-12 form. Because the encoding is the one place both minting and checking go through, the two cannot disagree. `test/integ-token-binding.test.ts` issues all three kinds of row in upper case, in braces and without hyphens, and resolves each. It also shows two different owners still encoding apart.
+**Rejected.** (a) Refusing a non-canonical spelling at issue, which turns a spelling PostgreSQL accepts into an error of this library's own. (b) Canonicalising at each caller, which is five places to forget one.
+**Reason.** What the MAC binds has to be what the row reads back as, or a genuine row fails its own check.
+**Price.** The encoding's owner field is no longer the caller's text byte for byte. For the spelling every stored row already has, the change is nothing.

@@ -8812,7 +8812,8 @@ presented token. The MAC is taken over a length-prefixed encoding of:
 
 Each field is a type byte, a four-byte length in network order and its bytes,
 and an absent value has its own type byte, so two different rows never encode
-alike. The canonical JSON of a payload sorts every object's keys and is taken
+alike. The owner is encoded in the lower-case, hyphenated spelling PostgreSQL
+hands a `uuid` back in, whatever spelling the caller passed. The canonical JSON of a payload sorts every object's keys and is taken
 after a JSON round trip, which is the form `jsonb` hands back. A payload is read
 the same whether the driver hands `jsonb` back decoded or as text; a stored
 payload that is not an object, an array or SQL `NULL` — a `jsonb` string, number

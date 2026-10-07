@@ -1037,3 +1037,58 @@ describe("a one-time token row whose payload is a jsonb value no issue writes (S
 		expect(redeemed?.userId).toBe(userId);
 	});
 });
+
+describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
+	const SPELLINGS: readonly [string, (userId: string) => string][] = [
+		["upper case", (userId) => userId.toUpperCase()],
+		["braces", (userId) => `{${userId}}`],
+		["no hyphens", (userId) => userId.replaceAll("-", "")],
+	];
+
+	it.each(SPELLINGS)("binds a session the account can still use, in %s", async (_name, spell) => {
+		const userId = await createUser(migrated.connection, schema);
+
+		const issued = await sessions.issue({
+			userId: spell(userId),
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
+
+		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
+	});
+
+	it.each(SPELLINGS)("binds a one-time token the account can still redeem, in %s", async (_name, spell) => {
+		const userId = await createUser(migrated.connection, schema);
+
+		const { token } = await oneTimeTokens.issue({ purpose: "magic_link", userId: spell(userId) });
+
+		expect((await oneTimeTokens.redeem({ token, purpose: "magic_link" }))?.userId).toBe(userId);
+	});
+
+	it.each(SPELLINGS)("binds a pending authentication the account can still use, in %s", async (_name, spell) => {
+		const userId = await createUser(migrated.connection, schema);
+
+		const { token } = await pending.begin({ userId: spell(userId), factorsCompleted: ["password"] });
+
+		expect((await pending.resolve(token))?.userId).toBe(userId);
+	});
+
+	it("still encodes two different owners apart", () => {
+		const of = (ownerId: string) =>
+			Buffer.from(
+				encodeTokenBinding({
+					purpose: "session",
+					ownerId,
+					tokenSha256: new Uint8Array(32),
+					content: { factors: [], sessionEpoch: 1 },
+				}),
+			).toString("hex");
+
+		expect(of("0F0E0D0C-0B0A-4908-8706-050403020100")).toBe(
+			of("0f0e0d0c-0b0a-4908-8706-050403020100"),
+		);
+		expect(of("0f0e0d0c-0b0a-4908-8706-050403020101")).not.toBe(
+			of("0f0e0d0c-0b0a-4908-8706-050403020100"),
+		);
+	});
+});

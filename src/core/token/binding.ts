@@ -154,12 +154,30 @@ function contentField(content: TokenRowContent): Uint8Array {
 	return concatenated([listField(content.factors), integerField(counter)]);
 }
 
+const UUID_DIGITS = /^[0-9a-f]{32}$/;
+
+//every spelling postgresql reads as one uuid must bind as the one it hands back
+function canonicalOwnerIdOf(ownerId: string): string {
+	const lower = ownerId.toLowerCase();
+	const digits = lower.replace(/^\{(.*)\}$/, "$1").replaceAll("-", "");
+	if (!UUID_DIGITS.test(digits)) {
+		return lower;
+	}
+	return [
+		digits.slice(0, 8),
+		digits.slice(8, 12),
+		digits.slice(12, 16),
+		digits.slice(16, 20),
+		digits.slice(20),
+	].join("-");
+}
+
 //two different rows must never encode alike (S-INTEG-9)
 export function encodeTokenBinding(binding: TokenBinding): Uint8Array<ArrayBuffer> {
 	return concatenated([
 		textField(BINDING_CONTEXT),
 		textField(binding.purpose),
-		optionalTextField(binding.ownerId),
+		optionalTextField(binding.ownerId === null ? null : canonicalOwnerIdOf(binding.ownerId)),
 		bytesField(binding.tokenSha256),
 		contentField(binding.content),
 	]);
