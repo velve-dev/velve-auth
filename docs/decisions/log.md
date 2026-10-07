@@ -16418,3 +16418,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A bound fixed in code, which leaves an application with a legitimate need for more passkeys no option.
 **Reason.** A cost an account holder can raise without limit is a denial of service against their own account and the process serving it.
 **Price.** A user with more than twenty authenticators has to remove one before adding another. The two new codes and the `limits` option are additions to the unreleased 2.0.0 surface.
+
+<a id="e-3355"></a>
+
+### The spec-coverage case reads the German, and T-KEY-5 states how it counts
+`E-3355` · security-state · tests, test plan, settled
+
+**Context.** `test/security-state-spec-coverage.test.ts` checked its four statements against `VELVE-AUTH-ARCHITECTURE.md`, the translation, while CLAUDE.md says to decide from the German. The eighth review asked for it to read the German. It now runs every case against the German specification and against its translation, so a statement missing in either fails. The constant-time check accepts the German "konstant" as well as "constant". Separately, T-KEY-5's "7/7 assertions" counted two assertions that range over every account the maintenance step passed, and did not say whether each counts once or once per account. The threshold now states that every assertion counts once, also where it ranges over all accounts or rows, in both languages.
+**Rejected.** Recounting per account, which would make the threshold depend on the size of the test's estate.
+**Reason.** A threshold whose unit is unstated cannot be checked by anyone but the person who wrote it.
+**Price.** None.
+
+<a id="e-3356"></a>
+
+### The second security-state range row was widened once, and stays as it is
+`E-3356` · security-state · rules, settled
+
+**Context.** The commit recorded in E-3291 added a sentence to the CLAUDE.md §6 row of E-3190 … E-3219. The row had named only the second review, and the sentence says the range also holds the queued items and the third review's answers. Its range stayed unchanged. The eighth review asked for the widening of a reserved row's description to be recorded as such, since §6 says a range is not changed after assignment and a reader could take the edit for a change of the reservation. This entry records that only the description was extended, by one sentence and once. The row will not be edited again.
+**Rejected.** Reverting the sentence, which would bring back the description E-3291 found misleading.
+**Reason.** An edit to a row the rules call fixed has to be recorded where the rules' readers look, even when it changes no number.
+**Price.** None.
