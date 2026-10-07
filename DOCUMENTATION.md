@@ -8700,7 +8700,9 @@ application's own must answer both with a key that can take an HMAC, or `migrate
 start with `keys_unusable`; the start takes one probe HMAC under each to find
 out, and requires the key to be HMAC with SHA-256 and the output to be 32 bytes.
 `migrate()` also probes the `state-mac` key of every version a row of
-`velve.security_state` names, and refuses the start with `keys_unusable` if the ring
+`velve.security_state` names, and the `token-mac` key of every version a row of
+`velve.session`, `velve.one_time_token` or `velve.pending_authentication` names,
+and refuses the start with `keys_unusable` if the ring
 answers one of them with a key that cannot take that MAC; a version the ring no
 longer holds is not a start error but a broken state of the accounts it seals.
 Both checks run in `migrate()` and nowhere else: a serving process that does
@@ -8756,9 +8758,10 @@ uses it to decide which purposes get the probe.
 ### `assertStoredIntegrityKeysTakeMac({ driver, keys, schema })`
 
 Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
-every distinct `key_version` of `velve.security_state` and refuses the start with
-`keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects. A
-version the ring does not hold is skipped.
+every distinct `key_version` of `velve.security_state` under `state-mac` and every
+distinct `token_mac_key_version` of the three token tables under `token-mac`, and
+refuses the start with `keys_unusable` if the ring answers one of them with a key
+`keyTakesMac` rejects. A version the ring does not hold is skipped.
 
 ### The seal table
 
@@ -8899,8 +8902,20 @@ A row that is never resolved while two versions are in the ring keeps the old
 version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
 and S-KEY-5 holds only if it has run between putting a new version in front and
 removing the old one; the start does not refuse a ring that lacks a stored
-`token_mac_key_version`, so a row left behind is refused and its user signed
-out.
+`token_mac_key_version`, and a row left behind is refused and its user signed
+out. The step it calls is internal:
+
+```ts
+rebindTokenRowsUnderCurrentKey({ driver, schema, keys, sealing, table, batchSize, reportTokenBindingRefusal? })
+  : Promise<{ rebound: number; refused: number }>
+```
+
+in `src/core/token/rebind.ts`. For one of the three tables it visits every row not
+under the current `token-mac` version, `batchSize` at a time in token-hash order,
+checks it under its own version and rebinds it by a compare-and-set on the stored
+MAC. A row that fails its check keeps its version, is counted as `refused` and
+reported with the occasion `maintenance`; a one-time token without an owner, which
+nothing redeems, is not visited.
 
 ### The attempt budget
 

@@ -8,7 +8,7 @@ import {
 } from "../token/binding.js";
 
 /** a session row as stored, with the account's current epoch beside it */
-export interface StoredSessionRow extends StoredTokenMac {
+interface StoredSessionRow extends StoredTokenMac {
 	readonly userId: string;
 	readonly tokenHash: Uint8Array;
 	/** the factor names exactly as stored, or null where the column holds something that is no name */

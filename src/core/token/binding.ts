@@ -26,7 +26,11 @@ export interface StoredTokenMac {
 }
 
 /** the place a refused token row was presented at */
-export type TokenBindingOccasion = "session_resolve" | "factor_check" | "token_redemption";
+export type TokenBindingOccasion =
+	| "session_resolve"
+	| "factor_check"
+	| "token_redemption"
+	| "maintenance";
 
 /** what a refused token row tells the security-state alarm, and never the token or a hash */
 export interface TokenBindingRefusal {

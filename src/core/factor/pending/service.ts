@@ -17,6 +17,7 @@ import {
 	type TokenBindingRefusalReport,
 	type TokenBindingVerdict,
 } from "../../token/binding.js";
+import { pendingBinding } from "./binding.js";
 import {
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationRepository,
@@ -96,21 +97,6 @@ interface CheckedPendingRow extends StoredTokenMac {
 
 function attemptsRemainingAfter(attempts: number): number {
 	return Math.max(MAXIMUM_PENDING_ATTEMPTS - attempts, 0);
-}
-
-//a writer who resets the attempt counter must be refused like a forged row (S-INTEG-9)
-function pendingBinding(
-	userId: string,
-	tokenHash: Uint8Array,
-	factorsCompleted: readonly string[],
-	attempts: number,
-): TokenBinding {
-	return {
-		purpose: "pending_authentication",
-		ownerId: userId,
-		tokenSha256: tokenHash,
-		content: { factors: factorsCompleted, attempts },
-	};
 }
 
 const FIRST_ATTEMPT_COUNT = 0;

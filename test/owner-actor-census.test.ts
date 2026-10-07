@@ -141,6 +141,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/auth/integrity-key-ring.ts#assertStoredIntegrityKeysTakeMac": "maintenance or start-up",
+	"src/core/token/rebind.ts#rebindTokenRowsUnderCurrentKey": "maintenance or start-up",
 	"src/core/db/cascade-guard.ts#assertEveryUserReferenceCascades": "maintenance or start-up",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.listSessionsOfUser":

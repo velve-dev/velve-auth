@@ -110,6 +110,8 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
 			`${coreDirectory}/db/migrations/token-mac.ts`,
 			repositoryPath,
+			//the maintenance seam rebinds the token MACs of the three tables it names (E-3148)
+			`${coreDirectory}/token/rebind.ts`,
 		]);
 	});
 

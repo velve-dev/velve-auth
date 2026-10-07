@@ -15748,3 +15748,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Changing the flows so that a refused one-time row is deleted, which would make a refusal write and differ from an unknown token in what it leaves behind.
 **Reason.** A documented behaviour nobody checked is a defect of its own, whichever way the code goes.
 **Price.** A forged one-time row stays in the table until its deadline or a sweep, and every redemption of it is refused again with a report.
+
+<a id="e-3148"></a>
+
+### The rebinding of unresolved token rows is a seam for the maintenance step, and the start probes their key versions
+`E-3148` · security-state-tokens · S-KEY-5, settled
+
+**Context.** S-KEY-5 holds only if the maintenance step rebinds every token row under an old `token-mac` version before that version leaves the ring (E-3133). A review asked this branch for the seam the administration branch calls. `rebindTokenRowsUnderCurrentKey` in `src/core/token/rebind.ts` takes one of the three tables and visits, in batches and in token-hash order, every row not under the current version. It checks each under its own version, with the session epoch read under the sealing mode, and rebinds it by a compare-and-set on the stored MAC with the owner in the predicate. A row that fails is left at its version, counted and reported with the new occasion `maintenance`, which section 3.18's alarm already lists. A one-time token without an owner is the cover artefact nothing redeems, and it is not visited. Separately, the foundation's start probe `assertStoredIntegrityKeysTakeMac` (E-3191) read only `velve.security_state`; since migration 4 stores `token-mac` versions in three more tables, it now reads those as well, as the merge instructions asked. Both reach token tables outside the repositories: the owner census lists the seam among the maintenance and start-up functions, the owner-predicate scan lists it among the files whose table is chosen at run time, and the scan of files naming `one_time_token` admits it.
+**Rejected.** (a) Leaving the rebinding to the administration branch entirely, which would make that branch write the binding of three tables it does not own. (b) Rebinding a row that fails its check, which would ratify a forged row under the current version.
+**Reason.** The rows' binding is this branch's, and the seam keeps it in one place.
+**Price.** The pass reads each stale row and takes two HMACs and one update per row it rebinds. A session under an older epoch fails its check and is counted as refused with a report, although it is only stale.

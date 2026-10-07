@@ -14,7 +14,7 @@ export type SecurityStateSealing = "required" | "migrating";
 //an unsealed account is at the first epoch in "migrating" and at none in "required" (E-3142)
 const FIRST_SESSION_EPOCH = 1;
 
-function epochOf(storedEpoch: string, sealing: SecurityStateSealing): string {
+export function epochOf(storedEpoch: string, sealing: SecurityStateSealing): string {
 	return sealing === "migrating" ? `COALESCE(${storedEpoch}, ${FIRST_SESSION_EPOCH})` : storedEpoch;
 }
 
