@@ -15258,3 +15258,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Taking the account lock for a check, which would serialise every request of an account behind every change of it.
 **Reason.** A snapshot gives a consistent read without a lock, which is what the check needs and all it needs.
 **Price.** The implementation is constrained to one statement or an explicit transaction per check, which the seal branch builds and measures.
+
+<a id="e-3096"></a>
+
+### A broken-state refusal costs what the ordinary failure costs
+`E-3096` · security-state · specification, S-INTEG-5, settled
+
+**Context.** A review found that S-INTEG-5 spoke of the answer and not of the time it takes. A sign-in that refused a broken account before the KDF, or one that checked the seal only after a correct password, would answer measurably differently from a wrong password or an unknown account, and S-TIM-1 exists because that difference is visible over the network. Section 3.18 *Outwards* and S-INTEG-5 now require the refusal to do the same work as the ordinary failure — the same queries, the same KDF, the same HMAC — so password sign-in checks the seal on every attempt, and against a stand-in state for an unknown account, as it already derives a stand-in KDF. T-INTEG-5 gains a call-sequence part in the form of T-TIM-1b on every commit and a timing part at T-TIM-1's threshold, which section 6's rule puts on the nightly tier like the concurrency part of T-RACE-2; the opening of section 6 says so. The tier counts are unchanged, because T-INTEG-5 is still one case blocking every commit.
+**Rejected.** Checking the seal only on a successful password, which my first draft of 3.18 intended and which a password holder can time.
+**Reason.** The same reason S-TIM-1 gives: a difference in work is a difference in time, and time is an answer.
+**Price.** Every password attempt, including every failed and every unknown one, pays a state read and an HMAC.
