@@ -106,6 +106,8 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		// admitting a file to this list without that would move the sweep out of every scan in this
 		// file — each of the others reads the repository source alone (E-353).
 		expect(pathsMatching(/one_time_token/)).toStrictEqual([
+			//the start reads which token-mac versions the rows name and nothing else (E-3148)
+			`${coreDirectory}/auth/integrity-key-ring.ts`,
 			`${coreDirectory}/auth/maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
 			`${coreDirectory}/db/migrations/token-mac.ts`,
