@@ -15808,3 +15808,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the entry was wrong about the surface.
 **Reason.** Whether something is public is decided by what the package publishes, and E-3215 judged it by the `export` keyword of an internal module instead of by the declarations `test/api-surface.test.ts` holds.
 **Price.** None for applications. The new code is visible only inside the library, where `KEY_ERROR_MESSAGES` is a `Record` over the union and the type check already forced its message.
+
+<a id="e-3291"></a>
+
+### The second security-state range says it holds the third review too
+`E-3291` · security-state · rules, settled
+
+**Context.** The row of CLAUDE.md §6 that reserves E-3190 … E-3219 describes the range as the foundation's answers to its second review. The fourth review pointed out that the range holds more: E-3205 and E-3206 answer items the branches queued after the second review, and E-3207 … E-3219 answer the third review and the items queued with it, because the third review was answered inside the range the second had left over instead of a range of its own. The row now says so in a sentence added after its standing text; the range itself is unchanged.
+**Rejected.** Reserving a range for the third review after the fact and renumbering, which the numbering rule forbids, and changing the row's range, which a reservation may not do once assigned.
+**Reason.** The table is how a reader finds which work a number belongs to, and a row that names one review for a range holding two misdirects that reader.
+**Price.** None.
