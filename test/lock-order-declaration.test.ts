@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { createTotpRepository } from "../src/core/factor/totp/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
@@ -231,7 +231,7 @@ describe("every account lock outside the interleavings is declared before the ta
 			);
 			await enrolConfirmedCredential(connection, schema, ring.providerAt(1, [1]), userId);
 			// A ring with a newer current version makes both envelopes due for the rewrite.
-			const rewrite = await held.transaction((transaction) =>
+			const rewrite = await inOneTransaction(held, (transaction) =>
 				rebindEnvelopesOfAccount({
 					driver: transaction,
 					schema,

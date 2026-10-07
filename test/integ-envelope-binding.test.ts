@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { OpenTransaction } from "../src/core/auth/account-envelopes.js";
 import { sealRowPresenceOf, unboundReadingOf } from "../src/core/auth/security-state.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
+import type { Driver } from "../src/core/db/driver.js";
 import { encryptWithPurposeKey, type PurposeCiphertext } from "../src/core/keys/envelope.js";
 import {
 	type BoundColumn,
@@ -440,5 +442,12 @@ export const seal = (keys, value) => encryptWithPurposeKey(keys, "totp-enc", val
 		);
 
 		expect(modulesReachingTheUnboundForm(planted)).toStrictEqual([BINDING_MODULE]);
+	});
+});
+
+describe("the account rewrite runs only inside an open transaction (E-3129)", () => {
+	it("does not take a pool where it needs a transaction", () => {
+		expectTypeOf<Driver>().not.toMatchTypeOf<OpenTransaction>();
+		expectTypeOf<OpenTransaction>().toMatchTypeOf<Driver>();
 	});
 });

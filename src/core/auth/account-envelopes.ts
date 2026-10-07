@@ -26,9 +26,22 @@ interface AccountEnvelopeRewrite {
 	readonly identitiesRewritten: number;
 }
 
+declare const openTransactionBrand: unique symbol;
+
+/** a driver bound to one open transaction, which only inOneTransaction hands out */
+export type OpenTransaction = Driver & { readonly [openTransactionBrand]: "one open transaction" };
+
+//the brand is given to the driver a transaction hands its work and to nothing else (E-3129)
+export function inOneTransaction<T>(
+	driver: Driver,
+	work: (transaction: OpenTransaction) => Promise<T>,
+): Promise<T> {
+	return driver.transaction((transaction) => work(transaction as OpenTransaction));
+}
+
 /** the open transaction in which one account's envelopes are rewritten under its lock */
 interface AccountEnvelopeTransaction {
-	readonly driver: Driver;
+	readonly driver: OpenTransaction;
 	readonly schema: string;
 	readonly keys: KeyProvider;
 	readonly actor: Actor;

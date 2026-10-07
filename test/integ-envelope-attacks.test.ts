@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
@@ -634,7 +634,7 @@ describe("the row binding within one owner", () => {
 			),
 		).rejects.toMatchObject({ code: "authentication_failed" });
 		await expect(
-			connection.transaction((transaction) =>
+			inOneTransaction(connection, (transaction) =>
 				rebindEnvelopesOfAccount({
 					driver: transaction,
 					schema,

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
+import type { Driver } from "../src/core/db/driver.js";
 import { createTotpService, timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
@@ -707,7 +708,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 			REFUSED_SIGN_IN,
 		);
 
-		const rewrite = await connection.transaction((transaction) =>
+		const rewrite = await inOneTransaction(connection, (transaction) =>
 			rebindEnvelopesOfAccount({
 				driver: transaction,
 				schema,
@@ -776,7 +777,7 @@ const STORED_PHC = `$argon2id$v=19$m=19456,t=2,p=1$${"c2FsdA".repeat(4)}$${"aGFz
 
 describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account runs first (S-INTEG-1, E-3117)", () => {
 	async function rebind(userId: string, keys: KeyProvider, sealing: "migrating" | "required") {
-		return connection.transaction((transaction) =>
+		return inOneTransaction(connection, (transaction) =>
 			rebindEnvelopesOfAccount({
 				driver: transaction,
 				schema,
@@ -964,20 +965,28 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		await writePhc(account.userId, unbound);
 		const replacement = await readPhc(other.userId);
 
-		const attempt = connection.transaction((transaction) =>
+		//every statement of the transaction passes through, and the rewrite's compare-and-swap is preceded by a foreign write
+		const interceptingTheSwap = (transaction: Driver): Driver => ({
+			async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
+				if (/^UPDATE \S+\.password_credential SET phc = \$2/.test(sql.trim())) {
+					await transaction.query(
+						`UPDATE ${schema}.password_credential SET phc = $2 WHERE user_id = $1`,
+						[account.userId, replacement.ciphertext],
+					);
+				}
+				return transaction.query<T>(sql, parameters);
+			},
+			transaction: (work) => transaction.transaction(work),
+		});
+		const pool: Driver = {
+			query: (sql, parameters) => connection.query(sql, parameters),
+			transaction: (work) =>
+				connection.transaction((transaction) => work(interceptingTheSwap(transaction))),
+		};
+
+		const attempt = inOneTransaction(pool, (transaction) =>
 			rebindEnvelopesOfAccount({
-				driver: {
-					async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
-						if (/^UPDATE \S+\.password_credential SET phc = \$2/.test(sql.trim())) {
-							await transaction.query(
-								`UPDATE ${schema}.password_credential SET phc = $2 WHERE user_id = $1`,
-								[account.userId, replacement.ciphertext],
-							);
-						}
-						return transaction.query<T>(sql, parameters);
-					},
-					transaction: (work) => transaction.transaction(work),
-				},
+				driver: transaction,
 				schema,
 				keys: beforeRotation,
 				actor: actorOfTestUser(account.userId),

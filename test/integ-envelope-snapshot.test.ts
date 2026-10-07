@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { createTotpService, timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
@@ -38,7 +38,7 @@ function sealingRightAfterTheRead(userId: string, readsSeen: { count: number }):
 			const rows = await connection.query<T>(sql, parameters);
 			if (reading.test(sql) && readsSeen.count === 0) {
 				readsSeen.count += 1;
-				await connection.transaction((transaction) =>
+				await inOneTransaction(connection, (transaction) =>
 					rebindEnvelopesOfAccount({
 						driver: transaction,
 						schema,

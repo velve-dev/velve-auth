@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
@@ -112,7 +112,7 @@ describe("S-INTEG-1: the old form only for an account without a seal row", () =>
 		await setPhc(victim.userId, laundered);
 		await sealRowFor(victim.userId);
 		await expect(
-			connection.transaction((tx) =>
+			inOneTransaction(connection, (tx) =>
 				rebindEnvelopesOfAccount({
 					driver: tx,
 					schema,
