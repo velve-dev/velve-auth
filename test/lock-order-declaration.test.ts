@@ -248,10 +248,11 @@ describe("every account lock outside the interleavings is declared before the ta
 	}, 60_000);
 
 	/**
-	 * The reach, counted rather than described. Nine statements take the account lock; this file
-	 * drives four of them, `test/lock-order-race.test.ts` drives two, and the remaining three write
-	 * fewer than two of the account's own tables, so the audit skips them by construction (E-1617).
-	 * A tenth site added anywhere reddens this and has to be placed in that account.
+	 * The reach, counted rather than described. Ten statements take the account lock; this file
+	 * drives four of them, `test/lock-order-race.test.ts` drives two, and the remaining four write
+	 * fewer than two of the account's own tables, so the audit skips them by construction (E-1617);
+	 * the OAuth refresh of E-3222 is the fourth. An eleventh site added anywhere reddens this and has
+	 * to be placed in that account.
 	 */
 	it("counts the statements that take the account lock, so the reach cannot drift unnoticed", () => {
 		const CALL = /\blockAccountRow(?:Statement)?\s*\(/g;
@@ -279,6 +280,6 @@ describe("every account lock outside the interleavings is declared before the ta
 		const listing = sites.map((source) => `${source.path}: ${source.count}`).join("\n");
 
 		expect(sites.length, listing).toBeGreaterThan(5);
-		expect(total, listing).toBe(9);
+		expect(total, listing).toBe(10);
 	});
 });

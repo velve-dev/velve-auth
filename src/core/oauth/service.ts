@@ -46,7 +46,11 @@ import {
 	stateOfPointer,
 } from "./flow-secrets.js";
 import { claimsOfIdToken } from "./id-token.js";
-import { createOAuthIdentityRepository, type IdentityFacts } from "./identity-repository.js";
+import {
+	createOAuthIdentityRepository,
+	type IdentityFacts,
+	type OwnedIdentity,
+} from "./identity-repository.js";
 import { accountAnAutomaticLinkMayJoin } from "./linking.js";
 import type { OutboundFetch } from "./outbound.js";
 import type { ProviderTable, ResolvedProvider } from "./providers.js";
@@ -330,6 +334,27 @@ export function createOAuthService(input: {
 		return created;
 	}
 
+	//every write to an account's provider tokens runs under the account lock (E-3222)
+	async function theIdentityUnderItsAccountLock(
+		transaction: Driver,
+		owned: ReturnType<typeof createOAuthIdentityRepository>,
+		existing: OwnedIdentity,
+	): Promise<OwnedIdentity> {
+		await lockAccountRow(transaction, schema, existing.userId);
+		const locked = await owned.findIdentityBySubject({
+			provider: existing.identity.provider,
+			subject: existing.identity.subject,
+		});
+		if (
+			locked === null ||
+			locked.userId !== existing.userId ||
+			locked.identity.id !== existing.identity.id
+		) {
+			throw new ConcealedError("state_not_found");
+		}
+		return locked;
+	}
+
 	async function accountForSignIn(
 		provider: ResolvedProvider,
 		account: ProviderAccount,
@@ -344,10 +369,11 @@ export function createOAuthService(input: {
 			});
 
 			if (existing !== null) {
-				assertTheAccountIsEnabled(await users.findUserById(existing.userId));
+				const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
+				assertTheAccountIsEnabled(await users.findUserById(locked.userId));
 				return {
-					userId: existing.userId,
-					identity: await owned.refreshIdentity({ existing, ...facts }),
+					userId: locked.userId,
+					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
 				};
 			}
 

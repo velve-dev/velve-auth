@@ -82,7 +82,7 @@ export interface IdentityFacts {
 	readonly tokens: ProviderTokensToStore | null;
 }
 
-interface OwnedIdentity {
+export interface OwnedIdentity {
 	readonly identity: Identity;
 	readonly userId: string;
 }

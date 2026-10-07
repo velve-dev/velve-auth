@@ -911,7 +911,7 @@ other request is observably waiting for a lock, reads the SQLSTATE where the ser
 raises it rather than at the HTTP boundary, and looks for any two transactions that
 take two tables in opposite orders in modes that wait for each other.
 
-**Where each of the nine is pinned.** The declaration audit — the statement carrying
+**Where each of the ten is pinned.** The declaration audit — the statement carrying
 `/* locks: … */` must appear, and must precede the first of the account's own tables —
 reads the statements a transaction ran, so a transaction has only to be *driven*. No
 interleaving, no second connection and no deadlock are needed, which is what makes the
@@ -928,10 +928,12 @@ audit cheap enough to point at flows that never race.
 | `redeemResetWithRecoveryCode` | nothing; the audit skips it |
 | `replaceEveryCode` | nothing; the audit skips it |
 | `removeSignInMethod` | nothing; the audit skips it |
+| `accountForSignIn`, the OAuth sign-in of a known identity | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` drives it against the bound-envelope rewrite, which it waits for |
 
-The last three are not an omission of the audit but a property of it: it considers only
+The last four are not an omission of the audit but a property of it: it considers only
 a transaction that writes **two or more** of the account's own tables, and on the tree as
-it stands each of those three writes fewer than two. The first two are E-1617's
+it stands each of those four writes fewer than two; the OAuth sign-in of a known identity
+writes `velve.identity` alone. The first two are E-1617's
 measurement — the recovery-code redemption is refused after one table on the repaired
 tree, and the regeneration touches one. The third was established by reading
 `removeSignInMethod`, which issues one `DELETE` against whichever single table the
@@ -939,7 +941,7 @@ removal names; it has not been driven, and driving it is the stronger statement 
 has made. A transaction with one child table has no two tables to put in an order, so
 there is nothing for this audit to decide about it. Each case in
 `test/lock-order-declaration.test.ts` reports how many transactions it read, and a fifth
-case counts the nine statements themselves, so a tenth added anywhere reddens and has to
+case counts the ten statements themselves, so an eleventh added anywhere reddens and has to
 be placed in this table.
 
 **What none of them covers.** The order is not enforced for a transaction no test
@@ -8858,6 +8860,12 @@ accounts and still open.
 The three token columns share one purpose key, so the column in the additional
 data is what keeps an access token from opening as a refresh token. The column
 decides the purpose: a caller names the column, and the key follows from it.
+
+An OAuth sign-in of a known identity locks the account row through
+`src/core/db/lock.ts` before it refreshes the stored tokens, re-reads the
+identity under the lock, and fails the flow as an unknown state when the
+identity's owner or id changed meanwhile, so a sign-in waits for the account
+rewrite rather than making its compare-and-swap lose (E-3222).
 
 `identity.id` is drawn by the library before the row is inserted, so the
 tokens can be bound to it; a refresh of an existing identity writes its new
