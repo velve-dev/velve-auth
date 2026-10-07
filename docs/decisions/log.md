@@ -16338,3 +16338,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Probing every version the ring holds at start, which the ring does not enumerate; `KeyProvider` answers versions it is asked for.
 **Reason.** What a check cannot see has to be named, and the condition that makes it reachable stated.
 **Price.** An operator who answers an old version with the wrong purpose's key is exposed to a writer until the ring is corrected.
+
+<a id="e-3347"></a>
+
+### The read-committed wrapper, the stored-key probe and the instance wiring each have a plant killer
+`E-3347` · security-state · tests, settled
+
+**Context.** The eighth review planted faults the suite did not notice and wrote cases that would. Each was run here against its plant before it was kept. `test/db-read-committed-refusal.test.ts` names a refused isolation statement whether the driver carries 25001 as `code`, as node-postgres and postgres.js do, or as `sqlState`, as the test connection does; ignoring either field failed it. It passes a serialization failure, a connection loss and a failure carrying neither field through unchanged; renaming every failure failed it. It also gives a twice-wrapped driver the statement once; removing the idempotence failed it. `test/keys-integrity-stored-key-sharing.test.ts` refuses a stored `state-mac` version answered with the current `cookie-sig` or `token-pepper` key, so the probe compares against every other HMAC purpose, as E-3329 says; restricting it to the integrity purposes failed it. `test/db-read-committed-instance.test.ts` holds that every transaction a sign-up opens through the assembled instance starts with the isolation statement; unwrapping the instance's driver failed it.
+**Rejected.** Nothing.
+**Reason.** A guard no test sees removed is a guard by intention only.
+**Price.** None.
