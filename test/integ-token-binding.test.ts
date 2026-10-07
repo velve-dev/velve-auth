@@ -179,7 +179,7 @@ describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/
 	});
 });
 
-describe("real rows a writer rewrites (T-INTEG-9, 9/9)", () => {
+describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	it("refuses a session moved to another account", async () => {
 		const token = await issuedSession(owner);
 		await sql(
@@ -282,6 +282,22 @@ describe("real rows a writer rewrites (T-INTEG-9, 9/9)", () => {
 		expectOneRefusal("token_redemption", victim);
 	});
 
+	it("refuses a one-time token moved into the pending table", async () => {
+		const token = await issuedOneTime(owner);
+		await sql(
+			`WITH moved AS (DELETE FROM ${schema}.one_time_token WHERE token_sha256 = $1 RETURNING *)
+			 INSERT INTO ${schema}.pending_authentication
+			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version)
+			 SELECT token_sha256, user_id, '{password}', now() + interval '5 minutes',
+			    token_mac, token_mac_key_version FROM moved`,
+			[sha256Of(token)],
+		);
+		refusals = [];
+
+		expect(await pending.resolve(toPendingToken(token))).toBeNull();
+		expectOneRefusal("factor_check", owner);
+	});
+
 	it("refuses a one-time token given another purpose", async () => {
 		const token = await issuedOneTime(owner);
 		await sql(
@@ -313,12 +329,12 @@ describe("real rows a writer rewrites (T-INTEG-9, 9/9)", () => {
 });
 
 describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
-	it("refuses a row whose counter a writer reset", async () => {
+	it("refuses a row whose counter a writer reset after four failed attempts", async () => {
 		const token = await issuedPending(owner);
-		expect(await pending.registerFailedAttempt(token)).toStrictEqual({
-			outcome: "attempts_remain",
-			attemptsRemaining: MAXIMUM_PENDING_ATTEMPTS - 1,
-		});
+		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
+			await pending.registerFailedAttempt(token);
+		}
+		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(1);
 		await sql(`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE token_sha256 = $1`, [
 			sha256Of(token),
 		]);
@@ -365,6 +381,25 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(
 			MAXIMUM_PENDING_ATTEMPTS - 1,
 		);
+	});
+
+	it("counts nothing from a counter a writer reset while a counted attempt waits", async () => {
+		const token = await issuedPending(owner);
+		await pending.registerFailedAttempt(token);
+		const resolved = await pending.resolveForAttempt(token);
+		await sql(`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE token_sha256 = $1`, [
+			sha256Of(token),
+		]);
+		refusals = [];
+
+		expect(await resolved?.registerFailedAttempt()).toStrictEqual({ outcome: "exhausted" });
+		expectOneRefusal("factor_check", owner);
+		const [row] = await migrated.connection.query<{ attempts: number }>(
+			`SELECT attempts FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		expect(row?.attempts).toBe(0);
+		expect(await pending.resolve(token)).toBeNull();
 	});
 
 	it("gives no budget back to a writer who restores an older row between resolve and count", async () => {
