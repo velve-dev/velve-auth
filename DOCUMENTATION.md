@@ -8809,9 +8809,23 @@ after a JSON round trip, which is the form `jsonb` hands back.
 A writer who inserts a row for a token of their own, moves a real row to another
 account, into another table or to another purpose, raises its factors, rewrites
 a payload or resets a pending attempt counter leaves a row whose MAC does not
-match. What the row binds is decided by the library: deadlines, `ip`,
-`user_agent`, `created_at` and `last_used_at` are not covered, so a writer can
-still extend a deadline, as section 3.18 names among its limits.
+match.
+
+**What the MAC leaves to a writer.** Section 3.18 names these limits, and they
+hold here as stated:
+
+- Deadlines are not bound — `idle_expires_at`, `absolute_expires_at`,
+  `expires_at` — nor are `created_at`, `last_used_at`, `ip` and `user_agent`. A
+  writer can extend the life of an existing row and change what a session list
+  shows about it, but cannot create a row or point one at another account.
+- A row is proved to be the library's, not to be its latest version. A writer
+  who saved a row can write it back with its MAC of that time: a session revoked
+  on its own (`session.revoke`, `signOut`) becomes valid again as long as the
+  account's `session_epoch` has not risen since; a consumed one-time token becomes
+  redeemable again within its deadline; a pending row gets its older attempt
+  budget back ([The attempt budget](#the-attempt-budget)). A session ended by a
+  mass revocation does not come back this way, because its MAC binds an epoch the
+  revocation left behind.
 
 ### The session epoch
 
@@ -8850,10 +8864,12 @@ before anything in the row is used:
 
 A refusal has no code of its own and reaches the outside exactly as a missing
 row does. An unknown `token_mac_key_version` is refused the same way. A one-time
-token is consumed by the statement that reads it, so a refused one-time row is
-deleted with the redemption that found it; a refused pending row being consumed
-is restored by the rollback of the transaction that would have issued the
-session.
+token is consumed by the statement that reads it. Every email flow redeems inside
+its own transaction and answers a refused row with `invalid_token`, which rolls
+the transaction back and leaves the refused row where it was; only a redemption
+outside a transaction, such as the one that spends a token whose mail could not
+be sent, deletes it. A refused pending row being consumed is likewise restored by
+the rollback of the transaction that would have issued the session.
 
 ### The refusal report
 

@@ -15738,3 +15738,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Only the upgrade text, which leaves the failure for an operator who does not read it. (b) A separate migration 5 for the lock, which cannot run before the statements it is meant to precede.
 **Reason.** An unreleased migration is a draft, and the lock is what makes its delete and its new columns one step for every other session on the database.
 **Price.** While migration 4 runs, every statement of a running instance on the three tables waits; a 1.x instance left running fails every insert afterwards. A database built from an earlier draft of migration 4 on a parallel branch refuses to start with a changed checksum, as E-3108 describes for migration 3.
+
+<a id="e-3147"></a>
+
+### The chapter corrects what a refused one-time row leaves, and states the writer's limits in full
+`E-3147` · security-state-tokens · documentation, settled
+
+**Context.** A review found that the chapter said a refused one-time row "is deleted with the redemption that found it". In every email flow the redemption runs inside the flow's transaction and the refusal throws `invalid_token`, which rolls the transaction back and restores the row. Only the redemption that spends a token whose mail failed runs outside a transaction and deletes it. The sentence was written from the consume statement alone and never checked against the flows. The chapter now says what happens. The same review asked that the chapter state the limits the foundation is making explicit in section 3.18. These are the unbound deadlines and timestamps, and the replay of an earlier version of a row with its MAC of that time. That covers a session revoked on its own, a consumed one-time token and a pending row's budget, where a mass revocation's epoch stops the session case. The chapter lists them in its own words.
+**Rejected.** Changing the flows so that a refused one-time row is deleted, which would make a refusal write and differ from an unknown token in what it leaves behind.
+**Reason.** A documented behaviour nobody checked is a defect of its own, whichever way the code goes.
+**Price.** A forged one-time row stays in the table until its deadline or a sweep, and every redemption of it is refused again with a report.
