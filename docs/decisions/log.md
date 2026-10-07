@@ -15718,3 +15718,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Consuming the token rows of an account before taking its lock in the maintenance transaction, which would turn the maintenance step into a consumer of tokens it only means to rebind.
 **Reason.** §7's order is fixed and a maintenance step is not a reason to break it; a compare-and-set per row needs no lock at all.
 **Price.** The maintenance step's "every account is converted entirely or not at all" now holds for the seal's components only; token rows are rebound in a second pass that can be interrupted between rows, and a row it misses is rebound by a later run or expires.
+
+<a id="e-3282"></a>
+
+### A pending row is rebound only by its booking or by a compare-and-set, and a rebind is no manipulation
+`E-3282` · security-state · specification, S-INTEG-9, settled
+
+**Context.** The fourth review found two collisions between key rotation and the booking of E-3208. A booking whose compare-and-set missed because the maintenance step had just rebound the row would re-read a row at the same `attempts` with a different MAC and classify it as manipulation, with the alarm; and a maintenance rebind written without a condition could overwrite a booking that landed in between, giving back an attempt. The orchestrator decided: a pending row is rebound outside the maintenance step only by its own booking, which writes the new MAC under the current key version; the maintenance step rebinds it only by compare-and-set on the old MAC and `attempts`; and in the booking's re-read, a row that verifies at an equal count under a newer key version is a legitimate rebind, so the booking re-pins and retries without an alarm. Point 3 of section 3.18 now says all three in both languages, and the manipulation clause is narrowed to a different MAC under the same key version. The general rule that a resolved row is rebound under the current version now excludes pending rows.
+**Rejected.** Letting the resolution of a pending row rebind it like a session, which races the booking it precedes.
+**Reason.** Only the writes that already compare against the row may change its MAC, so no write can undo another.
+**Price.** A pending authentication whose key version leaves the ring before a booking or a maintenance pass rebinds it is lost; its deadline is minutes, so the price is a restarted sign-in.
