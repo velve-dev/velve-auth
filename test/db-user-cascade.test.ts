@@ -15,7 +15,7 @@ import {
 	type UserOwnedTable,
 } from "./db-fixtures.js";
 
-const SPECIFIED_USER_OWNED_TABLES = 13;
+const SPECIFIED_USER_OWNED_TABLES = 14;
 
 let migrated: MigratedSchema;
 let columns: readonly ColumnFact[];
@@ -33,7 +33,7 @@ afterAll(async () => {
 });
 
 describe("deleting a user (S-TOKEN-5)", () => {
-	it("finds the thirteen user-owned tables in the catalogue, not in a written list", () => {
+	it("finds the fourteen user-owned tables in the catalogue, not in a written list", () => {
 		expect(owned).toHaveLength(SPECIFIED_USER_OWNED_TABLES);
 	});
 
@@ -92,7 +92,7 @@ describe("deleting a user (S-TOKEN-5)", () => {
 });
 
 describe("the owner predicate on every user-owned table (S-OWNER-2)", () => {
-	it("keeps a stranger away from each of the thirteen tables", async () => {
+	it("keeps a stranger away from each of the fourteen tables", async () => {
 		const ownerId = await createUser(migrated.connection, migrated.schema);
 		const strangerId = await createUser(migrated.connection, migrated.schema);
 		const ownerActor: Actor = actorOfTestUser(ownerId);

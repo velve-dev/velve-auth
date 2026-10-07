@@ -3,7 +3,8 @@ import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
 import { dropSchema, type MigratedSchema, openMigratedSchema, readColumns } from "./db-fixtures.js";
 
 // Every entry is one column of the schema in architecture 3.2 with the differences
-// from 3.17 (L-2, L-12, L-3, import_mapping, password_reset_required) already applied.
+// from 3.17 (L-2, L-12, L-3, import_mapping, password_reset_required) and the table of
+// 3.18 (security_state, migration 3) already applied.
 // `password_credential.set_by_session_id` and `oauth_flow.link_from_session_id` were
 // once carried by neither section; the specification was amended to declare both, so
 // this list is again what its first sentence says it is (E-1095, E-1097).
@@ -74,6 +75,11 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"schema_migration.checksum text NOT NULL",
 	"schema_migration.name text NOT NULL",
 	"schema_migration.version integer NOT NULL",
+	"security_state.digest bytea NOT NULL",
+	"security_state.key_version integer NOT NULL",
+	"security_state.sealed_at timestamp with time zone NOT NULL DEFAULT",
+	"security_state.user_id uuid NOT NULL",
+	"security_state.version bigint NOT NULL",
 	"session.absolute_expires_at timestamp with time zone NOT NULL",
 	"session.created_at timestamp with time zone NOT NULL DEFAULT",
 	"session.factors text[] NOT NULL DEFAULT",
@@ -144,6 +150,7 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE INDEX rate_bucket_sweep_idx ON SCHEMA.rate_bucket USING btree (expires_at)",
 	"CREATE UNIQUE INDEX recovery_code_pkey ON SCHEMA.recovery_code USING btree (user_id, code_hmac)",
 	"CREATE UNIQUE INDEX schema_migration_pkey ON SCHEMA.schema_migration USING btree (version)",
+	"CREATE UNIQUE INDEX security_state_pkey ON SCHEMA.security_state USING btree (user_id)",
 	"CREATE UNIQUE INDEX session_pkey ON SCHEMA.session USING btree (id)",
 	"CREATE INDEX session_sweep_idx ON SCHEMA.session USING btree (absolute_expires_at)",
 	"CREATE UNIQUE INDEX session_token_unique ON SCHEMA.session USING btree (token_sha256)",
@@ -161,7 +168,7 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE INDEX webauthn_credential_user_idx ON SCHEMA.webauthn_credential USING btree (user_id)",
 ];
 
-const SPECIFIED_TABLES = 16;
+const SPECIFIED_TABLES = 17;
 
 let migrated: MigratedSchema;
 
@@ -174,13 +181,13 @@ afterAll(async () => {
 	await migrated.connection.close();
 });
 
-describe("migration 1 against architecture 3.2 and 3.17", () => {
+describe("the shipped migrations against architecture 3.2, 3.17 and 3.18", () => {
 	it("creates every table in its final form rather than altering it afterwards", () => {
 		expect(initialSchema.sql).not.toMatch(/\bALTER\s+TABLE\b/i);
 		expect(initialSchema.sql).not.toMatch(/\bDROP\s+COLUMN\b/i);
 	});
 
-	it("leaves the schema with sixteen tables", async () => {
+	it("leaves the schema with seventeen tables", async () => {
 		const rows = await migrated.connection.query<{ present: number }>(
 			`SELECT count(*)::int AS present FROM information_schema.tables
 			 WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,

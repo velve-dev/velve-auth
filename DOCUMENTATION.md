@@ -130,7 +130,7 @@ CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and
 ## Schema
 
 Everything lives in its own PostgreSQL schema, `velve` by default, so nothing
-collides with the application's own tables. Sixteen tables.
+collides with the application's own tables. Seventeen tables.
 
 `user` is a reserved word in SQL, but `velve.user` is valid without quoting
 because PostgreSQL accepts any keyword after the dot. No statement in this
@@ -141,7 +141,7 @@ tokens, challenges, recovery codes. What it needs in cleartext is encrypted —
 the TOTP secret, third-party OAuth tokens, the PKCE verifier, the PHC string.
 Passwords are derived with a KDF. Nothing confidential is in cleartext.
 
-**The schema.** Sixteen tables in their own PostgreSQL schema, `velve` by
+**The schema.** Seventeen tables in their own PostgreSQL schema, `velve` by
 default. The SQL is shipped as files under `migrations/`, so it can be read,
 reviewed and applied with your own tooling; the library carries the same text
 and never reads a file at run time.
@@ -360,6 +360,20 @@ Legacy hashes that could not be carried over.
 | `detail` | `text` | for example `clerk:phpass` |
 | `created_at` | `timestamptz` | |
 
+### `velve.security_state`
+
+One seal per account, added by migration 3 (architecture section 3.18). What
+the seal covers and when it is written and checked is in
+[Security state](#security-state).
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | `uuid` | primary key, cascades from `velve.user` |
+| `version` | `bigint` | at least 1; rises by one with every seal of the account |
+| `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
+| `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
+| `sealed_at` | `timestamptz` | when the row was last written |
+
 ### `velve.schema_migration`
 
 The migration ledger.
@@ -388,9 +402,11 @@ the two byte for byte.
 | `0002_identity_email.sql` | 2 | `CHECK (email IS NOT NULL)` |
 | `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
+| `0003_security_state.sql` | 3 | the table `velve.security_state` |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Changing the mode of a database that has already
+configured identity mode. Migration 3 is the same in every mode, and migration 4
+is reserved by architecture section 3.18 for the token MAC columns. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
 
@@ -7411,10 +7427,10 @@ longer carried by recognising positions — but it is not free of the parse
 either, and the residual is named under Rule 1.
 
 **Rule 1 — a core table is refused by its name, wherever the name stands.**
-Seventeen core table names: sixteen read out of the SQL that creates them, so no
+Eighteen core table names: seventeen read out of the SQL that creates them, so no
 second list of those exists, and `plugin_schema_migration`, which no migration
 creates — the runner does — and which is therefore named from the one place it is
-defined. A statement containing any of the seventeen, bare or qualified, in any
+defined. A statement containing any of the eighteen, bare or qualified, in any
 position the reader treats as code, is refused. It is the one rule that does not
 depend on recognising a *position*, which is why the boundary rests on it.
 
@@ -8684,6 +8700,18 @@ a `MacVerdict`:
 
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.
+
+### The seal table
+
+Migration 3 creates `velve.security_state`, one row per account, documented
+column by column under [Schema](#velvesecurity_state). Its foreign key cascades
+from `velve.user`, so deleting an account deletes its seal, and the cascade
+guard of the migration runner counts it among the user-owned tables. It has no
+deadline and no sweep index: a seal is never expired, only replaced.
+
+Nothing writes the table yet. Migration 4, the token MAC columns of section
+3.18, is reserved for the branch that writes those MACs, because its `NOT NULL`
+columns would refuse every session the code inserts until then.
 
 ## Security state: bound envelopes
 

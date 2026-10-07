@@ -15198,3 +15198,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Describing the purposes only in *Security state*, which leaves *Key management* stating six purposes the code no longer has.
 **Reason.** A count in another chapter that the change makes false is a defect in that chapter, and the partition of §5 is about who writes a chapter's content, not about leaving a number wrong.
 **Price.** Those chapters are owned by no current feature, and the edit is reported here rather than reviewed by an owner.
+
+<a id="e-3090"></a>
+
+### Tests that append a migration of their own number it past the shipped plan
+`E-3090` · security-state · test, migration runner, settled
+
+**Context.** Migration 3 broke twenty-two cases in ten test files. Most asserted the shipped plan itself — the versions `[1, 2]`, sixteen tables, thirteen user-owned tables, the columns and indexes of the schema — and now assert the plan with migration 3 in it. Seven cases in `test/db-runner-integrity.test.ts` and `test/db-schema-status.test.ts` appended a step of their own with the literal version 3 or 4, and two of them failed only because the runner refused two migrations claiming version 3. Those files now read the shipped versions from `coreMigrations("email")` and number their own steps past the highest, and the two plugin ledger cases in `test/db-cascade-guard-evasion.test.ts` and `test/db-plugin-migration.test.ts` expect the shipped versions followed by the plugin's.
+**Rejected.** Renumbering the test steps to 4 and 5, which collides again with migration 4 on the token branch (E-3086).
+**Reason.** A test about the runner's behaviour should not have to change each time the library ships a migration; a test about the shipped plan should.
+**Price.** The cases that state the plan — `test/db-migration-runner.test.ts`, `test/db-schema.test.ts`, `test/db-schema-conformance.test.ts`, `test/db-user-cascade.test.ts`, `test/db-subpath-exports.test.ts`, `test/plugin-migration-run.test.ts` — still change with every migration, and the token branch edits them again.

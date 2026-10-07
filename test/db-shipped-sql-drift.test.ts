@@ -4,6 +4,7 @@ import { migrationChecksum } from "../src/core/db/migration.js";
 import { identityModeMigration } from "../src/core/db/migrations/identity-mode.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
+import { securityStateSchema } from "../src/core/db/migrations/security-state.js";
 
 const migrationsDirectory = new URL("../migrations/", import.meta.url);
 
@@ -22,6 +23,7 @@ const everyShippedMigration = [
 	identityModeMigration("email"),
 	identityModeMigration("username"),
 	identityModeMigration("username_email"),
+	securityStateSchema,
 ];
 
 describe("the SQL the operator reads and the SQL the runner executes", () => {
@@ -31,6 +33,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			"0002_identity_email.sql",
 			"0002_identity_username.sql",
 			"0002_identity_username_email.sql",
+			"0003_security_state.sql",
 		]);
 	});
 
@@ -51,6 +54,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			["0002_identity_email.sql", identityModeMigration("email").sql],
 			["0002_identity_username.sql", identityModeMigration("username").sql],
 			["0002_identity_username_email.sql", identityModeMigration("username_email").sql],
+			["0003_security_state.sql", securityStateSchema.sql],
 		];
 
 		for (const [name, embedded] of pairs) {
@@ -69,10 +73,11 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 	});
 
 	it("ships a plan whose version numbers are the file prefixes", () => {
-		expect(coreMigrations("email").map((migration) => migration.version)).toEqual([1, 2]);
+		expect(coreMigrations("email").map((migration) => migration.version)).toEqual([1, 2, 3]);
 		expect(coreMigrations("username").map((migration) => migration.name)).toEqual([
 			"initial_schema",
 			"identity_username",
+			"security_state",
 		]);
 	});
 });

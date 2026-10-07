@@ -1,9 +1,10 @@
 import { type Migration, PLUGIN_LEDGER_TABLE } from "../migration.js";
 import { type IdentityMode, identityModeMigration } from "./identity-mode.js";
 import { initialSchema } from "./initial-schema.js";
+import { securityStateSchema } from "./security-state.js";
 
 export function coreMigrations(identityMode: IdentityMode): readonly Migration[] {
-	return [initialSchema, identityModeMigration(identityMode)];
+	return [initialSchema, identityModeMigration(identityMode), securityStateSchema];
 }
 
 const CREATES_A_TABLE =
