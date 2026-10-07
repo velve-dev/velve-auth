@@ -32,7 +32,7 @@ export interface TokenBindingRefusal {
 	readonly userId: string;
 	readonly occasion: TokenBindingOccasion;
 	readonly reason: "token_binding_mismatch";
-	readonly verdict: "mismatch" | "key_version_unknown";
+	readonly verdict: "mismatch" | "key_version_unknown" | "key_unusable";
 }
 
 /** receives every refused token row, and whatever it throws does not change the refusal */
