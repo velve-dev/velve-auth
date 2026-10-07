@@ -17,7 +17,7 @@ export interface StoredSessionRow extends StoredTokenMac {
 	readonly sessionEpoch: number | null;
 }
 
-//the epoch the account had at issue is bound so a mass revocation outlives a written back row (S-INTEG-9)
+//a row written back after a mass revocation must stay refused (S-INTEG-9)
 export function sessionBinding(
 	userId: string,
 	tokenHash: Uint8Array,

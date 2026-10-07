@@ -63,14 +63,14 @@ export interface PendingAuthenticationRepository {
 	findPendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
 	): Promise<PendingCandidate<PendingAuthenticationWithOwner> | null>;
-	//the stored mac is the predicate so a concurrent rebinding is not overwritten (S-KEY-5)
+	//a concurrent rebinding must not be overwritten (S-KEY-5)
 	rebindPendingTokenMac(input: {
 		readonly tokenHash: Uint8Array;
 		readonly userId: string;
 		readonly previous: StoredTokenMac;
 		readonly next: StoredTokenMac;
 	}): Promise<boolean>;
-	//an attempt is booked only over the counter and mac that were checked (S-INTEG-9)
+	//an attempt must be booked only over the counter and mac that were checked (S-INTEG-9)
 	bookAttempt(input: {
 		readonly tokenHash: Uint8Array;
 		readonly checked: StoredTokenMac & { readonly attempts: number };
@@ -145,7 +145,7 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 	return names.filter(isAuthenticationFactor);
 }
 
-//json keeps a comma inside a name apart from the comma between two names (S-INTEG-9)
+//a comma inside a factor name must not split it in two (S-INTEG-9)
 function storedNamesOf(json: string): readonly string[] | null {
 	const names: unknown = JSON.parse(json);
 	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;

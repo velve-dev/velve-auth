@@ -2,7 +2,7 @@ import { macUnderCurrentKey, verifyMacUnderKeyVersion } from "../keys/mac.js";
 import type { KeyProvider } from "../keys/provider.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
 
-/** the kind of row a token hash stands in, so a hash moved to another table or purpose fails */
+/** the kind of row a token hash stands in, which a hash moved to another table or purpose no longer matches */
 export type TokenBindingPurpose = "session" | "pending_authentication" | OneTimeTokenPurpose;
 
 /** the security-relevant content of a token row, in the form it is stored in */
@@ -97,7 +97,7 @@ function concatenated(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
 	return joined;
 }
 
-//a list keeps its stored order so a reordered or repeated factor no longer verifies
+//a reordered or repeated factor must not verify (S-INTEG-9)
 function listField(items: readonly string[]): Uint8Array {
 	return concatenated([field(LIST, items.length, new Uint8Array(0)), ...items.map(textField)]);
 }
@@ -115,12 +115,12 @@ function canonicalJsonOf(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-//the payload is read through json first so it is taken in the form jsonb returns it in
+//the payload must be taken in the form jsonb returns it in
 export function canonicalPayloadOf(payload: OneTimeTokenPayload | null): string | null {
 	return payload === null ? null : canonicalJsonOf(JSON.parse(JSON.stringify(payload)));
 }
 
-//the purpose field tells a session epoch from an attempt count so both take the same place
+//the purpose field must tell a session epoch from an attempt count (S-INTEG-9)
 function contentField(content: TokenRowContent): Uint8Array {
 	if (!("factors" in content)) {
 		return optionalTextField(canonicalPayloadOf(content.payload));
@@ -129,7 +129,7 @@ function contentField(content: TokenRowContent): Uint8Array {
 	return concatenated([listField(content.factors), integerField(counter)]);
 }
 
-//every field carries its type and length so two different rows never encode alike (S-INTEG-9)
+//two different rows must never encode alike (S-INTEG-9)
 export function encodeTokenBinding(binding: TokenBinding): Uint8Array<ArrayBuffer> {
 	return concatenated([
 		textField(BINDING_CONTEXT),
@@ -165,7 +165,7 @@ export function checkTokenBinding(
 	);
 }
 
-//a row under an older version is rebound on use so the old version can leave the ring (S-KEY-5)
+//a row under an older version must be rebound on use before that version leaves the ring (S-KEY-5)
 export async function reboundTokenMacIfStale(
 	keys: KeyProvider,
 	binding: TokenBinding,

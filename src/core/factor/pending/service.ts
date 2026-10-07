@@ -98,7 +98,7 @@ function attemptsRemainingAfter(attempts: number): number {
 	return Math.max(MAXIMUM_PENDING_ATTEMPTS - attempts, 0);
 }
 
-//the attempt counter is bound so a writer who resets it is refused like a forged row (S-INTEG-9)
+//a writer who resets the attempt counter must be refused like a forged row (S-INTEG-9)
 function pendingBinding(
 	userId: string,
 	tokenHash: Uint8Array,
@@ -178,7 +178,7 @@ export function createPendingAuthenticationService(
 		};
 	}
 
-	//the row a booking is pinned to is the one this check passed, rebound where it was stale
+	//a booking must be pinned to the row this check passed (E-3140)
 	async function checkedRowOf(tokenHash: Uint8Array): Promise<{
 		readonly row: CheckedPendingRow;
 		readonly found: PendingAuthenticationWithOwner;
@@ -203,7 +203,7 @@ export function createPendingAuthenticationService(
 		};
 	}
 
-	//a booking that missed tells a concurrent attempt from a writer by reading the row once more (E-3140)
+	//a missed booking must tell a concurrent attempt from a writer (E-3140)
 	async function afterMissedBooking(
 		tokenHash: Uint8Array,
 		pinned: CheckedPendingRow,
@@ -252,7 +252,7 @@ export function createPendingAuthenticationService(
 		};
 	}
 
-	//every miss follows a booking that raised the counter so the budget bounds the retries
+	//the retries must stay within the budget that every concurrent booking raises (E-3140)
 	async function bookFrom(
 		tokenHash: Uint8Array,
 		resolution: PendingResolution,

@@ -11,7 +11,7 @@ import { lockAccountRow } from "../lock.js";
 /** whether every account must have a seal row, or one without is still served while it is sealed */
 export type SecurityStateSealing = "required" | "migrating";
 
-//an account without a seal row is at the first epoch in "migrating" and at none in "required"
+//an unsealed account is at the first epoch in "migrating" and at none in "required" (E-3142)
 const FIRST_SESSION_EPOCH = 1;
 
 function epochOf(storedEpoch: string, sealing: SecurityStateSealing): string {
@@ -87,7 +87,7 @@ export interface RemovedSession {
 interface SessionRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
-	//every listed row is checked so the repository cannot list without the key (S-INTEG-9)
+	//a repository that lists rows must hold the key that checks them (S-INTEG-9)
 	readonly keys: KeyProvider;
 	//a caller that names no mode gets the one that refuses an account without a seal row (S-INTEG-4)
 	readonly sealing?: SecurityStateSealing;
@@ -99,7 +99,7 @@ export interface SessionRepository {
 	boundTo(driver: Driver): SessionRepository;
 	insertSession(input: SessionInsert): Promise<Session>;
 	findSessionByTokenHash(tokenHash: Uint8Array): Promise<SessionCandidate | null>;
-	//the stored mac is the predicate so a concurrent rebinding is not overwritten (S-KEY-5)
+	//a concurrent rebinding must not be overwritten (S-KEY-5)
 	rebindSessionTokenMac(input: {
 		readonly actor: Actor;
 		readonly sessionId: string;
@@ -220,7 +220,7 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 	return names.filter(isAuthenticationFactor);
 }
 
-//json keeps a comma inside a name apart from the comma between two names (S-INTEG-9)
+//a comma inside a factor name must not split it in two (S-INTEG-9)
 function storedNamesOf(json: string): readonly string[] | null {
 	const names: unknown = JSON.parse(json);
 	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;
@@ -258,7 +258,7 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 	};
 }
 
-//the row is written only while the account is still at the epoch its mac binds (S-INTEG-9)
+//a session must be written only while the account is at the epoch its mac binds (S-INTEG-9)
 function insertStatement(table: string, states: string, sealing: SecurityStateSealing): string {
 	return `INSERT INTO ${table}
 		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent,
@@ -328,7 +328,7 @@ function currentEpochStatement(states: string, sealing: SecurityStateSealing): s
 	return `SELECT ${epochOfAccount(states, sealing)}::text AS session_epoch`;
 }
 
-//a bigint arrives as text so it is read here and refused when it is not an exact integer
+//a bigint arrives as text and must be an exact epoch before it is used
 function toEpoch(value: string | null): number | null {
 	if (value === null) {
 		return null;
@@ -348,7 +348,7 @@ function deleteEveryOtherOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE user_id = $1 AND id <> $2 RETURNING id`;
 }
 
-//a listed row carries what its check needs beside what the list shows (S-INTEG-9)
+//a listed row must be checkable before it is shown (S-INTEG-9)
 function listedColumns(sealing: SecurityStateSealing): string {
 	return `s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 	s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,

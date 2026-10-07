@@ -135,7 +135,6 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	const metadataMode = options.sessionMetadata ?? DEFAULT_SESSION_METADATA_MODE;
 	const sessions = repositoryOn(options.driver);
 
-	//a repository on another driver checks its rows with this service's keys and mode
 	function repositoryOn(driver: Driver): SessionRepository {
 		return createSessionRepository({
 			driver,
@@ -152,7 +151,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		return sessionMetadataFor(metadataMode, observed);
 	}
 
-	//the mac is taken over the factors as the row stores them, once and in their first order
+	//the mac must cover the factors exactly as the row will store them (S-INTEG-9)
 	function insertFor(
 		userId: string,
 		factors: readonly AuthenticationFactor[],
