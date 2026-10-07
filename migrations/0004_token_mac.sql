@@ -21,3 +21,11 @@ ALTER TABLE velve.one_time_token
 ALTER TABLE velve.pending_authentication
   ADD COLUMN token_mac bytea NOT NULL CHECK (octet_length(token_mac) = 32),
   ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);
+/* The start reads which token-mac versions are stored, and the maintenance pass which rows are
+   under an old one; each index lets both step from version to version instead of reading every
+   row. */
+CREATE INDEX session_token_mac_key_version_idx ON velve.session (token_mac_key_version);
+CREATE INDEX one_time_token_token_mac_key_version_idx
+  ON velve.one_time_token (token_mac_key_version);
+CREATE INDEX pending_authentication_token_mac_key_version_idx
+  ON velve.pending_authentication (token_mac_key_version);

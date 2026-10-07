@@ -227,7 +227,7 @@ email address is an attribute, never a key.
 | `user_id` | `uuid` | cascades from `velve.user`, indexed, **immutable** |
 | `token_sha256` | `bytea` | SHA-256 of the session token, unique; the lookup key |
 | `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 ([Security state: keyed token hashes](#security-state-keyed-token-hashes)) |
-| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 | `created_at`, `last_used_at` | `timestamptz` | |
 | `idle_expires_at`, `absolute_expires_at` | `timestamptz` | `absolute_expires_at` is indexed for the sweep |
 | `factors` | `text[]` | `password`, `totp`, `webauthn`, `recovery`, `oauth` |
@@ -250,7 +250,7 @@ in one transaction (E-23).
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
 | `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
-| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 
 ### `velve.pending_authentication`
 
@@ -265,7 +265,7 @@ The state between the first factor and the second.
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
 | `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
-| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 
 ### `velve.totp_credential`
 
@@ -410,7 +410,7 @@ the two byte for byte.
 | `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
-| `0004_token_mac.sql` | 4 | deletes every session, one-time token and pending authentication, and adds `token_mac` and `token_mac_key_version` to the three tables |
+| `0004_token_mac.sql` | 4 | deletes every session, one-time token and pending authentication, and adds `token_mac` and an indexed `token_mac_key_version` to the three tables |
 
 Exactly one of the three version-2 files is applied — the one matching the
 configured identity mode. Migrations 3 and 4 are the same in every mode; migration 4
@@ -8763,7 +8763,11 @@ Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
 every distinct `key_version` of `velve.security_state` under `state-mac` and every
 distinct `token_mac_key_version` of the three token tables under `token-mac`, and
 refuses the start with `keys_unusable` if the ring answers one of them with a key
-`keyTakesMac` rejects. A version the ring does not hold is skipped.
+`keyTakesMac` rejects. A version the ring does not hold is skipped. A token table
+is read down its `token_mac_key_version` index one version at a time, so the
+read costs one index step per stored version rather than one per row: measured
+on PostgreSQL 16 over 300,000 rows under two versions at 0.4 to 0.9 ms, against
+26 to 35 ms for a `SELECT DISTINCT` over the same index.
 
 ### The seal table
 

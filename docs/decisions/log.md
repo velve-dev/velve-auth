@@ -15778,3 +15778,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) One `LOCK TABLE` listing the tables in the new order, which is correct too but leaves the order to a property of the statement a reader has to know. (b) A `lock_timeout` with a retry, which turns a deadlock into a migration that may never get through under load.
 **Reason.** A lock that is taken against the order every flow takes the same tables is a deadlock waiting for the first upgrade under traffic.
 **Price.** A migration that waits behind a long 1.x transaction on `pending_authentication` holds nothing else meanwhile, so 1.x sessions go on being issued until it gets through, and are deleted by it.
+
+<a id="e-3251"></a>
+
+### The start reads the stored token-mac versions down an index, one version at a time
+`E-3251` · security-state-tokens · schema, migration 4, start, settled
+
+**Context.** E-3148 extended the start probe `assertStoredIntegrityKeysTakeMac` to the token tables by a `UNION` of one `SELECT` per table. A `UNION` removes duplicates over everything its branches return, so every start read every session, one-time token and pending authentication. Nothing indexed `token_mac_key_version`, and nothing had measured the read. Migration 4, still unreleased, now creates an index on `token_mac_key_version` in each of the three tables. The probe reads each table by a recursive query that takes the lowest stored version from the index and then the next one above it, until there is none. The seal table is read with `SELECT DISTINCT`, as before. Measured on PostgreSQL 16 against one table of 300,000 rows under two versions, the stepwise read took 0.4 to 0.9 ms and a `SELECT DISTINCT` over the same index 26 to 35 ms.
+**Rejected.** (a) `SELECT DISTINCT` per table, which an index makes an index-only scan but still reads every entry, since PostgreSQL 14 to 16 has no skip scan. (b) Probing every version the ring holds instead of the stored ones, which E-3191 rejected because a ring may hold a version no row names.
+**Reason.** A start that reads every token row grows with the number of signed-in users, and the question it asks has as many answers as there are key versions.
+**Price.** Three indexes that every token insert maintains. The seal table is still read in full, because its key version is the foundation's and has no index.
