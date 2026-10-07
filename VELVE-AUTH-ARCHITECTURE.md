@@ -45,9 +45,9 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
-**The safeguarding.** 123 security requirements in eighteen error classes, each with at least one test case and a number fixed in advance as its threshold; 127 test cases, of which 109 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
+**The safeguarding.** 132 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 136 test cases, of which 118 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
 
-**Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
+**Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. A writer on the database who also has the root key has everything, and without the anchor from section 3.18 they can reset an account to an old, internally consistent state. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
 
 ---
 
@@ -55,10 +55,10 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 1. Feature comparison — each of the 618 Better Auth features with its decision and reasoning
 2. Language and runtime — the assessment, the measurements, the recommendation
-3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps
+3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 123 requirements in eighteen error classes, with a coverage table of the 33 advisories
-6. Test plan — 127 test cases with thresholds fixed in advance
+5. Security requirements — 132 requirements in nineteen error classes, with a coverage table of the 33 advisories
+6. Test plan — 136 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
 The build brief lies separately as `CLAUDE-CODE-AUFTRAG.md`.
@@ -574,7 +574,7 @@ plugins themselves are already contained in A–M and are not counted twice here
 | H32 `advanced.disableOriginCheck` | Switches the URL validation off, and out of compatibility CSRF too (`create-context.ts:398-403`) | Omit | Nobody. An option that switches two checks off at once although its name names only one is the reason why it may not exist. |
 | H33 `advanced.trustedProxyHeaders` | Trusts `X-Forwarded-Host`/`-Proto` in the baseURL determination (`init-options.ts:500`) | Omit | Nobody. The base URL is configuration. Trusting `X-Forwarded-Host` on the first request was CVE-2025-71401: an external request poisoned the base path permanently. |
 | H34 `advanced.skipTrailingSlashes` | Tolerates deviating trailing slashes (`init-options.ts:534`) | Solve differently | Paths are normalised before the resolution, and the key for rate limiting and rules is the resolved route name — not the raw path. Tolerance as an option is the cause of GHSA-x732-6j76-qmhm. |
-| H35 `secret` | One secret for cookie signatures, email JWTs and the cookie cache (`init-options.ts:603`) | Solve differently | One root key, out of it by HKDF-SHA256 six purpose-separated keys: `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc` (section 3.8, L-2). Better Auth has no domain separation; HKDF only in the JWE path (inventory N3-27). |
+| H35 `secret` | One secret for cookie signatures, email JWTs and the cookie cache (`init-options.ts:603`) | Solve differently | One root key, out of it by HKDF-SHA256 eight purpose-separated keys: `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac` (section 3.8, L-2, 3.18). Better Auth has no domain separation; HKDF only in the JWE path (inventory N3-27). |
 | H36 `secrets` (versioned) | Rotation over `[{version, value}]`, but only for encryption (`init-options.ts:616`, N3-26) | Surpass | Every generated value carries its key version, a ring of accepted versions permits rotation without an outage — for **all** purposes, not only for encryption. And because sessions are opaque database rows, every rotation survives all sessions. |
 | H37 Envelope format `$ba$<v>$<hex>` | Encrypted values carry their key version (`crypto/index.ts:16-98`) | Adopt | The same principle; the version stands additionally as a column of its own (`key_version`, `token_key_version`), so that it is evaluable without parsing. |
 | H38 Lazy re-encryption | Old envelopes are lifted at the next write (`context/secret-utils.ts:75-167`) | Adopt | Unchanged; the same pattern as with the silent rehash. |
@@ -1059,7 +1059,7 @@ Two conditions on the choice of packages follow from this: `otpauth` is loaded v
 
 ### 2.7 The cryptographic primitives at a glance
 
-The table assigns each purpose from section 3 its package: the six prefix families of the verification path (3.3), the six key purposes (3.8) and the remaining building blocks.
+The table assigns each purpose from section 3 its package: the six prefix families of the verification path (3.3), the eight key purposes (3.8) and the remaining building blocks.
 
 | Purpose | Package / API |
 |---|---|
@@ -1070,7 +1070,7 @@ The table assigns each purpose from section 3 its package: the six prefix famili
 | Verify Firebase scrypt (`$fbscrypt$`) | `@noble/hashes/scrypt` + `crypto.subtle` AES-256-CTR |
 | Parse / serialise PHC | own parser, ~40 lines, no dependency; not `@phc/format` (CJS, without types, `Buffer`) |
 | CSPRNG (session tokens, one-time artefacts, salt, nonces) | `crypto.getRandomValues` |
-| HKDF-SHA256 — derivation of the six purpose keys `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc` | `crypto.subtle.deriveBits` (HKDF) |
+| HKDF-SHA256 — derivation of the eight purpose keys `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac` | `crypto.subtle.deriveBits` (HKDF) |
 | SHA-256 (`token_sha256`, `state_sha256`), HMAC-SHA256 (`cookie-sig`, `token-pepper`: recovery codes, account counters) | `crypto.subtle` for large blocks; `@noble/hashes/sha2`, `/hmac` synchronously for short inputs |
 | AES-256-GCM (`totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`) | `crypto.subtle`, fallback `@noble/ciphers` |
 | Constant-time comparison | own XOR loop over `Uint8Array` of equal length; `crypto.timingSafeEqual` is Node-specific |
@@ -1518,9 +1518,13 @@ previous ones of the same user.
 ### 3.8 Key management
 
 One root key, and from it, by **HKDF-SHA256**, purpose-separated keys:
-`cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`.
+`cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`,
+`state-mac`, `token-mac`. The last two bind the security state and the stored token
+hashes to the root key (3.18).
 Every value produced carries its key version in the envelope. A ring
-of accepted versions permits rotation without an outage.
+of accepted versions permits rotation without an outage. Before a version leaves the ring,
+the maintenance step from 3.18 must have run, so that seals and token MACs stand under the
+current version.
 
 ```ts
 interface KeyProvider {
@@ -1622,6 +1626,9 @@ need them, not at all (`storeTokens: false` is the default).
   error) or **observe**. It may not replace the response.
 - Contribute error codes and rate limiting rules of its own.
 - Declare dependencies (`dependsOn`), which are sorted topologically.
+- Contribute an anchor for the security state (`securityStateAnchor`, 3.18), which learns every
+  new seal and can set a lower bound for its version. The anchor is not a hook point: it
+  observes after the commit and refuses through the lower bound.
 
 **What a plugin may not do:**
 - Override core routes. A name conflict is a **start error**, not a warning.
@@ -1794,7 +1801,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 |---|---|---|---|
 | `database` | `Driver` | — | Driver from `@velve/auth/pg` or one of the application's own per 3.2; the only place at which a connection comes in. |
 | `identity` | `IdentityConfig<M>` | — | Which sign-in names there are; determines the CHECK constraint and the instance type. |
-| `keys` | `KeyProvider` | — | Root key and ring; all six purpose keys (3.8) arise from it by HKDF-SHA256. |
+| `keys` | `KeyProvider` | — | Root key and ring; all eight purpose keys (3.8) arise from it by HKDF-SHA256. |
 | `origins` | `readonly string[]` | — | Allowed origins; an empty list is a start error, not a silent free pass. |
 | `password` | `PasswordConfig` | A.4 | Argon2id parameters, legacy schemes, length limits, semaphore limit, hook point `validate`. |
 | `session` | `SessionConfig` | A.5 | Lifetimes, cookie name, cookie options, freshness window. |
@@ -1809,6 +1816,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 | `plugins` | `readonly VelvePlugin[]` | `[]` | Extensions; a name conflict is a start error. |
 | `schema` | `string` | `"velve"` | Postgres schema name. |
 | `clock` | `Clock` | system clock | Time source; replaceable from `@velve/auth/testing`. |
+| `securityState` | `SecurityStateConfig` | `{ sealing: "required" }` | Whether every account must have a seal (`"required"`) or the estate is still being sealed (`"migrating"`, reported as a weakening), and the alarm callback for a broken state (3.18). |
 
 ##### A.3 `identity` and the enforced recovery codes
 
@@ -1946,6 +1954,7 @@ interface TotpConfig          { issuer: string; stepToleranceInSteps: 0 | 1 }  /
 interface RecoveryCodesConfig { count: number; groupSize: number }             // defaults 10, 5
 
 type KeyPurpose = "cookie-sig" | "token-pepper" | "totp-enc" | "oauth-token-enc" | "pkce-enc" | "password-enc"
+  | "state-mac" | "token-mac"
 interface KeyProvider {
   current(purpose: KeyPurpose): Promise<{ version: number; key: CryptoKey }>
   byVersion(purpose: KeyPurpose, version: number): Promise<CryptoKey | null>
@@ -1953,6 +1962,17 @@ interface KeyProvider {
 declare function rootKeyProvider(input: { currentVersion: number
   keysByVersion: Readonly<Record<number, string>> }): KeyProvider   // base64url, 32 bytes each
 interface Clock { now(): Date }
+interface SecurityStateConfig {
+  sealing: "required" | "migrating"           // default "required"
+  alarm?: (event: SecurityStateAlarm) => void
+}
+interface SecurityStateAlarm {
+  readonly userId: string
+  readonly occasion: "sign_in" | "factor_check" | "session_resolve" | "token_redemption"
+    | "change" | "maintenance"
+  readonly reason: "seal_missing" | "seal_mismatch" | "key_version_unknown" | "version_below_anchor"
+    | "anchor_unavailable" | "token_binding_mismatch" | "envelope_binding_mismatch"
+}
 ```
 
 `subjectClaim` deliberately has no default: the stable provider ID is the only
@@ -1991,13 +2011,18 @@ interface AuthInternals {
   readonly routes: readonly AnyRoute[]
   readonly identityMode: IdentityMode
   readonly errorCodes: readonly VelveErrorCode[]
-  readonly maintenance: { sweep(): Promise<SweepReport> }        // L-11, without an HTTP route
+  readonly maintenance: {                                       // without an HTTP route
+    sweep(): Promise<SweepReport>                                 // L-11
+    sealSecurityState(): Promise<SecurityStateReport>             // 3.18, S-INTEG-8
+    resealSecurityState(input: { userId: string; reason: string }): Promise<{ version: number }>
+  }                                                               // S-INTEG-7
   readonly weakenings: readonly { option: string; chosen: string }[]   // S-DEFAULT-1
   migrate(): Promise<MigrationReport>
   close(): Promise<void>
 }
 interface MigrationReport { appliedVersions: readonly number[]; currentVersion: number }
 interface SweepReport     { deletedRowsByTable: Readonly<Record<string, number>> }
+interface SecurityStateReport { sealed: number; rekeyed: number; refused: number; unchanged: number }
 ```
 
 `routes` is not an implementation detail but the data structure from which part D builds the
@@ -2005,6 +2030,9 @@ HTTP handler and part E the client. It is present at run time, because otherwise
 would have to guess. `AuthSurface` has 55 methods in mode `username_email`, 52 in `email`, 46 in
 `username`. `maintenance.sweep` deletes expired rows from the seven tables with
 `*_sweep_idx` (L-11); `@velve/auth/schema` delivers the same as SQL for `pg_cron`.
+`maintenance.sealSecurityState` and `maintenance.resealSecurityState` are the maintenance step
+and the resealing from 3.18; like `sweep` they have no route, and the application calls them
+after its own authorization decision.
 
 ##### B.1 `signUp` (2), `signIn` (8), `signOut` (1)
 
@@ -2783,6 +2811,15 @@ interface VelvePlugin<Id extends string = string> {
   readonly hooks?: PluginHooks
   readonly errorCodes?: readonly `${Id}.${string}`[]
   readonly rateLimitRules?: Readonly<Record<`${Id}.${string}`, RateLimitRule>>
+  readonly securityStateAnchor?: SecurityStateAnchor
+}
+interface SecurityStateAnchor {
+  recordSeal(event: SecurityStateSealedEvent, context: FrozenContext): Promise<void>
+  minimumVersion(input: { userId: string }, context: FrozenContext): Promise<number | null>
+}
+interface SecurityStateSealedEvent {
+  readonly userId: string; readonly version: number
+  readonly digest: string                  // base64url, the seal's HMAC (3.18)
 }
 interface PluginMigration<Id extends string> {
   readonly version: number; readonly name: string; readonly sql: string
@@ -2848,7 +2885,11 @@ Seven hook points, exactly the ones from 3.11. The return is everywhere
 **reject** by throwing, and **observe** by doing nothing; it cannot replace the
 response, because it cannot return one. A return type `Promise<Event | void>` would have
 opened exactly the door 3.11 closes. All event fields are `readonly`, and
-no event contains a session token, a plaintext password or a hash.
+no event contains a session token, a plaintext password or a hash. The anchor's `digest` is not
+the hash of a secret but the seal's HMAC under `state-mac`; without the root key nothing can be
+computed from it. `securityStateAnchor` is not an eighth hook point: `recordSeal` runs after the
+commit and can refuse nothing, and `minimumVersion` refuses not by throwing but through the
+lower bound it delivers.
 
 `Object.freeze` freezes the context at runtime, `readonly` makes the attempt a type error
 — both, because the one holds for TypeScript callers and the other for everyone else.
@@ -3040,11 +3081,104 @@ CREATE TABLE velve.password_reset_required (
 
 With that the schema comprises **sixteen tables**. For comparison: Better Auth manages with four in its core — `user`, `session`, `account`, `verification`, plus `rateLimit` only with database rate limiting (`packages/core/src/db/get-tables.ts:59-61`) — and distributes the rest across plugins. The difference is not bloat but explicitness — intermediate states, one-time artefacts and challenges which there sit in cookies, JWTs or the generic `verification` table have here a row of their own with a deadline of their own and a consumption of their own.
 
+### 3.18 Integrity of the security state
+
+The storage rule from 3.2 protects against a **reader** of the database. It does not protect against a **writer**. Whoever has `INSERT`, `UPDATE` and `DELETE` on the schema `velve` but does not know the root key — a compromised application role, a tool with database access, an SQL injection in the application — could, up to version 1.x:
+
+- delete factor rows (`totp_credential`, `webauthn_credential`, `recovery_code`) and so downgrade an account to the password alone;
+- insert a row into `velve.webauthn_credential` with their own public key and sign in without a password;
+- insert a row into `velve.identity` with their own provider account and sign in over OAuth;
+- copy an encrypted TOTP secret or an encrypted PHC string from one account to another, because the envelope's additional data binds only algorithm and key version;
+- set `velve.user.email` to their own address and redirect the password reset to themselves;
+- create a session, a one-time token or a pending authentication for any account, because `token_sha256` is an unkeyed SHA-256 value: whoever chooses a token themselves knows its hash.
+
+This attacker — **write access to the database without the root key** — belongs to the threat model from version 2.0.0 on. Five measures stand against them, and all of them hang on the root key, which they do not have.
+
+**1. Two new purpose keys.** `state-mac` and `token-mac` arise like the others by HKDF-SHA256 from the root key (3.8), each with a derivation context of its own; both are HMAC-SHA256 keys. No new secret and no new configuration entry arises, but a custom `KeyProvider` must answer both purposes.
+
+**2. Bound envelopes (S-INTEG-1).** The additional data of every envelope binds, besides algorithm and key version, the owner (`user_id`, or explicitly none), the row and the column, each field with a length prefix. A ciphertext copied into another row, to another owner or into another column fails authentication.
+
+| Column | Owner | Row |
+|---|---|---|
+| `password_credential.phc` | `user_id` | `user_id` |
+| `totp_credential.secret_enc` | `user_id` | `user_id` |
+| `identity.access_token_enc`, `refresh_token_enc`, `id_token_enc` | `user_id` | `identity.id`, the column tells the three apart |
+| `oauth_flow.pkce_verifier_enc` | `link_to_user_id` or none | `state_sha256` |
+
+The bound form is a new envelope version and can be told apart from the old one by its first byte. The old form stays readable, but only in the transition mode (`securityState.sealing: "migrating"`) and only for an account without a seal row; the maintenance step (point 5) rewrites it into the bound form. Rows in `velve.oauth_flow` live for minutes and are not rewritten: a flow that runs across the upgrade fails and is started again.
+
+**3. Keyed token hashes (S-INTEG-9).** Session, one-time token and pending authentication keep `token_sha256` as the lookup key (S-REST-2). Beside it every row carries `token_mac`, an HMAC-SHA256 under `token-mac` over a length-prefixed encoding of purpose (`session`, the purpose of the one-time token, `pending_authentication`), owner, `token_sha256` and the security-relevant content of the row — `session.factors`, `pending_authentication.factors_completed`, `one_time_token.payload` in canonical form —, and `token_mac_key_version`. The resolution finds the row by `token_sha256`, recomputes the MAC under the named version and compares in constant time; a failure is answered like "no row" and raises the alarm. A successfully resolved row whose `token_mac_key_version` is not the current one is bound anew under the current version; the maintenance step binds the rest anew.
+
+The MAC runs over the SHA-256 value of the token and not over the token itself, and the lookup key stays unkeyed. A keyed lookup key fails at two places: the owner is not known before the lookup, and a value under a key version cannot be computed under a new version without the plaintext token, which the server never stores — after the old version has been removed from the ring every session would be lost, and S-KEY-5 would be broken. The MAC over the SHA-256 value, by contrast, can be rekeyed without the token. Because SHA-256 is collision resistant, the MAC over the hash binds the token as firmly as one over the token.
+
+Existing rows carry no MAC. Migration 4 therefore deletes every row in `velve.session`, `velve.one_time_token` and `velve.pending_authentication`: **on the upgrade to 2.0.0 every session ends, and every open link and every pending authentication expires.**
+
+**4. The seal (S-INTEG-2 to S-INTEG-7).** Every account has a row in `velve.security_state`:
+
+```sql
+-- Migration 3
+CREATE TABLE velve.security_state (
+  user_id     uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,
+  version     bigint NOT NULL CHECK (version >= 1),
+  digest      bytea NOT NULL CHECK (octet_length(digest) = 32),
+  key_version integer NOT NULL CHECK (key_version >= 1),
+  sealed_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Migration 4
+DELETE FROM velve.session;
+DELETE FROM velve.one_time_token;
+DELETE FROM velve.pending_authentication;
+ALTER TABLE velve.session
+  ADD COLUMN token_mac bytea NOT NULL,
+  ADD COLUMN token_mac_key_version integer NOT NULL;
+ALTER TABLE velve.one_time_token
+  ADD COLUMN token_mac bytea NOT NULL,
+  ADD COLUMN token_mac_key_version integer NOT NULL;
+ALTER TABLE velve.pending_authentication
+  ADD COLUMN token_mac bytea NOT NULL,
+  ADD COLUMN token_mac_key_version integer NOT NULL;
+```
+
+`digest` is an HMAC-SHA256 under `state-mac` in the version `key_version` over the canonical encoding of the state. The encoding begins with the context `velve-auth/security-state/v1` and contains, in a fixed order:
+
+- the account ID and the `version`;
+- `user.email` or its absence, and whether `email_verified_at` is set;
+- whether a password is present, and if so, the SHA-256 value of `password_credential.phc` with its `key_version`;
+- whether a TOTP secret is present, and if so, whether it is confirmed, the SHA-256 value of `secret_enc` and its `key_version`;
+- every passkey as a pair of `credential_id` and `public_key`;
+- every identity as a pair of `provider` and `subject`;
+- every recovery code as a pair of `key_version` and `code_hmac`.
+
+Every field is a type byte, a length of four bytes in network order and its bytes; a missing value is a type byte of its own and not the empty string; a list is its count, followed by its elements in ascending order of their encoding. Two different states therefore never yield the same encoding, and the order in which the database delivers rows changes nothing.
+
+*Sealing.* Every legitimate change to one of these components — sign-up on every path, setting, changing, resetting and rehashing the password, confirming and changing the email address, setting up, confirming and removing TOTP, registering and removing a passkey, generating and redeeming recovery codes, linking and unlinking an identity, the import from section 4 — runs in a transaction that first locks `velve.user` through `src/core/db/lock.ts` (`FOR NO KEY UPDATE`), then checks the existing seal, then writes the change and finally recomputes the seal and raises the version by one. A broken state is not overwritten by a change: the change is refused. What is not in the seal — a passkey's name, its `sign_count`, the stored provider tokens, the username, `disabled_at` — changes without a new seal.
+
+*Checking.* Before every sign-in (password, passkey, OAuth, magic link, before a session or a pending authentication arises), before every factor check (when the pending authentication is resolved), on every session resolution and before the effect of every redeemed one-time token, the library reads the state, recomputes the encoding with the stored version and compares the HMAC in constant time. A mismatch, an unknown key version, a version below the anchor (point *Anchor*) or — in mode `"required"` — a missing seal row is a **broken state**: the request is refused, and nothing is repaired.
+
+*The missing seal row.* A writer can delete every marker in the database, including one that says the sealing is complete. Whether an account **must** have a seal can therefore only be said by something outside the database, and that is the configuration: `securityState.sealing` is `"required"` (default) or `"migrating"`. In mode `"required"` a missing seal row is a broken state. In mode `"migrating"` an account without a seal row counts as not yet sealed and is served; the start reports the mode as a weakening (S-DEFAULT-1). A new account is sealed on sign-up in both modes.
+
+*Outwards.* The refusal carries no new visible code. `src/core/http/error-map.ts` maps it onto the code that the same path delivers for a failure without a broken state: `invalid_credentials` on sign-in, `invalid_pending_authentication` on the factor check, `session_required` on session resolution, `invalid_token` on the redemption of a one-time token. Only the alarm and the log carry the reason.
+
+*The alarm.* `securityState.alarm` receives `{ userId, occasion, reason }`, where `occasion` is one of `sign_in`, `factor_check`, `session_resolve`, `token_redemption`, `change` and `maintenance`, and `reason` is one of `seal_missing`, `seal_mismatch`, `key_version_unknown`, `version_below_anchor`, `anchor_unavailable`, `token_binding_mismatch` and `envelope_binding_mismatch`. The same goes out as a log line of level `warn`. No field contains a secret, a token, a hash or a ciphertext. Per process, account and reason at most one alarm is raised in 60 seconds, and at most 10,000 such entries are held; so a caller without a sign-in cannot flood the alarm, and they cannot break a state, so they cannot trigger a sealing either. An alarm callback that throws does not change the refusal.
+
+*Anchor (S-INTEG-6).* A plugin can contribute `securityStateAnchor`: `recordSeal({ userId, version, digest })` is called after every new seal has been committed, and `minimumVersion({ userId })` delivers a lower bound from the application's own append-only store. If the stored version lies below the highest lower bound delivered, the state is broken; if `minimumVersion` throws, the request is refused. An error in `recordSeal` is logged and does not undo the committed change, and a crash between commit and call leaves the anchor one version behind. **Without an anchor a writer can reset an account to an old, internally consistent state** — old factor rows together with their old seal row —, and the seal does not notice. That is a named limit, not a gap in the code.
+
+*Resealing (S-INTEG-7).* A broken state is sealed anew exclusively by `maintenance.resealSecurityState({ userId, reason })`, a call by the application in its own process after its own authorization decision, without an HTTP route. `reason` is mandatory, may not be empty, is logged and not stored. The new version lies above the stored one and above the anchor's lower bound, and the anchor learns it. No other path — no sign-in, no change, no maintenance — seals a broken state.
+
+**5. The maintenance step (S-INTEG-8).** `maintenance.sealSecurityState()` brings an estate into the form of this section. It works account by account, each in a transaction of its own under the account lock: an account without a seal row gets its envelopes re-encrypted in the bound form and its first seal; an account with an intact seal gets envelopes, seal and token MACs rewritten under the current key version where they are not yet; an account with a broken state is not touched and raises the alarm. Re-encryption is the only thing that rewrites an existing ciphertext. Because the progress is the seal rows themselves, a second run has no effect, and an interrupted run is simply repeated; every account is either converted entirely or not at all. Signed-in users keep working meanwhile; a change to the account being processed waits for its lock. The maintenance step needs the root key and is therefore not pure SQL. It must have run before a key version is removed from the ring.
+
+An upgrade to 2.0.0 runs like this: `migrate()`, then start in mode `"migrating"`, let `maintenance.sealSecurityState()` run to the end, then switch to `"required"` and restart.
+
+**The limits.** Whoever has write access to the database **and** the root key has everything: they can produce every seal, every MAC and every envelope themselves. Without an anchor, resetting to an old, consistent state is possible. In mode `"migrating"` deleting the seal row makes an account an unsealed one again. The deadlines of sessions, tokens and pending authentications are not bound, and `disabled_at` is not in the seal: a writer can extend an existing deadline and unlock a disabled account, but can create no session and redirect none. A passkey falling back to an old `sign_count` stays unnoticed. Every check costs one query and one HMAC per request.
+
+With that the schema comprises **seventeen tables**.
+
 ---
 
 ## 4. Migration module
 
-The migration module has no subpath yet and is added as one of its own when it is built (section 3.1). Only there may heavy dependencies stand — CSV parsers, PGP decryption, source drivers. The core does not know the module; it knows only the result: rows in the `velve` schema and canonical PHC strings per section 3.3. The importer produces the PHC string but never writes it into `velve.password_credential.phc` itself: per L-2 (section 3.16) the column holds the AES-256-GCM-encrypted string under the key purpose `password-enc`, and for that the importer uses the same encryption path the core uses when registering; `key_version` is the current version of that key. The same holds for `velve.recovery_code.key_version` (L-3), should a project-specific hook supply recovery codes — none of the five sources does.
+The migration module has no subpath yet and is added as one of its own when it is built (section 3.1). Only there may heavy dependencies stand — CSV parsers, PGP decryption, source drivers. The core does not know the module; it knows only the result: rows in the `velve` schema and canonical PHC strings per section 3.3. The importer produces the PHC string but never writes it into `velve.password_credential.phc` itself: per L-2 (section 3.16) the column holds the AES-256-GCM-encrypted string under the key purpose `password-enc`, and for that the importer uses the same encryption path the core uses when registering; `key_version` is the current version of that key. The same holds for `velve.recovery_code.key_version` (L-3), should a project-specific hook supply recovery codes — none of the five sources does. The importer encrypts in the bound form and seals every imported account in the same transaction that creates it (section 3.18).
 
 Basic attitude: a migration is not a script but a procedure with a pre-check, a dry run, repeatability and a loss report. Everything that does not come with it is named.
 
@@ -4227,11 +4361,11 @@ The research report records: "**every single one** would have been prevented by 
 
 **(c) The requirements.**
 
-- **S-KEY-1:** All working keys are derived by HKDF-SHA256 from a root key, with exactly one derivation context per purpose; the six purposes are `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc` and `password-enc`. *(Section 3.8, first paragraph; section 3.15 A.8, `KeyPurpose`; section 3.16, L-2)*
+- **S-KEY-1:** All working keys are derived by HKDF-SHA256 from a root key, with exactly one derivation context per purpose; the eight purposes are `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac` and `token-mac`. *(Section 3.8, first paragraph; section 3.15 A.8, `KeyPurpose`; section 3.16, L-2; section 3.18, point 1)*
 - **S-KEY-2:** A value produced under the key of one purpose is not verifiable and not decryptable with the key of another purpose. *(Section 3.8, purpose separation)*
-- **S-KEY-3:** Every generated, protected value carries its key version with it — either in the envelope or in its own column (`totp_credential.key_version`, `oauth_flow.key_version`, `identity.token_key_version`, `password_credential.key_version`, `recovery_code.key_version`). *(Section 3.8: "Every generated value carries its key version in the envelope."; sections 3.2 and 3.17, schema)*
+- **S-KEY-3:** Every generated, protected value carries its key version with it — either in the envelope or in its own column (`totp_credential.key_version`, `oauth_flow.key_version`, `identity.token_key_version`, `password_credential.key_version`, `recovery_code.key_version`, `security_state.key_version`, `token_mac_key_version` in `session`, `one_time_token` and `pending_authentication`). *(Section 3.8: "Every generated value carries its key version in the envelope."; sections 3.2, 3.17 and 3.18, schema)*
 - **S-KEY-4:** The `KeyProvider` supplies through `current(purpose)` exactly one version for generating and through `byVersion(purpose, version)` every version of the ring for checking; a version no longer contained in the ring leads to `null` and thereby to a clearly named error instead of a generic crash. *(Section 3.8, `KeyProvider` interface)*
-- **S-KEY-5:** A rotation of the root key ends no existing session: after a new version has been put in front and after the old version has been removed from the ring, all rows in `velve.session` remain valid. *(Section 3.8: "Because sessions are opaque database rows, every key rotation is survived by all sessions.")*
+- **S-KEY-5:** A rotation of the root key ends no existing session: after a new version has been put in front and after the old version has been removed from the ring, all rows in `velve.session` remain valid, provided `maintenance.sealSecurityState` has run between the two steps and bound their token MACs anew under the new version. *(Section 3.8: "Because sessions are opaque database rows, every key rotation is survived by all sessions."; section 3.18, point 3)*
 - **S-KEY-6:** The library does not start if the root key is missing or shorter than 32 bytes. *(Section 3.8, default implementation; section 3.12, `keys: keyProvider` as a mandatory field)*
 - **S-KEY-7:** The check of the signature of an ID token accepts exclusively asymmetric algorithms from an enumerated list against the provider's JWKS; `none` and symmetric algorithms are rejected. *(Section 3.10: "ID token signature against JWKS"; section 2.7, `jose`)*
 
@@ -4356,11 +4490,31 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 
 ---
 
+### 5.21 INTEG — Integrity of the security state against write access to the database
+
+**(a) The error class.** The classes REST and KEY protect what a reader of the database learns. A writer without the root key needs to learn nothing: they delete a factor, insert a passkey or an identity of their own, copy a ciphertext from one account to another, change an address or create a session whose token they chose themselves. Each of these rows is valid on its own; what is wrong is only that nobody entitled wrote it. The countermeasure is to bind everything security-relevant to a key the writer does not have, and to check it before every use (section 3.18). Two limits remain and are named: whoever also has the root key has everything; and without an anchor an old, internally consistent state can be played back.
+
+**(b) The precedent.** Among the 33 Better Auth advisories none is of this class; Better Auth does not take a writer on the database into its threat model, and neither did Velve Auth up to version 1.x. The class arose from this design's own review: the additional data of the envelope in `src/core/keys/envelope.ts` bound only algorithm and key version, and `token_sha256` was an unkeyed SHA-256 value.
+
+**(c) The requirements.**
+
+- **S-INTEG-1:** Every ciphertext is bound to its owner (`user_id`, or explicitly none), its row and its column; a ciphertext copied into another row, to another owner or into another column cannot be decrypted. The old, unbound form is readable only in mode `"migrating"` and only for an account without a seal row. *(Section 3.18, point 2)*
+- **S-INTEG-2:** Every account has a seal in `velve.security_state`: an HMAC-SHA256 under `state-mac` over a canonical, unambiguous encoding of account ID, monotonic version, `email` and whether it is confirmed, the password (present, and then the SHA-256 value of the ciphertext), TOTP (present, confirmed, SHA-256 value of the ciphertext), every passkey (`credential_id` and `public_key`), every identity (`provider` and `subject`) and the set of recovery codes. *(Section 3.18, point 4)*
+- **S-INTEG-3:** Every legitimate change to a component of the seal checks the existing seal, writes the change, recomputes the seal and raises the version, all in one transaction under the account lock from `src/core/db/lock.ts`; two concurrent changes never leave an invalid seal behind, and the version only rises. *(Section 3.18, point 4, Sealing)*
+- **S-INTEG-4:** Sign-in, factor check, session resolution and the redemption of a one-time token check the seal before they use anything from it; a broken state — a deviating HMAC, an unknown key version, a version below the anchor or, in mode `"required"`, a missing seal row — is refused and raises the alarm. *(Section 3.18, point 4, Checking and The missing seal row)*
+- **S-INTEG-5:** A refusal because of a broken state cannot be told apart from the outside from the failure of the same path without a broken state, decided solely in `src/core/http/error-map.ts`; only alarm and log carry the reason, and neither of them a secret. Per account and reason a process raises at most one alarm in 60 seconds. *(Section 3.18, point 4, Outwards and The alarm)*
+- **S-INTEG-6:** A plugin can contribute an anchor that learns every new `{ userId, version, digest }` and sets a lower bound with `minimumVersion({ userId })`; a stored version below it is a broken state. Without an anchor, playing back an old, consistent state stays possible, and the documentation says so. *(Section 3.18, point 4, Anchor)*
+- **S-INTEG-7:** A broken state is sealed anew exclusively by `maintenance.resealSecurityState({ userId, reason })` with a non-empty `reason`; no sign-in, no change and no maintenance does it. *(Section 3.18, point 4, Resealing)*
+- **S-INTEG-8:** `maintenance.sealSecurityState()` seals the estate and re-encrypts its envelopes in the bound form; it is idempotent and resumable, needs the root key, lets signed-in users keep working, leaves no account half converted after an interruption, and rewrites an existing ciphertext only by re-encryption. *(Section 3.18, point 5)*
+- **S-INTEG-9:** Every row in `velve.session`, `velve.one_time_token` and `velve.pending_authentication` carries, beside `token_sha256`, an HMAC-SHA256 under `token-mac` over purpose, owner, `token_sha256` and the security-relevant content of the row, with its key version; a row whose MAC does not match is answered like a missing one. On the upgrade to 2.0.0 every existing session ends, and every open token expires. *(Section 3.18, point 3)*
+
+---
+
 ## 6. Test plan
 
-To each of the 123 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — **127 test cases** together.
+To each of the 132 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — **136 test cases** together.
 
-**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (109 test cases, plus the static part of T-RACE-2), `CI nightly` (15, plus the concurrency part of T-RACE-2), `before every release` (2).
+**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (118 test cases, plus the static part of T-RACE-2), `CI nightly` (15, plus the concurrency part of T-RACE-2), `before every release` (2).
 
 **Principle of the tier assignment.** Everything deterministic blocks every commit. Everything statistical and everything that runs longer than 60 seconds runs nightly on a dedicated runner and reports as a ticket, not as a red build. The reason is in section 6.20.
 
@@ -4585,11 +4739,11 @@ soften the first, so it is declined.
 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
-| T-KEY-1 | S-KEY-1 | Unit | Derive all six purpose keys from a fixed root key and compare them pairwise; check the derivation against test vectors from RFC 5869. | **6 pairwise different keys**; HKDF matches **all 7 test vectors from RFC 5869 Appendix A** | CI on every commit |
-| T-KEY-2 | S-KEY-2 | Unit, exhaustive | All ordered pairs of the 6 purposes (30 combinations): create with purpose *i*, verify resp. decrypt with purpose *j ≠ i*. | **30/30 fail** | CI on every commit |
+| T-KEY-1 | S-KEY-1 | Unit | Derive all eight purpose keys from a fixed root key and compare them pairwise; check the derivation against test vectors from RFC 5869. | **8 pairwise different keys**; HKDF matches **all 7 test vectors from RFC 5869 Appendix A** | CI on every commit |
+| T-KEY-2 | S-KEY-2 | Unit, exhaustive | All ordered pairs of the 8 purposes (56 combinations): create with purpose *i*, verify resp. decrypt with purpose *j ≠ i*. | **56/56 fail** | CI on every commit |
 | T-KEY-3 | S-KEY-3 | Integration | Create every protected value (TOTP secret, PKCE verifier, foreign OAuth tokens, PHC string, recovery code) and read the version information (envelope or column). | **5/5 values carry the current version**; **0 values without a version** | CI on every commit |
 | T-KEY-4 | S-KEY-4 | Unit | Call `byVersion` for a version present in the ring and for a removed one; then decrypt a value encrypted with the removed version. | The present version returns a key; the removed one returns **`null`**; the decryption throws a named error (`KeyVersionUnavailable`), **not a generic crash** | CI on every commit |
-| T-KEY-5 | S-KEY-5 | Integration | Create a session, write an encrypted field. Switch the ring to `v2,v1` and restart the process; then reduce the ring to `v2` and restart again. | Session valid after **both** steps; field decryptable after step 1; new values carry `v2`: **4/4 assertions** | before every release |
+| T-KEY-5 | S-KEY-5 | Integration | Create a session, write an encrypted field. Switch the ring to `v2,v1` and restart the process; let `maintenance.sealSecurityState` run; then reduce the ring to `v2` and restart again. | Session valid after **both** steps; field decryptable after step 1; new values carry `v2`: **4/4 assertions** | before every release |
 | T-KEY-6 | S-KEY-6 | Unit | Start attempts with root keys of the lengths 0, 8, 31 and 32 bytes as well as with a missing `keys` field. | **4 out of 5 refuse to start**, only 32 bytes starts: **5/5** | CI on every commit |
 | T-KEY-7 | S-KEY-7 | Unit | Check an ID token with `alg: "none"`, with `HS256` under the root key, with a foreign RSA key and with the correct JWKS key. | **3/3 rejected**, 1 accepted; the allowlist is a constant and is read in the test | CI on every commit |
 
@@ -4751,7 +4905,25 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 - **Target: mutation score ≥ 85 % on this section**, measured **before every release**, not on every commit.
 - **The value for a one-person team is not the number but the list of surviving mutants.** It is a work list of missing assertions and replaces the code review by a second person at exactly the place where such a review would be worth the most.
 
-**Coverage is not a security measure.** The 127 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+**Coverage is not a security measure.** The 136 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+
+---
+
+### 6.24 INTEG — Integrity of the security state
+
+Every test case of this class runs against a real database and attacks the way a writer without the root key does: with SQL on the schema `velve`, past the library.
+
+| Test ID | verifies | Kind | Procedure | Threshold | runs in |
+|---|---|---|---|---|---|
+| T-INTEG-1 | S-INTEG-1 | Integration | Copy one ciphertext each from `password_credential.phc`, `totp_credential.secret_enc`, `identity.access_token_enc` and `oauth_flow.pkce_verifier_enc` into the corresponding row of another account and run the path that decrypts it; in addition copy each into another column of the same account. Then switch the ring to `v2,v1` and decrypt every original. In mode `"required"` put in a ciphertext of the old form. | **8/8 copies fail**; **4/4 originals** decryptable after the rotation; the old form is refused in **1/1** case | CI on every commit |
+| T-INTEG-2 | S-INTEG-2 | Integration + Property | For an account with every component make one of the following changes by SQL each and attempt a sign-in: delete TOTP, delete a passkey, delete a recovery code, delete an identity, insert a foreign passkey, insert a foreign identity, put in another account's TOTP ciphertext, replace the password ciphertext by an older one of the same account, change `email`, delete `email_verified_at`, change `version`, change `digest`. Property: encode 1000 random pairs of different states. | **12/12 changes detected**; **0 collisions** among 1000 pairs | CI on every commit |
+| T-INTEG-3 | S-INTEG-3 | Concurrency + Static | 50 times start two changes to the same account at the same time (register a passkey and generate recovery codes); after every pair check the seal and read the version. Static: `pnpm check:lock-order` and `pnpm check:token-after-lock`. | **50/50** seals valid; the version rises by exactly the number of committed changes and **0 times** backwards; both checks green | CI on every commit |
+| T-INTEG-4 | S-INTEG-4 | Integration | Break the state of an account by SQL and run password sign-in, passkey sign-in, OAuth sign-in, magic-link redemption, TOTP check, session resolution and reset redemption; likewise with a deleted seal row in both modes. | **7/7 paths refused** with **1 alarm** each; missing seal row: refused in mode `"required"`, served in mode `"migrating"` | CI on every commit |
+| T-INTEG-5 | S-INTEG-5 | Integration + Static | Compare every path from T-INTEG-4 with a broken state against the same path with an ordinary failure (wrong password, unknown session, wrong code, unknown token); search alarm and log for token, hash, ciphertext and password; send 1000 requests against a broken account within 60 seconds. Static: the reason is mapped onto a visible code only in `src/core/http/error-map.ts`. | Status, headers and body **byte-identical** in **7/7** pairs; **0 hits** in alarm and log; **1 alarm** for 1000 requests | CI on every commit |
+| T-INTEG-6 | S-INTEG-6 | Integration | Save an account's state, register a passkey, then reset all rows of the account including the seal row to the saved state; once without and once with an anchor. In addition read every seal of a sequence of five changes at the anchor. | Without an anchor **accepted** (documented limit); with an anchor **refused** with alarm `version_below_anchor`; the anchor learns **5/5** seals with version and digest | CI on every commit |
+| T-INTEG-7 | S-INTEG-7 | Integration | Break the state; then run 10 sign-ins, one legitimate change and one maintenance run; then call `maintenance.resealSecurityState` without, with an empty and with a set `reason`. | State still broken after **12/12** operations; **2/2** calls without a valid `reason` refused; after the valid call **1/1** sign-in successful, version higher than before | CI on every commit |
+| T-INTEG-8 | S-INTEG-8 | Integration | Create 200 accounts in the state before the upgrade (old envelope form, no seal row). Interrupt the maintenance step after 70 accounts, meanwhile send a request with a session of an account not yet converted, resume the maintenance step, let it run a second time. Compare ciphertexts before and after. | **200/200** sealed; **0** half-converted accounts after the interruption; session requests during the run **successful**; second run writes **0 rows**; every changed ciphertext is a re-encryption of the same plaintext | CI on every commit |
+| T-INTEG-9 | S-INTEG-9 | Integration | Insert one row each into `session`, `one_time_token` and `pending_authentication` by SQL with the SHA-256 value of a self-chosen token for a foreign account and present the token; in addition rewrite one real row each to another account, change its purpose and change its content (`factors`, `factors_completed`, `payload`). | **3/3 inserted** and **9/9 altered** rows refused, with alarm `token_binding_mismatch` | CI on every commit |
 
 ---
 
