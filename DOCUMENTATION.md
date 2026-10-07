@@ -6078,7 +6078,7 @@ What counts as weaker, option by option:
 | `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
 | `recoveryCodes` | `count` below ten |
 | `clock` | any clock the caller supplies |
-| `securityState` | `sealing: "migrating"` |
+| `securityState` | `sealing: "migrating"`; the line says that unsealed accounts are open to old envelopes copied from another account |
 
 The other rows say nothing weakens them: `password` and a username mode without
 recovery codes are refused instead, and a TOTP tolerance above one step is not
@@ -8728,12 +8728,23 @@ columns would refuse every session the code inserts until then.
 
 Every ciphertext the library stores is bound to the account it belongs to, the
 row it stands in and the column it was written for (S-INTEG-1, architecture
-section 3.18 point 2). A ciphertext a database writer copies to another
+section 3.18 point 2). A bound ciphertext a database writer copies to another
 account, another row or another column does not decrypt: the AES-256-GCM tag
 fails, and the path that wanted the value answers as it answers its ordinary
 failure. Before 2.0.0 the additional data bound only the algorithm and the key
 version, so an encrypted password or TOTP secret could be moved between
 accounts and still open.
+
+> **Under `securityState.sealing: "migrating"` this does not hold for an
+> unsealed account.** The old 1.x form carries no binding, and it is read for
+> every account without a seal row. A writer who kept an old-form ciphertext of
+> their own account — their password or their TOTP secret from before the
+> upgrade — can copy it into any unsealed account and sign in as that account
+> with their own password or code. Nothing in the code can tell that copy from
+> the account's own old value until the account has a seal. Run the
+> maintenance step immediately after the upgrade, and switch to `"required"` as
+> soon as it has finished; every hour in `"migrating"` is an hour this copy
+> works (E-3122).
 
 ### The bound columns
 

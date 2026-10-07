@@ -143,7 +143,7 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 		option: "securityState",
 		safeDefault: `sealing "${DEFAULT_SEALING}"`,
 		weakenedBy:
-			'sealing "migrating", which serves an account without a seal row and reads its unbound envelopes',
+			'sealing "migrating", which serves an account without a seal row and reads its unbound envelopes, so every unsealed account is open to an old envelope copied from another account until it is sealed; run the maintenance step at once and then switch to "required"',
 	},
 	{
 		option: "log",
@@ -272,7 +272,10 @@ const DETECTORS: readonly Detector[] = [
 	(config) =>
 		sealingOf(config.securityState) === DEFAULT_SEALING
 			? null
-			: { option: "securityState", chosen: `sealing "${sealingOf(config.securityState)}"` },
+			: {
+					option: "securityState",
+					chosen: `sealing "${sealingOf(config.securityState)}", unsealed accounts open to old envelopes copied from another account`,
+				},
 ];
 
 //each weakened option appears once, as the operator reads what was given up (S-DEFAULT-1)
