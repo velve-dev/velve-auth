@@ -101,7 +101,7 @@ function joined(parts: readonly Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuff
 }
 
 /** one column of a row whose identity is several columns, a text, the bytes of a key, or absent */
-export type RowPart = string | Uint8Array | null;
+type RowPart = string | Uint8Array | null;
 
 //a row named by several columns is written as their typed and length prefixed fields in order (E-3123)
 export function rowOfParts(parts: readonly RowPart[]): Uint8Array<ArrayBuffer> {

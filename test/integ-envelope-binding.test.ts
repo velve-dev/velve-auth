@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { sealRowPresenceOf, unboundReadingOf } from "../src/core/auth/security-state.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
@@ -339,5 +341,23 @@ describe("securityState.sealing decides whether the unbound form is read (S-INTE
 				configFor({ database: {} as TestConnection, securityState: { sealing }, log: () => {} }),
 			),
 		).not.toThrow();
+	});
+});
+
+describe("no module writes the unbound form (S-INTEG-1, E-3124)", () => {
+	const sourceRoot = fileURLToPath(new URL("../src", import.meta.url));
+	const sources = readdirSync(sourceRoot, { recursive: true, withFileTypes: true })
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+		.map((entry) => `${entry.parentPath}/${entry.name}`);
+
+	it("names the old-form writers in the envelope module alone", () => {
+		const naming = sources
+			.filter((path) =>
+				/\b(?:encryptWithPurposeKey|sealEnvelope|openEnvelope)\b/.test(readFileSync(path, "utf8")),
+			)
+			.map((path) => path.replace(`${sourceRoot}/`, ""));
+
+		expect(sources.length).toBeGreaterThan(100);
+		expect(naming).toStrictEqual(["core/keys/envelope.ts"]);
 	});
 });
