@@ -441,6 +441,61 @@ describe("the owner binding of a link flow's PKCE verifier", () => {
 	});
 });
 
+describe("the tokens a refresh writes", () => {
+	it("binds them to the identity's owner and row, so they open under that binding alone", async () => {
+		const handler = instance(v1);
+		const subject = `refresh-${randomBytes(4).toString("hex")}`;
+		provider.reportClaims({
+			sub: subject,
+			email: `${subject}@provider.example`,
+			email_verified: true,
+		});
+		for (let round = 0; round < 2; round += 1) {
+			const answer = await handler(
+				requestTo("/sign-in/oauth/start", { body: { provider: "stubby" } }),
+			);
+			const body = (await answer.json()) as {
+				authorizationUrl: string;
+				stateCookie: { value: string };
+			};
+			const url = new URL(body.authorizationUrl);
+			const back = await callback(handler, {
+				state: url.searchParams.get("state") ?? "",
+				pointer: body.stateCookie.value,
+				nonce: url.searchParams.get("nonce"),
+			});
+			expect(back.status).toBeLessThan(400);
+		}
+		const [row] = await connection.query<{
+			id: string;
+			user_id: string;
+			access_token_enc: Uint8Array;
+			token_key_version: number;
+			updated_at: Date;
+			created_at: Date;
+		}>(
+			`SELECT id, user_id, access_token_enc, token_key_version, updated_at, created_at
+			 FROM ${schema}.identity WHERE subject = $1`,
+			[subject],
+		);
+		const stored = {
+			keyVersion: row?.token_key_version ?? 0,
+			ciphertext: Uint8Array.from(row?.access_token_enc ?? []),
+		};
+		const openAs = (owner: string) =>
+			decryptBound(
+				v1,
+				{ column: "identity.access_token_enc", owner, row: row?.id ?? "" },
+				stored,
+				"refused",
+			);
+
+		expect(row?.updated_at.getTime()).toBeGreaterThan(row?.created_at.getTime() ?? 0);
+		await expect(openAs(row?.user_id ?? "")).resolves.toBeDefined();
+		await expect(openAs(randomUUID())).rejects.toMatchObject({ code: "authentication_failed" });
+	});
+});
+
 describe("an identity row replaced between the lookup and the refresh", () => {
 	it("fails the flow as a lost state and not as an internal error", async () => {
 		const subject = `replaced-${randomBytes(4).toString("hex")}`;
