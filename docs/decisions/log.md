@@ -15768,3 +15768,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reading a malformed answer as `null`, which is the fail-open the review found under another name. Clamping it to the nearest valid floor, which invents a floor the anchor did not give.
 **Reason.** The anchor's answer is the only evidence against a rollback, so an answer the library cannot read has to refuse like an anchor it cannot reach. `0` is included although the review did not list it, because the rule says from 1 and the boundary needs its own case.
 **Price.** An anchor with a bug in its return value refuses every sign-in of the accounts it answers for until it is fixed, the same price a throwing anchor already had.
+
+<a id="e-3287"></a>
+
+### The OAuth flow is consumed before and outside the sealing transaction
+`E-3287` · security-state · specification, S-INTEG-3, settled
+
+**Context.** Section 3.18 *Sealing* listed an OAuth flow among the consumptions §7 puts at the start of a sealing transaction, and point 3 listed `oauth_flow` among the rows a session issue consumes before its lock. E-3209 named an OAuth sign-in among the changes that consume their row before the account lock. The fourth review pointed out that the callback consumes the flow in a statement of its own, before the code is exchanged with the provider, and `src/core/oauth/service.ts` does exactly that through `consumeFlow` on the driver. So no sealing transaction and no session issue contains that consumption, and a restart of the sealing transaction does not repeat it. Both places now leave the OAuth flow out of the list and say where it is consumed, in both languages. E-3209 is not edited; its sentence is true about the order and wrong about the transaction.
+**Rejected.** Moving the consumption into the sealing transaction, which would hold a connection and the account lock across the provider's token endpoint.
+**Reason.** The specification has to describe the order the code keeps, and the order the code keeps is the one that holds no transaction open across a network call.
+**Price.** A sealing transaction that fails after the exchange does not give the flow back; the user starts the sign-in again, as with any other failed callback.
