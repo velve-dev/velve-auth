@@ -113,12 +113,12 @@ function wasLeftBehind(outcome: RebindOutcome): boolean {
 	return outcome !== "current" && outcome !== "absent";
 }
 
-//three user-owned tables are written so the account row is locked first even where the caller holds it
+//the account row is locked before any of its three envelope tables is written, even where the caller holds the lock already
 export async function rebindEnvelopesOfAccount(
 	input: AccountEnvelopeTransaction,
 ): Promise<AccountEnvelopeRewrite> {
 	await lockAccountRow(input.driver, input.schema, input.actor);
-	//the reading is decided under the lock so no caller can open the old form of a sealed account (S-INTEG-1)
+	//the old form of a sealed account is never opened, whatever the caller asks (E-3121)
 	const unbound = unboundReadingOf(
 		input.sealing,
 		sealRowPresenceOf(await sealRowUnderTheLock(input)),

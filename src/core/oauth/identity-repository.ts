@@ -34,7 +34,7 @@ const NO_STORED_TOKENS: EncryptedProviderTokens = {
 
 const utf8 = new TextEncoder();
 
-//each token is bound to the identity row and its own column so none of the three stands in for another (S-INTEG-1)
+//no one of the three tokens may open in the column of another (S-INTEG-1)
 async function encryptedProviderTokens(
 	keys: KeyProvider,
 	row: { readonly owner: string; readonly identityId: string },
@@ -305,7 +305,7 @@ WHERE id = $1 AND user_id = $2 AND token_key_version = $7
   AND id_token_enc IS NOT DISTINCT FROM $10
 RETURNING id`;
 
-	//the row id is drawn before the insert so the tokens can be bound to the row they are written to (E-3113)
+	//the tokens are bound to a row id that exists before the insert (E-3113)
 	async function insertOwnedBy(ownerId: string, facts: IdentityFacts): Promise<Identity | null> {
 		const identityId = randomUuid();
 		const encrypted = await encryptedProviderTokens(
@@ -345,7 +345,7 @@ RETURNING id`;
 				...factParameters(facts, encrypted),
 				existing.identity.id,
 			]);
-			//a row replaced between the lookup and the refresh fails the flow like a lost state
+			//tokens bound to one identity row are never written to another (E-3123)
 			if (row === undefined) {
 				throw new ConcealedError("state_not_found");
 			}

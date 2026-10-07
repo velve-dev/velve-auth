@@ -9,7 +9,7 @@ import { KeyError } from "./errors.js";
 import type { KeyProvider } from "./provider.js";
 import type { EncryptionKeyPurpose } from "./purpose.js";
 
-//the column decides the purpose so a binding can never name a key of another column (S-INTEG-1)
+//a binding names its column and never a purpose of its own (S-INTEG-1)
 const PURPOSE_OF_COLUMN = {
 	"password_credential.phc": "password-enc",
 	"totp_credential.secret_enc": "totp-enc",
@@ -117,7 +117,7 @@ export function rowOfParts(parts: readonly RowPart[]): Uint8Array<ArrayBuffer> {
 	);
 }
 
-//every field is typed and length prefixed in a fixed order so two bindings never share bytes (E-3110)
+//two different bindings must never yield the same additional data (E-3110)
 export function boundAdditionalData(
 	binding: EnvelopeBinding,
 	keyVersion: number,

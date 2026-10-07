@@ -91,7 +91,7 @@ SET secret_enc = EXCLUDED.secret_enc, key_version = EXCLUDED.key_version, create
 WHERE ${credentials}.user_id = $1 AND ${credentials}.confirmed_at IS NULL
 RETURNING user_id`;
 
-	//the seal row is read in the statement that reads the secret so a seal written between cannot refuse it (S-INTEG-1)
+	//the seal row is read in the statement that reads the secret (E-3121)
 	const findStatement = `SELECT credential.secret_enc, credential.key_version, credential.confirmed_at,
 ${sealRowPresentFor(schema, "credential.user_id")} AS sealed
 FROM ${credentials} credential WHERE credential.user_id = $1`;

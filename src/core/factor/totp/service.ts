@@ -30,7 +30,7 @@ export interface TotpServiceOptions {
 	readonly sealing?: SealingMode;
 }
 
-//the row of a totp credential is its owner so both name the same account (S-INTEG-1)
+//a totp credential is bound to its owner as both owner and row (S-INTEG-1)
 function secretBindingOf(userId: string): EnvelopeBinding {
 	return { column: "totp_credential.secret_enc", owner: userId, row: userId };
 }

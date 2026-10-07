@@ -42,7 +42,7 @@ export interface SealedPhc {
 	readonly ciphertext: Uint8Array<ArrayBuffer>;
 }
 
-//the row of a password credential is its owner so both name the same account (S-INTEG-1)
+//a password credential is bound to its owner as both owner and row (S-INTEG-1)
 function phcBindingOf(userId: string): EnvelopeBinding {
 	return { column: "password_credential.phc", owner: userId, row: userId };
 }
@@ -133,7 +133,7 @@ export function createPasswordCredentialRepository(
 	const { memoryCeilingKiB } = options;
 	const sealing = options.sealing ?? "required";
 
-	//the seal row is read in the statement that reads the envelope so a seal written between cannot refuse it (S-INTEG-1)
+	//the seal row is read in the statement that reads the envelope (E-3121)
 	const findStatement = `SELECT credential.user_id, credential.phc, credential.key_version, credential.scheme,
 ${sealRowPresentFor(schema, "credential.user_id")} AS sealed
 FROM ${table} credential WHERE credential.user_id = $1`;

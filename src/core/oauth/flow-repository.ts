@@ -37,7 +37,7 @@ export interface ConsumedOAuthFlowRow {
 }
 
 interface OAuthFlowRepository {
-	//the deadline is drawn before the insert so the verifier can be bound to it (E-3128)
+	//the verifier is bound to a deadline that exists before the insert (E-3128)
 	deadlineOfANewFlow(): Promise<Date>;
 	insertFlow(input: OAuthFlowInsert): Promise<void>;
 	//the removal is the check, so a state cannot be spent twice (S-REPLAY-6)
