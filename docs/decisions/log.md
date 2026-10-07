@@ -15638,3 +15638,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Wrapping the version back to 1, which would put the new version below the stored one and below the anchor's floor and so break the account again.
 **Reason.** A bound on the version has a top, and the specification has to say what happens there rather than promise something the table refuses.
 **Price.** Recovery needs an administrator with SQL access, and through `"migrating"` it reopens the window of E-3212 for that account.
+
+<a id="e-3214"></a>
+
+### T-INTEG-5 counts the aggregate alarm and runs on the injected clock
+`E-3214` · security-state · specification, test plan, settled
+
+**Context.** The third review found that T-INTEG-5's alarm threshold did not say whether the aggregate alarm counts toward the 100, and that a window of 60 real seconds would put the case on the nightly tier. E-3098 had rejected an injected clock because "the alarm does not have a clock seam yet"; that was wrong — `config.clock` is the library's clock for every deadline, and an alarm window is one more deadline. E-3098 is not edited; this entry corrects it. T-INTEG-5 now sends its 1000 requests within 60 seconds of the test clock injected through `config.clock` and then advances it, and expects at most 100 delivered alarms in the window, then one aggregate alarm, with the delivered alarms other than the aggregate plus everything reported in `suppressed`, the aggregate's value included, adding up to 1000.
+**Rejected.** Counting the aggregate among the 100, which would let a flood suppress the aggregate itself.
+**Reason.** A threshold that leaves a count ambiguous passes two different implementations.
+**Price.** The alarm's window must read `config.clock`, which ties the seal branch's alarm to the clock seam.
