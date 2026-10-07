@@ -14,6 +14,7 @@ import {
 	rebindEnvelope,
 } from "../src/core/keys/envelope-binding.js";
 import { KeyError } from "../src/core/keys/errors.js";
+import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -187,6 +188,27 @@ describe("a bound ciphertext opens only under its own binding (S-INTEG-1)", () =
 			await errorCodeOf(decryptBound(rotated, binding, { ...sealed, keyVersion: 2 }, "refused")),
 		).toBe("authentication_failed");
 		expect(await decryptBound(rotated, binding, sealed, "refused")).toStrictEqual(PLAINTEXT);
+	});
+
+	//a ring that hands out one key under two versions makes the version in the additional data the only defence
+	it("fails when the key version is rewritten even where both versions share a key", async () => {
+		const sharedKey = await keys.current("totp-enc");
+		const oneKeyTwoVersions: KeyProvider = {
+			current: () => Promise.resolve(sharedKey),
+			byVersion: (_purpose, version) =>
+				Promise.resolve(version === 1 || version === 2 ? sharedKey.key : null),
+		};
+		const binding = bindingFor("totp_credential.secret_enc");
+		const sealed = await encryptBound(oneKeyTwoVersions, binding, PLAINTEXT);
+
+		expect(await decryptBound(oneKeyTwoVersions, binding, sealed, "refused")).toStrictEqual(
+			PLAINTEXT,
+		);
+		expect(
+			await errorCodeOf(
+				decryptBound(oneKeyTwoVersions, binding, { ...sealed, keyVersion: 2 }, "refused"),
+			),
+		).toBe("authentication_failed");
 	});
 
 	it("names a key version that left the ring as such", async () => {

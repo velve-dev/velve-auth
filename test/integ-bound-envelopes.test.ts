@@ -13,6 +13,7 @@ import {
 	rowOfParts,
 } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { createOAuthIdentityRepository } from "../src/core/oauth/identity-repository.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -885,6 +886,58 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		await expect(rebind(identity.userId, beforeRotation, "migrating")).rejects.toMatchObject({
 			code: "key_version_unknown",
 		});
+	});
+
+	//a ring whose current version moves between the two passes leaves the first pass behind
+	it("fails when the second pass finds an envelope the first one left under an older version", async () => {
+		const account = await signUp();
+		await writePhc(account.userId, await unboundPhcOf(account.userId));
+		let currentCalls = 0;
+		const movingRing: KeyProvider = {
+			current: (purpose) => {
+				currentCalls += 1;
+				return (currentCalls <= 2 ? ring.providerAt(1, [1, 2]) : afterRotation).current(purpose);
+			},
+			byVersion: (purpose, version) => afterRotation.byVersion(purpose, version),
+		};
+
+		await expect(rebind(account.userId, movingRing, "migrating")).rejects.toMatchObject({
+			code: "internal_error",
+		});
+		const left = await readPhc(account.userId);
+		expect(left.ciphertext[0]).not.toBe(0x02);
+	});
+
+	it("refuses to encrypt the tokens of a new identity under two key versions", async () => {
+		const account = await signUp();
+		let currentCalls = 0;
+		const alternating: KeyProvider = {
+			current: (purpose) => {
+				currentCalls += 1;
+				return (currentCalls % 2 === 0 ? afterRotation : ring.providerAt(1, [1, 2])).current(
+					purpose,
+				);
+			},
+			byVersion: (purpose, version) => afterRotation.byVersion(purpose, version),
+		};
+
+		await expect(
+			createOAuthIdentityRepository({
+				driver: connection,
+				schema,
+				keys: alternating,
+			}).insertIdentityOfSignIn({
+				userId: account.userId,
+				provider: "stubby",
+				subject: `two-versions-${accountNumber}`,
+				providerEmail: null,
+				providerEmailVerified: false,
+				profile: null,
+				scopes: [],
+				tokenLifetimeInSeconds: 3600,
+				tokens: { accessToken: "access", refreshToken: "refresh", idToken: "id" },
+			}),
+		).rejects.toMatchObject({ code: "internal_error" });
 	});
 
 	it("refuses to write three tokens of one identity under two key versions", async () => {
