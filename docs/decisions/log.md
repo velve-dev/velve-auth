@@ -15868,3 +15868,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Requiring exactly 256 bits, which refuses a longer key that is no weaker.
 **Reason.** A MAC is as strong as its key, and a check that accepts the algorithm and the output length vouches for neither.
 **Price.** A provider of its own that hands out shorter HMAC keys stops starting after the upgrade, which is the intent.
+
+<a id="e-3297"></a>
+
+### The maintenance step's first seal and a change meet without a retry
+`E-3297` · security-state · specification, S-INTEG-8, test plan, settled
+
+**Context.** E-3210 had a unique violation on a first seal retried like a serialization failure, and S-INTEG-8 and T-INTEG-8 kept from that time the promise that when the maintenance step's first seal and a change meet, the losing one is repeated, with a threshold of one retry. E-3280 put every sealing transaction at READ COMMITTED with the seal row read after the account lock, and under that model the later one waits for the lock, reads the seal the earlier one committed and updates it, so the threshold could not be met by a build that follows the model. The fifth review's case showed it. As the reviewer proposed and the orchestrator decided, S-INTEG-8 says the later one waits for the lock and reads the earlier seal, and T-INTEG-8 expects 0 retries, 1 seal row and 0 alarms, with the change shown waiting on the lock. The three-attempt bound of *Sealing* keeps one case, a seal row a writer inserted past the library, and *Sealing* now names it as the only one; T-INTEG-3's forced unique violations test that case. `test/security-state-first-seal-maintenance.test.ts` holds the 0 retries and, as its control, the one retry the abandoned REPEATABLE READ rule needed; the review's file is folded into it. Neither E-3210 nor E-3280 is edited.
+**Rejected.** Removing the three-attempt bound, which would turn a writer's seal row into an unhandled 23505 instead of a restart that reads and checks it.
+**Reason.** E-3280 changed the model and missed the two places that still described the old one.
+**Price.** None beyond the edits.
