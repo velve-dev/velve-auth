@@ -15538,3 +15538,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Per-key counts folded in at eviction, which needs a second counter and can report an alarm minutes after it was held back.
 **Reason.** One counter raised at once cannot lose or double-count an alarm, whatever the table does.
 **Price.** `suppressed` does not say which accounts or reasons the held-back alarms were for.
+
+<a id="e-3204"></a>
+
+### The first byte tells the bound form apart in one direction only
+`E-3204` · security-state, second range · specification, S-INTEG-1, settled
+
+**Context.** Section 3.18 point 2 said the bound envelope form can be told apart from the old one by its first byte. The branch that builds the bound envelopes reported that this holds one way only: the bound form begins with `0x02`, an old-form value begins with a random nonce byte, and one old value in 256 begins with `0x02` too. That branch opens a `0x02` value as bound first, which an old value passes only with a forged 128-bit GCM tag, and falls back to the old form where it is readable for that owner; in mode `"required"` such an old value is therefore refused as `authentication_failed` rather than `envelope_unbound`. The orchestrator asked for the sentence to say exactly that, and point 2 now does in both languages. The decision on the fallback and the error codes is that branch's, recorded in its own range; this entry only records that the specification follows it.
+**Rejected.** A marker longer than one byte, which shrinks the ambiguity without removing it and is that branch's decision, not this one's.
+**Reason.** The specification stated a property the format does not have.
+**Price.** One old-form value in 256 is refused in `"required"` under a code that says the value does not authenticate rather than that it is unbound, which an operator reading the code may misread.
