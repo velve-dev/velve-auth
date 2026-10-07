@@ -16518,3 +16518,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Locking a placeholder row before the insert, which would add a statement to every sign-up to satisfy a rule whose reason does not apply.
 **Reason.** An exception a rule's reason does not cover has to be named, or the next reader takes the code for a violation.
 **Price.** None.
+
+<a id="e-3365"></a>
+
+### Maintenance reads session and epoch together, and two cases get their procedure and bound
+`E-3365` · security-state · specification, test plan, settled
+
+**Context.** The ninth review raised three smaller gaps. First, E-3332 has the maintenance step verify a session's MAC against the account's current `session_epoch`, but did not say how the two are read. Read in two statements, a revocation between them gives a legitimate session a false failure, exactly as E-3299 found for resolution. Point 5 now requires the session row and the epoch in one statement. Second, T-INTEG-6's window procedure did not say when the change that reseals happens relative to the anchor call and the reset. It now registers a passkey after the change's `minimumVersion` call and before its read under the lock, then resets. Third, T-INTEG-10's cost part had no threshold. At the bound, a session resolution may cost at most three times the resolution on an account with one passkey, as a median over at least 1000 requests. That factor is the decision's choice, not a measurement. All of it is in both languages.
+**Rejected.** Nothing.
+**Reason.** A rule about a race has to fix the reads it relies on, and a cost case without a bound cannot fail.
+**Price.** If the seal branch measures more than three times, the cap or the encoding has to change, not the threshold.
