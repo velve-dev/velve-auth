@@ -44,7 +44,7 @@ export async function macUnderCurrentKey(
 	return { keyVersion: version, mac: await hmacUnder(key, message) };
 }
 
-//web crypto promises no constant time for verify so the comparison is made here (S-INTEG-2)
+//a stored mac is compared in constant time and never through web crypto verify (E-3088)
 export async function verifyMacUnderKeyVersion(
 	keys: KeyProvider,
 	purpose: IntegrityKeyPurpose,
