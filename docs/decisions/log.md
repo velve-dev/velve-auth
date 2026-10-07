@@ -16278,3 +16278,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A requirement without a threshold is a requirement no test can fail.
 **Price.** T-INTEG-9 grows by five revocations.
+
+<a id="e-3341"></a>
+
+### "Converted entirely or not at all" holds for seal and envelopes only
+`E-3341` · security-state · specification, S-INTEG-8, test plan, settled
+
+**Context.** Point 5, S-INTEG-8 and T-INTEG-8 said every account is converted entirely or not at all and none is left half converted after an interruption. Since E-3281 the token MACs are rebound outside the account lock in a separate row-by-row pass, so an interrupted run can leave an account whose seal and envelopes are converted while some token rows are still under the old version. The seventh review's second reviewer pointed out that the claim overstated its scope. The three places now say, in both languages, that the all-or-nothing property holds for the seal's components and the envelopes, and that a token row not yet rebound stays valid under its old version.
+**Rejected.** Moving the token rebind back under the lock to make the claim true, which E-3281 rejected for the deadlock it causes.
+**Reason.** A claim has to name the scope it holds in.
+**Price.** None.
+
+<a id="e-3342"></a>
+
+### Refusing one key for two purposes breaks some 1.x providers
+`E-3342` · security-state · keys, upgrade, settled
+
+**Context.** E-3324 made the start refuse a `KeyProvider` that answers two HMAC purposes with one key, and gave as its only price one HMAC per purpose at start. The seventh review's second reviewer pointed out a price it missed. A custom provider written for 1.x may hand the same HMAC key to `cookie-sig` and `token-pepper`, which 1.x never checked. Such a provider stops starting under 2.0.0, so this is a breaking change for the upgrade steps. E-3324 is not edited. The orchestrator adds it to the 2.0.0 release notes; this branch does not write the README or the release notes.
+**Rejected.** Exempting the two 1.x purposes from the check, which would keep the cross-purpose forgery the check exists to stop.
+**Reason.** A price that falls on upgraders has to be written down where the upgrade is planned.
+**Price.** Applications with such a provider derive separate keys before upgrading.
