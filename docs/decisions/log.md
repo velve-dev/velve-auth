@@ -15818,3 +15818,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reserving a range for the third review after the fact and renumbering, which the numbering rule forbids, and changing the row's range, which a reservation may not do once assigned.
 **Reason.** The table is how a reader finds which work a number belongs to, and a row that names one review for a range holding two misdirects that reader.
 **Price.** None.
+
+<a id="e-3292"></a>
+
+### The PKCE verifier binds the flow's deadline too
+`E-3292` · security-state · specification, S-INTEG-1, settled
+
+**Context.** E-3218 brought section 3.18 point 2's table into step with the bound-envelope branch, which bound the PKCE verifier envelope to the flow row's `state_sha256`, `provider`, `nonce`, `redirect_path` and `link_from_session_id`. That branch has since bound the row's `expires_at` as well (its E-3128), because a writer could move an open flow's deadline thirty days out and complete it. E-3218's list of columns is now short by one; it is not edited. The table names `expires_at` in both languages, and the limits paragraph no longer counts the deadline of an OAuth flow among the unbound deadlines and says that a moved one makes the verifier unreadable.
+**Rejected.** Leaving the limits paragraph as it was, which would state as a named limit a gap the code has closed.
+**Reason.** The specification describes the binding as built, as E-3218 did, and the limits paragraph has to shrink with it.
+**Price.** None beyond the edit; the cost of the binding is the branch's and recorded there.
