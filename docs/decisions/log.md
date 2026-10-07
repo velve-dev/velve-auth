@@ -15518,3 +15518,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A separate test case for the reasons, which would need a requirement of its own under section 6's naming and has none.
 **Reason.** An alarm reason nothing raises in a test is a branch nothing proves reachable.
 **Price.** T-INTEG-4 needs an anchor plugin and a key provider of its own, beside the accounts per path.
+
+<a id="e-3202"></a>
+
+### Issuing a session inserts only under the epoch it read, and a miss is no alarm
+`E-3202` · security-state, second range · specification, S-INTEG-9, settled
+
+**Context.** The review found a race the epoch introduced: a sign-in reads the epoch, a `session.revokeAll` of the same account raises it and commits, and the sign-in inserts its session bound to the old epoch; the next request refuses that session as a binding mismatch and raises the alarm, although nobody tampered with anything. The orchestrator decided the remedy: issuing reads the epoch in the inserting transaction and inserts conditionally (`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $2`, against epoch 1 for an unsealed account in `"migrating"`), and a miss retries once with the fresh epoch and never alarms. Section 3.18 point 3 says so, and T-INTEG-3 races 50 sign-ins against `session.revokeAll` with no alarm and every surviving session resolving. The token branch builds it.
+**Rejected.** Taking the account lock for every session issue, which would serialise sign-ins behind every change of the account.
+**Reason.** A false alarm teaches an operator to ignore the alarm, which is worse than the race it reports.
+**Price.** A sign-in that loses the race twice in a row — two mass revocations during one sign-in — fails, which this entry accepts without having measured how often it happens.
