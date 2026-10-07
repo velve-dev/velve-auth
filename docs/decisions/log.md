@@ -16078,3 +16078,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A sentinel UUID for "no owner", which is a value a writer can place in a column.
 **Reason.** The seal already solved the same ambiguity, and two encodings under one key purpose family should not solve it twice in different ways.
 **Price.** None.
+
+<a id="e-3321"></a>
+
+### T-INTEG-1 pins the old-form ciphertext that starts with 0x02
+`E-3321` · security-state · test plan, S-INTEG-1, settled
+
+**Context.** Point 2 explains that one in 256 old-form ciphertexts begins with the bound form's version byte `0x02`. Such a value is opened as a bound one first and then, where the old form is readable, as an old one, and in mode `"required"` it is refused as `authentication_failed`, not `envelope_unbound`. The sixth review found no T-INTEG case that pins this, so its threshold existed nowhere in the specification. The bound-envelope branch already tests it end to end. T-INTEG-1 now constructs such a ciphertext deterministically and expects it to open in mode `"migrating"` for an unsealed account (1/1) and to be refused as `authentication_failed` in mode `"required"` (1/1), in both languages.
+**Rejected.** Relying on the random first byte of generated ciphertexts, which hits the case once in 256 runs.
+**Reason.** A branch point that only chance reaches needs a case that reaches it every time.
+**Price.** None.
