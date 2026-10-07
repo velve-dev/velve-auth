@@ -130,7 +130,7 @@ async function bookingAfterAWriterChangedOnlyTheMac(guardTheMac: boolean): Promi
 	return booking(other, row, guardTheMac);
 }
 
-describe("a booking that loses to a concurrent booking (section 3.18 point 3)", () => {
+describe("premise: a booking that loses to a concurrent booking (section 3.18 point 3)", () => {
 	it("at READ COMMITTED misses, so the re-read of the case table is reached", async () => {
 		expect(await losingBookingAt("READ COMMITTED")).toBe("missed");
 	});

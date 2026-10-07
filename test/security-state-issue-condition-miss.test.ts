@@ -75,7 +75,7 @@ async function issueUnderTheLock(writerChangesTheEpoch: boolean) {
 	}
 }
 
-describe("the session issue's conditional insert under the account lock (section 3.18 point 3)", () => {
+describe("premise: the session issue's conditional insert under the account lock (section 3.18 point 3)", () => {
 	it("misses when a writer changes the epoch under the lock, which is why a miss is a broken state", async () => {
 		expect(await issueUnderTheLock(true)).toStrictEqual({ writer: "committed", inserted: 0 });
 	});

@@ -78,7 +78,7 @@ async function resolveInOneStatement(tokenHash: Buffer) {
 	return rows.map((row) => alarmFor(row.epoch));
 }
 
-describe("a session resolution racing session.revokeAll (section 3.18, Checking)", () => {
+describe("premise: a session resolution racing session.revokeAll (section 3.18, Checking)", () => {
 	it("in one statement finds the session under its epoch before the revocation and no row after it", async () => {
 		const { userId, tokenHash } = await sealedAccountWithSessionUnderEpochOne();
 		const before = await resolveInOneStatement(tokenHash);

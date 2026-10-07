@@ -66,7 +66,7 @@ async function rewriteAfterTheVerifiedRead(writerSwaps: boolean) {
 	}
 }
 
-describe("a re-encryption on a sealed account (section 3.18, Sealing and point 5)", () => {
+describe("premise: a re-encryption on a sealed account (section 3.18, Sealing and point 5)", () => {
 	it("writes nothing when a writer swapped the ciphertext after the verified read", async () => {
 		expect((await rewriteAfterTheVerifiedRead(true)).rowsWritten).toBe(0);
 	});

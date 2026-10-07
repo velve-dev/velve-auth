@@ -12,7 +12,11 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
 // missing kept row raises nothing. The bound epoch, which the token MAC carries, is
 // modelled as a map, because the MAC columns are the token branch's. The case holds that X does
 // not come back; the control runs the unconditional rebind the rule replaced and lifts X under the
-// current epoch.
+// current epoch. This holds the rule's logic, not the code: once the token branch's MAC columns
+// are on this branch, that branch tightens the rebind to `… AND token_mac = $read` here. The same
+// interleaving against the library is not added as a placeholder, because today a reinserted row
+// resolves for want of an epoch at all, and no control could show it failing for this rule alone
+// (E-3327).
 
 let caller: TestConnection;
 let victim: TestConnection;
@@ -126,7 +130,7 @@ async function revokeAllOtherAfterARevocationAndAReinsert(
 	};
 }
 
-describe("the session revokeAllOther keeps, against a revokeAll that ended it (section 3.18, Sealing)", () => {
+describe("premise: the session revokeAllOther keeps, against a revokeAll that ended it (section 3.18, Sealing)", () => {
 	it("is checked under the lock, does not come back and raises the alarm", async () => {
 		expect(await revokeAllOtherAfterARevocationAndAReinsert(true)).toStrictEqual({
 			resolvesAgain: false,

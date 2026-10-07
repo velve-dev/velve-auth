@@ -73,7 +73,7 @@ async function readsAcrossAWriterCommit(): Promise<{
 	}
 }
 
-describe("the account lock and a writer's insert during a change (section 3.18, Sealing)", () => {
+describe("premise: the account lock and a writer's insert during a change (section 3.18, Sealing)", () => {
 	it("keeps the insert out of the one read the seal is computed from, and shows it to the next check", async () => {
 		const reads = await readsAcrossAWriterCommit();
 		expect({ sealedFrom: reads.sealedFrom, nextCheck: reads.nextCheck }).toStrictEqual({

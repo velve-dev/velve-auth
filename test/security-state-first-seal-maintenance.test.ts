@@ -122,7 +122,7 @@ async function changeRacingTheFirstSeal(isolation: string) {
 	return { retries, sealRows: rows?.n, version: rows?.version };
 }
 
-describe("T-INTEG-8: a change and the maintenance step's first seal on one unsealed account", () => {
+describe("premise: T-INTEG-8: a change and the maintenance step's first seal on one unsealed account", () => {
 	it("at READ COMMITTED the change waits for the lock, reads the first seal and is not retried", async () => {
 		expect(await changeRacingTheFirstSeal("READ COMMITTED")).toStrictEqual({
 			retries: 0,

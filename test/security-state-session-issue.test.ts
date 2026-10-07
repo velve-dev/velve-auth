@@ -73,7 +73,7 @@ async function beginMassRevocation(userId: string): Promise<void> {
 	await revoker.query(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
 }
 
-describe("a session issued while a mass revocation raises the epoch (section 3.18 point 3)", () => {
+describe("premise: a session issued while a mass revocation raises the epoch (section 3.18 point 3)", () => {
 	it("control: without the lock, an insert under the epoch read before the raise survives it", async () => {
 		const userId = await sealedAccount();
 		await beginMassRevocation(userId);
@@ -106,7 +106,7 @@ describe("a session issued while a mass revocation raises the epoch (section 3.1
 	});
 });
 
-describe("a session of an account without a seal row (section 3.18 point 3, migrating)", () => {
+describe("premise: a session of an account without a seal row (section 3.18 point 3, migrating)", () => {
 	function insertForUnsealed(userId: string): Promise<number> {
 		return signer
 			.query(

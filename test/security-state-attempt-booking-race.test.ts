@@ -77,7 +77,7 @@ async function bookOrRefuse(
 	throw new Error("the booking did not settle within the attempt budget");
 }
 
-describe("concurrent wrong second-factor codes on one pending authentication (L-8)", () => {
+describe("premise: concurrent wrong second-factor codes on one pending authentication (L-8)", () => {
 	it("control: the shipped unconditional count exhausts the budget and removes the row", async () => {
 		const { tokenHash } = await pendingRow();
 		await Promise.all(

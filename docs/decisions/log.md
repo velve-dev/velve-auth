@@ -16138,3 +16138,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the figure was wrong.
 **Reason.** A cost claim has to name what a writer actually controls, or it overstates or understates the attack.
 **Price.** None.
+
+<a id="e-3327"></a>
+
+### Premise tests say they are premises, and the consumption order is observed in the database
+`E-3327` · security-state · tests, settled
+
+**Context.** The sixth review raised three things about this branch's tests. First, reviewer B (B-L7): the premise tests model the specification's rule with hand-written SQL, yet several titles read like library behaviour, so a reader of a test report could take them for proof that the library does it. Their `describe` titles now begin with "premise:". The changed files are the attempt booking race, booking and epoch isolation, both first-seal cases, the issue miss, the kept session, the re-encryption compare, the resolve race, the seal snapshot, the session issue, the token rebind order and the version ceiling. Second, reviewer A (A-9): `test/security-state-snapshot-order.test.ts` compared positions in the source text of `redeemReset`, which a refactor can reorder without changing the statements sent. It now runs a reset redemption through the library over a driver that records every statement sent. It holds that the `DELETE` from `one_time_token` comes before the `FOR NO KEY UPDATE`, and that `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` of E-3310 is the statement right before the consumption. Third, reviewer A (A-8): `test/security-state-kept-session.test.ts` checks a JavaScript model of the bound epoch. Its comment now names the token branch as the one to tighten the rebind to `… AND token_mac = $read` once the columns are here. It also says why no library placeholder is added. Today a reinserted session row resolves because there is no epoch at all, so a control could not show the placeholder failing for the kept-session rule alone. The session-epoch placeholder already covers that absence.
+**Rejected.** Moving the premise tests to a directory of their own, which would break the file references in earlier entries.
+**Reason.** A test's title is what a report shows, and it has to say what the test proves.
+**Price.** The recording driver ties the order test to the SQL text of two statements.

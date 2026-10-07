@@ -144,7 +144,7 @@ async function issueWaitingOnARevocation(isolation: string) {
 	}
 }
 
-describe("a mass revocation that waited on the account lock (section 3.18, Sealing)", () => {
+describe("premise: a mass revocation that waited on the account lock (section 3.18, Sealing)", () => {
 	it("at READ COMMITTED deletes the session the lock holder committed", async () => {
 		expect(await revocationWaitingOnAnIssue("READ COMMITTED")).toStrictEqual({
 			surviving: 0,
@@ -160,7 +160,7 @@ describe("a mass revocation that waited on the account lock (section 3.18, Seali
 	});
 });
 
-describe("a session issue that waited on the account lock (section 3.18 point 3)", () => {
+describe("premise: a session issue that waited on the account lock (section 3.18 point 3)", () => {
 	it("at READ COMMITTED reads the raised epoch and inserts under it", async () => {
 		expect(await issueWaitingOnARevocation("READ COMMITTED")).toStrictEqual({
 			epochRead: 2,

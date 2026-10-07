@@ -97,7 +97,7 @@ async function redemptionAgainstARebind(rebindUnderTheAccountLock: boolean): Pro
 	}
 }
 
-describe("a token MAC rebind and a redemption that consumes first and locks second", () => {
+describe("premise: a token MAC rebind and a redemption that consumes first and locks second", () => {
 	it("outside the account lock waits for the redemption and deadlocks with nothing", async () => {
 		expect(await redemptionAgainstARebind(false)).toStrictEqual(["done", "done"]);
 	});

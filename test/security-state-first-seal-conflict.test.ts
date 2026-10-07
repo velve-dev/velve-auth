@@ -90,7 +90,7 @@ async function secondFirstSealAfterWaiting(isolation: string) {
 	}
 }
 
-describe("two first seals of one account (section 3.18, Sealing)", () => {
+describe("premise: two first seals of one account (section 3.18, Sealing)", () => {
 	it("at READ COMMITTED the later one reads the seal row after the lock and inserts nothing", async () => {
 		expect(await secondFirstSealAfterWaiting("READ COMMITTED")).toStrictEqual({
 			seen: 1,
