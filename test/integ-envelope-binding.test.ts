@@ -229,7 +229,7 @@ describe("a bound ciphertext opens only under its own binding (S-INTEG-1)", () =
 //an unbound value whose random nonce opens with the marker byte is the case the first byte cannot decide
 async function unboundStartingWith(
 	firstByte: number,
-	plaintext: Uint8Array = PLAINTEXT,
+	plaintext: Uint8Array<ArrayBuffer> = PLAINTEXT,
 ): Promise<PurposeCiphertext> {
 	for (let attempt = 0; attempt < 10_000; attempt += 1) {
 		const unbound = await encryptWithPurposeKey(keys, "password-enc", plaintext);
