@@ -16528,3 +16528,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A rule about a race has to fix the reads it relies on, and a cost case without a bound cannot fail.
 **Price.** If the seal branch measures more than three times, the cap or the encoding has to change, not the threshold.
+
+<a id="e-3366"></a>
+
+### Migration 4 as printed locks the token tables first, and the upgrade stops 1.x
+`E-3366` · security-state · specification, settled
+
+**Context.** The token branch's migration 4, as built in its commit 00e3a44, begins with four `LOCK TABLE … IN ACCESS EXCLUSIVE MODE` statements, in the order `pending_authentication`, `one_time_token`, `webauthn_challenge`, `session`. They keep its deletes from deadlocking with a factor completion or a reset in flight. The SQL printed in point 4 lacked them. They are now printed in both languages, and the sentence before the block says why they are there. The ninth review also asked for the upgrade sequence to say that 1.x instances are stopped first, since a 1.x process would keep writing token rows without a MAC into tables migration 4 has just cleared. The upgrade sequence now begins with stopping every 1.x instance.
+**Rejected.** Leaving the lock statements to the code alone, which would let a second implementation following the printed SQL deadlock.
+**Reason.** Printed SQL that differs from the shipped migration misleads every reader who trusts it.
+**Price.** None.
