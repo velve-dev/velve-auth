@@ -4,11 +4,13 @@ import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./d
 import type { TestConnection } from "./db-postgres-connection.js";
 
 // A database writer saves a session row, waits for the user to sign out everywhere, and inserts
-// the saved row again. Section 3.18 binds every session MAC to the account's session_epoch, which
-// a mass revocation raises, so the row must resolve to nothing. The epoch is bound on the branch
-// that builds the token MACs; until it is, the case below is expected to fail, so it records the
-// gap instead of hiding it. That branch turns it into a plain it, which this file then fails on
-// (E-3107).
+// the saved row again. Section 3.18 binds every session MAC to the account's session_epoch, and a
+// mass revocation raises it; the account here has no seal row, so under the rule for an unsealed
+// account the session binds epoch 1 and the revocation first seals the account and then raises
+// its epoch. Two branches have to land before the row resolves to nothing: the token branch
+// (security-state-tokens) binds the epoch into the session MAC, and the seal branch
+// (security-state-seal) raises the epoch and seals. Until both have, the case is expected to fail;
+// the seal branch, merging after the token branch, turns it into a plain it (E-3196).
 
 let connection: TestConnection;
 let schema: string;

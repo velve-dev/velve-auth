@@ -15458,3 +15458,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the stored epoch and raising it by one, which leaves a re-inserted row valid if the writer lowered the epoch by more than one.
 **Reason.** An administrator reseals after an incident, and after an incident no session of the account should survive.
 **Price.** A reseal ends every session of the account, the administrator's own included if they are its owner. The invariant holds only while every raise reseals, which the seal branch builds; a writer can store an epoch above the version, and the reseal lowers it to the new version, which still lies above every epoch a legitimate state reached.
+
+<a id="e-3196"></a>
+
+### The session-epoch placeholder is flipped by the seal branch, after the token branch
+`E-3196` · security-state, second range · test, settled
+
+**Context.** `test/security-state-session-epoch.test.ts` (6b8847b) said the token branch turns its `it.fails` into a plain case. The review found that wrong: binding the epoch into the MAC is the token branch's, but raising the epoch is a resealing (E-3107), which is the seal branch's, and the placeholder's account has no seal row whose epoch anything could raise. E-3107's Context and the commit message of 6b8847b named only the token branch; neither is edited. Under the rule E-3197 states, an account without a seal row binds epoch 1 and a mass revocation on it first seals the account and then raises the epoch, so the case stays as written and turns green once both branches have landed. Its comment now names both and gives the flip to the seal branch, which merges after the token branch. The reviewer's three companion files are deleted: `review-foundation2-placeholder-epoch` and `review-foundation2-placeholder-attempts` were controls showing the two placeholders fail for the reasons they state, which was checked before deleting them, and `review-foundation2-epoch-owner` asserted that issuing a session creates a seal row, which E-3197 rules out for an unsealed account in mode `"migrating"`.
+**Rejected.** Sealing the account in the test before issuing the session, which needs the seal branch's code and would make the case fail on setup until then.
+**Reason.** A placeholder that names the wrong branch is flipped by nobody, or by a branch that cannot make it pass.
+**Price.** The case depends on two branches' order of merging.
