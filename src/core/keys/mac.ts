@@ -5,13 +5,13 @@ import type { KeyProvider } from "./provider.js";
 import type { IntegrityKeyPurpose } from "./purpose.js";
 
 /** a MAC together with the key version it was taken under, which is stored beside it */
-export interface VersionedMac {
+interface VersionedMac {
 	readonly keyVersion: number;
 	readonly mac: Uint8Array<ArrayBuffer>;
 }
 
 /** what checking a stored MAC found, where an unknown version is told apart from a mismatch */
-export type MacVerdict = "valid" | "mismatch" | "key_version_unknown";
+type MacVerdict = "valid" | "mismatch" | "key_version_unknown";
 
 async function hmacUnder(
 	key: CryptoKey,
