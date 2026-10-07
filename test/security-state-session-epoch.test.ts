@@ -11,6 +11,11 @@ import type { TestConnection } from "./db-postgres-connection.js";
 // (security-state-tokens) binds the epoch into the session MAC, and the seal branch
 // (security-state-seal) raises the epoch and seals. Until both have, the case is expected to fail;
 // the seal branch, merging after the token branch, turns it into a plain it (E-3196).
+// The controls hold today's behaviour so that the expected failure cannot pass for another reason:
+// the replayed row resolves, and a session issued after the revocation resolves as well, which
+// it must still do once the epoch is bound. The alarm the refusal raises, token_binding_mismatch,
+// has no configuration to observe it until the seal branch adds securityState.alarm, which then
+// asserts its reason here.
 
 let connection: TestConnection;
 let schema: string;
@@ -30,31 +35,50 @@ afterAll(async () => {
 	await connection.close();
 });
 
-describe("a session row replayed after a mass revocation (section 3.18, T-INTEG-9)", () => {
-	it.fails("resolves to nothing once every session of the account was revoked", async () => {
-		const userId = await createUser(connection, schema);
-		const { token, session } = await sessions.issue({
-			userId,
-			factors: ["password"],
-			observed: OBSERVED,
-		});
-		const saved = await connection.query<Record<string, unknown>>(
-			`SELECT * FROM ${schema}.session WHERE id = $1`,
-			[session.id],
-		);
+async function replayAfterRevokingEverySession(): Promise<{
+	readonly userId: string;
+	readonly token: string;
+}> {
+	const userId = await createUser(connection, schema);
+	const { token, session } = await sessions.issue({
+		userId,
+		factors: ["password"],
+		observed: OBSERVED,
+	});
+	const saved = await connection.query<Record<string, unknown>>(
+		`SELECT * FROM ${schema}.session WHERE id = $1`,
+		[session.id],
+	);
 
-		await sessions.revokeEverySessionOfUser({ actor: actorOfTestUser(userId) });
-		const [row] = saved;
-		if (row === undefined) {
-			throw new Error("the issued session left no row to save");
-		}
-		const columns = Object.keys(row);
-		await connection.query(
-			`INSERT INTO ${schema}.session (${columns.join(", ")})
+	await sessions.revokeEverySessionOfUser({ actor: actorOfTestUser(userId) });
+	const [row] = saved;
+	if (row === undefined) {
+		throw new Error("the issued session left no row to save");
+	}
+	const columns = Object.keys(row);
+	await connection.query(
+		`INSERT INTO ${schema}.session (${columns.join(", ")})
 			 VALUES (${columns.map((_, index) => `$${index + 1}`).join(", ")})`,
-			columns.map((column) => row[column]),
-		);
+		columns.map((column) => row[column]),
+	);
 
+	return { userId, token };
+}
+
+describe("a session row replayed after a mass revocation (section 3.18, T-INTEG-9)", () => {
+	it("control: today the replayed row resolves", async () => {
+		const { token } = await replayAfterRevokingEverySession();
+		expect(await sessions.resolve(token)).not.toBeNull();
+	});
+
+	it("control: a session issued after the revocation resolves", async () => {
+		const { userId } = await replayAfterRevokingEverySession();
+		const later = await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		expect(await sessions.resolve(later.token)).not.toBeNull();
+	});
+
+	it.fails("resolves to nothing once every session of the account was revoked", async () => {
+		const { token } = await replayAfterRevokingEverySession();
 		expect(await sessions.resolve(token)).toBeNull();
 	});
 });

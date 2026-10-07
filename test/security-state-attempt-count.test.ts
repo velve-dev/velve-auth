@@ -6,19 +6,21 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { beginPendingState, pendingAuthenticationsOn } from "./totp-fixtures.js";
 
-// A writer who holds a pending row sets attempts to 0 while a counted failed attempt waits on it.
-// Section 3.18 point 3 makes the count conditional on the attempts value and the MAC the
-// resolution verified, so the count misses and the row counts as missing. The count is built on
-// the token branch (security-state-tokens), which also changes how the verified values reach it;
-// until then the count carries the writer's reset forward, which the expected-failure marker
-// records. That branch adapts the call and turns this into a plain it (E-3194).
+// A writer who holds a pending row sets attempts to 0 while an attempt waits on it. Section 3.18
+// point 3 books every attempt by compare-and-set against the verified row before the code is
+// evaluated; the writer's reset makes the booking miss, the re-read finds a count not above the
+// pinned one with a MAC that does not match, and the row is answered as missing with the alarm.
+// The booking is the token branch's (security-state-tokens), which also changes how the pinned
+// values reach the repository; it adapts the call, turns the expected failure into a plain case
+// and removes the control, which holds today's behaviour so that the expected failure cannot pass
+// for a reason other than the one stated (E-3208).
 
 let owner: TestConnection;
 let writer: TestConnection;
 let schema: string;
 
 beforeAll(async () => {
-	const migrated = await openMigratedSchema("review_attempt_carry");
+	const migrated = await openMigratedSchema("attempt_count");
 	owner = migrated.connection;
 	schema = migrated.schema;
 	writer = await openTestConnection();
@@ -30,32 +32,41 @@ afterAll(async () => {
 	await writer.close();
 });
 
-async function untilCountWaitsOnTheRow(): Promise<void> {
-	for (let poll = 0; poll < 200; poll += 1) {
-		const [row] = await writer.query<{ n: number }>(
-			`SELECT count(*)::int AS n FROM pg_stat_activity
-			 WHERE wait_event_type = 'Lock' AND query LIKE '%attempts = attempts + 1%'`,
-			[],
+async function backendOf(connection: TestConnection): Promise<number> {
+	const [row] = await connection.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
+	if (row === undefined) {
+		throw new Error("the connection named no backend");
+	}
+	return row.pid;
+}
+
+async function untilBlockedBy(waiter: number, holder: number): Promise<void> {
+	for (let poll = 0; poll < 300; poll += 1) {
+		const [row] = await writer.query<{ blocked: boolean }>(
+			"SELECT $2::int = ANY (pg_blocking_pids($1::int)) AS blocked",
+			[waiter, holder],
 		);
-		if ((row?.n ?? 0) > 0) {
+		if (row?.blocked === true) {
 			return;
 		}
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
-	throw new Error("the count never waited on the writer's row lock");
+	throw new Error("the attempt never waited on the writer's row lock");
 }
 
-describe("a counted attempt and a writer who resets the counter during the count", () => {
-	it.fails("treats the row as missing instead of counting on from the reset", async () => {
-		const userId = await createUser(owner, schema);
-		const { token } = await beginPendingState(pendingAuthenticationsOn(owner, schema), userId);
-		const tokenHash = hashPendingToken(token);
-		const repository = createPendingAuthenticationRepository({ driver: owner, schema });
-		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
-			await repository.countFailedAttempt({ tokenHash, maximumAttempts: MAXIMUM_PENDING_ATTEMPTS });
-		}
+async function countWhileTheWriterResets(): Promise<unknown> {
+	const userId = await createUser(owner, schema);
+	const { token } = await beginPendingState(pendingAuthenticationsOn(owner, schema), userId);
+	const tokenHash = hashPendingToken(token);
+	const repository = createPendingAuthenticationRepository({ driver: owner, schema });
+	for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
+		await repository.countFailedAttempt({ tokenHash, maximumAttempts: MAXIMUM_PENDING_ATTEMPTS });
+	}
+	const ownerBackend = await backendOf(owner);
+	const writerBackend = await backendOf(writer);
 
-		await writer.query("BEGIN", []);
+	await writer.query("BEGIN", []);
+	try {
 		await writer.query(
 			`SELECT 1 FROM ${schema}.pending_authentication WHERE user_id = $1 FOR UPDATE`,
 			[userId],
@@ -64,14 +75,24 @@ describe("a counted attempt and a writer who resets the counter during the count
 			tokenHash,
 			maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
 		});
-		await untilCountWaitsOnTheRow();
+		await untilBlockedBy(ownerBackend, writerBackend);
 		await writer.query(
 			`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE user_id = $1`,
 			[userId],
 		);
 		await writer.query("COMMIT", []);
+		return await counted;
+	} finally {
+		await writer.query("ROLLBACK", []);
+	}
+}
 
-		const result = await counted;
-		expect(result).toBeNull();
+describe("an attempt and a writer who resets the counter while it waits", () => {
+	it("control: today the count carries the writer's reset forward", async () => {
+		expect(await countWhileTheWriterResets()).toStrictEqual({ attempts: 1, exhausted: false });
+	});
+
+	it.fails("answers the row as missing instead of counting on from the reset", async () => {
+		expect(await countWhileTheWriterResets()).toBeNull();
 	});
 });
