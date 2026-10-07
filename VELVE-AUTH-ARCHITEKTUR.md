@@ -43,9 +43,9 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
-**Die Absicherung.** 123 Sicherheitsanforderungen in achtzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 127 Testfälle, von denen 109 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
+**Die Absicherung.** 132 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 136 Testfälle, von denen 118 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
 
-**Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
+**Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Ein Schreiber auf der Datenbank, der auch den Wurzelschlüssel hat, hat alles, und ohne den Anker aus Abschnitt 3.18 kann er ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
 
 ---
 
@@ -53,10 +53,10 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 1. Funktionsvergleich — jede der 618 Better-Auth-Funktionen mit Entscheidung und Begründung
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
-3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken
+3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 123 Anforderungen in achtzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
-6. Prüfplan — 127 Testfälle mit vorab festgelegten Schwellen
+5. Sicherheitsanforderungen — 132 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+6. Prüfplan — 136 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
 Der Bauauftrag liegt getrennt als `CLAUDE-CODE-AUFTRAG.md`.
@@ -572,7 +572,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H32 `advanced.disableOriginCheck` | Schaltet die URL-Validierung ab, und aus Kompatibilität auch CSRF (`create-context.ts:398-403`) | Weglassen | Niemand. Eine Option, die zwei Prüfungen zugleich abschaltet, obwohl ihr Name nur eine nennt, ist der Grund, warum es sie nicht geben darf. |
 | H33 `advanced.trustedProxyHeaders` | Vertraut `X-Forwarded-Host`/`-Proto` bei der baseURL-Ermittlung (`init-options.ts:500`) | Weglassen | Niemand. Die Basis-URL ist Konfiguration. Das Vertrauen in `X-Forwarded-Host` beim ersten Request war CVE-2025-71401: ein externer Request vergiftete den Basispfad dauerhaft. |
 | H34 `advanced.skipTrailingSlashes` | Toleriert abweichende Trailing Slashes (`init-options.ts:534`) | Anders lösen | Pfade werden vor der Auflösung normalisiert, und der Schlüssel für Ratenbegrenzung und Regeln ist der aufgelöste Routenname — nicht der rohe Pfad. Toleranz als Option ist die Ursache von GHSA-x732-6j76-qmhm. |
-| H35 `secret` | Ein Secret für Cookie-Signaturen, E-Mail-JWTs und Cookie-Cache (`init-options.ts:603`) | Anders lösen | Ein Wurzelschlüssel, daraus per HKDF-SHA256 sechs zweckgetrennte Schlüssel: `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc` (Abschnitt 3.8, L-2). Better Auth hat keine Domain-Separation; HKDF nur im JWE-Pfad (Inventur N3-27). |
+| H35 `secret` | Ein Secret für Cookie-Signaturen, E-Mail-JWTs und Cookie-Cache (`init-options.ts:603`) | Anders lösen | Ein Wurzelschlüssel, daraus per HKDF-SHA256 acht zweckgetrennte Schlüssel: `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac` (Abschnitt 3.8, L-2, 3.18). Better Auth hat keine Domain-Separation; HKDF nur im JWE-Pfad (Inventur N3-27). |
 | H36 `secrets` (versioniert) | Rotation über `[{version, value}]`, aber nur für Verschlüsselung (`init-options.ts:616`, N3-26) | Übertreffen | Jeder erzeugte Wert trägt seine Schlüsselversion, ein Ring akzeptierter Versionen erlaubt Rotation ohne Ausfall — für **alle** Zwecke, nicht nur für Verschlüsselung. Und weil Sitzungen undurchsichtige Datenbankzeilen sind, überlebt jede Rotation sämtliche Sitzungen. |
 | H37 Envelope-Format `$ba$<v>$<hex>` | Verschlüsselte Werte tragen ihre Schlüsselversion (`crypto/index.ts:16-98`) | Übernehmen | Gleiches Prinzip; die Version steht zusätzlich als eigene Spalte (`key_version`, `token_key_version`), damit sie ohne Parsen auswertbar ist. |
 | H38 Lazy Re-Encryption | Alte Envelopes werden beim nächsten Schreiben gehoben (`context/secret-utils.ts:75-167`) | Übernehmen | Unverändert; dasselbe Muster wie beim stillen Rehash. |
@@ -1057,7 +1057,7 @@ Zwei Bedingungen an die Paketwahl folgen daraus: `otpauth` wird über den `defau
 
 ### 2.7 Die kryptografischen Primitive im Überblick
 
-Die Tabelle ordnet jedem Zweck aus Abschnitt 3 sein Paket zu: den sechs Präfixfamilien des Prüfpfads (3.3), den sechs Schlüsselzwecken (3.8) und den übrigen Bausteinen.
+Die Tabelle ordnet jedem Zweck aus Abschnitt 3 sein Paket zu: den sechs Präfixfamilien des Prüfpfads (3.3), den acht Schlüsselzwecken (3.8) und den übrigen Bausteinen.
 
 | Zweck | Paket / API |
 |---|---|
@@ -1068,7 +1068,7 @@ Die Tabelle ordnet jedem Zweck aus Abschnitt 3 sein Paket zu: den sechs Präfixf
 | Firebase-scrypt prüfen (`$fbscrypt$`) | `@noble/hashes/scrypt` + `crypto.subtle` AES-256-CTR |
 | PHC parsen / serialisieren | eigener Parser, ~40 Zeilen, keine Abhängigkeit; nicht `@phc/format` (CJS, ohne Typen, `Buffer`) |
 | CSPRNG (Sitzungstoken, Einmal-Artefakte, Salz, Nonces) | `crypto.getRandomValues` |
-| HKDF-SHA256 — Ableitung der sechs Zweckschlüssel `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc` | `crypto.subtle.deriveBits` (HKDF) |
+| HKDF-SHA256 — Ableitung der acht Zweckschlüssel `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac` | `crypto.subtle.deriveBits` (HKDF) |
 | SHA-256 (`token_sha256`, `state_sha256`), HMAC-SHA256 (`cookie-sig`, `token-pepper`: Wiederherstellungscodes, Kontozähler) | `crypto.subtle` für große Blöcke; `@noble/hashes/sha2`, `/hmac` synchron für kurze Eingaben |
 | AES-256-GCM (`totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`) | `crypto.subtle`, Rückfall `@noble/ciphers` |
 | Zeitkonstanter Vergleich | eigene XOR-Schleife über `Uint8Array` gleicher Länge; `crypto.timingSafeEqual` ist Node-spezifisch |
@@ -1519,9 +1519,13 @@ vorherigen desselben Nutzers.
 ### 3.8 Schlüsselverwaltung
 
 Ein Wurzelschlüssel, daraus per **HKDF-SHA256** zweckgetrennte Schlüssel:
-`cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`.
+`cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`,
+`state-mac`, `token-mac`. Die beiden letzten binden den Sicherheitszustand und die
+gespeicherten Token-Hashes an den Wurzelschlüssel (3.18).
 Jeder erzeugte Wert trägt seine Schlüsselversion im Envelope. Ein Ring
-akzeptierter Versionen erlaubt Rotation ohne Ausfall.
+akzeptierter Versionen erlaubt Rotation ohne Ausfall. Bevor eine Version den Ring
+verlässt, muss die Wartung aus 3.18 gelaufen sein, damit Siegel und Token-MACs unter der
+aktuellen Version stehen.
 
 ```ts
 interface KeyProvider {
@@ -1624,6 +1628,9 @@ nicht braucht, gar nicht (`storeTokens: false` ist der Standard).
   werfen) oder **beobachten**. Er darf die Antwort nicht ersetzen.
 - Eigene Fehlercodes und Ratenbegrenzungsregeln beitragen.
 - Abhängigkeiten deklarieren (`dependsOn`), die topologisch sortiert werden.
+- Einen Anker für den Sicherheitszustand beitragen (`securityStateAnchor`, 3.18), der jedes
+  neue Siegel erfährt und eine Untergrenze für dessen Version setzen kann. Der Anker ist kein
+  Hook-Punkt: Er beobachtet nach dem Festschreiben und lehnt über die Untergrenze ab.
 
 **Was ein Plugin nicht darf:**
 - Kernrouten überschreiben. Ein Namenskonflikt ist ein **Startfehler**, keine Warnung.
@@ -1797,7 +1804,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 |---|---|---|---|
 | `database` | `Driver` | — | Treiber aus `@velve/auth/pg` oder ein eigener nach 3.2; einzige Stelle, an der eine Verbindung hereinkommt. |
 | `identity` | `IdentityConfig<M>` | — | Welche Anmeldenamen es gibt; bestimmt CHECK-Constraint und Instanztyp. |
-| `keys` | `KeyProvider` | — | Wurzelschlüssel und Ring; alle sechs Zweckschlüssel (3.8) entstehen daraus per HKDF-SHA256. |
+| `keys` | `KeyProvider` | — | Wurzelschlüssel und Ring; alle acht Zweckschlüssel (3.8) entstehen daraus per HKDF-SHA256. |
 | `origins` | `readonly string[]` | — | Erlaubte Ursprünge; eine leere Liste ist ein Startfehler, kein stiller Freibrief. |
 | `password` | `PasswordConfig` | A.4 | Argon2id-Parameter, Altverfahren, Längengrenzen, Semaphor-Grenze, Einhängepunkt `validate`. |
 | `session` | `SessionConfig` | A.5 | Fristen, Cookie-Name, Cookie-Optionen, Frischefenster. |
@@ -1812,6 +1819,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 | `plugins` | `readonly VelvePlugin[]` | `[]` | Erweiterungen; ein Namenskonflikt ist ein Startfehler. |
 | `schema` | `string` | `"velve"` | Postgres-Schemaname. |
 | `clock` | `Clock` | Systemuhr | Zeitquelle; aus `@velve/auth/testing` ersetzbar. |
+| `securityState` | `SecurityStateConfig` | `{ sealing: "required" }` | Ob jedes Konto ein Siegel haben muss (`"required"`) oder der Bestand noch versiegelt wird (`"migrating"`, als Abschwächung gemeldet), und der Alarm-Callback für einen gebrochenen Zustand (3.18). |
 
 ##### A.3 `identity` und die erzwungenen Wiederherstellungscodes
 
@@ -1949,6 +1957,7 @@ interface TotpConfig          { issuer: string; stepToleranceInSteps: 0 | 1 }  /
 interface RecoveryCodesConfig { count: number; groupSize: number }             // Vorgaben 10, 5
 
 type KeyPurpose = "cookie-sig" | "token-pepper" | "totp-enc" | "oauth-token-enc" | "pkce-enc" | "password-enc"
+  | "state-mac" | "token-mac"
 interface KeyProvider {
   current(purpose: KeyPurpose): Promise<{ version: number; key: CryptoKey }>
   byVersion(purpose: KeyPurpose, version: number): Promise<CryptoKey | null>
@@ -1956,6 +1965,17 @@ interface KeyProvider {
 declare function rootKeyProvider(input: { currentVersion: number
   keysByVersion: Readonly<Record<number, string>> }): KeyProvider   // base64url, je 32 Byte
 interface Clock { now(): Date }
+interface SecurityStateConfig {
+  sealing: "required" | "migrating"           // Vorgabe "required"
+  alarm?: (event: SecurityStateAlarm) => void
+}
+interface SecurityStateAlarm {
+  readonly userId: string
+  readonly occasion: "sign_in" | "factor_check" | "session_resolve" | "token_redemption"
+    | "change" | "maintenance"
+  readonly reason: "seal_missing" | "seal_mismatch" | "key_version_unknown" | "version_below_anchor"
+    | "anchor_unavailable" | "token_binding_mismatch" | "envelope_binding_mismatch"
+}
 ```
 
 `subjectClaim` hat bewusst keine Vorgabe: Die stabile Anbieter-ID ist der einzige
@@ -1994,13 +2014,18 @@ interface AuthInternals {
   readonly routes: readonly AnyRoute[]
   readonly identityMode: IdentityMode
   readonly errorCodes: readonly VelveErrorCode[]
-  readonly maintenance: { sweep(): Promise<SweepReport> }        // L-11, ohne HTTP-Route
+  readonly maintenance: {                                       // ohne HTTP-Route
+    sweep(): Promise<SweepReport>                                 // L-11
+    sealSecurityState(): Promise<SecurityStateReport>             // 3.18, S-INTEG-8
+    resealSecurityState(input: { userId: string; reason: string }): Promise<{ version: number }>
+  }                                                               // S-INTEG-7
   readonly weakenings: readonly { option: string; chosen: string }[]   // S-DEFAULT-1
   migrate(): Promise<MigrationReport>
   close(): Promise<void>
 }
 interface MigrationReport { appliedVersions: readonly number[]; currentVersion: number }
 interface SweepReport     { deletedRowsByTable: Readonly<Record<string, number>> }
+interface SecurityStateReport { sealed: number; rekeyed: number; refused: number; unchanged: number }
 ```
 
 `routes` ist kein Implementierungsdetail, sondern die Datenstruktur, aus der Teil D den
@@ -2008,6 +2033,9 @@ HTTP-Handler und Teil E den Client baut. Sie liegt zur Laufzeit vor, weil der Cl
 raten müsste. `AuthSurface` hat 55 Methoden im Modus `username_email`, 52 in `email`, 46 in
 `username`. `maintenance.sweep` löscht abgelaufene Zeilen aus den sieben Tabellen mit
 `*_sweep_idx` (L-11); `@velve/auth/schema` liefert dasselbe als SQL für `pg_cron`.
+`maintenance.sealSecurityState` und `maintenance.resealSecurityState` sind die Wartung und das
+Neuversiegeln aus 3.18; wie `sweep` haben sie keine Route, und die Anwendung ruft sie nach ihrer
+eigenen Autorisierungsentscheidung auf.
 
 ##### B.1 `signUp` (2), `signIn` (8), `signOut` (1)
 
@@ -2786,6 +2814,15 @@ interface VelvePlugin<Id extends string = string> {
   readonly hooks?: PluginHooks
   readonly errorCodes?: readonly `${Id}.${string}`[]
   readonly rateLimitRules?: Readonly<Record<`${Id}.${string}`, RateLimitRule>>
+  readonly securityStateAnchor?: SecurityStateAnchor
+}
+interface SecurityStateAnchor {
+  recordSeal(event: SecurityStateSealedEvent, context: FrozenContext): Promise<void>
+  minimumVersion(input: { userId: string }, context: FrozenContext): Promise<number | null>
+}
+interface SecurityStateSealedEvent {
+  readonly userId: string; readonly version: number
+  readonly digest: string                  // base64url, der HMAC des Siegels (3.18)
 }
 interface PluginMigration<Id extends string> {
   readonly version: number; readonly name: string; readonly sql: string
@@ -2851,7 +2888,11 @@ Sieben Hook-Punkte, genau die aus 3.11. Die Rückgabe ist überall
 **ablehnen**, indem er wirft, und **beobachten**, indem er nichts tut; ersetzen kann er die
 Antwort nicht, weil er keine zurückgeben kann. Ein Rückgabetyp `Promise<Event | void>` hätte
 genau die Tür geöffnet, die 3.11 schließt. Alle Ereignisfelder sind `readonly`, und
-kein Ereignis enthält ein Sitzungstoken, ein Klartextkennwort oder einen Hash.
+kein Ereignis enthält ein Sitzungstoken, ein Klartextkennwort oder einen Hash. Der `digest` des
+Ankers ist kein Hash eines Geheimnisses, sondern der HMAC des Siegels unter `state-mac`; ohne den
+Wurzelschlüssel lässt sich aus ihm nichts berechnen. `securityStateAnchor` ist kein achter
+Hook-Punkt: `recordSeal` läuft nach dem Festschreiben und kann nichts ablehnen, und
+`minimumVersion` lehnt nicht durch Werfen ab, sondern über die Untergrenze, die es liefert.
 
 `Object.freeze` friert den Kontext zur Laufzeit ein, `readonly` macht den Versuch zum Typfehler
 — beides, weil das eine für TypeScript-Aufrufer und das andere für alle übrigen gilt.
@@ -3043,11 +3084,104 @@ CREATE TABLE velve.password_reset_required (
 
 Damit umfasst das Schema **sechzehn Tabellen**. Zum Vergleich: Better Auth kommt im Kern mit vier aus — `user`, `session`, `account`, `verification`, dazu `rateLimit` nur bei Datenbank-Ratenbegrenzung (`packages/core/src/db/get-tables.ts:59-61`) — und verteilt den Rest auf Plugins. Der Unterschied ist keine Aufblähung, sondern Explizitheit — Zwischenzustände, Einmal-Artefakte und Herausforderungen, die dort in Cookies, JWTs oder der generischen `verification`-Tabelle stecken, haben hier eine eigene Zeile mit eigener Frist und eigenem Konsum.
 
+### 3.18 Integrität des Sicherheitszustands
+
+Die Speicherregel aus 3.2 schützt gegen einen **Leser** der Datenbank. Gegen einen **Schreiber** schützt sie nicht. Wer `INSERT`, `UPDATE` und `DELETE` auf dem Schema `velve` hat, den Wurzelschlüssel aber nicht kennt — eine kompromittierte Anwendungsrolle, ein Werkzeug mit Datenbankzugang, eine SQL-Injektion in der Anwendung —, konnte bis Version 1.x:
+
+- Faktorzeilen löschen (`totp_credential`, `webauthn_credential`, `recovery_code`) und ein Konto so auf das Kennwort allein herabstufen;
+- eine Zeile in `velve.webauthn_credential` mit dem eigenen öffentlichen Schlüssel einfügen und sich ohne Kennwort anmelden;
+- eine Zeile in `velve.identity` mit dem eigenen Anbieterkonto einfügen und sich über OAuth anmelden;
+- ein verschlüsseltes TOTP-Geheimnis oder einen verschlüsselten PHC-String von einem Konto auf ein anderes kopieren, weil die Zusatzdaten des Umschlags nur Algorithmus und Schlüsselversion binden;
+- `velve.user.email` auf die eigene Adresse setzen und den Kennwort-Reset auf sich umleiten;
+- eine Sitzung, einen Einmal-Token oder einen Zwischenzustand für ein beliebiges Konto anlegen, weil `token_sha256` ein ungeschlüsselter SHA-256-Wert ist: Wer einen Token selbst wählt, kennt seinen Hash.
+
+Dieser Angreifer — **Schreibzugriff auf die Datenbank ohne den Wurzelschlüssel** — gehört ab Version 2.0.0 zum Bedrohungsmodell. Fünf Mittel stehen gegen ihn, und alle hängen am Wurzelschlüssel, den er nicht hat.
+
+**1. Zwei neue Zweckschlüssel.** `state-mac` und `token-mac` entstehen wie die übrigen per HKDF-SHA256 aus dem Wurzelschlüssel (3.8), jeder mit eigenem Ableitungskontext; beide sind HMAC-SHA256-Schlüssel. Es entsteht kein neues Geheimnis und kein neuer Konfigurationseintrag, aber ein eigener `KeyProvider` muss beide Zwecke beantworten.
+
+**2. Gebundene Umschläge (S-INTEG-1).** Die Zusatzdaten jedes Umschlags binden neben Algorithmus und Schlüsselversion den Eigentümer (`user_id`, oder ausdrücklich keinen), die Zeile und die Spalte, jedes Feld mit Längenpräfix. Ein Chiffrat, das in eine andere Zeile, zu einem anderen Eigentümer oder in eine andere Spalte kopiert wird, scheitert an der Authentifizierung.
+
+| Spalte | Eigentümer | Zeile |
+|---|---|---|
+| `password_credential.phc` | `user_id` | `user_id` |
+| `totp_credential.secret_enc` | `user_id` | `user_id` |
+| `identity.access_token_enc`, `refresh_token_enc`, `id_token_enc` | `user_id` | `identity.id`, die Spalte unterscheidet die drei |
+| `oauth_flow.pkce_verifier_enc` | `link_to_user_id` oder keiner | `state_sha256` |
+
+Die gebundene Form ist eine neue Umschlagversion und an ihrem ersten Byte von der alten unterscheidbar. Die alte Form bleibt lesbar, aber nur im Übergangsmodus (`securityState.sealing: "migrating"`) und nur für ein Konto ohne Siegelzeile; die Wartung (Punkt 5) schreibt sie in die gebundene Form um. Zeilen in `velve.oauth_flow` leben Minuten und werden nicht umgeschrieben: Ein Ablauf, der über das Upgrade läuft, scheitert und wird neu begonnen.
+
+**3. Geschlüsselte Token-Hashes (S-INTEG-9).** Sitzung, Einmal-Token und Zwischenzustand behalten `token_sha256` als Nachschlageschlüssel (S-REST-2). Daneben trägt jede Zeile `token_mac`, einen HMAC-SHA256 unter `token-mac` über eine längenpräfixierte Kodierung aus Zweck (`session`, der Zweck des Einmal-Tokens, `pending_authentication`), Eigentümer, `token_sha256` und dem sicherheitsrelevanten Inhalt der Zeile — `session.factors`, `pending_authentication.factors_completed`, `one_time_token.payload` in kanonischer Form —, und `token_mac_key_version`. Die Auflösung findet die Zeile über `token_sha256`, berechnet den MAC unter der genannten Version neu und vergleicht in konstanter Zeit; ein Fehlschlag wird beantwortet wie „keine Zeile" und löst den Alarm aus. Eine erfolgreich aufgelöste Zeile, deren `token_mac_key_version` nicht die aktuelle ist, wird unter der aktuellen Version neu gebunden; die Wartung bindet die übrigen neu.
+
+Der MAC läuft über den SHA-256-Wert des Tokens und nicht über den Token selbst, und der Nachschlageschlüssel bleibt ungeschlüsselt. Ein geschlüsselter Nachschlageschlüssel scheitert an zwei Stellen: Der Eigentümer ist vor dem Nachschlagen nicht bekannt, und ein Wert unter einer Schlüsselversion lässt sich ohne den Klartext-Token, den der Server nie speichert, nicht unter einer neuen Version berechnen — nach dem Entfernen der alten Version aus dem Ring wäre jede Sitzung verloren, und S-KEY-5 wäre gebrochen. Der MAC über den SHA-256-Wert lässt sich dagegen ohne den Token neu schlüsseln. Weil SHA-256 kollisionsresistent ist, bindet der MAC über den Hash den Token so fest wie einer über den Token.
+
+Bestehende Zeilen tragen keinen MAC. Migration 4 löscht deshalb jede Zeile in `velve.session`, `velve.one_time_token` und `velve.pending_authentication`: **Beim Upgrade auf 2.0.0 endet jede Sitzung, und jeder offene Link und jeder Zwischenzustand verfällt.**
+
+**4. Das Siegel (S-INTEG-2 bis S-INTEG-7).** Jedes Konto hat eine Zeile in `velve.security_state`:
+
+```sql
+-- Migration 3
+CREATE TABLE velve.security_state (
+  user_id     uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,
+  version     bigint NOT NULL CHECK (version >= 1),
+  digest      bytea NOT NULL CHECK (octet_length(digest) = 32),
+  key_version integer NOT NULL CHECK (key_version >= 1),
+  sealed_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Migration 4
+DELETE FROM velve.session;
+DELETE FROM velve.one_time_token;
+DELETE FROM velve.pending_authentication;
+ALTER TABLE velve.session
+  ADD COLUMN token_mac bytea NOT NULL,
+  ADD COLUMN token_mac_key_version integer NOT NULL;
+ALTER TABLE velve.one_time_token
+  ADD COLUMN token_mac bytea NOT NULL,
+  ADD COLUMN token_mac_key_version integer NOT NULL;
+ALTER TABLE velve.pending_authentication
+  ADD COLUMN token_mac bytea NOT NULL,
+  ADD COLUMN token_mac_key_version integer NOT NULL;
+```
+
+`digest` ist ein HMAC-SHA256 unter `state-mac` in der Version `key_version` über die kanonische Kodierung des Zustands. Die Kodierung beginnt mit dem Kontext `velve-auth/security-state/v1` und enthält in fester Reihenfolge:
+
+- die Konto-ID und die `version`;
+- `user.email` oder ihr Fehlen, und ob `email_verified_at` gesetzt ist;
+- ob ein Kennwort vorhanden ist, und wenn ja, den SHA-256-Wert von `password_credential.phc` mit seiner `key_version`;
+- ob ein TOTP-Geheimnis vorhanden ist, und wenn ja, ob es bestätigt ist, den SHA-256-Wert von `secret_enc` und seine `key_version`;
+- jeden Passkey als Paar aus `credential_id` und `public_key`;
+- jede Identität als Paar aus `provider` und `subject`;
+- jeden Wiederherstellungscode als Paar aus `key_version` und `code_hmac`.
+
+Jedes Feld ist ein Typbyte, eine Länge von vier Byte in Netzwerkreihenfolge und seine Bytes; ein fehlender Wert ist ein eigenes Typbyte und nicht die leere Zeichenkette; eine Liste ist ihre Anzahl, gefolgt von ihren Elementen in aufsteigender Reihenfolge ihrer Kodierung. Zwei verschiedene Zustände ergeben deshalb nie dieselbe Kodierung, und die Reihenfolge, in der die Datenbank Zeilen liefert, ändert nichts.
+
+*Versiegeln.* Jede legitime Änderung eines dieser Bestandteile — Registrierung auf jedem Weg, Kennwort setzen, ändern, zurücksetzen und neu hashen, E-Mail bestätigen und wechseln, TOTP einrichten, bestätigen und entfernen, Passkey registrieren und entfernen, Wiederherstellungscodes erzeugen und einlösen, Identität verknüpfen und lösen, der Import aus Abschnitt 4 — läuft in einer Transaktion, die zuerst `velve.user` über `src/core/db/lock.ts` sperrt (`FOR NO KEY UPDATE`), dann das bestehende Siegel prüft, dann die Änderung schreibt und zuletzt das Siegel neu berechnet und die Version um eins erhöht. Ein gebrochener Zustand wird von einer Änderung nicht überschrieben: Die Änderung wird abgelehnt. Was nicht im Siegel steht — der Name eines Passkeys, sein `sign_count`, die gespeicherten Anbieter-Tokens, der Benutzername, `disabled_at` —, ändert sich ohne neues Siegel.
+
+*Prüfen.* Vor jeder Anmeldung (Kennwort, Passkey, OAuth, Magic Link, bevor eine Sitzung oder ein Zwischenzustand entsteht), vor jeder Faktorprüfung (beim Auflösen des Zwischenzustands), bei jeder Sitzungsauflösung und vor der Wirkung jedes eingelösten Einmal-Tokens liest die Bibliothek den Zustand, berechnet die Kodierung mit der gespeicherten Version neu und vergleicht den HMAC in konstanter Zeit. Eine Abweichung, eine unbekannte Schlüsselversion, eine Version unter dem Anker (Punkt *Anker*) oder — im Modus `"required"` — eine fehlende Siegelzeile ist ein **gebrochener Zustand**: Die Anfrage wird abgelehnt, und nichts wird repariert.
+
+*Die fehlende Siegelzeile.* Ein Schreiber kann jede Markierung in der Datenbank löschen, auch eine, die sagt, dass die Versiegelung abgeschlossen ist. Ob ein Konto ein Siegel haben **muss**, kann deshalb nur etwas außerhalb der Datenbank sagen, und das ist die Konfiguration: `securityState.sealing` ist `"required"` (Vorgabe) oder `"migrating"`. Im Modus `"required"` ist eine fehlende Siegelzeile ein gebrochener Zustand. Im Modus `"migrating"` gilt ein Konto ohne Siegelzeile als noch nicht versiegelt und wird bedient; der Start meldet den Modus als Abschwächung (S-DEFAULT-1). Ein neues Konto wird in beiden Modi bei der Registrierung versiegelt.
+
+*Nach außen.* Die Ablehnung trägt keinen neuen sichtbaren Code. `src/core/http/error-map.ts` bildet sie auf den Code ab, den derselbe Weg ohne gebrochenen Zustand für einen Fehlschlag liefert: `invalid_credentials` bei der Anmeldung, `invalid_pending_authentication` bei der Faktorprüfung, `session_required` bei der Sitzungsauflösung, `invalid_token` bei der Einlösung eines Einmal-Tokens. Nur der Alarm und das Protokoll tragen den Grund.
+
+*Der Alarm.* `securityState.alarm` erhält `{ userId, occasion, reason }`, wobei `occasion` einer von `sign_in`, `factor_check`, `session_resolve`, `token_redemption`, `change` und `maintenance` ist und `reason` einer von `seal_missing`, `seal_mismatch`, `key_version_unknown`, `version_below_anchor`, `anchor_unavailable`, `token_binding_mismatch` und `envelope_binding_mismatch`. Dasselbe geht als Protokollzeile der Stufe `warn` hinaus. Kein Feld enthält ein Geheimnis, einen Token, einen Hash oder ein Chiffrat. Je Prozess, Konto und Grund wird höchstens ein Alarm in 60 Sekunden ausgelöst, und es werden höchstens 10 000 solcher Einträge gehalten; so kann ein Aufrufer ohne Anmeldung den Alarm nicht fluten, und er kann keinen Zustand brechen, also auch keine Versiegelung auslösen. Ein Alarm-Callback, der wirft, ändert die Ablehnung nicht.
+
+*Anker (S-INTEG-6).* Ein Plugin kann `securityStateAnchor` beitragen: `recordSeal({ userId, version, digest })` wird nach dem Festschreiben jedes neuen Siegels aufgerufen, und `minimumVersion({ userId })` liefert eine Untergrenze aus dem eigenen, nur anhängbaren Speicher der Anwendung. Liegt die gespeicherte Version unter der höchsten gelieferten Untergrenze, ist der Zustand gebrochen; wirft `minimumVersion`, wird abgelehnt. Ein Fehler in `recordSeal` wird protokolliert und macht die festgeschriebene Änderung nicht rückgängig, und ein Absturz zwischen Festschreiben und Aufruf lässt den Anker eine Version zurück. **Ohne Anker kann ein Schreiber ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen** — alte Faktorzeilen zusammen mit ihrer alten Siegelzeile —, und das Siegel bemerkt es nicht. Das ist eine benannte Grenze, keine Lücke im Code.
+
+*Neu versiegeln (S-INTEG-7).* Einen gebrochenen Zustand versiegelt ausschließlich `maintenance.resealSecurityState({ userId, reason })`, ein Aufruf der Anwendung im eigenen Prozess nach ihrer eigenen Autorisierungsentscheidung, ohne HTTP-Route. `reason` ist Pflicht, darf nicht leer sein, wird protokolliert und nicht gespeichert. Die neue Version liegt über der gespeicherten und über der Untergrenze des Ankers, und der Anker erfährt sie. Kein anderer Weg — keine Anmeldung, keine Änderung, keine Wartung — versiegelt einen gebrochenen Zustand.
+
+**5. Die Wartung (S-INTEG-8).** `maintenance.sealSecurityState()` bringt einen Bestand in die Form dieses Abschnitts. Sie arbeitet Konto für Konto, jedes in einer eigenen Transaktion unter der Kontosperre: Ein Konto ohne Siegelzeile bekommt seine Umschläge in gebundener Form neu verschlüsselt und sein erstes Siegel; ein Konto mit intaktem Siegel bekommt Umschläge, Siegel und Token-MACs unter der aktuellen Schlüsselversion neu geschrieben, wo sie es noch nicht sind; ein Konto mit gebrochenem Zustand wird nicht angefasst und löst den Alarm aus. Neuverschlüsselung ist das einzige, was ein bestehendes Chiffrat umschreibt. Weil der Fortschritt die Siegelzeilen selbst sind, ist ein zweiter Lauf ohne Wirkung, und ein abgebrochener Lauf wird einfach wiederholt; jedes Konto ist entweder ganz oder gar nicht umgestellt. Angemeldete Nutzer arbeiten währenddessen weiter, eine Änderung am gerade bearbeiteten Konto wartet auf dessen Sperre. Die Wartung braucht den Wurzelschlüssel und ist deshalb kein reines SQL. Vor dem Entfernen einer Schlüsselversion aus dem Ring muss sie gelaufen sein.
+
+Ein Upgrade auf 2.0.0 läuft so: `migrate()`, dann im Modus `"migrating"` starten, `maintenance.sealSecurityState()` bis zum Ende laufen lassen, dann auf `"required"` umstellen und neu starten.
+
+**Die Grenzen.** Wer Schreibzugriff auf die Datenbank **und** den Wurzelschlüssel hat, hat alles: Er kann jedes Siegel, jeden MAC und jeden Umschlag selbst erzeugen. Ohne Anker ist das Zurücksetzen auf einen alten, stimmigen Stand möglich. Im Modus `"migrating"` macht das Löschen der Siegelzeile ein Konto wieder zu einem unversiegelten. Die Fristen von Sitzungen, Tokens und Zwischenzuständen sind nicht gebunden, und `disabled_at` steht nicht im Siegel: Ein Schreiber kann eine bestehende Frist verlängern und ein gesperrtes Konto entsperren, aber keine Sitzung erzeugen und keine umlenken. Der Rückfall eines Passkeys auf einen alten `sign_count` bleibt unbemerkt. Jede Prüfung kostet eine Abfrage und einen HMAC je Anfrage.
+
+Damit umfasst das Schema **siebzehn Tabellen**.
+
 ---
 
 ## 4. Migrationsmodul
 
-Das Migrationsmodul hat noch keinen Subpfad und kommt als eigener hinzu, wenn es entsteht (Abschnitt 3.1). Nur dort dürfen schwere Abhängigkeiten stehen — CSV-Parser, PGP-Entschlüsselung, Quelltreiber. Der Kern kennt das Modul nicht; er kennt nur das Ergebnis: Zeilen im Schema `velve` und kanonische PHC-Strings nach Abschnitt 3.3. Der Importer erzeugt den PHC-String, schreibt ihn aber nie selbst in `velve.password_credential.phc`: Die Spalte hält nach L-2 (Abschnitt 3.16) den AES-256-GCM-verschlüsselten String unter dem Schlüsselzweck `password-enc`, und der Importer benutzt dafür denselben Verschlüsselungspfad wie der Kern beim Registrieren; `key_version` ist die aktuelle Version dieses Schlüssels. Dasselbe gilt für `velve.recovery_code.key_version` (L-3), sollte ein projektspezifischer Hook Wiederherstellungscodes liefern — keine der fünf Quellen tut das.
+Das Migrationsmodul hat noch keinen Subpfad und kommt als eigener hinzu, wenn es entsteht (Abschnitt 3.1). Nur dort dürfen schwere Abhängigkeiten stehen — CSV-Parser, PGP-Entschlüsselung, Quelltreiber. Der Kern kennt das Modul nicht; er kennt nur das Ergebnis: Zeilen im Schema `velve` und kanonische PHC-Strings nach Abschnitt 3.3. Der Importer erzeugt den PHC-String, schreibt ihn aber nie selbst in `velve.password_credential.phc`: Die Spalte hält nach L-2 (Abschnitt 3.16) den AES-256-GCM-verschlüsselten String unter dem Schlüsselzweck `password-enc`, und der Importer benutzt dafür denselben Verschlüsselungspfad wie der Kern beim Registrieren; `key_version` ist die aktuelle Version dieses Schlüssels. Dasselbe gilt für `velve.recovery_code.key_version` (L-3), sollte ein projektspezifischer Hook Wiederherstellungscodes liefern — keine der fünf Quellen tut das. Der Importer verschlüsselt in der gebundenen Form und versiegelt jedes importierte Konto in derselben Transaktion, die es anlegt (Abschnitt 3.18).
 
 Grundhaltung: Eine Migration ist kein Skript, sondern ein Verfahren mit Vorprüfung, Trockenlauf, Wiederholbarkeit und einem Verlustbericht. Alles, was nicht mitkommt, wird benannt.
 
@@ -4230,11 +4364,11 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 
 **(c) Die Anforderungen.**
 
-- **S-KEY-1:** Alle Arbeitsschlüssel werden per HKDF-SHA256 aus einem Wurzelschlüssel abgeleitet, mit genau einem Ableitungskontext je Zweck; die sechs Zwecke sind `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc` und `password-enc`. *(Abschnitt 3.8, erster Absatz; Abschnitt 3.15 A.8, `KeyPurpose`; Abschnitt 3.16, L-2)*
+- **S-KEY-1:** Alle Arbeitsschlüssel werden per HKDF-SHA256 aus einem Wurzelschlüssel abgeleitet, mit genau einem Ableitungskontext je Zweck; die acht Zwecke sind `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac` und `token-mac`. *(Abschnitt 3.8, erster Absatz; Abschnitt 3.15 A.8, `KeyPurpose`; Abschnitt 3.16, L-2; Abschnitt 3.18, Punkt 1)*
 - **S-KEY-2:** Ein mit dem Schlüssel eines Zwecks erzeugter Wert ist mit dem Schlüssel eines anderen Zwecks nicht verifizierbar und nicht entschlüsselbar. *(Abschnitt 3.8, Zwecktrennung)*
-- **S-KEY-3:** Jeder erzeugte, geschützte Wert trägt seine Schlüsselversion mit sich — entweder im Envelope oder in einer eigenen Spalte (`totp_credential.key_version`, `oauth_flow.key_version`, `identity.token_key_version`, `password_credential.key_version`, `recovery_code.key_version`). *(Abschnitt 3.8: „Jeder erzeugte Wert trägt seine Schlüsselversion im Envelope."; Abschnitt 3.2 und 3.17, Schema)*
+- **S-KEY-3:** Jeder erzeugte, geschützte Wert trägt seine Schlüsselversion mit sich — entweder im Envelope oder in einer eigenen Spalte (`totp_credential.key_version`, `oauth_flow.key_version`, `identity.token_key_version`, `password_credential.key_version`, `recovery_code.key_version`, `security_state.key_version`, `token_mac_key_version` in `session`, `one_time_token` und `pending_authentication`). *(Abschnitt 3.8: „Jeder erzeugte Wert trägt seine Schlüsselversion im Envelope."; Abschnitt 3.2, 3.17 und 3.18, Schema)*
 - **S-KEY-4:** Der `KeyProvider` liefert über `current(purpose)` genau eine Version zum Erzeugen und über `byVersion(purpose, version)` jede Version des Rings zum Prüfen; eine nicht mehr im Ring enthaltene Version führt zu `null` und damit zu einem klar benannten Fehler statt zu einem generischen Absturz. *(Abschnitt 3.8, `KeyProvider`-Schnittstelle)*
-- **S-KEY-5:** Eine Rotation des Wurzelschlüssels beendet keine bestehende Sitzung: nach dem Vorschalten einer neuen Version und nach dem Entfernen der alten Version aus dem Ring bleiben alle Zeilen in `velve.session` gültig. *(Abschnitt 3.8: „Weil Sitzungen undurchsichtige Datenbankzeilen sind, überlebt jede Schlüsselrotation sämtliche Sitzungen.")*
+- **S-KEY-5:** Eine Rotation des Wurzelschlüssels beendet keine bestehende Sitzung: nach dem Vorschalten einer neuen Version und nach dem Entfernen der alten Version aus dem Ring bleiben alle Zeilen in `velve.session` gültig, sofern zwischen beiden Schritten `maintenance.sealSecurityState` gelaufen ist, die ihre Token-MACs unter der neuen Version neu bindet. *(Abschnitt 3.8: „Weil Sitzungen undurchsichtige Datenbankzeilen sind, überlebt jede Schlüsselrotation sämtliche Sitzungen."; Abschnitt 3.18, Punkt 3)*
 - **S-KEY-6:** Die Bibliothek startet nicht, wenn der Wurzelschlüssel fehlt oder kürzer als 32 Byte ist. *(Abschnitt 3.8, Standardimplementierung; Abschnitt 3.12, `keys: keyProvider` als Pflichtfeld)*
 - **S-KEY-7:** Die Prüfung der Signatur eines ID-Tokens akzeptiert ausschließlich asymmetrische Algorithmen aus einer aufgezählten Liste gegen den JWKS des Anbieters; `none` und symmetrische Algorithmen werden abgelehnt. *(Abschnitt 3.10: „ID-Token-Signatur gegen JWKS"; Abschnitt 2.7, `jose`)*
 
@@ -4359,11 +4493,31 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 
 ---
 
+### 5.21 INTEG — Integrität des Sicherheitszustands gegen Schreibzugriff auf die Datenbank
+
+**(a) Die Fehlerklasse.** Die Klassen REST und KEY schützen, was ein Leser der Datenbank erfährt. Ein Schreiber ohne den Wurzelschlüssel braucht nichts zu erfahren: Er löscht einen Faktor, fügt einen eigenen Passkey oder eine eigene Identität ein, kopiert ein Chiffrat von einem Konto auf ein anderes, setzt eine Adresse um oder legt eine Sitzung an, deren Token er selbst gewählt hat. Jede dieser Zeilen ist für sich gültig; falsch ist nur, dass sie niemand Berechtigtes geschrieben hat. Die Gegenmaßnahme ist, alles Sicherheitsrelevante an einen Schlüssel zu binden, den der Schreiber nicht hat, und vor jeder Verwendung zu prüfen (Abschnitt 3.18). Zwei Grenzen bleiben und werden genannt: Wer zusätzlich den Wurzelschlüssel hat, hat alles; und ohne Anker kann ein alter, in sich stimmiger Stand zurückgespielt werden.
+
+**(b) Der Präzedenzfall.** Unter den 33 Better-Auth-Advisories ist keiner dieser Klasse; Better Auth nimmt einen Schreiber auf der Datenbank nicht in sein Bedrohungsmodell auf, und Velve Auth tat es bis Version 1.x ebenso nicht. Die Klasse ist aus der eigenen Prüfung dieses Entwurfs entstanden: Die Zusatzdaten des Umschlags in `src/core/keys/envelope.ts` banden nur Algorithmus und Schlüsselversion, und `token_sha256` war ein ungeschlüsselter SHA-256-Wert.
+
+**(c) Die Anforderungen.**
+
+- **S-INTEG-1:** Jedes Chiffrat ist an seinen Eigentümer (`user_id`, oder ausdrücklich keinen), seine Zeile und seine Spalte gebunden; ein in eine andere Zeile, zu einem anderen Eigentümer oder in eine andere Spalte kopiertes Chiffrat lässt sich nicht entschlüsseln. Die alte, ungebundene Form ist nur im Modus `"migrating"` und nur für ein Konto ohne Siegelzeile lesbar. *(Abschnitt 3.18, Punkt 2)*
+- **S-INTEG-2:** Jedes Konto hat in `velve.security_state` ein Siegel: einen HMAC-SHA256 unter `state-mac` über eine kanonische, eindeutige Kodierung aus Konto-ID, monotoner Version, `email` und ob sie bestätigt ist, dem Kennwort (vorhanden, und dann der SHA-256-Wert des Chiffrats), TOTP (vorhanden, bestätigt, SHA-256-Wert des Chiffrats), jedem Passkey (`credential_id` und `public_key`), jeder Identität (`provider` und `subject`) und der Menge der Wiederherstellungscodes. *(Abschnitt 3.18, Punkt 4)*
+- **S-INTEG-3:** Jede legitime Änderung eines Bestandteils des Siegels prüft das bestehende Siegel, schreibt die Änderung, berechnet das Siegel neu und erhöht die Version, alles in einer Transaktion unter der Kontosperre aus `src/core/db/lock.ts`; zwei nebenläufige Änderungen hinterlassen nie ein ungültiges Siegel, und die Version steigt nur. *(Abschnitt 3.18, Punkt 4, Versiegeln)*
+- **S-INTEG-4:** Anmeldung, Faktorprüfung, Sitzungsauflösung und die Einlösung eines Einmal-Tokens prüfen das Siegel, bevor sie etwas daraus verwenden; ein gebrochener Zustand — abweichender HMAC, unbekannte Schlüsselversion, Version unter dem Anker oder im Modus `"required"` eine fehlende Siegelzeile — wird abgelehnt und löst den Alarm aus. *(Abschnitt 3.18, Punkt 4, Prüfen und Die fehlende Siegelzeile)*
+- **S-INTEG-5:** Eine Ablehnung wegen eines gebrochenen Zustands ist nach außen nicht von dem Fehlschlag desselben Weges ohne gebrochenen Zustand zu unterscheiden, entschieden allein in `src/core/http/error-map.ts`; nur Alarm und Protokoll tragen den Grund, und keiner von beiden ein Geheimnis. Je Konto und Grund löst ein Prozess höchstens einen Alarm in 60 Sekunden aus. *(Abschnitt 3.18, Punkt 4, Nach außen und Der Alarm)*
+- **S-INTEG-6:** Ein Plugin kann einen Anker beitragen, der jedes neue `{ userId, version, digest }` erfährt und mit `minimumVersion({ userId })` eine Untergrenze setzt; eine gespeicherte Version darunter ist ein gebrochener Zustand. Ohne Anker bleibt das Zurückspielen eines alten, stimmigen Stands möglich, und die Dokumentation sagt das. *(Abschnitt 3.18, Punkt 4, Anker)*
+- **S-INTEG-7:** Ein gebrochener Zustand wird ausschließlich durch `maintenance.resealSecurityState({ userId, reason })` mit nicht leerem `reason` neu versiegelt; keine Anmeldung, keine Änderung und keine Wartung tut es. *(Abschnitt 3.18, Punkt 4, Neu versiegeln)*
+- **S-INTEG-8:** `maintenance.sealSecurityState()` versiegelt den Bestand und verschlüsselt seine Umschläge in gebundener Form neu; sie ist idempotent und fortsetzbar, braucht den Wurzelschlüssel, lässt angemeldete Nutzer weiterarbeiten, lässt nach einem Abbruch kein Konto halb umgestellt zurück und schreibt ein bestehendes Chiffrat nur durch Neuverschlüsselung um. *(Abschnitt 3.18, Punkt 5)*
+- **S-INTEG-9:** Jede Zeile in `velve.session`, `velve.one_time_token` und `velve.pending_authentication` trägt neben `token_sha256` einen HMAC-SHA256 unter `token-mac` über Zweck, Eigentümer, `token_sha256` und den sicherheitsrelevanten Inhalt der Zeile, mit seiner Schlüsselversion; eine Zeile, deren MAC nicht stimmt, wird wie eine fehlende beantwortet. Beim Upgrade auf 2.0.0 endet jede bestehende Sitzung, und jeder offene Token verfällt. *(Abschnitt 3.18, Punkt 3)*
+
+---
+
 ## 6. Prüfplan
 
-Zu jeder der 123 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **127 Testfälle**.
+Zu jeder der 132 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **136 Testfälle**.
 
-**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (109 Testfälle, dazu der statische Teil von T-RACE-2), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2), `vor jedem Release` (2).
+**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (118 Testfälle, dazu der statische Teil von T-RACE-2), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2), `vor jedem Release` (2).
 
 **Grundsatz der Stufenzuordnung.** Alles Deterministische blockiert jeden Commit. Alles Statistische und alles, was länger als 60 Sekunden läuft, läuft nächtlich auf einem dedizierten Läufer und meldet als Ticket, nicht als roter Build. Der Grund steht in Abschnitt 6.20.
 
@@ -4590,11 +4744,11 @@ wird nicht genommen.
 
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
-| T-KEY-1 | S-KEY-1 | Unit | Aus einem festen Wurzelschlüssel alle sechs Zweckschlüssel ableiten und paarweise vergleichen; Ableitung gegen Testvektoren aus RFC 5869 prüfen. | **6 paarweise verschiedene Schlüssel**; HKDF stimmt mit **allen 7 Testvektoren aus RFC 5869 Anhang A** überein | CI bei jedem Commit |
-| T-KEY-2 | S-KEY-2 | Unit, exhaustiv | Alle geordneten Paare der 6 Zwecke (30 Kombinationen): mit Zweck *i* erzeugen, mit Zweck *j ≠ i* prüfen bzw. entschlüsseln. | **30/30 schlagen fehl** | CI bei jedem Commit |
+| T-KEY-1 | S-KEY-1 | Unit | Aus einem festen Wurzelschlüssel alle acht Zweckschlüssel ableiten und paarweise vergleichen; Ableitung gegen Testvektoren aus RFC 5869 prüfen. | **8 paarweise verschiedene Schlüssel**; HKDF stimmt mit **allen 7 Testvektoren aus RFC 5869 Anhang A** überein | CI bei jedem Commit |
+| T-KEY-2 | S-KEY-2 | Unit, exhaustiv | Alle geordneten Paare der 8 Zwecke (56 Kombinationen): mit Zweck *i* erzeugen, mit Zweck *j ≠ i* prüfen bzw. entschlüsseln. | **56/56 schlagen fehl** | CI bei jedem Commit |
 | T-KEY-3 | S-KEY-3 | Integration | Jeden geschützten Wert erzeugen (TOTP-Geheimnis, PKCE-Verifier, fremde OAuth-Tokens, PHC-String, Wiederherstellungscode) und die Versionsangabe lesen (Envelope oder Spalte). | **5/5 Werte tragen die aktuelle Version**; **0 Werte ohne Version** | CI bei jedem Commit |
 | T-KEY-4 | S-KEY-4 | Unit | `byVersion` für eine im Ring vorhandene und für eine entfernte Version aufrufen; anschließend einen mit der entfernten Version verschlüsselten Wert entschlüsseln. | Vorhandene Version liefert einen Schlüssel; entfernte liefert **`null`**; die Entschlüsselung wirft einen benannten Fehler (`KeyVersionUnavailable`), **kein generischer Absturz** | CI bei jedem Commit |
-| T-KEY-5 | S-KEY-5 | Integration | Sitzung anlegen, verschlüsseltes Feld schreiben. Ring auf `v2,v1` umstellen und Prozess neu starten; danach Ring auf `v2` reduzieren und erneut starten. | Sitzung nach **beiden** Schritten gültig; Feld nach Schritt 1 entschlüsselbar; neue Werte tragen `v2`: **4/4 Zusicherungen** | vor jedem Release |
+| T-KEY-5 | S-KEY-5 | Integration | Sitzung anlegen, verschlüsseltes Feld schreiben. Ring auf `v2,v1` umstellen und Prozess neu starten; `maintenance.sealSecurityState` laufen lassen; danach Ring auf `v2` reduzieren und erneut starten. | Sitzung nach **beiden** Schritten gültig; Feld nach Schritt 1 entschlüsselbar; neue Werte tragen `v2`: **4/4 Zusicherungen** | vor jedem Release |
 | T-KEY-6 | S-KEY-6 | Unit | Startversuche mit Wurzelschlüsseln der Längen 0, 8, 31 und 32 Byte sowie mit fehlendem `keys`-Feld. | **4 von 5 verweigern den Start**, nur 32 Byte startet: **5/5** | CI bei jedem Commit |
 | T-KEY-7 | S-KEY-7 | Unit | ID-Token mit `alg: "none"`, mit `HS256` unter dem Wurzelschlüssel, mit einem fremden RSA-Schlüssel und mit dem korrekten JWKS-Schlüssel prüfen. | **3/3 abgelehnt**, 1 akzeptiert; die Erlaubnisliste ist eine Konstante und wird im Test gelesen | CI bei jedem Commit |
 
@@ -4756,7 +4910,25 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 - **Ziel: Mutations-Score ≥ 85 % auf diesem Ausschnitt**, gemessen **vor jedem Release**, nicht bei jedem Commit.
 - **Der Wert für ein Ein-Personen-Team ist nicht die Zahl, sondern die Liste der überlebenden Mutanten.** Sie ist eine Arbeitsliste fehlender Zusicherungen und ersetzt den Code-Review durch eine zweite Person an genau der Stelle, an der ein solcher Review am meisten wert wäre.
 
-**Abdeckung ist kein Sicherheitsmaß.** Die 127 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+**Abdeckung ist kein Sicherheitsmaß.** Die 136 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+
+---
+
+### 6.24 INTEG — Integrität des Sicherheitszustands
+
+Jeder Testfall dieser Klasse läuft gegen eine echte Datenbank und greift so an, wie ein Schreiber ohne Wurzelschlüssel es tut: mit SQL am Schema `velve` vorbei an der Bibliothek.
+
+| Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
+|---|---|---|---|---|---|
+| T-INTEG-1 | S-INTEG-1 | Integration | Je ein Chiffrat aus `password_credential.phc`, `totp_credential.secret_enc`, `identity.access_token_enc` und `oauth_flow.pkce_verifier_enc` in die entsprechende Zeile eines anderen Kontos kopieren und den Weg ausführen, der es entschlüsselt; zusätzlich jedes in eine andere Spalte desselben Kontos kopieren. Danach Ring auf `v2,v1` umstellen und jedes Original entschlüsseln. Im Modus `"required"` ein Chiffrat der alten Form einsetzen. | **8/8 Kopien scheitern**; **4/4 Originale** entschlüsselbar nach der Rotation; die alte Form wird in **1/1** Fall abgelehnt | CI bei jedem Commit |
+| T-INTEG-2 | S-INTEG-2 | Integration + Property | Für ein Konto mit allen Bestandteilen je eine der folgenden Änderungen per SQL vornehmen und eine Anmeldung versuchen: TOTP löschen, Passkey löschen, Wiederherstellungscode löschen, Identität löschen, fremden Passkey einfügen, fremde Identität einfügen, TOTP-Chiffrat eines anderen Kontos einsetzen, Kennwort-Chiffrat durch ein älteres desselben Kontos ersetzen, `email` ändern, `email_verified_at` löschen, `version` ändern, `digest` ändern. Property: 1000 zufällige Paare verschiedener Zustände kodieren. | **12/12 Änderungen erkannt**; **0 Kollisionen** bei 1000 Paaren | CI bei jedem Commit |
+| T-INTEG-3 | S-INTEG-3 | Nebenläufigkeit + Statisch | 50-mal zwei Änderungen an demselben Konto zeitgleich starten (Passkey registrieren und Wiederherstellungscodes erzeugen); nach jedem Paar das Siegel prüfen und die Version lesen. Statisch: `pnpm check:lock-order` und `pnpm check:token-after-lock`. | **50/50** Siegel gültig; Version steigt um genau die Zahl der festgeschriebenen Änderungen und **0-mal** zurück; beide Prüfungen grün | CI bei jedem Commit |
+| T-INTEG-4 | S-INTEG-4 | Integration | Den Zustand eines Kontos per SQL brechen und Kennwort-Anmeldung, Passkey-Anmeldung, OAuth-Anmeldung, Magic-Link-Einlösung, TOTP-Prüfung, Sitzungsauflösung und Reset-Einlösung ausführen; ebenso mit gelöschter Siegelzeile in beiden Modi. | **7/7 Wege abgelehnt** und je **1 Alarm**; fehlende Siegelzeile: abgelehnt im Modus `"required"`, bedient im Modus `"migrating"` | CI bei jedem Commit |
+| T-INTEG-5 | S-INTEG-5 | Integration + Statisch | Jeden Weg aus T-INTEG-4 mit gebrochenem Zustand gegen denselben Weg mit einem gewöhnlichen Fehlschlag vergleichen (falsches Kennwort, unbekannte Sitzung, falscher Code, unbekannter Token); Alarm und Protokoll nach Token, Hash, Chiffrat und Kennwort durchsuchen; 1000 Anfragen gegen ein gebrochenes Konto innerhalb von 60 Sekunden senden. Statisch: Der Grund wird nur in `src/core/http/error-map.ts` auf einen sichtbaren Code abgebildet. | Status, Kopfzeilen und Körper **byteweise gleich** in **7/7** Paaren; **0 Treffer** in Alarm und Protokoll; **1 Alarm** bei 1000 Anfragen | CI bei jedem Commit |
+| T-INTEG-6 | S-INTEG-6 | Integration | Den Zustand eines Kontos sichern, einen Passkey registrieren, dann alle Zeilen des Kontos einschließlich der Siegelzeile auf den gesicherten Stand zurücksetzen; einmal ohne und einmal mit einem Anker. Zusätzlich jedes Siegel einer Folge von fünf Änderungen am Anker mitlesen. | Ohne Anker **angenommen** (dokumentierte Grenze); mit Anker **abgelehnt** mit Alarm `version_below_anchor`; der Anker erfährt **5/5** Siegel mit Version und Digest | CI bei jedem Commit |
+| T-INTEG-7 | S-INTEG-7 | Integration | Den Zustand brechen; danach 10 Anmeldungen, eine legitime Änderung und einen Wartungslauf ausführen; dann `maintenance.resealSecurityState` ohne, mit leerem und mit gesetztem `reason` aufrufen. | Zustand nach **12/12** Vorgängen weiterhin gebrochen; **2/2** Aufrufe ohne gültigen `reason` abgelehnt; nach dem gültigen Aufruf **1/1** Anmeldung erfolgreich, Version höher als zuvor | CI bei jedem Commit |
+| T-INTEG-8 | S-INTEG-8 | Integration | 200 Konten im Zustand vor dem Upgrade anlegen (alte Umschlagform, keine Siegelzeile). Die Wartung nach 70 Konten abbrechen, dabei mit einer Sitzung eines noch nicht umgestellten Kontos anfragen, die Wartung fortsetzen, ein zweites Mal laufen lassen. Chiffrate vor und nach vergleichen. | **200/200** versiegelt; **0** halb umgestellte Konten nach dem Abbruch; Sitzungsanfragen während des Laufs **erfolgreich**; zweiter Lauf schreibt **0 Zeilen**; jedes geänderte Chiffrat ist eine Neuverschlüsselung desselben Klartexts | CI bei jedem Commit |
+| T-INTEG-9 | S-INTEG-9 | Integration | Je eine Zeile in `session`, `one_time_token` und `pending_authentication` per SQL mit dem SHA-256-Wert eines selbst gewählten Tokens für ein fremdes Konto einfügen und den Token vorlegen; zusätzlich je eine echte Zeile auf ein anderes Konto umschreiben, ihren Zweck ändern und ihren Inhalt ändern (`factors`, `factors_completed`, `payload`). | **3/3 eingefügte** und **9/9 veränderte** Zeilen abgelehnt, mit Alarm `token_binding_mismatch` | CI bei jedem Commit |
 
 ---
 

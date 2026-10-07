@@ -15098,3 +15098,83 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Comparing build entries by their first lines or their headings only, which would have passed the old E-100's paragraphs. (b) Making the log quote the case study's rendering, which turns the source around. (c) Reading E-01 … E-46 from the log as well, which would stop comparing the case study with section 7, the source E-1970 names for them.
 **Reason.** A copy nothing compares with its source drifts, and E-100 is the measurement: it drifted the moment its source changed.
 **Price.** A Where line anywhere but at the end of a case-study entry leaves blank lines the log does not have, and the copy then fails until the line is moved. A change to a log entry the case study holds now fails until the case study is brought into step, which is intended.
+
+<a id="e-3080"></a>
+
+### The database-write attacker joins the threat model as section 3.18 and class INTEG
+`E-3080` · security-state · specification, threat model, settled
+
+**Context.** The specification protected what a reader of the database learns and said nothing about a writer. A review of the tree on 2026-10-07 listed what a writer without the root key could do: delete factor rows, insert a passkey or an identity of their own, copy an encrypted TOTP secret or password between accounts because the envelope's additional data binds only algorithm and key version, and change `velve.user.email`. The same review first said sessions and one-time tokens were peppered; reading `src/core/session/token.ts`, `src/core/token/secret-token.ts` and `src/core/factor/pending/token.ts` showed all three are plain SHA-256, so a writer can also mint a session, a reset token or a pending sign-in for any account by choosing a token and storing its hash. The German specification now carries section 3.18, which states the attacker, the five measures and their limits, and class 5.21 INTEG with S-INTEG-1 … S-INTEG-9 and T-INTEG-1 … T-INTEG-9 in 6.24. The counts in the summary, the contents list and the opening of section 6 move from 123 requirements, eighteen classes, 127 test cases and 109 blocking to 132, nineteen, 136 and 118, because all nine new cases run on every commit.
+**Rejected.** (a) A new section between 5.18 and 5.19 and between 6.18 and 6.19, which would renumber 5.19, 5.20 and 6.19 … 6.23 and every citation of them. (b) Stating the attacker only in the README, where no requirement and no test case reaches it.
+**Reason.** A protection the specification does not state has no requirement for a reviewer to check and no test case with a threshold; appending the class at the end of sections 5 and 6 changes no existing number.
+**Price.** INTEG sits after the coverage table and after the infrastructure sections of 6, out of the order the other classes follow. Nine requirements are stated before any code meets them (E-3087).
+
+<a id="e-3081"></a>
+
+### The token MAC runs over the SHA-256 value of the token, and the lookup stays unkeyed
+`E-3081` · security-state · specification, S-INTEG-9, settled
+
+**Context.** The plan asks that every stored token hash be a keyed MAC over the token, its owner and its purpose. A resolve does not know the owner before it finds the row, so the owner cannot be part of the lookup key. A keyed lookup over token and purpose alone was considered next: it is computed under one key version, and a value under a version can only be recomputed under a new version from the plaintext token, which the server never stores. After the old version leaves the ring every session written under it would be unfindable, and S-KEY-5 says the opposite. Section 3.18 therefore keeps `token_sha256` as the lookup key (S-REST-2 is unchanged) and adds `token_mac` with `token_mac_key_version`: an HMAC-SHA256 under `token-mac` over purpose, owner, `token_sha256` and the row's security-relevant content — `session.factors`, `pending_authentication.factors_completed` and the one-time token's `payload` in canonical form. A resolve finds the row by `token_sha256` and compares the MAC in constant time. A row under an older version is rebound under the current one on a successful resolve and by the maintenance step. S-KEY-5 and T-KEY-5 now say the maintenance step runs between putting the new version in front and removing the old one.
+**Rejected.** (a) A keyed lookup over token and purpose, for the rotation reason above. (b) Carrying the key version in the cookie or the token, which changes the token format every client and every test of S-RAND reads, and still needs the owner binding as a second value. (c) Binding only token, owner and purpose as the plan words it: a writer could then raise a session's `factors` or rewrite an email-change token's target address in `payload`, and the library would carry out the change legitimately.
+**Reason.** The MAC over the SHA-256 value binds the token as firmly as one over the token, because SHA-256 is collision resistant, and it can be rekeyed without the token; that is the only form that keeps S-KEY-5.
+**Price.** This is a deviation from the plan's wording, and a reader holding the plan will see a MAC over a hash where the plan says a MAC over the token. A database reader still sees the unkeyed SHA-256 value, as before. S-KEY-5 now depends on the maintenance step having run before a version leaves the ring, which it did not before. Deadlines are not bound, so a writer can extend an existing row's lifetime. Migration 4 deletes every session, one-time token and pending authentication, and every user is signed out by the upgrade.
+
+<a id="e-3082"></a>
+
+### The seal covers the password ciphertext, not only that a password exists
+`E-3082` · security-state · specification, S-INTEG-2, settled
+
+**Context.** The plan lists "password credential present" as the password's part of the seal and relies on the bound envelope against a copied `phc`. The bound envelope stops a ciphertext from another account; it does not stop an older ciphertext of the same account, written under the same owner and row, from being put back. With presence alone a writer who once read the database could restore the account's old password row and sign in with an old password, and nothing would notice, because the row is still bound to its owner and still present. S-INTEG-2 and section 3.18 therefore put the SHA-256 value of `password_credential.phc` and its `key_version` into the seal, the same treatment the plan gives TOTP, and list the rehash among the changes that reseal.
+**Rejected.** Presence only, as the plan words it, for the restoration above.
+**Reason.** A single-row rollback is the cheapest attack a past reader turned writer has, and the anchor of S-INTEG-6 does not cover it unless the whole account is rolled back with its seal.
+**Price.** The background rehash after a successful sign-in (S-TIM-5, S-RACE-6) now has to take the account lock and reseal, which it did not need before; a rehash costs a lock, a state read and a HMAC more. This widens the plan, and the widening is the writer's, not the operator's.
+
+<a id="e-3083"></a>
+
+### A missing seal row is told from an unsealed account by the configuration
+`E-3083` · security-state · specification, S-INTEG-4, settled
+
+**Context.** During the upgrade there are accounts without a seal row that must keep working, and after it a missing seal row must be a broken state, since deleting it is the cheapest way to switch the check off. Any marker in the database that says the upgrade is complete — a ledger row, a column on `velve.user`, a row in a progress table — can be deleted by the same writer, and with it the account reads as not yet migrated again. Section 3.18 puts the answer outside the database: `securityState.sealing` is `"required"` by default, where a missing row is broken, or `"migrating"`, where it is not yet sealed, which the start reports as a weakening through the existing S-DEFAULT-1 report. The legacy envelope form is readable only in `"migrating"` and only for an account without a seal row, for the same reason.
+**Rejected.** (a) A completion marker in the database, signed under `state-mac`, which a writer cannot forge and can delete, and deleting it is all the attack needs. (b) Requiring the maintenance step to finish before the new version serves any request, which is the same as `"required"` with no way to keep signed-in users working during it, which S-INTEG-8 asks for. (c) Treating a missing row as broken only for accounts that have a session, which a writer controls too.
+**Reason.** Only a source the writer cannot touch can say that a seal must exist, and the library has exactly one such source besides the root key.
+**Price.** The upgrade needs two starts — one in `"migrating"`, one in `"required"` — and an operator who never switches back keeps a deployment where deleting a seal row unseals an account. The default `"required"` refuses every existing account of an upgraded database until the maintenance step has sealed it.
+
+<a id="e-3084"></a>
+
+### The anchor is a plugin member of its own and not an eighth hook point
+`E-3084` · security-state · specification, S-INTEG-6, settled
+
+**Context.** The plan asks for a plugin hook that learns every new `{ userId, version, digest }` and an optional `minimumStateVersion(userId)`. 3.11 and 3.15 G enumerate seven hook points, each `Promise<void>`, each able to refuse by throwing before something happens. Neither half of the anchor has that shape: the record runs after the seal is committed and cannot refuse anything, and the floor returns a number. The specification adds `securityStateAnchor` to `VelvePlugin` with `recordSeal(event, context)` and `minimumVersion({ userId }, context)`. The highest floor of all plugins counts; a stored version below it is broken, and a `minimumVersion` that throws is a refusal. `recordSeal` runs after commit, so a failure there is logged and the change stands.
+**Rejected.** (a) Two more entries in `PluginHooks`, which would make the sentence "every hook returns `Promise<void>`" false for one and the refusal semantics false for the other. (b) Calling `recordSeal` inside the transaction, so that a failed record undoes the change: if the record succeeded and the transaction then rolled back, the application's floor would sit above the database's version and the account would be broken for good.
+**Reason.** The anchor is a seam with its own semantics, and naming it apart keeps the seven hook points saying what they say.
+**Price.** A crash between commit and `recordSeal` leaves the floor one version behind, and that version can be rolled back to. The name differs from the plan's `minimumStateVersion`.
+
+<a id="e-3085"></a>
+
+### The administrator reseal and the sealing step live under maintenance
+`E-3085` · security-state · specification, S-INTEG-7, S-INTEG-8, settled
+
+**Context.** The reseal of a broken state needs a caller the library trusts without an authorization model, which 3.15 B.3 already defines for `user.disable`: the application in its own process, after its own decision. Putting the reseal in `user` would change B.3's count of six, the method counts of `AuthSurface` (55, 52, 46) and B.9's table, and `test/server-surface-origin.test.ts` reads that count and would fail on every branch until the method existed. `maintenance` is in `AuthInternals`, has no route, and already holds `sweep`, an operator step of the same kind. Section 3.15 B now gives `maintenance` three members: `sweep`, `sealSecurityState()` returning a `SecurityStateReport`, and `resealSecurityState({ userId, reason })`.
+**Rejected.** (a) `user.resealSecurityState`, for the counts above. (b) An `auth.admin` namespace, which B.8 excludes.
+**Reason.** Both calls are operator steps without a route, and `maintenance` is where the specification already puts those.
+**Price.** A caller looking for account operations in `user` does not find the reseal there, and `maintenance` now mixes a bulk step with a per-account one.
+
+<a id="e-3086"></a>
+
+### Migration 3 is the seal table and migration 4 is the token MACs
+`E-3086` · security-state · specification, schema, settled
+
+**Context.** The work after the foundation is split across parallel branches, and two of them change the schema: the seal table and the token MAC columns. Two branches each adding "the next migration" would both take version 3. Section 3.18 fixes the numbers in advance: migration 3 creates `velve.security_state` (`user_id`, `version`, `digest`, `key_version`, `sealed_at`), and migration 4 deletes the rows of `session`, `one_time_token` and `pending_authentication` and adds `token_mac` and `token_mac_key_version` to each. The foundation ships migration 3; migration 4 belongs to the branch that writes the MACs, because its `NOT NULL` columns fail every insert the code makes until that branch writes them.
+**Rejected.** (a) One migration with both changes in the foundation, which makes every session insert fail until the token branch lands. (b) Leaving the numbers to the branches, which is the collision above.
+**Reason.** A migration's version is checksummed into the ledger of every database that ran it, so a number taken twice cannot be repaired after either branch merges.
+**Price.** The table carries `key_version`, which the plan's list of columns does not name, because S-KEY-3 asks every protected value to carry its key version.
+
+<a id="e-3087"></a>
+
+### The INTEG requirements are stated ahead of the code and listed as named by no test
+`E-3087` · security-state · specification, test, open until the four security-state branches merge
+
+**Context.** `test/requirement-coverage.test.ts` fails on any requirement of section 5 no test file names, unless it is listed in `NAMED_BY_NO_TEST` with a reason. The foundation states S-INTEG-1 … S-INTEG-9 and builds none of them: it builds the two key purposes and the seal table they rest on. Each of the nine is listed with the branch whose range in the §6 table owns it; the line is removed by that branch when its tests cite the requirement, which the same test then demands.
+**Rejected.** (a) A test in the foundation that names each requirement without testing it, which would make the coverage test pass on a citation and not on a test. (b) Leaving the specification without the requirements until the code exists, which leaves four parallel branches building against a plan instead of the binding text.
+**Reason.** The list is the test's own mechanism for a requirement stated before it is met, and its comment says a line there is a reported finding.
+**Price.** Until the four branches merge the specification states nine requirements the library does not meet, and `test/requirement-coverage.test.ts` is a file each of the four branches edits.
