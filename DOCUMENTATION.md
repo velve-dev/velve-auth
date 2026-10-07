@@ -5963,7 +5963,7 @@ nothing else would tell you.
 | `code` | Raised when |
 |---|---|
 | `keys_missing` | `keys` is absent or is not a `KeyProvider` (S-KEY-6) |
-| `keys_unusable` | the provider has no current key for some purpose, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written; or the ring answers a `state-mac` version a stored seal names with such a key, which the message states with that version; or the provider answers two purposes with the same HMAC key, which the message names |
+| `keys_unusable` | the provider has no current key for some purpose, or names a current version no `key_version` column holds, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written; or the ring answers a `state-mac` version a stored seal names with such a key, which the message states with that version; or the provider answers two purposes with the same HMAC key, which the message names |
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
@@ -8748,8 +8748,9 @@ uses it to decide which purposes get the probe.
 
 Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
 every distinct `key_version` of `velve.security_state` and refuses the start with
-`keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects. A
-version the ring does not hold is skipped. The refusal shares its code with the
+`keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects,
+or with the current key of another HMAC purpose. A version the ring does not hold
+is skipped. The refusal shares its code with the
 purpose probe and has a message of its own, which names the stored version.
 It makes one `byVersion` call and at most one probe per distinct stored version,
 and how many distinct versions there are is up to whoever writes the table.

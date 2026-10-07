@@ -16158,3 +16158,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Documenting that applications must pass a READ COMMITTED connection to `runMigrations`, which is the reliance on a default E-3310 removed.
 **Reason.** A rule stated for "every transaction the library opens" has to hold at every entry point that opens one, not only at the one that seals.
 **Price.** One more round trip per migration transaction.
+
+<a id="e-3329"></a>
+
+### The start refuses an unstorable current version and a stored state-mac version sharing a key
+`E-3329` · security-state · keys, start-up, settled
+
+**Context.** `DOCUMENTATION.md` promised that a key the start accepts is one the check can use. The seventh review found two gaps. First, the start accepted a current version that `macUnderCurrentKey` then refuses, any integer from 1 up, such as 2,147,483,648, which no `key_version` column holds; so every later seal or token write failed after a clean start. Second, the same-key check of E-3324 compared only current keys, so a ring that answered a stored `state-mac` version with the current `token-mac` key started. The review's cases were red. `assertKeysAnswerForEveryPurpose` now requires `isStorableKeyVersion` of every purpose's current version, not only the integrity purposes the decision named. Every purpose's version is stored in some `key_version` column, so an unstorable version fails a write for any of them. `assertStoredIntegrityKeysTakeMac` now also compares the fingerprint of every stored `state-mac` version's key against the current keys of the other HMAC purposes. A match refuses with `keys_unusable` and a message naming the version and the purpose. `test/keys-integrity-start-storable.test.ts` holds both; the review's file is folded into it. `DOCUMENTATION.md` names both refusals.
+**Rejected.** Comparing every stored version against every other stored version of every purpose, which a writer could make quadratic in the number of versions they store.
+**Reason.** A start check exists so that a configuration that will fail at the first write fails at the start instead.
+**Price.** One more HMAC per stored `state-mac` version at start, on top of E-3216's per-version cost.

@@ -1,8 +1,8 @@
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
-import type { KeyProvider } from "../keys/index.js";
-import { keyTakesMac } from "../keys/mac.js";
-import { storedIntegrityKeyUnusable } from "./startup.js";
+import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
+import { keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
+import { storedIntegrityKeyUnusable, storedStateMacKeySharedWith } from "./startup.js";
 
 //a version no row names is never read so only the stored ones are probed (E-3191)
 export async function assertStoredIntegrityKeysTakeMac(options: {
@@ -15,11 +15,35 @@ export async function assertStoredIntegrityKeysTakeMac(options: {
 		ORDER BY key_version`,
 		[],
 	);
+	const currentPurposeByFingerprint = await currentPurposesByFingerprint(options.keys);
 	for (const row of rows) {
 		const key = await options.keys.byVersion("state-mac", row.key_version);
 		//a version that left the ring is a broken state of those accounts and not a start error (E-3191)
-		if (key !== null && !(await keyTakesMac(key))) {
+		if (key === null) {
+			continue;
+		}
+		if (!(await keyTakesMac(key))) {
 			throw storedIntegrityKeyUnusable(row.key_version);
 		}
+		const fingerprint = await sameKeyFingerprintOf(key);
+		const sharedWith =
+			fingerprint === null ? undefined : currentPurposeByFingerprint.get(fingerprint);
+		if (sharedWith !== undefined) {
+			throw storedStateMacKeySharedWith(row.key_version, sharedWith);
+		}
 	}
+}
+
+async function currentPurposesByFingerprint(keys: KeyProvider): Promise<Map<string, string>> {
+	const byFingerprint = new Map<string, string>();
+	for (const purpose of KEY_PURPOSES) {
+		if (purpose === "state-mac") {
+			continue;
+		}
+		const fingerprint = await sameKeyFingerprintOf((await keys.current(purpose)).key);
+		if (fingerprint !== null) {
+			byFingerprint.set(fingerprint, purpose);
+		}
+	}
+	return byFingerprint;
 }
