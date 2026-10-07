@@ -15298,3 +15298,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Folding the migration-state cases into T-INTEG-4, which is about the paths a request takes and not about the maintenance step.
 **Reason.** A matrix the plan lists case by case is met case by case, or the gap is a finding again at the next review.
 **Price.** T-INTEG-8 becomes the longest case of the class.
+
+<a id="e-3100"></a>
+
+### T-INTEG-1 copies between columns of one purpose
+`E-3100` · security-state · specification, test plan, settled
+
+**Context.** T-INTEG-1 copied each of its four ciphertexts into another column of the same account. Most such copies cross purposes — a TOTP secret into a password column — and fail under S-KEY-2 before the binding of S-INTEG-1 is reached, so the case tested the key separation a second time. The column part now copies within one purpose: `identity.access_token_enc` into `refresh_token_enc` and `id_token_enc` of the same row, which share the key `oauth-token-enc`, the owner and the row, and differ only in the column the binding names. The threshold moves from eight copies to six.
+**Rejected.** Keeping the cross-purpose copies beside them, which would add cases T-KEY-2 already decides.
+**Reason.** A case belongs to the requirement whose failure alone would let it pass.
+**Price.** The column binding is tested on one table only, the only one with several columns under one purpose.
