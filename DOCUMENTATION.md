@@ -42,6 +42,11 @@ here as well, where nothing removes it.
 - [The client](#the-client)
 - [Signing in with a password](#signing-in-with-a-password)
 - [The factor and passkey routes](#the-factor-and-passkey-routes)
+- [Security state](#security-state)
+- [Security state: bound envelopes](#security-state-bound-envelopes)
+- [Security state: keyed token hashes](#security-state-keyed-token-hashes)
+- [Security state: the seal](#security-state-the-seal)
+- [Security state: administration and migration](#security-state-administration-and-migration)
 - [Using it with an AI coding agent](#using-it-with-an-ai-coding-agent)
 - [Licence](#licence)
 
@@ -8622,6 +8627,26 @@ Which internal reason produced a visible code is decided in
 Several distinct reasons collapse onto one code deliberately: a credential that
 is unknown and one whose signature is wrong are one answer, and so are a
 recovery code that was already spent and one that never existed.
+
+## Security state
+
+> Reserved for the foundation of the security-state work: the database-write attacker, the `state-mac` and `token-mac` key purposes and the `velve.security_state` table. This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+
+## Security state: bound envelopes
+
+> Reserved for `security-state-envelopes`: every envelope bound to its owner, its row and its column (S-INTEG-1). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+
+## Security state: keyed token hashes
+
+> Reserved for `security-state-tokens`: the token MAC of sessions, one-time tokens and pending authentications (S-INTEG-9). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+
+## Security state: the seal
+
+> Reserved for `security-state-seal`: the seal, its reseal on every change, its verification, the alarm and the anchor (S-INTEG-2 to S-INTEG-6). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+
+## Security state: administration and migration
+
+> Reserved for `security-state-administration`: the maintenance step and the administrator reseal (S-INTEG-7, S-INTEG-8). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
 
 ## Using it with an AI coding agent
 
