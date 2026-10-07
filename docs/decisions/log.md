@@ -15728,3 +15728,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Letting the resolution of a pending row rebind it like a session, which races the booking it precedes.
 **Reason.** Only the writes that already compare against the row may change its MAC, so no write can undo another.
 **Price.** A pending authentication whose key version leaves the ring before a booking or a maintenance pass rebinds it is lost; its deadline is minutes, so the price is a restarted sign-in.
+
+<a id="e-3283"></a>
+
+### The reseal signs out every session only with an anchor, and E-3213's Price was too small
+`E-3283` · security-state · specification, S-INTEG-7, settled
+
+**Context.** E-3195 made the administrator reseal set `session_epoch` to the new version, and *Resealing* said this signs the account out everywhere because the new version lies above every epoch the account had. The fourth review showed the claim unconditional where it is not: without an anchor a writer can lower version and epoch together — say from 3 to 2 — so the reseal writes version 3, which equals the epoch a saved session was issued under, and that session resolves again. With an anchor the new version lies above the anchor's floor and so above every legitimate epoch. *Resealing*, S-INTEG-7 and T-INTEG-7, which now lowers both and reseals with and without an anchor, say so in both languages. The same review found E-3213's Price understated, and E-3213 is not edited: its recovery switches the deployment to `"migrating"`, which reopens the window of E-3212 for every account and not only for the one being recovered, and `maintenance.sealSecurityState`, which the recovery relies on, ratifies whatever rows exist without returning them as `resealSecurityState` does (E-3102).
+**Rejected.** Raising the reseal's version by a margin above the stored one, which narrows the collision without excluding it.
+**Reason.** Without something outside the database the reseal cannot know which epochs the account really had; the anchor is that something.
+**Price.** An installation without an anchor gets a reseal that may revive a session a writer saved, and its recovery from a version at the ceiling exposes every unsealed account while it runs.
