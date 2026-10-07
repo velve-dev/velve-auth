@@ -34,7 +34,7 @@ describe("derivePurposeKeyBytes", () => {
 		expect(first).not.toStrictEqual(second);
 	});
 
-	it("covers exactly the seven purposes of section 3.8", () => {
+	it("covers exactly the eight purposes of section 3.8", () => {
 		expect([...KEY_PURPOSES]).toStrictEqual([
 			"cookie-sig",
 			"token-pepper",
@@ -43,6 +43,7 @@ describe("derivePurposeKeyBytes", () => {
 			"pkce-enc",
 			"password-enc",
 			"state-mac",
+			"token-mac",
 		]);
 	});
 });

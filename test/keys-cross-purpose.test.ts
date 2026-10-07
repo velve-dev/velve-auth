@@ -15,7 +15,7 @@ import { generateRootKey } from "./keys-fixtures.js";
 // sign and four encrypt, so "produce and consume" is spelled out for each combination rather than
 // only for the four encryption purposes.
 
-const SIGNING_PURPOSES: readonly KeyPurpose[] = ["cookie-sig", "token-pepper", "state-mac"];
+const SIGNING_PURPOSES: readonly KeyPurpose[] = ["cookie-sig", "token-pepper", "state-mac", "token-mac"];
 
 const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
@@ -64,8 +64,8 @@ const ORDERED_PAIRS = KEY_PURPOSES.flatMap((produced) =>
 );
 
 describe("cross-purpose use of a purpose key (S-KEY-2)", () => {
-	it("enumerates every ordered pair of the seven purposes", () => {
-		expect(ORDERED_PAIRS).toHaveLength(42);
+	it("enumerates every ordered pair of the eight purposes", () => {
+		expect(ORDERED_PAIRS).toHaveLength(56);
 	});
 
 	it("reads back a value under the purpose that produced it", async () => {

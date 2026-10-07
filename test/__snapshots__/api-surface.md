@@ -2150,7 +2150,7 @@ export {
 ## core/keys/purpose.d.mts
 
 //#region src/core/keys/purpose.d.ts
-declare const KEY_PURPOSES: readonly ["cookie-sig", "token-pepper", "totp-enc", "oauth-token-enc", "pkce-enc", "password-enc", "state-mac"];
+declare const KEY_PURPOSES: readonly ["cookie-sig", "token-pepper", "totp-enc", "oauth-token-enc", "pkce-enc", "password-enc", "state-mac", "token-mac"];
 type KeyPurpose = (typeof KEY_PURPOSES)[number];
 //#endregion
 export {

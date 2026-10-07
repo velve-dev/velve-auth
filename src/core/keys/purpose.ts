@@ -6,6 +6,7 @@ export const KEY_PURPOSES = [
 	"pkce-enc",
 	"password-enc",
 	"state-mac",
+	"token-mac",
 ] as const;
 
 export type KeyPurpose = (typeof KEY_PURPOSES)[number];

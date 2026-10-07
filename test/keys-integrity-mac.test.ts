@@ -103,3 +103,26 @@ describe("a MAC under the state-mac purpose (S-KEY-1)", () => {
 		expect(underCookieKey).not.toStrictEqual(taken.mac);
 	});
 });
+
+describe("the two integrity purposes against each other (S-KEY-2)", () => {
+	it("does not verify a state-mac MAC under token-mac, nor the reverse", async () => {
+		const underState = await macUnderCurrentKey(beforeRotation, "state-mac", MESSAGE);
+		const underToken = await macUnderCurrentKey(beforeRotation, "token-mac", MESSAGE);
+
+		expect(underState.mac).not.toStrictEqual(underToken.mac);
+		expect(await verifyMacUnderKeyVersion(beforeRotation, "token-mac", underState, MESSAGE)).toBe(
+			"mismatch",
+		);
+		expect(await verifyMacUnderKeyVersion(beforeRotation, "state-mac", underToken, MESSAGE)).toBe(
+			"mismatch",
+		);
+	});
+
+	it("does not take a token-mac MAC under the token-pepper key", async () => {
+		const underToken = await macUnderCurrentKey(beforeRotation, "token-mac", MESSAGE);
+		const { key } = await beforeRotation.current("token-pepper");
+		const underPepper = new Uint8Array(await crypto.subtle.sign("HMAC", key, MESSAGE));
+
+		expect(underPepper).not.toStrictEqual(underToken.mac);
+	});
+});

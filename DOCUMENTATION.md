@@ -944,7 +944,7 @@ decides the second, and it decides it for the two interleavings it chooses.
 
 ### Purposes
 
-One root key, seven working keys, derived with HKDF-SHA256 and separated by one
+One root key, eight working keys, derived with HKDF-SHA256 and separated by one
 derivation context per purpose (section 3.8).
 
 | Purpose | Key type | Used for |
@@ -956,8 +956,9 @@ derivation context per purpose (section 3.8).
 | `pkce-enc` | AES-256-GCM | `oauth_flow.pkce_verifier_enc` |
 | `password-enc` | AES-256-GCM | `password_credential.phc` |
 | `state-mac` | HMAC-SHA256 | the seal of `velve.security_state` ([Security state](#security-state)) |
+| `token-mac` | HMAC-SHA256 | the owner binding of stored session, one-time and pending token hashes ([Security state](#security-state)) |
 
-`KEY_PURPOSES` is the tuple of those seven names; `KeyPurpose` is the union
+`KEY_PURPOSES` is the tuple of those eight names; `KeyPurpose` is the union
 derived from it. The set is closed — a name outside it does not type-check.
 `EncryptionKeyPurpose` and `SigningKeyPurpose` are the two halves of that
 union, derived from the same tuple. The four encryption functions take
@@ -8644,11 +8645,15 @@ consistent state.
 
 ### The integrity purposes
 
-`state-mac` is a purpose of the key ring like the six before it
-([Key management](#key-management)): HKDF-SHA256 from the root key with the
-context `velve-auth/key/state-mac`, imported as an HMAC-SHA256 key. It adds no
-secret and no configuration entry. A `KeyProvider` of an application's own must
-answer it, or `migrate()` refuses the start with `keys_unusable`.
+`state-mac` and `token-mac` are purposes of the key ring like the six before
+them ([Key management](#key-management)): HKDF-SHA256 from the root key with the
+contexts `velve-auth/key/state-mac` and `velve-auth/key/token-mac`, each imported
+as an HMAC-SHA256 key of its own. `state-mac` authenticates the seal of an
+account; `token-mac` binds a stored token hash to its owner and purpose. Neither
+shares a key with `token-pepper` or `cookie-sig`, which use the same algorithm.
+They add no secret and no configuration entry. A `KeyProvider` of an
+application's own must answer both, or `migrate()` refuses the start with
+`keys_unusable`.
 
 `IntegrityKeyPurpose` is the part of `KeyPurpose` whose names end in `-mac`.
 It is internal and not exported from the package.

@@ -101,7 +101,7 @@ describe("the purpose set is closed and split the way section 3.8 splits it", ()
 	const purposeSource = readFileSync(`${keysDirectory}/purpose.ts`, "utf8");
 	const providerSource = readFileSync(`${keysDirectory}/root-key-provider.ts`, "utf8");
 
-	it("declares the seven purposes as a frozen tuple", () => {
+	it("declares the eight purposes as a frozen tuple", () => {
 		expect(purposeSource).toContain("as const");
 		expect([...purposeSource.matchAll(/"([a-z-]+)"/g)].map((match) => match[1])).toStrictEqual([
 			"cookie-sig",
@@ -111,6 +111,7 @@ describe("the purpose set is closed and split the way section 3.8 splits it", ()
 			"pkce-enc",
 			"password-enc",
 			"state-mac",
+			"token-mac",
 		]);
 	});
 
@@ -118,7 +119,7 @@ describe("the purpose set is closed and split the way section 3.8 splits it", ()
 		expect(purposeSource).toMatch(/typeof KEY_PURPOSES\)\[number\]/);
 	});
 
-	it("splits the seven names the way the type splits them, by the -enc suffix", () => {
+	it("splits the eight names the way the type splits them, by the -enc suffix", () => {
 		expect(KEY_PURPOSES.filter((purpose) => purpose.endsWith("-enc"))).toStrictEqual([
 			"totp-enc",
 			"oauth-token-enc",
@@ -129,6 +130,7 @@ describe("the purpose set is closed and split the way section 3.8 splits it", ()
 			"cookie-sig",
 			"token-pepper",
 			"state-mac",
+			"token-mac",
 		]);
 	});
 
