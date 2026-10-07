@@ -16348,3 +16348,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A guard no test sees removed is a guard by intention only.
 **Price.** None.
+
+<a id="e-3348"></a>
+
+### The plugin connection is not wrapped, because it opens no transaction
+`E-3348` · security-state · db, settled
+
+**Context.** E-3328 wrapped `pluginDatabase` with `withReadCommittedTransactions` together with `runMigrations`, saying the rule holds for every transaction the library opens. The eighth review pointed out that the plugin connection built over `pluginDatabase` in `src/core/plugin/login-connection.ts` only ever calls `query`, so the wrap changed nothing and the documentation claimed an effect it did not have. E-3328's sentence about the plugin connection was wrong when written and is not edited. The wrap is removed, and `DOCUMENTATION.md` now lists the plugin connection among the paths that open no transaction.
+**Rejected.** Keeping the wrap as harmless, which would leave a reader looking for the transaction it guards.
+**Reason.** Code that guards nothing misstates what it protects.
+**Price.** If the plugin connection ever opens a transaction, the wrap has to come back; `test/db-read-committed-instance.test.ts` covers only the instance's own driver.

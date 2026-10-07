@@ -8772,9 +8772,9 @@ database or the role sets `default_transaction_isolation` to something else, whi
 the sealing of section 3.18 relies on. A transaction joined from inside one, by
 calling `transaction` on the bound driver, is not given the statement again,
 because PostgreSQL accepts it only before the first query of the outer
-transaction. `runMigrations` wraps the driver it is handed the same way, and so
-does the instance for `pluginDatabase`; the owned-row repository and the schema
-status open no transaction. Wrapping a driver twice returns the wrapped one, so a
+transaction. `runMigrations` wraps the driver it is handed the same way; the
+owned-row repository, the schema status and the plugin connection over
+`pluginDatabase` open no transaction. Wrapping a driver twice returns the wrapped one, so a
 transaction is never given the statement twice.
 
 ### The seal table
