@@ -16488,3 +16488,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Deleting traces in the maintenance step, which E-3332 rejected because it destroys the evidence.
 **Reason.** A rule that keeps evidence and a rule that requires zero rows have to say which rows each counts, or one makes the other impossible.
 **Price.** The administrator has to clean traces up by hand.
+
+<a id="e-3362"></a>
+
+### A kept session rebound in the meantime is retried, not alarmed
+`E-3362` · security-state · specification, S-INTEG-9, settled
+
+**Context.** E-3301 rebinds the session that `revokeAllOther` keeps by compare-and-set on its MAC under the account lock, and raised the alarm whenever the swap hit no row. The ninth review's premise case showed that a resolution's rebind under a new key version takes no account lock, so it can commit while the lock is held. The keeping swap then misses on a row that was rebound legitimately, and the caller is signed out with a false alarm. As decided, the rule follows the booking's: when the swap misses, the row is read once more. If it shows the same session with a matching MAC under a newer key version, the swap is repeated against the new MAC without an alarm. Any other answer counts as a MAC that does not match. *Sealing* says so in both languages. `test/security-state-kept-session-rebind.test.ts` holds the premise and that the German text exempts the rebind. E-3301 is not edited.
+**Rejected.** Taking the account lock for the resolution's rebind, which would make every resolution under an old key version wait on changes.
+**Reason.** A legitimate race must never raise the alarm, which is the rule point 3 already set for the booking.
+**Price.** One more read in the rare case of a rotation landing between the lock and the swap.
