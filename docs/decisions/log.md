@@ -15418,3 +15418,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Walking every version from 1 to the current one, for the cost above. (b) Refusing the start on an unknown stored version, as the password ring check does (E-179), for the denial of service above.
 **Reason.** A ring version matters exactly when a stored value names it, and the database says which do.
 **Price.** The token MAC versions are not probed yet: their columns arrive with migration 4, and the token branch extends this query. The check adds one query to `migrate()`, and a process that never calls `migrate()` (E-3192) never runs it.
+
+<a id="e-3192"></a>
+
+### The integrity probes run only where migrate() runs
+`E-3192` · security-state, second range · keys, startup, settled
+
+**Context.** E-3093's Price says the start check is what keeps an unusable integrity key from being reachable. The review found that overstated: `assertKeysAnswerForEveryPurpose` and, since E-3191, `assertStoredIntegrityKeysTakeMac` run inside `migrate()`, and a deployment where a separate job migrates the schema and the serving processes never call `migrate()` runs neither probe in the processes that serve. There an unusable key is met first by a request, where `verifyMacUnderKeyVersion` answers `"key_unusable"` and the account reads as broken, and `macUnderCurrentKey` throws the platform error. E-3093 is not edited; this entry corrects its Price, and the *Security state* chapter now says where the probes run.
+**Rejected.** Moving the probes into `createVelveAuth`, which is synchronous and cannot await Web Crypto; making it asynchronous changes the start of every application, which is not this review's to decide.
+**Reason.** E-3093 stated a guarantee the deployment shape decides, and the reader needs to know which shape.
+**Price.** The guarantee holds only for a process that calls `migrate()`, which the README's start sequence does and a split deployment does not.
