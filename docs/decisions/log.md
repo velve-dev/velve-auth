@@ -16148,3 +16148,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the premise tests to a directory of their own, which would break the file references in earlier entries.
 **Reason.** A test's title is what a report shows, and it has to say what the test proves.
 **Price.** The recording driver ties the order test to the SQL text of two statements.
+
+<a id="e-3328"></a>
+
+### The migration runner and the plugin connection state READ COMMITTED too
+`E-3328` · security-state · db, settled
+
+**Context.** E-3310 wrapped the instance's driver so that every transaction it opens begins with `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`. Its Price said the lower-level exports that take an application's own driver are not wrapped and that "none of them seals". The seventh review found that false as a reason. `runMigrations`, a public export of the schema subpath, opens transactions on the driver it is handed. On connections defaulting to repeatable read, four concurrent runners did not all succeed, and the review's case was red. E-3310 is not edited. As the orchestrator decided, the rule holds for every transaction the library opens. `runMigrations` wraps its driver with `withReadCommittedTransactions`, and the instance wraps `pluginDatabase` as well. The wrapper is now idempotent, so the instance's already-wrapped driver passed into `runMigrations` is not given the statement twice. The owned-row repository and the schema status open no transaction. `test/db-migration-runner-isolation.test.ts` holds both cases, the first statement of every runner transaction and four concurrent runners on repeatable-read connections; the review's file is folded into it. `DOCUMENTATION.md` says so.
+**Rejected.** Documenting that applications must pass a READ COMMITTED connection to `runMigrations`, which is the reliance on a default E-3310 removed.
+**Reason.** A rule stated for "every transaction the library opens" has to hold at every entry point that opens one, not only at the one that seals.
+**Price.** One more round trip per migration transaction.
