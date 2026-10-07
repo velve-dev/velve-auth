@@ -15428,3 +15428,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the probes into `createVelveAuth`, which is synchronous and cannot await Web Crypto; making it asynchronous changes the start of every application, which is not this review's to decide.
 **Reason.** E-3093 stated a guarantee the deployment shape decides, and the reader needs to know which shape.
 **Price.** The guarantee holds only for a process that calls `migrate()`, which the README's start sequence does and a split deployment does not.
+
+<a id="e-3193"></a>
+
+### A sealing transaction reads one snapshot taken by its lock statement
+`E-3193` · security-state, second range · specification, S-INTEG-3, settled
+
+**Context.** The review showed that *Sealing* could ratify a writer's row. The account lock is `FOR NO KEY UPDATE`, chosen so that a foreign key's `FOR KEY SHARE` does not wait on it (E-1604), so a writer can insert a passkey for the account while a legitimate change holds the lock. Under `READ COMMITTED` the recomputation at the end of the change reads that passkey, and the new seal covers it. The reviewer's test showed the insert committing and the second read seeing it. The orchestrator decided the remedy: the sealing transaction runs at `REPEATABLE READ` with the snapshot taken by the lock statement, check and recomputation read that snapshot plus the transaction's own writes, and a serialization failure is retried a bounded number of times and then refused, never sealed from a re-read. Section 3.18 and S-INTEG-3 say so, with three retries as the bound; T-INTEG-3 inserts a foreign passkey during a change and expects the new seal not to contain it and the next check to refuse with `seal_mismatch`. The reviewer's case is replaced by `test/security-state-seal-snapshot.test.ts`, which holds the premise under both isolation levels; the case against the sealing code is the seal branch's, which has the code.
+**Rejected.** (a) `FOR UPDATE` on the account row, which blocks the writer's insert but is the mode E-1604 removed because it deadlocks with every foreign-key insert. (b) `SERIALIZABLE`, which adds predicate locks the change does not need; the snapshot alone decides what the seal covers.
+**Reason.** What the seal covers must be what the check read, and only a snapshot makes the two the same without locking the writer out.
+**Price.** A change that loses a serialization race is retried, and after three losses the user's change is refused. The writer's row is not prevented, only kept out of the seal, so the account reads as broken at the next check — which is the detection the seal exists for.
