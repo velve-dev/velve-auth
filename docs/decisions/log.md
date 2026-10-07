@@ -15948,3 +15948,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Calling `minimumVersion` under the lock and accepting the queue behind it. Calling it twice, before and after, which narrows the window but still holds the lock across the second call.
 **Reason.** A floor is evidence against a rollback that can only have happened before the check began, so a floor read a moment earlier loses almost nothing, while a lock held across the application's code can stall the account.
 **Price.** A rollback that a writer stages exactly between an anchor's raised floor and the next read passes one check or change; the window is the latency of one call into the application.
+
+<a id="e-3305"></a>
+
+### The one-read rule gets its guard on the seal branch, and the MAC helpers their callers there
+`E-3305` · security-state · keys, specification, revisit when the seal branch merges
+
+**Context.** The fifth review recorded two things this branch leaves open. `macUnderCurrentKey` and `verifyMacUnderKeyVersion` in `src/core/keys/mac.ts` have no caller in `src/` here; only `test/keys-integrity-mac.test.ts`, `test/keys-integrity-key-shape.test.ts` and `test/keys-integrity-start.test.ts` use them. The token and seal branches call them, so whether they fit their callers is verified on the integration branch, not here. And E-3280's Price admitted that the rule that a sealing transaction computes the new seal from its one read, never from a second read, is enforced by nothing: no check and no test reads the sealing code for a second read of the components. As the orchestrator decided, the seal branch adds that guard, and the orchestrator puts it in that branch's brief. This entry records that the foundation does not.
+**Rejected.** A guard on this branch, which would have no sealing code to read.
+**Reason.** A guard belongs where the code it checks is written, and the foundation writes no sealing transaction.
+**Price.** Until the seal branch merges with its guard, the one-read rule rests on review alone, as E-3280 said.
+
+<a id="e-3306"></a>
+
+### E-3302 named one entry too many as citing the test file
+`E-3306` · security-state · tests, settled
+
+**Context.** E-3302 kept the name of `test/security-state-snapshot-order.test.ts` because renaming it "would break the references to it in E-3209 and E-3280". Only E-3209 names the file; E-3280 names `test/security-state-seal-snapshot.test.ts`, a different one. E-3302 is not edited.
+**Rejected.** Nothing; the count was wrong.
+**Reason.** The decision stands on the one reference E-3209 makes, which a rename would still leave pointing at nothing.
+**Price.** None.
