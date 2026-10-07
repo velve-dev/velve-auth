@@ -310,3 +310,16 @@ describe("signing out every other session (section 3.18 point 3)", () => {
 		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
 	});
 });
+
+describe("a resolve racing a mass revocation (section 3.18 point 3, S-CACHE-2)", () => {
+	it(`reads the row and the epoch in one statement and raises no alarm in ${PAIRS} races`, async () => {
+		refusals = [];
+		for (let pair = 0; pair < PAIRS; pair += 1) {
+			const userId = await sealedAccount();
+			const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+			await Promise.all([sessions.resolve(issued.token), revokeEverySession(pool, userId)]);
+		}
+
+		expect(refusals).toStrictEqual([]);
+	});
+});
