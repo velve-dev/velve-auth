@@ -16119,6 +16119,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** One wrapper at the one place the configured driver enters keeps the isolation statement first, and a nested call inside it stays a savepoint.
 **Price.** A test or a future caller that builds these factories over a raw driver gets the database's default isolation, as the tests here do on purpose.
 
+<a id="e-3272"></a>
+
+### The maintenance compare-and-set also holds the key version it read
+`E-3272` · security-state-tokens · S-KEY-5, settled
+
+**Context.** Checking the branch against the merged section 3.18 point 5 found one difference. The point has the maintenance rebind each session and one-time token by a compare-and-set on its old MAC and that MAC's key version. The seam's statement held the MAC, the owner and, for a pending row, the counter, but not the version. A writer who changed only `token_mac_key_version` between the pass's read and its update therefore had the row rebound over a version the pass never checked. The seam's update now also requires `token_mac_key_version` to be the one it read. `test/integ-token-rebind.test.ts` moves the version during a pass and finds the row left under the writer's version. The same check found the rest of points 3 and 5 as built: the four version indexes, `created_at` in whole microseconds, the ceremony as a text field, `accountEmail`, the occasions `sign_in`, `change` and `maintenance`, and counts per key version. The migration SQL that point 4 prints has no `LOCK TABLE` statements, while migration 4 here begins with three and a fourth for the challenges (E-3250). That difference is the specification's to resolve, and it is reported rather than changed here.
+**Rejected.** Leaving the version out because the MAC already differs under another key, which is not true for a writer who changes the version alone.
+**Reason.** A compare-and-set has to hold everything the check that preceded it relied on.
+**Price.** None beyond one more predicate.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

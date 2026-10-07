@@ -149,7 +149,8 @@ function staleRowsStatement(table: string, shape: TableShape, columns: string): 
 function rebindStatement(table: string, shape: TableShape): string {
 	return `UPDATE ${table} SET token_mac = $4, token_mac_key_version = $5
 	WHERE ${shape.hashColumn} = $1 AND user_id IS NOT DISTINCT FROM $2::uuid AND token_mac = $3
-		${shape.guardsAttempts ? "AND attempts = $6" : ""}
+		AND token_mac_key_version = $6
+		${shape.guardsAttempts ? "AND attempts = $7" : ""}
 	RETURNING ${shape.hashColumn}`;
 }
 
@@ -204,6 +205,7 @@ async function rebindRow(
 		row.token_mac,
 		next.tokenMac,
 		next.tokenMacKeyVersion,
+		row.token_mac_key_version,
 		...(shape.guardsAttempts ? [row.attempts] : []),
 	]);
 	return written.length === 1 ? "rebound" : "left";

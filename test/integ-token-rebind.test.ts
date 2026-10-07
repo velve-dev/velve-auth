@@ -197,7 +197,7 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		let booked = false;
 		const bookingBeforeTheRebinding = {
 			query: async <T>(sql: string, params: unknown[]) => {
-				if (!booked && sql.includes("UPDATE") && sql.includes("AND attempts = $6")) {
+				if (!booked && sql.includes("UPDATE") && sql.includes("AND attempts = $7")) {
 					booked = true;
 					await bookAttemptOn(before.pending, token);
 				}
@@ -265,5 +265,43 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		expect(outcome).toBe("booked");
 		expect(row).toStrictEqual({ attempts: 1, version: 2 });
 		expect(refusals).toStrictEqual([]);
+	});
+
+	it("leaves a row whose key version a writer changed between the read and the rebinding", async () => {
+		await emptyTokenTables();
+		const ring = testKeyRing(2);
+		const before = servicesUnder(ring.providerAt(1, [1]));
+		const userId = await createUser(migrated.connection, schema);
+		await before.sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		let moved = false;
+		const movingTheVersion = {
+			query: async <T>(sql: string, params: unknown[]) => {
+				if (
+					!moved &&
+					sql.trimStart().startsWith("UPDATE") &&
+					sql.includes("RETURNING token_sha256")
+				) {
+					moved = true;
+					await migrated.connection.query(
+						`UPDATE ${schema}.session SET token_mac_key_version = 7 WHERE user_id = $1`,
+						[userId],
+					);
+				}
+				return migrated.connection.query<T>(sql, params);
+			},
+			transaction: migrated.connection.transaction.bind(migrated.connection),
+		};
+
+		const pass = await rebindTokenRowsUnderCurrentKey({
+			driver: movingTheVersion,
+			schema,
+			keys: ring.providerAt(2, [1, 2]),
+			sealing: "migrating",
+			table: "session",
+			batchSize: BATCH,
+		});
+
+		expect(moved).toBe(true);
+		expect(pass).toStrictEqual({ rebound: 0, refused: 0, rowsByKeyVersion: { 7: 1 } });
 	});
 });

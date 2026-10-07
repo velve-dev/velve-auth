@@ -9106,7 +9106,7 @@ under the row's own version over everything the MAC binds: a session against the
 account's current epoch and its `created_at`, a pending authentication over its
 stored `attempts`, a one-time token over its payload with the bound address, a
 challenge over its ceremony. A row that passes is rebound by a compare-and-set on
-the MAC it read, and a pending row also on the `attempts` it read; a row that
+the MAC and key version it read, and a pending row also on the `attempts` it read; a row that
 changed in between is left for the next pass. A row that fails is not rebound and
 not deleted: it keeps its version, stays unusable, is counted as `refused` and is
 reported with the occasion `maintenance`. It takes no account lock: each row is its
