@@ -4,7 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const SESSION_DIRECTORY = fileURLToPath(new URL("../src/core/session/", import.meta.url));
@@ -59,6 +62,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_resolution");
 	recorder = recordingDriver(migrated.connection);
 	service = createSessionService({
+		keys: TOKEN_KEYS,
 		driver: recorder.driver,
 		schema: migrated.schema,
 	});
@@ -149,7 +153,8 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 	/**
 	 * T-CACHE-2 fixes the threshold at "byte for byte equal to a fixture", so that every change to
 	 * the one authorisation query is a decision somebody made on purpose. This is that fixture.
-	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232).
+	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232); the factors are
+	 * read as JSON and the two MAC columns beside them, because S-INTEG-9 checks the row before use.
 	 */
 	it("runs the statement this fixture pins, byte for byte", async () => {
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
@@ -159,8 +164,8 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 
 		expect(recorder.recorded[0]?.sql).toBe(
 			`SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
-\t\ts.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
-\t\tu.disabled_at, now() AS observed_at
+\t\ts.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
+\t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at
 \tFROM ${migrated.schema}.session s
 \tJOIN ${migrated.schema}.user u ON u.id = s.user_id
 \tWHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`,

@@ -2,9 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import type { AnyRoute } from "../src/core/http/route.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
 import { createStubProvider, oauthConfigFor } from "./oauth-provider.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 /* ------------------------------------------------------------------ *
  * S-OWNER-6 and T-OWNER-6. A parameter read from more than one source
@@ -25,6 +28,7 @@ beforeAll(async () => {
 		claims: { sub: "sources-subject", email: "sources@example.com", email_verified: true },
 	});
 	mounted = await mountAuth("inputsources", {
+		keys: TOKEN_KEYS,
 		oauth: oauthConfigFor({ openIdConnect: false }),
 		fetch: provider.fetch,
 		rateLimit: { perIpAddress: { capacity: 100_000, refillPerSecond: 1_000 } },
@@ -222,10 +226,19 @@ describe("a signed-in revoke with the target in two sources changes nothing (S-O
 		const issued = createSessionToken();
 		const [row] = await mounted.connection.query<{ id: string }>(
 			`INSERT INTO ${mounted.schema}.session
-			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4)
 			 RETURNING id`,
-			[userId, issued.tokenHash],
+			[
+				userId,
+				issued.tokenHash,
+				...(await sessionMacParameters(TOKEN_KEYS, {
+					userId,
+					tokenHash: issued.tokenHash,
+					factors: ["password"],
+				})),
+			],
 		);
 		return { token: issued.token, id: row?.id ?? "" };
 	}

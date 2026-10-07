@@ -1,3 +1,4 @@
+import type { StoredTokenMac } from "../../token/binding.js";
 import {
 	ONE_TIME_TOKEN_LIFETIME_SECONDS,
 	ONE_TIME_TOKEN_PURPOSES,
@@ -21,7 +22,8 @@ export type OneTimeTokenReplacement = {
 	readonly tokenSha256: Uint8Array;
 	readonly purpose: OneTimeTokenPurpose;
 	readonly payload: OneTimeTokenPayload | null;
-} & OneTimeTokenSubject;
+} & OneTimeTokenSubject &
+	StoredTokenMac;
 
 export interface OneTimeTokenLookup {
 	readonly tokenSha256: Uint8Array;
@@ -29,14 +31,21 @@ export interface OneTimeTokenLookup {
 }
 
 //the removal proved the owner so this is a lawful provenance of an actor (E-234)
-export type StoredOneTimeToken = RedeemedOneTimeToken & {
+type StoredOneTimeToken = RedeemedOneTimeToken & {
 	readonly payload: OneTimeTokenPayload | null;
 };
+
+/** a removed row whose MAC is still to be checked before its owner or payload is used */
+export interface OneTimeTokenCandidate extends StoredTokenMac {
+	readonly userId: string;
+	readonly payload: OneTimeTokenPayload | null;
+	accept(): StoredOneTimeToken;
+}
 
 export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
 	//a row that names no account is answered exactly as no row is (S-TOKEN-4)
-	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
+	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<OneTimeTokenCandidate | null>;
 }
 
 export type OneTimeTokenErrorCode =
@@ -105,6 +114,13 @@ function readPayload(value: unknown): OneTimeTokenPayload | null {
 	return value as OneTimeTokenPayload;
 }
 
+interface ConsumedRowShape {
+	readonly user_id: string | null;
+	readonly payload: unknown;
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
+}
+
 export function createOneTimeTokenRepository(
 	options: OneTimeTokenRepositoryOptions,
 ): OneTimeTokenRepository {
@@ -118,15 +134,16 @@ export function createOneTimeTokenRepository(
 	const replaceStatement = `WITH superseded AS (
 	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
 )
-INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
-VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision))
+INSERT INTO ${table}
+	(token_sha256, purpose, user_id, payload, expires_at, token_mac, token_mac_key_version)
+VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision), $7, $8)
 RETURNING expires_at`;
 
 	//the consume statement must stay the specified one apart from its marker (E-142)
 	const consumeStatement = `DELETE FROM ${table}
 /* no owner predicate: S-TOKEN-4 */
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
-RETURNING user_id, payload`;
+RETURNING user_id, payload, token_mac, token_mac_key_version`;
 
 	return {
 		async replaceOneTimeToken(replacement) {
@@ -154,6 +171,8 @@ RETURNING user_id, payload`;
 						payload === null ? null : JSON.stringify(payload),
 						ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
 						userId,
+						replacement.tokenMac,
+						replacement.tokenMacKeyVersion,
 					])
 					.catch((failure: unknown) => {
 						if (isForeignKeyViolation(failure)) {
@@ -169,13 +188,22 @@ RETURNING user_id, payload`;
 		},
 
 		async consumeOneTimeToken({ tokenSha256, purpose }) {
-			const [row] = await options.driver.query<{ user_id: string | null; payload: unknown }>(
-				consumeStatement,
-				[tokenSha256, purpose],
-			);
-			return row === undefined || row.user_id === null
-				? null
-				: redeemedBy(row.user_id, readPayload(row.payload));
+			const [row] = await options.driver.query<ConsumedRowShape>(consumeStatement, [
+				tokenSha256,
+				purpose,
+			]);
+			if (row === undefined || row.user_id === null) {
+				return null;
+			}
+			const userId = row.user_id;
+			const payload = readPayload(row.payload);
+			return {
+				userId,
+				payload,
+				tokenMac: row.token_mac,
+				tokenMacKeyVersion: row.token_mac_key_version,
+				accept: () => redeemedBy(userId, payload),
+			};
 		},
 	};
 }

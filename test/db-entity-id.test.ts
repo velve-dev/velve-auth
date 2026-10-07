@@ -97,7 +97,7 @@ describe("the second and third lawful provenance of an actor (E-234, E-341)", ()
 			{ user_id: ACCOUNT, payload: null },
 		]).consumeOneTimeToken(LOOKUP);
 
-		expect(redeemed === null ? null : actorOfRedeemedOneTimeToken(redeemed)).toBe(ACCOUNT);
+		expect(redeemed === null ? null : actorOfRedeemedOneTimeToken(redeemed.accept())).toBe(ACCOUNT);
 	});
 
 	it("answers a removed row that names no account exactly as it answers no row", async () => {

@@ -9,6 +9,7 @@ import {
 	type WebAuthnService,
 	type WebAuthnServiceOptions,
 } from "../src/core/factor/webauthn/service.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { createVirtualAuthenticator, type VirtualAuthenticator } from "./webauthn-simulator.js";
@@ -108,6 +109,7 @@ export async function beginSecondFactor(
 ): Promise<PendingResolution> {
 	const pendingAuthentications = createPendingAuthenticationService({
 		driver: fixture.connection,
+		keys: testKeyProvider(),
 		schema: fixture.schema,
 	});
 	const { token } = await pendingAuthentications.begin({

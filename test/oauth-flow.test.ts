@@ -9,7 +9,14 @@ import type { VelvePlugin } from "../src/core/plugin/config.js";
 import type { SessionConfig } from "../src/core/session/config.js";
 import { createSessionService } from "../src/core/session/service.js";
 import { createVelveAuth, registerPluginErrorCodes, VelveError } from "../src/index.js";
-import { configFor, type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
+import {
+	configFor,
+	type MountedAuth,
+	mountAuth,
+	requestTo,
+	TEST_ORIGIN,
+	testKeyProvider,
+} from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import {
 	CALLBACK_BASE_URL,
@@ -19,6 +26,8 @@ import {
 	type ProviderClaims,
 	type StubProvider,
 } from "./oauth-provider.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 interface Mounted {
 	readonly auth: MountedAuth;
@@ -42,6 +51,7 @@ async function mountWith(input: {
 		...(input.openIdConnect === undefined ? {} : { openIdConnect: input.openIdConnect }),
 	});
 	const auth = await mountAuth("oauthflow", {
+		keys: TOKEN_KEYS,
 		oauth: oauthConfigFor({
 			openIdConnect: input.openIdConnect === true,
 			...(input.trusted === undefined ? {} : { trusted: input.trusted }),
@@ -779,6 +789,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
 		const session = sessionCookieOf(signedIn) ?? "";
 		const sessions = createSessionService({
+			keys: TOKEN_KEYS,
 			driver: mounted.auth.connection,
 			schema: mounted.auth.schema,
 		});

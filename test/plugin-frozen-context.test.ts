@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FrozenContext, PluginActor } from "../src/core/plugin/config.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
 import { type ContextProbe, createContextProbe } from "./plugin-fixtures.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let mounted: MountedAuth;
 let probe: ContextProbe;
@@ -14,15 +17,24 @@ const ACTOR: PluginActor = { pluginId: "demo", reason: "the test asked" };
 
 beforeAll(async () => {
 	probe = createContextProbe();
-	mounted = await mountAuth("frozenctx", { plugins: [probe.plugin] });
+	mounted = await mountAuth("frozenctx", { keys: TOKEN_KEYS, plugins: [probe.plugin] });
 	userId = await createUser(mounted.connection, mounted.schema);
 	const issued = createSessionToken();
 	const [row] = await mounted.connection.query<{ id: string }>(
 		`INSERT INTO ${mounted.schema}.session
-		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4)
 		 RETURNING id`,
-		[userId, issued.tokenHash],
+		[
+			userId,
+			issued.tokenHash,
+			...(await sessionMacParameters(TOKEN_KEYS, {
+				userId,
+				tokenHash: issued.tokenHash,
+				factors: ["password"],
+			})),
+		],
 	);
 	sessionId = row?.id ?? "";
 	await mounted.connection.query(

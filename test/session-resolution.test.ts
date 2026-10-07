@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { VelveError } from "../src/core/http/error-map.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import {
 	type CountedDriver,
@@ -14,6 +15,8 @@ import {
 	statementsMatching,
 } from "./session-fixtures.js";
 
+const TOKEN_KEYS = testKeyProvider();
+
 const NOWHERE = { ipAddress: null, userAgent: null };
 
 let migrated: MigratedSchema;
@@ -22,10 +25,7 @@ let service: SessionService;
 let userId: string;
 
 function serviceOver(driver: CountedDriver): SessionService {
-	return createSessionService({
-		driver: driver.driver,
-		schema: migrated.schema,
-	});
+	return createSessionService({ keys: TOKEN_KEYS, driver: driver.driver, schema: migrated.schema });
 }
 
 async function shiftDeadline(sessionId: string, column: string, by: string): Promise<void> {

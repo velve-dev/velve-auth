@@ -41,6 +41,8 @@ function repositoryReturning(rows: readonly unknown[], ownerRows?: readonly unkn
 
 const HASH = new Uint8Array(32).fill(7);
 
+const MAC = { tokenMac: new Uint8Array(32).fill(9), tokenMacKeyVersion: 1 };
+
 /** A driver decodes `timestamptz` into a `Date`, and E-598 makes the repository read one. */
 const EXPIRY = new Date("2026-09-08T00:00:00.000Z");
 
@@ -53,6 +55,7 @@ describe("the parameters the repository sends", () => {
 			purpose: "password_reset",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
 			payload: { newEmail: "next@example.com" },
+			...MAC,
 		});
 
 		expect(calls).toHaveLength(2);
@@ -68,6 +71,8 @@ describe("the parameters the repository sends", () => {
 			'{"newEmail":"next@example.com"}',
 			ONE_TIME_TOKEN_LIFETIME_SECONDS.password_reset,
 			"0d1b6c8e-0000-4000-8000-000000000001",
+			MAC.tokenMac,
+			MAC.tokenMacKeyVersion,
 		]);
 		expect(issued.expiresAt).toStrictEqual(EXPIRY);
 	});
@@ -80,6 +85,7 @@ describe("the parameters the repository sends", () => {
 			purpose: "magic_link",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
 			payload: null,
+			...MAC,
 		});
 
 		expect(calls[1]?.params[3]).toBeNull();
@@ -93,6 +99,7 @@ describe("the parameters the repository sends", () => {
 			purpose: "magic_link",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
 			payload: null,
+			...MAC,
 		});
 
 		const collapsed = calls.map((call) => call.sql.replace(/\s+/g, " ").trim());
@@ -124,7 +131,10 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(stored).toStrictEqual({ userId: "a", payload: { newEmail: "next@example.com" } });
+		expect(stored?.accept()).toStrictEqual({
+			userId: "a",
+			payload: { newEmail: "next@example.com" },
+		});
 	});
 
 	it("is parsed when the driver handed back the text PostgreSQL sent", async () => {
@@ -137,14 +147,19 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(stored).toStrictEqual({ userId: "a", payload: { newEmail: "next@example.com" } });
+		expect(stored?.accept()).toStrictEqual({
+			userId: "a",
+			payload: { newEmail: "next@example.com" },
+		});
 	});
 
 	it("is null for a row without one", async () => {
 		const { repository } = repositoryReturning([{ user_id: "a", payload: null }]);
 
 		expect(
-			await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			(
+				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" })
+			)?.accept(),
 		).toStrictEqual({ userId: "a", payload: null });
 	});
 
@@ -152,7 +167,9 @@ describe("the payload a driver hands back", () => {
 		const { repository } = repositoryReturning([{ user_id: "a" }]);
 
 		expect(
-			await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			(
+				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" })
+			)?.accept(),
 		).toStrictEqual({ userId: "a", payload: null });
 	});
 });
@@ -167,6 +184,7 @@ describe("what the repository refuses", () => {
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
 				payload: null,
+				...MAC,
 			}),
 		).rejects.toThrow(OneTimeTokenError);
 	});
@@ -184,6 +202,7 @@ describe("what the repository refuses", () => {
 					purpose,
 					userId: "0d1b6c8e-0000-4000-8000-000000000001",
 					payload: { secret: "must-not-appear" },
+					...MAC,
 				})
 				.catch((error: unknown) => error)) as OneTimeTokenError;
 		};
@@ -217,6 +236,7 @@ describe("what the repository refuses", () => {
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
 				payload: null,
+				...MAC,
 			})
 			.catch(() => undefined);
 
@@ -233,6 +253,7 @@ describe("what the repository refuses", () => {
 				purpose: "totp_step" as unknown as OneTimeTokenPurpose,
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
 				payload: null,
+				...MAC,
 			})
 			.catch(() => undefined);
 

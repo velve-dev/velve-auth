@@ -2,8 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { isSessionFresh } from "../src/core/session/freshness.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import { HOUR, MINUTE, withProcessClockShiftedBy } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -58,7 +61,11 @@ async function deadlinesOf(sessionId: string) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_deadlines");
 	counter = countingByVerb(migrated.connection);
-	service = createSessionService({ driver: counter.driver, schema: migrated.schema });
+	service = createSessionService({
+		keys: TOKEN_KEYS,
+		driver: counter.driver,
+		schema: migrated.schema,
+	});
 	userId = await createUser(migrated.connection, migrated.schema);
 });
 
@@ -110,6 +117,7 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 
 	it("lets a short interval write on every request, so the throttle is the interval and nothing else", async () => {
 		const eager = createSessionService({
+			keys: TOKEN_KEYS,
 			driver: counter.driver,
 			schema: migrated.schema,
 			session: { idleWriteInterval: "1s" },
@@ -178,6 +186,7 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	it("refuses a configuration that would let the idle deadline outlive it", () => {
 		expect(() =>
 			createSessionService({
+				keys: TOKEN_KEYS,
 				driver: counter.driver,
 				schema: migrated.schema,
 				session: { idleTimeout: "31d" },

@@ -7,6 +7,7 @@ import {
 	type SessionRepository,
 } from "../src/core/db/repositories/session.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -15,6 +16,8 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { sessionInsertFor } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 /**
  * The primitive `identity.link.start` reaches for lives in a module three features are editing, and
@@ -43,7 +46,11 @@ beforeAll(async () => {
 		driver: migrated.connection,
 		schema: migrated.schema,
 	});
-	service = createSessionService({ driver: migrated.connection, schema: migrated.schema });
+	service = createSessionService({
+		keys: TOKEN_KEYS,
+		driver: migrated.connection,
+		schema: migrated.schema,
+	});
 	ownerId = await createUser(migrated.connection, migrated.schema);
 	owner = actorOfTestUser(ownerId);
 	strangerId = await createUser(migrated.connection, migrated.schema);

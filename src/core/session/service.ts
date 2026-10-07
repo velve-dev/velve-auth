@@ -4,10 +4,21 @@ import {
 	createSessionRepository,
 	PreviousSessionMissingError,
 	type SessionInsert,
+	type SessionWithOwner,
 } from "../db/repositories/session.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import type { AuthenticationFactor, Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
+import type { KeyProvider } from "../keys/provider.js";
+import {
+	bindToken,
+	checkTokenBinding,
+	reboundTokenMacIfStale,
+	reportRefusedTokenRow,
+	type StoredTokenMac,
+	type TokenBinding,
+	type TokenBindingRefusalReport,
+} from "../token/binding.js";
 import { type SessionConfig, type SessionSettings, sessionSettingsOf } from "./config.js";
 import { assertSessionIsFresh } from "./freshness.js";
 import {
@@ -37,7 +48,9 @@ export interface ObservedRequest {
 
 export interface SessionServiceOptions {
 	readonly driver: Driver;
+	readonly keys: KeyProvider;
 	readonly schema?: string;
+	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
 }
@@ -95,6 +108,20 @@ export interface SessionService {
 
 const WRITE_NOW = 0;
 
+function sessionBinding(
+	userId: string,
+	tokenHash: Uint8Array,
+	factors: readonly string[],
+): TokenBinding {
+	return { purpose: "session", ownerId: userId, tokenSha256: tokenHash, content: { factors } };
+}
+
+interface VerifiedSession {
+	readonly found: SessionWithOwner;
+	readonly stored: StoredTokenMac;
+	readonly rebound: StoredTokenMac | null;
+}
+
 //a session that vanished before its replacement is one the caller no longer has
 function replacedSessionFailure(cause: unknown): never {
 	if (cause instanceof PreviousSessionMissingError) {
@@ -120,19 +147,49 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		return sessionMetadataFor(metadataMode, observed);
 	}
 
-	function insertFor(
+	//the mac is taken over the factors as the row stores them, once and in their first order
+	async function insertFor(
 		userId: string,
 		factors: readonly AuthenticationFactor[],
 		observed: ObservedRequest,
 		tokenHash: Uint8Array,
-	): SessionInsert {
+	): Promise<SessionInsert> {
+		const storedFactors = factors.filter((factor, index) => factors.indexOf(factor) === index);
+		const mac = await bindToken(options.keys, sessionBinding(userId, tokenHash, storedFactors));
 		return {
 			userId,
 			tokenHash,
-			factors,
+			factors: storedFactors,
 			...metadataOf(observed),
 			idleTimeoutMs: settings.idleTimeoutMs,
 			absoluteTimeoutMs: settings.absoluteTimeoutMs,
+			...mac,
+		};
+	}
+
+	//a row the library did not write is answered as no row before anything in it is read (S-INTEG-9)
+	async function verifiedSession(token: string): Promise<VerifiedSession | null> {
+		const tokenHash = sessionTokenHash(token);
+		const candidate = await sessions.findSessionByTokenHash(tokenHash);
+		if (candidate === null) {
+			return null;
+		}
+		const names = candidate.storedFactorNames;
+		const binding = sessionBinding(candidate.userId, tokenHash, names ?? []);
+		const verdict =
+			names === null ? "mismatch" : await checkTokenBinding(options.keys, binding, candidate);
+		if (verdict !== "valid") {
+			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+				userId: candidate.userId,
+				occasion: "session_resolve",
+				verdict,
+			});
+			return null;
+		}
+		return {
+			found: candidate.decode(),
+			stored: candidate,
+			rebound: await reboundTokenMacIfStale(options.keys, binding, candidate),
 		};
 	}
 
@@ -149,15 +206,24 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		token: string,
 		writtenNoSoonerThanMs: number,
 	): Promise<SessionResolution | null> {
-		const found = await sessions.findSessionByTokenHash(sessionTokenHash(token));
-		if (found === null) {
+		const verified = await verifiedSession(token);
+		if (verified === null) {
 			return null;
 		}
+		const { found } = verified;
 		//a disabled account is named only here, once the caller has proved the account is theirs
 		if (found.userDisabledAt !== null) {
 			throw new VelveError("account_disabled");
 		}
 		const resolved = resolutionOf(found.userId, found.session, found.observedAt);
+		if (verified.rebound !== null) {
+			await sessions.rebindSessionTokenMac({
+				actor: actorOfResolvedSession(resolved),
+				sessionId: found.session.id,
+				previous: verified.stored,
+				next: verified.rebound,
+			});
+		}
 		const sinceLastWrite = found.observedAt.getTime() - found.session.lastUsedAt.getTime();
 		if (sinceLastWrite < writtenNoSoonerThanMs) {
 			return resolved;
@@ -181,7 +247,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.insertSession(
-				insertFor(userId, factors, observed, issued.tokenHash),
+				await insertFor(userId, factors, observed, issued.tokenHash),
 			);
 			return { token: issued.token, session };
 		},
@@ -191,7 +257,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const issued = createSessionToken();
 			const session = await sessions.replacePresentedSession({
 				presentedTokenHash: presentedToken === null ? null : sessionTokenHash(presentedToken),
-				insert: insertFor(userId, factors, observed, issued.tokenHash),
+				insert: await insertFor(userId, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},
@@ -202,7 +268,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions
 				.replaceSession({
 					previousTokenHash: sessionTokenHash(previousToken),
-					insert: insertFor(userId, factors, observed, issued.tokenHash),
+					insert: await insertFor(userId, factors, observed, issued.tokenHash),
 				})
 				.catch(replacedSessionFailure);
 			return { token: issued.token, session };
@@ -213,7 +279,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
-				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash),
+				insert: await insertFor(resolved.userId, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},
@@ -223,7 +289,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions.replaceSessionOwnedBy({
 				actor,
 				previousSessionId,
-				insert: insertFor(actor, factors, observed, issued.tokenHash),
+				insert: await insertFor(actor, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},

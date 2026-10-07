@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -8,6 +9,8 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const INVENTED = "00000000-0000-4000-8000-000000000000";
@@ -36,6 +39,7 @@ async function snapshotOf(user: string): Promise<string> {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_ownership");
 	service = createSessionService({
+		keys: TOKEN_KEYS,
 		driver: migrated.connection,
 		schema: migrated.schema,
 	});

@@ -1,4 +1,5 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
+import type { StoredTokenMac } from "../../token/binding.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
@@ -29,7 +30,7 @@ export class SessionOwnerMismatchError extends Error {
 	}
 }
 
-export interface SessionInsert {
+export interface SessionInsert extends StoredTokenMac {
 	readonly userId: string;
 	readonly tokenHash: Uint8Array;
 	readonly factors: readonly AuthenticationFactor[];
@@ -47,6 +48,15 @@ export interface SessionWithOwner {
 	readonly observedAt: Date;
 }
 
+/** a row found by its token hash whose MAC is still to be checked before anything in it is used */
+export interface SessionCandidate extends StoredTokenMac {
+	readonly sessionId: string;
+	readonly userId: string;
+	/** the factor names exactly as stored, or null where the column holds something that is no name */
+	readonly storedFactorNames: readonly string[] | null;
+	decode(): SessionWithOwner;
+}
+
 export interface RemovedSession {
 	readonly id: string;
 	readonly userId: string;
@@ -59,7 +69,14 @@ interface SessionRepositoryOptions {
 
 export interface SessionRepository {
 	insertSession(input: SessionInsert): Promise<Session>;
-	findSessionByTokenHash(tokenHash: Uint8Array): Promise<SessionWithOwner | null>;
+	findSessionByTokenHash(tokenHash: Uint8Array): Promise<SessionCandidate | null>;
+	//the stored mac is the predicate so a concurrent rebinding is not overwritten (S-KEY-5)
+	rebindSessionTokenMac(input: {
+		readonly actor: Actor;
+		readonly sessionId: string;
+		readonly previous: StoredTokenMac;
+		readonly next: StoredTokenMac;
+	}): Promise<void>;
 	extendIdleDeadline(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -125,7 +142,10 @@ interface SessionRowShape {
 	readonly user_agent: string | null;
 }
 
-interface OwnedRowShape extends SessionRowShape {
+interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
+	readonly factor_names: string;
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
 	readonly disabled_at: unknown;
 	readonly observed_at: unknown;
 }
@@ -162,6 +182,12 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 	return names.filter(isAuthenticationFactor);
 }
 
+//json keeps a comma inside a name apart from the comma between two names (S-INTEG-9)
+function storedNamesOf(json: string): readonly string[] | null {
+	const names: unknown = JSON.parse(json);
+	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;
+}
+
 //the array literal is built from a closed set so no request value can reach it
 function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	for (const factor of factors) {
@@ -196,17 +222,18 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 
 function insertStatement(table: string): string {
 	return `INSERT INTO ${table}
-		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent)
+		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent,
+			token_mac, token_mac_key_version)
 	VALUES ($1, $2, now() + make_interval(secs => $3::double precision),
-		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7)
+		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9)
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
 //one joined query reads disabled at so a disabled account cannot pass as signed in (S-CACHE-2)
 function resolveStatement(table: string, users: string): string {
 	return `SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
-		s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
-		u.disabled_at, now() AS observed_at
+		s.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
+		s.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at
 	FROM ${table} s
 	JOIN ${users} u ON u.id = s.user_id
 	WHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`;
@@ -220,6 +247,11 @@ function extendIdleDeadlineStatement(table: string): string {
 		AND last_used_at <= now() - make_interval(secs => $4::double precision)
 		AND idle_expires_at > now() AND absolute_expires_at > now()
 	RETURNING idle_expires_at`;
+}
+
+function rebindStatement(table: string): string {
+	return `UPDATE ${table} SET token_mac = $3, token_mac_key_version = $4
+	WHERE id = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5`;
 }
 
 function deleteByTokenHashStatement(table: string): string {
@@ -273,7 +305,26 @@ function insertParameters(insert: SessionInsert): unknown[] {
 		toFactorArray(insert.factors),
 		insert.ipAddress,
 		insert.userAgent,
+		insert.tokenMac,
+		insert.tokenMacKeyVersion,
 	];
+}
+
+function candidateOf(row: OwnedRowShape): SessionCandidate {
+	const storedFactorNames = storedNamesOf(row.factor_names);
+	return {
+		sessionId: row.id,
+		userId: row.user_id,
+		storedFactorNames,
+		tokenMac: row.token_mac,
+		tokenMacKeyVersion: row.token_mac_key_version,
+		decode: () => ({
+			session: toSession({ ...row, factors: (storedFactorNames ?? []).join(",") }, NOT_LISTED),
+			userId: row.user_id,
+			userDisabledAt: toOptionalDate(row.disabled_at),
+			observedAt: toDate(row.observed_at),
+		}),
+	};
 }
 
 export function createSessionRepository(options: SessionRepositoryOptions): SessionRepository {
@@ -282,6 +333,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const insertSql = insertStatement(table);
 	const resolveSql = resolveStatement(table, users);
 	const extendSql = extendIdleDeadlineStatement(table);
+	const rebindSql = rebindStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
 	const findUserIdSql = findUserIdStatement(table);
 	const deleteOwnedSql = deleteOwnedStatement(table);
@@ -319,15 +371,18 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 
 		async findSessionByTokenHash(tokenHash) {
 			const [row] = await options.driver.query<OwnedRowShape>(resolveSql, [tokenHash]);
-			if (row === undefined) {
-				return null;
-			}
-			return {
-				session: toSession(row, NOT_LISTED),
-				userId: row.user_id,
-				userDisabledAt: toOptionalDate(row.disabled_at),
-				observedAt: toDate(row.observed_at),
-			};
+			return row === undefined ? null : candidateOf(row);
+		},
+
+		async rebindSessionTokenMac({ actor, sessionId, previous, next }) {
+			await options.driver.query(rebindSql, [
+				sessionId,
+				previous.tokenMac,
+				next.tokenMac,
+				next.tokenMacKeyVersion,
+				previous.tokenMacKeyVersion,
+				actor,
+			]);
 		},
 
 		async listEverySessionIdOwnedBy({ actor }) {

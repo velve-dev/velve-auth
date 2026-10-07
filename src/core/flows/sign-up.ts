@@ -127,7 +127,7 @@ async function register(
 		const artefact =
 			written.email === null
 				? null
-				: await mintArtefact(transaction, schema, {
+				: await mintArtefact(transaction, flow.environment.services, {
 						purpose: "email_verify",
 						subject: { userId: created.id },
 					});
@@ -203,8 +203,8 @@ async function announce(
 	if (flow.email === undefined || address === null || minted === null) {
 		return;
 	}
-	const { driver, schema } = flow.environment.services;
-	const mailer = { driver, schema, email: flow.email };
+	const { driver, schema, keys } = flow.environment.services;
+	const mailer = { driver, schema, keys, email: flow.email };
 	if (occupancy.kind === "taken") {
 		if (occupancy.owner !== null) {
 			await sendOrUndo(mailer, null, noticeOf(occupancy.owner, address));

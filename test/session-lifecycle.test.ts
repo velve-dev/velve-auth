@@ -6,6 +6,7 @@ import {
 	type SessionServiceOptions,
 } from "../src/core/session/service.js";
 import { createSessionToken, sessionTokenHash } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -14,6 +15,8 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { MINUTE } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const A_BROWSER = {
@@ -60,6 +63,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_lifecycle");
 	const options: SessionServiceOptions = {
 		driver: migrated.connection,
+		keys: TOKEN_KEYS,
 		schema: migrated.schema,
 	};
 	service = createSessionService(options);
@@ -95,6 +99,7 @@ describe("issuing a session", () => {
 
 	it("stores the observed values when the configuration says full", async () => {
 		const full = createSessionService({
+			keys: TOKEN_KEYS,
 			driver: migrated.connection,
 			schema: migrated.schema,
 			sessionMetadata: "full",

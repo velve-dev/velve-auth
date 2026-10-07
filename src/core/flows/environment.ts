@@ -21,7 +21,8 @@ export function observedIn(context: RequestContext): ObservedRequest {
 }
 
 export function mailerOf(environment: FlowEnvironment, email: EmailConfig): ArtefactMailer {
-	return { driver: environment.services.driver, schema: environment.services.schema, email };
+	const { driver, schema, keys } = environment.services;
+	return { driver, schema, keys, email };
 }
 
 //an account that vanished after a redemption must answer as the token does

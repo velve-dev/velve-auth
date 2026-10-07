@@ -14,8 +14,11 @@ import {
 } from "../src/core/factor/pending/index.js";
 import { ConcealedError } from "../src/core/http/error-map.js";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let connection: TestConnection;
 let schema: string;
@@ -26,7 +29,7 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("pending");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	pending = createPendingAuthenticationService({ driver: connection, schema });
+	pending = createPendingAuthenticationService({ keys: TOKEN_KEYS, driver: connection, schema });
 });
 
 afterAll(async () => {
@@ -263,6 +266,8 @@ describe("the token and the repository underneath the service", () => {
 
 		const counted = await repository.countFailedAttempt({
 			tokenHash: hashPendingToken(toPendingToken("x".repeat(43))),
+			checked: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1, attempts: 0 },
+			next: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 },
 			maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
 		});
 

@@ -34,9 +34,10 @@ async function createUser(email: string): Promise<string> {
 
 async function createSession(userId: string): Promise<string> {
 	const [row] = await connection.query<{ id: string }>(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-		 VALUES ($1, $2, now() + interval '1 day', now() + interval '30 days') RETURNING id`,
-		[userId, randomBytes(32)],
+		`INSERT INTO ${schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '1 day', now() + interval '30 days', $3, 1) RETURNING id`,
+		[userId, randomBytes(32), randomBytes(32)],
 	);
 	if (row === undefined) {
 		throw new Error("the session was not created");
@@ -189,14 +190,16 @@ describe("deleting a user (S-TOKEN-5)", () => {
 			[userId, randomBytes(8).toString("hex")],
 		);
 		await connection.query(
-			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
-			 VALUES ($1, 'email_verify', $2, now() + interval '1 hour')`,
-			[bytes(), userId],
+			`INSERT INTO ${schema}.one_time_token
+			   (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'email_verify', $2, now() + interval '1 hour', $3, 1)`,
+			[bytes(), userId, bytes()],
 		);
 		await connection.query(
-			`INSERT INTO ${schema}.pending_authentication (token_sha256, user_id, factors_completed, expires_at)
-			 VALUES ($1, $2, '{password}', now() + interval '10 minutes')`,
-			[bytes(), userId],
+			`INSERT INTO ${schema}.pending_authentication
+			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, $2, '{password}', now() + interval '10 minutes', $3, 1)`,
+			[bytes(), userId, bytes()],
 		);
 		await connection.query(
 			`INSERT INTO ${schema}.totp_credential (user_id, secret_enc, key_version) VALUES ($1, $2, 1)`,

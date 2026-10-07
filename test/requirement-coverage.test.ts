@@ -96,10 +96,6 @@ const NAMED_BY_NO_TEST: ReadonlyMap<string, string> = new Map([
 		"S-INTEG-8",
 		"Stated by section 5.21 ahead of the code that meets it. The specification, the state-mac and token-mac purposes and the velve.security_state table are the foundation the requirement is built on; the requirement itself belongs to the `security-state-administration` range of the decision log and is unbuilt until that branch merges, which removes this line by citing it (E-3087).",
 	],
-	[
-		"S-INTEG-9",
-		"Stated by section 5.21 ahead of the code that meets it. The specification, the state-mac and token-mac purposes and the velve.security_state table are the foundation the requirement is built on; the requirement itself belongs to the `security-state-tokens` range of the decision log and is unbuilt until that branch merges, which removes this line by citing it (E-3087).",
-	],
 ]);
 
 describe("every requirement of section 5 has a test case in section 6", () => {

@@ -4,7 +4,10 @@ import { truncatedIpAddress } from "../src/core/session/ip-address.js";
 import { DEFAULT_SESSION_METADATA_MODE, sessionMetadataFor } from "../src/core/session/metadata.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { truncatedUserAgent } from "../src/core/session/user-agent.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const CHROME_ON_MACOS =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.205 Safari/537.36";
@@ -65,6 +68,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_metadata");
 	sent = capturingDriver(migrated.connection);
 	truncating = createSessionService({
+		keys: TOKEN_KEYS,
 		driver: sent.driver,
 		schema: migrated.schema,
 	});
@@ -169,11 +173,13 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 
 	it("stores nothing at all in mode none, and the observed values in mode full", async () => {
 		const nothing = createSessionService({
+			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "none",
 		});
 		const everything = createSessionService({
+			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "full",
@@ -247,6 +253,7 @@ describe("what truncation refuses to pass through", () => {
 
 	it("is what a service built without the option does, and the option's default says so", async () => {
 		const unconfigured = createSessionService({
+			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 		});

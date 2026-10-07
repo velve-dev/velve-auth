@@ -40,9 +40,12 @@ export async function requestVerification(
 		throw new VelveError("invalid_input");
 	}
 	await context.enforceAccountRateLimit(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, { purpose: "email_verify", subject: { userId: user.id } }),
+		mintArtefact(transaction, environment.services, {
+			purpose: "email_verify",
+			subject: { userId: user.id },
+		}),
 	);
 	await sendOrUndo(mailerOf(environment, email), minted, {
 		kind: "email_verification",
@@ -62,7 +65,7 @@ export async function redeemVerification(
 	const confirmingSessionId = await sessionIdOfCaller(environment, context);
 
 	const userId = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "email_verify",
 		});
@@ -106,9 +109,9 @@ export async function requestChange(
 
 	const user = await readAccountOfSession(environment, userId);
 	const previousEmail = user.email ?? "";
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "email_change",
 			subject: { userId: user.id },
 			payload: { [CHANGED_ADDRESS]: address },
@@ -133,7 +136,7 @@ export async function redeemChange(
 	const confirmingSessionId = await sessionIdOfCaller(environment, context);
 
 	const userId = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "email_change",
 		});

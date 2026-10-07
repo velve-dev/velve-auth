@@ -39,10 +39,10 @@ export async function requestReset(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	//the unknown branch must mint a row too and call send exactly once (E-597)
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "password_reset",
 			subject: subjectOfAddress(owner, address),
 		}),
@@ -126,10 +126,10 @@ export async function redeemReset(
 		environment.services.password,
 		environment.semaphore,
 	);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 
 	const result = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "password_reset",
 		});

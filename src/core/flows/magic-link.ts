@@ -29,9 +29,9 @@ export async function requestMagicLink(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "magic_link",
 			subject: subjectOfAddress(owner, address),
 		}),
@@ -65,7 +65,7 @@ export async function redeemMagicLink(
 	const confirmingSessionId = await sessionIdOfCaller(environment, context);
 
 	const account = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "magic_link",
 		});

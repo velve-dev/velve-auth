@@ -37,11 +37,14 @@ export function testKeyProvider(currentVersion = 1): KeyProvider {
 	return testKeyRing(currentVersion).providerAt(currentVersion);
 }
 
+//every pending service of one test file takes its token MACs under one provider (S-INTEG-9)
+const PENDING_TOKEN_KEYS = testKeyProvider();
+
 export function pendingAuthenticationsOn(
 	driver: Driver,
 	schema: string,
 ): PendingAuthenticationService {
-	return createPendingAuthenticationService({ driver, schema });
+	return createPendingAuthenticationService({ driver, keys: PENDING_TOKEN_KEYS, schema });
 }
 
 /** The state a second factor is spent on, begun the way the sign-in path begins it. */

@@ -9,6 +9,7 @@ import {
 } from "../src/core/db/repositories/session.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken, sessionTokenHash } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -18,6 +19,8 @@ import {
 } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { sessionInsertFor } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -90,6 +93,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_reissue");
 	traced = tracingDriver(migrated.connection);
 	service = createSessionService({
+		keys: TOKEN_KEYS,
 		driver: traced.driver,
 		schema: migrated.schema,
 	});

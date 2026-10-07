@@ -101,13 +101,14 @@ describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 
 describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 	it("names the table in the schema that creates it and in the repository, nowhere else", () => {
-		// L-11 adds a third: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
+		// Migration 4 names it to add the MAC columns of S-INTEG-9. L-11 adds another: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
 		// and naming them is what it does. What it is allowed to do there is pinned below, because
 		// admitting a file to this list without that would move the sweep out of every scan in this
 		// file — each of the others reads the repository source alone (E-353).
 		expect(pathsMatching(/one_time_token/)).toStrictEqual([
 			`${coreDirectory}/auth/maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
+			`${coreDirectory}/db/migrations/token-mac.ts`,
 			repositoryPath,
 		]);
 	});
@@ -162,7 +163,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(asWritten(consume)).toBe(
 			"DELETE FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = $2 " +
-				"AND expires_at > now() RETURNING user_id, payload",
+				"AND expires_at > now() RETURNING user_id, payload, token_mac, token_mac_key_version",
 		);
 	});
 

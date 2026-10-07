@@ -11,9 +11,11 @@ import { createWebAuthnChallenges } from "../src/core/factor/webauthn/challenge.
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { createOneTimeTokens } from "../src/core/token/index.js";
 import { createVelveAuth } from "../src/index.js";
-import { configFor, requestTo } from "./auth-fixtures.js";
+import { configFor, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import { createStubProvider, oauthConfigFor } from "./oauth-provider.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const sourceDirectory = fileURLToPath(new URL("../src", import.meta.url));
 
@@ -106,11 +108,13 @@ const ARTEFACT_CREATORS: Readonly<Record<string, () => Promise<string>>> = {
 				driver: recording(migrated.connection),
 				schema: migrated.schema,
 			}),
+			{ keys: TOKEN_KEYS },
 		);
 		return (await tokens.issue({ purpose: "magic_link", userId })).token;
 	},
 	"pending authentication": async () => {
 		const pending = createPendingAuthenticationService({
+			keys: TOKEN_KEYS,
 			driver: recording(migrated.connection),
 			schema: migrated.schema,
 		});

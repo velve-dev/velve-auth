@@ -326,12 +326,19 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
-	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
-	const pending = createPendingAuthenticationService({ driver, schema });
+	const sessions = createSessionService({
+		driver,
+		keys: config.keys,
+		schema,
+		...sessionOptionsOf(config),
+	});
+	const pending = createPendingAuthenticationService({ driver, keys: config.keys, schema });
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
-	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
+	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }), {
+		keys: config.keys,
+	});
 
 	const pluginDatabaseRole =
 		config.pluginDatabaseRole === undefined
@@ -375,6 +382,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		origins: config.origins,
 		completeSecondFactor: createSecondFactorCompletion({
 			driver,
+			keys: config.keys,
 			schema,
 			...sessionOptionsOf(config),
 		}),

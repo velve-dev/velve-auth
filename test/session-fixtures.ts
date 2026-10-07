@@ -1,6 +1,8 @@
 import type { Driver } from "../src/core/db/driver.js";
 import type { SessionInsert } from "../src/core/db/repositories/session.js";
+import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createSessionToken } from "../src/core/session/token.js";
+import { bindToken } from "../src/core/token/binding.js";
 
 const SECOND = 1_000;
 export const MINUTE = 60 * SECOND;
@@ -19,6 +21,8 @@ export function sessionInsertFor(
 		userAgent: null,
 		idleTimeoutMs: 7 * DAY,
 		absoluteTimeoutMs: 30 * DAY,
+		tokenMac: new Uint8Array(32),
+		tokenMacKeyVersion: 1,
 		...overrides,
 	};
 }
@@ -88,4 +92,25 @@ export async function withProcessClockShiftedBy<T>(
 	} finally {
 		globalThis.Date = realDate;
 	}
+}
+
+/**
+ * The two MAC columns a session row written by hand needs to resolve, taken the way the session
+ * service takes them (S-INTEG-9): pass them as the last two parameters of the insert.
+ */
+export async function sessionMacParameters(
+	keys: KeyProvider,
+	row: {
+		readonly userId: string;
+		readonly tokenHash: Uint8Array;
+		readonly factors: readonly string[];
+	},
+): Promise<[Uint8Array, number]> {
+	const { tokenMac, tokenMacKeyVersion } = await bindToken(keys, {
+		purpose: "session",
+		ownerId: row.userId,
+		tokenSha256: row.tokenHash,
+		content: { factors: row.factors },
+	});
+	return [tokenMac, tokenMacKeyVersion];
 }
