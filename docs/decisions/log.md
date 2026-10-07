@@ -16318,3 +16318,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the explanations into `describe` titles, which would make titles of several lines.
 **Reason.** The explanations belong where reasons live, the log, and the comment rule exists so that the code does not grow a second log.
 **Price.** A reader of a test file has to follow the cited entry for the why.
+
+<a id="e-3345"></a>
+
+### A provider value that is no key is unusable, not a TypeError
+`E-3345` · security-state · keys, start-up, settled
+
+**Context.** `keyTakesMac` and `sameKeyFingerprintOf` read `key.algorithm` and `key.usages` without checking that a provider of an application's own had handed over a key at all. A value such as `{}` for `cookie-sig` made the start throw a `TypeError` instead of `keys_unusable`, and the same value answered for a stored `state-mac` version made `verifyMacUnderKeyVersion` throw instead of answering `key_unusable`. The review's cases were red. `src/core/keys/mac.ts` now reads the algorithm through a guard that tolerates any value, `isKeyShaped` requires an algorithm object and a usages array, and the start refuses a current key that is not shaped like one with `keys_unusable`. `test/keys-integrity-non-key.test.ts` holds both, and `DOCUMENTATION.md` says `keyTakesMac` never throws for such a value.
+**Rejected.** Requiring `instanceof CryptoKey`, which fails across realms and for keys from another Web Crypto implementation.
+**Reason.** A start check that crashes on a bad configuration tells the operator less than one that names it.
+**Price.** None.
+
+<a id="e-3346"></a>
+
+### A relabelled seal under an unnamed version is a limit, and E-3191's premise was incomplete
+`E-3346` · security-state · keys, specification, settled
+
+**Context.** E-3191 skipped probing the `state-mac` versions no seal row names, on the premise that such a version is never read. The eighth review showed that the premise does not hold against a writer. After the start, a writer can set a seal row's `key_version` to such a version. If the ring answers that version with another purpose's key, which is an operator's misconfiguration, the writer can then take a MAC under that purpose and present it as a valid seal. E-3191's premise was incomplete when written and is not edited. As decided, this is named as a limit in *The limits* in both languages, since it needs the misconfiguration and the writer together. The case in `test/keys-integrity-non-key.test.ts` is kept as a characterization of the limit, green and titled as one: the start does not refuse such a ring, and a relabelled MAC verifies.
+**Rejected.** Probing every version the ring holds at start, which the ring does not enumerate; `KeyProvider` answers versions it is asked for.
+**Reason.** What a check cannot see has to be named, and the condition that makes it reachable stated.
+**Price.** An operator who answers an old version with the wrong purpose's key is exposed to a writer until the ring is corrected.

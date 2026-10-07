@@ -8723,7 +8723,8 @@ means rather than catching it.
 
 Internal, in `src/core/keys/mac.ts`. Resolves `true` when `key` is an HMAC key
 with hash SHA-256 of at least 256 bits that Web Crypto signs with and whose
-output is 32 bytes, and `false` otherwise; it never throws. A shorter HMAC-SHA256
+output is 32 bytes, and `false` otherwise; it never throws, also not for a value
+a provider of its own hands over that is no key at all. A shorter HMAC-SHA256
 key signs and gives a 32-byte output, so the key length is checked on its own.
 The output-length check is redundant: HMAC with SHA-256 always gives 32 bytes,
 and a key that Web Crypto refuses to sign with fails the signing step first. It
