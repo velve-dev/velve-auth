@@ -19,7 +19,7 @@ afterAll(async () => {
 	await connection.close();
 });
 
-describe("a seal row at the largest storable version (S-INTEG-7)", () => {
+describe("a seal row at the largest storable version (section 3.18, Resealing)", () => {
 	it("refuses any version above it, so a reseal has nothing left to write", async () => {
 		const userId = await createUser(connection, schema);
 		await connection.query(
