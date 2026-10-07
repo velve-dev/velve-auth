@@ -15488,3 +15488,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Folding it into `key_version_unknown`, which would send an operator looking for a lost ring version when the ring holds a key of the wrong kind.
 **Reason.** An alarm's reason is what the operator acts on, and the two causes have different remedies.
 **Price.** One more reason in a public union, which an exhaustive switch in an application's callback has to handle.
+
+<a id="e-3199"></a>
+
+### E-3107's reason is wrong without an anchor
+`E-3199` · security-state, second range · specification, settled
+
+**Context.** E-3107 gave as its reason that "a counter the seal covers is the one thing a writer cannot roll back without breaking the seal". The review showed that false. A mass revocation changes only the epoch and the version of the seal row, so a writer who saved the seal row and a session row before it can put both back: the old seal row matches every unchanged component, the session's MAC matches the old epoch, and no check notices. The reason holds only with an anchor, whose floor the old row's version lies below. E-3107 is not edited, as CLAUDE.md §6 requires for a reason that was wrong when written; this entry corrects it. Section 3.18 *The limits* now say in both languages, in bold, that without an anchor the old seal row suffices to undo a mass revocation, and T-INTEG-9 plays the seal row back once without an anchor (accepted, the documented limit) and once with one (refused with `version_below_anchor`).
+**Rejected.** Nothing; the reason was wrong.
+**Reason.** The epoch is a counter in the database, and a writer can restore any database row they once read; only something outside the database, the anchor, makes a rollback detectable.
+**Price.** The epoch protects a mass revocation against a writer who did not save the seal row beforehand, or against any writer where an anchor is configured, and against nobody else.
