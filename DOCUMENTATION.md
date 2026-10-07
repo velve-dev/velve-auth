@@ -8741,9 +8741,10 @@ from `velve.user`, so deleting an account deletes its seal, and the cascade
 guard of the migration runner counts it among the user-owned tables. It has no
 deadline and no sweep index: a seal is never expired, only replaced.
 
-Nothing writes the table yet. Migration 4, the token MAC columns of section
-3.18, is reserved for the branch that writes those MACs, because its `NOT NULL`
-columns would refuse every session the code inserts until then.
+The table is written by the seal and read by every check; both are documented
+in [Security state: the seal](#security-state-the-seal). Migration 4, the token
+MAC columns of section 3.18, ships with the keyed token hashes and is documented
+in [Security state: keyed token hashes](#security-state-keyed-token-hashes).
 
 ## Security state: bound envelopes
 
