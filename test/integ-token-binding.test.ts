@@ -50,8 +50,6 @@ let refusals: TokenBindingRefusal[];
 let sessions: SessionService;
 let pending: PendingAuthenticationService;
 let oneTimeTokens: OneTimeTokens;
-let owner: string;
-let victim: string;
 
 function report(refusal: TokenBindingRefusal): void {
 	refusals.push(refusal);
@@ -124,8 +122,6 @@ beforeAll(async () => {
 	schema = migrated.schema;
 	keys = testKeyRing(1).providerAt(1);
 	({ sessions, pending, oneTimeTokens } = servicesUnder(keys));
-	owner = await createUser(migrated.connection, schema);
-	victim = await createUser(migrated.connection, schema);
 });
 
 afterAll(async () => {
@@ -135,6 +131,7 @@ afterAll(async () => {
 
 describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/3)", () => {
 	it("refuses a session row", async () => {
+		const victim = await createUser(migrated.connection, schema);
 		refusals = [];
 		const token = chosenToken();
 		await sql(
@@ -151,6 +148,7 @@ describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/
 	});
 
 	it("refuses a pending authentication row", async () => {
+		const victim = await createUser(migrated.connection, schema);
 		refusals = [];
 		const token = chosenToken();
 		await sql(
@@ -168,6 +166,7 @@ describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/
 	});
 
 	it("refuses a one-time token row", async () => {
+		const victim = await createUser(migrated.connection, schema);
 		refusals = [];
 		const token = chosenToken();
 		await sql(
@@ -186,6 +185,8 @@ describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/
 
 describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	it("refuses a session moved to another account", async () => {
+		const owner = await createUser(migrated.connection, schema);
+		const victim = await createUser(migrated.connection, schema);
 		const token = await issuedSession(owner);
 		await sql(
 			`WITH moved AS (DELETE FROM ${schema}.session WHERE token_sha256 = $1 RETURNING *)
@@ -203,6 +204,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a session moved into the pending table", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedSession(owner);
 		await sql(
 			`WITH moved AS (DELETE FROM ${schema}.session WHERE token_sha256 = $1 RETURNING *)
@@ -219,6 +221,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a session whose factors were raised", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedSession(owner);
 		await sql(`UPDATE ${schema}.session SET factors = '{password,totp}' WHERE token_sha256 = $1`, [
 			sha256Of(token),
@@ -230,6 +233,8 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a pending authentication moved to another account", async () => {
+		const owner = await createUser(migrated.connection, schema);
+		const victim = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		await sql(`UPDATE ${schema}.pending_authentication SET user_id = $2 WHERE token_sha256 = $1`, [
 			sha256Of(token),
@@ -242,6 +247,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a pending authentication moved into the session table", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		await sql(
 			`WITH moved AS (
@@ -261,6 +267,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a pending authentication whose completed factors were raised", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		await sql(
 			`UPDATE ${schema}.pending_authentication SET factors_completed = '{password,totp}'
@@ -274,6 +281,8 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a one-time token moved to another account", async () => {
+		const owner = await createUser(migrated.connection, schema);
+		const victim = await createUser(migrated.connection, schema);
 		const token = await issuedOneTime(owner);
 		await sql(`UPDATE ${schema}.one_time_token SET user_id = $2 WHERE token_sha256 = $1`, [
 			sha256Of(token),
@@ -288,6 +297,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a one-time token moved into the pending table", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedOneTime(owner);
 		await sql(
 			`WITH moved AS (DELETE FROM ${schema}.one_time_token WHERE token_sha256 = $1 RETURNING *)
@@ -304,6 +314,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a one-time token given another purpose", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedOneTime(owner);
 		await sql(
 			`UPDATE ${schema}.one_time_token SET purpose = 'password_reset' WHERE token_sha256 = $1`,
@@ -318,6 +329,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 	});
 
 	it("refuses a one-time token whose payload names another address", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedOneTime(owner, "email_change");
 		await sql(
 			`UPDATE ${schema}.one_time_token SET payload = '{"newEmail":"attacker@example.com"}'
@@ -335,6 +347,7 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 
 describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 	it("refuses a row whose counter a writer reset after four failed attempts", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
 			await failOneAttempt(pending, token);
@@ -354,6 +367,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 	});
 
 	it("rebinds the row on every attempt, so the counted row still verifies", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		refusals = [];
 		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
@@ -372,6 +386,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 	});
 
 	it("books two attempts that resolved the same row each once, without an alarm", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		refusals = [];
 
@@ -388,6 +403,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 	});
 
 	it("answers a refused booking exactly as a missing pending row, outwardly", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedPending(owner);
 		await sql(`UPDATE ${schema}.pending_authentication SET attempts = 3 WHERE token_sha256 = $1`, [
 			sha256Of(token),
@@ -412,6 +428,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 	});
 
 	it("answers a booking on a consumed or expired row as a missing row, without an alarm", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const consumed = await issuedPending(owner);
 		const expired = await issuedPending(owner);
 		await pending.consume(consumed);
@@ -430,6 +447,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 
 describe("what a row the library wrote keeps (S-INTEG-9)", () => {
 	it("resolves an untouched session, pending authentication and one-time token", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		refusals = [];
 		const session = await issuedSession(owner);
 		const pendingToken = await issuedPending(owner);
@@ -444,6 +462,7 @@ describe("what a row the library wrote keeps (S-INTEG-9)", () => {
 	});
 
 	it("refuses a row under a key version the ring does not hold, naming that verdict", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const token = await issuedSession(owner);
 		await sql(`UPDATE ${schema}.session SET token_mac_key_version = 7 WHERE token_sha256 = $1`, [
 			sha256Of(token),
@@ -462,6 +481,7 @@ describe("what a row the library wrote keeps (S-INTEG-9)", () => {
 	});
 
 	it("does not let a throwing report change the refusal", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const throwing = createSessionService({
 			sealing: "migrating",
 			driver: migrated.connection,
@@ -482,6 +502,7 @@ describe("what a row the library wrote keeps (S-INTEG-9)", () => {
 
 describe("a row under an older key version (S-KEY-5)", () => {
 	it("is rebound under the current version on a successful resolve", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const ring = testKeyRing(2);
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const rotated = servicesUnder(ring.providerAt(2, [1, 2]));
@@ -510,6 +531,7 @@ describe("a row under an older key version (S-KEY-5)", () => {
 	});
 
 	it("is refused once its version has left the ring without a rebinding", async () => {
+		const owner = await createUser(migrated.connection, schema);
 		const ring = testKeyRing(2);
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const retired = servicesUnder(ring.providerAt(2, [2]));
