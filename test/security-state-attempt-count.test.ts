@@ -275,3 +275,46 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
 	});
 });
+
+describe("a writer who edits the row while a booking waits on it, to launder it through the booking", () => {
+	it("does not get a valid MAC over factors he chose, however many attempts he claims", async () => {
+		const userId = await createUser(owner, schema);
+		const token = await pendingAfterFailedAttempts(userId, 1);
+		refusals = [];
+
+		const outcome = await bookingWhileTheWriter(userId, token, async () => {
+			await writer.query(
+				`UPDATE ${schema}.pending_authentication
+				 SET attempts = 3, factors_completed = '{password,totp}' WHERE user_id = $1`,
+				[userId],
+			);
+		});
+		const [row] = await owner.query<{ factors: string }>(
+			`SELECT array_to_string(factors_completed, ',') AS factors
+			 FROM ${schema}.pending_authentication WHERE user_id = $1`,
+			[userId],
+		);
+
+		expect(outcome).toBe("missing");
+		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
+		expect(await pending.resolve(token)).toBeNull();
+		expect(row?.factors).toBe("password,totp");
+	});
+
+	it("is refused as missing, with the alarm, when the rewritten row is at the budget", async () => {
+		const userId = await createUser(owner, schema);
+		const token = await pendingAfterFailedAttempts(userId, 1);
+		refusals = [];
+
+		const outcome = await bookingWhileTheWriter(userId, token, async () => {
+			await writer.query(
+				`UPDATE ${schema}.pending_authentication SET attempts = ${MAXIMUM_PENDING_ATTEMPTS}
+				 WHERE user_id = $1`,
+				[userId],
+			);
+		});
+
+		expect(outcome).toBe("missing");
+		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
+	});
+});
