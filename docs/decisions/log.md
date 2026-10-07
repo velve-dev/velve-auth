@@ -15558,3 +15558,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Verifying the MAC before the delete in a separate `SELECT`, which S-RACE-2 forbids: no read may precede the consumption.
 **Reason.** The consuming statement is the only place the row exists for the redemption, so it has to return everything the check needs.
 **Price.** A forged row is consumed by the attempt that discovers it, which removes the writer's evidence from the table; the alarm is the record.
+
+<a id="e-3206"></a>
+
+### The limits say plainly that an unsealed account is not bound in migrating mode
+`E-3206` · security-state · specification, S-INTEG-1, settled
+
+**Context.** The branches reported a limit section 3.18 implied and did not state: in mode `"migrating"` an account without a seal row has no binding at all, because its old-form envelopes carry no owner and no seal covers its factors, so a writer can copy an old-form ciphertext — their own password, for instance — into an unsealed victim account and sign in as the victim. E-3083 named the mode's weaker cousin, deleting a seal row; this one needs no deletion. *The limits* now say it in bold in both languages, that it ends for each account at its first seal and for all at `"required"`, and recommend running the maintenance step immediately after the upgrade and then switching to `"required"`.
+**Rejected.** Refusing old-form envelopes in `"migrating"` for accounts that already have a session, which a writer controls as well.
+**Reason.** The upgrade window is the weakest the design has, and an operator who does not know that keeps it open longer than needed.
+**Price.** None beyond the sentence; the exposure itself is E-3083's.
