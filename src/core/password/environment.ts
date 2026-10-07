@@ -14,6 +14,7 @@ export function createPasswordEnvironmentReader(
 		keys: services.keys,
 		schema: services.schema,
 		memoryCeilingKiB: storedMemoryCeilingKiB(services.password.argon2id.memoryKiB),
+		unboundEnvelopes: services.unboundEnvelopes,
 	});
 	const dummy = createDummyCredential(services.keys, services.password);
 	//the eager start must not become an unhandled rejection before a check awaits it (E-1183)

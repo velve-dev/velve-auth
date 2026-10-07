@@ -39,7 +39,7 @@ let stored: StoredHashes;
 async function createHarness(limit: number, waitLimitInMilliseconds: number): Promise<Harness> {
 	const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 	const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
-	const sealed = await sealPhc(keys, stored.byScheme.argon2id);
+	const sealed = await sealPhc(keys, USER_ID, stored.byScheme.argon2id);
 	const row: PasswordCredentialRow = {
 		userId: USER_ID,
 		phc: sealed.ciphertext,
@@ -251,7 +251,7 @@ describe("S-DOS-3, S-DOS-4 — a flood is refused, not queued forever", () => {
 	it("charges the background rehash to the same semaphore as the check", async () => {
 		const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 		const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
-		const sealed = await sealPhc(keys, stored.byScheme.bcrypt);
+		const sealed = await sealPhc(keys, USER_ID, stored.byScheme.bcrypt);
 		const rows = new Map<string, PasswordCredentialRow>([
 			[USER_ID, { userId: USER_ID, phc: sealed.ciphertext, keyVersion: 1, scheme: "bcrypt" }],
 		]);

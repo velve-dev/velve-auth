@@ -39,6 +39,13 @@ export interface TotpRepository {
 	//only the secret the code was matched against may be confirmed
 	confirmCredential(input: { actor: Actor; secretEnc: Uint8Array<ArrayBuffer> }): Promise<boolean>;
 	removeCredential(input: { actor: Actor }): Promise<boolean>;
+	//only the ciphertext that was read and rebound may be replaced (S-INTEG-1)
+	replaceSecretIfUnchanged(input: {
+		actor: Actor;
+		previous: Uint8Array<ArrayBuffer>;
+		secretEnc: Uint8Array<ArrayBuffer>;
+		keyVersion: number;
+	}): Promise<boolean>;
 	claimTimeStep(input: TimeStepClaim): Promise<boolean>;
 	//the pending row named the owner when its token hash resolved it (E-2424)
 	claimTimeStepOfPending(input: PendingTimeStepClaim): Promise<boolean>;
@@ -85,6 +92,10 @@ WHERE user_id = $1`;
 WHERE user_id = $1 AND secret_enc = $2 AND confirmed_at IS NULL
 RETURNING user_id`;
 
+	const replaceSecretStatement = `UPDATE ${credentials} SET secret_enc = $3, key_version = $4
+WHERE user_id = $1 AND secret_enc = $2
+RETURNING user_id`;
+
 	const removeCredentialStatement = `DELETE FROM ${credentials} WHERE user_id = $1 RETURNING user_id`;
 
 	//a re-enrolment must not inherit the previous secret's replay ledger
@@ -128,6 +139,16 @@ RETURNING time_step`;
 
 		async confirmCredential({ actor, secretEnc }) {
 			const rows = await options.driver.query(confirmStatement, [actor, secretEnc]);
+			return rows.length === 1;
+		},
+
+		async replaceSecretIfUnchanged({ actor, previous, secretEnc, keyVersion }) {
+			const rows = await options.driver.query(replaceSecretStatement, [
+				actor,
+				previous,
+				secretEnc,
+				keyVersion,
+			]);
 			return rows.length === 1;
 		},
 

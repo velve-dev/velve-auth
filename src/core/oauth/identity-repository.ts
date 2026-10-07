@@ -2,21 +2,71 @@ import type { Identity } from "../auth/results.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
+import { VelveError } from "../http/error-map.js";
+import {
+	type BoundColumn,
+	encryptBound,
+	rebindEnvelope,
+	type UnboundEnvelopeReading,
+} from "../keys/envelope-binding.js";
+import type { KeyProvider } from "../keys/provider.js";
+import { randomUuid } from "../token/random.js";
+import type { ProviderTokens } from "./token-exchange.js";
 
-//the token columns are written only when storeTokens says so (S-REST-6)
-export interface EncryptedProviderTokens {
+/** the three provider tokens an identity row can store, before they are encrypted */
+type ProviderTokensToStore = Pick<ProviderTokens, "accessToken" | "refreshToken" | "idToken">;
+
+interface EncryptedProviderTokens {
 	readonly accessTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly refreshTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly idTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly tokenKeyVersion: number | null;
 }
 
-export const NO_STORED_TOKENS: EncryptedProviderTokens = {
+const NO_STORED_TOKENS: EncryptedProviderTokens = {
 	accessTokenEnc: null,
 	refreshTokenEnc: null,
 	idTokenEnc: null,
 	tokenKeyVersion: null,
 };
+
+const utf8 = new TextEncoder();
+
+//each token is bound to the identity row and its own column so none of the three stands in for another (S-INTEG-1)
+async function encryptedProviderTokens(
+	keys: KeyProvider,
+	row: { readonly owner: string; readonly identityId: string },
+	tokens: ProviderTokensToStore | null,
+): Promise<EncryptedProviderTokens> {
+	if (tokens === null) {
+		return NO_STORED_TOKENS;
+	}
+	const columns: readonly (readonly [BoundColumn, string | null])[] = [
+		["identity.access_token_enc", tokens.accessToken],
+		["identity.refresh_token_enc", tokens.refreshToken],
+		["identity.id_token_enc", tokens.idToken],
+	];
+	const sealed = await Promise.all(
+		columns.map(([column, token]) =>
+			token === null
+				? null
+				: encryptBound(keys, { column, owner: row.owner, row: row.identityId }, utf8.encode(token)),
+		),
+	);
+	const versions = new Set(
+		sealed.filter((written) => written !== null).map((written) => written.keyVersion),
+	);
+	//one column carries the version of three ciphertexts, so a rotation between them is refused
+	if (versions.size > 1) {
+		throw new VelveError("internal_error");
+	}
+	return {
+		accessTokenEnc: sealed[0]?.ciphertext ?? null,
+		refreshTokenEnc: sealed[1]?.ciphertext ?? null,
+		idTokenEnc: sealed[2]?.ciphertext ?? null,
+		tokenKeyVersion: [...versions][0] ?? null,
+	};
+}
 
 export interface IdentityFacts {
 	readonly provider: string;
@@ -26,7 +76,8 @@ export interface IdentityFacts {
 	readonly profile: unknown;
 	readonly scopes: readonly string[];
 	readonly tokenLifetimeInSeconds: number | null;
-	readonly tokens: EncryptedProviderTokens;
+	/** the tokens to store encrypted, or null when storeTokens is off */
+	readonly tokens: ProviderTokensToStore | null;
 }
 
 interface OwnedIdentity {
@@ -47,8 +98,69 @@ interface OAuthIdentityRepository {
 		input: { readonly userId: string } & IdentityFacts,
 	): Promise<Identity | null>;
 	//the provider's verification state is written per identity on every sign-in (S-LINK-6)
-	refreshIdentity(input: IdentityFacts): Promise<Identity>;
+	refreshIdentity(input: { readonly existing: OwnedIdentity } & IdentityFacts): Promise<Identity>;
 	listIdentitiesOwnedBy(input: { readonly actor: Actor }): Promise<Identity[]>;
+	//the stored tokens are opened and re-encrypted and never fetched again from the provider (S-INTEG-8)
+	rebindTokensOwnedBy(input: {
+		readonly actor: Actor;
+		readonly unbound: UnboundEnvelopeReading;
+	}): Promise<number>;
+}
+
+interface StoredTokenRow {
+	readonly id: string;
+	readonly access_token_enc: Uint8Array | null;
+	readonly refresh_token_enc: Uint8Array | null;
+	readonly id_token_enc: Uint8Array | null;
+	readonly token_key_version: number | null;
+}
+
+type RebindableColumn = "access_token_enc" | "refresh_token_enc" | "id_token_enc";
+
+const REBINDABLE_COLUMNS: readonly (readonly [RebindableColumn, BoundColumn])[] = [
+	["access_token_enc", "identity.access_token_enc"],
+	["refresh_token_enc", "identity.refresh_token_enc"],
+	["id_token_enc", "identity.id_token_enc"],
+];
+
+async function reboundTokensOf(
+	keys: KeyProvider,
+	owner: string,
+	row: StoredTokenRow,
+	unbound: UnboundEnvelopeReading,
+): Promise<EncryptedProviderTokens | null> {
+	const keyVersion = row.token_key_version;
+	if (keyVersion === null) {
+		return null;
+	}
+	const rewritten: Partial<Record<RebindableColumn, Uint8Array<ArrayBuffer> | null>> = {};
+	let changed = false;
+	let writtenVersion = keyVersion;
+	for (const [name, column] of REBINDABLE_COLUMNS) {
+		const stored = row[name];
+		if (stored === null) {
+			rewritten[name] = null;
+			continue;
+		}
+		const ciphertext = Uint8Array.from(stored);
+		const rebound = await rebindEnvelope(
+			keys,
+			{ column, owner, row: row.id },
+			{ keyVersion, ciphertext },
+			unbound,
+		);
+		rewritten[name] = rebound?.ciphertext ?? ciphertext;
+		changed ||= rebound !== null;
+		writtenVersion = rebound?.keyVersion ?? writtenVersion;
+	}
+	return changed
+		? {
+				accessTokenEnc: rewritten.access_token_enc ?? null,
+				refreshTokenEnc: rewritten.refresh_token_enc ?? null,
+				idTokenEnc: rewritten.id_token_enc ?? null,
+				tokenKeyVersion: writtenVersion,
+			}
+		: null;
 }
 
 interface IdentityRow {
@@ -105,16 +217,19 @@ function toIdentity(row: IdentityRow): Identity {
 	};
 }
 
-function factParameters(facts: IdentityFacts): readonly unknown[] {
+function factParameters(
+	facts: IdentityFacts,
+	encrypted: EncryptedProviderTokens,
+): readonly unknown[] {
 	return [
 		facts.providerEmail,
 		facts.providerEmailVerified,
 		facts.profile === null || facts.profile === undefined ? null : JSON.stringify(facts.profile),
 		facts.scopes.join(" "),
-		facts.tokens.accessTokenEnc,
-		facts.tokens.refreshTokenEnc,
-		facts.tokens.idTokenEnc,
-		facts.tokens.tokenKeyVersion,
+		encrypted.accessTokenEnc,
+		encrypted.refreshTokenEnc,
+		encrypted.idTokenEnc,
+		encrypted.tokenKeyVersion,
 		facts.tokenLifetimeInSeconds,
 	];
 }
@@ -122,6 +237,7 @@ function factParameters(facts: IdentityFacts): readonly unknown[] {
 export function createOAuthIdentityRepository(options: {
 	readonly driver: Driver;
 	readonly schema: string;
+	readonly keys: KeyProvider;
 }): OAuthIdentityRepository {
 	const schema = assertSchemaName(options.schema);
 	const identities = qualifiedTableName(schema, "identity");
@@ -136,9 +252,9 @@ WHERE provider = $1 AND subject = $2`;
 
 	const insertStatement = `INSERT INTO ${identities}
 (user_id, provider, subject, provider_email, provider_email_verified, profile, scopes,
- access_token_enc, refresh_token_enc, id_token_enc, token_key_version, token_expires_at)
+ access_token_enc, refresh_token_enc, id_token_enc, token_key_version, token_expires_at, id)
 VALUES ($1, $2, $3, $4, $5, $6::jsonb, string_to_array($7::text, ' '), $8, $9, $10, $11,
-        now() + make_interval(secs => $12::double precision))
+        now() + make_interval(secs => $12::double precision), $13)
 ON CONFLICT (provider, subject) DO NOTHING
 RETURNING ${RETURNED_COLUMNS}`;
 
@@ -150,18 +266,37 @@ SET provider_email = $3, provider_email_verified = $4, profile = $5::jsonb,
     access_token_enc = $7, refresh_token_enc = $8, id_token_enc = $9, token_key_version = $10,
     token_expires_at = now() + make_interval(secs => $11::double precision),
     updated_at = now()
-WHERE provider = $1 AND subject = $2
+WHERE provider = $1 AND subject = $2 AND id = $12
 RETURNING ${RETURNED_COLUMNS}`;
 
 	const listStatement = `SELECT ${RETURNED_COLUMNS} FROM ${identities}
 WHERE user_id = $1 ORDER BY created_at, id`;
 
+	//the row id is drawn before the insert so the tokens can be bound to the row they are written to (E-3113)
+	const storedTokensStatement = `SELECT id, access_token_enc, refresh_token_enc, id_token_enc,
+token_key_version FROM ${identities} WHERE user_id = $1 ORDER BY id`;
+
+	//the three ciphertexts are swapped only while the row still holds what was read
+	const replaceTokensStatement = `UPDATE ${identities}
+SET access_token_enc = $3, refresh_token_enc = $4, id_token_enc = $5, token_key_version = $6
+WHERE id = $1 AND user_id = $2 AND token_key_version = $7
+  AND access_token_enc IS NOT DISTINCT FROM $8 AND refresh_token_enc IS NOT DISTINCT FROM $9
+  AND id_token_enc IS NOT DISTINCT FROM $10
+RETURNING id`;
+
 	async function insertOwnedBy(ownerId: string, facts: IdentityFacts): Promise<Identity | null> {
+		const identityId = randomUuid();
+		const encrypted = await encryptedProviderTokens(
+			options.keys,
+			{ owner: ownerId, identityId },
+			facts.tokens,
+		);
 		const [row] = await options.driver.query<IdentityRow>(insertStatement, [
 			ownerId,
 			facts.provider,
 			facts.subject,
-			...factParameters(facts),
+			...factParameters(facts, encrypted),
+			identityId,
 		]);
 		return row === undefined ? null : toIdentity(row);
 	}
@@ -176,16 +311,47 @@ WHERE user_id = $1 ORDER BY created_at, id`;
 
 		insertIdentityOfSignIn: ({ userId, ...facts }) => insertOwnedBy(userId, facts),
 
-		async refreshIdentity({ provider, subject, ...facts }) {
+		async refreshIdentity({ existing, ...facts }) {
+			const encrypted = await encryptedProviderTokens(
+				options.keys,
+				{ owner: existing.userId, identityId: existing.identity.id },
+				facts.tokens,
+			);
 			const [row] = await options.driver.query<IdentityRow>(refreshStatement, [
-				provider,
-				subject,
-				...factParameters({ provider, subject, ...facts }),
+				facts.provider,
+				facts.subject,
+				...factParameters(facts, encrypted),
+				existing.identity.id,
 			]);
 			if (row === undefined) {
 				throw new TypeError("the identity refreshed by its own subject reported no row");
 			}
 			return toIdentity(row);
+		},
+
+		async rebindTokensOwnedBy({ actor, unbound }) {
+			const rows = await options.driver.query<StoredTokenRow>(storedTokensStatement, [actor]);
+			let rewritten = 0;
+			for (const row of rows) {
+				const rebound = await reboundTokensOf(options.keys, actor, row, unbound);
+				if (rebound === null) {
+					continue;
+				}
+				const replaced = await options.driver.query(replaceTokensStatement, [
+					row.id,
+					actor,
+					rebound.accessTokenEnc,
+					rebound.refreshTokenEnc,
+					rebound.idTokenEnc,
+					rebound.tokenKeyVersion,
+					row.token_key_version,
+					row.access_token_enc,
+					row.refresh_token_enc,
+					row.id_token_enc,
+				]);
+				rewritten += replaced.length;
+			}
+			return rewritten;
 		},
 
 		async listIdentitiesOwnedBy({ actor }) {

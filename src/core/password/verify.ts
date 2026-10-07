@@ -55,7 +55,7 @@ export async function createDummyCredential(
 		new TextEncoder().encode(encodeStandardBase64(randomBytes(32))),
 		config.argon2id,
 	);
-	const sealed = await sealPhc(keys, phc);
+	const sealed = await sealPhc(keys, ABSENT_USER_ID, phc);
 
 	return {
 		userId: ABSENT_USER_ID,
@@ -168,10 +168,13 @@ async function openCredential(
 	environment: PasswordEnvironment,
 	row: PasswordCredentialRow,
 ): Promise<OpenedCredential> {
-	return openPhc(environment.keys, row).then(
-		(phc) => ({ phc, scheme: row.scheme }),
-		() => openedDummy(environment),
-	);
+	return environment.credentials
+		.unboundEnvelopeReadingFor(row.userId)
+		.then((unbound) => openPhc(environment.keys, row, unbound))
+		.then(
+			(phc) => ({ phc, scheme: row.scheme }),
+			() => openedDummy(environment),
+		);
 }
 
 function isAcceptedScheme(scheme: PasswordScheme, config: ResolvedPasswordConfig): boolean {

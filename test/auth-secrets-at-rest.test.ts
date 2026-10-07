@@ -62,7 +62,7 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 	if (stored === null) {
 		throw new Error("the password credential was not written, so there is nothing to search for");
 	}
-	plaintexts.push({ name: "password hash (PHC)", value: await openPhc(keys, stored) });
+	plaintexts.push({ name: "password hash (PHC)", value: await openPhc(keys, stored, "refused") });
 
 	const pending = createPendingAuthenticationService({ driver: connection, schema });
 	const issued = await pending.begin({

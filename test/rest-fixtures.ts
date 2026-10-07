@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import { timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { decryptWithPurposeKey } from "../src/core/keys/envelope.js";
+import { decryptBound } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createPasswordCredentialRepository, openPhc } from "../src/core/password/credential.js";
 import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
@@ -160,11 +160,12 @@ async function openFlowVerifier(mounted: MountedAuth, keys: KeyProvider, state: 
 	if (row === undefined) {
 		throw new Error("the open OAuth flow left no row");
 	}
-	const verifier = await decryptWithPurposeKey(
+	const stateSha256 = createHash("sha256").update(state, "utf8").digest();
+	const verifier = await decryptBound(
 		keys,
-		"pkce-enc",
-		row.key_version,
-		row.pkce_verifier_enc,
+		{ column: "oauth_flow.pkce_verifier_enc", owner: null, row: stateSha256 },
+		{ keyVersion: row.key_version, ciphertext: Uint8Array.from(row.pkce_verifier_enc) },
+		"refused",
 	);
 	return Buffer.from(verifier).toString("utf8");
 }
@@ -293,7 +294,7 @@ export async function driveOneUserThroughEveryFlow(prefix: string): Promise<Driv
 		providerTokens: tokens,
 		secrets: [
 			{ name: "password", value: REST_PASSWORD },
-			{ name: "password hash (PHC)", value: await openPhc(keys, stored) },
+			{ name: "password hash (PHC)", value: await openPhc(keys, stored, "refused") },
 			{ name: "session token", value: sessionToken },
 			{ name: "pending token", value: pendingToken },
 			{ name: "one-time token (email_verify)", value: tokenSent(mounted, "email_verification") },

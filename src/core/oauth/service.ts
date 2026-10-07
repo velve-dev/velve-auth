@@ -18,7 +18,8 @@ import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
 import { identityColumns } from "../identity/columns.js";
 import { removeSignInMethod } from "../identity/sign-in-methods.js";
-import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
+import { decryptBound, type EnvelopeBinding, encryptBound } from "../keys/envelope-binding.js";
+import { KeyError } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
@@ -40,12 +41,7 @@ import {
 	stateOfPointer,
 } from "./flow-secrets.js";
 import { claimsOfIdToken } from "./id-token.js";
-import {
-	createOAuthIdentityRepository,
-	type EncryptedProviderTokens,
-	type IdentityFacts,
-	NO_STORED_TOKENS,
-} from "./identity-repository.js";
+import { createOAuthIdentityRepository, type IdentityFacts } from "./identity-repository.js";
 import { accountAnAutomaticLinkMayJoin } from "./linking.js";
 import type { OutboundFetch } from "./outbound.js";
 import type { ProviderTable, ResolvedProvider } from "./providers.js";
@@ -191,6 +187,11 @@ function refuseIfAlreadyLinked(inserted: Identity | null): Identity {
 	return inserted;
 }
 
+//a flow row is keyed by its state hash and owned by the account it links, or by none (S-INTEG-1)
+function pkceBindingOf(owner: string | null, stateSha256: Uint8Array): EnvelopeBinding {
+	return { column: "oauth_flow.pkce_verifier_enc", owner, row: stateSha256 };
+}
+
 export function createOAuthService(input: {
 	readonly services: RouteServices;
 	readonly providers: ProviderTable;
@@ -199,35 +200,10 @@ export function createOAuthService(input: {
 	const driver: Driver = services.driver;
 	const schema = services.schema;
 	const flows = createOAuthFlowRepository({ driver, schema });
-	const identities = createOAuthIdentityRepository({ driver, schema });
+	const keys = services.keys;
+	const identities = createOAuthIdentityRepository({ driver, schema, keys });
 	const outbound: OutboundFetch = services.fetch ?? globalThis.fetch;
 	const storeTokens = services.oauth?.storeTokens === true;
-
-	async function encryptedProviderTokens(tokens: ProviderTokens): Promise<EncryptedProviderTokens> {
-		if (!storeTokens) {
-			return NO_STORED_TOKENS;
-		}
-		const sealed = await Promise.all(
-			[tokens.accessToken, tokens.refreshToken, tokens.idToken].map(async (token) =>
-				token === null
-					? null
-					: encryptWithPurposeKey(services.keys, "oauth-token-enc", utf8.encode(token)),
-			),
-		);
-		const versions = new Set(
-			sealed.filter((written) => written !== null).map((written) => written.keyVersion),
-		);
-		//one column carries the version of three ciphertexts, so a rotation between them is refused
-		if (versions.size > 1) {
-			throw new VelveError("internal_error");
-		}
-		return {
-			accessTokenEnc: sealed[0]?.ciphertext ?? null,
-			refreshTokenEnc: sealed[1]?.ciphertext ?? null,
-			idTokenEnc: sealed[2]?.ciphertext ?? null,
-			tokenKeyVersion: [...versions][0] ?? null,
-		};
-	}
 
 	async function factsOf(
 		provider: ResolvedProvider,
@@ -242,7 +218,7 @@ export function createOAuthService(input: {
 			profile: account.claims,
 			scopes: tokens.scopes,
 			tokenLifetimeInSeconds: storeTokens ? tokens.expiresInSeconds : null,
-			tokens: await encryptedProviderTokens(tokens),
+			tokens: storeTokens ? tokens : null,
 		};
 	}
 
@@ -334,7 +310,7 @@ export function createOAuthService(input: {
 		facts: IdentityFacts,
 	): Promise<ResolvedAccount> {
 		return driver.transaction(async (transaction) => {
-			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
+			const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
 			const users: UserRepository = createUserRepository({ driver: transaction, schema });
 			const existing = await owned.findIdentityBySubject({
 				provider: provider.id,
@@ -343,7 +319,10 @@ export function createOAuthService(input: {
 
 			if (existing !== null) {
 				assertTheAccountIsEnabled(await users.findUserById(existing.userId));
-				return { userId: existing.userId, identity: await owned.refreshIdentity(facts) };
+				return {
+					userId: existing.userId,
+					identity: await owned.refreshIdentity({ existing, ...facts }),
+				};
 			}
 
 			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
@@ -445,7 +424,7 @@ export function createOAuthService(input: {
 		return driver.transaction(async (transaction) => {
 			//identity and session are both written below, so the account row is locked first
 			await lockAccountRow(transaction, schema, userId);
-			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
+			const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
 			assertTheAccountIsEnabled(
 				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
 			);
@@ -465,13 +444,26 @@ export function createOAuthService(input: {
 		});
 	}
 
-	async function verifierOf(flow: {
-		readonly pkceVerifierEnc: Uint8Array<ArrayBuffer>;
-		readonly keyVersion: number;
-	}): Promise<string> {
-		return new TextDecoder().decode(
-			await decryptWithPurposeKey(services.keys, "pkce-enc", flow.keyVersion, flow.pkceVerifierEnc),
-		);
+	//a flow that began before the upgrade holds an unbound verifier and is begun again (S-INTEG-1)
+	async function verifierOf(
+		flow: {
+			readonly pkceVerifierEnc: Uint8Array<ArrayBuffer>;
+			readonly keyVersion: number;
+			readonly linkTo: ConsumedOAuthFlow | null;
+		},
+		stateSha256: Uint8Array,
+	): Promise<string> {
+		try {
+			const verifier = await decryptBound(
+				services.keys,
+				pkceBindingOf(flow.linkTo?.userId ?? null, stateSha256),
+				{ keyVersion: flow.keyVersion, ciphertext: flow.pkceVerifierEnc },
+				"refused",
+			);
+			return new TextDecoder().decode(verifier);
+		} catch (failure) {
+			throw failure instanceof KeyError ? new ConcealedError("state_not_found") : failure;
+		}
 	}
 
 	return {
@@ -481,10 +473,15 @@ export function createOAuthService(input: {
 			const state = stateOfPointer(pointer);
 			const verifier = createPkceVerifier();
 			const nonce = provider.jwksUri === null ? null : createNonce();
-			const sealed = await encryptWithPurposeKey(services.keys, "pkce-enc", utf8.encode(verifier));
+			const stateSha256 = stateHash(state);
+			const sealed = await encryptBound(
+				services.keys,
+				pkceBindingOf(linkTo?.actor ?? null, stateSha256),
+				utf8.encode(verifier),
+			);
 
 			await flows.insertFlow({
-				stateSha256: stateHash(state),
+				stateSha256,
 				provider: provider.id,
 				pkceVerifierEnc: sealed.ciphertext,
 				keyVersion: sealed.keyVersion,
@@ -516,7 +513,8 @@ export function createOAuthService(input: {
 			}
 			assertIssuerMatches(provider, arrival.iss);
 
-			const flow = await flows.consumeFlow({ stateSha256: stateHash(arrival.state) });
+			const stateSha256 = stateHash(arrival.state);
+			const flow = await flows.consumeFlow({ stateSha256 });
 			if (flow === null || flow.provider !== provider.id) {
 				throw new ConcealedError("state_not_found");
 			}
@@ -530,7 +528,7 @@ export function createOAuthService(input: {
 				fetch: outbound,
 				provider,
 				code: arrival.code,
-				codeVerifier: await verifierOf(flow),
+				codeVerifier: await verifierOf(flow, stateSha256),
 			});
 			const read = await claimsOfProvider(provider, tokens, flow.nonce);
 			assertClaimsAnswerForTheIssuer({ provider, iss: arrival.iss, ...read });

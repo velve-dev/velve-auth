@@ -323,11 +323,14 @@ describe("T-LINK-1: two providers reporting one address (S-LINK-1)", () => {
 		);
 		const predicates = [...repository.matchAll(/WHERE ([^\n]+)/g)].map((match) => match[1] ?? "");
 
-		expect(predicates).toHaveLength(3);
+		//the two token rewrites of S-INTEG-1 reach the rows of one owner and name no address
+		expect(predicates).toHaveLength(5);
 		expect(predicates.filter((one) => /email/i.test(one))).toStrictEqual([]);
 		expect(predicates.filter((one) => /provider = \$1 AND subject = \$2/.test(one))).toHaveLength(
 			2,
 		);
+		expect(predicates.filter((one) => /^id = \$1 AND user_id = \$2/.test(one))).toHaveLength(1);
+		expect(predicates.filter((one) => /^user_id = \$1/.test(one))).toHaveLength(2);
 	});
 });
 

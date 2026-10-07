@@ -151,7 +151,7 @@ beforeEach(async () => {
 }, 60_000);
 
 async function seed(phc: string, scheme: PasswordScheme, userId = USER_ID): Promise<void> {
-	const sealed: SealedPhc = await sealPhc(environment.keys, phc);
+	const sealed: SealedPhc = await sealPhc(environment.keys, userId, phc);
 	recorder.rows.set(userId, {
 		userId,
 		phc: sealed.ciphertext,
@@ -175,7 +175,7 @@ describe("the stored credential", () => {
 		expect(row?.scheme).toBe("argon2id");
 		expect(row?.keyVersion).toBe(1);
 		expect(new TextDecoder().decode(row?.phc)).not.toContain("$argon2id$");
-		expect(await openPhc(environment.keys, row as PasswordCredentialRow)).toMatch(
+		expect(await openPhc(environment.keys, row as PasswordCredentialRow, "refused")).toMatch(
 			/^\$argon2id\$v=19\$/,
 		);
 	}, 30_000);
@@ -239,7 +239,7 @@ describe("the stored credential", () => {
 			keysByVersion: { 1: generateRootKey() },
 		});
 
-		await expect(openPhc(otherKeys, row)).rejects.toMatchObject({
+		await expect(openPhc(otherKeys, row, "refused")).rejects.toMatchObject({
 			code: "authentication_failed",
 		});
 	}, 30_000);
@@ -277,7 +277,7 @@ describe("one code path regardless of the outcome", () => {
 	}, 30_000);
 
 	it("verifies against the dummy with the configured parameters, not against a fresh hash", async () => {
-		const dummy = parsePhc(await openPhc(environment.keys, environment.dummy));
+		const dummy = parsePhc(await openPhc(environment.keys, environment.dummy, "refused"));
 
 		expect(dummy?.id).toBe("argon2id");
 		expect(dummy?.parameters.get("m")).toBe(String(CHEAP_ARGON2ID.memoryKiB));
@@ -407,7 +407,7 @@ describe("needsRehash and the silent rehash", () => {
 
 		const after = recorder.rows.get(USER_ID) as PasswordCredentialRow;
 		expect(after.scheme).toBe("argon2id");
-		expect(await openPhc(environment.keys, after)).toMatch(/^\$argon2id\$v=19\$/);
+		expect(await openPhc(environment.keys, after, "refused")).toMatch(/^\$argon2id\$v=19\$/);
 		expect(await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, environment)).toEqual({
 			outcome: "verified",
 			userId: USER_ID,
