@@ -13,7 +13,9 @@ import {
 	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBinding,
+	type TokenBindingRefusal,
 	type TokenBindingRefusalReport,
+	type TokenBindingVerdict,
 } from "../../token/binding.js";
 import {
 	createPendingAuthenticationRepository,
@@ -70,17 +72,22 @@ export interface PendingAuthenticationService {
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
-	/** resolves the state and counts a failure against exactly the row this resolve checked */
-	resolveForAttempt(token: PendingToken): Promise<ResolvedForAttempt | null>;
+	/** spends one attempt of the budget before the caller evaluates a submitted factor */
+	bookAttempt(token: PendingToken): Promise<BookedAttempt>;
 	registerFailedAttempt(token: PendingToken): Promise<FailedAttempt>;
 	cancel(input: { readonly token: PendingToken }): Promise<void>;
 }
 
-/** a resolved pending state together with the one failed attempt that may be counted against it */
-export interface ResolvedForAttempt {
-	readonly resolution: PendingResolution;
-	registerFailedAttempt(): Promise<FailedAttempt>;
-}
+/** an attempt already counted against the budget, or why none could be */
+export type BookedAttempt =
+	| { readonly outcome: "missing" }
+	| { readonly outcome: "exhausted" }
+	| {
+			readonly outcome: "booked";
+			readonly resolution: PendingResolution;
+			/** reports a wrong factor, which removes the row when this was the last attempt */
+			failed(): Promise<FailedAttempt>;
+	  };
 
 interface CheckedPendingRow extends StoredTokenMac {
 	readonly userId: string;
@@ -117,6 +124,32 @@ export function createPendingAuthenticationService(
 		schema: options.schema ?? "velve",
 	});
 
+	function bindingOf(tokenHash: Uint8Array, candidate: PendingCandidate<unknown>): TokenBinding {
+		return pendingBinding(
+			candidate.userId,
+			tokenHash,
+			candidate.storedFactorNames ?? [],
+			candidate.attempts,
+		);
+	}
+
+	async function verdictOf(
+		tokenHash: Uint8Array,
+		candidate: PendingCandidate<unknown>,
+	): Promise<TokenBindingVerdict> {
+		return candidate.storedFactorNames === null
+			? "mismatch"
+			: checkTokenBinding(options.keys, bindingOf(tokenHash, candidate), candidate);
+	}
+
+	function reportRefusal(userId: string, verdict: TokenBindingRefusal["verdict"]): void {
+		reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+			userId,
+			occasion: "factor_check",
+			verdict,
+		});
+	}
+
 	//a row the library did not write is answered as no row before anything in it is read (S-INTEG-9)
 	async function verified<Decoded>(
 		tokenHash: Uint8Array,
@@ -125,53 +158,28 @@ export function createPendingAuthenticationService(
 		if (candidate === null) {
 			return null;
 		}
-		const names = candidate.storedFactorNames;
-		const binding = pendingBinding(candidate.userId, tokenHash, names ?? [], candidate.attempts);
-		const verdict =
-			names === null ? "mismatch" : await checkTokenBinding(options.keys, binding, candidate);
+		const verdict = await verdictOf(tokenHash, candidate);
 		if (verdict !== "valid") {
-			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
-				userId: candidate.userId,
-				occasion: "factor_check",
-				verdict,
-			});
+			reportRefusal(candidate.userId, verdict);
 			return null;
 		}
-		return { binding, decoded: candidate.decode() };
+		return { binding: bindingOf(tokenHash, candidate), decoded: candidate.decode() };
 	}
 
-	//a row changed since its check is counted as no row and reported (E-3139)
-	async function countAgainst(
-		tokenHash: Uint8Array,
-		row: CheckedPendingRow,
-	): Promise<FailedAttempt> {
-		const next = await bindToken(
-			options.keys,
-			pendingBinding(row.userId, tokenHash, row.factorNames, row.attempts + 1),
-		);
-		const counted = await repository.countFailedAttempt({
-			tokenHash,
-			checked: row,
-			next,
-			maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
-		});
-		if (counted === null) {
-			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
-				userId: row.userId,
-				occasion: "factor_check",
-				verdict: "mismatch",
-			});
-		}
-		if (counted === null || counted.exhausted) {
-			return { outcome: "exhausted" };
-		}
+	function checkedRow(
+		candidate: PendingCandidate<unknown>,
+		mac: StoredTokenMac,
+	): CheckedPendingRow {
 		return {
-			outcome: "attempts_remain",
-			attemptsRemaining: attemptsRemainingAfter(counted.attempts),
+			userId: candidate.userId,
+			factorNames: candidate.storedFactorNames ?? [],
+			attempts: candidate.attempts,
+			tokenMac: mac.tokenMac,
+			tokenMacKeyVersion: mac.tokenMacKeyVersion,
 		};
 	}
 
-	//the row a later count is pinned to is the one this check passed, rebound where it was stale
+	//the row a booking is pinned to is the one this check passed, rebound where it was stale
 	async function checkedRowOf(tokenHash: Uint8Array): Promise<{
 		readonly row: CheckedPendingRow;
 		readonly found: PendingAuthenticationWithOwner;
@@ -190,17 +198,90 @@ export function createPendingAuthenticationService(
 				previous: candidate,
 				next: rebound,
 			}));
-		const mac = reboundStored ? rebound : candidate;
 		return {
-			row: {
-				userId: candidate.userId,
-				factorNames: candidate.storedFactorNames ?? [],
-				attempts: candidate.attempts,
-				tokenMac: mac.tokenMac,
-				tokenMacKeyVersion: mac.tokenMacKeyVersion,
-			},
+			row: checkedRow(candidate, reboundStored ? rebound : candidate),
 			found: checked.decoded,
 		};
+	}
+
+	//a booking that missed tells a concurrent attempt from a writer by reading the row once more (E-3140)
+	async function afterMissedBooking(
+		tokenHash: Uint8Array,
+		pinned: CheckedPendingRow,
+	): Promise<CheckedPendingRow | "missing"> {
+		const reread = await repository.findPendingAuthenticationByTokenHash(tokenHash);
+		if (reread === null) {
+			return "missing";
+		}
+		const verdict = await verdictOf(tokenHash, reread);
+		const advanced =
+			reread.attempts > pinned.attempts ||
+			(reread.attempts === pinned.attempts &&
+				reread.tokenMacKeyVersion > pinned.tokenMacKeyVersion);
+		if (verdict !== "valid" || !advanced) {
+			reportRefusal(reread.userId, verdict === "valid" ? "mismatch" : verdict);
+			return "missing";
+		}
+		return checkedRow(reread, reread);
+	}
+
+	async function exhaust(tokenHash: Uint8Array): Promise<{ readonly outcome: "exhausted" }> {
+		await repository.deletePendingAuthenticationByTokenHash(tokenHash);
+		return { outcome: "exhausted" };
+	}
+
+	async function bookedOver(tokenHash: Uint8Array, row: CheckedPendingRow): Promise<boolean> {
+		const next = await bindToken(
+			options.keys,
+			pendingBinding(row.userId, tokenHash, row.factorNames, row.attempts + 1),
+		);
+		return repository.bookAttempt({ tokenHash, checked: row, next });
+	}
+
+	function bookingOf(
+		tokenHash: Uint8Array,
+		resolution: PendingResolution,
+		attempts: number,
+	): BookedAttempt {
+		return {
+			outcome: "booked",
+			resolution,
+			failed: async () =>
+				attempts >= MAXIMUM_PENDING_ATTEMPTS
+					? exhaust(tokenHash)
+					: { outcome: "attempts_remain", attemptsRemaining: attemptsRemainingAfter(attempts) },
+		};
+	}
+
+	//every miss follows a booking that raised the counter so the budget bounds the retries
+	async function bookFrom(
+		tokenHash: Uint8Array,
+		resolution: PendingResolution,
+		checked: CheckedPendingRow,
+	): Promise<BookedAttempt> {
+		let row: CheckedPendingRow | "missing" = checked;
+		for (let tries = 0; tries <= MAXIMUM_PENDING_ATTEMPTS && row !== "missing"; tries += 1) {
+			//the attempt that spent the budget is still evaluated and removes the row itself
+			if (row.attempts >= MAXIMUM_PENDING_ATTEMPTS) {
+				return { outcome: "exhausted" };
+			}
+			if (await bookedOver(tokenHash, row)) {
+				return bookingOf(tokenHash, resolution, row.attempts + 1);
+			}
+			row = await afterMissedBooking(tokenHash, row);
+		}
+		return { outcome: row === "missing" ? "missing" : "exhausted" };
+	}
+
+	//no factor is evaluated before its attempt is counted (E-3140)
+	async function book(token: PendingToken): Promise<BookedAttempt> {
+		const tokenHash = hashPendingToken(token);
+		const checked = await checkedRowOf(tokenHash);
+		const resolution = checked === null ? null : resolutionOf(checked.found);
+		if (checked === null || resolution === null) {
+			return { outcome: "missing" };
+		}
+		return bookFrom(tokenHash, resolution, checked.row);
 	}
 
 	//a disabled account answers as an unknown pending state, not with the disabled code
@@ -254,15 +335,7 @@ export function createPendingAuthenticationService(
 			return checked === null ? null : resolutionOf(checked.found);
 		},
 
-		async resolveForAttempt(token) {
-			const tokenHash = hashPendingToken(token);
-			const checked = await checkedRowOf(tokenHash);
-			const resolution = checked === null ? null : resolutionOf(checked.found);
-			if (checked === null || resolution === null) {
-				return null;
-			}
-			return { resolution, registerFailedAttempt: () => countAgainst(tokenHash, checked.row) };
-		},
+		bookAttempt: book,
 
 		//the removal is the check so two requests with one token cannot both pass
 		async consume(token) {
@@ -278,9 +351,8 @@ export function createPendingAuthenticationService(
 		},
 
 		async registerFailedAttempt(token) {
-			const tokenHash = hashPendingToken(token);
-			const checked = await checkedRowOf(tokenHash);
-			return checked === null ? { outcome: "exhausted" } : countAgainst(tokenHash, checked.row);
+			const booked = await book(token);
+			return booked.outcome === "booked" ? booked.failed() : { outcome: "exhausted" };
 		},
 
 		async cancel({ token }) {

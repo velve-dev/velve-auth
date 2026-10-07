@@ -50,11 +50,6 @@ export interface PendingCandidate<Decoded> extends StoredTokenMac {
 	decode(): Decoded;
 }
 
-export interface CountedAttempt {
-	readonly attempts: number;
-	readonly exhausted: boolean;
-}
-
 export interface PendingAuthenticationRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
@@ -75,13 +70,12 @@ export interface PendingAuthenticationRepository {
 		readonly previous: StoredTokenMac;
 		readonly next: StoredTokenMac;
 	}): Promise<boolean>;
-	//the counter is written only over the row that was checked so a concurrent change answers null
-	countFailedAttempt(input: {
+	//an attempt is booked only over the counter and mac that were checked (S-INTEG-9)
+	bookAttempt(input: {
 		readonly tokenHash: Uint8Array;
 		readonly checked: StoredTokenMac & { readonly attempts: number };
 		readonly next: StoredTokenMac;
-		readonly maximumAttempts: number;
-	}): Promise<CountedAttempt | null>;
+	}): Promise<boolean>;
 	deletePendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
 	): Promise<PendingCandidate<RemovedPendingAuthentication> | null>;
@@ -336,21 +330,15 @@ export function createPendingAuthenticationRepository(
 			return rows.length === 1;
 		},
 
-		//the attempt that exhausts the row removes it whatever a concurrent attempt wrote meanwhile
-		async countFailedAttempt({ tokenHash, checked, next, maximumAttempts }) {
-			const attempts = checked.attempts + 1;
-			if (attempts >= maximumAttempts) {
-				await removeByTokenHash(options.driver, tokenHash);
-				return { attempts, exhausted: true };
-			}
+		async bookAttempt({ tokenHash, checked, next }) {
 			const rows = await options.driver.query(countAttemptSql, [
 				tokenHash,
 				checked.tokenMac,
-				attempts,
+				checked.attempts + 1,
 				next.tokenMac,
 				next.tokenMacKeyVersion,
 			]);
-			return rows.length === 0 ? null : { attempts, exhausted: false };
+			return rows.length === 1;
 		},
 
 		deletePendingAuthenticationByTokenHash: (tokenHash) =>

@@ -261,17 +261,16 @@ describe("the token and the repository underneath the service", () => {
 		expect(drawn.size).toBe(1000);
 	});
 
-	it("reports a missing row rather than inventing an attempt count", async () => {
+	it("books nothing on a row that is not there", async () => {
 		const repository = createPendingAuthenticationRepository({ driver: connection, schema });
 
-		const counted = await repository.countFailedAttempt({
+		const booked = await repository.bookAttempt({
 			tokenHash: hashPendingToken(toPendingToken("x".repeat(43))),
 			checked: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1, attempts: 0 },
 			next: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 },
-			maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
 		});
 
-		expect(counted).toBeNull();
+		expect(booked).toBe(false);
 	});
 });
 

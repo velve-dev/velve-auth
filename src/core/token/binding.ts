@@ -150,7 +150,7 @@ export async function bindToken(keys: KeyProvider, binding: TokenBinding): Promi
 }
 
 /** whether a stored token row was written by the library, checked before anything in it is used */
-type TokenBindingVerdict = "valid" | TokenBindingRefusal["verdict"];
+export type TokenBindingVerdict = "valid" | TokenBindingRefusal["verdict"];
 
 export function checkTokenBinding(
 	keys: KeyProvider,

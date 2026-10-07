@@ -105,7 +105,8 @@ describe("L-8: the permitted attempts per pending state, and then the row is gon
 		expect(await attemptsRecorded(connection, schema, account.userId)).toBe(2);
 	});
 
-	it("spends no attempt on a correct code", async () => {
+	//every code is booked before it is evaluated, and the sign-in a correct one completes removes the row (E-3140)
+	it("books one attempt for a correct code, as for every code", async () => {
 		const account = await enrolAnAccount("correct@example.com");
 		const { token } = await beginPendingState(pending, account.userId);
 		clock.advanceBy(TOTP_PERIOD_SECONDS * 1000);
@@ -115,7 +116,7 @@ describe("L-8: the permitted attempts per pending state, and then the row is gon
 			code: totpCodeForStep(account.secretBytes, timeStepAt(clock.now())),
 		});
 
-		expect(await attemptsRecorded(connection, schema, account.userId)).toBe(0);
+		expect(await attemptsRecorded(connection, schema, account.userId)).toBe(1);
 	});
 
 	it("answers a pending state that is gone as invalid_pending_authentication", async () => {

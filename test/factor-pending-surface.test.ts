@@ -1,8 +1,8 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { Actor, ResolvedSession } from "../src/core/db/actor.js";
 import type {
+	BookedAttempt,
 	ConsumedPendingAuthentication,
-	CountedAttempt,
 	FailedAttempt,
 	IssuedPendingAuthentication,
 	PendingAuthenticationInsert,
@@ -51,12 +51,9 @@ describe("the surface the pending module publishes", () => {
 		>();
 	});
 
-	it("separates the outcome of a failed attempt from a count nobody has to interpret", () => {
+	it("separates the outcome of a failed attempt from the booking that counted it (E-3140)", () => {
 		expectTypeOf<FailedAttempt>().toExtend<{ outcome: "attempts_remain" | "exhausted" }>();
-		expectTypeOf<CountedAttempt>().toEqualTypeOf<{
-			readonly attempts: number;
-			readonly exhausted: boolean;
-		}>();
+		expectTypeOf<BookedAttempt["outcome"]>().toEqualTypeOf<"missing" | "exhausted" | "booked">();
 	});
 
 	it("carries the same option shape the session service takes, and no clock (E-247)", () => {
@@ -79,7 +76,7 @@ describe("the surface the pending module publishes", () => {
 
 	it("publishes the repository and service contracts the factor features build against", () => {
 		expectTypeOf<PendingAuthenticationService["begin"]>().toBeFunction();
-		expectTypeOf<PendingAuthenticationRepository["countFailedAttempt"]>().toBeFunction();
+		expectTypeOf<PendingAuthenticationRepository["bookAttempt"]>().toBeFunction();
 		expectTypeOf<PendingAuthenticationInsert["lifetimeInSeconds"]>().toBeNumber();
 		expectTypeOf<PendingAuthenticationWithOwner["availableFactors"]>().toEqualTypeOf<
 			readonly SecondFactor[]

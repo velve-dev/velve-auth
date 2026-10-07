@@ -11,8 +11,10 @@ import {
 	type PendingAuthenticationService,
 	type PendingToken,
 	toPendingToken,
+	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
+import { toVisibleFailure } from "../src/core/http/error-map.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
@@ -366,60 +368,60 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		expect(refusals).toStrictEqual([]);
 	});
 
-	it("counts a failure only against the row its resolve checked", async () => {
+	it("books two attempts that resolved the same row each once, without an alarm", async () => {
 		const token = await issuedPending(owner);
-		const first = await pending.resolveForAttempt(token);
-		const second = await pending.resolveForAttempt(token);
 		refusals = [];
 
-		expect(await second?.registerFailedAttempt()).toStrictEqual({
-			outcome: "attempts_remain",
-			attemptsRemaining: MAXIMUM_PENDING_ATTEMPTS - 1,
-		});
-		expect(await first?.registerFailedAttempt()).toStrictEqual({ outcome: "exhausted" });
-		expectOneRefusal("factor_check", owner);
+		const [first, second] = await Promise.all([
+			pending.bookAttempt(token),
+			pending.bookAttempt(token),
+		]);
+
+		expect([first?.outcome, second?.outcome]).toStrictEqual(["booked", "booked"]);
 		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(
-			MAXIMUM_PENDING_ATTEMPTS - 1,
+			MAXIMUM_PENDING_ATTEMPTS - 2,
 		);
+		expect(refusals).toStrictEqual([]);
 	});
 
-	it("counts nothing from a counter a writer reset while a counted attempt waits", async () => {
+	it("answers a refused booking exactly as a missing pending row, outwardly", async () => {
 		const token = await issuedPending(owner);
-		await pending.registerFailedAttempt(token);
-		const resolved = await pending.resolveForAttempt(token);
-		await sql(`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE token_sha256 = $1`, [
+		await sql(`UPDATE ${schema}.pending_authentication SET attempts = 3 WHERE token_sha256 = $1`, [
 			sha256Of(token),
 		]);
-		refusals = [];
+		const outwardOf = (work: Promise<unknown>) =>
+			work.then(
+				() => "succeeded",
+				(failure: unknown) => {
+					const visible = toVisibleFailure(failure);
+					return { code: visible.error.code, status: visible.error.httpStatus };
+				},
+			);
+		const evaluate = () => Promise.reject(new Error("a wrong code"));
 
-		expect(await resolved?.registerFailedAttempt()).toStrictEqual({ outcome: "exhausted" });
-		expectOneRefusal("factor_check", owner);
-		const [row] = await migrated.connection.query<{ attempts: number }>(
-			`SELECT attempts FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
-			[sha256Of(token)],
+		const refused = await outwardOf(verifyUnderPendingAttemptLimit(pending, token, evaluate));
+		const missing = await outwardOf(
+			verifyUnderPendingAttemptLimit(pending, toPendingToken(chosenToken()), evaluate),
 		);
-		expect(row?.attempts).toBe(0);
-		expect(await pending.resolve(token)).toBeNull();
+
+		expect(refused).toStrictEqual(missing);
+		expect(refused).toStrictEqual({ code: "invalid_pending_authentication", status: 401 });
 	});
 
-	it("gives no budget back to a writer who restores an older row between resolve and count", async () => {
-		const token = await issuedPending(owner);
-		const [saved] = await migrated.connection.query<{ mac: Buffer; version: number }>(
-			`SELECT token_mac AS mac, token_mac_key_version AS version
-			 FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
-			[sha256Of(token)],
-		);
-		await pending.registerFailedAttempt(token);
-		const resolved = await pending.resolveForAttempt(token);
+	it("answers a booking on a consumed or expired row as a missing row, without an alarm", async () => {
+		const consumed = await issuedPending(owner);
+		const expired = await issuedPending(owner);
+		await pending.consume(consumed);
 		await sql(
-			`UPDATE ${schema}.pending_authentication SET attempts = 0, token_mac = $2,
-			   token_mac_key_version = $3 WHERE token_sha256 = $1`,
-			[sha256Of(token), saved?.mac, saved?.version],
+			`UPDATE ${schema}.pending_authentication SET expires_at = now() - interval '1 second'
+			 WHERE token_sha256 = $1`,
+			[sha256Of(expired)],
 		);
 		refusals = [];
 
-		expect(await resolved?.registerFailedAttempt()).toStrictEqual({ outcome: "exhausted" });
-		expectOneRefusal("factor_check", owner);
+		expect((await pending.bookAttempt(consumed)).outcome).toBe("missing");
+		expect((await pending.bookAttempt(expired)).outcome).toBe("missing");
+		expect(refusals).toStrictEqual([]);
 	});
 });
 

@@ -79,7 +79,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"secret address",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.findPendingAuthenticationByTokenHash":
 		"secret address",
-	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.countFailedAttempt":
+	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.bookAttempt":
 		"secret address",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.rebindPendingTokenMac":
 		"secret address",

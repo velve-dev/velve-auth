@@ -3564,9 +3564,12 @@ The deadline is computed by the database from `now()`, so it is the database
 clock that decides both when a token expires and whether it has; and the string
 form is the one every driver agrees on.
 
-### `createOneTimeTokens(repository)`
+### `createOneTimeTokens(repository, { keys, reportTokenBindingRefusal? })`
 
-The two operations a flow needs, over that repository.
+The two operations a flow needs, over that repository. `keys` takes the token MAC
+of every row it writes and checks the MAC of every row it redeems;
+`reportTokenBindingRefusal` receives a redeemed row whose MAC fails
+([Security state: keyed token hashes](#security-state-keyed-token-hashes)).
 
 | Method | Parameters | Returns |
 |---|---|---|
@@ -3583,7 +3586,8 @@ carries the token cannot be sent (section 3.15 A.7) — subject to the driver
 joining the open transaction, as described under `replaceOneTimeToken` above.
 
 `redeem` answers `null` for a token that expired, for one already used, for one
-minted for a different purpose and for one that never existed. The four are the
+minted for a different purpose and for one that never existed, and in the same
+way for a row whose token MAC fails (S-INTEG-9). The four are the
 same answer on purpose (S-REPLAY-3): they are indistinguishable to the caller
 because they are indistinguishable to the statement, which learns only whether a
 row came back. Nothing downstream may reintroduce the difference; the visible
@@ -3899,7 +3903,9 @@ driver's work; the repository reads values, it does not parse them.
 ```ts
 createSessionService(options: {
   driver: Driver
+  keys: KeyProvider                                 // takes and checks every token MAC
   schema?: string                                   // "velve"
+  reportTokenBindingRefusal?: TokenBindingRefusalReport
   session?: Partial<SessionConfig>
   sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
 }): SessionService
@@ -4403,11 +4409,14 @@ the ring read finds one version and the redemption is one statement.
 `verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for every
 factor a pending state can be spent on: TOTP, a recovery code and a WebAuthn
 assertion. It lives in the pending module, beside the state whose attempts it
-counts, and is re-exported from nowhere else. It resolves the state, runs the
-verification, and on failure calls `registerFailedAttempt`. The limit itself is
-`MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not restated here.
+counts, and is re-exported from nowhere else. It books one attempt with
+`bookAttempt` before it runs the verification, and on failure reports it, which
+removes the row once the budget is spent ([The attempt budget](#the-attempt-budget)).
+The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not
+restated here.
 
-A correct code — or a verifying assertion — spends no attempt. Failures one to
+A correct code — or a verifying assertion — spends the attempt it booked, and the
+sign-in it completes removes the row with it. Failures one to
 four answer whatever the factor answers, `invalid_factor_code`,
 `invalid_recovery_code` or `webauthn_credential_rejected`; the failure that
 exhausts the budget answers `too_many_factor_attempts` and takes the pending row
@@ -6400,7 +6409,7 @@ request carrying only it byte for byte as it answers a request carrying no
 cookie at all.
 
 ```ts
-createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationService
+createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRefusal? }): PendingAuthenticationService
 ```
 
 | Method | Meaning |
@@ -6408,11 +6417,12 @@ createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationSe
 | `begin({ userId, factorsCompleted })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied |
 | `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
+| `bookAttempt(token)` | books one attempt before a factor is evaluated: `{ outcome: "booked", resolution, failed() }`, `{ outcome: "exhausted" }` or `{ outcome: "missing" }`; `failed()` answers `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
 
 ```ts
-createSecondFactorCompletion({ driver, schema?, session?, sessionMetadata? })
+createSecondFactorCompletion({ driver, keys, schema?, session?, sessionMetadata?, reportTokenBindingRefusal? })
   .complete({ pendingToken, factor, observed }): Promise<IssuedSession>
 ```
 
@@ -8850,12 +8860,6 @@ Every insert takes the MAC under the current `token-mac` version in the
 statement that writes the row. A session or pending authentication that
 resolves under an older version is rebound under the current one by a
 compare-and-set on the stored MAC, so a concurrent rebinding is not overwritten.
-A failed second-factor attempt is counted against exactly the row the resolve
-checked: the update writes the raised counter and a MAC over it only where
-`attempts` and `token_mac` still hold the values that resolve verified
-(`resolveForAttempt`). A row changed in between, by a writer or by a concurrent
-attempt, is answered as no row and reported; the attempt that exhausts the row
-deletes it.
 
 A row that is never resolved while two versions are in the ring keeps the old
 version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
@@ -8863,6 +8867,27 @@ and S-KEY-5 holds only if it has run between putting a new version in front and
 removing the old one; the start does not refuse a ring that lacks a stored
 `token_mac_key_version`, so a row left behind is refused and its user signed
 out.
+
+### The attempt budget
+
+Every second-factor check books one attempt before the submitted factor is
+evaluated (`PendingAuthenticationService.bookAttempt`, used by
+`verifyUnderPendingAttemptLimit`). The booking resolves and checks the row, then
+writes `attempts + 1` and a MAC over it only where `attempts` and `token_mac`
+still hold the values it verified. When that write finds nothing it reads the row
+once more:
+
+| The row read again | Answer | Report |
+|---|---|---|
+| gone, consumed or expired | no pending authentication (`invalid_pending_authentication`) | none |
+| verifies, with more attempts than the booking saw, or the same count rebound under a newer key version | a concurrent attempt: the booking retries over it | none |
+| verifies, with `attempts` at the budget | `too_many_factor_attempts` | none |
+| fails its MAC, or verifies with fewer attempts or the same count under no newer version | no pending authentication | `token_binding_mismatch` |
+
+A correct factor is evaluated after its booking, and the sign-in it completes
+removes the row; a wrong one has already been counted, and the attempt that
+spends the budget removes the row when it fails. Guesses that arrive together are
+therefore evaluated at most as often as the budget allows.
 
 ### Configuring a key provider
 
