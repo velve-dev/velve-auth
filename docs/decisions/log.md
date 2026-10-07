@@ -16398,3 +16398,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A fresh random stand-in per attempt, which a store with a cache would answer differently on the second attempt for a known account than for an unknown one.
 **Reason.** A side channel is closed only when both paths do the same work, and the library can make its own work equal but not the application's store.
 **Price.** One more call into the application per unknown-account sign-in.
+
+<a id="e-3353"></a>
+
+### Session resolution asks the anchor after its one statement and re-reads once
+`E-3353` · security-state · specification, S-CACHE-2, S-INTEG-6, test plan, settled
+
+**Context.** E-3304 and E-3339 consult the anchor before the account is read under the lock, and a consuming path reads its row first to learn the owner. The eighth review pointed out that session resolution cannot do either. S-CACHE-2 makes it one query, and only that query names the account. Asking the anchor afterwards lets a legitimate reseal, recorded by the anchor between the query and the call, look like a rollback. As decided, session resolution is the exception named in *Anchor*. It consults the anchor after its one statement. If the comparison gives `version_below_anchor`, it runs the statement once more and compares again, so a reseal recorded in between is seen, and only a second failure is refused with the alarm. S-CACHE-2 now says one query holds per attempt and the repetition is a second attempt of the same query. T-INTEG-3 keeps 0 refused resolutions, now also with an anchor that learns every seal during the pairs. Both languages say so.
+**Rejected.** Reading the session row in a separate statement first to learn the account, which breaks S-CACHE-2 and reopens the two-statement race E-3299 closed.
+**Reason.** The anchor can only be ahead of a legitimate state by a reseal that committed after the read, and one re-read sees that reseal.
+**Price.** A resolution that meets a rollback costs two queries before it refuses.
