@@ -16538,3 +16538,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the lock statements to the code alone, which would let a second implementation following the printed SQL deadlock.
 **Reason.** Printed SQL that differs from the shipped migration misleads every reader who trusts it.
 **Price.** None.
+
+<a id="e-3367"></a>
+
+### The requirement and test-case counts follow S-INTEG-10 and T-INTEG-10
+`E-3367` · security-state · specification, settled
+
+**Context.** E-3354 added S-INTEG-10 and T-INTEG-10 without raising the counts the specification states in its summary, its table of contents, the opening of section 6 and the coverage paragraph. The ninth review counted the list items and table rows. There are 133 requirements and 137 test cases, where the text still said 132 and 136, and the commit-blocking count of 118 already matched. The four places now say 133 and 137 in both languages. The English rendering of "zusammen" in the opening of section 6 now reads "in total", as the German says. The *Runs in* sentence now names the part of T-INTEG-5 other than its timing part among the per-commit work, beside T-RACE-2's static part.
+**Rejected.** Nothing.
+**Reason.** A stated count is a measurement the text makes about itself, and it has to change with what it counts.
+**Price.** None.
