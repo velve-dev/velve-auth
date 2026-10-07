@@ -15608,3 +15608,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** `INSERT … ON CONFLICT DO NOTHING` for the first seal, which would let the losing transaction continue on a snapshot that does not contain the winner's seal and recompute over components the winner may have changed.
 **Reason.** The losing transaction read a state that is no longer the account's, which is what a serialization failure means whatever code PostgreSQL gives it.
 **Price.** The retry only covers the first seal's primary key; another unique violation still fails the change.
+
+<a id="e-3211"></a>
+
+### The retry bound is three attempts in total, and it is a choice
+`E-3211` · security-state · specification, S-INTEG-3, settled
+
+**Context.** The review found the retry bound stated two ways: section 3.18 said a failed sealing transaction is "started over at most three times", which is four attempts, and E-3193 said three attempts. Neither said why three. The orchestrator decided on three attempts in total, stated the same in both languages and marked as an unmeasured choice. Section 3.18 now reads so with an `ESTIMATE` marker, and T-INTEG-3 forces two and three serialization failures and expects success on the third attempt and a refusal after it. E-3193 is corrected by this entry and not edited. Three was picked by the writer of E-3193 with nothing measured behind it, and that remains the case.
+**Rejected.** An unbounded retry, which a writer able to cause conflicts on one account could turn into an endless loop of a request.
+**Reason.** A bound has to exist, and a stated choice is more honest than a number that reads like a measurement.
+**Price.** Under real contention a legitimate change may be refused after three losses, and how often is unknown.
