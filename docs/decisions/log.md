@@ -15668,3 +15668,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Capping the number of versions probed, which a writer would defeat by placing the unusable version past the cap.
 **Reason.** A writer who can slow the start can also stop it in other ways, so the cost adds no attack; skipping an unknown version still keeps it a per-account broken state, which is the more useful answer for the accounts concerned, whatever the weight of the denial-of-service argument.
 **Price.** `migrate()` has no bound on its running time against a hostile table.
+
+<a id="e-3217"></a>
+
+### One commit of this branch uses a type CLAUDE.md does not list
+`E-3217` · security-state · history, settled
+
+**Context.** CLAUDE.md §4 lists the Conventional Commit types this repository uses: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `build`, `perf`, `security`, `revert`. Commit `b1dbb1a`, which reflowed one line of `test/keys-cross-purpose.test.ts`, is typed `style(keys):`, which is not among them; `test(keys):` was the type the rule asks for. History is not rewritten, so the commit stays as it is; E-3106 already lists it among the commits that fail the gate on their own and calls its line a comment when it was an array.
+**Rejected.** A revert and a recommit with the right type, which adds two commits to correct a subject line and changes nothing in the tree.
+**Reason.** The rule is checked by a reader of the history, and this entry is where that reader finds the deviation.
+**Price.** The branch's history carries one subject outside the listed types.
