@@ -15,6 +15,14 @@ interface StoredSessionRow extends StoredTokenMac {
 	readonly storedFactorNames: readonly string[] | null;
 	/** null for an account that has no epoch to be checked against */
 	readonly sessionEpoch: number | null;
+	readonly createdAtMicros: number;
+}
+
+/** what a session's MAC binds beside its owner, token and factors */
+export interface SessionIssue {
+	readonly sessionEpoch: number;
+	/** `created_at` in whole microseconds since the Unix epoch */
+	readonly createdAtMicros: number;
 }
 
 //a row written back after a mass revocation must stay refused (S-INTEG-9)
@@ -22,13 +30,13 @@ export function sessionBinding(
 	userId: string,
 	tokenHash: Uint8Array,
 	factors: readonly string[],
-	sessionEpoch: number,
+	issue: SessionIssue,
 ): TokenBinding {
 	return {
 		purpose: "session",
 		ownerId: userId,
 		tokenSha256: tokenHash,
-		content: { factors, sessionEpoch },
+		content: { factors, sessionEpoch: issue.sessionEpoch, createdAtMicros: issue.createdAtMicros },
 	};
 }
 
@@ -41,12 +49,10 @@ export async function isLibrarySessionRow(
 	if (row.sessionEpoch === null) {
 		return false;
 	}
-	const binding = sessionBinding(
-		row.userId,
-		row.tokenHash,
-		row.storedFactorNames ?? [],
-		row.sessionEpoch,
-	);
+	const binding = sessionBinding(row.userId, row.tokenHash, row.storedFactorNames ?? [], {
+		sessionEpoch: row.sessionEpoch,
+		createdAtMicros: row.createdAtMicros,
+	});
 	const verdict =
 		row.storedFactorNames === null ? "mismatch" : await checkTokenBinding(keys, binding, row);
 	if (verdict !== "valid") {

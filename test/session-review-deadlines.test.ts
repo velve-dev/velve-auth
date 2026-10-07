@@ -4,7 +4,7 @@ import { isSessionFresh } from "../src/core/session/freshness.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { HOUR, MINUTE, withProcessClockShiftedBy } from "./session-fixtures.js";
+import { HOUR, MINUTE, rebindSessionsOf, withProcessClockShiftedBy } from "./session-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
 
@@ -39,6 +39,7 @@ async function shift(sessionId: string, columns: readonly string[], by: string):
 		`UPDATE ${migrated.schema}.session SET ${assignment} WHERE id = $1 AND user_id = $3`,
 		[sessionId, by, userId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, TOKEN_KEYS, { sessionId });
 }
 
 async function deadlinesOf(sessionId: string) {

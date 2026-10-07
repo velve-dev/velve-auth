@@ -33,7 +33,7 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { decodingJsonb } from "./jsonb-decoding-driver.js";
-import { SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
+import { rebindSessionsOf, SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
 /**
@@ -692,13 +692,13 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 			repository.insertSession(
 				sessionInsertFor(userId, {
 					tokenHash: sha256Of(token),
-					bindUnderEpoch: async () => {
+					bindUnder: async () => {
 						await raiseEpochOf(userId);
 						return { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 };
 					},
 				}),
 			),
-		).rejects.toThrow(TypeError);
+		).rejects.toThrow(ConcealedError);
 		const [row] = await migrated.connection.query<{ present: number }>(
 			`SELECT count(*)::int AS present FROM ${schema}.session WHERE user_id = $1`,
 			[userId],
@@ -840,7 +840,7 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 					? { payload: pick([null, {}, { a: "" }, { a: ",", b: [1, "x"] }, { "": null }]) }
 					: purpose === "pending_authentication"
 						? { factors, attempts: byte() % 3 }
-						: { factors, sessionEpoch: byte() % 3 },
+						: { factors, sessionEpoch: byte() % 3, createdAtMicros: byte() % 3 },
 		};
 	}
 
@@ -881,12 +881,15 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 
 		expect(
 			Buffer.from(
-				encodeTokenBinding({ ...base, content: { factors: ["password,totp"], sessionEpoch: 1 } }),
+				encodeTokenBinding({
+					...base,
+					content: { factors: ["password,totp"], sessionEpoch: 1, createdAtMicros: 0 },
+				}),
 			).equals(
 				Buffer.from(
 					encodeTokenBinding({
 						...base,
-						content: { factors: ["password", "totp"], sessionEpoch: 1 },
+						content: { factors: ["password", "totp"], sessionEpoch: 1, createdAtMicros: 0 },
 					}),
 				),
 			),
@@ -1080,7 +1083,7 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 					purpose: "session",
 					ownerId,
 					tokenSha256: new Uint8Array(32),
-					content: { factors: [], sessionEpoch: 1 },
+					content: { factors: [], sessionEpoch: 1, createdAtMicros: 0 },
 				}),
 			).toString("hex");
 
@@ -1211,5 +1214,39 @@ describe("a factor check that meets a broken state (section 3.18 point 3)", () =
 			"too_many_factor_attempts",
 		]);
 		expect(left?.n).toBe(0);
+	});
+});
+
+describe("the creation time a session MAC binds (section 3.18 point 3)", () => {
+	it("refuses a stale session whose created_at a writer moved forward, with one report", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedSession(userId);
+		await sql(
+			`UPDATE ${schema}.session SET created_at = created_at - interval '1 hour' WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		await rebindSessionsOf(migrated.connection, schema, keys, { userId });
+		expect((await sessions.resolve(token))?.userId).toBe(userId);
+		await sql(`UPDATE ${schema}.session SET created_at = now() WHERE token_sha256 = $1`, [
+			sha256Of(token),
+		]);
+		refusals = [];
+
+		expect(await sessions.resolve(token)).toBeNull();
+		expectOneRefusal("session_resolve", userId);
+	});
+
+	it("binds the creation time the row stores, to the microsecond", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedSession(userId);
+		await sql(
+			`UPDATE ${schema}.session SET created_at = created_at + interval '1 microsecond'
+			 WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		refusals = [];
+
+		expect(await sessions.resolve(token)).toBeNull();
+		expectOneRefusal("session_resolve", userId);
 	});
 });

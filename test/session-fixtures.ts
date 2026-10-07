@@ -30,10 +30,10 @@ export function sessionInsertFor(
 		...overrides,
 	};
 	return {
-		bindUnderEpoch: (sessionEpoch) =>
+		bindUnder: (issue) =>
 			bindToken(
 				SESSION_FIXTURE_KEYS,
-				sessionBinding(insert.userId, insert.tokenHash, insert.factors, sessionEpoch),
+				sessionBinding(insert.userId, insert.tokenHash, insert.factors, issue),
 			),
 		...insert,
 	};
@@ -107,8 +107,9 @@ export async function withProcessClockShiftedBy<T>(
 }
 
 /**
- * The two MAC columns a session row written by hand needs to resolve, taken the way the session
- * service takes them (S-INTEG-9): pass them as the last two parameters of the insert. An account
+ * The three columns a session row written by hand needs to resolve, taken the way the session
+ * service takes them (S-INTEG-9): pass them as the last three parameters of the insert, for
+ * `token_mac`, `token_mac_key_version` and `created_at`, the last cast to `timestamptz`. An account
  * without a seal row is at epoch 1.
  */
 export async function sessionMacParameters(
@@ -119,12 +120,57 @@ export async function sessionMacParameters(
 		readonly factors: readonly string[];
 		readonly sessionEpoch?: number;
 	},
-): Promise<[Uint8Array, number]> {
+): Promise<[Uint8Array, number, string]> {
+	const createdAt = new Date();
 	const { tokenMac, tokenMacKeyVersion } = await bindToken(keys, {
 		purpose: "session",
 		ownerId: row.userId,
 		tokenSha256: row.tokenHash,
-		content: { factors: row.factors, sessionEpoch: row.sessionEpoch ?? 1 },
+		content: {
+			factors: row.factors,
+			sessionEpoch: row.sessionEpoch ?? 1,
+			createdAtMicros: createdAt.getTime() * 1000,
+		},
 	});
-	return [tokenMac, tokenMacKeyVersion];
+	return [tokenMac, tokenMacKeyVersion, createdAt.toISOString()];
+}
+
+/**
+ * Takes the MAC of every session row of an account again, over what the row now stores, under
+ * `keys` and the epoch the account is at; a test that ages a session by moving its `created_at`
+ * calls this afterwards, since the MAC binds the creation time (S-INTEG-9).
+ */
+export async function rebindSessionsOf(
+	driver: Driver,
+	schema: string,
+	keys: KeyProvider,
+	where: { readonly userId?: string; readonly sessionId?: string },
+): Promise<void> {
+	const rows = await driver.query<{
+		id: string;
+		user_id: string;
+		token_sha256: Uint8Array;
+		factor_names: string;
+		session_epoch: string;
+		created_at_us: string;
+	}>(
+		`SELECT s.id, s.user_id, s.token_sha256, array_to_json(s.factors)::text AS factor_names,
+			COALESCE((SELECT session_epoch FROM ${schema}.security_state st WHERE st.user_id = s.user_id), 1)::text AS session_epoch,
+			(extract(epoch FROM s.created_at) * 1000000)::bigint::text AS created_at_us
+		 FROM ${schema}.session s WHERE s.user_id = $1 OR s.id = $2`,
+		[where.userId ?? null, where.sessionId ?? null],
+	);
+	for (const row of rows) {
+		const { tokenMac, tokenMacKeyVersion } = await bindToken(
+			keys,
+			sessionBinding(row.user_id, new Uint8Array(row.token_sha256), JSON.parse(row.factor_names), {
+				sessionEpoch: Number(row.session_epoch),
+				createdAtMicros: Number(row.created_at_us),
+			}),
+		);
+		await driver.query(
+			`UPDATE ${schema}.session SET token_mac = $2, token_mac_key_version = $3 WHERE id = $1`,
+			[row.id, tokenMac, tokenMacKeyVersion],
+		);
+	}
 }

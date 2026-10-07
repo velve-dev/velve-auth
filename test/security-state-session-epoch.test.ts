@@ -44,22 +44,15 @@ describe("a session row replayed after a mass revocation (section 3.18, T-INTEG-
 			factors: ["password"],
 			observed: OBSERVED,
 		});
-		const saved = await connection.query<Record<string, unknown>>(
-			`SELECT * FROM ${schema}.session WHERE id = $1`,
+		//the row is saved in the database so its microseconds survive the replay
+		const saved = `${schema}.saved_session_${session.id.replaceAll("-", "")}`;
+		await connection.query(
+			`CREATE TABLE ${saved} AS SELECT * FROM ${schema}.session WHERE id = $1`,
 			[session.id],
 		);
 
 		await sessions.revokeEverySessionOfUser({ actor: actorOfTestUser(userId) });
-		const [row] = saved;
-		if (row === undefined) {
-			throw new Error("the issued session left no row to save");
-		}
-		const columns = Object.keys(row);
-		await connection.query(
-			`INSERT INTO ${schema}.session (${columns.join(", ")})
-			 VALUES (${columns.map((_, index) => `$${index + 1}`).join(", ")})`,
-			columns.map((column) => row[column]),
-		);
+		await connection.query(`INSERT INTO ${schema}.session SELECT * FROM ${saved}`, []);
 
 		expect(await sessions.resolve(token)).toBeNull();
 	});

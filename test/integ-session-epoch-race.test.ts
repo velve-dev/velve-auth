@@ -133,8 +133,8 @@ describe("a sign-in racing a mass revocation (section 3.18 point 3, T-INTEG-3)",
 //the writer acts on its own connection right after the issue has read the epoch it will bind
 function writingAfterTheEpochRead(inner: Driver, write: () => Promise<unknown>): Driver {
 	return {
-		query: async (sql, params) => {
-			const rows = await inner.query(sql, params);
+		query: async <T>(sql: string, params: unknown[]) => {
+			const rows = await inner.query<T>(sql, params);
 			if (/^\s*SELECT\b.*\bsession_epoch\b.*\.security_state\b/s.test(sql) && !sql.includes("token_sha256")) {
 				await write();
 			}

@@ -7,7 +7,12 @@ export type TokenBindingPurpose = "session" | "pending_authentication" | OneTime
 
 /** the security-relevant content of a token row, in the form it is stored in */
 export type TokenRowContent =
-	| { readonly factors: readonly string[]; readonly sessionEpoch: number }
+	| {
+			readonly factors: readonly string[];
+			readonly sessionEpoch: number;
+			/** `created_at` in whole microseconds since the Unix epoch */
+			readonly createdAtMicros: number;
+	  }
 	| { readonly factors: readonly string[]; readonly attempts: number }
 	| { readonly payload: OneTimeTokenPayload | null };
 
@@ -152,8 +157,14 @@ function contentField(content: TokenRowContent): Uint8Array {
 	if (!("factors" in content)) {
 		return optionalTextField(canonicalPayloadOf(content.payload));
 	}
-	const counter = "sessionEpoch" in content ? content.sessionEpoch : content.attempts;
-	return concatenated([listField(content.factors), integerField(counter)]);
+	if ("sessionEpoch" in content) {
+		return concatenated([
+			listField(content.factors),
+			integerField(content.sessionEpoch),
+			integerField(content.createdAtMicros),
+		]);
+	}
+	return concatenated([listField(content.factors), integerField(content.attempts)]);
 }
 
 const UUID_DIGITS = /^[0-9a-f]{32}$/;

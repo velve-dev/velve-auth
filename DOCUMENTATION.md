@@ -8808,7 +8808,7 @@ presented token. The MAC is taken over a length-prefixed encoding of:
 | purpose | `session` | `pending_authentication` | the row's `purpose` |
 | owner | `user_id` | `user_id` | `user_id`, or absent |
 | token | `token_sha256` | `token_sha256` | `token_sha256` |
-| content | `factors`, in stored order, and the account's `session_epoch` at issue | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
+| content | `factors`, in stored order, the account's `session_epoch` at issue, and `created_at` in whole microseconds since the Unix epoch | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
 
 Each field is a type byte, a four-byte length in network order and its bytes,
 and an absent value has its own type byte, so two different rows never encode
@@ -8829,9 +8829,12 @@ match.
 hold here as stated:
 
 - Deadlines are not bound — `idle_expires_at`, `absolute_expires_at`,
-  `expires_at` — nor are `created_at`, `last_used_at`, `ip` and `user_agent`. A
-  writer can extend the life of an existing row and change what a session list
-  shows about it, but cannot create a row or point one at another account.
+  `expires_at` — nor are `last_used_at`, `ip`, `user_agent` and the `created_at`
+  of a one-time token or a pending authentication. A writer can extend the life of
+  an existing row and change what a session list shows about it, but cannot
+  create a row or point one at another account. A session's `created_at` is
+  bound, because freshness is measured from it: a writer who moves it to make a
+  stale session fresh again leaves a row that is refused.
 - A row is proved to be the library's, not to be its latest version. A writer
   who saved a row can write it back with its MAC of that time: a session revoked
   on its own (`session.revoke`, `signOut`) becomes valid again as long as the
@@ -8846,8 +8849,9 @@ hold here as stated:
 A session's MAC also binds the account's `session_epoch` from `velve.security_state`.
 Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
 waits for a mass revocation that holds the account and then reads the epoch that
-revocation leaves; it takes the MAC over that epoch and inserts the row only while
-the account is still at it. For an account with a seal row the insert is
+revocation leaves, together with the transaction's `now()`; it takes the MAC over
+that epoch and that time, writes the time as `created_at`, and inserts the row only
+while the account is still at the epoch. For an account with a seal row the insert is
 `INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $10`;
 for one read without a seal row, only in `"migrating"` and only at epoch 1, it is
 `… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. The lock

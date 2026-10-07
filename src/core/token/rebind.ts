@@ -30,6 +30,7 @@ interface StoredTokenRow {
 	readonly token_mac_key_version: number;
 	readonly factor_names?: string;
 	readonly session_epoch?: string | null;
+	readonly created_at_us?: string;
 	readonly purpose?: OneTimeTokenPurpose;
 	readonly payload?: unknown;
 }
@@ -41,6 +42,7 @@ const FIRST_TOKEN_HASH = new Uint8Array(0);
 function contentColumns(table: TokenTable, states: string, sealing: SecurityStateSealing): string {
 	if (table === "session") {
 		return `array_to_json(t.factors)::text AS factor_names,
+		(extract(epoch FROM t.created_at) * 1000000)::bigint::text AS created_at_us,
 		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`;
 	}
 	return "t.purpose, t.payload";
@@ -89,7 +91,12 @@ function bindingOf(table: TokenTable, row: StoredTokenRow): TokenBinding | null 
 		row.session_epoch === null || row.session_epoch === undefined
 			? null
 			: Number(row.session_epoch);
-	return epoch === null ? null : sessionBinding(row.user_id, tokenHash, names, epoch);
+	return epoch === null || row.created_at_us === undefined
+		? null
+		: sessionBinding(row.user_id, tokenHash, names, {
+				sessionEpoch: epoch,
+				createdAtMicros: Number(row.created_at_us),
+			});
 }
 
 function verdictOf(

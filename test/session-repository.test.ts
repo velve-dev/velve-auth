@@ -19,6 +19,7 @@ import {
 	DAY,
 	HOUR,
 	MINUTE,
+	rebindSessionsOf,
 	SESSION_FIXTURE_KEYS,
 	sessionInsertFor,
 	statementsMatching,
@@ -42,6 +43,7 @@ async function ageSession(sessionId: string, by: number): Promise<void> {
 		 WHERE id = $1 AND user_id = $3`,
 		[sessionId, by / 1000, ownerId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, SESSION_FIXTURE_KEYS, { sessionId });
 }
 
 async function expireSession(sessionId: string, column: string): Promise<void> {

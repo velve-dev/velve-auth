@@ -173,8 +173,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			...metadataOf(observed),
 			idleTimeoutMs: settings.idleTimeoutMs,
 			absoluteTimeoutMs: settings.absoluteTimeoutMs,
-			bindUnderEpoch: (sessionEpoch) =>
-				bindToken(options.keys, sessionBinding(userId, tokenHash, storedFactors, sessionEpoch)),
+			bindUnder: (issue) =>
+				bindToken(options.keys, sessionBinding(userId, tokenHash, storedFactors, issue)),
 		};
 	}
 
@@ -189,12 +189,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		if (!(await isLibrarySessionRow(options.keys, row, options.reportTokenBindingRefusal))) {
 			return null;
 		}
-		const binding = sessionBinding(
-			candidate.userId,
-			tokenHash,
-			candidate.storedFactorNames ?? [],
-			candidate.sessionEpoch,
-		);
+		const binding = sessionBinding(candidate.userId, tokenHash, candidate.storedFactorNames ?? [], {
+			sessionEpoch: candidate.sessionEpoch,
+			createdAtMicros: candidate.createdAtMicros,
+		});
 		return {
 			found: candidate.decode(),
 			stored: candidate,

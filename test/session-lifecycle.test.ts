@@ -14,7 +14,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
-import { MINUTE } from "./session-fixtures.js";
+import { MINUTE, rebindSessionsOf } from "./session-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
 
@@ -44,6 +44,7 @@ async function ageBeyondFreshness(sessionId: string): Promise<void> {
 		 WHERE id = $1 AND user_id = $2`,
 		[sessionId, userId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, TOKEN_KEYS, { sessionId });
 }
 
 async function signIn(): Promise<{ token: string; sessionId: string }> {

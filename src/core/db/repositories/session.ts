@@ -1,7 +1,7 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
 import { ConcealedError } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
-import { isLibrarySessionRow } from "../../session/binding.js";
+import { isLibrarySessionRow, type SessionIssue } from "../../session/binding.js";
 import {
 	reportBrokenState,
 	type StoredTokenMac,
@@ -56,8 +56,8 @@ export interface SessionInsert {
 	readonly userAgent: string | null;
 	readonly idleTimeoutMs: number;
 	readonly absoluteTimeoutMs: number;
-	/** takes the token MAC over the session epoch the inserting statement's transaction reads */
-	bindUnderEpoch(sessionEpoch: number): Promise<StoredTokenMac>;
+	/** takes the token MAC over the session epoch and creation time the inserting transaction reads */
+	bindUnder(issue: SessionIssue): Promise<StoredTokenMac>;
 }
 
 export interface SessionWithOwner {
@@ -76,6 +76,7 @@ export interface SessionCandidate extends StoredTokenMac {
 	readonly storedFactorNames: readonly string[] | null;
 	/** the account's current session epoch, or null for an account that has none to be checked against */
 	readonly sessionEpoch: number | null;
+	readonly createdAtMicros: number;
 	decode(): SessionWithOwner;
 }
 
@@ -85,8 +86,7 @@ export interface SessionOwner {
 	readonly libraryRow: boolean;
 }
 
-interface IssuingEpoch {
-	readonly epoch: number;
+interface IssuingState extends SessionIssue {
 	readonly sealed: boolean;
 }
 
@@ -185,6 +185,7 @@ interface SessionRowShape {
 interface VerifiedRowShape {
 	readonly id: string;
 	readonly user_id: string;
+	readonly created_at_us: string;
 	readonly token_sha256: Uint8Array;
 	readonly factor_names: string;
 	readonly token_mac: Uint8Array;
@@ -195,6 +196,7 @@ interface VerifiedRowShape {
 interface ListedRowShape extends SessionRowShape, VerifiedRowShape {}
 
 interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
+	readonly created_at_us: string;
 	readonly factor_names: string;
 	readonly session_epoch: string | null;
 	readonly token_mac: Uint8Array;
@@ -273,11 +275,16 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 	};
 }
 
+//the creation time is the transaction's own so it equals the one the mac was taken over (S-INTEG-9)
 const INSERTED_VALUES = `$1, $2, now() + make_interval(secs => $3::double precision),
-		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9`;
+		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9, now()`;
 
 const INSERTED_COLUMNS = `(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip,
-		user_agent, token_mac, token_mac_key_version)`;
+		user_agent, token_mac, token_mac_key_version, created_at)`;
+
+function microsOf(timestamp: string): string {
+	return `(extract(epoch FROM ${timestamp}) * 1000000)::bigint::text`;
+}
 
 //a session must be written only while the account is at the epoch its mac binds (S-INTEG-9)
 function sealedInsertStatement(table: string, states: string): string {
@@ -305,6 +312,7 @@ function resolveStatement(
 	return `SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 		s.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 		s.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
+		${microsOf("s.created_at")} AS created_at_us,
 		${epochOf("st.session_epoch", sealing)}::text AS session_epoch
 	FROM ${table} s
 	JOIN ${users} u ON u.id = s.user_id
@@ -350,8 +358,18 @@ function deleteLiveOwnedStatement(table: string, users: string): string {
 	RETURNING s.id`;
 }
 
-function sealedEpochStatement(states: string): string {
-	return `SELECT session_epoch::text AS session_epoch FROM ${states} WHERE user_id = $1`;
+function issuingStateStatement(states: string): string {
+	return `SELECT (SELECT session_epoch::text FROM ${states} WHERE user_id = $1) AS session_epoch,
+		${microsOf("now()")} AS created_at_us`;
+}
+
+//a count of microseconds must be exact before a mac binds it (S-INTEG-9)
+function microsFrom(value: string): number {
+	const micros = Number(value);
+	if (!Number.isSafeInteger(micros)) {
+		throw new TypeError("velve.session.created_at lies outside what this library binds");
+	}
+	return micros;
 }
 
 //an epoch must be an exact integer before a mac binds it (S-INTEG-9)
@@ -381,7 +399,8 @@ function deleteEveryOtherOwnedStatement(table: string): string {
 
 //a row that is counted or announced must be checkable first (S-INTEG-9)
 function verifiedColumns(states: string, sealing: SecurityStateSealing): string {
-	return `s.id, s.user_id, s.token_sha256, array_to_json(s.factors)::text AS factor_names,
+	return `s.id, s.user_id, ${microsOf("s.created_at")} AS created_at_us, s.token_sha256,
+	array_to_json(s.factors)::text AS factor_names,
 	s.token_mac, s.token_mac_key_version,
 	${epochOf(`(SELECT session_epoch FROM ${states} WHERE user_id = s.user_id)`, sealing)}::text AS session_epoch`;
 }
@@ -391,7 +410,8 @@ function listedColumns(sealing: SecurityStateSealing): string {
 	return `s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 	s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
 	s.token_sha256, array_to_json(s.factors)::text AS factor_names, s.token_mac,
-	s.token_mac_key_version, ${epochOf("st.session_epoch", sealing)}::text AS session_epoch`;
+	s.token_mac_key_version, ${epochOf("st.session_epoch", sealing)}::text AS session_epoch,
+	${microsOf("s.created_at")} AS created_at_us`;
 }
 
 function listEveryIdOwnedStatement(
@@ -433,6 +453,7 @@ function candidateOf(row: OwnedRowShape): SessionCandidate {
 		userId: row.user_id,
 		storedFactorNames,
 		sessionEpoch: toEpoch(row.session_epoch),
+		createdAtMicros: microsFrom(row.created_at_us),
 		tokenMac: row.token_mac,
 		tokenMacKeyVersion: row.token_mac_key_version,
 		decode: () => ({
@@ -452,7 +473,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const sealedInsertSql = sealedInsertStatement(table, states);
 	const unsealedInsertSql = unsealedInsertStatement(table, states);
 	const resolveSql = resolveStatement(table, users, states, sealing);
-	const sealedEpochSql = sealedEpochStatement(states);
+	const issuingStateSql = issuingStateStatement(states);
 	const extendSql = extendIdleDeadlineStatement(table);
 	const rebindSql = rebindStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
@@ -472,6 +493,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				tokenHash: row.token_sha256,
 				storedFactorNames: storedNamesOf(row.factor_names),
 				sessionEpoch: toEpoch(row.session_epoch),
+				createdAtMicros: microsFrom(row.created_at_us),
 				tokenMac: row.token_mac,
 				tokenMacKeyVersion: row.token_mac_key_version,
 			},
@@ -489,26 +511,35 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return libraryRowsAmong(await options.driver.query<ListedRowShape>(statement, [userId]));
 	}
 
-	async function issuingEpochOf(driver: Driver, userId: string): Promise<IssuingEpoch | null> {
-		const [row] = await driver.query<{ session_epoch: string }>(sealedEpochSql, [userId]);
-		if (row !== undefined) {
-			return { epoch: epochFrom(row.session_epoch), sealed: true };
+	async function issuingStateOf(driver: Driver, userId: string): Promise<IssuingState | null> {
+		const [row] = await driver.query<{ session_epoch: string | null; created_at_us: string }>(
+			issuingStateSql,
+			[userId],
+		);
+		if (row === undefined) {
+			throw new TypeError("the read of the issuing state returned no row");
 		}
-		return sealing === "migrating" ? { epoch: FIRST_SESSION_EPOCH, sealed: false } : null;
+		const createdAtMicros = microsFrom(row.created_at_us);
+		if (row.session_epoch !== null) {
+			return { sessionEpoch: epochFrom(row.session_epoch), createdAtMicros, sealed: true };
+		}
+		return sealing === "migrating"
+			? { sessionEpoch: FIRST_SESSION_EPOCH, createdAtMicros, sealed: false }
+			: null;
 	}
 
 	async function insertUnderCurrentEpoch(
 		driver: Driver,
 		insert: SessionInsert,
 	): Promise<SessionRowShape | undefined> {
-		const issuing = await issuingEpochOf(driver, insert.userId);
+		const issuing = await issuingStateOf(driver, insert.userId);
 		if (issuing === null) {
 			throw new ConcealedError("session_not_found");
 		}
-		const mac = await insert.bindUnderEpoch(issuing.epoch);
+		const mac = await insert.bindUnder(issuing);
 		const parameters = [...insertParameters(insert), mac.tokenMac, mac.tokenMacKeyVersion];
 		const [row] = issuing.sealed
-			? await driver.query<SessionRowShape>(sealedInsertSql, [...parameters, issuing.epoch])
+			? await driver.query<SessionRowShape>(sealedInsertSql, [...parameters, issuing.sessionEpoch])
 			: await driver.query<SessionRowShape>(unsealedInsertSql, parameters);
 		return row;
 	}

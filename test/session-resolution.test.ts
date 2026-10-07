@@ -12,6 +12,7 @@ import {
 	DAY,
 	HOUR,
 	MINUTE,
+	rebindSessionsOf,
 	statementsMatching,
 } from "./session-fixtures.js";
 
@@ -48,6 +49,7 @@ async function age(sessionId: string, by: string): Promise<void> {
 		 WHERE id = $1 AND user_id = $3`,
 		[sessionId, by, userId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, TOKEN_KEYS, { sessionId });
 }
 
 beforeAll(async () => {
