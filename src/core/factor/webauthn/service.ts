@@ -18,6 +18,8 @@ import { isRowIdentifier } from "../../db/row-identifier.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { removeSignInMethod } from "../../identity/sign-in-methods.js";
 import { decodeBase64Url, encodeBase64Url } from "../../keys/base64url.js";
+import type { KeyProvider } from "../../keys/provider.js";
+import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { PendingResolution } from "../pending/index.js";
 import {
 	createWebAuthnChallenges,
@@ -102,6 +104,8 @@ export interface WebAuthnService {
 export interface WebAuthnServiceOptions {
 	readonly driver: Driver;
 	readonly schema?: string;
+	readonly keys: KeyProvider;
+	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	readonly webauthn: WebAuthnConfig;
 }
 
@@ -166,6 +170,10 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 	const challenges: WebAuthnChallenges = createWebAuthnChallenges({
 		driver: options.driver,
 		schema,
+		keys: options.keys,
+		...(options.reportTokenBindingRefusal === undefined
+			? {}
+			: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
 	});
 	const credentials: WebAuthnCredentialRepository = createWebAuthnCredentialRepository({
 		driver: options.driver,

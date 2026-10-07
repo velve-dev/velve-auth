@@ -9,6 +9,7 @@ import {
 	type WebAuthnService,
 	type WebAuthnServiceOptions,
 } from "../src/core/factor/webauthn/service.js";
+import type { KeyProvider } from "../src/core/keys/provider.js";
 import { testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -27,6 +28,8 @@ export interface WebAuthnFixture {
 	readonly connection: TestConnection;
 	readonly schema: string;
 	readonly service: WebAuthnService;
+	/** the keys the service binds its challenges under, for a test that issues one directly */
+	readonly keys: KeyProvider;
 	close(): Promise<void>;
 }
 
@@ -35,12 +38,14 @@ export async function openWebAuthnFixture(
 	config: WebAuthnConfig = TEST_WEBAUTHN_CONFIG,
 ): Promise<WebAuthnFixture> {
 	const { connection, schema } = await openMigratedSchema(prefix);
-	const options: WebAuthnServiceOptions = { driver: connection, schema, webauthn: config };
+	const keys = testKeyProvider();
+	const options: WebAuthnServiceOptions = { driver: connection, schema, keys, webauthn: config };
 	const service = createWebAuthnService(options);
 	return {
 		connection,
 		schema,
 		service,
+		keys,
 		async close() {
 			await dropSchema(connection, schema);
 			await connection.close();

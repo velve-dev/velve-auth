@@ -11,6 +11,7 @@ import {
 	toPendingToken,
 	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/pending/index.js";
+import { createWebAuthnChallenges } from "../src/core/factor/webauthn/challenge.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { ConcealedError, toVisibleFailure } from "../src/core/http/error-map.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
@@ -1296,5 +1297,82 @@ describe("a one-time token row that names no account (S-TOKEN-4, S-INTEG-9)", ()
 				verdict: "mismatch",
 			},
 		]);
+	});
+});
+
+describe("a WebAuthn challenge row (section 3.18 point 3)", () => {
+	function challengesUnder(provider: KeyProvider) {
+		return createWebAuthnChallenges({
+			driver: migrated.connection,
+			schema,
+			keys: provider,
+			reportTokenBindingRefusal: report,
+		});
+	}
+
+	async function savedChallenge(challengeToken: string) {
+		const [row] = await migrated.connection.query<Record<string, unknown>>(
+			`SELECT challenge_sha256, purpose, user_id, token_mac, token_mac_key_version
+			 FROM ${schema}.webauthn_challenge WHERE challenge_sha256 = $1`,
+			[sha256Of(challengeToken)],
+		);
+		return row;
+	}
+
+	it("is consumed once, and refused with one report when a writer inserts it again", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const challenges = challengesUnder(keys);
+		const { challengeToken } = await challenges.issue({ purpose: "register", userId });
+		const saved = await savedChallenge(challengeToken);
+		expect(await challenges.consume({ challengeToken, purpose: "register", userId })).toBe(true);
+		await sql(
+			`INSERT INTO ${schema}.webauthn_challenge
+			   (challenge_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, $2, $3, now() + interval '5 minutes', $4, $5)`,
+			[saved?.challenge_sha256, saved?.purpose, saved?.user_id, randomBytes(32), 1],
+		);
+		refusals = [];
+
+		expect(await challenges.consume({ challengeToken, purpose: "register", userId })).toBe(false);
+		expectOneRefusal("factor_check", userId);
+	});
+
+	it("is refused when a writer moves it to the other ceremony, and reports no owner for a discoverable one", async () => {
+		const challenges = challengesUnder(keys);
+		const { challengeToken } = await challenges.issue({ purpose: "register", userId: null });
+		await sql(
+			`UPDATE ${schema}.webauthn_challenge SET purpose = 'authenticate' WHERE challenge_sha256 = $1`,
+			[sha256Of(challengeToken)],
+		);
+		refusals = [];
+
+		expect(
+			await challenges.consume({ challengeToken, purpose: "authenticate", userId: null }),
+		).toBe(false);
+		expect(refusals).toStrictEqual([
+			{
+				userId: null,
+				occasion: "factor_check",
+				reason: "token_binding_mismatch",
+				verdict: "mismatch",
+			},
+		]);
+	});
+
+	it("is refused when a writer inserts one for a challenge of their own choosing", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const challengeToken = chosenToken();
+		await sql(
+			`INSERT INTO ${schema}.webauthn_challenge
+			   (challenge_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'authenticate', $2, now() + interval '5 minutes', $3, 1)`,
+			[sha256Of(challengeToken), userId, randomBytes(32)],
+		);
+		refusals = [];
+
+		expect(
+			await challengesUnder(keys).consume({ challengeToken, purpose: "authenticate", userId }),
+		).toBe(false);
+		expectOneRefusal("factor_check", userId);
 	});
 });

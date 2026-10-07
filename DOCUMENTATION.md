@@ -319,6 +319,8 @@ One row per code, never a blob.
 | `user_id` | `uuid` | cascades from `velve.user`; null for a discoverable sign-in |
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 
 ### `velve.oauth_flow`
 
@@ -410,7 +412,7 @@ the two byte for byte.
 | `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
-| `0004_token_mac.sql` | 4 | deletes every session, one-time token and pending authentication, and adds `token_mac` and an indexed `token_mac_key_version` to the three tables |
+| `0004_token_mac.sql` | 4 | deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables |
 
 Exactly one of the three version-2 files is applied — the one matching the
 configured identity mode. Migrations 3 and 4 are the same in every mode; migration 4
@@ -8798,10 +8800,10 @@ in [Security state: keyed token hashes](#security-state-keyed-token-hashes).
 ## Security state: keyed token hashes
 
 A database writer without the root key could, until 2.0.0, create a session, a
-one-time token or a pending authentication for any account: `token_sha256` is an
-unkeyed SHA-256 value, so whoever chooses a token knows its hash. Every row of
-`velve.session`, `velve.one_time_token` and `velve.pending_authentication` now
-also carries `token_mac`, an HMAC-SHA256 under the `token-mac` purpose key, and
+one-time token, a pending authentication or a WebAuthn challenge for any account:
+`token_sha256` is an unkeyed SHA-256 value, so whoever chooses a token knows its
+hash. Every row of `velve.session`, `velve.one_time_token`,
+`velve.pending_authentication` and `velve.webauthn_challenge` now also carries `token_mac`, an HMAC-SHA256 under the `token-mac` purpose key, and
 `token_mac_key_version`, the version it was taken under (architecture section
 3.18, point 3, and S-INTEG-9). Nothing in this chapter is configured; it holds
 for every instance.
@@ -8833,6 +8835,14 @@ A writer who inserts a row for a token of their own, moves a real row to another
 account, into another table or to another purpose, raises its factors, rewrites
 a payload or resets a pending attempt counter leaves a row whose MAC does not
 match.
+
+A WebAuthn challenge is bound the same way, with `challenge_sha256` in the token
+field: purpose `webauthn_challenge`, the owner or the absent field for a
+discoverable sign-in, and as content the ceremony, `register` or `authenticate`,
+as one text field. A challenge a writer inserts again after it was consumed, moves
+to the other ceremony or inserts for a challenge of their own is refused at
+consumption like an unknown challenge (`challenge_not_found`) and reported with
+the occasion `factor_check`.
 
 **What the MAC leaves to a writer.** Section 3.18 names these limits, and they
 hold here as stated:
@@ -8901,6 +8911,7 @@ before anything in the row is used:
 | session resolve, refresh and every route that reads the session cookie | `SessionService.resolve` | as no session |
 | pending resolve, every failed attempt, and the consume that completes a sign-in | `PendingAuthenticationService` | as no pending authentication (`pending_not_found`, `pending_consumed`) |
 | redemption of an email verification, a reset, an address change or a magic link | `OneTimeTokens.redeem` | as no token (`invalid_token`) |
+| a WebAuthn registration or authentication finished against its challenge | the challenge store of `src/core/factor/webauthn/challenge.ts` | as no challenge (`challenge_not_found`) |
 
 `session.revokeEveryOther` takes the account lock first, reads the session it
 keeps and the account's epoch under it, checks that row and rebinds it under the
@@ -9027,7 +9038,7 @@ expires. **Stop every 1.x instance before you migrate.** The lock keeps a 1.x
 instance that still runs from inserting a row between the deletes and the new
 columns, which would make the migration fail and roll back. It takes the tables
 one at a time in the order a sign-in reaches them — `pending_authentication`,
-then `one_time_token`, then `session` — so a 1.x second-factor completion or
+then `one_time_token`, then `webauthn_challenge`, then `session` — so a 1.x second-factor completion or
 password reset in flight finishes first and the migration waits for it, rather
 than the two deadlocking and PostgreSQL aborting the migration. A 1.x insert that
 arrives after the lock waits, and fails once the columns exist.

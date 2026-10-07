@@ -3,7 +3,11 @@ import type { KeyProvider } from "../keys/provider.js";
 import type { OneTimeTokenPayload, OneTimeTokenPurpose } from "./purpose.js";
 
 /** the kind of row a token hash stands in, which a hash moved to another table or purpose no longer matches */
-export type TokenBindingPurpose = "session" | "pending_authentication" | OneTimeTokenPurpose;
+export type TokenBindingPurpose =
+	| "session"
+	| "pending_authentication"
+	| "webauthn_challenge"
+	| OneTimeTokenPurpose;
 
 /** the security-relevant content of a token row, in the form it is stored in */
 export type TokenRowContent =
@@ -14,6 +18,7 @@ export type TokenRowContent =
 			readonly createdAtMicros: number;
 	  }
 	| { readonly factors: readonly string[]; readonly attempts: number }
+	| { readonly ceremony: string }
 	| { readonly payload: OneTimeTokenPayload | null };
 
 /** everything a token MAC is taken over */
@@ -156,6 +161,9 @@ export function canonicalPayloadOf(payload: OneTimeTokenPayload | null): string 
 
 //the purpose field must tell a session epoch from an attempt count (S-INTEG-9)
 function contentField(content: TokenRowContent): Uint8Array {
+	if ("ceremony" in content) {
+		return textField(content.ceremony);
+	}
 	if (!("factors" in content)) {
 		return optionalTextField(canonicalPayloadOf(content.payload));
 	}

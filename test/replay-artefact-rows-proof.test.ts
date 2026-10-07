@@ -124,6 +124,7 @@ const ARTEFACT_CREATORS: Readonly<Record<string, () => Promise<string>>> = {
 		const challenges = createWebAuthnChallenges({
 			driver: recording(migrated.connection),
 			schema: migrated.schema,
+			keys: TOKEN_KEYS,
 		});
 		return (await challenges.issue({ purpose: "authenticate", userId: null })).challengeToken;
 	},

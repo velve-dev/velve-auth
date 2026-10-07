@@ -5,7 +5,12 @@ import { keyTakesMac } from "../keys/mac.js";
 import type { IntegrityKeyPurpose } from "../keys/purpose.js";
 import { VelveStartupError } from "./startup.js";
 
-const TOKEN_TABLES = ["session", "one_time_token", "pending_authentication"] as const;
+const TOKEN_TABLES = [
+	"session",
+	"one_time_token",
+	"pending_authentication",
+	"webauthn_challenge",
+] as const;
 
 //the start must read one index entry per stored version and not every token row
 function storedTokenVersionsOf(table: string): string {

@@ -36,22 +36,23 @@ async function rowsIn(table: string): Promise<number> {
 }
 
 describe("migration 4, the token MAC columns", () => {
-	it("locks the three token tables before it deletes anything", () => {
+	it("locks the four token tables before it deletes anything", () => {
 		const statements = tokenMacSchema.sql
 			.replace(/\/\*[\s\S]*?\*\//g, "")
 			.split(";")
 			.map((statement) => statement.replace(/\s+/g, " ").trim())
 			.filter((statement) => statement.length > 0);
 
-		expect(statements.slice(0, 4)).toStrictEqual([
+		expect(statements.slice(0, 5)).toStrictEqual([
 			"LOCK TABLE velve.pending_authentication IN ACCESS EXCLUSIVE MODE",
 			"LOCK TABLE velve.one_time_token IN ACCESS EXCLUSIVE MODE",
+			"LOCK TABLE velve.webauthn_challenge IN ACCESS EXCLUSIVE MODE",
 			"LOCK TABLE velve.session IN ACCESS EXCLUSIVE MODE",
 			"DELETE FROM velve.session",
 		]);
 	});
 
-	it("signs every user out and leaves the three tables with the MAC columns", async () => {
+	it("signs every user out and leaves the four tables with the MAC columns", async () => {
 		const userId = await createUser(connection, schema);
 		await connection.query(
 			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
@@ -67,6 +68,11 @@ describe("migration 4, the token MAC columns", () => {
 			`INSERT INTO ${schema}.pending_authentication
 			   (token_sha256, user_id, factors_completed, expires_at)
 			 VALUES ($1, $2, '{password}', now() + interval '5 minutes')`,
+			[randomBytes(32), userId],
+		);
+		await connection.query(
+			`INSERT INTO ${schema}.webauthn_challenge (challenge_sha256, purpose, user_id, expires_at)
+			 VALUES ($1, 'register', $2, now() + interval '5 minutes')`,
 			[randomBytes(32), userId],
 		);
 
@@ -87,7 +93,8 @@ describe("migration 4, the token MAC columns", () => {
 			await rowsIn("session"),
 			await rowsIn("one_time_token"),
 			await rowsIn("pending_authentication"),
-		]).toEqual([0, 0, 0]);
+			await rowsIn("webauthn_challenge"),
+		]).toEqual([0, 0, 0, 0]);
 		expect(columns.map((column) => `${column.table_name}.${column.column_name}`)).toEqual([
 			"one_time_token.token_mac",
 			"one_time_token.token_mac_key_version",
@@ -95,6 +102,8 @@ describe("migration 4, the token MAC columns", () => {
 			"pending_authentication.token_mac_key_version",
 			"session.token_mac",
 			"session.token_mac_key_version",
+			"webauthn_challenge.token_mac",
+			"webauthn_challenge.token_mac_key_version",
 		]);
 	});
 });

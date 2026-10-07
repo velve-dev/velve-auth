@@ -221,9 +221,10 @@ describe("deleting a user (S-TOKEN-5)", () => {
 			[userId, bytes(), bytes()],
 		);
 		await connection.query(
-			`INSERT INTO ${schema}.webauthn_challenge (challenge_sha256, purpose, user_id, expires_at)
-			 VALUES ($1, 'register', $2, now() + interval '5 minutes')`,
-			[bytes(), userId],
+			`INSERT INTO ${schema}.webauthn_challenge
+			   (challenge_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'register', $2, now() + interval '5 minutes', $3, 1)`,
+			[bytes(), userId, bytes()],
 		);
 		await connection.query(
 			`INSERT INTO ${schema}.oauth_flow

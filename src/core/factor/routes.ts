@@ -633,6 +633,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 	const webauthn: WebAuthnService = createWebAuthnService({
 		driver: services.driver,
 		schema: services.schema,
+		keys: services.keys,
 		webauthn: services.webauthn,
 	});
 	return [
