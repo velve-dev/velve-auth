@@ -819,7 +819,7 @@ method that reaches them some other way says which way, by name.**
 | provider subject | the identity is addressed by `(provider, subject)` and the account is the answer (S-LINK-1, E-2425) | `findIdentityBySubject`, `refreshIdentity` |
 | account a sign-in decided | the account is one the OAuth sign-in created in the same transaction, or one automatic linking joined for a trusted provider, before any session exists (E-558, E-2434) | `insertIdentityOfSignIn` |
 | maintenance or start-up | every owner at once, by a deadline or a catalogue (E-2426) | `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown`, `assertEveryUserReferenceCascades` |
-| shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findUserIdOfSession`, `deleteSessionById` behind `FrozenRepositories`; TOTP `isConfirmedFor`, which answers `TotpService.isEnrolled` with a boolean and no secret (E-2435); `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
+| shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findOwnerOfSession`, `deleteSessionById` behind `FrozenRepositories`; TOTP `isConfirmedFor`, which answers `TotpService.isEnrolled` with a boolean and no secret (E-2435); `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
 | created with its account | the account row was inserted by the same transaction (E-2428) | password `writeForCreatedAccount` |
 
 Where a caller holds a proof, the method takes it:
@@ -3499,8 +3499,8 @@ library that do.
 
 | Method | Does |
 |---|---|
-| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
-| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a `StoredOneTimeToken` or `null` |
+| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload, tokenMac, tokenMacKeyVersion })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row with its token MAC in one statement, returning `{ expiresAt }` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload, token_mac, token_mac_key_version`; a `OneTimeTokenCandidate` whose MAC the caller checks before using it, or `null` |
 
 `replaceOneTimeToken` runs in a transaction and serialises the requests about one
 subject with `pg_advisory_xact_lock` before it writes, **not** with a row lock: the
@@ -3597,14 +3597,17 @@ code for all four is `invalid_token`, decided in `error-map.ts` and nowhere else
 
 `userId` in the answer is the account the token was minted for, and it is the
 only account the redemption may act on. No session, cookie or input field takes
-part in that decision (S-TOKEN-4). A row that names no user is not redeemable and
-answers `null` like the rest.
+part in that decision (S-TOKEN-4). A row that names no user is not redeemable:
+`OneTimeTokens.redeem` checks its MAC, reports it if it fails, and answers `null`
+like the rest ([Security state: keyed token hashes](#security-state-keyed-token-hashes)).
 
 The row the repository removed is also the evidence an `Actor` is minted from.
-`consumeOneTimeToken` returns a `RedeemedOneTimeToken` — the branded shape
-`actorOfRedeemedOneTimeToken` takes — and that brand is asserted in this
-repository and nowhere else, so a redemption that no `DELETE … RETURNING`
-produced cannot become an actor (E-234, E-93).
+`consumeOneTimeToken` returns a candidate whose `accept()`, present only when the
+row names an account, gives the `RedeemedOneTimeToken` — the branded shape
+`actorOfRedeemedOneTimeToken` takes — and `OneTimeTokens.redeem` calls it only
+after the row's MAC has passed. The brand is asserted in this repository and
+nowhere else, so a redemption that no `DELETE … RETURNING` produced cannot become
+an actor (E-234, E-93).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -3624,16 +3627,16 @@ produced cannot become an actor (E-234, E-93).
 | `OneTimeTokenRedemption` | `{ purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the result of `redeem` |
 | `OneTimeTokens` | `{ issue; redeem }` | the result of `createOneTimeTokens` |
 | `OneTimeTokenRepositoryOptions` | `{ driver: Driver; schema: string }` | the argument of `createOneTimeTokenRepository` |
-| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the argument of `replaceOneTimeToken` |
+| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; payload: OneTimeTokenPayload \| null; tokenMac: Uint8Array; tokenMacKeyVersion: number }` with a `userId`, or `userId: null` and `serialisedOn` for a cover | the argument of `replaceOneTimeToken` |
 | `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
-| `StoredOneTimeToken` | `RedeemedOneTimeToken & { payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns; a row that names no account answers `null`, exactly as no row does (S-TOKEN-4) |
+| `OneTimeTokenCandidate` | `{ storedPayload; tokenMac; tokenMacKeyVersion }` with `userId: string` and `accept()`, or `userId: null` and no `accept` | the row `consumeOneTimeToken` returns, to be checked before use; `storedPayload` is `{ payload }`, or `null` where the column holds a value no issue writes |
 | `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
 | `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
 | `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
 
 `payload` is `Readonly`: the object `redeem` hands back is the row's, not a copy
 to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in
-`StoredOneTimeToken`, because the column is nullable and a row that names no
+`OneTimeTokenCandidate`, because the column is nullable and a row that names no
 account is not redeemable — the service turns that row into `null` rather than
 handing a caller a target it does not have.
 
@@ -3820,8 +3823,15 @@ freshness is time since sign-in, and only a new sign-in restores it.
 ### `createSessionRepository(options)`
 
 ```ts
-createSessionRepository(options: { driver: Driver; schema: string }): SessionRepository
+createSessionRepository(options: {
+  driver: Driver; schema: string; keys: KeyProvider;
+  sealing?: SecurityStateSealing; reportTokenBindingRefusal?: TokenBindingRefusalReport;
+}): SessionRepository
 ```
+
+`keys` checks the token MAC of every row the repository lists, counts or announces;
+`sealing` defaults to `"required"`; both are described under [Security state:
+keyed token hashes](#security-state-keyed-token-hashes).
 
 Every statement the library issues against `velve.session`. All SQL lives here;
 nothing above this module writes SQL, and no method takes a table or column name
@@ -3829,13 +3839,20 @@ from a caller.
 
 | Method | Statement | Result |
 |---|---|---|
-| `insertSession(insert)` | `INSERT … RETURNING …` | the new `Session` |
-| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` | `{ session, userId, userDisabledAt, observedAt }` or `null` |
+| `boundTo(driver)` | none | the same repository, keys and mode over another driver |
+| `insertSession(insert)` | the account lock, the epoch read, then `INSERT … SELECT … WHERE` the epoch still holds, `RETURNING …`, one transaction | the new `Session` |
+| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` and `velve.security_state` | a `SessionCandidate` to be checked before use, or `null` |
+| `rebindSessionTokenMac({ actor, sessionId, previous, next })` | `UPDATE … WHERE id = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5` | nothing; a row changed since it was read is left |
+| `listSessionsOfUser({ userId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions whose MAC passes, newest first |
+| `listEverySessionIdOwnedBy({ actor })` | `SELECT … WHERE user_id = $1`, deadlines ignored | the ids of every row whose MAC passes |
+| `findOwnerOfSession({ sessionId })` | `SELECT … WHERE id = $1` | `{ userId, libraryRow }` or `null` |
+| `deleteSessionById({ sessionId, ownerReadBefore })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
 | `extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs })` | `UPDATE … WHERE id = $1 AND user_id = $2 AND last_used_at <= now() - $4` | the new idle deadline, or `null` if nothing was written |
 | `deleteSessionByTokenHash(hash)` | `DELETE … WHERE token_sha256 = $1 RETURNING id, user_id` | what was removed, or `null` |
 | `deleteSessionOwnedBy({ sessionId, actor })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
-| `deleteEverySessionOwnedBy({ actor })` | `DELETE … WHERE user_id = $1` | how many rows went |
-| `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | `DELETE … WHERE user_id = $1 AND id <> $2` | how many rows went |
+| `deleteEverySessionOwnedBy({ actor })` | `DELETE … WHERE user_id = $1 RETURNING` what the check needs | how many of the removed rows passed their check |
+| `deleteEverySessionOwnedByReturningIds({ actor })` | the same statement | the ids of the removed rows that passed |
+| `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | the account lock, the kept row read, `DELETE … WHERE user_id = $1 AND id <> $2`, then the kept row checked and rebound by compare-and-set, or deleted, one transaction | how many of the other rows passed their check |
 | `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
 | `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
 | `replacePresentedSession({ presentedTokenHash, insert })` | `DELETE … WHERE token_sha256 = $1` when a token was presented, plus `INSERT`, one transaction | the new `Session` |
@@ -3847,7 +3864,9 @@ session is still fresh — is measured against it, so no decision compares two
 clocks (E-232, E-238).
 
 `SessionInsert` carries `userId`, `tokenHash`, `factors`, `ipAddress`,
-`userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`. Both deadlines are
+`userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`, and `bindUnder({
+sessionEpoch, createdAtMicros })`, which takes the token MAC over the epoch and
+creation time the inserting transaction read. Both deadlines and `created_at` are
 computed by the database from `now()`, so a session's clock is the database's
 clock and not the application's.
 
@@ -4138,7 +4157,10 @@ Types the interface carries: `SessionToken` and `IssuedSessionToken` (from
 `FreshnessWindow` (`{ freshnessWindowMs, now }`), `SessionResolution`,
 `IssuedSession` (`{ token, session }`), `ObservedRequest`
 (`{ ipAddress, userAgent }`), `SessionServiceOptions` and `SessionService`, and
-on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
+on the repository `SessionInsert`, `SessionWithOwner`, `SessionCandidate` (the
+row with its stored factors, MAC, key version, the account's epoch and
+`createdAtMicros`, and `decode()`), `SessionOwner` (`{ userId, libraryRow }`),
+`RemovedSession`, `SecurityStateSealing` (`"required" | "migrating"`) and
 `SessionRepository`. The errors are `InvalidSessionConfigError` (startup),
 `SessionOwnerMismatchError` and `PreviousSessionMissingError` (re-issue).
 
@@ -8948,6 +8970,10 @@ A one-time token row that names no account — the cover artefact an unknown
 address is answered with — is checked as well, with the owner field absent, and is
 then answered as no row whether it passes or not; only a failing one is reported.
 
+Each check costs one HMAC-SHA256 over about 150 bytes; measured on one machine
+at 90 to 130 microseconds per check through `rootKeyProvider`, the key lookup
+included.
+
 A refusal has no code of its own and reaches the outside exactly as a missing
 row does. An unknown `token_mac_key_version` is refused the same way. A one-time
 token is consumed by the statement that reads it. Every email flow redeems inside
@@ -8973,6 +8999,23 @@ the rollback of the transaction that would have issued the session.
 and nothing else: no token, no hash, no MAC. Whatever the report throws is
 swallowed, so it cannot change the refusal. The instance does not pass one yet;
 the security-state alarm of section 3.18 is what it is there for.
+
+### The types
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `TokenBindingRefusal` | `{ userId: string \| null; occasion; reason: "token_binding_mismatch" \| "seal_mismatch"; verdict: "mismatch" \| "key_version_unknown" \| "key_unusable" }` | what `reportTokenBindingRefusal` receives |
+| `TokenBindingOccasion` | `"sign_in" \| "session_resolve" \| "factor_check" \| "token_redemption" \| "change" \| "maintenance"` | the `occasion` of a refusal |
+| `TokenBindingRefusalReport` | `(refusal: TokenBindingRefusal) => void` | the option every factory above takes |
+| `SecurityStateSealing` | `"required" \| "migrating"` | the `sealing` of the session service, the session repository, the second-factor completion and the maintenance pass |
+
+Internal, in `src/core/token/binding.ts` and not in the shipped declarations:
+`TokenBinding` (`{ purpose, ownerId, tokenSha256, content }`), `TokenRowContent`
+(a session's factors, epoch and `createdAtMicros`, a pending row's factors and
+`attempts`, a one-time token's `payload`, or a challenge's `ceremony`),
+`StoredTokenMac` (`{ tokenMac, tokenMacKeyVersion }`), `StoredPayload` and
+`TokenBindingVerdict`. `SessionRows` lives in `src/core/session/rows.ts` and
+`BookedAttempt` in `src/core/factor/pending/booking.ts`, both internal.
 
 ### Writing and rebinding
 
@@ -9065,9 +9108,6 @@ then `one_time_token`, then `webauthn_challenge`, then `session` — so a 1.x se
 password reset in flight finishes first and the migration waits for it, rather
 than the two deadlocking and PostgreSQL aborting the migration. A 1.x insert that
 arrives after the lock waits, and fails once the columns exist.
-Each check costs one HMAC-SHA256 over about 150 bytes; measured on one machine
-at 90 to 130 microseconds per check through `rootKeyProvider`, the key lookup
-included.
 
 ## Security state: the seal
 

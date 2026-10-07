@@ -15928,3 +15928,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Leaving pending rows to their bookings, which E-3149 chose for a reason that does not survive an operator retiring a version. (b) Deleting refused rows, which would make the maintenance pass a writer that removes evidence.
 **Reason.** A key version can only leave the ring once nothing under it is still in use, and only a count over every table says so.
 **Price.** A pass reads and checks every stale row of four tables, and ends with one grouped count per table. A pending row whose counter moves during the pass is left under the old version for the next run.
+
+<a id="e-3267"></a>
+
+### The repository reference of two other chapters is brought into step with the token MAC
+`E-3267` · security-state-tokens · documentation, settled
+
+**Context.** The reference chapters for one-time tokens and sessions still described the repositories as they were before this branch. `createSessionRepository` was shown taking only a driver and a schema, and `findSessionByTokenHash` returning a decoded session. The method table lacked `rebindSessionTokenMac`, `listSessionsOfUser`, `listEverySessionIdOwnedBy`, `boundTo`, `findOwnerOfSession`, `deleteSessionById` and `deleteEverySessionOwnedByReturningIds`. `SessionInsert` was shown without its binding function. The consume statement was quoted without its MAC columns. `StoredOneTimeToken` and `OneTimeTokenReplacement` were described in shapes the code no longer has. The census table of the owner rules named `findUserIdOfSession`, which E-3255 renamed. Each passage now states what the code does: the repository options, the conditional insert, the candidates checked before use, the revocations counting only rows that pass, and `OneTimeTokenCandidate` in place of `StoredOneTimeToken`. They link to this branch's chapter for the reasons. That chapter gains a table of the refusal types and a list of the internal ones, and the measured cost of a check moves from the end of "Upgrading", where it did not belong, to "When it is checked". These are edits in chapters this branch does not own, made because the code they describe changed here and a reference that contradicts its code is a defect of the change.
+**Rejected.** Reporting the stale passages for their owners to fix, which leaves the reference wrong in the release that changes the code.
+**Reason.** CLAUDE.md §5 counts the documentation of every changed function as part of being done.
+**Price.** Six passages outside the chapter this branch owns, which a reviewer of those chapters has to read again.
