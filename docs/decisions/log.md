@@ -15498,3 +15498,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; the reason was wrong.
 **Reason.** The epoch is a counter in the database, and a writer can restore any database row they once read; only something outside the database, the anchor, makes a rollback detectable.
 **Price.** The epoch protects a mass revocation against a writer who did not save the seal row beforehand, or against any writer where an anchor is configured, and against nobody else.
+
+<a id="e-3200"></a>
+
+### The same-work promise holds for password sign-in and not for the token paths
+`E-3200` · security-state, second range · specification, S-INTEG-5, settled
+
+**Context.** E-3096 promised that a broken-state refusal does the work of the ordinary failure on every path. The review found it unmeetable on the token paths: a session, pending or one-time token that names no row costs one lookup, and one that names a row of a broken account costs the lookup and the seal check, and there is no stand-in state for a token that matches nothing. The orchestrator decided to narrow the promise. S-INTEG-5 and section 3.18 *Outwards* now promise identical answers on every path and identical work only on password sign-in, where the stand-in state exists, and name the token paths as a limit with the reason: whoever can present a token whose row belongs to a broken account already is the writer or holds the token. T-INTEG-5's thresholds already measured timing on password sign-in only and stand.
+**Rejected.** A dummy seal check for an unknown token, which would cost every request with a stale cookie a full state read for nothing.
+**Reason.** The timing channel matters where it reveals something the caller did not know; a token holder learning that the account behind it is broken learns about their own account or their own write.
+**Price.** E-3096's promise is withdrawn for three paths, and a reader of E-3096 alone believes it still holds.
