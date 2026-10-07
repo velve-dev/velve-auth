@@ -611,7 +611,12 @@ interface Driver {
 
 `transaction` commits when `fn` resolves and rolls back when it rejects. A driver
 handed to `fn` is bound to one connection: statements it runs are inside the
-transaction. Calling `transaction` on that bound driver joins the open
+transaction. `transaction` must run no statement of its own before `fn`: the
+library's first statement in every transaction is `SET TRANSACTION ISOLATION
+LEVEL READ COMMITTED`, which PostgreSQL refuses with SQLSTATE 25001 after any
+other statement, and the library then fails the transaction with an error named
+`TransactionIsolationRefusedError`, code `transaction_isolation_refused`, rather
+than continue at the isolation the driver left. Calling `transaction` on that bound driver joins the open
 transaction rather than starting a second one, so a helper that wants a
 transaction can be called from inside one.
 

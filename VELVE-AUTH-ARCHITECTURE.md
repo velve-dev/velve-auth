@@ -1800,7 +1800,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 
 | Field of `BaseConfig<M>` | Type | Default | Meaning |
 |---|---|---|---|
-| `database` | `Driver` | — | Driver from `@velve/auth/pg` or one of the application's own per 3.2; the only place at which a connection comes in. |
+| `database` | `Driver` | — | Driver from `@velve/auth/pg` or one of the application's own per 3.2; the only place at which a connection comes in. `transaction(fn)` runs no statement before `fn`: the library begins every transaction with `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` (3.18), and a driver that runs a statement before it makes every transaction fail with the error `transaction_isolation_refused`, never silently continue at another isolation. |
 | `identity` | `IdentityConfig<M>` | — | Which sign-in names there are; determines the CHECK constraint and the instance type. |
 | `keys` | `KeyProvider` | — | Root key and ring; all eight purpose keys (3.8) arise from it by HKDF-SHA256. |
 | `origins` | `readonly string[]` | — | Allowed origins; an empty list is a start error, not a silent free pass. |

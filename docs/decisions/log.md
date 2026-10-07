@@ -16178,3 +16178,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A guard that no test sees removed is a guard by intention only, as E-3311 said.
 **Price.** None.
+
+<a id="e-3331"></a>
+
+### A driver must run nothing before the library's transaction work
+`E-3331` · security-state · db, specification, settled
+
+**Context.** E-3310 makes `SET TRANSACTION ISOLATION LEVEL READ COMMITTED` the first statement of every library transaction. The seventh review's second reviewer showed what happens with a driver whose `transaction()` first runs a statement of its own, such as a tenant `set_config` or an advisory lock. PostgreSQL refuses the isolation statement with 25001, and nothing in the driver contract said a driver may not do that. The review's characterization case was green on the bare 25001. As the orchestrator decided, the contract now says that `transaction(fn)` runs no statement before `fn`. It says so in A.2's `database` row in both languages and in the Driver section of `DOCUMENTATION.md`, and that section is another feature's chapter, so this is a recorded cross-chapter edit. When the isolation statement is refused with 25001, `withReadCommittedTransactions` raises `TransactionIsolationRefusedError`, code `transaction_isolation_refused`, with the driver's error as its cause, and never falls back to running at the driver's isolation. `test/db-read-committed-driver-contract.test.ts` holds it; the review's file is folded into it.
+**Rejected.** Retrying the work without the isolation statement, which is the silent fallback E-3310 exists to remove. Issuing `BEGIN ISOLATION LEVEL READ COMMITTED` from the library, which the `Driver` interface leaves to the driver.
+**Reason.** A guarantee that a driver can quietly disable has to fail loudly when it is disabled.
+**Price.** Drivers that set session state at the start of each transaction stop working with 2.0.0 until they move that statement into the work or before `BEGIN`.
