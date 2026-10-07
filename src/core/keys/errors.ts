@@ -9,7 +9,9 @@ export type KeyErrorCode =
 	| "ciphertext_malformed"
 	| "authentication_failed"
 	| "envelope_malformed"
-	| "envelope_algorithm_unsupported";
+	| "envelope_algorithm_unsupported"
+	| "envelope_unbound"
+	| "envelope_binding_malformed";
 
 const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
 	root_key_missing: "no root key is configured for the current key version",
@@ -23,6 +25,8 @@ const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
 	authentication_failed: "the value does not authenticate under this key",
 	envelope_malformed: "the envelope is too short to carry a header",
 	envelope_algorithm_unsupported: "the envelope names an unsupported algorithm",
+	envelope_unbound: "the ciphertext is in the unbound form, which is not read for this owner",
+	envelope_binding_malformed: "an envelope binding names an owner or a row that is not a uuid",
 };
 
 export class KeyError extends Error {
