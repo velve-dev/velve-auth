@@ -15478,3 +15478,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Starting the maintenance step's first seal at a fresh epoch above 1, which would sign out every user of the estate during the upgrade.
 **Reason.** Epoch 1 is what every session issued before the upgrade was bound under, so it is the only value that keeps them working through the maintenance step.
 **Price.** The limit above, which adds to the one E-3083 already names for `"migrating"`.
+
+<a id="e-3198"></a>
+
+### A key that cannot take the MAC is a broken state with its own alarm reason
+`E-3198` · security-state, second range · specification, S-INTEG-4, settled
+
+**Context.** E-3093 and E-3190 made `verifyMacUnderKeyVersion` answer `"key_unusable"` for a key of the stored version that is not HMAC-SHA256 or does not sign, and section 3.18 had no reason for it: the verdict had nowhere to go. The orchestrator decided it is a named broken state with its own alarm reason. *Checking* now lists it beside the unknown key version, S-INTEG-4 says "unknown or unusable key version", *The alarm* lists `key_unusable`, and the `reason` union of `SecurityStateAlarm` in A.8 gains it.
+**Rejected.** Folding it into `key_version_unknown`, which would send an operator looking for a lost ring version when the ring holds a key of the wrong kind.
+**Reason.** An alarm's reason is what the operator acts on, and the two causes have different remedies.
+**Price.** One more reason in a public union, which an exhaustive switch in an application's callback has to handle.
