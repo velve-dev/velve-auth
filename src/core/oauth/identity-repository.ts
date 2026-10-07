@@ -294,11 +294,10 @@ RETURNING ${RETURNED_COLUMNS}`;
 	const listStatement = `SELECT ${RETURNED_COLUMNS} FROM ${identities}
 WHERE user_id = $1 ORDER BY created_at, id`;
 
-	//the row id is drawn before the insert so the tokens can be bound to the row they are written to (E-3113)
 	const storedTokensStatement = `SELECT id, access_token_enc, refresh_token_enc, id_token_enc,
 token_key_version FROM ${identities} WHERE user_id = $1 ORDER BY id`;
 
-	//the three ciphertexts are swapped only while the row still holds what was read
+	//a write to the row between the read and the rewrite must make the rewrite lose rather than be overwritten (E-3121)
 	const replaceTokensStatement = `UPDATE ${identities}
 SET access_token_enc = $3, refresh_token_enc = $4, id_token_enc = $5, token_key_version = $6
 WHERE id = $1 AND user_id = $2 AND token_key_version = $7
@@ -306,6 +305,7 @@ WHERE id = $1 AND user_id = $2 AND token_key_version = $7
   AND id_token_enc IS NOT DISTINCT FROM $10
 RETURNING id`;
 
+	//the row id is drawn before the insert so the tokens can be bound to the row they are written to (E-3113)
 	async function insertOwnedBy(ownerId: string, facts: IdentityFacts): Promise<Identity | null> {
 		const identityId = randomUuid();
 		const encrypted = await encryptedProviderTokens(

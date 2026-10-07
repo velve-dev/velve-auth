@@ -201,7 +201,7 @@ interface FlowIdentity {
 	readonly linkFromSessionId: string | null;
 }
 
-//a flow is owned by the account it links or by none and its row binds every column that steers it (S-INTEG-1, E-3123)
+//a writer who changes any column that steers a flow must make its verifier unreadable (S-INTEG-1, E-3123)
 function pkceBindingOf(owner: string | null, flow: FlowIdentity): EnvelopeBinding {
 	return {
 		column: "oauth_flow.pkce_verifier_enc",
