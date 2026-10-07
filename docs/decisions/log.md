@@ -15728,3 +15728,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Editing E-3136's price, which existed when this branch was last reviewed and states what was true then.
 **Reason.** New information about an old entry goes into a new entry that cites it (CLAUDE.md §6).
 **Price.** None beyond a reader following E-3136 to this entry.
+
+<a id="e-3146"></a>
+
+### Migration 4 locks the three token tables before it deletes their rows
+`E-3146` · security-state-tokens · schema, migration 4, settled
+
+**Context.** A review noted that migration 4 ran `DELETE` and then `ALTER TABLE … ADD COLUMN … NOT NULL`, and that a 1.x instance still serving during the upgrade could insert a row in between. The `ADD COLUMN` would then fail, and the migration would roll back cleanly but leave the operator with an error that names neither cause. Migration 4 now begins with `LOCK TABLE velve.session, velve.one_time_token, velve.pending_authentication IN ACCESS EXCLUSIVE MODE`. It is changed in place, as E-3108 changed migration 3, because it has never been released. The upgrade text in the chapter says to stop every 1.x instance first. `test/db-token-mac-migration.test.ts` holds the order of the first two statements and shows the migration emptying the three tables of a database at version 3 and adding the six columns.
+**Rejected.** (a) Only the upgrade text, which leaves the failure for an operator who does not read it. (b) A separate migration 5 for the lock, which cannot run before the statements it is meant to precede.
+**Reason.** An unreleased migration is a draft, and the lock is what makes its delete and its new columns one step for every other session on the database.
+**Price.** While migration 4 runs, every statement of a running instance on the three tables waits; a 1.x instance left running fails every insert afterwards. A database built from an earlier draft of migration 4 on a parallel branch refuses to start with a changed checksum, as E-3108 describes for migration 3.

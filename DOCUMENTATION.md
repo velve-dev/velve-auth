@@ -8924,8 +8924,12 @@ derives it from the root key with no configuration.
 
 ### Upgrading
 
-Migration 4 deletes every row of the three tables before it adds the `NOT NULL`
-columns: every session ends, and every open link and pending sign-in expires.
+Migration 4 locks the three tables, deletes every row of them and then adds the
+`NOT NULL` columns: every session ends, and every open link and pending sign-in
+expires. **Stop every 1.x instance before you migrate.** The lock keeps a 1.x
+instance that still runs from inserting a row between the deletes and the new
+columns, which would make the migration fail and roll back; with the lock the 1.x
+instance waits instead, and its inserts fail once the columns exist.
 Each check costs one HMAC-SHA256 over about 150 bytes; measured on one machine
 at 90 to 130 microseconds per check through `rootKeyProvider`, the key lookup
 included.

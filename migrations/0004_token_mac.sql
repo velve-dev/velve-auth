@@ -1,6 +1,10 @@
 /* Every token row carries an HMAC under token-mac over purpose, owner, token_sha256 and
    its security-relevant content, with the version it was taken under (section 3.18, S-INTEG-9).
-   No existing row has one, so every session, one-time token and pending authentication ends. */
+   No existing row has one, so every session, one-time token and pending authentication ends.
+   The tables are locked first, as a 1.x instance still running would otherwise insert between
+   the deletes and the NOT NULL columns; stop every 1.x instance before migrating. */
+LOCK TABLE velve.session, velve.one_time_token, velve.pending_authentication
+  IN ACCESS EXCLUSIVE MODE;
 DELETE FROM velve.session;
 DELETE FROM velve.one_time_token;
 DELETE FROM velve.pending_authentication;
