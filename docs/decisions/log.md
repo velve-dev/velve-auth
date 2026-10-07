@@ -16188,3 +16188,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Retrying the work without the isolation statement, which is the silent fallback E-3310 exists to remove. Issuing `BEGIN ISOLATION LEVEL READ COMMITTED` from the library, which the `Driver` interface leaves to the driver.
 **Reason.** A guarantee that a driver can quietly disable has to fail loudly when it is disabled.
 **Price.** Drivers that set session state at the start of each transaction stop working with 2.0.0 until they move that statement into the work or before `BEGIN`.
+
+<a id="e-3332"></a>
+
+### Every token rebind verifies the old MAC first
+`E-3332` · security-state · specification, S-INTEG-8, S-INTEG-9, test plan, settled
+
+**Context.** Point 5 had the maintenance step rebind the token MACs of sessions, one-time tokens and pending authentications by compare-and-set on the old MAC and key version. The seventh review found that nothing required the step to verify the old MAC before writing the new one. A compare-and-set guards against a concurrent write, not against a forged row. A writer who inserts a session or one-time token with a self-chosen token under an old key version, with any MAC, would have it rebound by the next maintenance run under the current key with a valid MAC: the maintenance step would mint sessions and tokens. As the orchestrator decided, before rebinding, the step recomputes and compares in constant time every token row's MAC under its stored key version. For a session that is against the account's current `session_epoch`, for a pending row over the stored attempts, and for a one-time token over the payload including the bound address of E-3312. A row that fails is not rebound and not deleted. It stays as evidence and stays unusable, and it raises `token_binding_mismatch` with the occasion `maintenance`. Point 3 now says that the resolution's rebind follows a check, which it always did. Point 5, S-INTEG-8 and S-INTEG-9 state the rule in both languages, and T-INTEG-8 gains a writer-inserted session and one-time token under an old version that survive a maintenance run unrebound, with one alarm each. Implementation belongs to the token branch's seam and the administration branch's run.
+**Rejected.** Deleting a row that fails, which removes the evidence an operator needs to see what the writer did.
+**Reason.** A rebind turns whatever MAC a row had into a valid one, so it may only follow a check that the old one was valid.
+**Price.** The maintenance step recomputes one MAC per token row before it writes, roughly doubling its HMAC work.
