@@ -171,6 +171,64 @@ describe("a booked attempt and a legitimate rebinding during the booking (E-3149
 });
 
 describe("a booked attempt and a rewrite that only looks like progress (section 3.18 point 3)", () => {
+	it("treats the row as missing, with the alarm, when it is rebound at an equal count under an older version", async () => {
+		const userId = await createUser(owner, schema);
+		const token = await pendingAfterFailedAttempts(userId, 1);
+		const older = await bindToken(
+			ring.providerAt(1, [1]),
+			pendingBinding(userId, hashPendingToken(token), ["password"], 1),
+		);
+		refusals = [];
+
+		const outcome = await bookingWhileTheWriter(userId, token, async () => {
+			await writer.query(
+				`UPDATE ${schema}.pending_authentication
+				 SET token_mac = $2, token_mac_key_version = $3 WHERE user_id = $1`,
+				[userId, older.tokenMac, older.tokenMacKeyVersion],
+			);
+		});
+
+		expect(outcome).toBe("missing");
+		expect(refusals).toStrictEqual([
+			{ userId, occasion: "factor_check", reason: "token_binding_mismatch", verdict: "mismatch" },
+		]);
+	});
+
+	it("reports the verdict the re-read found, not a mismatch in its place", async () => {
+		const userId = await createUser(owner, schema);
+		const token = await pendingAfterFailedAttempts(userId, 1);
+		refusals = [];
+
+		const outcome = await bookingWhileTheWriter(userId, token, async () => {
+			await writer.query(
+				`UPDATE ${schema}.pending_authentication
+				 SET token_mac = $2, token_mac_key_version = 99 WHERE user_id = $1`,
+				[userId, new Uint8Array(32).fill(3)],
+			);
+		});
+
+		expect(outcome).toBe("missing");
+		expect(refusals.map((refusal) => refusal.verdict)).toStrictEqual(["key_version_unknown"]);
+	});
+
+	it("treats a row that expired during the booking as missing, without an alarm", async () => {
+		const userId = await createUser(owner, schema);
+		const token = await pendingAfterFailedAttempts(userId, 1);
+		refusals = [];
+
+		const outcome = await bookingWhileTheWriter(userId, token, async () => {
+			await writer.query(
+				`UPDATE ${schema}.pending_authentication SET expires_at = now() - interval '1 second'
+				 WHERE user_id = $1`,
+				[userId],
+			);
+		});
+
+		expect(outcome).toBe("missing");
+		expect(await attemptsOf(userId)).toBe(1);
+		expect(refusals).toStrictEqual([]);
+	});
+
 	it("answers missing, with the alarm, when the row keeps moving past every retry", async () => {
 		const many = testKeyRing(MAXIMUM_PENDING_ATTEMPTS + 3);
 		const newest = MAXIMUM_PENDING_ATTEMPTS + 3;
