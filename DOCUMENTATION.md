@@ -8749,7 +8749,7 @@ presented token. The MAC is taken over a length-prefixed encoding of:
 | purpose | `session` | `pending_authentication` | the row's `purpose` |
 | owner | `user_id` | `user_id` | `user_id`, or absent |
 | token | `token_sha256` | `token_sha256` | `token_sha256` |
-| content | `factors`, in stored order | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
+| content | `factors`, in stored order, and the account's `session_epoch` at issue | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
 
 Each field is a type byte, a four-byte length in network order and its bytes,
 and an absent value has its own type byte, so two different rows never encode
@@ -8762,6 +8762,22 @@ a payload or resets a pending attempt counter leaves a row whose MAC does not
 match. What the row binds is decided by the library: deadlines, `ip`,
 `user_agent`, `created_at` and `last_used_at` are not covered, so a writer can
 still extend a deadline, as section 3.18 names among its limits.
+
+### The session epoch
+
+A session's MAC also binds the account's `session_epoch` from `velve.security_state`,
+read in the transaction that inserts the session; an account without a seal row,
+which only `"migrating"` serves, is at epoch 1. The insert is conditional: it
+writes the row only while the account is still at the epoch the MAC binds, and if
+the epoch moved in between it reads it once more and tries again; a second miss
+throws `SessionEpochMovedError` and writes nothing. A resolve checks the MAC over
+the account's current epoch, so a session issued under an older one — a row a
+writer saved and wrote back after a mass revocation raised the epoch — is answered
+as no session. Rebinding under a new key version never lifts a session into a newer
+epoch, because such a session never resolves.
+
+Raising the epoch at every mass revocation is part of resealing the account and is
+described with the seal.
 
 ### When it is checked
 
@@ -8804,9 +8820,12 @@ Every insert takes the MAC under the current `token-mac` version in the
 statement that writes the row. A session or pending authentication that
 resolves under an older version is rebound under the current one by a
 compare-and-set on the stored MAC, so a concurrent rebinding is not overwritten.
-A failed second-factor attempt writes the raised counter together with a MAC
-over it, again only over the row it checked; a concurrent attempt makes it read
-the row again and count on top. The attempt that exhausts the row deletes it.
+A failed second-factor attempt is counted against exactly the row the resolve
+checked: the update writes the raised counter and a MAC over it only where
+`attempts` and `token_mac` still hold the values that resolve verified
+(`resolveForAttempt`). A row changed in between, by a writer or by a concurrent
+attempt, is answered as no row and reported; the attempt that exhausts the row
+deletes it.
 
 A row that is never resolved while two versions are in the ring keeps the old
 version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
