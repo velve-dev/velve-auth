@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // Guards of src/core/keys/mac.ts that no other case pins: the stored MAC is compared through
-// equalsInConstantTime and nothing else (section 3.18, Checking), a MAC is never taken under a
+// equalsInConstantTime and nothing else (section 3.18, Checking, T-INTEG-4), a MAC is never taken under a
 // current version no integer column holds (S-KEY-3), and a stored version no column holds is
 // answered as unknown without asking the provider. Each was run red against a planted fault before
 // it was kept: a naive byte comparison, and each version guard removed in turn (E-3311).

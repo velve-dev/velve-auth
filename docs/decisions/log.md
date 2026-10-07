@@ -16268,3 +16268,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Consulting the anchor inside the transaction after the consumption, which holds a connection across the application's call, as E-3304 rejected.
 **Reason.** The anchor has to be asked about the account the change will act on, and the only way to know it before the transaction is to read it.
 **Price.** One more read per consuming path. A writer who swaps the row's owner between the two reads causes a refusal with an alarm, not a bypass.
+
+<a id="e-3340"></a>
+
+### Four statements of section 5.21 get the thresholds they lacked
+`E-3340` · security-state · specification, test plan, settled
+
+**Context.** The seventh review's second reviewer held section 6.24 against 3.18 and 5.21 and found four statements without a threshold. First (B-F1): `seal_missing` appeared in no T-INTEG case, so E-3201's heading "every alarm reason has a case" was false when written, as E-3285 already found for its columns. T-INTEG-4's deleted-seal-row part now expects 1 alarm `seal_missing`. Second (B-F2): S-INTEG-4's constant-time clause, added by E-3311, had no threshold. T-INTEG-4 gains a static and unit part, 0 comparisons of a stored MAC outside `equalsInConstantTime`, with a planted naive comparison required to fail, and `test/keys-integrity-mac-guards.test.ts` cites T-INTEG-4. Third (B-F3): T-INTEG-9 re-inserted a saved session after two of the seven mass revocations S-INTEG-3 lists. It now runs all seven — `password.set`, `change`, `redeemReset`, `redeemResetWithRecoveryCode`, `session.revokeAll`, `revokeAllOther` and the S-LINK-4 sweep — 7/7. Its "a third time" became "after `session.revokeAll`", because there are no longer two before it. Fourth (B-F4): `SealedSecurityState`, what a reseal ratifies, omitted the disabled state that E-3315 put under the seal and the password's `set_by_session_id`. It gains `disabled` and `passwordSetBySession`, and *Resealing*, S-INTEG-7 and T-INTEG-7 name them. All of it is in both languages. `test/security-state-spec-coverage.test.ts`, the reviewer's case, holds the four. E-3201 is not edited.
+**Rejected.** Nothing.
+**Reason.** A requirement without a threshold is a requirement no test can fail.
+**Price.** T-INTEG-9 grows by five revocations.
