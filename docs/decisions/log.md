@@ -16238,3 +16238,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Answering a broken state as an unknown pending authentication, which differs from a wrong factor on the first request.
 **Reason.** Indistinguishability holds over a sequence of requests or not at all, because an attacker can always send the second one.
 **Price.** A broken account's pending authentication is used up by the refusals, as a wrong factor would use it up.
+
+<a id="e-3337"></a>
+
+### CLAUDE.md's lock rule counts from the isolation statement
+`E-3337` · security-state · rules, settled
+
+**Context.** CLAUDE.md §7 said that a transaction writing more than one user-owned table takes the account lock "as its first statement", and that for four redeem flows the lock "is not the transaction's first statement". Since E-3310 the first statement of every library transaction is `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`, and the specification says so. The seventh review pointed out the contradiction. CLAUDE.md's own rule makes a disagreement with the architecture a bug in CLAUDE.md. Both places now count from the statement after the isolation statement and cite E-3310. Nothing else in §7 changes.
+**Rejected.** Exempting the isolation statement in the specification instead, which would make the specification yield to the rules file.
+**Reason.** The architecture is the source of truth, and the rules file is fixed when it disagrees.
+**Price.** None.
