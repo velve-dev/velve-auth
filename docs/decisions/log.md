@@ -15308,3 +15308,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the cross-purpose copies beside them, which would add cases T-KEY-2 already decides.
 **Reason.** A case belongs to the requirement whose failure alone would let it pass.
 **Price.** The column binding is tested on one table only, the only one with several columns under one purpose.
+
+<a id="e-3101"></a>
+
+### T-INTEG-9 changes a purpose by moving the row between tables
+`E-3101` · security-state · specification, test plan, settled
+
+**Context.** T-INTEG-9 asked to change the purpose of one real row in each of `session`, `one_time_token` and `pending_authentication`. Only `one_time_token` has a purpose column; for a session and a pending authentication the purpose is the table the row stands in, so "change its purpose" had no defined act. The case now moves one real row of each table into another of the three, which is the purpose change a writer can make there, and in addition sets a one-time token's `purpose` to another of the four. The altered rows rise from ten to eleven.
+**Rejected.** Dropping the purpose change for the two tables without a column, which would leave the purpose in their MAC untested.
+**Reason.** The MAC binds the purpose because a row could otherwise be read as another kind of token, and moving it is how that happens.
+**Price.** A moved row has to be given the target table's columns, which the test supplies with values of its own.
