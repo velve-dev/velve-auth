@@ -16458,3 +16458,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Asking the token branch to rename its field to `underKeyVersion`, which would change built and tested code to match a name chosen one round earlier.
 **Reason.** The specification has to describe the encoding as built, because a second implementation that followed the old text would compute different MACs.
 **Price.** None.
+
+<a id="e-3359"></a>
+
+### What a path evaluates comes from its verified read
+`E-3359` · security-state · specification, S-INTEG-4, test plan, settled
+
+**Context.** *Checking* reads the seal row and every component in one statement and compares the digest. The ninth review showed that nothing tied what the path then evaluates to that read. A passkey sign-in looks up the credential and its public key, a factor check its secret, a recovery-code redemption deletes the matching code. A writer can swap a passkey's public key, insert a foreign identity or insert a copied recovery code, whose `code_hmac` binds no owner, in the gap between the checked read and the lookup or the consuming `DELETE`. With `LOCK TABLE velve.security_state IN ACCESS EXCLUSIVE MODE`, which plain `UPDATE` privilege permits, the writer can make that gap as wide as they like. The review's premise cases showed both windows. As decided, *Checking*, *Sealing* and S-INTEG-4 require, in both languages, that the factor material a sign-in, factor check or consumption evaluates comes from the one verified read itself, or is checked to be a member of exactly that read. This covers the passkey row and public key, the identity's provider and subject, the PHC, the TOTP ciphertext and the recovery code. One that is not in the read is a broken state, answered as the path's ordinary failure with `seal_mismatch`. *The limits* names the `LOCK TABLE` hold as a denial of service and no bypass once this holds. T-INTEG-4 gains both windows, refused with one alarm each. The premises are `test/security-state-check-use-window.test.ts`, together with the case that the German text states the rule.
+**Rejected.** Taking a row lock on the factor rows during the check, which a writer with `LOCK TABLE` or plain `UPDATE` on those rows defeats the same way.
+**Reason.** A check vouches for the rows it read, and only those rows may then be used.
+**Price.** Paths that looked a factor up separately have to take it from the check's statement or test membership in it; that is the seal and token branches' work.
