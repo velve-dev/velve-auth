@@ -15238,3 +15238,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Probing every purpose, encryption ones included, which no finding asked for and which belongs to whoever reworks the start check. (b) Mapping an unusable key to `"key_version_unknown"`, which would tell an operator the ring lost a version when it holds a key of the wrong kind.
 **Reason.** A key that cannot do its job is a configuration fault, and configuration faults are refused at the start, not discovered by the first request that needs them.
 **Price.** The start takes two more HMACs. `macUnderCurrentKey` still throws the platform error for an unusable current key; the start check is what keeps that from being reachable, and a provider that changes its answer after the start is not covered. The `keys_unusable` row of *The instance* was rewritten for the same reason as E-3089.
+
+<a id="e-3094"></a>
+
+### A change to an unsealed account in migrating mode converts the whole account first
+`E-3094` · security-state · specification, S-INTEG-3, S-INTEG-8, settled
+
+**Context.** A review found section 3.18 silent on a legitimate change — a passkey registered, a password changed — to an account that has no seal row yet in mode `"migrating"`. Sealing it after the change would lock the user out of their remaining old-form envelopes, which are readable only for an unsealed account (S-INTEG-1), and refusing the change would stop a signed-in user from working while the maintenance step runs, which S-INTEG-8 forbids. *Sealing* now says such a change first re-encrypts every old-form envelope of the account into the bound form, in the same transaction under the account lock, and then writes the first seal; point 2 and S-INTEG-3 say the same, and T-INTEG-8 registers a passkey on an unconverted account mid-run and expects its TOTP secret and password to stay usable.
+**Rejected.** (a) Sealing only the changed component and leaving the rest in the old form, which leaves a sealed account with envelopes no sealed account may read. (b) Refusing changes until the account is converted, for S-INTEG-8.
+**Reason.** The account is converted entirely or not at all, which is the property the maintenance step already promises per account; a change becomes one more way to reach it.
+**Price.** The first change after the upgrade costs a re-encryption of every envelope of that account inside the request.
