@@ -15718,3 +15718,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Binding the row's creation time or a counter outside the row, which a writer restores along with the row. (b) Leaving the limit to the specification's sentence alone, which a reader of the attempt budget does not find.
 **Reason.** A limit nobody can see from the place they read about the guarantee is a guarantee overstated.
 **Price.** The budget against a writer is unbounded within the pending row's five minutes. The review's case asserted the opposite and is kept with its expectation turned to what the code does, which is a test that passes on the gap.
+
+<a id="e-3145"></a>
+
+### The specification now prescribes the consume statement this branch runs
+`E-3145` · security-state-tokens · specification, test, settled
+
+**Context.** E-3136's price said that section 3.7 and S-REPLAY-2 still prescribed the one-time token's consume statement as `RETURNING user_id, payload`, while this branch also returns `token_mac` and `token_mac_key_version` and pins that in `test/token-static-scan.test.ts`. The foundation amended both in 2377691 (E-3205): the statement returns the two MAC columns, and a returned row whose MAC does not match is answered like an empty result. The code and the specification agree again, and E-3136's price is settled by that amendment, not by an edit to E-3136. The foundation's two placeholders for this branch are plain cases. `test/security-state-attempt-budget.test.ts` was flipped at the merge 288b138. `test/security-state-attempt-count.test.ts` was adapted at the merge 4699e8b to the count then in place. With 145ed4b it waits on the booking's statement and refuses both a reset counter and a restored older row during a booking, with the alarm.
+**Rejected.** Editing E-3136's price, which existed when this branch was last reviewed and states what was true then.
+**Reason.** New information about an old entry goes into a new entry that cites it (CLAUDE.md §6).
+**Price.** None beyond a reader following E-3136 to this entry.
