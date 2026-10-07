@@ -16218,3 +16218,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Enforcing it at start by probing the anchor's store, which the library cannot see; the anchor is the application's code.
 **Reason.** A guard the attacker can rewrite is not a guard against that attacker.
 **Price.** An application that wants rollback protection has to run a second store with separate credentials.
+
+<a id="e-3335"></a>
+
+### An old key version leaves the ring only after a run reports nothing left under it
+`E-3335` · security-state · specification, S-KEY-5, test plan, settled
+
+**Context.** 3.8 and point 5 required the maintenance step to have run before a key version leaves the ring, and T-KEY-5 ran it once with one process. The seventh review pointed out that with several processes one may still serve with the old current version after the run. It keeps writing seals and token MACs under the old version, and removing that version then breaks those accounts and sessions. As the orchestrator decided, an old version may be removed only after every process serves with the new current version and a final maintenance run reports zero seal rows and zero token rows under the old version. `SecurityStateReport` gains `underKeyVersion`, the seal and token row counts per key version after the run, so the operator can see it. 3.8, 3.15 B's report type, point 5, S-KEY-5 and T-KEY-5 say so in both languages. T-KEY-5 now runs two processes, one restarted only after a request writes under `v1`, and requires the last report to name zero rows for `v1`, now 7/7.
+**Rejected.** Having the library refuse to remove a version itself, which it cannot, since the ring is the application's configuration.
+**Reason.** The precondition for removing a key is a fact about the database, and only a count over the database can show it.
+**Price.** `SecurityStateReport` changes shape in the unreleased 2.0.0, and the maintenance step counts rows per version after each run.
