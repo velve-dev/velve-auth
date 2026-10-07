@@ -16088,3 +16088,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Relying on the random first byte of generated ciphertexts, which hits the case once in 256 runs.
 **Reason.** A branch point that only chance reaches needs a case that reaches it every time.
 **Price.** None.
+
+<a id="e-3322"></a>
+
+### T-INTEG-2's property uses generators that could find an ambiguity
+`E-3322` · security-state · test plan, S-INTEG-2, settled
+
+**Context.** T-INTEG-2 checked the seal's canonical encoding with 1000 random pairs of different states and expected no collision. The sixth review pointed out that random states almost never differ in the way an ambiguous encoding confuses: bytes that move across a field boundary, an element that moves between lists, an absent field against an empty one. So the property would pass for an encoder without length prefixes too. As the orchestrator decided, the property now uses two generators of at least 1000 pairs each, a boundary-shifting one and a single-field mutation, and a naive reference encoder without length prefixes or counts must fail the same property in the same test. That shows the generators can find what the property is for. Both languages say so.
+**Rejected.** Raising the random pair count, which does not change what random pairs exercise.
+**Reason.** A property test proves something only if a known-bad implementation fails it.
+**Price.** The test carries a second, deliberately wrong encoder.
