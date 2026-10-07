@@ -15528,3 +15528,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Taking the account lock for every session issue, which would serialise sign-ins behind every change of the account.
 **Reason.** A false alarm teaches an operator to ignore the alarm, which is worse than the race it reports.
 **Price.** A sign-in that loses the race twice in a row — two mass revocations during one sign-in — fails, which this entry accepts without having measured how often it happens.
+
+<a id="e-3203"></a>
+
+### One counter per process carries every undelivered alarm
+`E-3203` · security-state, second range · specification, S-INTEG-5, settled
+
+**Context.** E-3097 had every undelivered alarm counted and also had an evicted deduplication key pass "what it had counted" into the count, which reads as two counters and leaves open whether an alarm held back by a key is counted at once or at eviction. The review asked for one model. Section 3.18 *The alarm* now states it: one counter per process, raised at the moment any alarm is held back, by a key's deduplication or by the bound of 100; the next delivered alarm, the aggregate included, carries its value in `suppressed` and resets it to 0. An evicted key therefore loses nothing but its deduplication, because its alarms are already in the counter. The orchestrator's wording — evicted per-key counts added to the global counter — describes a model with per-key counts; with the count raised at once there is nothing to add, and the result is the same total.
+**Rejected.** Per-key counts folded in at eviction, which needs a second counter and can report an alarm minutes after it was held back.
+**Reason.** One counter raised at once cannot lose or double-count an alarm, whatever the table does.
+**Price.** `suppressed` does not say which accounts or reasons the held-back alarms were for.
