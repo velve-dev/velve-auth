@@ -16058,3 +16058,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reusing `anchor_unavailable` for a digest mismatch, which would tell the operator the anchor is down when it has in fact caught a rollback.
 **Reason.** A version number alone cannot tell the history the anchor recorded from a second history that reached the same number, and the digest can.
 **Price.** This is a breaking change for anchor implementers against the unreleased 2.0.0 interface. An anchor now stores a digest per account, not a number, and has to compare on every `recordSeal`.
+
+<a id="e-3319"></a>
+
+### The resolution's rebind of a session is a compare-and-set
+`E-3319` · security-state · specification, S-INTEG-9, settled
+
+**Context.** Point 3 said that a resolved session under an old key version is bound anew under the current one, without saying how the write is guarded. The sixth review pointed out that an unconditional write could overwrite a row that a revocation or the maintenance step's own compare-and-set changed after the resolution read it. Point 3 now states the rebind as a compare-and-set on the `token_mac` the resolution verified. A swap that hits no row leaves the row as it is, without an alarm, because the row was changed by a legitimate writer that holds its own guard. Both languages say so. Implementation belongs to the token branch.
+**Rejected.** Raising the alarm on a missed swap, which a revocation racing the resolution would trigger without any writer involved.
+**Reason.** Every rebind of a token row in this section compares against the MAC it verified, so that no rebind undoes another write, and the resolution's was the one left unstated.
+**Price.** None.
