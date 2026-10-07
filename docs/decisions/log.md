@@ -15828,3 +15828,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the limits paragraph as it was, which would state as a named limit a gap the code has closed.
 **Reason.** The specification describes the binding as built, as E-3218 did, and the limits paragraph has to shrink with it.
 **Price.** None beyond the edit; the cost of the binding is the branch's and recorded there.
+
+<a id="e-3293"></a>
+
+### The first seal's re-encryption runs in the change's own transaction
+`E-3293` · security-state · specification, S-INTEG-3, settled
+
+**Context.** Section 3.18 *Sealing* said that a change at an unsealed account in mode `"migrating"` re-encrypts the account's old-form envelopes "in the same transaction under the account lock" and then writes the first seal, and point 5 said the same of the maintenance step. It did not say that the re-encryption cannot run anywhere else. The bound-envelope branch found that its rewrite took any connection, so a caller passing the pool would take the account lock in a statement of its own, lose it at once and rewrite without it; it now accepts only a connection handed out by the one helper that opens a transaction (commit 53b0fad on that branch). *Sealing* now says in both languages that the re-encryption opens no transaction and takes no lock of its own, runs in the change's transaction, and cannot be called outside one.
+**Rejected.** Letting the re-encryption open its own transaction, which would seal the account in a second transaction and leave a window between the rewritten envelopes and the first seal.
+**Reason.** A lock taken through the pool is released when its statement ends, so a rewrite that does not run inside the change's transaction runs without the lock whatever the text above it says.
+**Price.** None in the specification; the type that enforces it is the bound-envelope branch's.
