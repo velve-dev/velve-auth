@@ -473,3 +473,16 @@ describe("the account rewrite's transaction states its isolation (E-3310)", () =
 		]);
 	});
 });
+
+describe("a uuid in a binding is the whole value and not a part of it (S-INTEG-1, E-3110)", () => {
+	it.each([
+		["a prefix", (uuid: string) => `x${uuid}`],
+		["a suffix", (uuid: string) => `${uuid}x`],
+		["a line feed", (uuid: string) => `${uuid}\n`],
+	])("refuses an owner with %s around a uuid", (_name, wrap) => {
+		const owner = randomUUID();
+		expect(() =>
+			boundAdditionalData({ column: "password_credential.phc", owner: wrap(owner), row: owner }, 1),
+		).toThrow(KeyError);
+	});
+});
