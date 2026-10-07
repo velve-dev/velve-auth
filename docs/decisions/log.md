@@ -15318,3 +15318,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Dropping the purpose change for the two tables without a column, which would leave the purpose in their MAC untested.
 **Reason.** The MAC binds the purpose because a row could otherwise be read as another kind of token, and moving it is how that happens.
 **Price.** A moved row has to be given the target table's columns, which the test supplies with values of its own.
+
+<a id="e-3102"></a>
+
+### A reseal returns what it ratified, and the specification says that sealing checks nothing
+`E-3102` · security-state · specification, S-INTEG-7, settled
+
+**Context.** A review found that `maintenance.resealSecurityState` and the first seal written by the maintenance step accept whatever rows the account has — a passkey or an identity a writer inserted among them — while the call returned only `{ version }`, so an administrator could ratify an inserted credential without seeing it. Section 3.15 B now types the result as `SealedSecurityState`: the version, the address and whether it is confirmed, whether a password and a `password_reset_required` row exist, the state of TOTP, the `credential_id` of every passkey in base64url, `provider` and `subject` of every identity and the number of recovery codes. *Resealing* says the call checks none of the rows and returns them so that the application sees what it ratifies; *The limits* says the first sealing and every resealing take over inserted rows unchecked; S-INTEG-7 and T-INTEG-7, which now inserts a foreign passkey before the valid call, follow.
+**Rejected.** (a) Having the reseal refuse rows it cannot vouch for, which the library cannot do: it has no record of which rows were legitimate other than the seal that is broken. (b) Returning only counts, which do not let an administrator recognise a foreign credential.
+**Reason.** The library cannot tell a legitimate row from an inserted one once the seal is broken, so the decision is the administrator's, and it can only be made on what the call shows.
+**Price.** The result carries identifiers — credential ids, provider subjects, the address — that the application may log, where the library itself logs none of them. `SealedSecurityState` lists the recovery codes only by number, so an inserted code is visible only as a count that does not match.
