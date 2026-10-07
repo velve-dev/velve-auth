@@ -16438,3 +16438,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reverting the sentence, which would bring back the description E-3291 found misleading.
 **Reason.** An edit to a row the rules call fixed has to be recorded where the rules' readers look, even when it changes no number.
 **Price.** None.
+
+<a id="e-3357"></a>
+
+### A consuming path consumes first and asks the anchor inside its transaction
+`E-3357` · security-state · specification, S-INTEG-6, settled
+
+**Context.** E-3339 had a path that learns its account by consuming a row read that row first, outside any transaction, to ask the anchor about its owner before consuming it. That rule contradicts S-RACE-2, which forbids any read of a row before its consumption, and with it T-RACE-2. It also contradicts S-TOKEN-4's requirement that the statements be the same whatever the token. The token branch found the contradiction when it built the paths. As decided, the read-first step is dropped. Such a path consumes the row first, as §7 orders. Then, in the same transaction and before the account lock, it asks `minimumVersion` for the consumed row's owner, takes the account lock, reads the seal in one statement and compares. The only lock held across the call into the application is the consumed row's own, which holds up nothing but that one token. The case of an owner changing between a read and the consumption, and its `token_binding_mismatch`, disappears. *Anchor* says so in both languages and names these paths as the exception to consulting the anchor outside any transaction. E-3339 is not edited.
+**Rejected.** Keeping the read and exempting it from S-RACE-2, which would give a racing redemption the window S-RACE-2 closes.
+**Reason.** A rule added later has to fit the requirements already standing, and S-RACE-2 is the older and the more basic one.
+**Price.** A consuming path's transaction stays open across the anchor call, holding the consumed row's lock and a connection for as long as the application's store takes.
