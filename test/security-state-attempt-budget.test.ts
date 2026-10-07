@@ -19,10 +19,7 @@ import {
 	testKeyProvider,
 } from "./totp-fixtures.js";
 
-// A database writer without the root key resets the attempt counter of a pending authentication
-// and gets more second-factor guesses than L-8 allows. Section 3.18 binds attempts into the
-// pending token MAC, which every counted attempt writes anew, so a reset row fails its MAC and
-// the pending authentication answers as gone (E-3091, E-3134).
+//a writer who resets attempts gets no more guesses than the budget allows (E-3091)
 
 let connection: TestConnection;
 let schema: string;
@@ -31,7 +28,7 @@ let pending: PendingAuthenticationService;
 let totp: TotpService;
 
 beforeAll(async () => {
-	const migrated = await openMigratedSchema("review_attempts");
+	const migrated = await openMigratedSchema("attempt_budget");
 	connection = migrated.connection;
 	schema = migrated.schema;
 	clock = createTestClock(new Date("2026-07-01T12:00:00.000Z"));
@@ -51,32 +48,37 @@ afterAll(async () => {
 	await connection.close();
 });
 
+async function guessesAnsweredWhileAWriterResetsAttempts(): Promise<number> {
+	const userId = await createUser(connection, schema);
+	const actor = actorOfTestUser(userId);
+	const enrollment = await totp.enroll.start({ actor, accountName: "victim@example.com" });
+	const secret = secretBytesOfBase32(enrollment.secretBase32);
+	await totp.enroll.finish({ actor, code: totpCodeForStep(secret, timeStepAt(clock.now())) });
+	const { token } = await beginPendingState(pending, userId);
+
+	let guessesAnswered = 0;
+	for (let round = 0; round < 4; round += 1) {
+		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
+			const outcome = await totp
+				.verify({ pendingToken: token, code: "000000" })
+				.then(() => "accepted")
+				.catch((cause: { reason?: string }) => cause.reason ?? "unknown");
+			if (outcome === "totp_code_wrong") {
+				guessesAnswered += 1;
+			}
+		}
+		await connection.query(
+			`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE user_id = $1`,
+			[userId],
+		);
+	}
+	return guessesAnswered;
+}
+
 describe("a database writer and the pending attempt budget (section 3.18, L-8)", () => {
 	it("does not give a writer who resets attempts more guesses than the budget", async () => {
-		const userId = await createUser(connection, schema);
-		const actor = actorOfTestUser(userId);
-		const enrollment = await totp.enroll.start({ actor, accountName: "victim@example.com" });
-		const secret = secretBytesOfBase32(enrollment.secretBase32);
-		await totp.enroll.finish({ actor, code: totpCodeForStep(secret, timeStepAt(clock.now())) });
-		const { token } = await beginPendingState(pending, userId);
-
-		let guessesAnswered = 0;
-		for (let round = 0; round < 4; round += 1) {
-			for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
-				const outcome = await totp
-					.verify({ pendingToken: token, code: "000000" })
-					.then(() => "accepted")
-					.catch((cause: { reason?: string }) => cause.reason ?? "unknown");
-				if (outcome === "totp_code_wrong") {
-					guessesAnswered += 1;
-				}
-			}
-			await connection.query(
-				`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE user_id = $1`,
-				[userId],
-			);
-		}
-
-		expect(guessesAnswered).toBeLessThanOrEqual(MAXIMUM_PENDING_ATTEMPTS);
+		expect(await guessesAnsweredWhileAWriterResetsAttempts()).toBeLessThanOrEqual(
+			MAXIMUM_PENDING_ATTEMPTS,
+		);
 	});
 });

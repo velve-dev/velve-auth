@@ -1,17 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertStoredIntegrityKeysTakeMac } from "../src/core/auth/integrity-key-ring.js";
 import { assertKeysAnswerForEveryPurpose } from "../src/core/auth/startup.js";
-import { macUnderCurrentKey, verifyMacUnderKeyVersion } from "../src/core/keys/mac.js";
+import { keyTakesMac, macUnderCurrentKey, verifyMacUnderKeyVersion } from "../src/core/keys/mac.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// Section 3.18 point 1 makes both integrity purposes HMAC-SHA256 keys, and migration 3 refuses a
-// digest that is not 32 bytes. An HMAC key under another hash signs, so the start has to ask for
-// the algorithm and the length, and a ring version that stored seals still name has to be probed
-// as well as the current one (E-3190, E-3191).
+//an integrity key must be hmac with sha-256 at full length for the current and every stored version (E-3190)
 
 const genuine = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
@@ -82,6 +79,33 @@ describe("the start check against the HMAC-SHA256 promise of section 3.18 point 
 	});
 });
 
+async function hmacSha256KeyOfBytes(bytes: number): Promise<CryptoKey> {
+	return crypto.subtle.importKey(
+		"raw",
+		new Uint8Array(bytes).fill(7),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+}
+
+describe("the length of an HMAC-SHA256 key (section 3.18 point 1, E-3296)", () => {
+	it.each([1, 31])("refuses a key of %i bytes", async (bytes) => {
+		expect(await keyTakesMac(await hmacSha256KeyOfBytes(bytes))).toBe(false);
+	});
+
+	it("takes a key of 32 bytes, the length the root key provider derives", async () => {
+		expect(await keyTakesMac(await hmacSha256KeyOfBytes(32))).toBe(true);
+		expect(await keyTakesMac((await genuine.current("state-mac")).key)).toBe(true);
+	});
+
+	it("refuses the start when a provider answers state-mac with a key of one byte", async () => {
+		await expect(
+			assertKeysAnswerForEveryPurpose(providerAnsweringStateMacWith(await hmacSha256KeyOfBytes(1))),
+		).rejects.toMatchObject({ code: "keys_unusable" });
+	});
+});
+
 describe("the older ring versions stored seals still name", () => {
 	it("refuses a ring whose older state-mac version a seal names cannot take an HMAC", async () => {
 		const aes = await aesKey();
@@ -98,7 +122,12 @@ describe("the older ring versions stored seals still name", () => {
 
 		await expect(
 			assertStoredIntegrityKeysTakeMac({ driver: connection, keys: provider, schema }),
-		).rejects.toMatchObject({ code: "keys_unusable" });
+		).rejects.toMatchObject({
+			name: "VelveStartupError",
+			code: "keys_unusable",
+			message:
+				"keys answered state-mac version 1, which a stored seal names, with a key that cannot take HMAC-SHA256, so no seal under that version could be checked",
+		});
 	});
 
 	it("starts when a seal names a version the ring no longer holds, which is a broken state", async () => {
@@ -107,5 +136,15 @@ describe("the older ring versions stored seals still name", () => {
 		await expect(
 			assertStoredIntegrityKeysTakeMac({ driver: connection, keys: genuine, schema }),
 		).resolves.toBeUndefined();
+	});
+});
+
+describe("taking a MAC under an unusable current key", () => {
+	it("refuses with the KeyError key_unusable rather than a platform exception", async () => {
+		const provider = providerAnsweringStateMacWith(await hmacKeyUnder("SHA-1"));
+
+		await expect(
+			macUnderCurrentKey(provider, "state-mac", new Uint8Array(8)),
+		).rejects.toMatchObject({ name: "KeyError", code: "key_unusable" });
 	});
 });

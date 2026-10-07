@@ -13,10 +13,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
-// A writer who holds a pending row changes it while a booked attempt waits on the row lock.
-// Section 3.18 point 3 makes the booking conditional on the attempts value and the MAC the
-// resolution verified; a booking that misses reads the row once more and refuses it as missing,
-// with the alarm, when it is not a concurrent attempt's progress (E-3194, E-3140).
+//a row a writer changes while a booking waits on it must answer as missing with the alarm unless a booking moved it (E-3208)
 
 let owner: TestConnection;
 let writer: TestConnection;

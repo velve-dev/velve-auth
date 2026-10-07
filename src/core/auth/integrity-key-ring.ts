@@ -1,9 +1,9 @@
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
-import type { KeyProvider } from "../keys/index.js";
-import { keyTakesMac } from "../keys/mac.js";
+import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
+import { keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import type { IntegrityKeyPurpose } from "../keys/purpose.js";
-import { VelveStartupError } from "./startup.js";
+import { storedIntegrityKeySharedWith, storedIntegrityKeyUnusable } from "./startup.js";
 
 const TOKEN_TABLES = [
 	"session",
@@ -37,7 +37,7 @@ function storedVersionsStatement(schema: string): string {
 		.concat("\n\tORDER BY 1, 2");
 }
 
-//a version no row names is never read so only the stored ones are probed (E-3191)
+//a version no row names is never read and needs no probe (E-3191)
 export async function assertStoredIntegrityKeysTakeMac(options: {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
@@ -47,11 +47,41 @@ export async function assertStoredIntegrityKeysTakeMac(options: {
 		purpose: IntegrityKeyPurpose;
 		key_version: number;
 	}>(storedVersionsStatement(options.schema), []);
+	const otherPurposesOf: Record<IntegrityKeyPurpose, Map<string, string>> = {
+		"state-mac": await currentPurposesByFingerprint(options.keys, "state-mac"),
+		"token-mac": await currentPurposesByFingerprint(options.keys, "token-mac"),
+	};
 	for (const row of rows) {
 		const key = await options.keys.byVersion(row.purpose, row.key_version);
 		//a version that left the ring is a broken state of those accounts and not a start error (E-3191)
-		if (key !== null && !(await keyTakesMac(key))) {
-			throw new VelveStartupError("keys_unusable");
+		if (key === null) {
+			continue;
+		}
+		if (!(await keyTakesMac(key))) {
+			throw storedIntegrityKeyUnusable(row.purpose, row.key_version);
+		}
+		const fingerprint = await sameKeyFingerprintOf(key);
+		const sharedWith =
+			fingerprint === null ? undefined : otherPurposesOf[row.purpose].get(fingerprint);
+		if (sharedWith !== undefined) {
+			throw storedIntegrityKeySharedWith(row.purpose, row.key_version, sharedWith);
 		}
 	}
+}
+
+async function currentPurposesByFingerprint(
+	keys: KeyProvider,
+	stored: IntegrityKeyPurpose,
+): Promise<Map<string, string>> {
+	const byFingerprint = new Map<string, string>();
+	for (const purpose of KEY_PURPOSES) {
+		if (purpose === stored) {
+			continue;
+		}
+		const fingerprint = await sameKeyFingerprintOf((await keys.current(purpose)).key);
+		if (fingerprint !== null) {
+			byFingerprint.set(fingerprint, purpose);
+		}
+	}
+	return byFingerprint;
 }

@@ -380,7 +380,7 @@ the seal covers and when it is written and checked is in
 | `version` | `bigint` | from 1 to 9007199254740991, `Number.MAX_SAFE_INTEGER`, because it reaches the application as a `number`; rises by one with every seal of the account |
 | `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
 | `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
-| `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; rises by one with every revocation of all of the account's sessions, and every session's MAC binds the epoch it was issued under |
+| `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; replaced by a new random value, different from the current one, on every revocation of all of the account's sessions and every administrator reseal, compared only for equality, and every session's MAC binds the epoch it was issued under |
 | `sealed_at` | `timestamptz` | when the row was last written |
 
 ### `velve.schema_migration`
@@ -620,7 +620,12 @@ interface Driver {
 
 `transaction` commits when `fn` resolves and rolls back when it rejects. A driver
 handed to `fn` is bound to one connection: statements it runs are inside the
-transaction. Calling `transaction` on that bound driver joins the open
+transaction. `transaction` must run no statement of its own before `fn`: the
+library's first statement in every transaction is `SET TRANSACTION ISOLATION
+LEVEL READ COMMITTED`, which PostgreSQL refuses with SQLSTATE 25001 after any
+other statement, and the library then fails the transaction with an error named
+`TransactionIsolationRefusedError`, code `transaction_isolation_refused`, rather
+than continue at the isolation the driver left. Calling `transaction` on that bound driver joins the open
 transaction rather than starting a second one, so a helper that wants a
 transaction can be called from inside one.
 
@@ -1123,8 +1128,10 @@ Every failure of this module is a `KeyError` with a `code` from a fixed set:
 `key_version_out_of_range`, `key_version_unknown`,
 `key_material_not_exportable`, `purpose_cannot_encrypt`,
 `ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`,
-`authentication_failed`. The message is fixed per code, so no key material can
-reach an error string.
+`authentication_failed`, `key_unusable`. The message is fixed per code, so no key
+material can reach an error string. `key_unusable` comes from `macUnderCurrentKey`
+when the current key of an integrity purpose is not HMAC-SHA256 or does not sign
+([Security state](#security-state)).
 
 That includes the failure a caller most has to handle: a ciphertext that does
 not authenticate arrives as `authentication_failed`, not as the exception type
@@ -6016,7 +6023,7 @@ nothing else would tell you.
 | `code` | Raised when |
 |---|---|
 | `keys_missing` | `keys` is absent or is not a `KeyProvider` (S-KEY-6) |
-| `keys_unusable` | the provider has no current key for some purpose, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written |
+| `keys_unusable` | the provider has no current key for some purpose, or names a current version no `key_version` column holds, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written; or the ring answers a `state-mac` version a stored seal names with such a key, which the message states with that version; or the provider answers two purposes with the same HMAC key, which the message names |
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
@@ -8771,7 +8778,7 @@ a `MacVerdict`:
 | `"valid"` | the MAC matches |
 | `"mismatch"` | it does not, including a stored MAC of another length |
 | `"key_version_unknown"` | the version is not a storable key version or has left the ring |
-| `"key_unusable"` | the provider answered the version with a key that is not HMAC-SHA256, or that Web Crypto refuses to sign with, or whose output is not 32 bytes |
+| `"key_unusable"` | the provider answered the version with a key that is not HMAC-SHA256, is shorter than 256 bits, or that Web Crypto refuses to sign with, or whose output is not 32 bytes |
 
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.
@@ -8779,10 +8786,27 @@ means rather than catching it.
 ### `keyTakesMac(key)`
 
 Internal, in `src/core/keys/mac.ts`. Resolves `true` when `key` is an HMAC key
-with hash SHA-256 that Web Crypto signs with and whose output is 32 bytes, and
-`false` otherwise; it never throws. The start probes and
+with hash SHA-256 of at least 256 bits that Web Crypto signs with and whose
+output is 32 bytes, and `false` otherwise; it never throws, also not for a value
+a provider of its own hands over that is no key at all. A shorter HMAC-SHA256
+key signs and gives a 32-byte output, so the key length is checked on its own.
+The output-length check is redundant: HMAC with SHA-256 always gives 32 bytes,
+and a key that Web Crypto refuses to sign with fails the signing step first. It
+is kept as a second guard on the length the seal table and the token columns
+require, not because any input reaches it. The start probes and
 `verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
 key the check can use.
+
+### `sameKeyFingerprintOf(key)`
+
+Internal, in `src/core/keys/mac.ts`. Resolves the hex HMAC of one fixed probe
+message under `key` when it is an HMAC key that may sign, and `null` otherwise.
+`assertKeysAnswerForEveryPurpose` takes it for the current key of every purpose
+and refuses the start with `keys_unusable` when two purposes give the same
+output, so a provider of its own cannot answer `state-mac` and `token-mac`, or an
+integrity purpose and `cookie-sig` or `token-pepper`, with one key. Encryption
+keys are not compared, because a non-extractable AES key gives nothing to
+compare without using it.
 
 ### `isIntegrityPurpose(purpose)`
 
@@ -8794,13 +8818,32 @@ uses it to decide which purposes get the probe.
 
 Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
 every distinct `key_version` of `velve.security_state` under `state-mac` and every
-distinct `token_mac_key_version` of the three token tables under `token-mac`, and
+distinct `token_mac_key_version` of the four token tables under `token-mac`, and
 refuses the start with `keys_unusable` if the ring answers one of them with a key
-`keyTakesMac` rejects. A version the ring does not hold is skipped. A token table
-is read down its `token_mac_key_version` index one version at a time, so the
-read costs one index step per stored version rather than one per row: measured
-on PostgreSQL 16 over 300,000 rows under two versions at 0.4 to 0.9 ms, against
-26 to 35 ms for a `SELECT DISTINCT` over the same index.
+`keyTakesMac` rejects, or with the current key of another HMAC purpose. A version
+the ring does not hold is skipped. The refusal shares its code with the purpose
+probe and has a message of its own, which names the stored version. It makes one
+`byVersion` call and at most one probe per distinct stored version, and how many
+distinct versions there are is up to whoever writes the tables. A token table is
+read down its `token_mac_key_version` index one version at a time, so the read
+costs one index step per stored version rather than one per row: measured on
+PostgreSQL 16 over 300,000 rows under two versions at 0.4 to 0.9 ms, against 26
+to 35 ms for a `SELECT DISTINCT` over the same index.
+### `withReadCommittedTransactions(driver)`
+
+Internal, in `src/core/db/read-committed.ts`. Returns a `Driver` whose `query` is
+the given one's and whose `transaction` runs `SET TRANSACTION ISOLATION LEVEL
+READ COMMITTED` as the first statement of every transaction before handing the
+bound driver to the work. `createVelveAuth` wraps the configured `database` with
+it, so every transaction the instance opens runs at READ COMMITTED even where the
+database or the role sets `default_transaction_isolation` to something else, which
+the sealing of section 3.18 relies on. A transaction joined from inside one, by
+calling `transaction` on the bound driver, is not given the statement again,
+because PostgreSQL accepts it only before the first query of the outer
+transaction. `runMigrations` wraps the driver it is handed the same way; the
+owned-row repository, the schema status and the plugin connection over
+`pluginDatabase` open no transaction. Wrapping a driver twice returns the wrapped one, so a
+transaction is never given the statement twice.
 
 ### The seal table
 
