@@ -16068,3 +16068,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Raising the alarm on a missed swap, which a revocation racing the resolution would trigger without any writer involved.
 **Reason.** Every rebind of a token row in this section compares against the MAC it verified, so that no rebind undoes another write, and the resolution's was the one left unstated.
 **Price.** None.
+
+<a id="e-3320"></a>
+
+### The token MAC encodes a missing owner by its own type byte
+`E-3320` · security-state · specification, S-INTEG-9, settled
+
+**Context.** Point 3 described the token MAC's input as a length-prefixed encoding of purpose, owner, hash and content, and E-3314 added rows whose owner may be absent, the challenge of a discoverable sign-in. The sixth review asked how an absent owner is encoded, because an empty string or a zeroed UUID would let a row without an owner and a row with a crafted owner meet in one encoding. Point 3 now says, in both languages, that the encoding follows the seal's rules: a type byte, a four-byte length and the bytes per field, and a missing owner as a type byte of its own without a value.
+**Rejected.** A sentinel UUID for "no owner", which is a value a writer can place in a column.
+**Reason.** The seal already solved the same ambiguity, and two encodings under one key purpose family should not solve it twice in different ways.
+**Price.** None.
