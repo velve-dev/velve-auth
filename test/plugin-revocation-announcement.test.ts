@@ -156,6 +156,23 @@ describe("a revocation a plugin performs is announced like any other (E-766)", (
 		expect(await liveSessionIds()).toStrictEqual([sessionId]);
 	});
 
+	it("removes a session row that fails its MAC without announcing it (S-INTEG-9)", async () => {
+		const [forged] = await mounted.connection.query<{ id: string }>(
+			`INSERT INTO ${mounted.schema}.session
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}', $3, 1)
+			 RETURNING id`,
+			[userId, createSessionToken().tokenHash, new Uint8Array(32).fill(5)],
+		);
+
+		const answer = await revoke(forged?.id ?? "");
+
+		expect(answer.status).toBe(200);
+		expect(announced).toStrictEqual([]);
+		expect(await liveSessionIds()).toStrictEqual([]);
+	});
+
 	/**
 	 * The re-entry guard: the context a `beforeSessionRevoke` hook holds revokes without announcing,
 	 * so a hook that revokes on every announcement terminates instead of announcing itself forever.

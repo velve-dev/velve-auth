@@ -144,7 +144,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 
 	"src/core/db/repositories/session.ts#createSessionRepository.listSessionsOfUser":
 		"shipped surface",
-	"src/core/db/repositories/session.ts#createSessionRepository.findUserIdOfSession":
+	"src/core/db/repositories/session.ts#createSessionRepository.findOwnerOfSession":
 		"shipped surface",
 	"src/core/db/repositories/session.ts#createSessionRepository.deleteSessionById":
 		"shipped surface",

@@ -8882,6 +8882,13 @@ before anything in the row is used:
 | pending resolve, every failed attempt, and the consume that completes a sign-in | `PendingAuthenticationService` | as no pending authentication (`pending_not_found`, `pending_consumed`) |
 | redemption of an email verification, a reset, an address change or a magic link | `OneTimeTokens.redeem` | as no token (`invalid_token`) |
 
+A revocation removes a session row whether or not it passes, but counts,
+returns and announces only the rows that do: `revokedOtherSessionsCount` of a
+password change or reset, `revokedCount` of `session.revokeAll`, the count of a
+first address confirmation, the ids told to `beforeSessionRevoke`, and the
+plugin context's `revokeSession`, which removes a forged row without announcing
+it. Each refused row is reported with the occasion `session_resolve`.
+
 A refusal has no code of its own and reaches the outside exactly as a missing
 row does. An unknown `token_mac_key_version` is refused the same way. A one-time
 token is consumed by the statement that reads it. Every email flow redeems inside

@@ -1092,3 +1092,94 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 		);
 	});
 });
+
+describe("a forged session row and the revocations that remove it (S-INTEG-9)", () => {
+	async function forgedSessionOf(userId: string): Promise<void> {
+		await sql(
+			`INSERT INTO ${schema}.session
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days', '{password}', $3, 1)`,
+			[userId, sha256Of(chosenToken()), randomBytes(32)],
+		);
+	}
+
+	it("is removed by a mass revocation and not counted, with one report", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		await issuedSession(userId);
+		await forgedSessionOf(userId);
+		refusals = [];
+
+		const revoked = await createSessionRepository({
+			driver: migrated.connection,
+			schema,
+			keys,
+			sealing: "migrating",
+			reportTokenBindingRefusal: report,
+		}).deleteEverySessionOwnedBy({ actor: actorOfTestUser(userId) });
+		const [left] = await migrated.connection.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM ${schema}.session WHERE user_id = $1`,
+			[userId],
+		);
+
+		expect(revoked).toBe(1);
+		expect(left?.n).toBe(0);
+		expectOneRefusal("session_resolve", userId);
+	});
+
+	it("is not counted among the sessions a password change revoked", async () => {
+		const mountedAuth = await mountAuth("integforgedcount", {
+			keys,
+			rateLimit: {
+				perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+				perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
+			},
+		});
+		try {
+			const PASSWORD = "correct-horse-battery-staple";
+			const signedUp = await mountedAuth.handler(
+				requestTo("/sign-up", { body: { email: "forged-count@example.com", password: PASSWORD } }),
+			);
+			const signedUpUserId = ((await signedUp.json()) as { user: { id: string } }).user.id;
+			const cookie = /__Host-velve_session=[^;]*/.exec(signedUp.headers.get("Set-Cookie") ?? "")?.[0];
+			await mountedAuth.connection.query(
+				`INSERT INTO ${mountedAuth.schema}.session
+				   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+				    token_mac, token_mac_key_version)
+				 VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days', '{password}', $3, 1)`,
+				[signedUpUserId, sha256Of(chosenToken()), randomBytes(32)],
+			);
+
+			const answer = await mountedAuth.handler(
+				requestTo("/password/change", {
+					body: { currentPassword: PASSWORD, newPassword: "a-different-password-entirely" },
+					...(cookie === undefined ? {} : { cookie }),
+				}),
+			);
+
+			expect(answer.status).toBe(200);
+			expect(((await answer.json()) as { revokedOtherSessionsCount: number }).revokedOtherSessionsCount).toBe(0);
+		} finally {
+			await dropSchema(mountedAuth.connection, mountedAuth.schema);
+			await mountedAuth.connection.close();
+		}
+	});
+
+	it("names its owner but is no library row to a plugin's revocation", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		await forgedSessionOf(userId);
+		const [row] = await migrated.connection.query<{ id: string }>(
+			`SELECT id FROM ${schema}.session WHERE user_id = $1`,
+			[userId],
+		);
+
+		const owner = await createSessionRepository({
+			driver: migrated.connection,
+			schema,
+			keys,
+			sealing: "migrating",
+		}).findOwnerOfSession({ sessionId: row?.id ?? "" });
+
+		expect(owner).toStrictEqual({ userId, libraryRow: false });
+	});
+});

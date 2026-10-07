@@ -79,6 +79,12 @@ export interface SessionCandidate extends StoredTokenMac {
 	decode(): SessionWithOwner;
 }
 
+/** the account a session row names, and whether the row passed the MAC check */
+export interface SessionOwner {
+	readonly userId: string;
+	readonly libraryRow: boolean;
+}
+
 export interface RemovedSession {
 	readonly id: string;
 	readonly userId: string;
@@ -127,7 +133,7 @@ export interface SessionRepository {
 		readonly ownerReadBefore: string;
 	}): Promise<number>;
 	//the owner is read before the row goes so the revoke hook can still refuse (E-640)
-	findUserIdOfSession(input: { readonly sessionId: string }): Promise<string | null>;
+	findOwnerOfSession(input: { readonly sessionId: string }): Promise<SessionOwner | null>;
 	deleteSessionOwnedBy(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -171,13 +177,17 @@ interface SessionRowShape {
 	readonly user_agent: string | null;
 }
 
-interface ListedRowShape extends SessionRowShape {
+interface VerifiedRowShape {
+	readonly id: string;
+	readonly user_id: string;
 	readonly token_sha256: Uint8Array;
 	readonly factor_names: string;
 	readonly token_mac: Uint8Array;
 	readonly token_mac_key_version: number;
 	readonly session_epoch: string | null;
 }
+
+interface ListedRowShape extends SessionRowShape, VerifiedRowShape {}
 
 interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
 	readonly factor_names: string;
@@ -306,8 +316,8 @@ function deleteByTokenHashStatement(table: string): string {
 	WHERE token_sha256 = $1 RETURNING id, user_id`;
 }
 
-function findUserIdStatement(table: string): string {
-	return `SELECT user_id FROM ${table} WHERE id = $1`;
+function findOwnerStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${verifiedColumns(states, sealing)} FROM ${table} s WHERE s.id = $1`;
 }
 
 function deleteOwnedStatement(table: string): string {
@@ -340,12 +350,24 @@ function toEpoch(value: string | null): number | null {
 	return epoch;
 }
 
-function deleteEveryOwnedStatement(table: string): string {
-	return `DELETE FROM ${table} WHERE user_id = $1 RETURNING id`;
+//a revocation counts and announces only rows the library wrote (S-INTEG-9)
+function deleteEveryOwnedStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `DELETE FROM ${table} s WHERE s.user_id = $1 RETURNING ${verifiedColumns(states, sealing)}`;
 }
 
 function deleteEveryOtherOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE user_id = $1 AND id <> $2 RETURNING id`;
+}
+
+//a row that is counted or announced must be checkable first (S-INTEG-9)
+function verifiedColumns(states: string, sealing: SecurityStateSealing): string {
+	return `s.id, s.user_id, s.token_sha256, array_to_json(s.factors)::text AS factor_names,
+	s.token_mac, s.token_mac_key_version,
+	${epochOf(`(SELECT session_epoch FROM ${states} WHERE user_id = s.user_id)`, sealing)}::text AS session_epoch`;
 }
 
 //a listed row must be checkable before it is shown (S-INTEG-9)
@@ -417,34 +439,37 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const extendSql = extendIdleDeadlineStatement(table);
 	const rebindSql = rebindStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
-	const findUserIdSql = findUserIdStatement(table);
+	const findOwnerSql = findOwnerStatement(table, states, sealing);
 	const deleteOwnedSql = deleteOwnedStatement(table);
 	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
-	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
+	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table, states, sealing);
 	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
 	const listOwnedSql = listOwnedStatement(table, states, sealing);
 	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
 
+	function isLibraryRow(row: VerifiedRowShape): Promise<boolean> {
+		return isLibrarySessionRow(
+			options.keys,
+			{
+				userId: row.user_id,
+				tokenHash: row.token_sha256,
+				storedFactorNames: storedNamesOf(row.factor_names),
+				sessionEpoch: toEpoch(row.session_epoch),
+				tokenMac: row.token_mac,
+				tokenMacKeyVersion: row.token_mac_key_version,
+			},
+			options.reportTokenBindingRefusal,
+		);
+	}
+
+	async function libraryRowsAmong<T extends VerifiedRowShape>(rows: readonly T[]): Promise<T[]> {
+		const verdicts = await Promise.all(rows.map(isLibraryRow));
+		return rows.filter((_, index) => verdicts[index] === true);
+	}
+
 	//a row the library did not write is not listed, announced or shown to a plugin (S-INTEG-9)
 	async function libraryRowsOf(userId: string, statement: string): Promise<SessionRowShape[]> {
-		const rows = await options.driver.query<ListedRowShape>(statement, [userId]);
-		const verdicts = await Promise.all(
-			rows.map((row) =>
-				isLibrarySessionRow(
-					options.keys,
-					{
-						userId: row.user_id,
-						tokenHash: row.token_sha256,
-						storedFactorNames: storedNamesOf(row.factor_names),
-						sessionEpoch: toEpoch(row.session_epoch),
-						tokenMac: row.token_mac,
-						tokenMacKeyVersion: row.token_mac_key_version,
-					},
-					options.reportTokenBindingRefusal,
-				),
-			),
-		);
-		return rows.filter((_, index) => verdicts[index] === true);
+		return libraryRowsAmong(await options.driver.query<ListedRowShape>(statement, [userId]));
 	}
 
 	async function currentEpochOf(driver: Driver, userId: string): Promise<number | null> {
@@ -502,9 +527,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
+	//a forged row goes with the others and is neither counted nor returned (S-INTEG-9)
 	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
-		const rows = await options.driver.query<{ id: string }>(deleteEveryOwnedSql, [actor]);
-		return rows.map((row) => row.id);
+		const rows = await options.driver.query<VerifiedRowShape>(deleteEveryOwnedSql, [actor]);
+		return (await libraryRowsAmong(rows)).map((row) => row.id);
 	}
 
 	return {
@@ -542,9 +568,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			return rows.length;
 		},
 
-		async findUserIdOfSession({ sessionId }) {
-			const [row] = await options.driver.query<{ user_id: string }>(findUserIdSql, [sessionId]);
-			return row === undefined ? null : row.user_id;
+		async findOwnerOfSession({ sessionId }) {
+			const [row] = await options.driver.query<VerifiedRowShape>(findOwnerSql, [sessionId]);
+			return row === undefined ? null : { userId: row.user_id, libraryRow: await isLibraryRow(row) };
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {
