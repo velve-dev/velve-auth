@@ -16468,3 +16468,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Taking a row lock on the factor rows during the check, which a writer with `LOCK TABLE` or plain `UPDATE` on those rows defeats the same way.
 **Reason.** A check vouches for the rows it read, and only those rows may then be used.
 **Price.** Paths that looked a factor up separately have to take it from the check's statement or test membership in it; that is the seal and token branches' work.
+
+<a id="e-3360"></a>
+
+### The session MAC binds the session's id, and the confirming session must be the account's
+`E-3360` · security-state · specification, S-INTEG-9, S-LINK-4, test plan, settled
+
+**Context.** L-12 and S-LINK-4 keep a password at the first confirmation of an address only if it was set in the confirming session, by comparing `set_by_session_id` with that session's id. The session MAC bound the factors, the creation time and the epoch, but not `session.id`. The ninth review's premise case showed that a writer who renames the victim's session row to the id `set_by_session_id` names keeps an attacker's password through the first confirmation. The same holds for `link_from_session_id` under S-FIX-1. As decided, `session.id` is bound into the session MAC. Point 3, S-INTEG-9 and T-INTEG-9, with a renamed session as the fourteenth altered row, say so. S-LINK-4 now requires that the confirming session belongs to the confirmed account and that its MAC matches, or else the password counts as set in another session. Both languages say so. The MAC is the token branch's to build and the account check the owner of the confirmation flow's. `test/security-state-session-id.test.ts` holds the premise and the case that the German text binds the id.
+**Rejected.** Binding `set_by_session_id` into the seal only, which leaves the session side of the comparison renameable.
+**Reason.** A comparison between two ids proves nothing when one side can be rewritten freely.
+**Price.** None at run time beyond one more field in the session MAC's encoding.
