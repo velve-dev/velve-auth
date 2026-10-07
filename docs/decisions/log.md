@@ -15448,3 +15448,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Recomputing the MAC over the stored value before the update, in a separate statement, which leaves the same window between the read and the update.
 **Reason.** A count that does not check what it counts from proves nothing about the row, and the condition in the `WHERE` is the same pattern S-RACE-2 uses for consumption.
 **Price.** A legitimate concurrent count on the same pending row now misses as well and ends the pending authentication with an alarm, where it used to count twice; two simultaneous wrong codes on one pending authentication are rare, and the alarm says so.
+
+<a id="e-3195"></a>
+
+### The administrator reseal sets the session epoch to the new version
+`E-3195` · security-state, second range · specification, S-INTEG-7, settled
+
+**Context.** The review found that `maintenance.resealSecurityState` kept whatever `session_epoch` the row held. A writer who lowered the epoch and re-inserted a session row saved before a mass revocation breaks the seal, and the reseal that repairs the seal would then ratify the lowered epoch and bring the session back. The orchestrator decided the remedy: the reseal sets `session_epoch` to the new version. Every raise of the epoch is a resealing, so `session_epoch ≤ version` holds for every legitimate state, and the new version lies above every epoch the account had and above any a writer set lower. The reseal therefore signs the account out everywhere, which is intended after an incident. Section 3.18 *Resealing*, S-INTEG-7, T-INTEG-7 (a lowered epoch and a re-inserted session) and `SealedSecurityState`, which gains `sessionEpoch`, follow.
+**Rejected.** Keeping the stored epoch and raising it by one, which leaves a re-inserted row valid if the writer lowered the epoch by more than one.
+**Reason.** An administrator reseals after an incident, and after an incident no session of the account should survive.
+**Price.** A reseal ends every session of the account, the administrator's own included if they are its owner. The invariant holds only while every raise reseals, which the seal branch builds; a writer can store an epoch above the version, and the reseal lowers it to the new version, which still lies above every epoch a legitimate state reached.
