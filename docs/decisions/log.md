@@ -16478,3 +16478,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Binding `set_by_session_id` into the seal only, which leaves the session side of the comparison renameable.
 **Reason.** A comparison between two ids proves nothing when one side can be rewritten freely.
 **Price.** None at run time beyond one more field in the session MAC's encoding.
+
+<a id="e-3361"></a>
+
+### Trace rows are counted apart and do not hold a key version in the ring
+`E-3361` · security-state · specification, S-KEY-5, test plan, settled
+
+**Context.** E-3332 keeps a token row that fails its check as an unusable trace, and E-3335 lets an old key version leave the ring only after a run reports zero seal and token rows under it. The ninth review pointed out that the two together block every key removal for good as soon as one trace exists, because a trace stays under the old version and is counted. As decided, `rowsByKeyVersion` reports usable rows and traces separately, `{ seals, tokens, traces }`. Traces do not block removing a version: after removal they answer `key_version_unknown` and stay unusable, and the administrator deletes them by SQL after handling their alarm. 3.8, 3.15 B's report type, point 5, S-KEY-5 and T-KEY-5 say so in both languages. T-KEY-5 inserts a forged session row under `v1` before the last run and expects it in `traces` and refused after the removal, now 8/8. `test/security-state-rotation-trace.test.ts` holds that the German text resolves the conflict.
+**Rejected.** Deleting traces in the maintenance step, which E-3332 rejected because it destroys the evidence.
+**Reason.** A rule that keeps evidence and a rule that requires zero rows have to say which rows each counts, or one makes the other impossible.
+**Price.** The administrator has to clean traces up by hand.
