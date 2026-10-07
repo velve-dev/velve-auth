@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { OpenTransaction } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction, type OpenTransaction } from "../src/core/auth/account-envelopes.js";
 import { sealRowPresenceOf, unboundReadingOf } from "../src/core/auth/security-state.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import type { Driver } from "../src/core/db/driver.js";
@@ -449,5 +449,27 @@ describe("the account rewrite runs only inside an open transaction (E-3129)", ()
 	it("does not take a pool where it needs a transaction", () => {
 		expectTypeOf<Driver>().not.toMatchTypeOf<OpenTransaction>();
 		expectTypeOf<OpenTransaction>().toMatchTypeOf<Driver>();
+	});
+});
+
+describe("the account rewrite's transaction states its isolation (E-3310)", () => {
+	it("sends SET TRANSACTION ISOLATION LEVEL READ COMMITTED first, even over a driver nobody wrapped", async () => {
+		const statements: string[] = [];
+		const bare: Driver = {
+			async query<T>(sql: string): Promise<T[]> {
+				statements.push(sql);
+				return [];
+			},
+			transaction: (work) => work(bare),
+		};
+
+		await inOneTransaction(bare, async (transaction) => {
+			await transaction.query("SELECT 1", []);
+		});
+
+		expect(statements).toStrictEqual([
+			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			"SELECT 1",
+		]);
 	});
 });

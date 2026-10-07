@@ -1,6 +1,7 @@
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
+import { withReadCommittedTransactions } from "../db/read-committed.js";
 import { createTotpRepository } from "../factor/totp/repository.js";
 import { VelveError } from "../http/error-map.js";
 import {
@@ -36,7 +37,10 @@ export function inOneTransaction<T>(
 	driver: Driver,
 	work: (transaction: OpenTransaction) => Promise<T>,
 ): Promise<T> {
-	return driver.transaction((transaction) => work(transaction as OpenTransaction));
+	//a transaction this module opens states its isolation like every other the library opens (E-3310)
+	return withReadCommittedTransactions(driver).transaction((transaction) =>
+		work(transaction as OpenTransaction),
+	);
 }
 
 /** the open transaction in which one account's envelopes are rewritten under its lock */
