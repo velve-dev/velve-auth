@@ -345,6 +345,7 @@ const DOCUMENTED_WEAKENINGS: readonly (readonly [
 	],
 	["recoveryCodes", "nine codes", { recoveryCodes: { count: 9, groupSize: 5 } }],
 	["clock", "a settable clock", { clock: createTestClock() }],
+	["securityState", 'sealing "migrating"', { securityState: { sealing: "migrating" } }],
 ];
 
 describe("every documented weakening is logged once at start (S-DEFAULT-1, T-DEFAULT-1)", () => {
@@ -376,6 +377,7 @@ describe("every documented weakening is logged once at start (S-DEFAULT-1, T-DEF
 				rateLimit: { perIpAddress: rates.perIpAddress, perAccount: rates.perAccount },
 				recoveryCodes: DEFAULT_RECOVERY_CODE_SHAPE,
 				plugins: [],
+				securityState: { sealing: "required" },
 			}),
 		).toStrictEqual([]);
 	});
