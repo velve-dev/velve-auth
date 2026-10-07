@@ -16388,3 +16388,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the epoch tied to the version and requiring an anchor, which the failed-`recordSeal` window defeats. Re-reading the anchor until it agrees, which waits on the application's code.
 **Reason.** An epoch exists to make an earlier session unequal to the current state, and a random value does that without any order a writer can lower.
 **Price.** The epoch no longer tells an operator how many revocations an account has seen. A random collision is possible with probability about 2^-53 per revocation.
+
+<a id="e-3352"></a>
+
+### The password sign-in asks the anchor for an unknown account too
+`E-3352` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** S-INTEG-5 promises that the password sign-in reveals nothing in its running time, and *Outwards* has it check a stand-in state for an unknown account. The eighth review found that with an anchor, `minimumVersion` was called only on the path of a known account. A call into the application's store is not free, so a missing call told an unknown account apart. As decided, the unknown-account path also calls `minimumVersion`. It uses a stand-in `userId` derived deterministically from the presented identifier: a UUID-shaped value from an HMAC under `token-pepper` with a context of its own, so the same identifier always gives the same stand-in. The answer is discarded. What remains is how the application's store answers for an id it does not hold, and that is named as a limit in *Outwards* and S-INTEG-5. T-INTEG-5's timing part gains a variant with an anchor that takes equally long for every id. Both languages say so.
+**Rejected.** A fresh random stand-in per attempt, which a store with a cache would answer differently on the second attempt for a known account than for an unknown one.
+**Reason.** A side channel is closed only when both paths do the same work, and the library can make its own work equal but not the application's store.
+**Price.** One more call into the application per unknown-account sign-in.
