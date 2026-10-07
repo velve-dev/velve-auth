@@ -212,6 +212,93 @@ describe("a link flow retargeted by a database writer", () => {
 	});
 });
 
+//every column that steers a flow is part of the row its verifier is bound to (E-3123)
+describe("a flow whose steering columns a database writer rewrote", () => {
+	async function startSignIn(on: Handler) {
+		const answer = await on(
+			requestTo("/sign-in/oauth/start", {
+				body: { provider: "stubby", redirectPath: "/welcome" },
+			}),
+		);
+		expect(answer.status, await answer.clone().text()).toBe(200);
+		const body = (await answer.json()) as {
+			authorizationUrl: string;
+			stateCookie: { value: string };
+		};
+		const url = new URL(body.authorizationUrl);
+		return {
+			state: url.searchParams.get("state") ?? "",
+			pointer: body.stateCookie.value,
+			nonce: url.searchParams.get("nonce"),
+		};
+	}
+
+	function reportAFreshAccount(): void {
+		const subject = `steer-${randomBytes(4).toString("hex")}`;
+		provider.reportClaims({
+			sub: subject,
+			email: `${subject}@provider.example`,
+			email_verified: true,
+		});
+	}
+
+	it.each([
+		["the nonce", "nonce = NULL"],
+		["the redirect path", "redirect_path = '/elsewhere'"],
+		["the provider", "provider = 'stubby2'"],
+	])(
+		"refuses the callback after %s was rewritten, as for an unknown state",
+		async (_label, change) => {
+			const handler = instance(v1);
+			const flow = await startSignIn(handler);
+			const control = await startSignIn(handler);
+			reportAFreshAccount();
+			const unknownState = await answerOf(
+				await callback(handler, { state: "no-such-state", pointer: flow.pointer, nonce: null }),
+			);
+
+			await connection.query(`UPDATE ${schema}.oauth_flow SET ${change} WHERE state_sha256 = $1`, [
+				stateHashOf(flow.state),
+			]);
+			const rewritten = await answerOf(await callback(handler, flow));
+
+			expect(rewritten).toStrictEqual(unknownState);
+			expect((await callback(handler, control)).status).toBeLessThan(400);
+		},
+	);
+
+	it("refuses a link flow whose session to replace was rewritten", async () => {
+		const handler = instance(v1);
+		const account = await signUp(handler);
+		const session = cookieOf(await signIn(handler, account.email), DEFAULT_COOKIE_NAMES.session);
+		const second = await signIn(handler, account.email);
+		expect(second.status).toBe(200);
+		const flow = await startLink(handler, `${DEFAULT_COOKIE_NAMES.session}=${session}`);
+		const [other] = await connection.query<{ id: string }>(
+			`SELECT id FROM ${schema}.session WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+			[account.userId],
+		);
+		reportAFreshAccount();
+
+		await connection.query(
+			`UPDATE ${schema}.oauth_flow SET link_from_session_id = $2 WHERE state_sha256 = $1`,
+			[stateHashOf(flow.state), other?.id],
+		);
+		const answer = await callback(handler, flow, `${DEFAULT_COOKIE_NAMES.session}=${session}`);
+
+		expect(answer.status).toBeGreaterThanOrEqual(300);
+		expect(
+			answer.headers
+				.getSetCookie()
+				.some(
+					(line) =>
+						line.startsWith(`${DEFAULT_COOKIE_NAMES.session}=`) &&
+						!line.startsWith(`${DEFAULT_COOKIE_NAMES.session}=;`),
+				),
+		).toBe(false);
+	});
+});
+
 describe("truncated, emptied and stale values answer as the ordinary failure", () => {
 	const truncations: readonly (readonly [string, Uint8Array])[] = [
 		["one byte, the marker", Uint8Array.of(0x02)],

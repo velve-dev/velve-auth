@@ -100,6 +100,23 @@ function joined(parts: readonly Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuff
 	return bytes;
 }
 
+/** one column of a row whose identity is several columns, a text, the bytes of a key, or absent */
+export type RowPart = string | Uint8Array | null;
+
+//a row named by several columns is written as their typed and length prefixed fields in order (E-3123)
+export function rowOfParts(parts: readonly RowPart[]): Uint8Array<ArrayBuffer> {
+	return joined(
+		parts.map((part) => {
+			if (part === null) {
+				return field(FIELD_ABSENT, new Uint8Array(0));
+			}
+			return typeof part === "string"
+				? field(FIELD_TEXT, utf8.encode(part))
+				: field(FIELD_BYTES, part);
+		}),
+	);
+}
+
 //every field is typed and length prefixed in a fixed order so two bindings never share bytes (E-3110)
 export function boundAdditionalData(
 	binding: EnvelopeBinding,

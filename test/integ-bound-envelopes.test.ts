@@ -10,6 +10,7 @@ import {
 	type BoundColumn,
 	decryptBound,
 	type EnvelopeBinding,
+	rowOfParts,
 } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createVelveAuth } from "../src/index.js";
@@ -325,6 +326,29 @@ async function readPkce(state: string): Promise<StoredCiphertext> {
 	return { keyVersion: row.key_version, ciphertext: Uint8Array.from(row.pkce_verifier_enc) };
 }
 
+async function pkceRowOf(state: string): Promise<Uint8Array<ArrayBuffer>> {
+	const [row] = await connection.query<{
+		provider: string;
+		nonce: string | null;
+		redirect_path: string | null;
+		link_from_session_id: string | null;
+	}>(
+		`SELECT provider, nonce, redirect_path, link_from_session_id
+		 FROM ${schema}.oauth_flow WHERE state_sha256 = $1`,
+		[stateHashOf(state)],
+	);
+	if (row === undefined) {
+		throw new Error("no open OAuth flow");
+	}
+	return rowOfParts([
+		stateHashOf(state),
+		row.provider,
+		row.nonce,
+		row.redirect_path,
+		row.link_from_session_id,
+	]);
+}
+
 async function writePkce(state: string, stored: StoredCiphertext): Promise<void> {
 	await connection.query(
 		`UPDATE ${schema}.oauth_flow SET pkce_verifier_enc = $2, key_version = $3 WHERE state_sha256 = $1`,
@@ -555,7 +579,7 @@ describe("T-INTEG-1: every original still decrypts after the ring is rotated to 
 		if (
 			await decrypts(
 				afterRotation,
-				{ column: "oauth_flow.pkce_verifier_enc", owner: null, row: stateHashOf(flow.state) },
+				{ column: "oauth_flow.pkce_verifier_enc", owner: null, row: await pkceRowOf(flow.state) },
 				await readPkce(flow.state),
 			)
 		) {

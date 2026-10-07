@@ -18,7 +18,12 @@ import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
 import { identityColumns } from "../identity/columns.js";
 import { removeSignInMethod } from "../identity/sign-in-methods.js";
-import { decryptBound, type EnvelopeBinding, encryptBound } from "../keys/envelope-binding.js";
+import {
+	decryptBound,
+	type EnvelopeBinding,
+	encryptBound,
+	rowOfParts,
+} from "../keys/envelope-binding.js";
 import { KeyError } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
@@ -187,9 +192,28 @@ function refuseIfAlreadyLinked(inserted: Identity | null): Identity {
 	return inserted;
 }
 
-//a flow row is keyed by its state hash and owned by the account it links, or by none (S-INTEG-1)
-function pkceBindingOf(owner: string | null, stateSha256: Uint8Array): EnvelopeBinding {
-	return { column: "oauth_flow.pkce_verifier_enc", owner, row: stateSha256 };
+/** the columns of a flow row that decide where the flow leads, bound with its verifier */
+interface FlowIdentity {
+	readonly stateSha256: Uint8Array;
+	readonly provider: string;
+	readonly nonce: string | null;
+	readonly redirectPath: string | null;
+	readonly linkFromSessionId: string | null;
+}
+
+//a flow is owned by the account it links or by none and its row binds every column that steers it (S-INTEG-1, E-3123)
+function pkceBindingOf(owner: string | null, flow: FlowIdentity): EnvelopeBinding {
+	return {
+		column: "oauth_flow.pkce_verifier_enc",
+		owner,
+		row: rowOfParts([
+			flow.stateSha256,
+			flow.provider,
+			flow.nonce,
+			flow.redirectPath,
+			flow.linkFromSessionId,
+		]),
+	};
 }
 
 export function createOAuthService(input: {
@@ -445,18 +469,17 @@ export function createOAuthService(input: {
 	}
 
 	//a flow that began before the upgrade holds an unbound verifier and is begun again (S-INTEG-1)
-	async function verifierOf(
-		flow: {
-			readonly pkceVerifierEnc: Uint8Array<ArrayBuffer>;
-			readonly keyVersion: number;
-			readonly linkTo: ConsumedOAuthFlow | null;
-		},
-		stateSha256: Uint8Array,
-	): Promise<string> {
+	async function verifierOf(flow: ConsumedOAuthFlowRow, stateSha256: Uint8Array): Promise<string> {
 		try {
 			const verifier = await decryptBound(
 				services.keys,
-				pkceBindingOf(flow.linkTo?.userId ?? null, stateSha256),
+				pkceBindingOf(flow.linkTo?.userId ?? null, {
+					stateSha256,
+					provider: flow.provider,
+					nonce: flow.nonce,
+					redirectPath: flow.redirectPath,
+					linkFromSessionId: flow.linkFromSessionId,
+				}),
 				{ keyVersion: flow.keyVersion, ciphertext: flow.pkceVerifierEnc },
 				"refused",
 			);
@@ -473,20 +496,23 @@ export function createOAuthService(input: {
 			const state = stateOfPointer(pointer);
 			const verifier = createPkceVerifier();
 			const nonce = provider.jwksUri === null ? null : createNonce();
-			const stateSha256 = stateHash(state);
+			const flow: FlowIdentity = {
+				stateSha256: stateHash(state),
+				provider: provider.id,
+				nonce,
+				redirectPath: redirectPath === undefined ? null : acceptedRedirectPath(redirectPath),
+				linkFromSessionId: linkTo?.sessionId ?? null,
+			};
 			const sealed = await encryptBound(
 				services.keys,
-				pkceBindingOf(linkTo?.actor ?? null, stateSha256),
+				pkceBindingOf(linkTo?.actor ?? null, flow),
 				utf8.encode(verifier),
 			);
 
 			await flows.insertFlow({
-				stateSha256,
-				provider: provider.id,
+				...flow,
 				pkceVerifierEnc: sealed.ciphertext,
 				keyVersion: sealed.keyVersion,
-				nonce,
-				redirectPath: redirectPath === undefined ? null : acceptedRedirectPath(redirectPath),
 				linkTo,
 			});
 
