@@ -3104,7 +3104,7 @@ The storage rule from 3.2 protects against a **reader** of the database. It does
 
 This attacker — **write access to the database without the root key** — belongs to the threat model from version 2.0.0 on. Five measures stand against them, and all of them hang on the root key, which they do not have.
 
-**1. Two new purpose keys.** `state-mac` and `token-mac` arise like the others by HKDF-SHA256 from the root key (3.8), each with a derivation context of its own; both are HMAC-SHA256 keys. No new secret and no new configuration entry arises, but a custom `KeyProvider` must answer both purposes.
+**1. Two new purpose keys.** `state-mac` and `token-mac` arise like the others by HKDF-SHA256 from the root key (3.8), each with a derivation context of its own; both are HMAC-SHA256 keys of 256 bits. A key for either purpose shorter than 256 bits is refused by the start and by every check like one with which no HMAC-SHA256 can be taken (`key_unusable`). No new secret and no new configuration entry arises, but a custom `KeyProvider` must answer both purposes.
 
 **2. Bound envelopes (S-INTEG-1).** The additional data of every envelope binds, besides algorithm and key version, the owner (`user_id`, or explicitly none), the row and the column, each field with a length prefix. A ciphertext copied into another row, to another owner or into another column fails authentication.
 

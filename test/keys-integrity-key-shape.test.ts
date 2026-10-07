@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertStoredIntegrityKeysTakeMac } from "../src/core/auth/integrity-key-ring.js";
 import { assertKeysAnswerForEveryPurpose } from "../src/core/auth/startup.js";
-import { macUnderCurrentKey, verifyMacUnderKeyVersion } from "../src/core/keys/mac.js";
+import { keyTakesMac, macUnderCurrentKey, verifyMacUnderKeyVersion } from "../src/core/keys/mac.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -79,6 +79,33 @@ describe("the start check against the HMAC-SHA256 promise of section 3.18 point 
 		await expect(
 			verifyMacUnderKeyVersion(provider, "state-mac", taken, new Uint8Array(8)),
 		).resolves.toBe("key_unusable");
+	});
+});
+
+async function hmacSha256KeyOfBytes(bytes: number): Promise<CryptoKey> {
+	return crypto.subtle.importKey(
+		"raw",
+		new Uint8Array(bytes).fill(7),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+}
+
+describe("the length of an HMAC-SHA256 key (section 3.18 point 1, E-3296)", () => {
+	it.each([1, 31])("refuses a key of %i bytes", async (bytes) => {
+		expect(await keyTakesMac(await hmacSha256KeyOfBytes(bytes))).toBe(false);
+	});
+
+	it("takes a key of 32 bytes, the length the root key provider derives", async () => {
+		expect(await keyTakesMac(await hmacSha256KeyOfBytes(32))).toBe(true);
+		expect(await keyTakesMac((await genuine.current("state-mac")).key)).toBe(true);
+	});
+
+	it("refuses the start when a provider answers state-mac with a key of one byte", async () => {
+		await expect(
+			assertKeysAnswerForEveryPurpose(providerAnsweringStateMacWith(await hmacSha256KeyOfBytes(1))),
+		).rejects.toMatchObject({ code: "keys_unusable" });
 	});
 });
 

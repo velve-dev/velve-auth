@@ -15858,3 +15858,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; E-3294 followed an instruction that was withdrawn.
 **Reason.** Without the maintenance rebind a pending row's MAC stays under the old key version until a booking happens, and the case table of the booking already treats the rebind as legitimate.
 **Price.** E-3282's Price stands as written; E-3294's grown Price does not apply.
+
+<a id="e-3296"></a>
+
+### An integrity key shorter than 256 bits is unusable
+`E-3296` · security-state · keys, settled
+
+**Context.** E-3190 made `keyTakesMac` ask for HMAC, SHA-256 and a 32-byte output. The fifth review pointed out that the key length was asked by nothing: an HMAC-SHA256 key of one byte signs and gives a 32-byte output, so a `KeyProvider` of an application's own could answer `state-mac` or `token-mac` with it, pass both start probes, and have every seal and token MAC taken under eight bits of key. The review's case was red. `keyTakesMac` now also requires the key's `algorithm.length` to be at least 256 bits, the length the root key provider derives; the start probes and `verifyMacUnderKeyVersion` share the rule. Section 3.18 point 1 says so in both languages, `DOCUMENTATION.md` says so, and `test/keys-integrity-key-shape.test.ts` refuses keys of 1 and 31 bytes, takes one of 32 and the derived key, and refuses the start for a one-byte key; the review's file is folded into it.
+**Rejected.** Requiring exactly 256 bits, which refuses a longer key that is no weaker.
+**Reason.** A MAC is as strong as its key, and a check that accepts the algorithm and the output length vouches for neither.
+**Price.** A provider of its own that hands out shorter HMAC keys stops starting after the upgrade, which is the intent.

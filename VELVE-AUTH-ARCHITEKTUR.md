@@ -3106,7 +3106,7 @@ Die Speicherregel aus 3.2 schützt gegen einen **Leser** der Datenbank. Gegen ei
 
 Dieser Angreifer — **Schreibzugriff auf die Datenbank ohne den Wurzelschlüssel** — gehört ab Version 2.0.0 zum Bedrohungsmodell. Fünf Mittel stehen gegen ihn, und alle hängen am Wurzelschlüssel, den er nicht hat.
 
-**1. Zwei neue Zweckschlüssel.** `state-mac` und `token-mac` entstehen wie die übrigen per HKDF-SHA256 aus dem Wurzelschlüssel (3.8), jeder mit eigenem Ableitungskontext; beide sind HMAC-SHA256-Schlüssel. Es entsteht kein neues Geheimnis und kein neuer Konfigurationseintrag, aber ein eigener `KeyProvider` muss beide Zwecke beantworten.
+**1. Zwei neue Zweckschlüssel.** `state-mac` und `token-mac` entstehen wie die übrigen per HKDF-SHA256 aus dem Wurzelschlüssel (3.8), jeder mit eigenem Ableitungskontext; beide sind HMAC-SHA256-Schlüssel von 256 Bit. Einen Schlüssel für einen der beiden Zwecke, der kürzer als 256 Bit ist, lehnen der Start und jede Prüfung ab wie einen, mit dem kein HMAC-SHA256 zu nehmen ist (`key_unusable`). Es entsteht kein neues Geheimnis und kein neuer Konfigurationseintrag, aber ein eigener `KeyProvider` muss beide Zwecke beantworten.
 
 **2. Gebundene Umschläge (S-INTEG-1).** Die Zusatzdaten jedes Umschlags binden neben Algorithmus und Schlüsselversion den Eigentümer (`user_id`, oder ausdrücklich keinen), die Zeile und die Spalte, jedes Feld mit Längenpräfix. Ein Chiffrat, das in eine andere Zeile, zu einem anderen Eigentümer oder in eine andere Spalte kopiert wird, scheitert an der Authentifizierung.
 

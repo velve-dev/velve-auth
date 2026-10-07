@@ -8709,7 +8709,7 @@ a `MacVerdict`:
 | `"valid"` | the MAC matches |
 | `"mismatch"` | it does not, including a stored MAC of another length |
 | `"key_version_unknown"` | the version is not a storable key version or has left the ring |
-| `"key_unusable"` | the provider answered the version with a key that is not HMAC-SHA256, or that Web Crypto refuses to sign with, or whose output is not 32 bytes |
+| `"key_unusable"` | the provider answered the version with a key that is not HMAC-SHA256, is shorter than 256 bits, or that Web Crypto refuses to sign with, or whose output is not 32 bytes |
 
 It never throws for a stored value, so a caller decides what an unknown version
 means rather than catching it.
@@ -8717,8 +8717,9 @@ means rather than catching it.
 ### `keyTakesMac(key)`
 
 Internal, in `src/core/keys/mac.ts`. Resolves `true` when `key` is an HMAC key
-with hash SHA-256 that Web Crypto signs with and whose output is 32 bytes, and
-`false` otherwise; it never throws. The start probes and
+with hash SHA-256 of at least 256 bits that Web Crypto signs with and whose
+output is 32 bytes, and `false` otherwise; it never throws. A shorter HMAC-SHA256
+key signs and gives a 32-byte output, so the key length is checked on its own. The start probes and
 `verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
 key the check can use.
 
