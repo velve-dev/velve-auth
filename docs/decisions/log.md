@@ -15618,3 +15618,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** An unbounded retry, which a writer able to cause conflicts on one account could turn into an endless loop of a request.
 **Reason.** A bound has to exist, and a stated choice is more honest than a number that reads like a measurement.
 **Price.** Under real contention a legitimate change may be refused after three losses, and how often is unknown.
+
+<a id="e-3212"></a>
+
+### An unsealed account stays exposed in migrating mode until required, not until its first seal
+`E-3212` · security-state · specification, S-INTEG-1, settled
+
+**Context.** E-3206 wrote that the exposure of an unsealed account in mode `"migrating"` ends for each account with its first seal. The third review found that false: in `"migrating"` a writer can delete a first seal row and so make the account unsealed again, so the exposure ends only with `"required"`. The bound-envelope branch had meanwhile stated the same limit in its own words (its entry in its range), and the queue asked for the two to be reconciled. *The limits* now carry that branch's sentence — an old-form envelope a writer kept from their own account opens in every account without a seal row, and nothing before the first seal tells it from the account's own old value — and say that it ends only with `"required"`, a first seal protecting an account in `"migrating"` only until its seal row is deleted. E-3206 is not edited.
+**Rejected.** Keeping both wordings, which states the same limit twice with different ends.
+**Reason.** E-3206 named an end that a writer can undo, which is the kind of error the limits exist to prevent.
+**Price.** None beyond the sentence.
