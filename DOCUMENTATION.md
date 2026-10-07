@@ -8807,8 +8807,9 @@ its callback as a flow with an unknown state and is begun again (E-3114).
 
 One old value in 256 also starts with `0x02`. Such a value is tried as bound
 first and, where the old form is read, as old second, so no row is stranded by
-its nonce; where the old form is refused it fails as `authentication_failed`
-(E-3111).
+its nonce and none is misread: an old value opens as bound only by a forged
+128-bit tag. Where the old form is refused it fails as `authentication_failed`
+(E-3111, E-3120).
 
 Until the seal is built (*Security state: the seal*) no seal row exists, and in
 `"migrating"` every account reads as one without a seal row (E-3112).

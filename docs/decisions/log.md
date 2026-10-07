@@ -15478,3 +15478,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Counting the cross-purpose copies, which pass on a library with no binding at all.
 **Reason.** A case that passes without the property it names is not evidence for it.
 **Price.** The test provider is now an OpenID Connect stub, because without an ID token there is no third column to copy into.
+
+<a id="e-3119"></a>
+
+### T-INTEG-1 counts six copies, as the specification now states
+`E-3119` · security-state-envelopes · test, S-INTEG-1, settled
+
+**Context.** E-3118 counted eight copies: four to another account or flow and four between the token columns of one identity. The foundation's amendment of T-INTEG-1 (E-3100), merged into this branch after E-3118 was written, counts six: the four to another account or flow, and `identity.access_token_enc` into `refresh_token_enc` and into `id_token_enc` of the same row. `test/integ-bound-envelopes.test.ts` now counts exactly those six; refresh to ID and ID to access stay in the file as cases that are not counted, beside the three cross-purpose moves. Planted against the merged tree, writing only the table name in place of column, owner and row fails the count and twenty-three cases across the two test files, eleven of them in `test/integ-bound-envelopes.test.ts`.
+**Rejected.** Keeping eight, which states a threshold the specification does not have.
+**Reason.** The threshold of a T-case is the specification's, and a test that counts something else measures something else.
+**Price.** E-3118's count of eight describes the file as it stood before the merge and no longer describes it; this entry is what corrects it.
+
+<a id="e-3120"></a>
+
+### An old value whose nonce begins with the marker neither locks its owner out nor is misread
+`E-3120` · security-state-envelopes · storage format, S-INTEG-1, settled
+
+**Context.** E-3111 reported that section 3.18's sentence — the bound form can be told from the old one by its first byte — holds only one way, because an old value begins with a random nonce byte and one in 256 begins with `0x02`. The orchestrator asked that the code be unambiguous whatever the sentence says: under `"migrating"` such a value must neither lock its owner out nor be misread. The design of E-3111 already does both, and nothing in it changes. It is not misread, because a value starting with `0x02` is first opened as bound, and an old value authenticates under the bound additional data only by forging a 128-bit GCM tag. It does not lock its owner out, because the failed bound attempt falls through to the old form wherever the old form is readable, and `rebindEnvelope` and `rebindEnvelopesOfAccount` reach the old form by the same path, so the conversion before an account's first seal (E-3094) rewrites it like any other old value. `test/integ-bound-envelopes.test.ts` now drives that case end to end: an old password ciphertext drawn until its nonce begins with `0x02` signs in under `"migrating"`, is refused under `"required"`, is converted by `rebindEnvelopesOfAccount` to the bound form of the same PHC string, and then signs in under `"required"`. The unit cases of `test/integ-envelope-binding.test.ts` cover the same overlap for `decryptBound` in both readings.
+**Rejected.** (a) A marker that cannot collide, which needs a byte the old form never starts with, and the old form has none. (b) A length or header check, which the old column form does not carry either.
+**Reason.** The first byte decides the form only as a hint; authentication decides it, and the fall-through is reached only where the old form is read anyway, so it reads nothing the policy refuses.
+**Price.** The sentence in section 3.18 still says the forms are told apart by their first byte; it is the specification's to correct and is reported, not edited here. An old value that begins with `0x02` and is refused under `"required"` answers `authentication_failed` rather than `envelope_unbound`, as E-3111 states.
