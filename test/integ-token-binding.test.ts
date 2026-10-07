@@ -350,19 +350,41 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		expect(refusals).toStrictEqual([]);
 	});
 
-	it("counts concurrent attempts exactly once each", async () => {
+	it("counts a failure only against the row its resolve checked", async () => {
 		const token = await issuedPending(owner);
-		const parallel = MAXIMUM_PENDING_ATTEMPTS - 1;
+		const first = await pending.resolveForAttempt(token);
+		const second = await pending.resolveForAttempt(token);
+		refusals = [];
 
-		const outcomes = await Promise.all(
-			Array.from({ length: parallel }, () => pending.registerFailedAttempt(token)),
+		expect(await second?.registerFailedAttempt()).toStrictEqual({
+			outcome: "attempts_remain",
+			attemptsRemaining: MAXIMUM_PENDING_ATTEMPTS - 1,
+		});
+		expect(await first?.registerFailedAttempt()).toStrictEqual({ outcome: "exhausted" });
+		expectOneRefusal("factor_check", owner);
+		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(
+			MAXIMUM_PENDING_ATTEMPTS - 1,
 		);
+	});
 
-		const remaining = outcomes
-			.map((outcome) => (outcome.outcome === "attempts_remain" ? outcome.attemptsRemaining : -1))
-			.sort((left, right) => left - right);
-		expect(remaining).toStrictEqual(Array.from({ length: parallel }, (_, index) => index + 1));
-		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(1);
+	it("gives no budget back to a writer who restores an older row between resolve and count", async () => {
+		const token = await issuedPending(owner);
+		const [saved] = await migrated.connection.query<{ mac: Buffer; version: number }>(
+			`SELECT token_mac AS mac, token_mac_key_version AS version
+			 FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		await pending.registerFailedAttempt(token);
+		const resolved = await pending.resolveForAttempt(token);
+		await sql(
+			`UPDATE ${schema}.pending_authentication SET attempts = 0, token_mac = $2,
+			   token_mac_key_version = $3 WHERE token_sha256 = $1`,
+			[sha256Of(token), saved?.mac, saved?.version],
+		);
+		refusals = [];
+
+		expect(await resolved?.registerFailedAttempt()).toStrictEqual({ outcome: "exhausted" });
+		expectOneRefusal("factor_check", owner);
 	});
 });
 

@@ -8,15 +8,16 @@ export async function verifyUnderPendingAttemptLimit<Result>(
 	token: PendingToken,
 	verify: (resolution: PendingResolution) => Promise<Result>,
 ): Promise<Result> {
-	const resolution = await pending.resolve(token);
-	if (resolution === null) {
+	const resolved = await pending.resolveForAttempt(token);
+	if (resolved === null) {
 		throw new ConcealedError("pending_not_found");
 	}
 
 	try {
-		return await verify(resolution);
+		return await verify(resolved.resolution);
 	} catch (failure) {
-		const attempt = await pending.registerFailedAttempt(token);
+		//the failure counts against the row the resolve checked and no row written since (E-3139)
+		const attempt = await resolved.registerFailedAttempt();
 		if (attempt.outcome === "exhausted") {
 			throw new VelveError("too_many_factor_attempts");
 		}

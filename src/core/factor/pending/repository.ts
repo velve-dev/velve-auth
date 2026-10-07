@@ -74,7 +74,7 @@ export interface PendingAuthenticationRepository {
 		readonly userId: string;
 		readonly previous: StoredTokenMac;
 		readonly next: StoredTokenMac;
-	}): Promise<void>;
+	}): Promise<boolean>;
 	//the counter is written only over the row that was checked so a concurrent change answers null
 	countFailedAttempt(input: {
 		readonly tokenHash: Uint8Array;
@@ -261,7 +261,8 @@ function deleteStatement(table: string): string {
 function rebindStatement(table: string): string {
 	return `UPDATE ${table}
 	SET token_mac = $3, token_mac_key_version = $4
-	WHERE token_sha256 = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5`;
+	WHERE token_sha256 = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5
+	RETURNING attempts`;
 }
 
 export function createPendingAuthenticationRepository(
@@ -324,7 +325,7 @@ export function createPendingAuthenticationRepository(
 		},
 
 		async rebindPendingTokenMac({ tokenHash, userId, previous, next }) {
-			await options.driver.query(rebindSql, [
+			const rows = await options.driver.query(rebindSql, [
 				tokenHash,
 				previous.tokenMac,
 				next.tokenMac,
@@ -332,6 +333,7 @@ export function createPendingAuthenticationRepository(
 				previous.tokenMacKeyVersion,
 				userId,
 			]);
+			return rows.length === 1;
 		},
 
 		//the attempt that exhausts the row removes it whatever a concurrent attempt wrote meanwhile

@@ -11,13 +11,14 @@ import {
 	checkTokenBinding,
 	reboundTokenMacIfStale,
 	reportRefusedTokenRow,
+	type StoredTokenMac,
 	type TokenBinding,
 	type TokenBindingRefusalReport,
 } from "../../token/binding.js";
 import {
-	type CountedAttempt,
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationRepository,
+	type PendingAuthenticationWithOwner,
 	type PendingCandidate,
 } from "./repository.js";
 import { createPendingToken, hashPendingToken, type PendingToken } from "./token.js";
@@ -69,8 +70,22 @@ export interface PendingAuthenticationService {
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
+	/** resolves the state and counts a failure against exactly the row this resolve checked */
+	resolveForAttempt(token: PendingToken): Promise<ResolvedForAttempt | null>;
 	registerFailedAttempt(token: PendingToken): Promise<FailedAttempt>;
 	cancel(input: { readonly token: PendingToken }): Promise<void>;
+}
+
+/** a resolved pending state together with the one failed attempt that may be counted against it */
+export interface ResolvedForAttempt {
+	readonly resolution: PendingResolution;
+	registerFailedAttempt(): Promise<FailedAttempt>;
+}
+
+interface CheckedPendingRow extends StoredTokenMac {
+	readonly userId: string;
+	readonly factorNames: readonly string[];
+	readonly attempts: number;
 }
 
 function attemptsRemainingAfter(attempts: number): number {
@@ -125,29 +140,84 @@ export function createPendingAuthenticationService(
 		return { binding, decoded: candidate.decode() };
 	}
 
-	//a concurrent attempt changes the row so the count is retried on the row it left (E-3134)
-	async function countVerifiedAttempt(tokenHash: Uint8Array): Promise<CountedAttempt | null> {
-		for (;;) {
-			const candidate = await repository.findPendingAuthenticationByTokenHash(tokenHash);
-			const checked = await verified(tokenHash, candidate);
-			if (checked === null || candidate === null) {
-				return null;
-			}
-			const names = candidate.storedFactorNames ?? [];
-			const next = await bindToken(
-				options.keys,
-				pendingBinding(candidate.userId, tokenHash, names, candidate.attempts + 1),
-			);
-			const counted = await repository.countFailedAttempt({
-				tokenHash,
-				checked: candidate,
-				next,
-				maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
+	//a row changed since its check is counted as no row and reported (E-3139)
+	async function countAgainst(
+		tokenHash: Uint8Array,
+		row: CheckedPendingRow,
+	): Promise<FailedAttempt> {
+		const next = await bindToken(
+			options.keys,
+			pendingBinding(row.userId, tokenHash, row.factorNames, row.attempts + 1),
+		);
+		const counted = await repository.countFailedAttempt({
+			tokenHash,
+			checked: row,
+			next,
+			maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
+		});
+		if (counted === null) {
+			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+				userId: row.userId,
+				occasion: "factor_check",
+				verdict: "mismatch",
 			});
-			if (counted !== null) {
-				return counted;
-			}
 		}
+		if (counted === null || counted.exhausted) {
+			return { outcome: "exhausted" };
+		}
+		return {
+			outcome: "attempts_remain",
+			attemptsRemaining: attemptsRemainingAfter(counted.attempts),
+		};
+	}
+
+	//the row a later count is pinned to is the one this check passed, rebound where it was stale
+	async function checkedRowOf(tokenHash: Uint8Array): Promise<{
+		readonly row: CheckedPendingRow;
+		readonly found: PendingAuthenticationWithOwner;
+	} | null> {
+		const candidate = await repository.findPendingAuthenticationByTokenHash(tokenHash);
+		const checked = await verified(tokenHash, candidate);
+		if (checked === null || candidate === null) {
+			return null;
+		}
+		const rebound = await reboundTokenMacIfStale(options.keys, checked.binding, candidate);
+		const reboundStored =
+			rebound !== null &&
+			(await repository.rebindPendingTokenMac({
+				tokenHash,
+				userId: candidate.userId,
+				previous: candidate,
+				next: rebound,
+			}));
+		const mac = reboundStored ? rebound : candidate;
+		return {
+			row: {
+				userId: candidate.userId,
+				factorNames: candidate.storedFactorNames ?? [],
+				attempts: candidate.attempts,
+				tokenMac: mac.tokenMac,
+				tokenMacKeyVersion: mac.tokenMacKeyVersion,
+			},
+			found: checked.decoded,
+		};
+	}
+
+	//a disabled account answers as an unknown pending state, not with the disabled code
+	function resolutionOf(found: PendingAuthenticationWithOwner): PendingResolution | null {
+		if (found.userDisabledAt !== null) {
+			return null;
+		}
+		return {
+			userId: found.userId,
+			pending: {
+				factorsCompleted: found.factorsCompleted,
+				availableFactors: found.availableFactors,
+				attemptsRemaining: attemptsRemainingAfter(found.attempts),
+				expiresAt: found.expiresAt,
+			},
+			observedAt: found.observedAt,
+		};
 	}
 
 	return {
@@ -179,37 +249,19 @@ export function createPendingAuthenticationService(
 			};
 		},
 
-		//a disabled account answers as an unknown pending state, not with the disabled code
 		async resolve(token) {
+			const checked = await checkedRowOf(hashPendingToken(token));
+			return checked === null ? null : resolutionOf(checked.found);
+		},
+
+		async resolveForAttempt(token) {
 			const tokenHash = hashPendingToken(token);
-			const candidate = await repository.findPendingAuthenticationByTokenHash(tokenHash);
-			const checked = await verified(tokenHash, candidate);
-			if (checked === null || candidate === null) {
+			const checked = await checkedRowOf(tokenHash);
+			const resolution = checked === null ? null : resolutionOf(checked.found);
+			if (checked === null || resolution === null) {
 				return null;
 			}
-			const rebound = await reboundTokenMacIfStale(options.keys, checked.binding, candidate);
-			if (rebound !== null) {
-				await repository.rebindPendingTokenMac({
-					tokenHash,
-					userId: candidate.userId,
-					previous: candidate,
-					next: rebound,
-				});
-			}
-			const found = checked.decoded;
-			if (found.userDisabledAt !== null) {
-				return null;
-			}
-			return {
-				userId: found.userId,
-				pending: {
-					factorsCompleted: found.factorsCompleted,
-					availableFactors: found.availableFactors,
-					attemptsRemaining: attemptsRemainingAfter(found.attempts),
-					expiresAt: found.expiresAt,
-				},
-				observedAt: found.observedAt,
-			};
+			return { resolution, registerFailedAttempt: () => countAgainst(tokenHash, checked.row) };
 		},
 
 		//the removal is the check so two requests with one token cannot both pass
@@ -226,14 +278,9 @@ export function createPendingAuthenticationService(
 		},
 
 		async registerFailedAttempt(token) {
-			const counted = await countVerifiedAttempt(hashPendingToken(token));
-			if (counted === null || counted.exhausted) {
-				return { outcome: "exhausted" };
-			}
-			return {
-				outcome: "attempts_remain",
-				attemptsRemaining: attemptsRemainingAfter(counted.attempts),
-			};
+			const tokenHash = hashPendingToken(token);
+			const checked = await checkedRowOf(tokenHash);
+			return checked === null ? { outcome: "exhausted" } : countAgainst(tokenHash, checked.row);
 		},
 
 		async cancel({ token }) {
