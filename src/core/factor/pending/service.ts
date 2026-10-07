@@ -239,7 +239,11 @@ export function createPendingAuthenticationService(
 			}
 			row = await afterMissedBooking(tokenHash, row);
 		}
-		return { outcome: row === "missing" ? "missing" : "exhausted" };
+		//a row that kept moving past every retry has been written by more than the bookings (E-3257)
+		if (row !== "missing") {
+			reportRefusal(row.userId, "mismatch");
+		}
+		return { outcome: "missing" };
 	}
 
 	//no factor is evaluated before its attempt is counted (E-3140)

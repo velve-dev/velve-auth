@@ -15838,3 +15838,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Retrying the issue, which section 3.18 rules out because the state is broken, not contended. (b) Keeping one `COALESCE` condition, which lets a seal row appear under a session bound to an account that had none.
 **Reason.** The specification states the case and its answer, and an unmapped error is an answer nobody chose.
 **Price.** A second insert statement. The alarm's occasion `sign_in` is used for every issue, including those a password change or a reset makes, because the refusal report is the session repository's and does not know which flow called it.
+
+<a id="e-3257"></a>
+
+### A booking that runs out of retries answers missing and raises the alarm
+`E-3257` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** The booking of E-3140 retries over a row that verifies as a concurrent attempt's progress, at most six times, one more than the budget. Each legitimate retry follows a booking that raised `attempts`, so the budget is spent before the retries are. When the loop ended with a row still in hand it answered `exhausted`, which is `too_many_factor_attempts`. A row under the budget that keeps verifying as progress past six retries has been written by more than the bookings, for instance rebound at the same count under one newer version after another. Section 3.18 point 3 has no answer for it, and `exhausted` was a guess that reads as a legitimate outcome. The decision taken was to answer `missing` and raise the alarm, since only interleaved writes reach the case. `test/security-state-attempt-count.test.ts` rebinds the row under a newer version before each of the booking's writes. It shows six writes interposed and the booking answered `missing` with one `token_binding_mismatch`. On the old code the answer was `exhausted`.
+**Rejected.** (a) Retrying without a bound, which a writer can keep busy indefinitely. (b) Answering `exhausted` without the alarm, which hides a write that is not the library's.
+**Reason.** A row the loop cannot account for is not a state the library left, and S-INTEG-9 answers that as missing.
+**Price.** The alarm carries the verdict `mismatch` although the last re-read verified, because no single row failed; the operator learns that something wrote the row, not what.

@@ -8969,6 +8969,7 @@ once more:
 | verifies, with more attempts than the booking saw, or the same count rebound under a newer key version | a concurrent attempt: the booking retries over it | none |
 | verifies, with `attempts` at the budget | `too_many_factor_attempts` | none |
 | fails its MAC, or verifies with fewer attempts or the same count under no newer version | no pending authentication | `token_binding_mismatch` |
+| still verifies as progress after six tries, one more than the budget allows bookings | no pending authentication | `token_binding_mismatch` |
 
 A correct factor is evaluated after its booking, and the sign-in it completes
 removes the row; a wrong one has already been counted, and the attempt that

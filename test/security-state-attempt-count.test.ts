@@ -24,8 +24,8 @@ let observer: TestConnection;
 let schema: string;
 let refusals: TokenBindingRefusal[];
 let pending: PendingAuthenticationService;
-//two versions, so a row can be rebound under the newer one while a booking waits on it
-const ring = testKeyRing(2);
+//three versions, so a row can be rebound under a newer or an older one while a booking waits on it
+const ring = testKeyRing(3);
 
 beforeAll(async () => {
 	const migrated = await openMigratedSchema("review_attempt_carry");
@@ -35,7 +35,7 @@ beforeAll(async () => {
 	observer = await openTestConnection();
 	pending = createPendingAuthenticationService({
 		driver: owner,
-		keys: ring.providerAt(2, [1, 2]),
+		keys: ring.providerAt(2, [1, 2, 3]),
 		schema,
 		reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
 	});
@@ -167,5 +167,49 @@ describe("a booked attempt and a legitimate rebinding during the booking (E-3149
 		expect(outcome).toBe("booked");
 		expect(await attemptsOf(userId)).toBe(1);
 		expect(refusals).toStrictEqual([]);
+	});
+});
+
+describe("a booked attempt and a rewrite that only looks like progress (section 3.18 point 3)", () => {
+	it("answers missing, with the alarm, when the row keeps moving past every retry", async () => {
+		const many = testKeyRing(MAXIMUM_PENDING_ATTEMPTS + 3);
+		const newest = MAXIMUM_PENDING_ATTEMPTS + 3;
+		const userId = await createUser(owner, schema);
+		const { token } = await createPendingAuthenticationService({
+			driver: owner,
+			keys: many.providerAt(1),
+			schema,
+		}).begin({ userId, factorsCompleted: ["password"] });
+		let interposed = 0;
+		const rebindingBeforeEveryBooking: typeof owner = {
+			...owner,
+			query: async (sql, params) => {
+				if (sql.includes("SET attempts =")) {
+					interposed += 1;
+					const next = await bindToken(
+						many.providerAt(interposed + 1),
+						pendingBinding(userId, hashPendingToken(token), ["password"], 0),
+					);
+					await owner.query(
+						`UPDATE ${schema}.pending_authentication
+						 SET token_mac = $2, token_mac_key_version = $3 WHERE user_id = $1`,
+						[userId, next.tokenMac, next.tokenMacKeyVersion],
+					);
+				}
+				return owner.query(sql, params);
+			},
+		};
+		refusals = [];
+
+		const booked = await createPendingAuthenticationService({
+			driver: rebindingBeforeEveryBooking,
+			keys: many.providerAt(newest),
+			schema,
+			reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
+		}).bookAttempt(token);
+
+		expect(booked.outcome).toBe("missing");
+		expect(interposed).toBe(MAXIMUM_PENDING_ATTEMPTS + 1);
+		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
 	});
 });
