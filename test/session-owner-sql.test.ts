@@ -5,7 +5,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createSessionRepository } from "../src/core/db/repositories/session.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { reassignsSessionOwner } from "../tools/session-owner-update.mjs";
-import { sessionInsertFor } from "./session-fixtures.js";
+import { SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 
 const SCHEMA = "velve";
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
@@ -30,6 +30,7 @@ function recordingDriver(statements: string[]): Driver {
 async function statementsAsTheyRun(): Promise<string[]> {
 	const statements: string[] = [];
 	const sessions = createSessionRepository({
+		keys: SESSION_FIXTURE_KEYS,
 		driver: recordingDriver(statements),
 		schema: SCHEMA,
 	});

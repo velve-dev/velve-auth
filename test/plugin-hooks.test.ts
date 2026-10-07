@@ -14,7 +14,7 @@ import { createPluginRuntime } from "../src/core/plugin/registry.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
-import { sessionMacParameters } from "./session-fixtures.js";
+import { SESSION_FIXTURE_KEYS, sessionMacParameters } from "./session-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
 
@@ -60,7 +60,7 @@ function servicesOver(driver: Driver): FrozenContextServices {
 		identityMode: "email",
 		schema: "velve",
 		users: createUserRepository({ driver, schema: "velve" }),
-		sessions: createSessionRepository({ driver, schema: "velve" }),
+		sessions: createSessionRepository({ keys: SESSION_FIXTURE_KEYS, driver, schema: "velve" }),
 		driver,
 		log: () => undefined,
 	};

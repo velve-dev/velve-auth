@@ -2,7 +2,6 @@ import type { EmailConfig } from "../auth/config.js";
 import { type Actor, actorOfConsumedRecoveryCode } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/pepper.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import { ConcealedError } from "../http/error-map.js";
@@ -81,7 +80,7 @@ async function replacePassword(
 		userId: input.userId,
 		factors: ["password"],
 	});
-	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
+	const sessionRows = sessions.repositoryOn(input.transaction);
 	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
 	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
 		await announceEachRevocation(

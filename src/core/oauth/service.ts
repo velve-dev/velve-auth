@@ -9,10 +9,7 @@ import { createUserRepository, type User, type UserRepository } from "../auth/us
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import {
-	createSessionRepository,
-	PreviousSessionMissingError,
-} from "../db/repositories/session.js";
+import { PreviousSessionMissingError } from "../db/repositories/session.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
@@ -408,7 +405,7 @@ export function createOAuthService(input: {
 		if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
 			return;
 		}
-		const owned = await createSessionRepository({ driver, schema }).listEverySessionIdOwnedBy({
+		const owned = await services.sessions.repositoryOn(driver).listEverySessionIdOwnedBy({
 			actor: actorOfConsumedOAuthFlow(linked.account),
 		});
 		await announceEachRevocation(services.pluginRuntime, {

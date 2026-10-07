@@ -1,28 +1,41 @@
 import type { Driver } from "../src/core/db/driver.js";
 import type { SessionInsert } from "../src/core/db/repositories/session.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { sessionBinding } from "../src/core/session/binding.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { bindToken } from "../src/core/token/binding.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 
 const SECOND = 1_000;
 export const MINUTE = 60 * SECOND;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
 
+/** The key a repository under test checks its rows with, and the one `sessionInsertFor` binds under. */
+export const SESSION_FIXTURE_KEYS: KeyProvider = testKeyProvider();
+
+/** A session insert whose MAC is taken under `SESSION_FIXTURE_KEYS`, as the session service takes it. */
 export function sessionInsertFor(
 	userId: string,
 	overrides: Partial<SessionInsert> = {},
 ): SessionInsert {
-	return {
+	const insert = {
 		userId,
 		tokenHash: createSessionToken().tokenHash,
-		factors: ["password"],
+		factors: ["password"] as const,
 		ipAddress: null,
 		userAgent: null,
 		idleTimeoutMs: 7 * DAY,
 		absoluteTimeoutMs: 30 * DAY,
-		bindUnderEpoch: () => Promise.resolve({ tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 }),
 		...overrides,
+	};
+	return {
+		bindUnderEpoch: (sessionEpoch) =>
+			bindToken(
+				SESSION_FIXTURE_KEYS,
+				sessionBinding(insert.userId, insert.tokenHash, insert.factors, sessionEpoch),
+			),
+		...insert,
 	};
 }
 

@@ -1,6 +1,8 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
 import { ConcealedError } from "../../http/error-map.js";
-import type { StoredTokenMac } from "../../token/binding.js";
+import type { KeyProvider } from "../../keys/provider.js";
+import { isLibrarySessionRow } from "../../session/binding.js";
+import type { StoredTokenMac, TokenBindingRefusalReport } from "../../token/binding.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
@@ -85,11 +87,16 @@ export interface RemovedSession {
 interface SessionRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
+	//every listed row is checked so the repository cannot list without the key (S-INTEG-9)
+	readonly keys: KeyProvider;
 	//a caller that names no mode gets the one that refuses an account without a seal row (S-INTEG-4)
 	readonly sealing?: SecurityStateSealing;
+	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 }
 
 export interface SessionRepository {
+	/** the same repository, keys and mode over another driver */
+	boundTo(driver: Driver): SessionRepository;
 	insertSession(input: SessionInsert): Promise<Session>;
 	findSessionByTokenHash(tokenHash: Uint8Array): Promise<SessionCandidate | null>;
 	//the stored mac is the predicate so a concurrent rebinding is not overwritten (S-KEY-5)
@@ -162,6 +169,14 @@ interface SessionRowShape {
 	readonly factors: string;
 	readonly ip: string | null;
 	readonly user_agent: string | null;
+}
+
+interface ListedRowShape extends SessionRowShape {
+	readonly token_sha256: Uint8Array;
+	readonly factor_names: string;
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
+	readonly session_epoch: string | null;
 }
 
 interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
@@ -333,15 +348,32 @@ function deleteEveryOtherOwnedStatement(table: string): string {
 	return `DELETE FROM ${table} WHERE user_id = $1 AND id <> $2 RETURNING id`;
 }
 
-function listEveryIdOwnedStatement(table: string): string {
-	return `SELECT id FROM ${table} WHERE user_id = $1 ORDER BY created_at DESC, id`;
+//a listed row carries what its check needs beside what the list shows (S-INTEG-9)
+function listedColumns(sealing: SecurityStateSealing): string {
+	return `s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
+	s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
+	s.token_sha256, array_to_json(s.factors)::text AS factor_names, s.token_mac,
+	s.token_mac_key_version, ${epochOf("st.session_epoch", sealing)}::text AS session_epoch`;
 }
 
-function listOwnedStatement(table: string): string {
-	return `SELECT ${SELECTED_COLUMNS}
-	FROM ${table}
-	WHERE user_id = $1 AND idle_expires_at > now() AND absolute_expires_at > now()
-	ORDER BY created_at DESC, id`;
+function listEveryIdOwnedStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `SELECT ${listedColumns(sealing)}
+	FROM ${table} s
+	LEFT JOIN ${states} st ON st.user_id = s.user_id
+	WHERE s.user_id = $1
+	ORDER BY s.created_at DESC, s.id`;
+}
+
+function listOwnedStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${listedColumns(sealing)}
+	FROM ${table} s
+	LEFT JOIN ${states} st ON st.user_id = s.user_id
+	WHERE s.user_id = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()
+	ORDER BY s.created_at DESC, s.id`;
 }
 
 function insertParameters(insert: SessionInsert): unknown[] {
@@ -390,8 +422,30 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
 	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
 	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
-	const listOwnedSql = listOwnedStatement(table);
-	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table);
+	const listOwnedSql = listOwnedStatement(table, states, sealing);
+	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
+
+	//a row the library did not write is not listed, announced or shown to a plugin (S-INTEG-9)
+	async function libraryRowsOf(userId: string, statement: string): Promise<SessionRowShape[]> {
+		const rows = await options.driver.query<ListedRowShape>(statement, [userId]);
+		const verdicts = await Promise.all(
+			rows.map((row) =>
+				isLibrarySessionRow(
+					options.keys,
+					{
+						userId: row.user_id,
+						tokenHash: row.token_sha256,
+						storedFactorNames: storedNamesOf(row.factor_names),
+						sessionEpoch: toEpoch(row.session_epoch),
+						tokenMac: row.token_mac,
+						tokenMacKeyVersion: row.token_mac_key_version,
+					},
+					options.reportTokenBindingRefusal,
+				),
+			),
+		);
+		return rows.filter((_, index) => verdicts[index] === true);
+	}
 
 	async function currentEpochOf(driver: Driver, userId: string): Promise<number | null> {
 		const [row] = await driver.query<{ session_epoch: string | null }>(currentEpochSql, [userId]);
@@ -454,6 +508,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	}
 
 	return {
+		boundTo: (driver) => createSessionRepository({ ...options, driver }),
+
 		insertSession: (insert) =>
 			issuing(options.driver, insert.userId, (tx) => insertUnderAccountLock(tx, insert)),
 
@@ -474,13 +530,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		},
 
 		async listEverySessionIdOwnedBy({ actor }) {
-			const rows = await options.driver.query<{ id: string }>(listEveryIdOwnedSql, [actor]);
-			return rows.map((row) => row.id);
+			return (await libraryRowsOf(actor, listEveryIdOwnedSql)).map((row) => row.id);
 		},
 
 		async listSessionsOfUser({ userId }) {
-			const rows = await options.driver.query<SessionRowShape>(listOwnedSql, [userId]);
-			return rows.map((row) => toSession(row, NOT_LISTED));
+			return (await libraryRowsOf(userId, listOwnedSql)).map((row) => toSession(row, NOT_LISTED));
 		},
 
 		async deleteSessionById({ sessionId, ownerReadBefore }) {
@@ -506,8 +560,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		deleteSessionByTokenHash: (tokenHash) => deleteSessionByTokenHash(options.driver, tokenHash),
 
 		async listSessionsOwnedBy({ actor, currentSessionId }) {
-			const rows = await options.driver.query<SessionRowShape>(listOwnedSql, [actor]);
-			return rows.map((row) => toSession(row, row.id === currentSessionId));
+			return (await libraryRowsOf(actor, listOwnedSql)).map((row) =>
+				toSession(row, row.id === currentSessionId),
+			);
 		},
 
 		async deleteSessionOwnedBy({ sessionId, actor }) {

@@ -2,7 +2,7 @@ import type { RouteServices } from "../auth/routes.js";
 import { type Actor, actorOfResolvedSession } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository, type SessionRepository } from "../db/repositories/session.js";
+import type { SessionRepository } from "../db/repositories/session.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
@@ -28,7 +28,7 @@ export async function refuseIfCredentialExists(
 }
 
 function sessionRowsOn(transaction: Driver, services: RouteServices): SessionRepository {
-	return createSessionRepository({ driver: transaction, schema: services.schema });
+	return services.sessions.repositoryOn(transaction);
 }
 
 function refuseUnlessCallingSessionIsAmong(

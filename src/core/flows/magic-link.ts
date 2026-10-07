@@ -78,6 +78,7 @@ export async function redeemMagicLink(
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
+			sessions: environment.services.sessions,
 			actor: resolved.actor,
 			confirmingSessionId,
 			newEmail: null,

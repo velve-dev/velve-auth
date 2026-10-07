@@ -5,6 +5,7 @@ import {
 	PreviousSessionMissingError,
 	type SecurityStateSealing,
 	type SessionInsert,
+	type SessionRepository,
 	type SessionWithOwner,
 } from "../db/repositories/session.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
@@ -13,13 +14,11 @@ import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { KeyProvider } from "../keys/provider.js";
 import {
 	bindToken,
-	checkTokenBinding,
 	reboundTokenMacIfStale,
-	reportRefusedTokenRow,
 	type StoredTokenMac,
-	type TokenBinding,
 	type TokenBindingRefusalReport,
 } from "../token/binding.js";
+import { isLibrarySessionRow, sessionBinding } from "./binding.js";
 import { type SessionConfig, type SessionSettings, sessionSettingsOf } from "./config.js";
 import { assertSessionIsFresh } from "./freshness.js";
 import {
@@ -61,6 +60,8 @@ export interface SessionService {
 	readonly settings: SessionSettings;
 	/** the same service over another driver, for a session written in a caller's own transaction */
 	boundTo(driver: Driver): SessionService;
+	/** the session rows on another driver, checked with this service's keys and sealing mode */
+	repositoryOn(driver: Driver): SessionRepository;
 	issue(input: {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -110,21 +111,6 @@ export interface SessionService {
 
 const WRITE_NOW = 0;
 
-//the epoch the account had at issue is bound so a mass revocation outlives a written back row (S-INTEG-9)
-function sessionBinding(
-	userId: string,
-	tokenHash: Uint8Array,
-	factors: readonly string[],
-	sessionEpoch: number,
-): TokenBinding {
-	return {
-		purpose: "session",
-		ownerId: userId,
-		tokenSha256: tokenHash,
-		content: { factors, sessionEpoch },
-	};
-}
-
 interface VerifiedSession {
 	readonly found: SessionWithOwner;
 	readonly stored: StoredTokenMac;
@@ -147,11 +133,20 @@ function resolutionOf(userId: string, session: Session, observedAt: Date): Sessi
 export function createSessionService(options: SessionServiceOptions): SessionService {
 	const settings = sessionSettingsOf(options.session);
 	const metadataMode = options.sessionMetadata ?? DEFAULT_SESSION_METADATA_MODE;
-	const sessions = createSessionRepository({
-		driver: options.driver,
-		schema: options.schema ?? "velve",
-		sealing: options.sealing,
-	});
+	const sessions = repositoryOn(options.driver);
+
+	//a repository on another driver checks its rows with this service's keys and mode
+	function repositoryOn(driver: Driver): SessionRepository {
+		return createSessionRepository({
+			driver,
+			schema: options.schema ?? "velve",
+			keys: options.keys,
+			sealing: options.sealing,
+			...(options.reportTokenBindingRefusal === undefined
+				? {}
+				: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
+		});
+	}
 
 	function metadataOf(observed: ObservedRequest): SessionMetadata {
 		return sessionMetadataFor(metadataMode, observed);
@@ -181,27 +176,19 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	async function verifiedSession(token: string): Promise<VerifiedSession | null> {
 		const tokenHash = sessionTokenHash(token);
 		const candidate = await sessions.findSessionByTokenHash(tokenHash);
-		//an account without an epoch is refused by the seal check and its sessions answer as none
 		if (candidate === null || candidate.sessionEpoch === null) {
 			return null;
 		}
-		const names = candidate.storedFactorNames;
+		const row = { ...candidate, tokenHash };
+		if (!(await isLibrarySessionRow(options.keys, row, options.reportTokenBindingRefusal))) {
+			return null;
+		}
 		const binding = sessionBinding(
 			candidate.userId,
 			tokenHash,
-			names ?? [],
+			candidate.storedFactorNames ?? [],
 			candidate.sessionEpoch,
 		);
-		const verdict =
-			names === null ? "mismatch" : await checkTokenBinding(options.keys, binding, candidate);
-		if (verdict !== "valid") {
-			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
-				userId: candidate.userId,
-				occasion: "session_resolve",
-				verdict,
-			});
-			return null;
-		}
 		return {
 			found: candidate.decode(),
 			stored: candidate,
@@ -259,6 +246,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		settings,
 
 		boundTo: (driver) => createSessionService({ ...options, driver }),
+
+		repositoryOn,
 
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();

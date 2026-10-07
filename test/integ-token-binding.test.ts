@@ -24,8 +24,14 @@ import {
 import { createOneTimeTokens, type OneTimeTokens } from "../src/core/token/one-time-token.js";
 import { toSecretToken } from "../src/core/token/secret-token.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
-import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { sessionInsertFor } from "./session-fixtures.js";
+import {
+	actorOfTestUser,
+	createUser,
+	dropSchema,
+	type MigratedSchema,
+	openMigratedSchema,
+} from "./db-fixtures.js";
+import { SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
 /**
@@ -648,7 +654,11 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 
 	it("writes no row when the epoch it bound moved before the insert", async () => {
 		const userId = await sealedAccount();
-		const repository = createSessionRepository({ driver: migrated.connection, schema });
+		const repository = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
+			driver: migrated.connection,
+			schema,
+		});
 		const token = chosenToken();
 
 		await expect(
@@ -667,6 +677,42 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 			[userId],
 		);
 		expect(row?.present).toBe(0);
+	});
+});
+
+describe("the session lists of an account (S-INTEG-9)", () => {
+	it("lists, shows to a plugin and announces only the rows the library wrote", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const own = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const resolved = await sessions.resolve(own.token);
+		if (resolved === null) {
+			throw new Error("the issued session did not resolve");
+		}
+		await sql(
+			`INSERT INTO ${schema}.session
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days', '{password,totp}',
+			    $3, 1)`,
+			[userId, sha256Of(chosenToken()), randomBytes(32)],
+		);
+		const rows = sessions.repositoryOn(migrated.connection);
+		refusals = [];
+
+		expect((await sessions.list({ resolved })).map((session) => session.id)).toStrictEqual([
+			own.session.id,
+		]);
+		expect((await rows.listSessionsOfUser({ userId })).map((session) => session.id)).toStrictEqual([
+			own.session.id,
+		]);
+		expect(await rows.listEverySessionIdOwnedBy({ actor: actorOfTestUser(userId) })).toStrictEqual([
+			own.session.id,
+		]);
+		expect(refusals.map((refusal) => refusal.occasion)).toStrictEqual([
+			"session_resolve",
+			"session_resolve",
+			"session_resolve",
+		]);
 	});
 });
 

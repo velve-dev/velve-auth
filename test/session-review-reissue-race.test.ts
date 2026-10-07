@@ -18,7 +18,7 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { sessionInsertFor } from "./session-fixtures.js";
+import { SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
 
@@ -99,6 +99,7 @@ beforeAll(async () => {
 		schema: migrated.schema,
 	});
 	sessions = createSessionRepository({
+		keys: SESSION_FIXTURE_KEYS,
 		sealing: "migrating",
 		driver: traced.driver,
 		schema: migrated.schema,
@@ -255,6 +256,7 @@ describe("S-FIX-2: the trigger is the second lock, and the code does not lean on
 			transaction: (fn) => fn(recording),
 		};
 		const quiet = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
 			sealing: "migrating",
 			driver: recording,
 			schema: "velve",
@@ -284,6 +286,7 @@ describe("two re-issues of one session at the same moment", () => {
 	it("leaves one live session behind, not two", async () => {
 		const second: TestConnection = await openTestConnection();
 		const other = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
 			sealing: "migrating",
 			driver: second,
 			schema: migrated.schema,

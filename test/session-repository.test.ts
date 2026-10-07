@@ -19,6 +19,7 @@ import {
 	DAY,
 	HOUR,
 	MINUTE,
+	SESSION_FIXTURE_KEYS,
 	sessionInsertFor,
 	statementsMatching,
 } from "./session-fixtures.js";
@@ -67,6 +68,7 @@ async function foundAndDecoded(tokenHash: Uint8Array) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_repository");
 	sessions = createSessionRepository({
+		keys: SESSION_FIXTURE_KEYS,
 		sealing: "migrating",
 		driver: migrated.connection,
 		schema: migrated.schema,
@@ -174,6 +176,7 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 	it("costs exactly one statement per answer, however often it is asked (S-CACHE-1)", async () => {
 		const counted = countingDriver(migrated.connection);
 		const counting = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
 			sealing: "migrating",
 			driver: counted.driver,
 			schema: migrated.schema,

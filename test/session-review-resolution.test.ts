@@ -121,7 +121,8 @@ describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", 
 			)
 			.map(([name]) => name);
 
-		expect(readdirSync(SESSION_DIRECTORY).filter((name) => name.endsWith(".ts")).length).toBe(8);
+		//the ninth is binding.ts, the check every session row passes before it is used (E-3144)
+		expect(readdirSync(SESSION_DIRECTORY).filter((name) => name.endsWith(".ts")).length).toBe(9);
 		expect(holding).toEqual([]);
 	});
 

@@ -2,10 +2,10 @@ import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import type { SessionService } from "../session/service.js";
 import { createPasswordProvenance } from "./credential.js";
 
 interface ConfirmationOutcome {
@@ -18,6 +18,7 @@ interface AddressConfirmation {
 	readonly transaction: Driver;
 	readonly schema: string;
 	readonly pluginRuntime: PluginRuntime;
+	readonly sessions: SessionService;
 	readonly actor: Actor;
 	readonly confirmingSessionId: string | null;
 	readonly newEmail: string | null;
@@ -87,7 +88,7 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 		return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount: 0 };
 	}
 
-	const sessionRows = createSessionRepository({ driver: input.transaction, schema: input.schema });
+	const sessionRows = input.sessions.repositoryOn(input.transaction);
 	//a refusal must roll the redemption and the deleted password back with it (E-2730)
 	if (input.pluginRuntime.listensTo("beforeSessionRevoke")) {
 		await announceEachRevocation(

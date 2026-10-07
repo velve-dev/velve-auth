@@ -3968,6 +3968,16 @@ read.
 | `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
 | `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
 
+`repositoryOn(driver)` returns the session repository over another driver — a
+caller's transaction — with this service's `keys`, `sealing` and refusal report.
+Every list it answers (`listSessionsOwnedBy`, `listSessionsOfUser`,
+`listEverySessionIdOwnedBy`) checks each row's token MAC over the account's epoch
+first and leaves out, and reports, a row the library did not write, so a forged or
+written-back session is neither listed nor announced to a revocation hook
+(S-INTEG-9). The flows that revoke every session of an account, the plugin
+context's `listSessionsForUser` and the OAuth link announcement build their
+repositories this way.
+
 `observed` is `{ ipAddress, userAgent }` as the request layer saw them; what is
 stored follows `sessionMetadata` (L-10).
 
