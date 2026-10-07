@@ -15628,3 +15628,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping both wordings, which states the same limit twice with different ends.
 **Reason.** E-3206 named an end that a writer can undo, which is the kind of error the limits exist to prevent.
 **Price.** None beyond the sentence.
+
+<a id="e-3213"></a>
+
+### A seal at the largest version cannot be resealed, and the specification says how to recover
+`E-3213` · security-state · specification, S-INTEG-7, settled
+
+**Context.** S-INTEG-7 says the reseal's new version lies above the stored one, and E-3092 bounded the version by `Number.MAX_SAFE_INTEGER`. The third review stored that largest version and showed the table refusing any higher one, so the one method allowed to repair a broken state could never repair that account. The orchestrator decided to name it as a limit with its recovery. *Resealing* now says the call refuses with the named error `security_state_version_exhausted` when no higher version is storable — a writer having set the stored version or the anchor's floor to the top — and that such an account is recovered by hand: the administrator deletes its sessions and its seal row by SQL and has it sealed anew in `"migrating"`, or the account is recreated. A writer can delete the account outright, so the limit adds no attack. T-INTEG-7 expects the refusal without a changed row; `test/security-state-version-ceiling.test.ts` holds the premise that the table refuses the next version.
+**Rejected.** Wrapping the version back to 1, which would put the new version below the stored one and below the anchor's floor and so break the account again.
+**Reason.** A bound on the version has a top, and the specification has to say what happens there rather than promise something the table refuses.
+**Price.** Recovery needs an administrator with SQL access, and through `"migrating"` it reopens the window of E-3212 for that account.
