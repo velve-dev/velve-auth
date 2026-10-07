@@ -227,9 +227,12 @@ describe("a bound ciphertext opens only under its own binding (S-INTEG-1)", () =
 });
 
 //an unbound value whose random nonce opens with the marker byte is the case the first byte cannot decide
-async function unboundStartingWith(firstByte: number): Promise<PurposeCiphertext> {
+async function unboundStartingWith(
+	firstByte: number,
+	plaintext: Uint8Array = PLAINTEXT,
+): Promise<PurposeCiphertext> {
 	for (let attempt = 0; attempt < 10_000; attempt += 1) {
-		const unbound = await encryptWithPurposeKey(keys, "password-enc", PLAINTEXT);
+		const unbound = await encryptWithPurposeKey(keys, "password-enc", plaintext);
 		if (unbound.ciphertext[0] === firstByte) {
 			return unbound;
 		}
@@ -261,6 +264,15 @@ describe("the unbound form of 1.x (S-INTEG-1)", () => {
 		expect(await decryptBound(keys, binding, unbound, "readable")).toStrictEqual(PLAINTEXT);
 		expect(await errorCodeOf(decryptBound(keys, binding, unbound, "refused"))).toBe(
 			"authentication_failed",
+		);
+	});
+
+	it("still reads an unbound empty value whose nonce opens with the marker, too short to be a bound one", async () => {
+		const unbound = await unboundStartingWith(0x02, new Uint8Array(0));
+
+		expect(await decryptBound(keys, binding, unbound, "readable")).toHaveLength(0);
+		expect(await errorCodeOf(decryptBound(keys, binding, unbound, "refused"))).toBe(
+			"ciphertext_malformed",
 		);
 	});
 
