@@ -15218,3 +15218,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Naming `attempts` as a limit only, which leaves L-8 open to a writer who sets a number. (b) A counter outside the database, which no process shares with another and which a restart empties.
 **Reason.** A bound that is checked against a value the attacker can set is no bound; one checked against a MAC at least forces the attacker to replay rows they saw.
 **Price.** The playback limit means the binding narrows the attack and does not close it: a writer who recorded the fresh row still gets five guesses per playback. Every failed attempt costs an HMAC and a second write. `set_by_session_id` in the seal means a password set by a session reseals with that session's id, so a change of it by a writer is a broken state.
+
+<a id="e-3092"></a>
+
+### The seal version stops at Number.MAX_SAFE_INTEGER, and migration 3 is changed in place
+`E-3092` · security-state · schema, migration 3, settled
+
+**Context.** The seal's version reaches the application as a `number` — the result of `resealSecurityState`, the `version` of `recordSeal`, the floor `minimumVersion` returns — while `velve.security_state.version` was an unbounded `bigint`. A writer could store a version no JavaScript number represents, and "the new version lies above the stored one" (S-INTEG-7) would then have no exact answer. A reviewer's test stored `9223372036854775807` and the table accepted it. The column's check is now `version BETWEEN 1 AND 9007199254740991` in `src/core/db/migrations/security-state.ts`, in `migrations/0003_security_state.sql` and in the SQL of section 3.18 in both languages, which now also says why. Migration 3 is edited in place: it exists only on this unmerged branch and in no published version, so no database has it in its ledger under the old checksum except the branch's own test schemas. The reviewer's case is committed as `test/security-state-table.test.ts`, with the boundary and zero beside it.
+**Rejected.** (a) A migration 4 that alters the check, which would ship a migration only to repair an unreleased one, and migration 4 is reserved (E-3086). (b) Reading the version as a string or `bigint` in the interface, which changes three signatures of section 3.15 for a range no legitimate account reaches.
+**Reason.** A check in the table is the one place a writer cannot step around, and an unreleased migration has no ledger to protect.
+**Price.** A database that ran this branch's earlier migration 3 refuses to start with `migration_checksum_changed` until its schema is recreated; that is only a test or development database.

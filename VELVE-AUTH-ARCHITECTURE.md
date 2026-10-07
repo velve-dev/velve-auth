@@ -3113,13 +3113,13 @@ The MAC runs over the SHA-256 value of the token and not over the token itself, 
 
 Existing rows carry no MAC. Migration 4 therefore deletes every row in `velve.session`, `velve.one_time_token` and `velve.pending_authentication`: **on the upgrade to 2.0.0 every session ends, and every open link and every pending authentication expires.**
 
-**4. The seal (S-INTEG-2 to S-INTEG-7).** Every account has a row in `velve.security_state`:
+**4. The seal (S-INTEG-2 to S-INTEG-7).** Every account has a row in `velve.security_state`. The version reaches the application as `number` (`resealSecurityState`, `recordSeal`, `minimumVersion`), so its range ends at `Number.MAX_SAFE_INTEGER`:
 
 ```sql
 -- Migration 3
 CREATE TABLE velve.security_state (
   user_id     uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,
-  version     bigint NOT NULL CHECK (version >= 1),
+  version     bigint NOT NULL CHECK (version BETWEEN 1 AND 9007199254740991),
   digest      bytea NOT NULL CHECK (octet_length(digest) = 32),
   key_version integer NOT NULL CHECK (key_version >= 1),
   sealed_at   timestamptz NOT NULL DEFAULT now()

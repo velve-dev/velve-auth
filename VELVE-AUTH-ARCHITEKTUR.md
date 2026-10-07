@@ -3116,13 +3116,13 @@ Der MAC läuft über den SHA-256-Wert des Tokens und nicht über den Token selbs
 
 Bestehende Zeilen tragen keinen MAC. Migration 4 löscht deshalb jede Zeile in `velve.session`, `velve.one_time_token` und `velve.pending_authentication`: **Beim Upgrade auf 2.0.0 endet jede Sitzung, und jeder offene Link und jeder Zwischenzustand verfällt.**
 
-**4. Das Siegel (S-INTEG-2 bis S-INTEG-7).** Jedes Konto hat eine Zeile in `velve.security_state`:
+**4. Das Siegel (S-INTEG-2 bis S-INTEG-7).** Jedes Konto hat eine Zeile in `velve.security_state`. Die Version erreicht die Anwendung als `number` (`resealSecurityState`, `recordSeal`, `minimumVersion`), deshalb endet ihr Wertebereich bei `Number.MAX_SAFE_INTEGER`:
 
 ```sql
 -- Migration 3
 CREATE TABLE velve.security_state (
   user_id     uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,
-  version     bigint NOT NULL CHECK (version >= 1),
+  version     bigint NOT NULL CHECK (version BETWEEN 1 AND 9007199254740991),
   digest      bytea NOT NULL CHECK (octet_length(digest) = 32),
   key_version integer NOT NULL CHECK (key_version >= 1),
   sealed_at   timestamptz NOT NULL DEFAULT now()

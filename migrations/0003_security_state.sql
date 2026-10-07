@@ -3,7 +3,7 @@
    key_version names the state-mac version the digest was taken under (S-KEY-3). */
 CREATE TABLE velve.security_state (
   user_id     uuid PRIMARY KEY REFERENCES velve.user(id) ON DELETE CASCADE,
-  version     bigint NOT NULL CHECK (version >= 1),
+  version     bigint NOT NULL CHECK (version BETWEEN 1 AND 9007199254740991),
   digest      bytea NOT NULL CHECK (octet_length(digest) = 32),
   key_version integer NOT NULL CHECK (key_version >= 1),
   sealed_at   timestamptz NOT NULL DEFAULT now()
