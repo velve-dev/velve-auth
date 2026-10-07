@@ -225,7 +225,9 @@ email address is an attribute, never a key.
 |---|---|---|
 | `id` | `uuid` | primary key |
 | `user_id` | `uuid` | cascades from `velve.user`, indexed, **immutable** |
-| `token_sha256` | `bytea` | SHA-256 of the session token, unique |
+| `token_sha256` | `bytea` | SHA-256 of the session token, unique; the lookup key |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 ([Security state: keyed token hashes](#security-state-keyed-token-hashes)) |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under |
 | `created_at`, `last_used_at` | `timestamptz` | |
 | `idle_expires_at`, `absolute_expires_at` | `timestamptz` | `absolute_expires_at` is indexed for the sweep |
 | `factors` | `text[]` | `password`, `totp`, `webauthn`, `recovery`, `oauth` |
@@ -247,6 +249,8 @@ in one transaction (E-23).
 | `payload` | `jsonb` | |
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under |
 
 ### `velve.pending_authentication`
 
@@ -257,9 +261,11 @@ The state between the first factor and the second.
 | `token_sha256` | `bytea` | primary key |
 | `user_id` | `uuid` | cascades from `velve.user` |
 | `factors_completed` | `text[]` | |
-| `attempts` | `integer` | default 0, counts against five |
+| `attempts` | `integer` | default 0, counts against five; bound into `token_mac` |
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under |
 
 ### `velve.totp_credential`
 
@@ -403,10 +409,11 @@ the two byte for byte.
 | `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
+| `0004_token_mac.sql` | 4 | deletes every session, one-time token and pending authentication, and adds `token_mac` and `token_mac_key_version` to the three tables |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migration 3 is the same in every mode, and migration 4
-is reserved by architecture section 3.18 for the token MAC columns. Changing the mode of a database that has already
+configured identity mode. Migrations 3 and 4 are the same in every mode; migration 4
+signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
 
@@ -8719,7 +8726,105 @@ columns would refuse every session the code inserts until then.
 
 ## Security state: keyed token hashes
 
-> Reserved for `security-state-tokens`: the token MAC of sessions, one-time tokens and pending authentications (S-INTEG-9). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+A database writer without the root key could, until 2.0.0, create a session, a
+one-time token or a pending authentication for any account: `token_sha256` is an
+unkeyed SHA-256 value, so whoever chooses a token knows its hash. Every row of
+`velve.session`, `velve.one_time_token` and `velve.pending_authentication` now
+also carries `token_mac`, an HMAC-SHA256 under the `token-mac` purpose key, and
+`token_mac_key_version`, the version it was taken under (architecture section
+3.18, point 3, and S-INTEG-9). Nothing in this chapter is configured; it holds
+for every instance.
+
+### What the MAC covers
+
+`token_sha256` stays the lookup key, so a row is still found by the hash of the
+presented token. The MAC is taken over a length-prefixed encoding of:
+
+| Field | Session | Pending authentication | One-time token |
+|---|---|---|---|
+| context | `velve-auth/token-binding/v1` | the same | the same |
+| purpose | `session` | `pending_authentication` | the row's `purpose` |
+| owner | `user_id` | `user_id` | `user_id`, or absent |
+| token | `token_sha256` | `token_sha256` | `token_sha256` |
+| content | `factors`, in stored order | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
+
+Each field is a type byte, a four-byte length in network order and its bytes,
+and an absent value has its own type byte, so two different rows never encode
+alike. The canonical JSON of a payload sorts every object's keys and is taken
+after a JSON round trip, which is the form `jsonb` hands back.
+
+A writer who inserts a row for a token of their own, moves a real row to another
+account, into another table or to another purpose, raises its factors, rewrites
+a payload or resets a pending attempt counter leaves a row whose MAC does not
+match. What the row binds is decided by the library: deadlines, `ip`,
+`user_agent`, `created_at` and `last_used_at` are not covered, so a writer can
+still extend a deadline, as section 3.18 names among its limits.
+
+### When it is checked
+
+The MAC is recomputed under the stored version and compared in constant time
+before anything in the row is used:
+
+| Path | Where | A refused row answers |
+|---|---|---|
+| session resolve, refresh and every route that reads the session cookie | `SessionService.resolve` | as no session |
+| pending resolve, every failed attempt, and the consume that completes a sign-in | `PendingAuthenticationService` | as no pending authentication (`pending_not_found`, `pending_consumed`) |
+| redemption of an email verification, a reset, an address change or a magic link | `OneTimeTokens.redeem` | as no token (`invalid_token`) |
+
+A refusal has no code of its own and reaches the outside exactly as a missing
+row does. An unknown `token_mac_key_version` is refused the same way. A one-time
+token is consumed by the statement that reads it, so a refused one-time row is
+deleted with the redemption that found it; a refused pending row being consumed
+is restored by the rollback of the transaction that would have issued the
+session.
+
+### The refusal report
+
+`createSessionService`, `createPendingAuthenticationService`,
+`createSecondFactorCompletion` and `createOneTimeTokens` take an optional
+`reportTokenBindingRefusal(refusal)`. It receives
+
+| Field | Value |
+|---|---|
+| `userId` | the account the refused row names |
+| `occasion` | `session_resolve`, `factor_check` or `token_redemption` |
+| `reason` | always `token_binding_mismatch` |
+| `verdict` | `mismatch`, or `key_version_unknown` for a version the ring does not hold |
+
+and nothing else: no token, no hash, no MAC. Whatever the report throws is
+swallowed, so it cannot change the refusal. The instance does not pass one yet;
+the security-state alarm of section 3.18 is what it is there for.
+
+### Writing and rebinding
+
+Every insert takes the MAC under the current `token-mac` version in the
+statement that writes the row. A session or pending authentication that
+resolves under an older version is rebound under the current one by a
+compare-and-set on the stored MAC, so a concurrent rebinding is not overwritten.
+A failed second-factor attempt writes the raised counter together with a MAC
+over it, again only over the row it checked; a concurrent attempt makes it read
+the row again and count on top. The attempt that exhausts the row deletes it.
+
+A row that is never resolved while two versions are in the ring keeps the old
+version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
+and S-KEY-5 holds only if it has run between putting a new version in front and
+removing the old one; the start does not refuse a ring that lacks a stored
+`token_mac_key_version`, so a row left behind is refused and its user signed
+out.
+
+### Configuring a key provider
+
+A custom `KeyProvider` must answer `token-mac` as an HMAC-SHA256 key; the
+[Key management](#key-management) chapter lists the purposes. `rootKeyProvider`
+derives it from the root key with no configuration.
+
+### Upgrading
+
+Migration 4 deletes every row of the three tables before it adds the `NOT NULL`
+columns: every session ends, and every open link and pending sign-in expires.
+Each check costs one HMAC-SHA256 over about 150 bytes; measured on one machine
+at 90 to 130 microseconds per check through `rootKeyProvider`, the key lookup
+included.
 
 ## Security state: the seal
 
