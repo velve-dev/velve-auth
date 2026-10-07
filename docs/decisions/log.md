@@ -16008,3 +16008,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Measuring freshness from a column the library rewrites, such as `last_used_at`, which the resolution moves on every request.
 **Reason.** A value a security decision is measured from has to be under the same MAC as the row that carries it.
 **Price.** None at run time; the MAC's encoding grows by one field.
+
+<a id="e-3314"></a>
+
+### A WebAuthn challenge carries a token MAC
+`E-3314` · security-state · specification, S-INTEG-9, test plan, settled
+
+**Context.** Point 3 gave session, one-time token and pending authentication a token MAC, and *The limits* named two tables under no seal and no MAC. The sixth review pointed out that `velve.webauthn_challenge` had neither, so a writer could insert a challenge of their choosing for any account, or move a consumed one to another owner or purpose, and the limits did not say so. As the orchestrator decided, a challenge row carries `token_mac` and `token_mac_key_version`, an HMAC under `token-mac` over its purpose, its owner or explicitly none, and `challenge_sha256`, verified at consumption like the other token rows. A mismatch is answered like an unknown challenge with the alarm. Migration 4, which is unreleased, deletes the existing challenges and adds the columns. Point 3, the migration block, S-INTEG-9 and T-INTEG-9 say so in both languages. One part deviates from the decision's wording. The decision asked for "a re-inserted consumed challenge" to be refused, but a consumed challenge re-inserted unchanged with its own MAC verifies, exactly as a redeemed one-time token re-inserted with its MAC does. So T-INTEG-9 inserts a self-chosen challenge and re-inserts a consumed one with a changed owner or purpose, 3/3 refused, and *The limits* names the unchanged re-insertion beside the one-time token's. The count of unbound tables in *The limits* and 5.21(a) is corrected with the other limits in E-3315. Implementation belongs to the token branch.
+**Rejected.** Binding the challenge's `expires_at` or `created_at`, which no other token row binds and *The limits* already names as unbound deadlines.
+**Reason.** Every row a sign-in consumes to learn which account it acts for has to be one the writer cannot have made.
+**Price.** Every open WebAuthn ceremony fails once at the upgrade, and the user starts it again.
