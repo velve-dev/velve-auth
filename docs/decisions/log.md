@@ -15688,3 +15688,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Binding the deadlines into the token MACs, which the token branch's design leaves out (E-3081) and which would make every idle extension a MAC rewrite.
 **Reason.** A limit that says "the deadlines" leaves a reader to guess which columns a writer can change; a list does not.
 **Price.** None beyond the sentences; the exposures are unchanged.
+
+<a id="e-3219"></a>
+
+### An unreadable envelope blocks an unsealed account, and the reseal does not repair it
+`E-3219` · security-state · specification, S-INTEG-7, S-INTEG-8, settled
+
+**Context.** The bound-envelope branch reported (its A-L7) that one envelope an unsealed account cannot open — its key gone from the ring, or its ciphertext corrupted by a writer — blocks every change of that account and the maintenance step on it, because both must convert the whole account (E-3094), and that recovery is by SQL only; it asked whether the administration branch's reseal should cover it. This entry decides that it should not. *The limits* now state the blockage, that `maintenance.resealSecurityState` seals what exists and repairs no envelope, and the recovery: the administrator deletes the unreadable row by SQL, the user enrols the factor anew, and the account is then converted.
+**Rejected.** A reseal option that drops unreadable rows before sealing, which would let a writer remove a victim's second factor by corrupting its ciphertext and waiting for an administrator to repair the account.
+**Reason.** Removing a factor is a downgrade of the account, and the library performs no downgrade an attacker can provoke; an administrator deleting a row by hand decides it knowingly.
+**Price.** An operator who loses a ring version before the maintenance step has run faces an SQL recovery per affected account. This entry uses the last number of the second range.
