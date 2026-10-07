@@ -57,7 +57,11 @@ export async function macUnderCurrentKey(
 	if (!isStorableKeyVersion(version)) {
 		throw new KeyError("key_version_out_of_range");
 	}
-	return { keyVersion: version, mac: await hmacUnder(key, message) };
+	const mac = await hmacUnderIfUsable(key, message);
+	if (mac === null) {
+		throw new KeyError("key_unusable");
+	}
+	return { keyVersion: version, mac };
 }
 
 //a stored mac is compared in constant time and never through web crypto verify (E-3088)

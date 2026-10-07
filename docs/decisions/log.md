@@ -15648,3 +15648,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Counting the aggregate among the 100, which would let a flood suppress the aggregate itself.
 **Reason.** A threshold that leaves a count ambiguous passes two different implementations.
 **Price.** The alarm's window must read `config.clock`, which ties the seal branch's alarm to the clock seam.
+
+<a id="e-3215"></a>
+
+### Taking a MAC under an unusable current key is a KeyError
+`E-3215` · security-state · keys, settled
+
+**Context.** E-3093 and E-3190 made the check side answer `"key_unusable"`, and E-3093's Price admitted that `macUnderCurrentKey` still threw the platform error for an unusable current key, leaving the start probe to keep that unreachable — which E-3192 showed it does not for a process that never calls `migrate()`. The third review asked for the write side to follow the check side. `macUnderCurrentKey` now takes the MAC through the same `hmacUnderIfUsable` and throws `KeyError("key_unusable")`, a new code of the public `KeyErrorCode` union, when the current key is not HMAC-SHA256, does not sign or returns a MAC of another length. `test/keys-integrity-key-shape.test.ts` holds it.
+**Rejected.** Returning `null` from `macUnderCurrentKey`, which every writer of a seal or a token would have to remember to check.
+**Reason.** A write under a key the check would refuse must not happen, and an error with a code is how this module refuses.
+**Price.** `KeyErrorCode` grows by one value, which an exhaustive switch over it has to handle.

@@ -109,3 +109,13 @@ describe("the older ring versions stored seals still name", () => {
 		).resolves.toBeUndefined();
 	});
 });
+
+describe("taking a MAC under an unusable current key", () => {
+	it("refuses with the KeyError key_unusable rather than a platform exception", async () => {
+		const provider = providerAnsweringStateMacWith(await hmacKeyUnder("SHA-1"));
+
+		await expect(
+			macUnderCurrentKey(provider, "state-mac", new Uint8Array(8)),
+		).rejects.toMatchObject({ name: "KeyError", code: "key_unusable" });
+	});
+});

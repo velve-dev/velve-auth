@@ -1114,8 +1114,10 @@ Every failure of this module is a `KeyError` with a `code` from a fixed set:
 `key_version_out_of_range`, `key_version_unknown`,
 `key_material_not_exportable`, `purpose_cannot_encrypt`,
 `ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`,
-`authentication_failed`. The message is fixed per code, so no key material can
-reach an error string.
+`authentication_failed`, `key_unusable`. The message is fixed per code, so no key
+material can reach an error string. `key_unusable` comes from `macUnderCurrentKey`
+when the current key of an integrity purpose is not HMAC-SHA256 or does not sign
+([Security state](#security-state)).
 
 That includes the failure a caller most has to handle: a ciphertext that does
 not authenticate arrives as `authentication_failed`, not as the exception type
