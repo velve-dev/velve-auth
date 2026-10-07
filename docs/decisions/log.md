@@ -16578,3 +16578,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A guard no test sees removed is a guard by intention only.
 **Price.** None.
+
+<a id="e-3371"></a>
+
+### S-INTEG-7 is split into three sentences
+`E-3371` · security-state · specification, S-INTEG-7, settled
+
+**Context.** E-3351 added the random epoch and the named window to S-INTEG-7 inside its one long sentence. The ninth review pointed out that the sentence then read as if the reseal "remains as a named limit, and returns the components it sealed". The requirement is now three sentences in both languages: only the administrator reseal seals a broken state, and nothing else does; the call draws a new random epoch, signing out every session, and returns what it sealed; resetting to the anchor's last version after a failed `recordSeal` remains a named limit. The content is unchanged.
+**Rejected.** Nothing.
+**Reason.** A requirement that cannot be parsed cannot be tested against.
+**Price.** None.
