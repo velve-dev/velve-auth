@@ -16028,3 +16028,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving `disabled_at` unsealed and naming it, which the orchestrator declined because a block that a writer can lift silently is no block.
 **Reason.** A limit has to name everything a writer gains, and the list was written before the challenge table and the import were held against it.
 **Price.** Disabling and enabling an account now take the account lock and reseal, one more transaction on an administrative path.
+
+<a id="e-3316"></a>
+
+### The code a broken state copies is named for every path
+`E-3316` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** S-INTEG-5 said that a refusal for a broken state looks like the same path's ordinary failure, and *Outwards* named four codes: `invalid_credentials` on sign-in, `invalid_pending_authentication` on the factor check, `session_required` and `invalid_token`. The sixth review found two gaps. The passkey and OAuth sign-ins and the passkey as second factor had no code named, and T-INTEG-5 compared every path against four ordinary failures, which do not cover eleven paths. Both reviewers asked for the code of each path, from `src/core/http/error-map.ts`. *Outwards* and S-INTEG-5 now name it for each of the eleven T-INTEG-4 paths together with the ordinary failure it copies, and T-INTEG-5 names the same pairs. The orchestrator decided the passkey second factor answers "as its rejected factor". I applied that reading to all three factor paths: `invalid_factor_code`, `webauthn_credential_rejected` and `invalid_recovery_code`, each copying a rejected factor. That replaces `invalid_pending_authentication`, which *Outwards* had named for the factor check, and the change is mine. If the factor check is meant to fail before the factor is evaluated, so that the ordinary counterpart is an unknown pending authentication, the three entries go back to `invalid_pending_authentication`, and that is for the orchestrator to confirm.
+**Rejected.** A new visible code for a broken state, which S-INTEG-5 forbids.
+**Reason.** A requirement that says "the same as the ordinary failure" without naming it cannot be tested on the paths it leaves out.
+**Price.** A refusal on a factor path that copies a rejected factor must also leave the pending authentication as a rejected factor does, or the next request tells the two apart; the seal branch has to hold that.
