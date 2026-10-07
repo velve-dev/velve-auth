@@ -8733,6 +8733,14 @@ require, not because any input reaches it. The start probes and
 `verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
 key the check can use.
 
+### `isKeyShaped(key)`
+
+Internal, in `src/core/keys/mac.ts`. `true` when `key` is an object with an
+`algorithm` object and a `usages` array, and `false` for anything else a provider
+of its own might hand over, such as `{}` or `null`. The start refuses a current key
+that is not shaped like one with `keys_unusable`, and `keyTakesMac` and
+`sameKeyFingerprintOf` answer `false` and `null` for it instead of throwing.
+
 ### `sameKeyFingerprintOf(key)`
 
 Internal, in `src/core/keys/mac.ts`. Resolves the hex HMAC of one fixed probe

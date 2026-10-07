@@ -16568,3 +16568,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Folding `suppressed` into the reason list, which would let an ordinary alarm carry it.
 **Reason.** A claim that every member of a list has a case is checked against the whole list, including the members a paragraph further down adds.
 **Price.** None.
+
+<a id="e-3370"></a>
+
+### Five more plant killers are kept, and isKeyShaped is documented
+`E-3370` · security-state · tests, keys, settled
+
+**Context.** The ninth review planted five more faults the suite did not notice. Each case was run here against its plant before it was kept, in `test/keys-integrity-gaps.test.ts`. A plugin migration's transactions start with the isolation statement; handing `applyOwnedMigration` the unwrapped driver failed it, so the runner already uses the wrapped one and nothing had to be fixed. A provider whose `current()` rejects is refused with `keys_unusable`; dropping the rejection's catch failed it. An HMAC-looking value without `usages` is refused; dropping the `usages` check from `isKeyShaped` failed it. The same-key fingerprint is the whole 32-byte probe MAC; truncating it failed it. The stored-version probe asks the ring once per distinct version; dropping `DISTINCT` failed it. `isKeyShaped`, added by E-3345, had no entry in `DOCUMENTATION.md`; it now has one.
+**Rejected.** Nothing.
+**Reason.** A guard no test sees removed is a guard by intention only.
+**Price.** None.
