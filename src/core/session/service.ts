@@ -56,12 +56,19 @@ export interface SessionServiceOptions {
 	readonly sessionMetadata?: SessionMetadataMode;
 }
 
+/** the session rows a flow announces or revokes in its own transaction, each one checked first */
+export interface SessionRows {
+	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
+	deleteEverySessionOwnedBy(input: { readonly actor: Actor }): Promise<number>;
+	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
+}
+
 export interface SessionService {
 	readonly settings: SessionSettings;
 	/** the same service over another driver, for a session written in a caller's own transaction */
 	boundTo(driver: Driver): SessionService;
 	/** the session rows on another driver, checked with this service's keys and sealing mode */
-	repositoryOn(driver: Driver): SessionRepository;
+	repositoryOn(driver: Driver): SessionRows;
 	issue(input: {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];

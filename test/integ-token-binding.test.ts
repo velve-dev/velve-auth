@@ -719,14 +719,21 @@ describe("the session lists of an account (S-INTEG-9)", () => {
 			[userId, sha256Of(chosenToken()), randomBytes(32)],
 		);
 		const rows = sessions.repositoryOn(migrated.connection);
+		const pluginRows = createSessionRepository({
+			driver: migrated.connection,
+			schema,
+			keys,
+			sealing: "migrating",
+			reportTokenBindingRefusal: report,
+		});
 		refusals = [];
 
 		expect((await sessions.list({ resolved })).map((session) => session.id)).toStrictEqual([
 			own.session.id,
 		]);
-		expect((await rows.listSessionsOfUser({ userId })).map((session) => session.id)).toStrictEqual([
-			own.session.id,
-		]);
+		expect(
+			(await pluginRows.listSessionsOfUser({ userId })).map((session) => session.id),
+		).toStrictEqual([own.session.id]);
 		expect(await rows.listEverySessionIdOwnedBy({ actor: actorOfTestUser(userId) })).toStrictEqual([
 			own.session.id,
 		]);

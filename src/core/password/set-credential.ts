@@ -2,14 +2,13 @@ import type { RouteServices } from "../auth/routes.js";
 import { type Actor, actorOfResolvedSession } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import type { SessionRepository } from "../db/repositories/session.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { createSessionUnderHooks } from "../plugin/sign-in.js";
-import type { SessionResolution } from "../session/service.js";
+import type { SessionResolution, SessionRows } from "../session/service.js";
 import { createArgon2idHash } from "./argon2.js";
 import { createPasswordCredentialRepository } from "./credential.js";
 import { storedMemoryCeilingKiB } from "./limits.js";
@@ -27,7 +26,7 @@ export async function refuseIfCredentialExists(
 	}
 }
 
-function sessionRowsOn(transaction: Driver, services: RouteServices): SessionRepository {
+function sessionRowsOn(transaction: Driver, services: RouteServices): SessionRows {
 	return services.sessions.repositoryOn(transaction);
 }
 

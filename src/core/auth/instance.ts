@@ -3,7 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
-import type { SecurityStateSealing } from "../db/repositories/session.js";
+import { createSessionRepository, type SecurityStateSealing } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -358,7 +358,12 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		identityMode: identity.mode,
 		schema,
 		users,
-		sessions: sessions.repositoryOn(driver),
+		sessions: createSessionRepository({
+			driver,
+			schema,
+			keys: config.keys,
+			sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
+		}),
 		driver,
 		log,
 		...(pluginDatabaseRole === undefined ? {} : { pluginDatabaseRole }),
