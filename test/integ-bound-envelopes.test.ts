@@ -426,12 +426,13 @@ describe("T-INTEG-1: a ciphertext copied to another owner, row or column does no
 	});
 
 	//one purpose key covers the three token columns, so only the binding tells them apart
+	//the two copies T-INTEG-1 counts are the access token into the other two columns
 	it.each([
-		["identity.access_token_enc", "identity.refresh_token_enc"],
-		["identity.refresh_token_enc", "identity.id_token_enc"],
-		["identity.id_token_enc", "identity.access_token_enc"],
-		["identity.access_token_enc", "identity.id_token_enc"],
-	] as const)("refuses %s moved into %s of the same identity", async (from, into) => {
+		["identity.access_token_enc", "identity.refresh_token_enc", true],
+		["identity.access_token_enc", "identity.id_token_enc", true],
+		["identity.refresh_token_enc", "identity.id_token_enc", false],
+		["identity.id_token_enc", "identity.access_token_enc", false],
+	] as const)("refuses %s moved into %s of the same identity", async (from, into, counted) => {
 		const identity = await signInThroughOAuth(`columns-${accountNumber}-${from}-${into}`);
 		const original = await readToken(identity.identityId, from);
 		expect(await decrypts(beforeRotation, tokenBinding(from, identity), original)).toBe(true);
@@ -445,11 +446,13 @@ describe("T-INTEG-1: a ciphertext copied to another owner, row or column does no
 				await readToken(identity.identityId, into),
 			),
 		).toBe(false);
-		refusedCopies.push(`${from} to ${into}`);
+		if (counted) {
+			refusedCopies.push(`${from} to ${into}`);
+		}
 	});
 
-	it("counts eight of eight copies refused", () => {
-		expect(refusedCopies).toHaveLength(8);
+	it("counts six of six copies refused", () => {
+		expect(refusedCopies).toHaveLength(6);
 	});
 });
 
@@ -597,6 +600,20 @@ function secretBindingOf(userId: string): EnvelopeBinding {
 	return { column: "totp_credential.secret_enc", owner: userId, row: userId };
 }
 
+const BOUND_FORM_MARKER = 0x02;
+
+async function unboundStartingWithTheMarker(
+	plaintext: Uint8Array<ArrayBuffer>,
+): Promise<StoredCiphertext> {
+	for (let attempt = 0; attempt < 10_000; attempt += 1) {
+		const unbound = await encryptWithPurposeKey(beforeRotation, "password-enc", plaintext);
+		if (unbound.ciphertext[0] === BOUND_FORM_MARKER) {
+			return unbound;
+		}
+	}
+	throw new Error("no nonce began with the marker in ten thousand draws");
+}
+
 async function unboundPhcOf(userId: string): Promise<StoredCiphertext> {
 	const bound = await readPhc(userId);
 	const phc = await decryptBound(beforeRotation, phcBindingOf(userId), bound, "refused");
@@ -642,6 +659,45 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 
 		expect(await checkTotp(handler, account, currentCodeOf(secret))).toStrictEqual(ordinaryFailure);
 		expect((await checkTotp(migrating, account, currentCodeOf(secret, 1))).status).toBe(200);
+	});
+
+	//one old value in 256 begins with the marker of the bound form by its random nonce (E-3111, E-3119)
+	it("reads an old password ciphertext whose nonce begins with the bound marker while migrating, and converts it", async () => {
+		const account = await signUp();
+		const phc = await decryptBound(
+			beforeRotation,
+			phcBindingOf(account.userId),
+			await readPhc(account.userId),
+			"refused",
+		);
+		const unbound = await unboundStartingWithTheMarker(phc);
+		await writePhc(account.userId, unbound);
+		const migrating = instanceUnder(beforeRotation, { securityState: { sealing: "migrating" } });
+
+		expect((await signInWithPassword(migrating, account.email, PASSWORD)).status).toBe(200);
+		expect(await signInWithPassword(handler, account.email, PASSWORD)).toStrictEqual(
+			REFUSED_SIGN_IN,
+		);
+
+		const rewrite = await connection.transaction((transaction) =>
+			rebindEnvelopesOfAccount({
+				driver: transaction,
+				schema,
+				keys: beforeRotation,
+				actor: actorOfTestUser(account.userId),
+				unbound: "readable",
+			}),
+		);
+		expect(rewrite.passwordRewritten).toBe(true);
+		expect(
+			await decryptBound(
+				beforeRotation,
+				phcBindingOf(account.userId),
+				await readPhc(account.userId),
+				"refused",
+			),
+		).toStrictEqual(phc);
+		expect((await signInWithPassword(handler, account.email, PASSWORD)).status).toBe(200);
 	});
 
 	it("refuses an unbound PKCE verifier even while migrating, so a flow across the upgrade begins again", async () => {
