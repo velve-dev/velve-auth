@@ -15678,3 +15678,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A revert and a recommit with the right type, which adds two commits to correct a subject line and changes nothing in the tree.
 **Reason.** The rule is checked by a reader of the history, and this entry is where that reader finds the deviation.
 **Price.** The branch's history carries one subject outside the listed types.
+
+<a id="e-3218"></a>
+
+### The specification follows the PKCE binding as built and names every unbound deadline
+`E-3218` · security-state · specification, S-INTEG-1, settled
+
+**Context.** Two items were queued for the foundation by the branches. The bound-envelope branch binds the PKCE verifier envelope not to `state_sha256` alone, as section 3.18 point 2's table said, but also to the row's `provider`, `nonce`, `redirect_path` and `link_from_session_id`, so that a writer cannot move a flow's verifier onto a flow with another redirect or another linking session; the table now says so. And *The limits* said only that "the deadlines" are not bound; they now name every unbound deadline and timestamp — `expires_at` of one-time tokens, pending authentications, OAuth flows and WebAuthn challenges, the two session deadlines, `created_at` and `last_used_at` — add that a writer can make an expired row valid again, and name the replay of a redeemed one-time token's row, which lets whoever holds the token redeem it twice.
+**Rejected.** Binding the deadlines into the token MACs, which the token branch's design leaves out (E-3081) and which would make every idle extension a MAC rewrite.
+**Reason.** A limit that says "the deadlines" leaves a reader to guess which columns a writer can change; a list does not.
+**Price.** None beyond the sentences; the exposures are unchanged.
