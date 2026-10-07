@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { lockAccountRow } from "../src/core/db/lock.js";
 import { createSessionRepository } from "../src/core/db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
 import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationService,
+	createSecondFactorCompletion,
 	MAXIMUM_PENDING_ATTEMPTS,
 	type PendingAuthenticationService,
 	type PendingToken,
@@ -12,6 +14,7 @@ import {
 	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/pending/index.js";
 import { createWebAuthnChallenges } from "../src/core/factor/webauthn/challenge.js";
+import { redeemOrRefuse } from "../src/core/flows/artefact.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { ConcealedError, toVisibleFailure } from "../src/core/http/error-map.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
@@ -35,6 +38,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
+import { openTestConnection } from "./db-postgres-connection.js";
 import { decodingJsonb } from "./jsonb-decoding-driver.js";
 import { rebindSessionsOf, SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
@@ -1374,5 +1378,93 @@ describe("a WebAuthn challenge row (section 3.18 point 3)", () => {
 			await challengesUnder(keys).consume({ challengeToken, purpose: "authenticate", userId }),
 		).toBe(false);
 		expectOneRefusal("factor_check", userId);
+	});
+});
+
+describe("the anchor's place on a consuming path: after the consumption, before the account lock (section 3.18)", () => {
+	async function lockIsFree(userId: string): Promise<boolean> {
+		const probe = await openTestConnection();
+		try {
+			await probe.query("BEGIN", []);
+			return await probe
+				.query(`SELECT 1 FROM ${schema}.user WHERE id = $1 FOR NO KEY UPDATE NOWAIT`, [userId])
+				.then(() => true)
+				.catch(() => false);
+		} finally {
+			await probe.query("ROLLBACK", []).catch(() => undefined);
+			await probe.close();
+		}
+	}
+
+	it("tells a redemption's hook the owner once the row is consumed and before the account is locked", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedOneTime(userId);
+		const told: { owner: string; free: boolean }[] = [];
+
+		await migrated.connection.transaction(async (tx) => {
+			const redeemed = await redeemOrRefuse(
+				tx,
+				{
+					schema,
+					keys,
+					beforeLockingTheOwnerOf: async (owner) => {
+						told.push({ owner, free: await lockIsFree(owner) });
+					},
+				},
+				{ token, purpose: "email_verify" },
+			);
+			await lockAccountRow(tx, schema, redeemed.userId);
+		});
+
+		expect(told).toStrictEqual([{ owner: userId, free: true }]);
+	});
+
+	it("leaves the row redeemable when the hook refuses, since its transaction rolls back", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedOneTime(userId);
+
+		await expect(
+			migrated.connection.transaction((tx) =>
+				redeemOrRefuse(
+					tx,
+					{
+						schema,
+						keys,
+						beforeLockingTheOwnerOf: async () => {
+							throw new Error("the anchor refuses this account");
+						},
+					},
+					{ token, purpose: "email_verify" },
+				),
+			),
+		).rejects.toThrow("the anchor refuses this account");
+		expect(
+			(await oneTimeTokens.redeem({ token: toSecretToken(token), purpose: "email_verify" }))
+				?.userId,
+		).toBe(userId);
+	});
+
+	it("tells the second-factor completion's hook the owner before the session takes the account lock", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedPending(userId);
+		const told: { owner: string; free: boolean }[] = [];
+		const completion = createSecondFactorCompletion({
+			driver: migrated.connection,
+			keys,
+			sealing: "migrating",
+			schema,
+			beforeLockingTheOwnerOf: async (owner) => {
+				told.push({ owner, free: await lockIsFree(owner) });
+			},
+		});
+
+		await completion.complete({
+			pendingToken: token,
+			factor: "totp",
+			presentedSessionToken: null,
+			observed: NO_REQUEST,
+		});
+
+		expect(told).toStrictEqual([{ owner: userId, free: true }]);
 	});
 });

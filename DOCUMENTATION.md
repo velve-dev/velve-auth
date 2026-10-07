@@ -9002,6 +9002,16 @@ report receives `occasion: "change"` for the missed rebinding. The seal branch
 raises the epoch in the same transaction, and the rebinding is where the kept
 session moves to the epoch the revocation leaves.
 
+**Consumed first, asked about second.** A redemption learns its account from the
+row it consumes, and it consumes that row first, without reading it before (§7,
+S-RACE-2). In the same transaction and before the account lock, the owner of the
+consumed row is passed to `beforeLockingTheOwnerOf(ownerId)`, an optional member
+of the store `redeemOrRefuse` takes and of `createSecondFactorCompletion`'s
+options, which may refuse by throwing; the transaction then rolls back and the row
+stands again. Section 3.18 asks the seal's anchor there. The instance passes
+nothing yet, and the WebAuthn challenge, whose consuming statement names the owner
+it expects, has no such hook.
+
 A revocation removes a session row whether or not it passes, but counts,
 returns and announces only the rows that do: `revokedOtherSessionsCount` of a
 password change or reset, `revokedCount` of `session.revokeAll`, the count of a

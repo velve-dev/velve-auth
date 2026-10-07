@@ -25,6 +25,8 @@ interface ArtefactStore {
 	readonly schema: string;
 	readonly keys: KeyProvider;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
+	/** told the owner of a consumed row before the account lock is taken, and may refuse by throwing */
+	readonly beforeLockingTheOwnerOf?: (ownerId: string) => Promise<void>;
 }
 
 function oneTimeTokensOn(driver: Driver, store: ArtefactStore) {
@@ -120,5 +122,7 @@ export async function redeemOrRefuse(
 	if (redeemed === null) {
 		throw new ConcealedError("token_not_found");
 	}
+	//the anchor is asked about the consumed row's owner in this transaction before the account lock (E-3265)
+	await store.beforeLockingTheOwnerOf?.(redeemed.userId);
 	return redeemed;
 }

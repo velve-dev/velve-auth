@@ -16049,6 +16049,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The link is proof of control of an address, and it proves the account only while the account still has that address.
 **Price.** Every one-time token's payload grows by one address, and its MAC with it. A legitimate change of address between request and redemption, by the user on another device, now refuses the older link too.
 
+<a id="e-3265"></a>
+
+### A consuming path consumes first and asks about the consumed row's owner before the account lock
+`E-3265` · security-state-tokens · S-INTEG-6, S-RACE-2, settled
+
+**Context.** For a path that learns its account by consuming a row, the specification asked the anchor about the owner before the consumption. That required reading the row first, which S-RACE-2 forbids and `test/token-static-scan.test.ts` refuses. This branch built that read-first step during its second review and held it back as a patch when the conflict showed. The merged specification drops the read. Such a path consumes the row first, as §7 orders. In the same transaction and before the account lock, it asks the anchor about the owner of the row it consumed, then takes the lock and reads the seal. The only lock held across the call into the application is the consumed row's own. The patch was discarded and nothing of it is on this branch. The anchor itself belongs to the seal and administration branches. This branch leaves the place it is called: an optional `beforeLockingTheOwnerOf(ownerId)` on the store `redeemOrRefuse` takes, called after a successful redemption, and on the options of `createSecondFactorCompletion`, called after the pending row is consumed and before the session is issued. Throwing refuses, and the transaction's rollback restores the row. `test/integ-token-binding.test.ts` shows each hook told the owner while another connection can still take the account lock, and a refusing hook leaving the row redeemable. The WebAuthn challenge gets no hook, because its consuming statement already names the owner the ceremony expects.
+**Rejected.** (a) The read-first step, which the merged specification drops for S-RACE-2. (b) Asking after the account lock, which keeps the account locked across a call into the application.
+**Reason.** Consuming first keeps the one atomic removal S-RACE-2 relies on, and asking before the lock keeps the call into the application from holding anything but the token it spent.
+**Price.** A refusal by the anchor costs a consumed and restored row. Until the integration passes a hook, nothing is asked.
+
 <a id="e-3266"></a>
 
 ### The maintenance pass covers all four token tables, checks every row first, and counts what each version still holds
