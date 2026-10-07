@@ -15548,3 +15548,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A marker longer than one byte, which shrinks the ambiguity without removing it and is that branch's decision, not this one's.
 **Reason.** The specification stated a property the format does not have.
 **Price.** One old-form value in 256 is refused in `"required"` under a code that says the value does not authenticate rather than that it is unbound, which an operator reading the code may misread.
+
+<a id="e-3205"></a>
+
+### The consume statement of section 3.7 returns the token MAC
+`E-3205` · security-state · specification, S-REPLAY-2, S-INTEG-9, settled
+
+**Context.** Section 3.7 and S-REPLAY-2 fix the one-time token's consume statement as `DELETE … RETURNING user_id, payload`. The token branch reported that S-INTEG-9 needs the row's MAC and its key version back from the same statement — a second read after the delete would find nothing — and that its code and `test/token-static-scan.test.ts` already return `token_mac, token_mac_key_version`. The SQL block of 3.7 and S-REPLAY-2 now return both. Since a returned row can now be invalid, 3.7 says a result whose MAC matches is valid and one with a wrong MAC is answered like none, and S-REPLAY-2 says the empty result set is the statement's only invalidity signal and a row with a wrong MAC is answered like it.
+**Rejected.** Verifying the MAC before the delete in a separate `SELECT`, which S-RACE-2 forbids: no read may precede the consumption.
+**Reason.** The consuming statement is the only place the row exists for the redemption, so it has to return everything the check needs.
+**Price.** A forged row is consumed by the attempt that discovers it, which removes the writer's evidence from the table; the alarm is the record.

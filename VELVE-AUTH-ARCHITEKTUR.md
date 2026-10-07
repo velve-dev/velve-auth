@@ -1506,11 +1506,12 @@ einem `purpose` und einem `expires_at`. Konsum ist **immer**:
 ```sql
 DELETE FROM velve.one_time_token
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
-RETURNING user_id, payload;
+RETURNING user_id, payload, token_mac, token_mac_key_version;
 ```
 
-Ein Ergebnis heißt gültig, kein Ergebnis heißt ungültig — abgelaufen, verbraucht
-und nie existiert sind nach außen ununterscheidbar. Das ist Absicht.
+Ein Ergebnis, dessen `token_mac` stimmt (S-INTEG-9, 3.18), heißt gültig, kein Ergebnis
+oder eines mit falschem MAC heißt ungültig — abgelaufen, verbraucht, nie existiert und
+von einem Schreiber eingesetzt sind nach außen ununterscheidbar. Das ist Absicht.
 
 Fristen: E-Mail-Bestätigung 24 h, Kennwort-Reset 1 h, E-Mail-Wechsel 1 h,
 Magic Link 10 min. Ein neu angeforderter Token gleichen Zwecks löscht die
@@ -4166,7 +4167,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 **(c) Die Anforderungen.**
 
 - **S-REPLAY-1:** Jedes Einmal-Artefakt der Bibliothek ist eine Datenbankzeile mit `sha256(token)` als Primärschlüssel, einem `purpose` und einem `expires_at`; kein Einmal-Artefakt ist ein selbsttragender signierter String. *(Abschnitt 3.7, erster Satz; Schema `velve.one_time_token`)*
-- **S-REPLAY-2:** Das Einlösen eines Einmal-Tokens erfolgt ausschließlich über `DELETE FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; eine leere Ergebnismenge ist das einzige Ungültigkeitssignal. *(Abschnitt 3.7, SQL-Block)*
+- **S-REPLAY-2:** Das Einlösen eines Einmal-Tokens erfolgt ausschließlich über `DELETE FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload, token_mac, token_mac_key_version`; eine leere Ergebnismenge ist das einzige Ungültigkeitssignal der Anweisung, und eine zurückgegebene Zeile, deren MAC nicht stimmt, wird wie eine leere beantwortet (S-INTEG-9). *(Abschnitt 3.7, SQL-Block)*
 - **S-REPLAY-3:** Die Antwort auf einen abgelaufenen, einen bereits verbrauchten und einen nie existierenden Token ist in allen drei Fällen byteweise identisch. *(Abschnitt 3.7: „abgelaufen, verbraucht und nie existiert sind nach außen ununterscheidbar")*
 - **S-REPLAY-4:** Ein TOTP-Code wird pro Nutzer und Zeitschritt höchstens einmal akzeptiert; die Prüfung ist ein `INSERT INTO velve.totp_used_step (user_id, time_step, expires_at)`, dessen Scheitern an der Primärschlüsselbedingung die Ablehnung ist, und eingetragen wird der tatsächlich passende Zeitschritt, nicht der aktuelle. *(Abschnitt 3.6, TOTP-Absatz: „ein `INSERT`, der bei Konflikt scheitert, ist die Prüfung")*
 - **S-REPLAY-5:** Eine WebAuthn-Challenge ist höchstens 5 Minuten gültig, wird per `DELETE … RETURNING` konsumiert und nur für den Zweck akzeptiert, unter dem sie erzeugt wurde (`register` oder `authenticate`). *(Abschnitt 3.6, WebAuthn-Absatz)*
