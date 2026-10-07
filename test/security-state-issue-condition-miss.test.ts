@@ -3,7 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-//a writer's update of security_state is not blocked by the account lock while an update of the locked user row is, so a missed conditional insert is a broken state (E-3298, E-3343)
+//a writer's update of security_state passes the account lock that blocks an update of the locked user row (E-3343)
 
 let signer: TestConnection;
 let writerConnection: TestConnection;

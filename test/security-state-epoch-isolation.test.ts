@@ -3,12 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 runs session issue and every mass revocation at READ COMMITTED under the account
-// lock: an issue reads the epoch after the lock, and a revocation's DELETE, a statement after the
-// lock, sees every session committed while it waited. The cases hold that rule against
-// PostgreSQL, and the controls hold the failure of the REPEATABLE READ rule it replaced, whose
-// snapshot was taken by the waiting lock statement and so missed what the lock holder committed
-// (E-3280).
+//a mass revocation and a session issue meet correctly only at read committed (E-3280)
 
 let first: TestConnection;
 let second: TestConnection;

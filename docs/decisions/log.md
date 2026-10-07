@@ -16308,3 +16308,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the timer, which a slow machine turns into a false "blocked".
 **Reason.** A premise test has to be able to fail, and a lock-timeout probe fails exactly when the lock blocks.
 **Price.** The case depends on `lock_timeout`, a session setting the test connection must accept.
+
+<a id="e-3344"></a>
+
+### This branch's test comments follow the comment rule, and the kept-session titles say they are a model
+`E-3344` · security-state · tests, settled
+
+**Context.** CLAUDE.md §3 allows a comment of one lower-case `//` sentence ending in at most one identifier. As the orchestrator decided for the seventh review's B-F10, that holds for the test files this branch added too. Twenty-six of the thirty-five test files this branch added opened with a spaced `// ` block of two to fourteen lines that explained the case. Each block is now one sentence citing the entry that holds the explanation; nothing in those blocks was lost, because every one paraphrased an entry already in the log. Three source comments of this branch are fixed in the same pass. The comment in `src/core/auth/integrity-key-ring.ts` used a "so" construction. The one above `storedIntegrityKeyUnusable` restated what the function does instead of why. The issue-miss test's comment, rewritten by E-3343, cited two identifiers. The reviewer named two source comments without line numbers, so which two it meant is my reading; the two pre-existing "so" comments in `src/core/auth/startup.ts` at the start checks are not this branch's and are left. For A-L6, the kept-session cases compute their alarm count in a JavaScript model, and their titles now say "in the model" instead of reading as if the library raised the alarm.
+**Rejected.** Moving the explanations into `describe` titles, which would make titles of several lines.
+**Reason.** The explanations belong where reasons live, the log, and the comment rule exists so that the code does not grow a second log.
+**Price.** A reader of a test file has to follow the cited entry for the why.

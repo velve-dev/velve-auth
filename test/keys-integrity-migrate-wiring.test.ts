@@ -7,10 +7,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// E-3088 and E-3093 have migrate() refuse a provider whose integrity key cannot take an HMAC, and
-// E-3191 has it probe every state-mac version a seal row names. The other cases call the two probes
-// directly; these reach them through migrate(), so removing either call from the instance fails
-// one of them, which was run before they were kept (E-3311).
+//migrate reaches both start probes for the integrity keys (E-3311)
 
 let connection: TestConnection;
 let schema: string;

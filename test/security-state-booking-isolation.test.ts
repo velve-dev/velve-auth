@@ -4,15 +4,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { beginPendingState, pendingAuthenticationsOn } from "./totp-fixtures.js";
 
-// Section 3.18 point 3 books a second-factor attempt by compare-and-set on the attempts value and
-// the token_mac its read verified, and, when the booking hits no row, re-reads once. The booking
-// and the re-read are their own READ COMMITTED statements, where a lost booking misses and the
-// re-read sees the winner, also when the losing booking waits on the winner's row lock. The MAC
-// guard makes a booking miss when a writer changed only the MAC; its control shows the same
-// booking without the guard goes through. The last control holds why the factor check no longer
-// reads inside a REPEATABLE READ transaction: there the lost booking is refused with 40001 and the
-// case table is never reached (E-3280, E-3303). The token_mac column is the token branch's; it is
-// added here if absent, so these cases hold the statement and not the code.
+//a booking compares attempts and mac and misses at read committed when another booking won (E-3303)
 
 let owner: TestConnection;
 let other: TestConnection;

@@ -3,13 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Sealing* and point 5: a re-encryption opens exactly the ciphertext the one
-// verified read returned and writes by compare-and-set on it, and a write that hits no row is a
-// broken state (E-3300). A writer who puts an older ciphertext of the same row in place between the
-// read and the rewrite makes the compare-and-set miss. These cases hold that, the control that the
-// same write hits the row when nobody writes, and as a second control what a second read would
-// have done: returned the writer's older ciphertext for the re-encryption to carry forward. The
-// re-encryption code is the bound-envelope branch's and the administration branch's.
+//a re-encryption writes only conditional on the ciphertext the verified read returned (E-3300)
 
 let maintainer: TestConnection;
 let writer: TestConnection;

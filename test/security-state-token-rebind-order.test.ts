@@ -3,11 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 point 5 rebinds token MACs outside the account-lock transaction, row by row with a
-// compare-and-set, because CLAUDE.md section 7 orders one_time_token before velve.user and a
-// redemption consumes its row before it reaches lockAccountRow. The case holds that rule against
-// PostgreSQL: a rebind that does not hold the account lock waits for the redemption and then finds
-// the row gone. The control holds why: a rebind under the account lock deadlocks with it (E-3281).
+//token macs are rebound outside the account lock and a rebind under it deadlocks with a redemption (E-3281)
 
 let redeemer: TestConnection;
 let maintainer: TestConnection;

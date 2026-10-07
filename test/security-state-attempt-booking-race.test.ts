@@ -6,11 +6,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { beginPendingState, pendingAuthenticationsOn } from "./totp-fixtures.js";
 
-// Section 3.18 point 3 books an attempt by compare-and-set before the code is evaluated, and on a
-// miss re-reads, re-pins a higher count and books again. E-3194's design, a count conditional on
-// the verified value with every miss treated as manipulation, let nine of ten concurrent wrong
-// codes go uncounted. These cases hold both against PostgreSQL with the counter alone; the MAC the
-// booking also compares is the token branch's, as is the code that runs it (E-3208).
+//booking before evaluating spends exactly the budget under concurrent wrong codes (E-3208)
 
 const GUESSES = 10;
 

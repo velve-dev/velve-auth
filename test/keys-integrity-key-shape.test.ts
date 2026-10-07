@@ -8,10 +8,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// Section 3.18 point 1 makes both integrity purposes HMAC-SHA256 keys, and migration 3 refuses a
-// digest that is not 32 bytes. An HMAC key under another hash signs, so the start has to ask for
-// the algorithm and the length, and a ring version that stored seals still name has to be probed
-// as well as the current one (E-3190, E-3191).
+//an integrity key must be hmac with sha-256 at full length for the current and every stored version (E-3190)
 
 const genuine = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 

@@ -5,13 +5,7 @@ import { withReadCommittedTransactions } from "../src/core/db/read-committed.js"
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Sealing* runs every sealing transaction at READ COMMITTED, and the library states
-// that itself: the driver the instance uses issues SET TRANSACTION ISOLATION LEVEL READ COMMITTED as
-// the first statement of every transaction it opens (E-3310). These cases run a mass revocation that
-// waits on a session issue on connections whose default_transaction_isolation is repeatable read,
-// which a deployment may set. Through the library's driver no session survives; the control opens
-// the same transactions with the plain BEGIN of the underlying driver, which inherits the default,
-// and the issued session survives the revocation.
+//every transaction the library opens runs at read committed even where the database default is repeatable read (E-3310)
 
 let issuer: TestConnection;
 let revoker: TestConnection;

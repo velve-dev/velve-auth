@@ -4,7 +4,7 @@ import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
 import { keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { storedIntegrityKeyUnusable, storedStateMacKeySharedWith } from "./startup.js";
 
-//a version no row names is never read so only the stored ones are probed (E-3191)
+//a version no seal row names is never read and needs no probe (E-3191)
 export async function assertStoredIntegrityKeysTakeMac(options: {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;

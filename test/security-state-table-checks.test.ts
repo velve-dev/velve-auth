@@ -2,9 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
-// Migration 3 declares octet_length(digest) = 32 and key_version >= 1 on velve.security_state.
-// These cases insert a digest of another length and key versions below one, so removing either
-// check from the migration fails one of them, which was run before they were kept (E-3311).
+//migration 3 refuses a digest of another length and a key version below one (E-3311)
 
 let connection: TestConnection;
 let schema: string;

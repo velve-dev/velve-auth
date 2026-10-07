@@ -7,12 +7,7 @@ import { configFor, requestTo } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Sealing* puts the consumption first where CLAUDE.md section 7 and E-1616 do, and
-// the account lock after it. Resetting the password is such a change: it consumes its one-time
-// token before it reaches the account lock. The case records every statement the library sends to
-// the database while a reset is redeemed and holds that order there, not in the source text, and
-// that the transaction states READ COMMITTED right before the consumption (E-3310, E-3327). Its
-// earlier comment and title described the snapshot rule of E-3209, which E-3280 abandoned (E-3302).
+//a reset redemption consumes its token before it takes the account lock (E-3327)
 
 let connection: TestConnection;
 let schema: string;

@@ -3,15 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// T-INTEG-8, last row: a change and the maintenance step's first seal on one unsealed account.
-// Section 3.18 *Sealing* runs both at READ COMMITTED under the account lock and reads the seal row
-// after the lock, so the later of the two waits for the lock, reads the seal the earlier committed
-// and updates it; nothing is retried (E-3297). The case runs that protocol, retrying only on 23505
-// within the three attempts the specification keeps for a seal row created without the lock, and
-// holds 0 retries and one seal row. The control runs the same protocol at REPEATABLE READ, the rule
-// E-3280 abandoned, where the later one reads no seal row, fails on the primary key and needs the
-// retry the old threshold of T-INTEG-8 counted. The change is seen waiting on the lock before the
-// maintenance step commits.
+//the maintenance step's first seal and a change of the same account meet without a retry (E-3297)
 
 let maintenance: TestConnection;
 let change: TestConnection;

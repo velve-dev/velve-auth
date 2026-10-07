@@ -3,14 +3,7 @@ import type { EmailMessage } from "../src/core/auth/config.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 
-// Section 3.18 point 3: a one-time token mailed to an address binds that address, and at
-// redemption it must equal the sealed user.email, otherwise the state is broken (E-3312). Without
-// the binding a writer flips the address only while the link is requested, restores it, and
-// redeems against a valid seal. The payload binding is the token branch's and the seal read at
-// redemption the seal branch's; until both have merged the case below is expected to fail, and
-// the branch that completes the pair turns it into a plain it and deletes the control. The control
-// holds today's behaviour, so the placeholder fails because the redemption succeeds and not
-// because its setup throws.
+//a link mailed to an address set only for the request must not redeem once the token and seal branches bind it (E-3312)
 
 let mounted: MountedAuth;
 

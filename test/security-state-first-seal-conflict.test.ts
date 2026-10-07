@@ -3,14 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Sealing* runs every sealing transaction at READ COMMITTED and reads the seal row
-// after the account lock, so two first seals of one account run one after the other and the
-// second reads the row the first committed. A unique violation on a first seal's insert remains
-// possible only for a seal row created without the lock, and is retried within three attempts
-// (E-3210, E-3280). These cases hold that premise and, as a control, the REPEATABLE READ failure
-// the old rule ran into. The second transaction is seen waiting on the lock before the first
-// commits, so neither case can pass by the second arriving late. The sealing code that retries is
-// the seal branch's.
+//two first seals of one account meet without a unique violation at read committed (E-3288)
 
 let first: TestConnection;
 let second: TestConnection;

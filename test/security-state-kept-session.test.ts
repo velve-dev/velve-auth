@@ -3,20 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Sealing*: the session revokeAllOther keeps was resolved before the account lock,
-// so under the lock and before the epoch is raised its MAC is checked again against the epoch read
-// under the lock, and it is rebound only by compare-and-set on that MAC; on a miss there is no kept
-// session and the alarm is raised (E-3301). Sequence: the caller's request resolves session X at
-// epoch 1; a session.revokeAll commits (epoch 2, X deleted); a writer reinserts the saved row of X;
-// the caller's revokeAllOther takes the lock. Without the writer the row is simply gone, and a
-// missing kept row raises nothing. The bound epoch, which the token MAC carries, is
-// modelled as a map, because the MAC columns are the token branch's. The case holds that X does
-// not come back; the control runs the unconditional rebind the rule replaced and lifts X under the
-// current epoch. This holds the rule's logic, not the code: once the token branch's MAC columns
-// are on this branch, that branch tightens the rebind to `… AND token_mac = $read` here. The same
-// interleaving against the library is not added as a placeholder, because today a reinserted row
-// resolves for want of an epoch at all, and no control could show it failing for this rule alone
-// (E-3327).
+//the kept session is checked again under the lock and the bound epoch is modelled until the token branch adds its columns (E-3301)
 
 let caller: TestConnection;
 let victim: TestConnection;
@@ -131,14 +118,14 @@ async function revokeAllOtherAfterARevocationAndAReinsert(
 }
 
 describe("premise: the session revokeAllOther keeps, against a revokeAll that ended it (section 3.18, Sealing)", () => {
-	it("is checked under the lock, does not come back and raises the alarm", async () => {
+	it("in the model is checked under the lock, does not come back and counts one alarm", async () => {
 		expect(await revokeAllOtherAfterARevocationAndAReinsert(true)).toStrictEqual({
 			resolvesAgain: false,
 			alarms: 1,
 		});
 	});
 
-	it("keeps nothing and raises no alarm when a legitimate revokeAll deleted the row and nobody reinserted it", async () => {
+	it("in the model keeps nothing and counts no alarm when a legitimate revokeAll deleted the row and nobody reinserted it", async () => {
 		expect(await revokeAllOtherAfterARevocationAndAReinsert(true, false)).toStrictEqual({
 			resolvesAgain: false,
 			alarms: 0,

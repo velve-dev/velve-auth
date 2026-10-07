@@ -3,19 +3,7 @@ import { createSessionService, type SessionService } from "../src/core/session/s
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 
-// A database writer saves a session row, waits for the user to sign out everywhere, and inserts
-// the saved row again. Section 3.18 binds every session MAC to the account's session_epoch, and a
-// mass revocation raises it; the account here has no seal row, so under the rule for an unsealed
-// account the session binds epoch 1 and the revocation first seals the account and then raises
-// its epoch. Two branches have to land before the row resolves to nothing: the token branch
-// (security-state-tokens) binds the epoch into the session MAC, and the seal branch
-// (security-state-seal) raises the epoch and seals. Until both have, the case is expected to fail;
-// the seal branch, merging after the token branch, turns it into a plain it (E-3196).
-// The controls hold today's behaviour so that the expected failure cannot pass for another reason:
-// the replayed row resolves, and a session issued after the revocation resolves as well, which
-// it must still do once the epoch is bound. The alarm the refusal raises, token_binding_mismatch,
-// has no configuration to observe it until the seal branch adds securityState.alarm, which then
-// asserts its reason here.
+//a session row reinserted after a mass revocation must not resolve once the token branch binds the epoch (E-3196)
 
 let connection: TestConnection;
 let schema: string;

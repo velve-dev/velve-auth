@@ -19,13 +19,7 @@ import {
 	testKeyProvider,
 } from "./totp-fixtures.js";
 
-// A database writer without the root key resets the attempt counter of a pending authentication
-// and gets more second-factor guesses than L-8 allows. Section 3.18 binds attempts into the
-// pending token MAC; that MAC is written on the branch that builds the token hashes, and until it
-// is the case below is expected to fail, so it records the gap instead of hiding it. The branch
-// that binds attempts turns this into a plain it, which this file then fails on (E-3091). The
-// control holds today's behaviour, so the placeholder cannot pass because its setup throws; it
-// goes red when the counter is bound, and that branch deletes it with the flip (E-3311).
+//a writer who resets attempts must get no more guesses than the budget once the token branch binds the counter (E-3091)
 
 let connection: TestConnection;
 let schema: string;

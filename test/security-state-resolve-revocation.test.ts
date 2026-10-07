@@ -3,14 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 *Checking*: the session resolution reads the session row, the account's
-// session_epoch, the seal row and the seal's components in one statement (E-3299). A session whose
-// bound epoch is not the account's current one is answered like a missing row and raises the alarm,
-// so a resolution that read the session row and the epoch in two READ COMMITTED statements would
-// raise it for a user who signs out everywhere while another tab resolves. These cases hold the one
-// statement, before and after a session.revokeAll, and as a control the two statements and the
-// false alarm they produce. The bound epoch of the issue stands in for the token MAC, whose columns
-// are the token branch's.
+//a resolution that reads session and epoch in one statement raises no false alarm against a racing revocation (E-3299)
 
 let resolver: TestConnection;
 let revoker: TestConnection;

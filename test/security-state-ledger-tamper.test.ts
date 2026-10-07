@@ -6,11 +6,7 @@ import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// T-INTEG-8, last clause: migration 3's ledger row deleted, migrate() called; the specification
-// expects the call to fail and no seal row to change. E-3099 recorded that expectation as a
-// reading of the runner that had not been run; this case runs it. The failure asserted is the one
-// the specification names, migration 3 run a second time against the table it already created, so
-// a migrate() that fails for any other reason does not pass it.
+//migrate fails on a deleted ledger row of migration 3 and changes no seal row (E-3288)
 
 let connection: TestConnection;
 let schema: string;

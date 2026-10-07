@@ -2,12 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 
-// Section 3.18 point 3 binds session.created_at into the session MAC, because freshness is
-// measured from it (src/core/session/freshness.ts) and a writer holding a stale session token who
-// moves it to now would pass every freshness gate (E-3313). The MAC is the token branch's; until it
-// binds created_at the case below is expected to fail, and that branch turns it into a plain it and
-// deletes the control. The control holds today's behaviour, so the placeholder fails because the
-// renewed session is fresh again and not because its setup throws.
+//a stale session renewed by a writer must stay stale once the token branch binds created_at (E-3313)
 
 let migrated: MigratedSchema;
 let service: SessionService;

@@ -5,9 +5,7 @@ import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// A provider of its own can answer an integrity purpose with a key HMAC cannot use. The start
-// refuses it, and a stored MAC checked under such a key is answered with a verdict rather than a
-// platform exception (E-3093).
+//the start refuses an integrity key hmac cannot use and one key shared by two purposes (E-3093)
 
 const genuine = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
