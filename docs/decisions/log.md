@@ -16258,3 +16258,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Sweeping outstanding links in a separate transaction before the change, which leaves a window in which a link mailed in between survives anyway.
 **Reason.** An alarm an operator will see in normal use has to be documented as such, or it teaches them to ignore the alarm.
 **Price.** The user requests the link again, and the operator sees one alarm they have to recognise.
+
+<a id="e-3339"></a>
+
+### A consuming path reads its row first to learn whom to ask the anchor about
+`E-3339` · security-state · specification, S-INTEG-6, settled
+
+**Context.** E-3304 has the anchor consulted before the account lock and outside any transaction. The seventh review pointed out that the paths §7 orders to consume first, one-time token, pending authentication and WebAuthn challenge, learn the account only by consuming the row inside their transaction, so they cannot know whom to ask the anchor about before it. As the orchestrator decided, such a path first reads the row without consuming it, outside any transaction, to learn its owner. It consults the anchor for that owner, then opens the transaction and consumes the row as §7 orders. If the consumed row's owner differs from the one read before, it refuses like a missing row and raises `token_binding_mismatch`. The decision named no reason for the alarm; that reason is this branch's choice, because a row whose owner changed between two reads was rewritten. *Anchor* says so in both languages.
+**Rejected.** Consulting the anchor inside the transaction after the consumption, which holds a connection across the application's call, as E-3304 rejected.
+**Reason.** The anchor has to be asked about the account the change will act on, and the only way to know it before the transaction is to read it.
+**Price.** One more read per consuming path. A writer who swaps the row's owner between the two reads causes a refusal with an alarm, not a bypass.
