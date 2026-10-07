@@ -202,7 +202,7 @@ interface FlowIdentity {
 	readonly expiresAt: Date;
 }
 
-//a writer who changes any column that steers a flow must make its verifier unreadable (S-INTEG-1, E-3123)
+//a writer who changes any column that steers a flow must make its verifier unreadable (E-3123)
 function pkceBindingOf(owner: string | null, flow: FlowIdentity): EnvelopeBinding {
 	return {
 		column: "oauth_flow.pkce_verifier_enc",

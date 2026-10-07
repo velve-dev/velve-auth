@@ -58,7 +58,7 @@ async function encryptedProviderTokens(
 	const versions = new Set(
 		sealed.filter((written) => written !== null).map((written) => written.keyVersion),
 	);
-	//one column carries the version of three ciphertexts, so a rotation between them is refused
+	//the three ciphertexts of a row must share the one key version the row stores
 	if (versions.size > 1) {
 		throw new VelveError("internal_error");
 	}
@@ -167,7 +167,7 @@ async function reboundTokensOf(
 		versions.add(rebound?.keyVersion ?? keyVersion);
 		changed ||= rebound !== null;
 	}
-	//one column carries the version of three ciphertexts so a rotation between them is refused
+	//the three ciphertexts of a row must share the one key version the row stores (E-3121)
 	if (versions.size > 1) {
 		throw new VelveError("internal_error");
 	}
