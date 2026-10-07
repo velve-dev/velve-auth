@@ -15868,3 +15868,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) `@internal` with `stripInternal`, which needs a build option this branch does not own and hides members of a type the code still sees, so a caller can use one that the declarations deny. (b) A second interface the factory returns beside the public one, whose return type the factory's own declaration would ship. (c) Leaving them on the surface, which makes them a contract for the next major version.
 **Reason.** What flows need from a service is not what an integrator calls, and the shipped declarations are the contract.
 **Price.** Two lookups through a `WeakMap`, and a service object that is copied or wrapped loses what it lends: a caller that spreads a service into a new object gets the `TypeError`. The api-surface diff still shows `registerFailedAttempt` and `FailedAttempt` removed.
+
+<a id="e-3260"></a>
+
+### The service carries what it lends, and no module keeps a map of services
+`E-3260` · security-state-tokens · S-CACHE-1, settled
+
+**Context.** E-3259 lent the session rows and the booking through a `WeakMap` keyed by the service object. The session module's own scans refuse a `WeakMap` anywhere in `src/core/session/` and count its files (S-CACHE-1), and the full suite failed on both, which E-3259's commit had not run. A map of services is not a cache of session state, but it is module-level state the scans exist to keep out, and moving it to another directory to pass them would be passing the scan rather than meeting it. Each service now carries its function under a module-private `Symbol`, defined non-enumerable on the service object when the factory builds it. `sessionRowsOn` and `bookAttemptOn` read it from the service they are given. Neither module holds anything between calls. The file count of the session module's scan is now ten, `rows.ts` being the tenth.
+**Rejected.** (a) Moving the `WeakMap` outside `src/core/session/`, for the reason above. (b) Widening the scan to admit a `WeakMap` of functions, which is a scan this branch does not own, loosened for its own convenience.
+**Reason.** What a service lends is a property of that service, and a property needs no registry.
+**Price.** The property is reachable by `Reflect.get` with the symbol, which only the two modules hold; a service copied by spreading still loses it, since the property is not enumerable, and the copy answers with the `TypeError` E-3259 describes.

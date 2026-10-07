@@ -14,10 +14,11 @@ export type BookedAttempt =
 
 type Booking = (token: PendingToken) => Promise<BookedAttempt>;
 
-const bookingOfService = new WeakMap<PendingAuthenticationService, Booking>();
+const LENT_BOOKING = Symbol("velve.pendingBooking");
 
+//the service carries its own booking so this module keeps nothing between calls
 export function lendBooking(service: PendingAuthenticationService, booking: Booking): void {
-	bookingOfService.set(service, booking);
+	Object.defineProperty(service, LENT_BOOKING, { value: booking });
 }
 
 //a factor check reaches the budget only through the service whose keys verify the row (S-INTEG-9)
@@ -25,11 +26,11 @@ export function bookAttemptOn(
 	service: PendingAuthenticationService,
 	token: PendingToken,
 ): Promise<BookedAttempt> {
-	const booking = bookingOfService.get(service);
-	if (booking === undefined) {
+	const booking: unknown = Reflect.get(service, LENT_BOOKING);
+	if (typeof booking !== "function") {
 		throw new TypeError(
 			"attempts are booked only on a service createPendingAuthenticationService built",
 		);
 	}
-	return booking(token);
+	return (booking as Booking)(token);
 }

@@ -9,20 +9,20 @@ export interface SessionRows {
 	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
 }
 
-const rowsOfService = new WeakMap<SessionService, (driver: Driver) => SessionRows>();
+const LENT_ROWS = Symbol("velve.sessionRows");
 
-export function lendSessionRows(
-	service: SessionService,
-	rowsOn: (driver: Driver) => SessionRows,
-): void {
-	rowsOfService.set(service, rowsOn);
+type RowsOn = (driver: Driver) => SessionRows;
+
+//the service carries its own lending so this module keeps nothing between calls
+export function lendSessionRows(service: SessionService, rowsOn: RowsOn): void {
+	Object.defineProperty(service, LENT_ROWS, { value: rowsOn });
 }
 
 //a flow reaches session rows only with the keys and sealing mode of the service it holds (S-INTEG-9)
 export function sessionRowsOn(service: SessionService, driver: Driver): SessionRows {
-	const rowsOn = rowsOfService.get(service);
-	if (rowsOn === undefined) {
+	const rowsOn: unknown = Reflect.get(service, LENT_ROWS);
+	if (typeof rowsOn !== "function") {
 		throw new TypeError("session rows are lent only by a service createSessionService built");
 	}
-	return rowsOn(driver);
+	return (rowsOn as RowsOn)(driver);
 }
