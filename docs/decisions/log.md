@@ -16198,3 +16198,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Deleting a row that fails, which removes the evidence an operator needs to see what the writer did.
 **Reason.** A rebind turns whatever MAC a row had into a valid one, so it may only follow a check that the old one was valid.
 **Price.** The maintenance step recomputes one MAC per token row before it writes, roughly doubling its HMAC work.
+
+<a id="e-3333"></a>
+
+### An alarm about a row without an owner carries no account
+`E-3333` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** The alarm's `userId` was documented as null only in the aggregate alarm, and its deduplication key was account, occasion and reason. The seventh review pointed out that E-3314 and E-3312 now raise alarms about rows that have no owner: a challenge of the discoverable sign-in, a one-time token without an account, and a PKCE flow without one. Nothing said what such an alarm carries or how it is deduplicated. As the orchestrator decided, it carries `userId: null` and the occasion of its path. Its deduplication key is occasion and reason alone. The aggregate alarm keeps its own occasion `aggregate`, so the two cannot be confused. A.8, *The alarm* and S-INTEG-5 say so in both languages, and T-INTEG-5 presents an inserted discoverable-sign-in challenge twice and expects one alarm with `userId: null` and the occasion `sign_in`.
+**Rejected.** Inventing an owner for the key, such as the challenge hash, which would give a writer one undeduplicated alarm per inserted row.
+**Reason.** An alarm cannot name an account the row does not have, and its deduplication must not depend on values the writer chooses.
+**Price.** All ownerless alarms of one occasion and reason share one key, so within a minute a second such alarm is counted, not delivered.
