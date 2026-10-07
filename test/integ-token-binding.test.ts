@@ -30,7 +30,7 @@ import { toSecretToken } from "../src/core/token/secret-token.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import { sessionInsertFor } from "./session-fixtures.js";
-import { testKeyRing } from "./totp-fixtures.js";
+import { failOneAttempt, testKeyRing } from "./totp-fixtures.js";
 
 /**
  * T-INTEG-9 (section 6.24): a database writer without the root key inserts token rows for a token
@@ -334,7 +334,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 	it("refuses a row whose counter a writer reset after four failed attempts", async () => {
 		const token = await issuedPending(owner);
 		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
-			await pending.registerFailedAttempt(token);
+			await failOneAttempt(pending, token);
 		}
 		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(1);
 		await sql(`UPDATE ${schema}.pending_authentication SET attempts = 0 WHERE token_sha256 = $1`, [
@@ -343,7 +343,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		refusals = [];
 
 		expect(await pending.resolve(token)).toBeNull();
-		expect(await pending.registerFailedAttempt(token)).toStrictEqual({ outcome: "exhausted" });
+		expect(await failOneAttempt(pending, token)).toStrictEqual({ outcome: "missing" });
 		expect(refusals.map((refusal) => refusal.occasion)).toStrictEqual([
 			"factor_check",
 			"factor_check",
@@ -354,7 +354,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		const token = await issuedPending(owner);
 		refusals = [];
 		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
-			expect(await pending.registerFailedAttempt(token)).toStrictEqual({
+			expect(await failOneAttempt(pending, token)).toStrictEqual({
 				outcome: "attempts_remain",
 				attemptsRemaining: MAXIMUM_PENDING_ATTEMPTS - attempt,
 			});
@@ -363,7 +363,7 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 			);
 		}
 
-		expect(await pending.registerFailedAttempt(token)).toStrictEqual({ outcome: "exhausted" });
+		expect(await failOneAttempt(pending, token)).toStrictEqual({ outcome: "exhausted" });
 		expect(await pending.resolve(token)).toBeNull();
 		expect(refusals).toStrictEqual([]);
 	});

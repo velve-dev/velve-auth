@@ -2,8 +2,10 @@ import { randomBytes as nodeRandomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
 import {
 	createPendingAuthenticationService,
+	type FailedAttempt,
 	type IssuedPendingAuthentication,
 	type PendingAuthenticationService,
+	type PendingToken,
 } from "../src/core/factor/pending/index.js";
 import { createTotpSecret } from "../src/core/factor/totp/index.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
@@ -45,6 +47,15 @@ export function pendingAuthenticationsOn(
 	schema: string,
 ): PendingAuthenticationService {
 	return createPendingAuthenticationService({ driver, keys: PENDING_TOKEN_KEYS, schema });
+}
+
+/** One wrong factor, booked and then failed the way verifyUnderPendingAttemptLimit does it. */
+export async function failOneAttempt(
+	pending: PendingAuthenticationService,
+	token: PendingToken,
+): Promise<FailedAttempt | { readonly outcome: "missing" }> {
+	const booked = await pending.bookAttempt(token);
+	return booked.outcome === "booked" ? booked.failed() : booked;
 }
 
 /** The state a second factor is spent on, begun the way the sign-in path begins it. */

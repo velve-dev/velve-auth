@@ -17,6 +17,7 @@ import { decodeBase64Url } from "../src/core/keys/base64url.js";
 import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { failOneAttempt } from "./totp-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
 
@@ -209,7 +210,7 @@ describe("the attempt budget (L-8)", () => {
 
 		const outcomes = [];
 		for (let attempt = 0; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
-			outcomes.push(await pending.registerFailedAttempt(token));
+			outcomes.push(await failOneAttempt(pending, token));
 		}
 
 		expect(outcomes).toStrictEqual([
@@ -223,9 +224,9 @@ describe("the attempt budget (L-8)", () => {
 		expect(await pending.resolve(token)).toBeNull();
 	});
 
-	it("reports a token it cannot find as exhausted, not as a fresh budget", async () => {
-		expect(await pending.registerFailedAttempt(toPendingToken("w".repeat(43)))).toStrictEqual({
-			outcome: "exhausted",
+	it("books nothing for a token it cannot find, and answers it as missing", async () => {
+		expect(await pending.bookAttempt(toPendingToken("w".repeat(43)))).toStrictEqual({
+			outcome: "missing",
 		});
 	});
 });

@@ -9,7 +9,7 @@ import { hashPendingToken } from "../src/core/factor/pending/token.js";
 import type { TokenBindingRefusal } from "../src/core/token/binding.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { testKeyProvider } from "./totp-fixtures.js";
+import { failOneAttempt, testKeyProvider } from "./totp-fixtures.js";
 
 // A writer who holds a pending row changes it while a booked attempt waits on the row lock.
 // Section 3.18 point 3 makes the booking conditional on the attempts value and the MAC the
@@ -63,7 +63,7 @@ async function untilBookingWaitsOnTheRow(): Promise<void> {
 async function pendingAfterFailedAttempts(userId: string, failed: number): Promise<PendingToken> {
 	const { token } = await pending.begin({ userId, factorsCompleted: ["password"] });
 	for (let attempt = 0; attempt < failed; attempt += 1) {
-		await pending.registerFailedAttempt(token);
+		await failOneAttempt(pending, token);
 	}
 	return token;
 }
@@ -120,8 +120,8 @@ describe("a booked attempt and a writer who changes the row during the booking",
 			 FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
 			[hashPendingToken(token)],
 		);
-		await pending.registerFailedAttempt(token);
-		await pending.registerFailedAttempt(token);
+		await failOneAttempt(pending, token);
+		await failOneAttempt(pending, token);
 		refusals = [];
 
 		const outcome = await bookingWhileTheWriter(userId, token, async () => {

@@ -6418,7 +6418,6 @@ createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRe
 | `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
 | `bookAttempt(token)` | books one attempt before a factor is evaluated: `{ outcome: "booked", resolution, failed() }`, `{ outcome: "exhausted" }` or `{ outcome: "missing" }`; `failed()` answers `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
-| `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
 
 ```ts

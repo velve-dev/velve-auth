@@ -74,7 +74,6 @@ export interface PendingAuthenticationService {
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
 	/** spends one attempt of the budget before the caller evaluates a submitted factor */
 	bookAttempt(token: PendingToken): Promise<BookedAttempt>;
-	registerFailedAttempt(token: PendingToken): Promise<FailedAttempt>;
 	cancel(input: { readonly token: PendingToken }): Promise<void>;
 }
 
@@ -348,11 +347,6 @@ export function createPendingAuthenticationService(
 				throw new ConcealedError("pending_consumed");
 			}
 			return removed.decoded;
-		},
-
-		async registerFailedAttempt(token) {
-			const booked = await book(token);
-			return booked.outcome === "booked" ? booked.failed() : { outcome: "exhausted" };
 		},
 
 		async cancel({ token }) {

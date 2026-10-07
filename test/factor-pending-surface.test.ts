@@ -76,6 +76,8 @@ describe("the surface the pending module publishes", () => {
 
 	it("publishes the repository and service contracts the factor features build against", () => {
 		expectTypeOf<PendingAuthenticationService["begin"]>().toBeFunction();
+		//a failure is counted only through the booking that preceded it (E-3140)
+		expectTypeOf<PendingAuthenticationService>().not.toHaveProperty("registerFailedAttempt");
 		expectTypeOf<PendingAuthenticationRepository["bookAttempt"]>().toBeFunction();
 		expectTypeOf<PendingAuthenticationInsert["lifetimeInSeconds"]>().toBeNumber();
 		expectTypeOf<PendingAuthenticationWithOwner["availableFactors"]>().toEqualTypeOf<
