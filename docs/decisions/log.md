@@ -15568,3 +15568,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Refusing old-form envelopes in `"migrating"` for accounts that already have a session, which a writer controls as well.
 **Reason.** The upgrade window is the weakest the design has, and an operator who does not know that keeps it open longer than needed.
 **Price.** None beyond the sentence; the exposure itself is E-3083's.
+
+<a id="e-3207"></a>
+
+### Issuing a session takes the account lock before it reads the epoch
+`E-3207` · security-state · specification, S-INTEG-9, settled
+
+**Context.** E-3202 had a sign-in read the epoch and insert conditionally (`INSERT … SELECT … WHERE session_epoch = $2`), and retry once with no alarm on a miss. The third review ran that statement against a mass revocation that held the account lock, had raised the epoch and had not committed. The insert did not wait — it read the committed epoch 1 and inserted — so the session survived the revocation under the old epoch, and the next check would raise the very alarm E-3202 promised never comes. Its unsealed-account variant inserted nothing at all, because without a seal row the `SELECT` yields no row. E-3202 is wrong on both counts and is not edited; this entry replaces its design, as decided by the orchestrator and as the token branch builds it. Issuing a session takes the account lock through `src/core/db/lock.ts` before it reads the epoch, after a consumption where §7 puts one first. The conditional insert stays as a second guard, with the unsealed statement given explicitly: `WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`, only in `"migrating"` and only against epoch 1. In `"required"` a missing seal row inserts nothing and the issue fails closed. Under the lock a miss can no longer be a race, so it is refused and not retried. `test/security-state-session-issue.test.ts` replaces the reviewer's cases: the old statement survives a revocation without the lock, waits and inserts under the raised epoch with it, and the unsealed statement inserts only while no seal row exists.
+**Rejected.** (a) `FOR SHARE` on the seal row in the issuing transaction, which the review offered and §7 forbids. (b) Keeping the retry, which under the lock has no race left to recover from.
+**Reason.** Only a lock both transactions take orders them; a condition in the insert cannot see an update that has not committed.
+**Price.** Every session issue takes the account lock and waits behind any change of the account, including a slow one. E-3202's Price — a sign-in that loses the race twice fails — no longer applies.
