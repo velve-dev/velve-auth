@@ -1,5 +1,6 @@
 import { randomBytes as nodeRandomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationService,
 	type FailedAttempt,
@@ -54,7 +55,7 @@ export async function failOneAttempt(
 	pending: PendingAuthenticationService,
 	token: PendingToken,
 ): Promise<FailedAttempt | { readonly outcome: "missing" }> {
-	const booked = await pending.bookAttempt(token);
+	const booked = await bookAttemptOn(pending, token);
 	return booked.outcome === "booked" ? booked.failed() : booked;
 }
 

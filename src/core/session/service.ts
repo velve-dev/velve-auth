@@ -27,6 +27,7 @@ import {
 	type SessionMetadataMode,
 	sessionMetadataFor,
 } from "./metadata.js";
+import { lendSessionRows } from "./rows.js";
 import { createSessionToken, type SessionToken, sessionTokenHash } from "./token.js";
 
 /** the only proof of a resolved session the library accepts, produced by `resolve` alone */
@@ -56,19 +57,10 @@ export interface SessionServiceOptions {
 	readonly sessionMetadata?: SessionMetadataMode;
 }
 
-/** the session rows a flow announces or revokes in its own transaction, each one checked first */
-export interface SessionRows {
-	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
-	deleteEverySessionOwnedBy(input: { readonly actor: Actor }): Promise<number>;
-	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
-}
-
 export interface SessionService {
 	readonly settings: SessionSettings;
 	/** the same service over another driver, for a session written in a caller's own transaction */
 	boundTo(driver: Driver): SessionService;
-	/** the session rows on another driver, checked with this service's keys and sealing mode */
-	repositoryOn(driver: Driver): SessionRows;
 	issue(input: {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -246,12 +238,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			: resolutionOf(found.userId, { ...found.session, idleExpiresAt: extended }, found.observedAt);
 	}
 
-	return {
+	const service: SessionService = {
 		settings,
 
 		boundTo: (driver) => createSessionService({ ...options, driver }),
-
-		repositoryOn,
 
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();
@@ -357,4 +347,6 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return { revokedCount: await sessions.deleteEverySessionOwnedBy({ actor }) };
 		},
 	};
+	lendSessionRows(service, repositoryOn);
+	return service;
 }

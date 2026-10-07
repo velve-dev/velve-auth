@@ -1,7 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { Actor, ResolvedSession } from "../src/core/db/actor.js";
+import type { BookedAttempt } from "../src/core/factor/pending/booking.js";
 import type {
-	BookedAttempt,
 	ConsumedPendingAuthentication,
 	FailedAttempt,
 	IssuedPendingAuthentication,
@@ -78,6 +78,8 @@ describe("the surface the pending module publishes", () => {
 		expectTypeOf<PendingAuthenticationService["begin"]>().toBeFunction();
 		//a failure is counted only through the booking that preceded it (E-3140)
 		expectTypeOf<PendingAuthenticationService>().not.toHaveProperty("registerFailedAttempt");
+		//the booking is internal and stays off the shipped service contract (E-3259)
+		expectTypeOf<PendingAuthenticationService>().not.toHaveProperty("bookAttempt");
 		expectTypeOf<PendingAuthenticationRepository["bookAttempt"]>().toBeFunction();
 		expectTypeOf<PendingAuthenticationInsert["lifetimeInSeconds"]>().toBeNumber();
 		expectTypeOf<PendingAuthenticationWithOwner["availableFactors"]>().toEqualTypeOf<

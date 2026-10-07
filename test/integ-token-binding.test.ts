@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionRepository } from "../src/core/db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationService,
 	MAXIMUM_PENDING_ATTEMPTS,
@@ -14,6 +15,7 @@ import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { ConcealedError, toVisibleFailure } from "../src/core/http/error-map.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { sessionRowsOn } from "../src/core/session/rows.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import {
 	canonicalPayloadOf,
@@ -393,8 +395,8 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		refusals = [];
 
 		const [first, second] = await Promise.all([
-			pending.bookAttempt(token),
-			pending.bookAttempt(token),
+			bookAttemptOn(pending, token),
+			bookAttemptOn(pending, token),
 		]);
 
 		expect([first?.outcome, second?.outcome]).toStrictEqual(["booked", "booked"]);
@@ -441,8 +443,8 @@ describe("the attempt counter of a pending authentication (S-INTEG-9)", () => {
 		);
 		refusals = [];
 
-		expect((await pending.bookAttempt(consumed)).outcome).toBe("missing");
-		expect((await pending.bookAttempt(expired)).outcome).toBe("missing");
+		expect((await bookAttemptOn(pending, consumed)).outcome).toBe("missing");
+		expect((await bookAttemptOn(pending, expired)).outcome).toBe("missing");
 		expect(refusals).toStrictEqual([]);
 	});
 });
@@ -528,7 +530,7 @@ describe("a row under an older key version (S-KEY-5)", () => {
 			);
 
 		expect((await versionsOf()).map((row) => row.version)).toStrictEqual([2, 1]);
-		expect((await rotated.pending.bookAttempt(pendingToken)).outcome).toBe("booked");
+		expect((await bookAttemptOn(rotated.pending, pendingToken)).outcome).toBe("booked");
 		expect((await versionsOf()).map((row) => row.version)).toStrictEqual([2, 2]);
 		expect((await retired.sessions.resolve(session))?.userId).toBe(owner);
 		expect((await retired.pending.resolve(pendingToken))?.userId).toBe(owner);
@@ -723,7 +725,7 @@ describe("the session lists of an account (S-INTEG-9)", () => {
 			    $3, 1)`,
 			[userId, sha256Of(chosenToken()), randomBytes(32)],
 		);
-		const rows = sessions.repositoryOn(migrated.connection);
+		const rows = sessionRowsOn(sessions, migrated.connection);
 		const pluginRows = createSessionRepository({
 			driver: migrated.connection,
 			schema,
@@ -1015,10 +1017,9 @@ describe("a one-time token row whose payload is a jsonb value no issue writes (S
 		const userId = await createUser(migrated.connection, schema);
 		const genuine = await before.oneTimeTokens.issue({ purpose: "email_verify", userId });
 		await insertedWithPayload(userId, chosenToken(), '"not json"');
-		await sql(
-			`UPDATE ${schema}.one_time_token SET token_mac_key_version = 1 WHERE user_id = $1`,
-			[userId],
-		);
+		await sql(`UPDATE ${schema}.one_time_token SET token_mac_key_version = 1 WHERE user_id = $1`, [
+			userId,
+		]);
 		refusals = [];
 
 		const pass = await rebindTokenRowsUnderCurrentKey({
@@ -1060,21 +1061,30 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
 	});
 
-	it.each(SPELLINGS)("binds a one-time token the account can still redeem, in %s", async (_name, spell) => {
-		const userId = await createUser(migrated.connection, schema);
+	it.each(SPELLINGS)(
+		"binds a one-time token the account can still redeem, in %s",
+		async (_name, spell) => {
+			const userId = await createUser(migrated.connection, schema);
 
-		const { token } = await oneTimeTokens.issue({ purpose: "magic_link", userId: spell(userId) });
+			const { token } = await oneTimeTokens.issue({ purpose: "magic_link", userId: spell(userId) });
 
-		expect((await oneTimeTokens.redeem({ token, purpose: "magic_link" }))?.userId).toBe(userId);
-	});
+			expect((await oneTimeTokens.redeem({ token, purpose: "magic_link" }))?.userId).toBe(userId);
+		},
+	);
 
-	it.each(SPELLINGS)("binds a pending authentication the account can still use, in %s", async (_name, spell) => {
-		const userId = await createUser(migrated.connection, schema);
+	it.each(SPELLINGS)(
+		"binds a pending authentication the account can still use, in %s",
+		async (_name, spell) => {
+			const userId = await createUser(migrated.connection, schema);
 
-		const { token } = await pending.begin({ userId: spell(userId), factorsCompleted: ["password"] });
+			const { token } = await pending.begin({
+				userId: spell(userId),
+				factorsCompleted: ["password"],
+			});
 
-		expect((await pending.resolve(token))?.userId).toBe(userId);
-	});
+			expect((await pending.resolve(token))?.userId).toBe(userId);
+		},
+	);
 
 	it("still encodes two different owners apart", () => {
 		const of = (ownerId: string) =>
@@ -1144,7 +1154,9 @@ describe("a forged session row and the revocations that remove it (S-INTEG-9)", 
 				requestTo("/sign-up", { body: { email: "forged-count@example.com", password: PASSWORD } }),
 			);
 			const signedUpUserId = ((await signedUp.json()) as { user: { id: string } }).user.id;
-			const cookie = /__Host-velve_session=[^;]*/.exec(signedUp.headers.get("Set-Cookie") ?? "")?.[0];
+			const cookie = /__Host-velve_session=[^;]*/.exec(
+				signedUp.headers.get("Set-Cookie") ?? "",
+			)?.[0];
 			await mountedAuth.connection.query(
 				`INSERT INTO ${mountedAuth.schema}.session
 				   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
@@ -1161,7 +1173,9 @@ describe("a forged session row and the revocations that remove it (S-INTEG-9)", 
 			);
 
 			expect(answer.status).toBe(200);
-			expect(((await answer.json()) as { revokedOtherSessionsCount: number }).revokedOtherSessionsCount).toBe(0);
+			expect(
+				((await answer.json()) as { revokedOtherSessionsCount: number }).revokedOtherSessionsCount,
+			).toBe(0);
 		} finally {
 			await dropSchema(mountedAuth.connection, mountedAuth.schema);
 			await mountedAuth.connection.close();

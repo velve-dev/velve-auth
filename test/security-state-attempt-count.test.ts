@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pendingBinding } from "../src/core/factor/pending/binding.js";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationService,
 	MAXIMUM_PENDING_ATTEMPTS,
@@ -81,7 +82,7 @@ async function bookingWhileTheWriter(
 		`SELECT 1 FROM ${schema}.pending_authentication WHERE user_id = $1 FOR UPDATE`,
 		[userId],
 	);
-	const booking = pending.bookAttempt(token);
+	const booking = bookAttemptOn(pending, token);
 	await untilBookingWaitsOnTheRow();
 	await change();
 	await writer.query("COMMIT", []);
@@ -259,12 +260,15 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 		};
 		refusals = [];
 
-		const booked = await createPendingAuthenticationService({
-			driver: rebindingBeforeEveryBooking,
-			keys: many.providerAt(newest),
-			schema,
-			reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
-		}).bookAttempt(token);
+		const booked = await bookAttemptOn(
+			createPendingAuthenticationService({
+				driver: rebindingBeforeEveryBooking,
+				keys: many.providerAt(newest),
+				schema,
+				reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
+			}),
+			token,
+		);
 
 		expect(booked.outcome).toBe("missing");
 		expect(interposed).toBe(MAXIMUM_PENDING_ATTEMPTS + 1);

@@ -17,6 +17,7 @@ import {
 	type TokenBindingVerdict,
 } from "../../token/binding.js";
 import { pendingBinding } from "./binding.js";
+import { type BookedAttempt, lendBooking } from "./booking.js";
 import {
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationRepository,
@@ -72,21 +73,8 @@ export interface PendingAuthenticationService {
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
-	/** spends one attempt of the budget before the caller evaluates a submitted factor */
-	bookAttempt(token: PendingToken): Promise<BookedAttempt>;
 	cancel(input: { readonly token: PendingToken }): Promise<void>;
 }
-
-/** an attempt already counted against the budget, or why none could be */
-export type BookedAttempt =
-	| { readonly outcome: "missing" }
-	| { readonly outcome: "exhausted" }
-	| {
-			readonly outcome: "booked";
-			readonly resolution: PendingResolution;
-			/** reports a wrong factor, which removes the row when this was the last attempt */
-			failed(): Promise<FailedAttempt>;
-	  };
 
 interface CheckedPendingRow extends StoredTokenMac {
 	readonly userId: string;
@@ -277,7 +265,7 @@ export function createPendingAuthenticationService(
 		};
 	}
 
-	return {
+	const service: PendingAuthenticationService = {
 		//the factors on offer are the account's state so the write reads them itself (E-735)
 		async begin({ userId, factorsCompleted }) {
 			const token = createPendingToken();
@@ -311,8 +299,6 @@ export function createPendingAuthenticationService(
 			return checked === null ? null : resolutionOf(checked.found);
 		},
 
-		bookAttempt: book,
-
 		//the removal is the check so two requests with one token cannot both pass
 		async consume(token) {
 			const tokenHash = hashPendingToken(token);
@@ -330,4 +316,6 @@ export function createPendingAuthenticationService(
 			await repository.deletePendingAuthenticationByTokenHash(hashPendingToken(token));
 		},
 	};
+	lendBooking(service, book);
+	return service;
 }

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationRepository,
 	createPendingAuthenticationService,
@@ -225,7 +226,7 @@ describe("the attempt budget (L-8)", () => {
 	});
 
 	it("books nothing for a token it cannot find, and answers it as missing", async () => {
-		expect(await pending.bookAttempt(toPendingToken("w".repeat(43)))).toStrictEqual({
+		expect(await bookAttemptOn(pending, toPendingToken("w".repeat(43)))).toStrictEqual({
 			outcome: "missing",
 		});
 	});

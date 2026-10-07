@@ -3968,10 +3968,12 @@ read.
 | `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
 | `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
 
-`repositoryOn(driver)` returns the session rows a flow announces or revokes —
-`listEverySessionIdOwnedBy`, `deleteEverySessionOwnedBy` and
+`sessionRowsOn(service, driver)`, internal in `src/core/session/rows.ts` and not
+part of the shipped `SessionService`, returns the session rows a flow announces or
+revokes — `listEverySessionIdOwnedBy`, `deleteEverySessionOwnedBy` and
 `deleteEverySessionOwnedByReturningIds` — over another driver, a caller's
-transaction, with this service's `keys`, `sealing` and refusal report. The session
+transaction, with that service's `keys`, `sealing` and refusal report. It answers
+only for a service `createSessionService` built. The session
 repository checks each row's token MAC over the account's epoch before it lists
 one, in `session.list`, in the plugin context's `listSessionsForUser` and in the
 ids announced to a revocation hook, and leaves out, and reports, a row the library
@@ -4422,8 +4424,8 @@ the ring read finds one version and the redemption is one statement.
 `verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for every
 factor a pending state can be spent on: TOTP, a recovery code and a WebAuthn
 assertion. It lives in the pending module, beside the state whose attempts it
-counts, and is re-exported from nowhere else. It books one attempt with
-`bookAttempt` before it runs the verification, and on failure reports it, which
+counts, and is re-exported from nowhere else. It books one attempt with the
+internal `bookAttemptOn(pending, token)` before it runs the verification, and on failure reports it, which
 removes the row once the budget is spent ([The attempt budget](#the-attempt-budget)).
 The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not
 restated here.
@@ -6430,8 +6432,15 @@ createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRe
 | `begin({ userId, factorsCompleted })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied |
 | `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
-| `bookAttempt(token)` | books one attempt before a factor is evaluated: `{ outcome: "booked", resolution, failed() }`, `{ outcome: "exhausted" }` or `{ outcome: "missing" }`; `failed()` answers `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
+
+The booking is not a method of the shipped service. `bookAttemptOn(pending, token)`,
+internal in `src/core/factor/pending/booking.ts`, books one attempt before a factor
+is evaluated and answers a `BookedAttempt`: `{ outcome: "booked", resolution,
+failed() }`, `{ outcome: "exhausted" }` or `{ outcome: "missing" }`; `failed()`
+answers `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome:
+"exhausted" }`. It answers only for a service `createPendingAuthenticationService`
+built.
 
 ```ts
 createSecondFactorCompletion({ driver, keys, sealing, schema?, session?, sessionMetadata?, reportTokenBindingRefusal? })
@@ -8961,7 +8970,7 @@ and are rebound by their bookings.
 ### The attempt budget
 
 Every second-factor check books one attempt before the submitted factor is
-evaluated (`PendingAuthenticationService.bookAttempt`, used by
+evaluated (`bookAttemptOn` in `src/core/factor/pending/booking.ts`, used by
 `verifyUnderPendingAttemptLimit`). The booking resolves and checks the row, then
 writes `attempts + 1` and a MAC over it only where `attempts` and `token_mac`
 still hold the values it verified. When that write finds nothing it reads the row

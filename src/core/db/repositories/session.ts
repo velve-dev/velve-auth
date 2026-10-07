@@ -623,7 +623,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 
 		async findOwnerOfSession({ sessionId }) {
 			const [row] = await options.driver.query<VerifiedRowShape>(findOwnerSql, [sessionId]);
-			return row === undefined ? null : { userId: row.user_id, libraryRow: await isLibraryRow(row) };
+			return row === undefined
+				? null
+				: { userId: row.user_id, libraryRow: await isLibraryRow(row) };
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {

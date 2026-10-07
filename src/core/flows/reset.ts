@@ -12,6 +12,7 @@ import { findUserByIdentifier } from "../identity/resolution.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { tellAfterSessionCreate } from "../plugin/sign-in.js";
+import { sessionRowsOn } from "../session/rows.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import {
@@ -80,7 +81,7 @@ async function replacePassword(
 		userId: input.userId,
 		factors: ["password"],
 	});
-	const sessionRows = sessions.repositoryOn(input.transaction);
+	const sessionRows = sessionRowsOn(sessions, input.transaction);
 	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
 	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
 		await announceEachRevocation(

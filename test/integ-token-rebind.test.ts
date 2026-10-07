@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import { createPendingAuthenticationService } from "../src/core/factor/pending/index.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createSessionService } from "../src/core/session/service.js";
@@ -117,7 +118,7 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 			expect((await after.sessions.resolve(token))?.userId).toBe(userId);
 		}
 		//a pending row is rebound only by the booking that writes its counter (E-3149)
-		expect((await rotated.pending.bookAttempt(pendingToken)).outcome).toBe("booked");
+		expect((await bookAttemptOn(rotated.pending, pendingToken)).outcome).toBe("booked");
 		expect((await after.pending.resolve(pendingToken))?.userId).toBe(userId);
 		expect(
 			await after.tokens.redeem({ token: toSecretToken(oneTime), purpose: "magic_link" }),

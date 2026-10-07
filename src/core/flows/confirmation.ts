@@ -5,6 +5,7 @@ import { lockAccountRow } from "../db/lock.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import { sessionRowsOn } from "../session/rows.js";
 import type { SessionService } from "../session/service.js";
 import { createPasswordProvenance } from "./credential.js";
 
@@ -88,7 +89,7 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 		return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount: 0 };
 	}
 
-	const sessionRows = input.sessions.repositoryOn(input.transaction);
+	const sessionRows = sessionRowsOn(input.sessions, input.transaction);
 	//a refusal must roll the redemption and the deleted password back with it (E-2730)
 	if (input.pluginRuntime.listensTo("beforeSessionRevoke")) {
 		await announceEachRevocation(

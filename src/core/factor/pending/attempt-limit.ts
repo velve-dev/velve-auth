@@ -1,4 +1,5 @@
 import { ConcealedError, VelveError } from "../../http/error-map.js";
+import { bookAttemptOn } from "./booking.js";
 import type { PendingAuthenticationService, PendingResolution } from "./service.js";
 import type { PendingToken } from "./token.js";
 
@@ -8,7 +9,7 @@ export async function verifyUnderPendingAttemptLimit<Result>(
 	token: PendingToken,
 	verify: (resolution: PendingResolution) => Promise<Result>,
 ): Promise<Result> {
-	const booked = await pending.bookAttempt(token);
+	const booked = await bookAttemptOn(pending, token);
 	if (booked.outcome === "missing") {
 		throw new ConcealedError("pending_not_found");
 	}

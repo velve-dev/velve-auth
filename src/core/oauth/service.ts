@@ -19,6 +19,7 @@ import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
+import { sessionRowsOn } from "../session/rows.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
 import { type ProviderAccount, providerAccountOf } from "./claims.js";
@@ -405,7 +406,7 @@ export function createOAuthService(input: {
 		if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
 			return;
 		}
-		const owned = await services.sessions.repositoryOn(driver).listEverySessionIdOwnedBy({
+		const owned = await sessionRowsOn(services.sessions, driver).listEverySessionIdOwnedBy({
 			actor: actorOfConsumedOAuthFlow(linked.account),
 		});
 		await announceEachRevocation(services.pluginRuntime, {

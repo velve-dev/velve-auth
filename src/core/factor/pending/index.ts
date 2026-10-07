@@ -15,7 +15,6 @@ export {
 	type StoredPendingAuthentication,
 } from "./repository.js";
 export {
-	type BookedAttempt,
 	type ConsumedPendingAuthentication,
 	createPendingAuthenticationService,
 	type FailedAttempt,
