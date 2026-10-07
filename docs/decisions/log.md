@@ -16038,3 +16038,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A new visible code for a broken state, which S-INTEG-5 forbids.
 **Reason.** A requirement that says "the same as the ordinary failure" without naming it cannot be tested on the paths it leaves out.
 **Price.** A refusal on a factor path that copies a rejected factor must also leave the pending authentication as a rejected factor does, or the next request tells the two apart; the seal branch has to hold that.
+
+<a id="e-3317"></a>
+
+### The alarm is delivered off the response path
+`E-3317` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** S-INTEG-5 promises that a refusal for a broken state is indistinguishable from the ordinary failure, also in running time on the password sign-in. The sixth review pointed out that nothing said whether the alarm callback is awaited. An application callback that writes to a slow sink would then add its latency only to refusals for a broken state, which makes the callback a timing oracle. As the orchestrator decided, delivery, both the callback and the warn log line, is not awaited on the response path: it starts after the refusal is decided, and its errors are caught and logged without secrets. *The alarm* and S-INTEG-5 say so in both languages, and T-INTEG-5's timing part runs with a callback that sleeps 50 ms. The same commit answers B-L5 in T-INTEG-5. The static item gets a threshold, 0 mappings of the reason outside `error-map.ts` and 0 awaited deliveries. The 1000-request part and the 1000-account part run on separate instances, so the first part's deduplication state cannot touch the second's count. The German left column gains the separator it was missing before "die Uhr". Implementation belongs to the seal branch.
+**Rejected.** Awaiting the callback with a timeout, which still adds up to the timeout to every refusal.
+**Reason.** A side channel is closed only when the refusal's response does not depend on anything the refusal alone does.
+**Price.** An alarm can be lost when the process ends between the refusal and the delivery, and a callback's failure reaches nobody but the log.
