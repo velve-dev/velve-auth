@@ -16098,3 +16098,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Raising the random pair count, which does not change what random pairs exercise.
 **Reason.** A property test proves something only if a known-bad implementation fails it.
 **Price.** The test carries a second, deliberately wrong encoder.
+
+<a id="e-3323"></a>
+
+### A seal rewritten under a new key is a reseal like any other
+`E-3323` · security-state · specification, S-INTEG-3, S-KEY-5, test plan, settled
+
+**Context.** Point 5 has the maintenance step rewrite an intact seal under the current key version, and nothing said how that write relates to S-INTEG-3's sealing rule or to the anchor. S-KEY-5 and T-KEY-5 covered sessions and encrypted fields across a root-key rotation but not the seal, so a rotation that left seals under the removed version would refuse every sign-in after step 2 and no case would notice. The sixth review raised both. As the orchestrator decided, a rekeyed seal is a reseal of unchanged components. It runs under the account lock, raises `version` by one, and reports through `recordSeal`, so the anchor's version and digest of E-3318 stay in step with the stored row. Point 5 says so and cites S-INTEG-3. S-KEY-5 adds that sign-in stays possible across the rotation, and T-KEY-5 adds a password sign-in after step 2 and `security_state.key_version = 2` for every account the maintenance step passed, now 6/6. All of it is in both languages.
+**Rejected.** Rewriting the digest under the new key while keeping the version, which leaves the anchor holding the old digest for that version and, under E-3318, reads as `anchor_mismatch`.
+**Reason.** Every write of a seal row has to be one the anchor learns, or the anchor stops describing the account.
+**Price.** A rotation raises every account's version by one and calls the anchor once per account.
