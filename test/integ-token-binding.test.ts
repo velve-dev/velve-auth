@@ -716,6 +716,76 @@ describe("the session lists of an account (S-INTEG-9)", () => {
 	});
 });
 
+describe("further rewrites of real rows (S-INTEG-9)", () => {
+	it("refuses two sessions of one account whose MACs were swapped", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const first = await issuedSession(userId);
+		const second = await issuedSession(userId);
+		await sql(
+			`UPDATE ${schema}.session x SET token_mac = y.token_mac FROM ${schema}.session y
+			 WHERE x.token_sha256 = $1 AND y.token_sha256 = $2`,
+			[sha256Of(first), sha256Of(second)],
+		);
+		refusals = [];
+
+		expect(await sessions.resolve(first)).toBeNull();
+		expectOneRefusal("session_resolve", userId);
+	});
+
+	it("refuses a key version far past the ring, as an unknown one", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedSession(userId);
+		await sql(
+			`UPDATE ${schema}.session SET token_mac_key_version = 2147483647 WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		refusals = [];
+
+		expect(await sessions.resolve(token)).toBeNull();
+		expect(refusals.map((refusal) => refusal.verdict)).toStrictEqual(["key_version_unknown"]);
+	});
+
+	it("refuses a session whose one factor was written twice", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedSession(userId);
+		await sql(
+			`UPDATE ${schema}.session SET factors = '{password,password}' WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		refusals = [];
+
+		expect(await sessions.resolve(token)).toBeNull();
+		expectOneRefusal("session_resolve", userId);
+	});
+});
+
+describe("a pending row written back with its older MAC (section 3.18, The limits)", () => {
+	//this pins a named limit: a consistent older version of the row verifies (E-3143)
+	it("gives the writer back the budget of the version written back", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedPending(userId);
+		const [saved] = await migrated.connection.query<{ mac: Buffer; version: number }>(
+			`SELECT token_mac AS mac, token_mac_key_version AS version
+			 FROM ${schema}.pending_authentication WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		for (let attempt = 1; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
+			await failOneAttempt(pending, token);
+		}
+		await sql(
+			`UPDATE ${schema}.pending_authentication
+			 SET attempts = 0, token_mac = $2, token_mac_key_version = $3 WHERE token_sha256 = $1`,
+			[sha256Of(token), saved?.mac, saved?.version],
+		);
+		refusals = [];
+
+		expect((await pending.resolve(token))?.pending.attemptsRemaining).toBe(
+			MAXIMUM_PENDING_ATTEMPTS,
+		);
+		expect(refusals).toStrictEqual([]);
+	});
+});
+
 describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 	function randomBinding(): TokenBinding {
 		const pick = <T>(values: readonly T[]): T => values[byte() % values.length] as T;

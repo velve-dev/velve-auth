@@ -15708,3 +15708,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Checking only in the service's `list`, which leaves the plugin path and the revocation announcements. (b) A keyless repository returning candidates the caller must check, which every caller can forget. (c) A `keys` field in the plugin context's services, which adds a secret-holding member to a type plugins' code is built around.
 **Reason.** A listed session is a statement that the session exists, and S-INTEG-9 answers a row that fails its MAC like a missing one wherever it is read.
 **Price.** Listing costs one HMAC per row of the account, and the announcement before a mass revocation one per row as well, deadlines included. A forged row is still deleted by a mass revocation without its id being announced to the hook. Seven files outside the set changed again.
+
+<a id="e-3143"></a>
+
+### An older consistent pending row written back gives its budget back, and that is pinned as a limit
+`E-3143` · security-state-tokens · S-INTEG-9, L-8, limit
+
+**Context.** A review showed that a writer who saved a pending row after its first failed attempt and wrote it back after four more got the whole budget back, because the saved row carries the MAC the library took over its own `attempts`. E-3139 said the pinned count gave "no budget back to a writer who restores an older row between resolve and count", and E-3140 says a restore during a booking is refused. Both are true only for a restore that lands between a booking's read and its write. A restore before the read is invisible. Section 3.18 names this replay among its limits. Nothing in this branch's chapter said what it means for the attempt budget, and E-3139's sentence read wider than it is. The chapter now says it plainly: against a database writer the budget is five per write-back. `test/integ-token-binding.test.ts` pins the limit as stated, with a written-back row resolving with its full budget and no report, so a later change that closes it fails that case and has to say so.
+**Rejected.** (a) Binding the row's creation time or a counter outside the row, which a writer restores along with the row. (b) Leaving the limit to the specification's sentence alone, which a reader of the attempt budget does not find.
+**Reason.** A limit nobody can see from the place they read about the guarantee is a guarantee overstated.
+**Price.** The budget against a writer is unbounded within the pending row's five minutes. The review's case asserted the opposite and is kept with its expectation turned to what the code does, which is a test that passes on the gap.

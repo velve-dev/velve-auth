@@ -8907,6 +8907,15 @@ removes the row; a wrong one has already been counted, and the attempt that
 spends the budget removes the row when it fails. Guesses that arrive together are
 therefore evaluated at most as often as the budget allows.
 
+**What the MAC does not stop.** The MAC proves that the library wrote a row, not
+that it is the row's latest version. A writer who saved a pending row and writes it
+back later with its old `attempts` and its old MAC has a row that verifies: before a
+booking reads it, the writer has the budget of the saved version back, and can do
+it again within the five minutes the row lives. Only a booking already in flight
+notices, because it finds fewer attempts than it read. Section 3.18 names this
+replay among its limits; the attempt budget against a database writer is therefore
+five per write-back, not five per pending sign-in.
+
 ### Configuring a key provider
 
 A custom `KeyProvider` must answer `token-mac` as an HMAC-SHA256 key; the
