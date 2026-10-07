@@ -1183,3 +1183,33 @@ describe("a forged session row and the revocations that remove it (S-INTEG-9)", 
 		expect(owner).toStrictEqual({ userId, libraryRow: false });
 	});
 });
+
+describe("a factor check that meets a broken state (section 3.18 point 3)", () => {
+	class BrokenState extends Error {}
+
+	it("books the attempt and removes the row at the budget, exactly as a rejected factor does", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const token = await issuedPending(userId);
+		const answers: unknown[] = [];
+
+		for (let attempt = 0; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
+			answers.push(
+				await verifyUnderPendingAttemptLimit(pending, token, async () => {
+					throw new BrokenState("the account's seal does not match");
+				}).catch((failure: unknown) =>
+					failure instanceof BrokenState ? "broken" : (failure as { code?: string }).code,
+				),
+			);
+		}
+		const [left] = await migrated.connection.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM ${schema}.pending_authentication WHERE user_id = $1`,
+			[userId],
+		);
+
+		expect(answers).toStrictEqual([
+			...Array.from({ length: MAXIMUM_PENDING_ATTEMPTS - 1 }, () => "broken"),
+			"too_many_factor_attempts",
+		]);
+		expect(left?.n).toBe(0);
+	});
+});

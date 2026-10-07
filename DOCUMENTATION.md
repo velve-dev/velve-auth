@@ -8973,7 +8973,9 @@ once more:
 
 A correct factor is evaluated after its booking, and the sign-in it completes
 removes the row; a wrong one has already been counted, and the attempt that
-spends the budget removes the row when it fails. Guesses that arrive together are
+spends the budget removes the row when it fails. Any failure of the check counts
+the same way, so a check the seal of section 3.18 refuses as a broken state is
+booked and, at the budget, removes the row exactly as a rejected factor does. Guesses that arrive together are
 therefore evaluated at most as often as the budget allows.
 
 **What the MAC does not stop.** The MAC proves that the library wrote a row, not
