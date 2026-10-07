@@ -15938,3 +15938,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Waiting for the token branch's migration before testing the guard, which would leave the statement point 3 prescribes untested on this branch.
 **Reason.** A premise test that omits the clause the rule rests on proves the rule without it.
 **Price.** The column the case adds can drift from the one the token branch defines; if that migration makes the column `NOT NULL`, the fixture that creates pending rows has to supply it, which is that branch's change.
+
+<a id="e-3304"></a>
+
+### The anchor is consulted before the account lock
+`E-3304` · security-state · specification, S-INTEG-6, settled
+
+**Context.** Section 3.18 *Anchor* said what `minimumVersion` decides and not when it is called. The fifth review pointed out that a change could call it while holding the account lock, so a connection holding the lock would wait on a call into the application, whose latency and failures the library does not control, and every other change and session issue of that account would queue behind it. As the orchestrator decided, the anchor is consulted before the account lock and outside any transaction, and its floor is compared against the version read afterwards, for a change the one read under the lock. *Anchor* says so in both languages, and *The limits* names the window this opens: a floor that rises between the call and the read is not seen by that one check or change, and the next one sees it. The reason is the one E-3287 gave for the OAuth flow's consumption, no connection held open across a call the library does not control.
+**Rejected.** Calling `minimumVersion` under the lock and accepting the queue behind it. Calling it twice, before and after, which narrows the window but still holds the lock across the second call.
+**Reason.** A floor is evidence against a rollback that can only have happened before the check began, so a floor read a moment earlier loses almost nothing, while a lock held across the application's code can stall the account.
+**Price.** A rollback that a writer stages exactly between an anchor's raised floor and the next read passes one check or change; the window is the latency of one call into the application.
