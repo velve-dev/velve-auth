@@ -38,7 +38,8 @@ export type TimeStepClaim = { readonly actor: Actor } & TimeStep;
 type PendingTimeStepClaim = { readonly pending: PendingResolution } & TimeStep;
 
 export interface TotpRepository {
-	putUnconfirmedCredential(input: TotpCredentialInsert): Promise<StoredTotpCredential | null>;
+	//false means a confirmed credential is in place and nothing was written
+	putUnconfirmedCredential(input: TotpCredentialInsert): Promise<boolean>;
 	findCredential(input: { actor: Actor }): Promise<StoredTotpCredential | null>;
 	findCredentialOf(input: { userId: string }): Promise<StoredTotpCredential | null>;
 	//the shipped enrolment check takes a user id so this answers a boolean and no secret (E-2435)
@@ -88,7 +89,7 @@ VALUES ($1, $2, $3, NULL)
 ON CONFLICT (user_id) DO UPDATE
 SET secret_enc = EXCLUDED.secret_enc, key_version = EXCLUDED.key_version, created_at = now()
 WHERE ${credentials}.user_id = $1 AND ${credentials}.confirmed_at IS NULL
-RETURNING secret_enc, key_version, confirmed_at, ${sealRowPresentFor(schema, "$1::uuid")} AS sealed`;
+RETURNING user_id`;
 
 	//the seal row is read in the statement that reads the secret so a seal written between cannot refuse it (S-INTEG-1)
 	const findStatement = `SELECT credential.secret_enc, credential.key_version, credential.confirmed_at,
@@ -129,12 +130,12 @@ RETURNING time_step`;
 
 	return {
 		async putUnconfirmedCredential({ actor, secretEnc, keyVersion }) {
-			const [row] = await options.driver.query<CredentialRow>(putUnconfirmedStatement, [
+			const written = await options.driver.query(putUnconfirmedStatement, [
 				actor,
 				secretEnc,
 				keyVersion,
 			]);
-			return readCredential(row);
+			return written.length === 1;
 		},
 
 		async findCredential({ actor }) {

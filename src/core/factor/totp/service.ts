@@ -126,7 +126,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					secretEnc: ciphertext,
 					keyVersion,
 				});
-				if (written === null) {
+				if (!written) {
 					throw new VelveError("factor_already_enrolled");
 				}
 				return totpEnrollment({ secretBytes, issuer: options.issuer, accountName });
