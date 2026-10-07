@@ -615,7 +615,10 @@ These follow from architecture section 2 and are not open for local decision:
   ${schema}.user */` as its first statement after the isolation statement
   (E-3310), and reaches it through
   `src/core/db/lock.ts` — the only file that writes a row lock, so the mode
-  cannot vary between call sites.
+  cannot vary between call sites. Sign-up is the one exception: the account
+  row does not exist yet, so it is created rather than locked, and the
+  `email_verify` token minted in the same transaction is safe because no other
+  transaction can hold the new row.
 - **The mode is not a local choice.** `FOR NO KEY UPDATE` is the strongest
   strength that does **not** conflict with the `FOR KEY SHARE` a foreign key
   takes on `velve.user` for every insert of a user-owned row. So `FOR UPDATE`
@@ -672,7 +675,8 @@ pnpm check:lock-order
 pnpm check:token-after-lock
                  velve.one_time_token is ordered before velve.user, so no
                  transaction takes the account row and then reaches that table —
-                 raw SQL or either repository method, comments and imports
+                 raw SQL, either repository method or the flows' mintArtefact,
+                 comments and imports
                  stripped first so prose about the rule and a named import are
                  not read as reaching for it.
 pnpm check:egress

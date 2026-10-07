@@ -16508,3 +16508,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Relying on timing without observing the statement in flight, which a fast machine turns into the old before-and-after case.
 **Reason.** A premise about a race has to run the race.
 **Price.** The case sleeps 300 ms.
+
+<a id="e-3364"></a>
+
+### Sign-up is the named exception to locking the account row, and the ordering check sees the mint helper
+`E-3364` · security-state · specification, rules, gate, settled
+
+**Context.** *Sealing* and CLAUDE.md §7 have every sealing change lock `velve.user` first, and §7 forbids reaching `velve.one_time_token` after that lock. The ninth review pointed out that sign-up can do neither literally. It creates the account row, so there is nothing to lock yet, and it mints the `email_verify` token in the same transaction. That is safe, because no other transaction can hold a row that does not exist until this one commits, but nothing said so. Sign-up is now named as the exception in *Sealing* in both languages and in CLAUDE.md §7. The review also asked for `pnpm check:token-after-lock` to recognise the flows' `mintArtefact`, if feasible, since minting through it reaches the token table without naming it. It was feasible: the check's pattern now includes `mintArtefact(`, and the shipped tree still passes, 11 account locks over 176 files, because no file mints after it locks. `test/token-after-lock.test.ts` reports `mintArtefact` after a lock beside the two repository methods, and CLAUDE.md §9 describes the check accordingly. Those files belong to the gate, and this is a recorded change to them.
+**Rejected.** Locking a placeholder row before the insert, which would add a statement to every sign-up to satisfy a rule whose reason does not apply.
+**Reason.** An exception a rule's reason does not cover has to be named, or the next reader takes the code for a violation.
+**Price.** None.
