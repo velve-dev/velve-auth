@@ -5,6 +5,7 @@ export const KEY_PURPOSES = [
 	"oauth-token-enc",
 	"pkce-enc",
 	"password-enc",
+	"state-mac",
 ] as const;
 
 export type KeyPurpose = (typeof KEY_PURPOSES)[number];
@@ -12,6 +13,9 @@ export type KeyPurpose = (typeof KEY_PURPOSES)[number];
 export type EncryptionKeyPurpose = Extract<KeyPurpose, `${string}-enc`>;
 
 export type SigningKeyPurpose = Exclude<KeyPurpose, EncryptionKeyPurpose>;
+
+/** a signing purpose whose key only authenticates rows the database must not be able to forge */
+export type IntegrityKeyPurpose = Extract<KeyPurpose, `${string}-mac`>;
 
 const ENCRYPTION_PURPOSE_NAME = /-enc$/;
 

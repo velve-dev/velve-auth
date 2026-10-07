@@ -15178,3 +15178,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) A test in the foundation that names each requirement without testing it, which would make the coverage test pass on a citation and not on a test. (b) Leaving the specification without the requirements until the code exists, which leaves four parallel branches building against a plan instead of the binding text.
 **Reason.** The list is the test's own mechanism for a requirement stated before it is met, and its comment says a line there is a reported finding.
 **Price.** Until the four branches merge the specification states nine requirements the library does not meet, and `test/requirement-coverage.test.ts` is a file each of the four branches edits.
+
+<a id="e-3088"></a>
+
+### The integrity purposes end in -mac, and one module takes and checks their MACs
+`E-3088` · security-state · keys, settled
+
+**Context.** Section 3.18 adds `state-mac` and `token-mac` to `KEY_PURPOSES`. A name not ending in `-enc` is a signing purpose to `isEncryptionPurpose`, so both are imported as HMAC-SHA256 keys by `rootKeyProvider` with no change to the provider, and the four encryption functions refuse both at compile time. Two later branches, the seal and the token MACs, each need to take a MAC under the current version and check a stored one under its version. `src/core/keys/mac.ts` does both for them: `macUnderCurrentKey` returns `{ keyVersion, mac }`, and `verifyMacUnderKeyVersion` recomputes the MAC and compares it with `equalsInConstantTime`, answering `"valid"`, `"mismatch"` or `"key_version_unknown"`. `IntegrityKeyPurpose`, the `-mac` part of the union, is the only purpose type the module accepts. `assertKeysAnswerForEveryPurpose` already walks `KEY_PURPOSES`, so a custom `KeyProvider` that does not answer the new names is refused at `migrate()` with `keys_unusable`; its message no longer counts the purposes.
+**Rejected.** (a) `crypto.subtle.verify` for the check, which Web Crypto does not promise to run in constant time. (b) Letting each branch write its own MAC helper, which puts the same comparison in two files that two writers own at once. (c) Throwing on an unknown version, which would make every caller catch an exception for what the seal treats as one of its reasons.
+**Reason.** One place compares integrity MACs, so constant time and the unknown-version answer are decided once.
+**Price.** The module has no caller in `src/` until a later branch lands, and only its test reaches it. A custom provider that answered six purposes stops starting, which is a break of 2.0.0.
+
+<a id="e-3089"></a>
+
+### The foundation writes into Key management and The instance as well as its own chapter
+`E-3089` · security-state · documentation, settled
+
+**Context.** The stub cut gave the foundation the chapter *Security state*. Two facts it changes stand in other chapters and would be false if left: *Key management* counts the purposes in its prose and lists them in a table, and the configuration table of *The instance* said all six purpose keys are derived from the root key. Both are corrected in place, with a row for each new purpose in the purpose table, and the instance row now says a provider of its own must answer every name in `KEY_PURPOSES`. Commit 7 adds the table to *Schema* and the migration to *Migrations* for the same reason.
+**Rejected.** Describing the purposes only in *Security state*, which leaves *Key management* stating six purposes the code no longer has.
+**Reason.** A count in another chapter that the change makes false is a defect in that chapter, and the partition of §5 is about who writes a chapter's content, not about leaving a number wrong.
+**Price.** Those chapters are owned by no current feature, and the edit is reported here rather than reviewed by an owner.

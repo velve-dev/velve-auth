@@ -33,7 +33,7 @@ type StartupErrorCode =
 	| "route_name_segment_reserved";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
-	keys_missing: "keys is required: the six purpose keys are derived from a root key of 32 bytes",
+	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
 	keys_unusable: "keys did not answer for every purpose, so no protected value could be written",
 	origins_empty:
 		"origins must name at least one allowed origin; an empty list is not a blanket permission",

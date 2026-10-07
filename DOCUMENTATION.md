@@ -944,7 +944,7 @@ decides the second, and it decides it for the two interleavings it chooses.
 
 ### Purposes
 
-One root key, six working keys, derived with HKDF-SHA256 and separated by one
+One root key, seven working keys, derived with HKDF-SHA256 and separated by one
 derivation context per purpose (section 3.8).
 
 | Purpose | Key type | Used for |
@@ -955,8 +955,9 @@ derivation context per purpose (section 3.8).
 | `oauth-token-enc` | AES-256-GCM | `identity.access_token_enc` and its siblings |
 | `pkce-enc` | AES-256-GCM | `oauth_flow.pkce_verifier_enc` |
 | `password-enc` | AES-256-GCM | `password_credential.phc` |
+| `state-mac` | HMAC-SHA256 | the seal of `velve.security_state` ([Security state](#security-state)) |
 
-`KEY_PURPOSES` is the tuple of those six names; `KeyPurpose` is the union
+`KEY_PURPOSES` is the tuple of those seven names; `KeyPurpose` is the union
 derived from it. The set is closed — a name outside it does not type-check.
 `EncryptionKeyPurpose` and `SigningKeyPurpose` are the two halves of that
 union, derived from the same tuple. The four encryption functions take
@@ -993,7 +994,7 @@ variable, the implementation is replaced and nothing else changes (section 2.6).
 rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: rootKey } });
 ```
 
-The default implementation. It derives all six purpose keys from the root key
+The default implementation. It derives every purpose key from the root key
 of each version and caches them for the lifetime of the provider.
 
 | Option | Type | Meaning |
@@ -5898,7 +5899,7 @@ compile (E-349).
 |---|---|---|---|
 | `database` | `Driver` | — | the driver from `@velve/auth/pg`, the one driver that ships, or one the application writes over another client as [the driver interface](#the-driver-interface) describes; the only way a connection enters |
 | `identity` | `IdentityConfig<M>` | — | which sign-in names exist; decides the CHECK constraint and the instance type |
-| `keys` | `KeyProvider` | — | the root key and the ring; all six purpose keys are derived from it |
+| `keys` | `KeyProvider` | — | the root key and the ring; every purpose key is derived from it, so a provider of its own must answer every name in `KEY_PURPOSES` |
 | `origins` | `readonly string[]` | — | the allowed origins; an empty list is a start error, not a blanket permission |
 | `password` | `PasswordConfig` | Passwords chapter | Argon2id parameters, legacy schemes, length bounds, `validate` |
 | `session` | `Partial<SessionConfig>` | Sessions chapter | deadlines, cookie name, `SameSite`, freshness window |
@@ -8630,7 +8631,54 @@ recovery code that was already spent and one that never existed.
 
 ## Security state
 
-> Reserved for the foundation of the security-state work: the database-write attacker, the `state-mac` and `token-mac` key purposes and the `velve.security_state` table. This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Version 2.0.0 adds an attacker to the threat model: someone who can write to
+the schema `velve` — `INSERT`, `UPDATE`, `DELETE` — and does not have the root
+key. Architecture section 3.18 states what such a writer could do before 2.0.0
+and the five measures against it; the four chapters below document each
+measure as it is built. This chapter documents the parts they all rest on.
+
+What the measures do not cover is stated here once, so no chapter below has to
+repeat it: a writer who also holds the root key can forge everything, and
+without an anchor (S-INTEG-6) an account can be reset to an old, internally
+consistent state.
+
+### The integrity purposes
+
+`state-mac` is a purpose of the key ring like the six before it
+([Key management](#key-management)): HKDF-SHA256 from the root key with the
+context `velve-auth/key/state-mac`, imported as an HMAC-SHA256 key. It adds no
+secret and no configuration entry. A `KeyProvider` of an application's own must
+answer it, or `migrate()` refuses the start with `keys_unusable`.
+
+`IntegrityKeyPurpose` is the part of `KeyPurpose` whose names end in `-mac`.
+It is internal and not exported from the package.
+
+### `macUnderCurrentKey(keys, purpose, message)`
+
+Internal, in `src/core/keys/mac.ts`. Returns a `VersionedMac` —
+`{ keyVersion, mac }` — with the 32-byte HMAC-SHA256 of `message` under the
+current version of `purpose`. The version is stored beside the MAC.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `keys` | `KeyProvider` | the ring |
+| `purpose` | `IntegrityKeyPurpose` | the integrity purpose to take the MAC under |
+| `message` | `Uint8Array` | the canonical bytes the MAC covers |
+
+### `verifyMacUnderKeyVersion(keys, purpose, stored, message)`
+
+Internal, in `src/core/keys/mac.ts`. Recomputes the MAC under
+`stored.keyVersion` and compares it with `stored.mac` in constant time. Returns
+a `MacVerdict`:
+
+| Verdict | When |
+|---|---|
+| `"valid"` | the MAC matches |
+| `"mismatch"` | it does not, including a stored MAC of another length |
+| `"key_version_unknown"` | the version is not a storable key version or has left the ring |
+
+It never throws for a stored value, so a caller decides what an unknown version
+means rather than catching it.
 
 ## Security state: bound envelopes
 
