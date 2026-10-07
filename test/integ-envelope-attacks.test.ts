@@ -496,6 +496,53 @@ describe("the tokens a refresh writes", () => {
 	});
 });
 
+describe("a callback that names another provider than the flow", () => {
+	it("answers as for an unknown state and signs nobody in", async () => {
+		const base = oauthConfigFor({ openIdConnect: true, storeTokens: true });
+		const stubby = base.providers.stubby;
+		if (stubby === undefined) {
+			throw new Error("the stub configuration names no stubby provider");
+		}
+		const handler = instance(v1, {
+			oauth: { ...base, providers: { ...base.providers, stubby2: stubby } },
+		});
+		const subject = `mixup-${randomBytes(4).toString("hex")}`;
+		provider.reportClaims({
+			sub: subject,
+			email: `${subject}@provider.example`,
+			email_verified: true,
+		});
+		const started = await handler(
+			requestTo("/sign-in/oauth/start", { body: { provider: "stubby" } }),
+		);
+		const body = (await started.json()) as {
+			authorizationUrl: string;
+			stateCookie: { value: string };
+		};
+		const url = new URL(body.authorizationUrl);
+		const flow = {
+			state: url.searchParams.get("state") ?? "",
+			pointer: body.stateCookie.value,
+			nonce: url.searchParams.get("nonce"),
+		};
+		const unknownState = await answerOf(
+			await callback(handler, { state: "no-such-state", pointer: flow.pointer, nonce: null }),
+		);
+
+		const answer = await handler(
+			requestTo(
+				`/sign-in/oauth/callback/stubby2?code=${codeCarrying(flow.nonce)}&state=${encodeURIComponent(flow.state)}`,
+				{ method: "GET", cookie: `${DEFAULT_COOKIE_NAMES.oauthState}=${flow.pointer}` },
+			),
+		);
+
+		expect(await answerOf(answer)).toStrictEqual(unknownState);
+		expect(
+			await connection.query(`SELECT 1 FROM ${schema}.identity WHERE subject = $1`, [subject]),
+		).toHaveLength(0);
+	});
+});
+
 describe("an identity row replaced between the lookup and the refresh", () => {
 	it("fails the flow as a lost state and not as an internal error", async () => {
 		const subject = `replaced-${randomBytes(4).toString("hex")}`;
