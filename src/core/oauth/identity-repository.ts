@@ -2,7 +2,7 @@ import type { Identity } from "../auth/results.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
-import { VelveError } from "../http/error-map.js";
+import { ConcealedError, VelveError } from "../http/error-map.js";
 import {
 	type BoundColumn,
 	encryptBound,
@@ -345,8 +345,9 @@ RETURNING id`;
 				...factParameters(facts, encrypted),
 				existing.identity.id,
 			]);
+			//a row replaced between the lookup and the refresh fails the flow like a lost state
 			if (row === undefined) {
-				throw new TypeError("the identity refreshed by its own subject reported no row");
+				throw new ConcealedError("state_not_found");
 			}
 			return toIdentity(row);
 		},

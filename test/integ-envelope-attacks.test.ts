@@ -6,6 +6,7 @@ import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { decryptBound } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
+import { createOAuthIdentityRepository } from "../src/core/oauth/identity-repository.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -296,6 +297,57 @@ describe("a flow whose steering columns a database writer rewrote", () => {
 						!line.startsWith(`${DEFAULT_COOKIE_NAMES.session}=;`),
 				),
 		).toBe(false);
+	});
+});
+
+describe("an identity row replaced between the lookup and the refresh", () => {
+	it("fails the flow as a lost state and not as an internal error", async () => {
+		const subject = `replaced-${randomBytes(4).toString("hex")}`;
+		const handler = instance(v1);
+		const flow = await (async () => {
+			const answer = await handler(
+				requestTo("/sign-in/oauth/start", { body: { provider: "stubby" } }),
+			);
+			const body = (await answer.json()) as {
+				authorizationUrl: string;
+				stateCookie: { value: string };
+			};
+			const url = new URL(body.authorizationUrl);
+			return {
+				state: url.searchParams.get("state") ?? "",
+				pointer: body.stateCookie.value,
+				nonce: url.searchParams.get("nonce"),
+			};
+		})();
+		provider.reportClaims({
+			sub: subject,
+			email: `${subject}@provider.example`,
+			email_verified: true,
+		});
+		expect((await callback(handler, flow)).status).toBeLessThan(400);
+		const [found] = await connection.query<{ id: string; user_id: string }>(
+			`SELECT id, user_id FROM ${schema}.identity WHERE subject = $1`,
+			[subject],
+		);
+		const identities = createOAuthIdentityRepository({ driver: connection, schema, keys: v1 });
+		const existing = await identities.findIdentityBySubject({ provider: "stubby", subject });
+		await connection.query(`UPDATE ${schema}.identity SET id = gen_random_uuid() WHERE id = $1`, [
+			found?.id,
+		]);
+
+		await expect(
+			identities.refreshIdentity({
+				existing: existing as NonNullable<typeof existing>,
+				provider: "stubby",
+				subject,
+				providerEmail: null,
+				providerEmailVerified: false,
+				profile: null,
+				scopes: [],
+				tokenLifetimeInSeconds: null,
+				tokens: null,
+			}),
+		).rejects.toMatchObject({ name: "ConcealedError", reason: "state_not_found" });
 	});
 });
 
