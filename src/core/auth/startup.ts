@@ -247,6 +247,13 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertSealingModeIsKnown(config.securityState);
 }
 
+//the stored-version probe gives its own reason under the code the purpose probe uses (E-3289)
+export function storedIntegrityKeyUnusable(keyVersion: number): VelveStartupError {
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with a key that cannot take HMAC-SHA256, so no seal under that version could be checked`;
+	return refusal;
+}
+
 //a key provider that answers for no purpose protects nothing and must refuse the start
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
 	for (const purpose of KEY_PURPOSES) {

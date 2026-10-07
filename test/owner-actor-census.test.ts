@@ -27,7 +27,7 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	oauth_flow: "src/core/oauth/flow-repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
 	password_reset_required: "no repository: no module of the library reads or writes it",
-	security_state: "src/core/auth/security-state.ts",
+	security_state: "src/core/auth/security-state.ts and src/core/auth/integrity-key-ring.ts",
 };
 
 const NO_REPOSITORY = "no repository:";
@@ -136,6 +136,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/auth/security-state.ts#sealRowPresentFor": "seal row beside its envelope",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown": "maintenance or start-up",
+	"src/core/auth/integrity-key-ring.ts#assertStoredIntegrityKeysTakeMac": "maintenance or start-up",
 	"src/core/db/cascade-guard.ts#assertEveryUserReferenceCascades": "maintenance or start-up",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.listSessionsOfUser":
