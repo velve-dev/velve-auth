@@ -573,6 +573,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3190 … E-3219 | outside the waves · `security-state`, second range — the foundation's answers to its second review. Its first range, E-3080 … E-3109, was used up to E-3108 when the second review arrived; counted over the rows standing at 6b8847b |
 | E-3220 … E-3249 | outside the waves · `security-state-envelopes`, second range — the bound envelopes' answers to their second review. Counted over the rows standing at 2addb33 |
 | E-3250 … E-3279 | outside the waves · `security-state-tokens`, second range — the keyed token hashes' answers to their review. Counted over the rows standing at 2addb33 |
+| E-3280 … E-3309 | outside the waves · `security-state`, third range — the foundation's answers to its fourth review. Counted over the rows standing at 87fd8f9 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
