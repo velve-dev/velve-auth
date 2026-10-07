@@ -1,10 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
-import { decryptBound } from "../src/core/keys/envelope-binding.js";
+import { decryptBound, rowOfParts } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createOAuthIdentityRepository } from "../src/core/oauth/identity-repository.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
@@ -359,6 +359,85 @@ describe("a link flow whose link_to_user_id a writer set to NULL", () => {
 
 		expect(await answerOf(await callback(hooked, flow))).toStrictEqual(unknownState);
 		veto = false;
+	});
+});
+
+//the owner of a link flow is bound on its own and not only through the session it replaces (E-3128)
+describe("the owner binding of a link flow's PKCE verifier", () => {
+	it("opens the verifier under link_to_user_id as owner and under no other owner", async () => {
+		const handler = instance(v1);
+		const account = await signUp(handler);
+		const session = cookieOf(await signIn(handler, account.email), DEFAULT_COOKIE_NAMES.session);
+		const flow = await startLink(handler, `${DEFAULT_COOKIE_NAMES.session}=${session}`);
+		const [row] = await connection.query<{
+			pkce_verifier_enc: Uint8Array;
+			key_version: number;
+			provider: string;
+			nonce: string | null;
+			redirect_path: string | null;
+			link_from_session_id: string | null;
+			expires_ms: string;
+		}>(
+			`SELECT pkce_verifier_enc, key_version, provider, nonce, redirect_path, link_from_session_id,
+			 (extract(epoch from expires_at) * 1000)::bigint::text AS expires_ms
+			 FROM ${schema}.oauth_flow WHERE state_sha256 = $1`,
+			[stateHashOf(flow.state)],
+		);
+		const stored = {
+			keyVersion: row?.key_version ?? 0,
+			ciphertext: Uint8Array.from(row?.pkce_verifier_enc ?? []),
+		};
+		const flowRow = rowOfParts([
+			stateHashOf(flow.state),
+			row?.provider ?? "",
+			row?.nonce ?? null,
+			row?.redirect_path ?? null,
+			row?.link_from_session_id ?? null,
+			row?.expires_ms ?? "",
+		]);
+		const openAs = (owner: string | null) =>
+			decryptBound(
+				v1,
+				{ column: "oauth_flow.pkce_verifier_enc", owner, row: flowRow },
+				stored,
+				"refused",
+			);
+
+		await expect(openAs(account.userId)).resolves.toBeDefined();
+		await expect(openAs(null)).rejects.toMatchObject({ code: "authentication_failed" });
+		await expect(openAs(randomUUID())).rejects.toMatchObject({ code: "authentication_failed" });
+	});
+
+	it("refuses a link flow whose only rewritten column is link_to_user_id", async () => {
+		const handler = instance(v1);
+		const attacker = await signUp(handler);
+		const victim = await signUp(handler);
+		const attackerSession = cookieOf(
+			await signIn(handler, attacker.email),
+			DEFAULT_COOKIE_NAMES.session,
+		);
+		const flow = await startLink(handler, `${DEFAULT_COOKIE_NAMES.session}=${attackerSession}`);
+		const subject = `owner-only-${randomBytes(4).toString("hex")}`;
+		provider.reportClaims({
+			sub: subject,
+			email: `${subject}@provider.example`,
+			email_verified: true,
+		});
+
+		await connection.query(
+			`UPDATE ${schema}.oauth_flow SET link_to_user_id = $2 WHERE state_sha256 = $1`,
+			[stateHashOf(flow.state), victim.userId],
+		);
+		const answer = await callback(
+			handler,
+			flow,
+			`${DEFAULT_COOKIE_NAMES.session}=${attackerSession}`,
+		);
+
+		expect(answer.status).toBeGreaterThanOrEqual(300);
+		expect(
+			await connection.query(`SELECT 1 FROM ${schema}.identity WHERE subject = $1`, [subject]),
+		).toHaveLength(0);
 	});
 });
 
