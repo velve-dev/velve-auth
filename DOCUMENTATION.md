@@ -8676,6 +8676,10 @@ out, and requires the key to be HMAC with SHA-256 and the output to be 32 bytes.
 `velve.security_state` names, and refuses the start with `keys_unusable` if the ring
 answers one of them with a key that cannot take that MAC; a version the ring no
 longer holds is not a start error but a broken state of the accounts it seals.
+Both checks run in `migrate()` and nowhere else: a serving process that does
+not call `migrate()` itself, because a separate job migrates the schema, never
+probes its keys, and a key that cannot take the MAC shows up there only as
+accounts the check answers `key_unusable` for.
 
 `IntegrityKeyPurpose` is the part of `KeyPurpose` whose names end in `-mac`.
 It is internal and not exported from the package.
