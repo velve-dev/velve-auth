@@ -16368,3 +16368,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Weakening E-3340's sentence instead of restoring the citation, which would trade a true test for a vaguer log.
 **Reason.** A log entry's statement about a file has to stay true of the file.
 **Price.** None.
+
+<a id="e-3350"></a>
+
+### The table counts include the seal table
+`E-3350` · security-state · specification, settled
+
+**Context.** Migration 3 added `velve.security_state`, a user-bound table whose foreign key cascades from `velve.user`, and `test/db-user-cascade.test.ts` already counts fourteen user-owned tables from the catalogue. S-TOKEN-5 still named thirteen user-bound tables and T-TOKEN-5 still expected 13/13, and the comparison row J37 still said the schema has sixteen tables. The eighth review found all three. S-TOKEN-5 now names fourteen tables with `security_state` among them, T-TOKEN-5 expects 14/14, and J37 says seventeen, counted over the `CREATE TABLE` statements of the shipped migrations, `schema_migration` included. Both languages say so.
+**Rejected.** Nothing.
+**Reason.** A count in the specification has to change with the schema it counts.
+**Price.** None.
