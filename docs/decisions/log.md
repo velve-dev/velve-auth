@@ -15248,3 +15248,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Sealing only the changed component and leaving the rest in the old form, which leaves a sealed account with envelopes no sealed account may read. (b) Refusing changes until the account is converted, for S-INTEG-8.
 **Reason.** The account is converted entirely or not at all, which is the property the maintenance step already promises per account; a change becomes one more way to reach it.
 **Price.** The first change after the upgrade costs a re-encryption of every envelope of that account inside the request.
+
+<a id="e-3095"></a>
+
+### The seal check reads one snapshot
+`E-3095` · security-state · specification, S-INTEG-4, settled
+
+**Context.** A review found that *Checking* did not say how the state is read. A check that reads the seal row and the components in several statements under PostgreSQL's default `READ COMMITTED` can see a legitimate reseal between them, compute the old state against the new seal and refuse a valid account — a spurious sign-out and a false alarm. Section 3.18 and S-INTEG-4 now require the seal row and every component to come from a single snapshot, one statement or one `REPEATABLE READ` transaction, and T-INTEG-3 runs 20 session resolutions beside each of its 50 change pairs and expects none of the 1000 refused.
+**Rejected.** Taking the account lock for a check, which would serialise every request of an account behind every change of it.
+**Reason.** A snapshot gives a consistent read without a lock, which is what the check needs and all it needs.
+**Price.** The implementation is constrained to one statement or an explicit transaction per check, which the seal branch builds and measures.
