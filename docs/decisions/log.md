@@ -15208,3 +15208,83 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Renumbering the test steps to 4 and 5, which collides again with migration 4 on the token branch (E-3086).
 **Reason.** A test about the runner's behaviour should not have to change each time the library ships a migration; a test about the shipped plan should.
 **Price.** The cases that state the plan — `test/db-migration-runner.test.ts`, `test/db-schema.test.ts`, `test/db-schema-conformance.test.ts`, `test/db-user-cascade.test.ts`, `test/db-subpath-exports.test.ts`, `test/plugin-migration-run.test.ts` — still change with every migration, and the token branch edits them again. *Note added before merge: the count in the first sentence was twenty-two in ten files when written, measured over the unit project alone; the concurrency project's `test/db-runner-concurrency.test.ts` (two cases, the plan again) and `test/owner-actor-census.test.ts` (one case, which now records `security_state` as a table no module reads or writes yet) were found by the full gate afterwards.*
+
+<a id="e-3130"></a>
+
+### The token MAC is checked in the services and the repositories stay keyless
+`E-3130` · security-state-tokens · keys, storage format, settled
+
+**Context.** S-INTEG-9 and section 3.18 ask that every session, one-time token and pending authentication row carry `token_mac` and `token_mac_key_version` and be checked before use. Taking the MAC needs the `KeyProvider`. `createSessionRepository` alone is built in seven places, six of them outside the session feature (`src/core/auth/instance.ts`, `src/core/oauth/service.ts`, `src/core/flows/confirmation.ts`, `src/core/flows/reset.ts`, `src/core/password/set-credential.ts`, `src/core/plugin/registry.ts`), and none of the six writes or resolves a token row. The repositories now write and return the two columns and nothing more: a resolve or a consume returns a candidate with the stored factor names, the attempt counter, the payload and the MAC, and a `decode()` or `accept()` that builds the session, the pending state or the redemption only once the caller has checked it. `createSessionService`, `createPendingAuthenticationService`, `createSecondFactorCompletion` and `createOneTimeTokens` take `keys` and do the check in `src/core/token/binding.ts`, which takes the MAC through `src/core/keys/mac.ts` (E-3088).
+**Rejected.** (a) `keys` on every repository, which changes all seven construction sites for six that never write a token row. (b) Checking inside the SQL, which cannot hold the key.
+**Reason.** The check belongs where the row becomes a session or an owner, and that is the service; a repository that cannot build its answer before the check cannot be used without it.
+**Price.** A new caller of a repository could still use a candidate's `userId` before the check; nothing but review stops that. The session factors are now read as `array_to_json(...)::text` instead of `array_to_string`, because a comma inside a stored name made two names out of one and the MAC over the split names would have verified.
+
+<a id="e-3131"></a>
+
+### The token binding is its own length-prefixed encoding, and the payload is canonical JSON
+`E-3131` · security-state-tokens · storage format, frozen
+
+**Context.** Section 3.18 asks for a length-prefixed encoding of purpose, owner, `token_sha256` and the row's content. `encodeTokenBinding` writes the context `velve-auth/token-binding/v1`, then each field as a type byte, a four-byte big-endian length and its bytes, with an absent owner or payload as its own type byte. The factors are a list of their count followed by each name, in the order the row stores them, so a reordered or repeated factor fails. The payload is taken through `JSON.parse(JSON.stringify(...))`, which is what the repository stores, and then written with every object's keys sorted, because `jsonb` hands keys back in its own order. The seal branch will need a canonical encoding as well and does not exist yet.
+**Rejected.** (a) Sorting the factors into a set, which lets a writer reorder them unnoticed; harmless today, but the stored order is what the library wrote. (b) Sharing one encoder with the seal, which would mean writing the seal's encoder on this branch.
+**Reason.** An encoding two branches would have to agree on before either exists is a collision waiting; this one is private to `binding.ts` and versioned by its context string.
+**Price.** There may be two canonical encoders in `src/` once the seal lands. A payload number that does not survive a JSON round trip unchanged would fail its own check, which no payload the library writes contains.
+
+<a id="e-3132"></a>
+
+### A refused token row is reported through an optional callback the seal branch wires
+`E-3132` · security-state-tokens · alarm seam, open until the seal branch merges
+
+**Context.** Section 3.18 says a token row whose MAC fails is answered as no row and raises the alarm with the reason `token_binding_mismatch`. The alarm, its rate limit and its log line belong to the seal branch. The three services and the `ArtefactStore` of `src/core/flows/artefact.ts` take an optional `reportTokenBindingRefusal`, which receives `{ userId, occasion, reason: "token_binding_mismatch", verdict }` with `verdict` either `mismatch` or `key_version_unknown`. Whatever it throws is swallowed. `src/core/auth/instance.ts` passes none, so on this branch a refusal is silent. `ArtefactStore` is satisfied by `RouteServices`, so a `reportTokenBindingRefusal` member added there reaches every redemption without touching the flows again.
+**Rejected.** (a) Building the alarm here, which is the seal branch's file set. (b) A distinct error the caller maps, which would make the refusal a second answer beside the missing row until `error-map.ts` knew it.
+**Reason.** The refusal path must exist and be testable now; the alarm can only be connected to it by the branch that owns the alarm.
+**Price.** Until the seal branch merges, T-INTEG-9's "with alarm" is met only as far as the report: the tests assert the report, not an alarm. An unknown key version reports the same reason as a mismatch and differs only in `verdict`.
+
+<a id="e-3133"></a>
+
+### A resolved session or pending row is rebound by compare-and-set, and a one-time token is not
+`E-3133` · security-state-tokens · key rotation, settled
+
+**Context.** Section 3.18 rebinds a successfully resolved row whose `token_mac_key_version` is not the current one. The session rebind is an `UPDATE` of the two columns with `id`, the resolved actor's `user_id`, the stored MAC and the stored version in its predicate; the pending rebind uses the token hash, the row's owner, the stored MAC and version. A rebind that finds the row changed does nothing. A one-time token is deleted by the redemption that reads it, so there is nothing to rebind. `test/key-rotation-restart-proof.test.ts` now asserts that the session the rotation resolves carries version 2 afterwards; it passes because that session is resolved while both versions are in the ring.
+**Rejected.** (a) Rebinding by token hash alone, which would let two concurrent resolves race to write and a writer's change in between be overwritten with a fresh MAC. (b) A start-up refusal, like the password ring check of E-1697, for a ring missing a stored `token_mac_key_version`: it needs a new code in the instance's start and is not in this branch's file set.
+**Reason.** The rebinding should never write a MAC over a row other than the one that was checked.
+**Price.** A row not resolved while two versions are in the ring stays under the old version until `maintenance.sealSecurityState()` rebinds it, and that step belongs to the administration branch. Removing the old version before it has run signs those users out silently, and nothing at start says so. The brief named `test/key-rotation-restart-proof.release.test.ts`; the file in the tree is `test/key-rotation-restart-proof.test.ts` in the unit project.
+
+<a id="e-3134"></a>
+
+### The pending attempt counter is bound into the MAC and counted by compare-and-set
+`E-3134` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** A foundation review found that a writer who resets `pending_authentication.attempts` gets five more guesses at a second factor, and the specification is being amended to bind it. The pending MAC now covers `attempts` after the factors. A failed attempt used to be `UPDATE ... SET attempts = attempts + 1` and, at the limit, a delete, in one transaction. It is now: read the row, check its MAC, take a MAC over the raised counter, and write counter and MAC with the old MAC and the old counter in the predicate; when another attempt changed the row first, the write finds nothing and the loop reads again. The attempt that reaches the limit deletes the row by its token hash without the compare, since deleting is the answer either way. A row that fails its check answers `exhausted`, which is what a missing row answered before.
+**Rejected.** (a) A row lock to serialise the attempts, which `check:lock-order` forbids outside `src/core/db/lock.ts` and on any table but `velve.user`. (b) Leaving `attempts` out of the MAC, which is the finding.
+**Reason.** The counter has to be written together with a MAC over its new value, and the key is not in the database, so the increment cannot stay one statement.
+**Price.** Every failed attempt costs a resolve query, two HMACs and an update instead of one update, more under contention, and the loop has no bound of its own: it ends because each retry follows another attempt's success and the fifth deletes the row. The count and the delete are no longer one transaction.
+
+<a id="e-3135"></a>
+
+### The keys reach the token services through seven files outside this branch's set
+`E-3135` · security-state-tokens · file ownership, reported
+
+**Context.** The brief gave this branch `src/core/session/`, `src/core/token/`, `src/core/factor/pending/`, the session and token repositories and migration 4, and asked that every place that mints a token row take the MAC. The instance builds the session service, the pending service, the second-factor completion and the instance's one-time tokens in `src/core/auth/instance.ts`, and every email flow mints and redeems through `src/core/flows/artefact.ts`, which took a schema and no keys. `instance.ts` now passes `config.keys` four times. `artefact.ts` takes an `ArtefactStore` (`schema`, `keys`) where it took `schema`; its callers in `address.ts`, `magic-link.ts`, `reset.ts` and `sign-up.ts` pass `environment.services`, and `mailerOf` in `environment.ts` and the mailer in `sign-up.ts` carry `keys`. None of the seven changes more than how the keys arrive.
+**Rejected.** Stopping before the wiring and reporting it, which leaves every insert failing on migration 4's `NOT NULL` columns and the gate red on this branch.
+**Reason.** Migration 4 and the code that writes the columns cannot merge apart (E-3086), and neither can the code that writes them and the wiring that gives it the key.
+**Price.** CLAUDE.md §5 says a feature that needs a file outside its set stops and reports; this branch edited them and reports afterwards. A parallel branch that edits the same lines of `instance.ts` or the flows will conflict.
+
+<a id="e-3136"></a>
+
+### Tests that wrote token rows by hand or pinned the old statements now state the MAC
+`E-3136` · security-state-tokens · test, settled
+
+**Context.** Fifty-eight test files changed. Most build a service, which now needs `keys`, or insert a session, one-time token or pending row by hand, which migration 4 refuses without the two columns. A hand-written row that a test later resolves through a mounted instance now takes its MAC through `sessionMacParameters` in `test/session-fixtures.ts`, with the instance mounted under the same key provider; one that is never resolved carries 32 fixed bytes. `test/flows-review-redemption-race.test.ts` built four instances over one database each with its own random ring, so a token minted by one was refused by another, and they now share one ring. Five cases changed meaning: `test/token-review-purpose-and-ownership.test.ts` asserted that a row written around the library yields its owner, and now asserts it is refused; `test/token-static-scan.test.ts` pins the consume statement of section 3.7, which now also returns `token_mac` and `token_mac_key_version`, and admits `src/core/db/migrations/token-mac.ts` among the files naming `one_time_token`; `test/session-review-resolution.test.ts` pins the resolve statement, which now reads the factors as JSON and the two MAC columns; `test/owner-actor-census.test.ts` names `rebindPendingTokenMac` a secret address; `test/factor-pending-surface.test.ts` states the pending service's four option names.
+**Rejected.** Giving the tests a keyless path through the services, which would be a way around the check in the shipped code.
+**Reason.** A test that writes a token row past the library is exactly the writer section 3.18 now refuses.
+**Price.** Section 3.7 of the specification still prescribes the consume statement with `RETURNING user_id, payload`; the code and its pinning test now differ from that text, and the specification is not this branch's to change. The S-INTEG-9 line of `NAMED_BY_NO_TEST` in `test/requirement-coverage.test.ts` is removed, as E-3087 asks.
+
+<a id="e-3137"></a>
+
+### Migration 4 carries the two CHECK constraints the specification is gaining
+`E-3137` · security-state-tokens · schema, settled
+
+**Context.** Migration 4 is the SQL of section 3.18 as reserved by E-3086, plus `CHECK (octet_length(token_mac) = 32)` and `CHECK (token_mac_key_version >= 1)` on each of the three tables, which the orchestrator reported the specification is gaining. It ships as `migrations/0004_token_mac.sql` and is embedded byte for byte in `src/core/db/migrations/token-mac.ts`. The Schema chapter of DOCUMENTATION.md gains the two columns in each of the three tables and the Migrations chapter the file's row and a sentence in place of the one reserving migration 4.
+**Rejected.** The section's SQL without the constraints, which the amended text would contradict.
+**Reason.** A migration's checksum is recorded in every database that ran it, so its SQL should match the amended specification before it ships, not after.
+**Price.** On this branch the constraints are ahead of the German text it reads. The *Security state* chapter, which the foundation owns, still says migration 4 is reserved and that nothing writes the token columns; that sentence is the foundation's to change and is reported, not edited.
