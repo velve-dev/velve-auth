@@ -15798,3 +15798,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A new code such as `keys_stored_version_unusable`, which changes the published `StartupErrorCode` union and the API surface for what is the same fault an operator repairs the same way. A third constructor parameter for a message, which changes the published constructor of `VelveStartupError` for one caller.
 **Reason.** The code says what to repair, the key provider; the message has to say which key, and a message that names the wrong probe sends the operator to look at the current keys, which are fine.
 **Price.** `keys_unusable` no longer has one message, so the table of messages is not the complete list of what a start refusal can say; the helper sits beside it so a reader of the table finds it.
+
+<a id="e-3290"></a>
+
+### KeyErrorCode is not public, and E-3215's price was none
+`E-3290` · security-state · keys, settled
+
+**Context.** E-3215 calls `key_unusable` "a new code of the public `KeyErrorCode` union" and prices it as a value an exhaustive switch over that union has to handle. The fourth review checked the published declarations: neither `KeyErrorCode` nor `KeyError` appears in any `dist/**/*.d.mts`, and `test/__snapshots__/api-surface.md` names neither. `src/core/keys/index.ts` re-exports the type, but that module is not an entry of the package, so no application can name the union or switch over it. E-3215's reason stands; its statement that the union is public and its price were wrong when written, and E-3215 is not edited.
+**Rejected.** Nothing; the entry was wrong about the surface.
+**Reason.** Whether something is public is decided by what the package publishes, and E-3215 judged it by the `export` keyword of an internal module instead of by the declarations `test/api-surface.test.ts` holds.
+**Price.** None for applications. The new code is visible only inside the library, where `KEY_ERROR_MESSAGES` is a `Record` over the union and the type check already forced its message.
