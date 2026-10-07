@@ -62,6 +62,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_resolution");
 	recorder = recordingDriver(migrated.connection);
 	service = createSessionService({
+		sealing: "migrating",
 		keys: TOKEN_KEYS,
 		driver: recorder.driver,
 		schema: migrated.schema,

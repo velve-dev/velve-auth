@@ -62,6 +62,7 @@ async function resolvedNow(token: string) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_lifecycle");
 	const options: SessionServiceOptions = {
+		sealing: "migrating",
 		driver: migrated.connection,
 		keys: TOKEN_KEYS,
 		schema: migrated.schema,
@@ -99,6 +100,7 @@ describe("issuing a session", () => {
 
 	it("stores the observed values when the configuration says full", async () => {
 		const full = createSessionService({
+			sealing: "migrating",
 			keys: TOKEN_KEYS,
 			driver: migrated.connection,
 			schema: migrated.schema,

@@ -11,7 +11,7 @@ import {
 	verifyUnderPendingAttemptLimit,
 } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { toVisibleFailure } from "../src/core/http/error-map.js";
+import { ConcealedError, toVisibleFailure } from "../src/core/http/error-map.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
@@ -66,6 +66,7 @@ function chosenToken(): string {
 function servicesUnder(provider: KeyProvider) {
 	return {
 		sessions: createSessionService({
+			sealing: "migrating",
 			driver: migrated.connection,
 			keys: provider,
 			schema,
@@ -456,6 +457,7 @@ describe("what a row the library wrote keeps (S-INTEG-9)", () => {
 
 	it("does not let a throwing report change the refusal", async () => {
 		const throwing = createSessionService({
+			sealing: "migrating",
 			driver: migrated.connection,
 			keys,
 			schema,
@@ -592,6 +594,36 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		);
 		expect(await sessions.resolve(issued.token)).toBeNull();
 		expectOneRefusal("session_resolve", userId);
+	});
+
+	it('refuses an account without a seal row in "required", issuing and resolving alike', async () => {
+		const required = createSessionService({
+			driver: migrated.connection,
+			keys,
+			sealing: "required",
+			schema,
+			reportTokenBindingRefusal: report,
+		});
+		const unsealed = await createUser(migrated.connection, schema);
+		const issuedWhileMigrating = await sessions.issue({
+			userId: unsealed,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
+		const sealed = await sealedAccount();
+		refusals = [];
+
+		await expect(
+			required.issue({ userId: unsealed, factors: ["password"], observed: NO_REQUEST }),
+		).rejects.toThrow(ConcealedError);
+		expect(await required.resolve(issuedWhileMigrating.token)).toBeNull();
+		const issued = await required.issue({
+			userId: sealed,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
+		expect((await required.resolve(issued.token))?.userId).toBe(sealed);
+		expect(refusals).toStrictEqual([]);
 	});
 
 	it("does not lift a session into a newer epoch when it rebinds", async () => {

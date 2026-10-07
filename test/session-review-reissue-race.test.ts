@@ -93,11 +93,16 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_reissue");
 	traced = tracingDriver(migrated.connection);
 	service = createSessionService({
+		sealing: "migrating",
 		keys: TOKEN_KEYS,
 		driver: traced.driver,
 		schema: migrated.schema,
 	});
-	sessions = createSessionRepository({ driver: traced.driver, schema: migrated.schema });
+	sessions = createSessionRepository({
+		sealing: "migrating",
+		driver: traced.driver,
+		schema: migrated.schema,
+	});
 	userId = await createUser(migrated.connection, migrated.schema);
 	owner = actorOfTestUser(userId);
 	strangerId = await createUser(migrated.connection, migrated.schema);
@@ -249,7 +254,11 @@ describe("S-FIX-2: the trigger is the second lock, and the code does not lean on
 			},
 			transaction: (fn) => fn(recording),
 		};
-		const quiet = createSessionRepository({ driver: recording, schema: "velve" });
+		const quiet = createSessionRepository({
+			sealing: "migrating",
+			driver: recording,
+			schema: "velve",
+		});
 		const insert = sessionInsertFor(userId);
 
 		await quiet.insertSession(insert).catch(() => undefined);
@@ -274,7 +283,11 @@ describe("S-FIX-2: the trigger is the second lock, and the code does not lean on
 describe("two re-issues of one session at the same moment", () => {
 	it("leaves one live session behind, not two", async () => {
 		const second: TestConnection = await openTestConnection();
-		const other = createSessionRepository({ driver: second, schema: migrated.schema });
+		const other = createSessionRepository({
+			sealing: "migrating",
+			driver: second,
+			schema: migrated.schema,
+		});
 		const previous = createSessionToken();
 		await sessions.deleteEverySessionOwnedBy({ actor: owner });
 		await sessions.insertSession(sessionInsertFor(userId, { tokenHash: previous.tokenHash }));

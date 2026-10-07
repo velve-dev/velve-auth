@@ -67,6 +67,7 @@ async function foundAndDecoded(tokenHash: Uint8Array) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_repository");
 	sessions = createSessionRepository({
+		sealing: "migrating",
 		driver: migrated.connection,
 		schema: migrated.schema,
 	});
@@ -172,7 +173,11 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 
 	it("costs exactly one statement per answer, however often it is asked (S-CACHE-1)", async () => {
 		const counted = countingDriver(migrated.connection);
-		const counting = createSessionRepository({ driver: counted.driver, schema: migrated.schema });
+		const counting = createSessionRepository({
+			sealing: "migrating",
+			driver: counted.driver,
+			schema: migrated.schema,
+		});
 		const issued = createSessionToken();
 		await counting.insertSession(sessionInsertFor(ownerId, { tokenHash: issued.tokenHash }));
 		counted.reset();

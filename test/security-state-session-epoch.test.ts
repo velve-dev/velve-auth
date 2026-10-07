@@ -23,7 +23,12 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("session_epoch");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	sessions = createSessionService({ driver: connection, keys: testKeyProvider(), schema });
+	sessions = createSessionService({
+		sealing: "migrating",
+		driver: connection,
+		keys: testKeyProvider(),
+		schema,
+	});
 });
 
 afterAll(async () => {

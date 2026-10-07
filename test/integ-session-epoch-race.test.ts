@@ -33,6 +33,7 @@ beforeAll(async () => {
 	pool = await openConnectionPool(8);
 	revoker = await openTestConnection();
 	sessions = createSessionService({
+		sealing: "migrating",
 		driver: pool,
 		keys: testKeyRing(1).providerAt(1),
 		schema,

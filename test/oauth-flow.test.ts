@@ -789,6 +789,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
 		const session = sessionCookieOf(signedIn) ?? "";
 		const sessions = createSessionService({
+			sealing: "migrating",
 			keys: TOKEN_KEYS,
 			driver: mounted.auth.connection,
 			schema: mounted.auth.schema,

@@ -3,7 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
-import { createSessionRepository } from "../db/repositories/session.js";
+import { createSessionRepository, type SecurityStateSealing } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -270,6 +270,9 @@ function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig
 }
 
 //session options nobody configured must also reach the completion as absent keys (E-1258)
+//every account is served unsealed until securityState.sealing exists to say otherwise (E-3142)
+const SEALING_UNTIL_IT_IS_CONFIGURED: SecurityStateSealing = "migrating";
+
 function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
 		...(config.session === undefined ? {} : { session: config.session }),
@@ -330,6 +333,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const sessions = createSessionService({
 		driver,
 		keys: config.keys,
+		sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
 		schema,
 		...sessionOptionsOf(config),
 	});
@@ -384,6 +388,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		completeSecondFactor: createSecondFactorCompletion({
 			driver,
 			keys: config.keys,
+			sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
 			schema,
 			...sessionOptionsOf(config),
 		}),

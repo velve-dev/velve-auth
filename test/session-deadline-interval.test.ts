@@ -108,6 +108,7 @@ describe("the deadlines the database actually stores (PostgreSQL 14 and newer)",
 	beforeAll(async () => {
 		migrated = await openMigratedSchema("sessioninterval");
 		sessions = createSessionRepository({
+			sealing: "migrating",
 			driver: migrated.connection,
 			schema: migrated.schema,
 		});

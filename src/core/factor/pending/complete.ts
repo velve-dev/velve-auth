@@ -1,4 +1,5 @@
 import type { Driver } from "../../db/driver.js";
+import type { SecurityStateSealing } from "../../db/repositories/session.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import type { SessionConfig } from "../../session/config.js";
 import type { SessionMetadataMode } from "../../session/metadata.js";
@@ -15,6 +16,7 @@ import type { PendingToken } from "./token.js";
 export interface SecondFactorCompletionOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
+	readonly sealing: SecurityStateSealing;
 	readonly schema?: string;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	readonly session?: Partial<SessionConfig>;
@@ -52,6 +54,7 @@ export function createSecondFactorCompletion(
 				const sessions = createSessionService({
 					driver: tx,
 					keys: options.keys,
+					sealing: options.sealing,
 					schema,
 					...report,
 					...(options.session === undefined ? {} : { session: options.session }),

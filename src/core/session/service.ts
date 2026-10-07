@@ -3,6 +3,7 @@ import type { Driver } from "../db/driver.js";
 import {
 	createSessionRepository,
 	PreviousSessionMissingError,
+	type SecurityStateSealing,
 	type SessionInsert,
 	type SessionWithOwner,
 } from "../db/repositories/session.js";
@@ -49,6 +50,7 @@ export interface ObservedRequest {
 export interface SessionServiceOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
+	readonly sealing: SecurityStateSealing;
 	readonly schema?: string;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	readonly session?: Partial<SessionConfig>;
@@ -148,6 +150,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	const sessions = createSessionRepository({
 		driver: options.driver,
 		schema: options.schema ?? "velve",
+		sealing: options.sealing,
 	});
 
 	function metadataOf(observed: ObservedRequest): SessionMetadata {
@@ -178,7 +181,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	async function verifiedSession(token: string): Promise<VerifiedSession | null> {
 		const tokenHash = sessionTokenHash(token);
 		const candidate = await sessions.findSessionByTokenHash(tokenHash);
-		if (candidate === null) {
+		//an account without an epoch is refused by the seal check and its sessions answer as none
+		if (candidate === null || candidate.sessionEpoch === null) {
 			return null;
 		}
 		const names = candidate.storedFactorNames;

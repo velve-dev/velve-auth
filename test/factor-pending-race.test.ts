@@ -39,7 +39,12 @@ beforeAll(async () => {
 	connection = migrated.connection;
 	schema = migrated.schema;
 	pending = createPendingAuthenticationService({ keys: TOKEN_KEYS, driver: connection, schema });
-	completion = createSecondFactorCompletion({ keys: TOKEN_KEYS, driver: connection, schema });
+	completion = createSecondFactorCompletion({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
+		driver: connection,
+		schema,
+	});
 });
 
 afterAll(async () => {
@@ -101,7 +106,12 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		};
 
 		await expect(
-			createSecondFactorCompletion({ keys: TOKEN_KEYS, driver: refusing, schema }).complete({
+			createSecondFactorCompletion({
+				sealing: "migrating",
+				keys: TOKEN_KEYS,
+				driver: refusing,
+				schema,
+			}).complete({
 				pendingToken: token,
 				factor: "totp",
 				presentedSessionToken: null,
@@ -126,7 +136,12 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		try {
 			const outcomes = await Promise.allSettled(
 				racers.map((racer) =>
-					createSecondFactorCompletion({ keys: TOKEN_KEYS, driver: racer, schema }).complete({
+					createSecondFactorCompletion({
+						sealing: "migrating",
+						keys: TOKEN_KEYS,
+						driver: racer,
+						schema,
+					}).complete({
 						pendingToken: token,
 						factor: "totp",
 						presentedSessionToken: null,

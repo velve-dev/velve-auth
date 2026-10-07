@@ -68,6 +68,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_metadata");
 	sent = capturingDriver(migrated.connection);
 	truncating = createSessionService({
+		sealing: "migrating",
 		keys: TOKEN_KEYS,
 		driver: sent.driver,
 		schema: migrated.schema,
@@ -173,12 +174,14 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 
 	it("stores nothing at all in mode none, and the observed values in mode full", async () => {
 		const nothing = createSessionService({
+			sealing: "migrating",
 			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "none",
 		});
 		const everything = createSessionService({
+			sealing: "migrating",
 			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
@@ -253,6 +256,7 @@ describe("what truncation refuses to pass through", () => {
 
 	it("is what a service built without the option does, and the option's default says so", async () => {
 		const unconfigured = createSessionService({
+			sealing: "migrating",
 			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,

@@ -3904,6 +3904,7 @@ driver's work; the repository reads values, it does not parse them.
 createSessionService(options: {
   driver: Driver
   keys: KeyProvider                                 // takes and checks every token MAC
+  sealing: "required" | "migrating"                 // whether an account without a seal row has an epoch
   schema?: string                                   // "velve"
   reportTokenBindingRefusal?: TokenBindingRefusalReport
   session?: Partial<SessionConfig>
@@ -6421,7 +6422,7 @@ createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRe
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
 
 ```ts
-createSecondFactorCompletion({ driver, keys, schema?, session?, sessionMetadata?, reportTokenBindingRefusal? })
+createSecondFactorCompletion({ driver, keys, sealing, schema?, session?, sessionMetadata?, reportTokenBindingRefusal? })
   .complete({ pendingToken, factor, observed }): Promise<IssuedSession>
 ```
 
@@ -8808,8 +8809,14 @@ A session's MAC also binds the account's `session_epoch` from `velve.security_st
 Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
 waits for a mass revocation that holds the account and then reads the epoch that
 revocation leaves; it takes the MAC over that epoch and inserts the row only while
-the account is still at it, a second guard that under the lock never misses. An
-account without a seal row, which only `"migrating"` serves, is at epoch 1. A
+the account is still at it, a second guard that under the lock never misses.
+Whether an account without a seal row has an epoch is the sealing mode's to say:
+the session service takes `sealing`, `"required"` or `"migrating"`. In
+`"migrating"` such an account is at epoch 1. In `"required"`, and in a session
+repository built without a mode, it has none: issuing a session for it answers as
+no session (`session_required`), and its existing sessions resolve to nothing. The
+instance passes `"migrating"` until the `securityState.sealing` configuration
+exists, because nothing writes a seal row before the seal branch does. A
 resolve checks the MAC over the account's current epoch, so a session issued under
 an older one — a row a writer saved and wrote back after a mass revocation raised
 the epoch — is answered as no session. Rebinding under a new key version never lifts

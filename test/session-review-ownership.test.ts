@@ -39,6 +39,7 @@ async function snapshotOf(user: string): Promise<string> {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_ownership");
 	service = createSessionService({
+		sealing: "migrating",
 		keys: TOKEN_KEYS,
 		driver: migrated.connection,
 		schema: migrated.schema,

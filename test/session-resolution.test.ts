@@ -25,7 +25,12 @@ let service: SessionService;
 let userId: string;
 
 function serviceOver(driver: CountedDriver): SessionService {
-	return createSessionService({ keys: TOKEN_KEYS, driver: driver.driver, schema: migrated.schema });
+	return createSessionService({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
+		driver: driver.driver,
+		schema: migrated.schema,
+	});
 }
 
 async function shiftDeadline(sessionId: string, column: string, by: string): Promise<void> {

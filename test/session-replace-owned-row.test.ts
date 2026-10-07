@@ -43,10 +43,12 @@ async function countRows(userId: string): Promise<number> {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_replace_owned");
 	sessions = createSessionRepository({
+		sealing: "migrating",
 		driver: migrated.connection,
 		schema: migrated.schema,
 	});
 	service = createSessionService({
+		sealing: "migrating",
 		keys: TOKEN_KEYS,
 		driver: migrated.connection,
 		schema: migrated.schema,

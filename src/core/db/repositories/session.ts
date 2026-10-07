@@ -1,15 +1,23 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
+import { ConcealedError } from "../../http/error-map.js";
 import type { StoredTokenMac } from "../../token/binding.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
 import { lockAccountRow } from "../lock.js";
 
-//an account without a seal row, which only "migrating" serves, is at the first epoch
+/** whether every account must have a seal row, or one without is still served while it is sealed */
+export type SecurityStateSealing = "required" | "migrating";
+
+//an account without a seal row is at the first epoch in "migrating" and at none in "required"
 const FIRST_SESSION_EPOCH = 1;
 
-function epochOfAccount(states: string): string {
-	return `COALESCE((SELECT session_epoch FROM ${states} WHERE user_id = $1), ${FIRST_SESSION_EPOCH})`;
+function epochOf(storedEpoch: string, sealing: SecurityStateSealing): string {
+	return sealing === "migrating" ? `COALESCE(${storedEpoch}, ${FIRST_SESSION_EPOCH})` : storedEpoch;
+}
+
+function epochOfAccount(states: string, sealing: SecurityStateSealing): string {
+	return epochOf(`(SELECT session_epoch FROM ${states} WHERE user_id = $1)`, sealing);
 }
 
 const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
@@ -64,8 +72,8 @@ export interface SessionCandidate extends StoredTokenMac {
 	readonly userId: string;
 	/** the factor names exactly as stored, or null where the column holds something that is no name */
 	readonly storedFactorNames: readonly string[] | null;
-	/** the account's current session epoch, which a valid session MAC must have been taken over */
-	readonly sessionEpoch: number;
+	/** the account's current session epoch, or null for an account that has none to be checked against */
+	readonly sessionEpoch: number | null;
 	decode(): SessionWithOwner;
 }
 
@@ -77,6 +85,8 @@ export interface RemovedSession {
 interface SessionRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
+	//a caller that names no mode gets the one that refuses an account without a seal row (S-INTEG-4)
+	readonly sealing?: SecurityStateSealing;
 }
 
 export interface SessionRepository {
@@ -156,7 +166,7 @@ interface SessionRowShape {
 
 interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
 	readonly factor_names: string;
-	readonly session_epoch: string;
+	readonly session_epoch: string | null;
 	readonly token_mac: Uint8Array;
 	readonly token_mac_key_version: number;
 	readonly disabled_at: unknown;
@@ -234,22 +244,27 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 }
 
 //the row is written only while the account is still at the epoch its mac binds (S-INTEG-9)
-function insertStatement(table: string, states: string): string {
+function insertStatement(table: string, states: string, sealing: SecurityStateSealing): string {
 	return `INSERT INTO ${table}
 		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent,
 			token_mac, token_mac_key_version)
 	SELECT $1, $2, now() + make_interval(secs => $3::double precision),
 		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9
-	WHERE ${epochOfAccount(states)} = $10::bigint
+	WHERE ${epochOfAccount(states, sealing)} = $10::bigint
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
 //one joined query reads disabled at so a disabled account cannot pass as signed in (S-CACHE-2)
-function resolveStatement(table: string, users: string, states: string): string {
+function resolveStatement(
+	table: string,
+	users: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
 	return `SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 		s.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 		s.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
-		COALESCE(st.session_epoch, ${FIRST_SESSION_EPOCH})::text AS session_epoch
+		${epochOf("st.session_epoch", sealing)}::text AS session_epoch
 	FROM ${table} s
 	JOIN ${users} u ON u.id = s.user_id
 	LEFT JOIN ${states} st ON st.user_id = s.user_id
@@ -294,12 +309,15 @@ function deleteLiveOwnedStatement(table: string, users: string): string {
 	RETURNING s.id`;
 }
 
-function currentEpochStatement(states: string): string {
-	return `SELECT ${epochOfAccount(states)}::text AS session_epoch`;
+function currentEpochStatement(states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${epochOfAccount(states, sealing)}::text AS session_epoch`;
 }
 
 //a bigint arrives as text so it is read here and refused when it is not an exact integer
-function toEpoch(value: string): number {
+function toEpoch(value: string | null): number | null {
+	if (value === null) {
+		return null;
+	}
 	const epoch = Number(value);
 	if (!Number.isSafeInteger(epoch) || epoch < FIRST_SESSION_EPOCH) {
 		throw new TypeError("velve.security_state.session_epoch holds no epoch this library writes");
@@ -360,9 +378,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const table = qualifiedTableName(options.schema, "session");
 	const users = qualifiedTableName(options.schema, "user");
 	const states = qualifiedTableName(options.schema, "security_state");
-	const insertSql = insertStatement(table, states);
-	const resolveSql = resolveStatement(table, users, states);
-	const currentEpochSql = currentEpochStatement(states);
+	const sealing = options.sealing ?? "required";
+	const insertSql = insertStatement(table, states, sealing);
+	const resolveSql = resolveStatement(table, users, states, sealing);
+	const currentEpochSql = currentEpochStatement(states, sealing);
 	const extendSql = extendIdleDeadlineStatement(table);
 	const rebindSql = rebindStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
@@ -374,9 +393,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const listOwnedSql = listOwnedStatement(table);
 	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table);
 
-	async function currentEpochOf(driver: Driver, userId: string): Promise<number> {
-		const [row] = await driver.query<{ session_epoch: string }>(currentEpochSql, [userId]);
-		return toEpoch(row?.session_epoch ?? String(FIRST_SESSION_EPOCH));
+	async function currentEpochOf(driver: Driver, userId: string): Promise<number | null> {
+		const [row] = await driver.query<{ session_epoch: string | null }>(currentEpochSql, [userId]);
+		return toEpoch(row?.session_epoch ?? null);
 	}
 
 	async function insertUnderCurrentEpoch(
@@ -384,6 +403,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		insert: SessionInsert,
 	): Promise<SessionRowShape | undefined> {
 		const epoch = await currentEpochOf(driver, insert.userId);
+		//an account without an epoch has no seal row in "required" and gets no session (S-INTEG-4)
+		if (epoch === null) {
+			throw new ConcealedError("session_not_found");
+		}
 		const mac = await insert.bindUnderEpoch(epoch);
 		const [row] = await driver.query<SessionRowShape>(insertSql, [
 			...insertParameters(insert),

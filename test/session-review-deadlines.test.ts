@@ -62,6 +62,7 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_deadlines");
 	counter = countingByVerb(migrated.connection);
 	service = createSessionService({
+		sealing: "migrating",
 		keys: TOKEN_KEYS,
 		driver: counter.driver,
 		schema: migrated.schema,
@@ -117,6 +118,7 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 
 	it("lets a short interval write on every request, so the throttle is the interval and nothing else", async () => {
 		const eager = createSessionService({
+			sealing: "migrating",
 			keys: TOKEN_KEYS,
 			driver: counter.driver,
 			schema: migrated.schema,
@@ -186,6 +188,7 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	it("refuses a configuration that would let the idle deadline outlive it", () => {
 		expect(() =>
 			createSessionService({
+				sealing: "migrating",
 				keys: TOKEN_KEYS,
 				driver: counter.driver,
 				schema: migrated.schema,
