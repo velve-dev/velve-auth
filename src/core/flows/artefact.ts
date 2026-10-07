@@ -3,7 +3,7 @@ import type { Driver } from "../db/driver.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { KeyProvider } from "../keys/provider.js";
-import type { TokenBindingRefusalReport } from "../token/binding.js";
+import { reportBrokenState, type TokenBindingRefusalReport } from "../token/binding.js";
 import {
 	createOneTimeTokens,
 	type IssuedOneTimeToken,
@@ -36,6 +36,8 @@ function oneTimeTokensOn(driver: Driver, store: ArtefactStore) {
 	);
 }
 
+const ACCOUNT_ADDRESS = "accountEmail";
+
 //an address that names no account must mint a row too and cost the same statements (E-597)
 export async function mintArtefact(
 	transaction: Driver,
@@ -43,15 +45,35 @@ export async function mintArtefact(
 	request: {
 		readonly purpose: OneTimeTokenPurpose;
 		readonly subject: OneTimeTokenSubject;
+		/** the account's address the token is issued against, which redemption must still find */
+		readonly accountEmail: string | null;
 		readonly payload?: OneTimeTokenPayload;
 	},
 ): Promise<MintedArtefact> {
 	const issued = await oneTimeTokensOn(transaction, store).issue({
 		...request.subject,
 		purpose: request.purpose,
-		...(request.payload === undefined ? {} : { payload: request.payload }),
+		payload: { ...request.payload, [ACCOUNT_ADDRESS]: request.accountEmail },
 	});
 	return { ...issued, purpose: request.purpose };
+}
+
+//a token mailed while a writer had moved the account's address must not be redeemed after it moved back (E-3264)
+export function refuseUnlessTheAddressIsStillTheAccounts(
+	store: ArtefactStore,
+	redeemed: OneTimeTokenRedemption,
+	accountEmail: string | null,
+): void {
+	const bound = redeemed.payload?.[ACCOUNT_ADDRESS];
+	if (bound !== undefined && bound === accountEmail) {
+		return;
+	}
+	reportBrokenState(store.reportTokenBindingRefusal, {
+		userId: redeemed.userId,
+		occasion: "token_redemption",
+		reason: "seal_mismatch",
+	});
+	throw new ConcealedError("token_not_found");
 }
 
 //a request for an unknown address must wait where a request for an account waits (E-931)

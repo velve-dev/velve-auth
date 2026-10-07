@@ -34,6 +34,7 @@ export async function requestMagicLink(
 		mintArtefact(transaction, environment.services, {
 			purpose: "magic_link",
 			subject: subjectOfAddress(owner, address),
+			accountEmail: owner?.email ?? address,
 		}),
 	);
 	await sendOrUndo(

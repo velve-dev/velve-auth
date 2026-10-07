@@ -8,7 +8,7 @@ import type { RequestContext } from "../http/route.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
 import type { ObservedRequest } from "../session/service.js";
 import type { OneTimeTokenRedemption } from "../token/one-time-token.js";
-import type { ArtefactMailer } from "./artefact.js";
+import { type ArtefactMailer, refuseUnlessTheAddressIsStillTheAccounts } from "./artefact.js";
 
 export interface FlowEnvironment {
 	readonly services: RouteServices;
@@ -56,6 +56,7 @@ export async function accountOrDisabledOfRedemption(
 	redemption: OneTimeTokenRedemption,
 ): Promise<RedeemedAccount | typeof A_DISABLED_ACCOUNT> {
 	const user = await readUserOrRefuse(environment, driver, redemption.userId);
+	refuseUnlessTheAddressIsStillTheAccounts(environment.services, redemption, user.email);
 	if (user.disabledAt !== null) {
 		return A_DISABLED_ACCOUNT;
 	}

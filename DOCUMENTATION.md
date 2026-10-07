@@ -8844,6 +8844,21 @@ to the other ceremony or inserts for a challenge of their own is refused at
 consumption like an unknown challenge (`challenge_not_found`) and reported with
 the occasion `factor_check`.
 
+**The address a link was mailed to.** Every one-time token the email flows mint
+carries `accountEmail` in its payload, and so under its MAC: the account's
+`user.email` when the token was issued — the address a reset, a magic link or an
+address verification is mailed to, and for an address change the old address,
+beside the new one in `newEmail`. A cover artefact for an unknown address carries
+that address. The redemption reads the account and compares: if `user.email` is
+no longer the bound address, the state is broken — a writer set the address to
+their own only for the request and restored it — and the redemption is answered
+as a missing token (`invalid_token`) and reported with `reason: "seal_mismatch"`
+and the occasion `token_redemption`. Until the seal branch reads the sealed
+address in the statement that reads the seal, the comparison is against the
+stored `user.email` (`refuseUnlessTheAddressIsStillTheAccounts` in
+`src/core/flows/artefact.ts`, called by every redemption through
+`accountOrDisabledOfRedemption`).
+
 **What the MAC leaves to a writer.** Section 3.18 names these limits, and they
 hold here as stated:
 

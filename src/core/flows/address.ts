@@ -45,6 +45,7 @@ export async function requestVerification(
 		mintArtefact(transaction, environment.services, {
 			purpose: "email_verify",
 			subject: { userId: user.id },
+			accountEmail: address,
 		}),
 	);
 	await sendOrUndo(mailerOf(environment, email), minted, {
@@ -115,6 +116,7 @@ export async function requestChange(
 		mintArtefact(transaction, environment.services, {
 			purpose: "email_change",
 			subject: { userId: user.id },
+			accountEmail: user.email,
 			payload: { [CHANGED_ADDRESS]: address },
 		}),
 	);

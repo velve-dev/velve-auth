@@ -45,6 +45,7 @@ export async function requestReset(
 		mintArtefact(transaction, environment.services, {
 			purpose: "password_reset",
 			subject: subjectOfAddress(owner, address),
+			accountEmail: owner?.email ?? address,
 		}),
 	);
 	await sendOrUndo(

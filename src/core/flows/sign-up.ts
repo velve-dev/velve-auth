@@ -118,6 +118,7 @@ async function register(
 				: await mintArtefact(transaction, flow.environment.services, {
 						purpose: "email_verify",
 						subject: { userId: created.id },
+						accountEmail: created.email,
 					});
 		const issued = await createSessionUnderHooks(hooks, { userId: created.id, factors }, () =>
 			sessions.boundTo(transaction).issue({
