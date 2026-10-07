@@ -369,7 +369,7 @@ the seal covers and when it is written and checked is in
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | `uuid` | primary key, cascades from `velve.user` |
-| `version` | `bigint` | at least 1; rises by one with every seal of the account |
+| `version` | `bigint` | from 1 to 9007199254740991, `Number.MAX_SAFE_INTEGER`, because it reaches the application as a `number`; rises by one with every seal of the account |
 | `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
 | `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
 | `sealed_at` | `timestamptz` | when the row was last written |
