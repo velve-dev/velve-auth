@@ -15278,3 +15278,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Dropping alarms over the bound, which makes a flood a way to hide the alarm that matters. (b) A bound per account only, which is the fault.
 **Reason.** An alarm exists to be read by a person, who can read a count and cannot read a flood.
 **Price.** An operator learns of the hundred-and-first broken account only as a number, without its id, until the window passes. A callback written for the first draft breaks on a nullable `userId`.
+
+<a id="e-3098"></a>
+
+### T-INTEG-4 and T-INTEG-9 attack one account per path
+`E-3098` · security-state · specification, test plan, settled
+
+**Context.** A review found T-INTEG-4's threshold — seven paths refused, one alarm each — unreachable on one account, because the alarm is deduplicated per account and reason, and T-INTEG-9's twelve rows "with alarm" the same. With the occasion now in the deduplication key (E-3097) the paths of T-INTEG-4 would be separable on one account, but T-INTEG-9's rows share occasion and reason. Both cases now break an account of their own for every path or attack, and the thresholds say one alarm each, T-INTEG-4's with the path's occasion.
+**Rejected.** An injected clock advanced past the window between paths, which the review offered; it tests the window rather than the paths and needs a clock seam the alarm does not have yet.
+**Reason.** One account per path makes each alarm attributable without depending on the deduplication rule at all.
+**Price.** The two cases create about twenty accounts each.
