@@ -61,6 +61,13 @@ async function post(path: string, body: unknown, cookie?: string): Promise<Respo
 	return answer;
 }
 
+//every transaction the library opens names its isolation first (E-3310)
+function transactionsNotOpenedAtReadCommitted(): string[] {
+	return transactions
+		.map((trace) => trace[0] ?? "")
+		.filter((first) => !first.startsWith("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"));
+}
+
 function tokenStatementsAfterTheAccountLock(): string[][] {
 	return transactions.filter((trace) => {
 		const lock = trace.findIndex((sql) => sql.includes("FOR NO KEY UPDATE"));
@@ -94,7 +101,7 @@ afterAll(async () => {
 	await migrated.connection.close();
 });
 
-describe("velve.one_time_token before velve.user in every flow that mints or redeems and issues (CLAUDE.md section 7)", () => {
+describe("velve.one_time_token before velve.user, at READ COMMITTED, in every flow that mints or redeems and issues (CLAUDE.md section 7)", () => {
 	const ADDRESS = "order@example.com";
 	const PASSWORD = "correct-horse-battery-staple";
 	let cookie: string;
@@ -107,6 +114,7 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 			transactions.some((trace) => trace.some((sql) => sql.includes("FOR NO KEY UPDATE"))),
 		).toBe(true);
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
+		expect(transactionsNotOpenedAtReadCommitted()).toStrictEqual([]);
 	});
 
 	it("holds for the verification resent and redeemed", async () => {
@@ -115,6 +123,7 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 		await post("/email/redeem-verification", { token: tokenMailed("email_verification") });
 
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
+		expect(transactionsNotOpenedAtReadCommitted()).toStrictEqual([]);
 	});
 
 	it("holds for the magic link requested and redeemed", async () => {
@@ -125,6 +134,7 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 		);
 
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
+		expect(transactionsNotOpenedAtReadCommitted()).toStrictEqual([]);
 	});
 
 	it("holds for the address change requested and redeemed", async () => {
@@ -133,6 +143,7 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 		await post("/email/redeem-change", { token: tokenMailed("email_change") });
 
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
+		expect(transactionsNotOpenedAtReadCommitted()).toStrictEqual([]);
 	});
 
 	it("holds for the password reset requested and redeemed", async () => {
@@ -147,5 +158,6 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 			transactions.some((trace) => trace.some((sql) => sql.includes("FOR NO KEY UPDATE"))),
 		).toBe(true);
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
+		expect(transactionsNotOpenedAtReadCommitted()).toStrictEqual([]);
 	});
 });

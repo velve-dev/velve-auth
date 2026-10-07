@@ -16109,6 +16109,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A test that stands in for the seal branch's raise has to raise the way that branch will.
 **Price.** The epochs in these tests differ on every run.
 
+<a id="e-3271"></a>
+
+### Every transaction this branch opens is the instance's, and its trace shows READ COMMITTED first
+`E-3271` · security-state-tokens · S-INTEG-3, settled
+
+**Context.** The merged foundation wraps the instance's driver in `withReadCommittedTransactions` (E-3310). Every transaction it opens therefore begins with `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`, whatever `default_transaction_isolation` says. This branch opens transactions in four places: the session repository's issue under the account lock, its revocation of every other session, the second-factor completion and the one-time token's replacement. All four run on the driver the instance hands to its services. None of the factories is exported from a package entry point, so no caller can hand them an unwrapped driver from outside the library. A factory that wrapped its own driver would break the flows that pass an open transaction in. A nested `transaction` there is a savepoint, and `SET TRANSACTION` after the outer transaction's first statement is refused, so the factories do not wrap. `test/integ-token-order-trace.test.ts` now also requires the first statement of every transaction that sign-up and the email flows open to be the isolation statement. All five cases fail when the instance passes its driver unwrapped.
+**Rejected.** Wrapping inside each factory, for the reason above.
+**Reason.** One wrapper at the one place the configured driver enters keeps the isolation statement first, and a nested call inside it stays a savepoint.
+**Price.** A test or a future caller that builds these factories over a raw driver gets the database's default isolation, as the tests here do on purpose.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model
