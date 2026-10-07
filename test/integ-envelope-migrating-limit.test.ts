@@ -9,12 +9,7 @@ import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
-/**
- * The limit S-INTEG-1 leaves under "migrating", pinned as stated (E-3122): an old-form ciphertext
- * copied from the writer's own account into an unsealed account opens, and the writer signs in as
- * the victim with their own password. It stops opening the moment the account has a seal row, and
- * it never opens under "required".
- */
+//a copied old envelope opens under migrating until the account is sealed (E-3122)
 
 const keys = testKeyRing(1).providerAt(1);
 const ATTACKER_PASSWORD = "the attacker's own password, long enough 91";

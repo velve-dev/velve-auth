@@ -7,12 +7,7 @@ import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./d
 import type { TestConnection } from "./db-postgres-connection.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
-/**
- * S-INTEG-1 with the maintenance step running concurrently: a reader that read an old-form secret
- * must decide whether the old form is readable from the same snapshot, so a conversion and a seal
- * committed right after the read cannot refuse a legitimate user (E-3121). The interception runs
- * the conversion and writes a seal row between the read and everything the reader does next.
- */
+//a reader decides whether the old form opens from the snapshot it read the secret in (E-3121)
 
 const keys = testKeyRing(1).providerAt(1);
 

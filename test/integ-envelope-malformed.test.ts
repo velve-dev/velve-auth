@@ -94,9 +94,7 @@ async function sealRowFor(userId: string) {
 	);
 }
 
-/**
- * S-INTEG-1 against a sealed account, malformed values and the start check of the sealing mode.
- */
+//a sealed account, a malformed value and the start check all refuse the old form (S-INTEG-1)
 describe("S-INTEG-1: the old form only for an account without a seal row", () => {
 	it("refuses an unbound password envelope of an account WITH a seal row under migrating", async () => {
 		const account = await signUp();

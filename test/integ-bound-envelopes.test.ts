@@ -28,11 +28,7 @@ import {
 } from "./oauth-provider.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
-/**
- * T-INTEG-1 against a real database and through the paths that decrypt: a password sign-in, a TOTP
- * check on a pending sign-in, an OAuth callback, and for the provider tokens, which no path of the
- * library reads back, the binding an application reading them uses.
- */
+//every path that decrypts opens only the envelope bound to its own row (T-INTEG-1)
 
 const PASSWORD = "a password long enough for the policy 7c1e";
 const ring = testKeyRing(2);

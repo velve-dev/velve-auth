@@ -28,10 +28,7 @@ import { configFor } from "./auth-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
-/**
- * The binding of S-INTEG-1 at the level of the envelope: what the additional data encodes, how the
- * two stored forms are told apart, and what the maintenance step will call to rewrite a value.
- */
+//the envelope's additional data names its column, its owner and its row (S-INTEG-1)
 
 const ring = testKeyRing(2);
 const keys = ring.providerAt(1, [1]);

@@ -7,10 +7,7 @@ import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./d
 import type { TestConnection } from "./db-postgres-connection.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyProvider } from "./totp-fixtures.js";
 
-/**
- * The sealing mode a reader falls back to when it is built without one is "required", so a
- * repository or service a caller forgot to configure reads no old envelope (S-INTEG-1, E-3121).
- */
+//a reader built without a sealing mode reads no old envelope (S-INTEG-1)
 
 let connection: TestConnection;
 let schema: string;

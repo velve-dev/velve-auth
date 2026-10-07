@@ -20,10 +20,7 @@ import {
 } from "./oauth-provider.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
-/**
- * Attacks a database writer without the root key tries against the envelopes and the rows they are
- * bound to, every one expected to be refused (S-INTEG-1).
- */
+//a database writer without the root key cannot make a moved or copied envelope open (S-INTEG-1)
 
 const PASSWORD = "a password long enough for the policy 7c1e";
 const ring = testKeyRing(2);

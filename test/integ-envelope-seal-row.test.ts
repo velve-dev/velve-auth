@@ -11,10 +11,7 @@ import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.j
 import type { TestConnection } from "./db-postgres-connection.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
-/**
- * S-INTEG-1, last sentence: the unbound form is readable only in "migrating" AND only for an account
- * WITHOUT a seal row. The seal row is read in the statement that reads the envelope (E-3121).
- */
+//the old form opens only under migrating and only for an account without a seal row (E-3121)
 
 const PASSWORD = "a password long enough for the policy 7c1e";
 const keys = testKeyRing(1).providerAt(1);
