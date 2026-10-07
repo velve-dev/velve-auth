@@ -15508,3 +15508,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A dummy seal check for an unknown token, which would cost every request with a stale cookie a full state read for nothing.
 **Reason.** The timing channel matters where it reveals something the caller did not know; a token holder learning that the account behind it is broken learns about their own account or their own write.
 **Price.** E-3096's promise is withdrawn for three paths, and a reader of E-3096 alone believes it still holds.
+
+<a id="e-3201"></a>
+
+### Every alarm reason and every sealed column has a case
+`E-3201` · security-state, second range · specification, test plan, settled
+
+**Context.** The review held the T-INTEG cases against the alarm reasons and the seal row's own columns. T-INTEG-2 did not tamper with `session_epoch` or the seal row's `key_version`, nor insert a `password_reset_required` row, although each changes what the check reads; no case raised `key_version_unknown`, `anchor_unavailable`, `envelope_binding_mismatch` or the new `key_unusable`; and T-INTEG-1's copies failed without saying whether they alarm. T-INTEG-2 now detects twenty changes; T-INTEG-4 adds one account per remaining reason and expects four refusals with an alarm of that reason each; T-INTEG-1's six copies alarm with `envelope_binding_mismatch` each. With these, every value of the `reason` union except `suppressed`, which T-INTEG-5 covers, has a case that raises it.
+**Rejected.** A separate test case for the reasons, which would need a requirement of its own under section 6's naming and has none.
+**Reason.** An alarm reason nothing raises in a test is a branch nothing proves reachable.
+**Price.** T-INTEG-4 needs an anchor plugin and a key provider of its own, beside the accounts per path.
