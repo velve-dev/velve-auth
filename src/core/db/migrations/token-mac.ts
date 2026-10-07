@@ -7,9 +7,13 @@ export const tokenMacSchema: Migration = {
    its security-relevant content, with the version it was taken under (section 3.18, S-INTEG-9).
    No existing row has one, so every session, one-time token and pending authentication ends.
    The tables are locked first, as a 1.x instance still running would otherwise insert between
-   the deletes and the NOT NULL columns; stop every 1.x instance before migrating. */
-LOCK TABLE velve.session, velve.one_time_token, velve.pending_authentication
-  IN ACCESS EXCLUSIVE MODE;
+   the deletes and the NOT NULL columns; stop every 1.x instance before migrating. They are
+   locked one statement each in the order a sign-in reaches them, the pending authentication
+   and the one-time token before the session, so a completion in flight is waited for and
+   never deadlocks with the migration. */
+LOCK TABLE velve.pending_authentication IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE velve.one_time_token IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE velve.session IN ACCESS EXCLUSIVE MODE;
 DELETE FROM velve.session;
 DELETE FROM velve.one_time_token;
 DELETE FROM velve.pending_authentication;

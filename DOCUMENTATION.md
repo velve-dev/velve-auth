@@ -8967,8 +8967,12 @@ Migration 4 locks the three tables, deletes every row of them and then adds the
 `NOT NULL` columns: every session ends, and every open link and pending sign-in
 expires. **Stop every 1.x instance before you migrate.** The lock keeps a 1.x
 instance that still runs from inserting a row between the deletes and the new
-columns, which would make the migration fail and roll back; with the lock the 1.x
-instance waits instead, and its inserts fail once the columns exist.
+columns, which would make the migration fail and roll back. It takes the tables
+one at a time in the order a sign-in reaches them — `pending_authentication`,
+then `one_time_token`, then `session` — so a 1.x second-factor completion or
+password reset in flight finishes first and the migration waits for it, rather
+than the two deadlocking and PostgreSQL aborting the migration. A 1.x insert that
+arrives after the lock waits, and fails once the columns exist.
 Each check costs one HMAC-SHA256 over about 150 bytes; measured on one machine
 at 90 to 130 microseconds per check through `rootKeyProvider`, the key lookup
 included.

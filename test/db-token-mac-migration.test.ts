@@ -43,10 +43,12 @@ describe("migration 4, the token MAC columns", () => {
 			.map((statement) => statement.replace(/\s+/g, " ").trim())
 			.filter((statement) => statement.length > 0);
 
-		expect(statements[0]).toBe(
-			"LOCK TABLE velve.session, velve.one_time_token, velve.pending_authentication IN ACCESS EXCLUSIVE MODE",
-		);
-		expect(statements[1]).toBe("DELETE FROM velve.session");
+		expect(statements.slice(0, 4)).toStrictEqual([
+			"LOCK TABLE velve.pending_authentication IN ACCESS EXCLUSIVE MODE",
+			"LOCK TABLE velve.one_time_token IN ACCESS EXCLUSIVE MODE",
+			"LOCK TABLE velve.session IN ACCESS EXCLUSIVE MODE",
+			"DELETE FROM velve.session",
+		]);
 	});
 
 	it("signs every user out and leaves the three tables with the MAC columns", async () => {
@@ -96,3 +98,105 @@ describe("migration 4, the token MAC columns", () => {
 		]);
 	});
 });
+
+//a 1.x transaction holds the first table and is about to insert a session when the migration starts
+const FLOWS_IN_FLIGHT: readonly [string, string, string][] = [
+	[
+		"a second-factor completion",
+		"pending_authentication",
+		`DELETE FROM %s.pending_authentication WHERE user_id = $1`,
+	],
+	["a password reset", "one_time_token", `DELETE FROM %s.one_time_token WHERE user_id = $1`],
+];
+
+describe("migration 4 against a 1.x sign-in in flight", () => {
+	let completion: TestConnection;
+	let observer: TestConnection;
+
+	beforeAll(async () => {
+		completion = await openTestConnection();
+		observer = await openTestConnection();
+	});
+
+	afterAll(async () => {
+		await completion.close();
+		await observer.close();
+	});
+
+	async function untilTheMigrationWaits(): Promise<void> {
+		for (let poll = 0; poll < 300; poll += 1) {
+			const [row] = await observer.query<{ n: number }>(
+				`SELECT count(*)::int AS n FROM pg_stat_activity
+				 WHERE wait_event_type = 'Lock' AND query LIKE '%LOCK TABLE%'`,
+				[],
+			);
+			if ((row?.n ?? 0) > 0) {
+				return;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		throw new Error("the migration never waited on the sign-in's lock");
+	}
+
+	it.each(FLOWS_IN_FLIGHT)(
+		"waits for %s and is not the transaction a deadlock aborts",
+		async (_flow, _table, firstStatement) => {
+			const flowSchema = uniqueSchemaName("token_mac_lock_order");
+			await runMigrations({
+				driver: connection,
+				schema: flowSchema,
+				migrations: coreMigrations("email").filter((migration) => migration.version < 4),
+			});
+			try {
+				const userId = await createUser(connection, flowSchema);
+				await connection.query(
+					`INSERT INTO ${flowSchema}.pending_authentication
+					   (token_sha256, user_id, factors_completed, expires_at)
+					 VALUES ($1, $2, '{password}', now() + interval '5 minutes')`,
+					[randomBytes(32), userId],
+				);
+				await connection.query(
+					`INSERT INTO ${flowSchema}.one_time_token (token_sha256, purpose, user_id, expires_at)
+					 VALUES ($1, 'password_reset', $2, now() + interval '1 hour')`,
+					[randomBytes(32), userId],
+				);
+
+				await completion.query("BEGIN", []);
+				await completion.query(firstStatement.replace("%s", flowSchema), [userId]);
+				const migrating = runMigrations({
+					driver: connection,
+					schema: flowSchema,
+					migrations: coreMigrations("email"),
+				})
+					.then((report) => report.appliedVersions)
+					.catch((failure: unknown) => `failed: ${(failure as Error).message}`);
+				await untilTheMigrationWaits();
+				const inserted = await completion
+					.query(
+						`INSERT INTO ${flowSchema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+						 VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days')`,
+						[userId, randomBytes(32)],
+					)
+					.then(() => "inserted")
+					.catch((failure: unknown) => `failed: ${(failure as Error).message}`);
+				await completion.query("COMMIT", []).catch(() => undefined);
+				const migrated = await migrating;
+
+				expect({ migrated, inserted }).toStrictEqual({ migrated: [4], inserted: "inserted" });
+				expect(await rowsInSchema(flowSchema, "session")).toBe(0);
+			} finally {
+				await completion.query("ROLLBACK", []).catch(() => undefined);
+				await dropSchema(connection, flowSchema);
+			}
+		},
+		30_000,
+	);
+});
+
+async function rowsInSchema(target: string, table: string): Promise<number> {
+	const [row] = await connection.query<{ n: number }>(
+		`SELECT count(*)::int AS n FROM ${target}.${table}`,
+		[],
+	);
+	return row?.n ?? -1;
+}
