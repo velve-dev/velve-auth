@@ -15598,3 +15598,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Taking the lock before the consumption, which reverses the order §7 fixes and reopens the deadlock E-1616 closed.
 **Reason.** A snapshot from an earlier statement of the same transaction is still one snapshot; what the seal needs is that check and recomputation read the same one.
 **Price.** The snapshot is a few statements older than the lock, so a writer's row committed between the consumption and the lock is excluded from the seal too, which is the intended effect, and the next check sees it.
+
+<a id="e-3210"></a>
+
+### A unique violation on the first seal is retried like a serialization failure
+`E-3210` · security-state · specification, S-INTEG-3, S-INTEG-8, settled
+
+**Context.** E-3193 retried a sealing transaction on a serialization failure. The third review ran two REPEATABLE READ transactions that first-seal one account: the second waits on the account lock, still sees no seal row in its snapshot, and its insert fails with 23505, a unique violation, not 40001. So a change racing the maintenance step on an unsealed account would fail outright instead of being retried. The orchestrator decided that a unique violation on the first seal's insert is treated exactly like a serialization failure, within the same bound. Section 3.18 and S-INTEG-8 say so, and T-INTEG-8 starts a change and the maintenance step together on one unconverted account, expecting the change to succeed after a retry, one seal row and no alarm. `test/security-state-first-seal-conflict.test.ts` holds the premise that the conflict surfaces as 23505.
+**Rejected.** `INSERT … ON CONFLICT DO NOTHING` for the first seal, which would let the losing transaction continue on a snapshot that does not contain the winner's seal and recompute over components the winner may have changed.
+**Reason.** The losing transaction read a state that is no longer the account's, which is what a serialization failure means whatever code PostgreSQL gives it.
+**Price.** The retry only covers the first seal's primary key; another unique violation still fails the change.
