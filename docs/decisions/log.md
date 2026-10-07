@@ -15778,3 +15778,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the consumption into the sealing transaction, which would hold a connection and the account lock across the provider's token endpoint.
 **Reason.** The specification has to describe the order the code keeps, and the order the code keeps is the one that holds no transaction open across a network call.
 **Price.** A sealing transaction that fails after the exchange does not give the flow back; the user starts the sign-in again, as with any other failed callback.
+
+<a id="e-3288"></a>
+
+### Three premise tests now name the failure they expect
+`E-3288` · security-state · tests, settled
+
+**Context.** The fourth review found three premise tests that could not tell a fault from a pass. `test/security-state-version-ceiling.test.ts` raised `version` and `session_epoch` together and accepted any refusal, so the refusal could have come from the epoch's constraint or from something else entirely. `test/security-state-ledger-tamper.test.ts` accepted any failure of `migrate()`; deleting the ledger row of migration 2 instead of 3 also fails it, with 42710, and the case passed that too. `test/security-state-first-seal-conflict.test.ts` started the second transaction's lock and committed the first without seeing the second wait, so it could pass by the second simply arriving late, and it still held the REPEATABLE READ premise E-3280 abandoned. The ceiling case now raises only `version` and expects 23514 on `security_state_version_check`. The ledger case expects 42P07, `relation "security_state" already exists`. The first-seal case waits on `pg_blocking_pids` before the first commits, holds the READ COMMITTED rule — the second reads the seal row after the lock and inserts nothing — and keeps the 23505 under REPEATABLE READ as its control. Each tightened assertion was run against a planted fault (version one below the ceiling, the ledger row of migration 2 deleted) and failed.
+**Rejected.** Matching on the SQLSTATE alone for the ceiling case, which a check constraint on any other column also produces.
+**Reason.** A premise test exists to say that the database does a specific thing, and an assertion that any failure will do says nothing about which.
+**Price.** The two message assertions depend on PostgreSQL's English message text and on the constraint's generated name; a server with another `lc_messages` or a renamed constraint fails them without a fault in the library.

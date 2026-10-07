@@ -3,11 +3,14 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-// Section 3.18 retries a sealing transaction on a serialization failure and on a unique violation
-// of the first seal's insert. Two REPEATABLE READ transactions that first-seal one account do not
-// meet as a serialization failure: the second waits on the lock, still reads no seal row in its
-// snapshot, and its insert fails on the primary key. This case holds that premise; the sealing code
-// that retries on it is the seal branch's (E-3210).
+// Section 3.18 *Sealing* runs every sealing transaction at READ COMMITTED and reads the seal row
+// after the account lock, so two first seals of one account run one after the other and the
+// second reads the row the first committed. A unique violation on a first seal's insert remains
+// possible only for a seal row created without the lock, and is retried within three attempts
+// (E-3210, E-3280). These cases hold that premise and, as a control, the REPEATABLE READ failure
+// the old rule ran into. The second transaction is seen waiting on the lock before the first
+// commits, so neither case can pass by the second arriving late. The sealing code that retries is
+// the seal branch's.
 
 let first: TestConnection;
 let second: TestConnection;
@@ -34,28 +37,71 @@ function sealInsert(connection: TestConnection, userId: string): Promise<unknown
 	);
 }
 
-describe("two first seals of one account (section 3.18, Sealing)", () => {
-	it("fail the later one with a unique violation, not a serialization failure", async () => {
-		const userId = await createUser(first, schema);
-		await first.query("BEGIN ISOLATION LEVEL REPEATABLE READ", []);
-		await second.query("BEGIN ISOLATION LEVEL REPEATABLE READ", []);
-		try {
-			await first.query(lockAccountRowStatement(schema), [userId]);
-			await sealInsert(first, userId);
-			const secondLock = second.query(lockAccountRowStatement(schema), [userId]);
-			await first.query("COMMIT", []);
-			await secondLock;
-			const [seen] = await second.query<{ n: number }>(
-				`SELECT count(*)::int AS n FROM ${schema}.security_state WHERE user_id = $1`,
-				[userId],
-			);
-			const sqlState = await sealInsert(second, userId)
-				.then(() => "inserted")
-				.catch((error: { sqlState?: string; code?: string }) => error.sqlState ?? error.code);
-			expect({ seen: seen?.n, sqlState }).toStrictEqual({ seen: 0, sqlState: "23505" });
-		} finally {
-			await first.query("ROLLBACK", []).catch(() => undefined);
-			await second.query("ROLLBACK", []);
+async function backendOf(connection: TestConnection): Promise<number> {
+	const [row] = await connection.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
+	return row?.pid ?? -1;
+}
+
+async function untilWaiting(observer: TestConnection, waiter: number): Promise<void> {
+	for (let poll = 0; poll < 300; poll += 1) {
+		const [row] = await observer.query<{ n: number }>(
+			"SELECT cardinality(pg_blocking_pids($1::int))::int AS n",
+			[waiter],
+		);
+		if ((row?.n ?? 0) > 0) {
+			return;
 		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error("the second transaction never waited on the account lock");
+}
+
+async function secondFirstSealAfterWaiting(isolation: string) {
+	const userId = await createUser(first, schema);
+	const secondBackend = await backendOf(second);
+	await first.query(`BEGIN ISOLATION LEVEL ${isolation}`, []);
+	await second.query(`BEGIN ISOLATION LEVEL ${isolation}`, []);
+	try {
+		await first.query(lockAccountRowStatement(schema), [userId]);
+		await sealInsert(first, userId);
+		const secondLock = second.query(lockAccountRowStatement(schema), [userId]);
+		const observer = await openTestConnection();
+		try {
+			await untilWaiting(observer, secondBackend);
+		} finally {
+			await observer.close();
+		}
+		await first.query("COMMIT", []);
+		await secondLock;
+		const [seen] = await second.query<{ n: number }>(
+			`SELECT count(*)::int AS n FROM ${schema}.security_state WHERE user_id = $1`,
+			[userId],
+		);
+		const sqlState =
+			seen?.n === 0
+				? await sealInsert(second, userId)
+						.then(() => "inserted")
+						.catch((error: { sqlState?: string }) => error.sqlState ?? "no SQLSTATE")
+				: "not attempted, the seal row was read";
+		return { seen: seen?.n, sqlState };
+	} finally {
+		await first.query("ROLLBACK", []).catch(() => undefined);
+		await second.query("ROLLBACK", []);
+	}
+}
+
+describe("two first seals of one account (section 3.18, Sealing)", () => {
+	it("at READ COMMITTED the later one reads the seal row after the lock and inserts nothing", async () => {
+		expect(await secondFirstSealAfterWaiting("READ COMMITTED")).toStrictEqual({
+			seen: 1,
+			sqlState: "not attempted, the seal row was read",
+		});
+	});
+
+	it("control: at REPEATABLE READ the later one reads no seal row and fails with a unique violation", async () => {
+		expect(await secondFirstSealAfterWaiting("REPEATABLE READ")).toStrictEqual({
+			seen: 0,
+			sqlState: "23505",
+		});
 	});
 });

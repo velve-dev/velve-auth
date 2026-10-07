@@ -5,7 +5,9 @@ import type { TestConnection } from "./db-postgres-connection.js";
 // Section 3.18 *Resealing*: a writer who stores the largest version the column accepts leaves the
 // administrator reseal no higher version to write, and the call refuses with
 // security_state_version_exhausted. This case holds the premise that the table itself refuses the
-// next version; the reseal that names the refusal is the administration branch's (E-3213).
+// next version; the reseal that names the refusal is the administration branch's (E-3213). Only the
+// version is raised, so the refusal can come from no other constraint, and the case names the one
+// it expects.
 
 let connection: TestConnection;
 let schema: string;
@@ -28,14 +30,19 @@ describe("a seal row at the largest storable version (section 3.18, Resealing)",
 			[userId],
 		);
 		const raised = await connection
-			.query(
-				`UPDATE ${schema}.security_state SET version = version + 1, session_epoch = version + 1
-				 WHERE user_id = $1`,
-				[userId],
-			)
-			.then(() => "raised")
-			.catch(() => "refused by the table");
+			.query(`UPDATE ${schema}.security_state SET version = version + 1 WHERE user_id = $1`, [
+				userId,
+			])
+			.then(() => ({ sqlState: "none, the version was raised", message: "" }))
+			.catch((error: { sqlState?: string; message?: string }) => ({
+				sqlState: error.sqlState ?? "no SQLSTATE",
+				message: error.message ?? "",
+			}));
 
-		expect(raised).toBe("refused by the table");
+		expect(raised).toStrictEqual({
+			sqlState: "23514",
+			message:
+				'new row for relation "security_state" violates check constraint "security_state_version_check"',
+		});
 	});
 });

@@ -8,7 +8,9 @@ import { generateRootKey } from "./keys-fixtures.js";
 
 // T-INTEG-8, last clause: migration 3's ledger row deleted, migrate() called; the specification
 // expects the call to fail and no seal row to change. E-3099 recorded that expectation as a
-// reading of the runner that had not been run; this case runs it.
+// reading of the runner that had not been run; this case runs it. The failure asserted is the one
+// the specification names, migration 3 run a second time against the table it already created, so
+// a migrate() that fails for any other reason does not pass it.
 
 let connection: TestConnection;
 let schema: string;
@@ -45,8 +47,11 @@ VALUES ($1, 7, decode(repeat('ab', 32), 'hex'), 1, 3)`,
 		);
 		const outcome = await auth
 			.migrate()
-			.then(() => "succeeded")
-			.catch((error: unknown) => `failed: ${(error as Error).message}`);
+			.then(() => ({ sqlState: "none, migrate() succeeded", message: "" }))
+			.catch((error: { sqlState?: string; message?: string }) => ({
+				sqlState: error.sqlState ?? "no SQLSTATE",
+				message: error.message ?? "",
+			}));
 
 		const after = await connection.query(
 			`SELECT user_id, version::text, encode(digest,'hex') d, key_version, session_epoch::text, sealed_at FROM ${schema}.security_state`,
@@ -56,7 +61,10 @@ VALUES ($1, 7, decode(repeat('ab', 32), 'hex'), 1, 3)`,
 			`SELECT version FROM ${schema}.schema_migration ORDER BY version`,
 			[],
 		);
-		expect(outcome.startsWith("failed")).toBe(true);
+		expect(outcome).toStrictEqual({
+			sqlState: "42P07",
+			message: 'relation "security_state" already exists',
+		});
 		expect(ledger.map((row) => row.version)).toStrictEqual([1, 2]);
 		expect(after).toEqual(before);
 	});
