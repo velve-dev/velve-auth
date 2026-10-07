@@ -108,12 +108,19 @@ export interface SessionService {
 
 const WRITE_NOW = 0;
 
+//the epoch the account had at issue is bound so a mass revocation outlives a written back row (S-INTEG-9)
 function sessionBinding(
 	userId: string,
 	tokenHash: Uint8Array,
 	factors: readonly string[],
+	sessionEpoch: number,
 ): TokenBinding {
-	return { purpose: "session", ownerId: userId, tokenSha256: tokenHash, content: { factors } };
+	return {
+		purpose: "session",
+		ownerId: userId,
+		tokenSha256: tokenHash,
+		content: { factors, sessionEpoch },
+	};
 }
 
 interface VerifiedSession {
@@ -148,14 +155,13 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	}
 
 	//the mac is taken over the factors as the row stores them, once and in their first order
-	async function insertFor(
+	function insertFor(
 		userId: string,
 		factors: readonly AuthenticationFactor[],
 		observed: ObservedRequest,
 		tokenHash: Uint8Array,
-	): Promise<SessionInsert> {
+	): SessionInsert {
 		const storedFactors = factors.filter((factor, index) => factors.indexOf(factor) === index);
-		const mac = await bindToken(options.keys, sessionBinding(userId, tokenHash, storedFactors));
 		return {
 			userId,
 			tokenHash,
@@ -163,7 +169,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			...metadataOf(observed),
 			idleTimeoutMs: settings.idleTimeoutMs,
 			absoluteTimeoutMs: settings.absoluteTimeoutMs,
-			...mac,
+			bindUnderEpoch: (sessionEpoch) =>
+				bindToken(options.keys, sessionBinding(userId, tokenHash, storedFactors, sessionEpoch)),
 		};
 	}
 
@@ -175,7 +182,12 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			return null;
 		}
 		const names = candidate.storedFactorNames;
-		const binding = sessionBinding(candidate.userId, tokenHash, names ?? []);
+		const binding = sessionBinding(
+			candidate.userId,
+			tokenHash,
+			names ?? [],
+			candidate.sessionEpoch,
+		);
 		const verdict =
 			names === null ? "mismatch" : await checkTokenBinding(options.keys, binding, candidate);
 		if (verdict !== "valid") {
@@ -247,7 +259,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.insertSession(
-				await insertFor(userId, factors, observed, issued.tokenHash),
+				insertFor(userId, factors, observed, issued.tokenHash),
 			);
 			return { token: issued.token, session };
 		},
@@ -257,7 +269,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const issued = createSessionToken();
 			const session = await sessions.replacePresentedSession({
 				presentedTokenHash: presentedToken === null ? null : sessionTokenHash(presentedToken),
-				insert: await insertFor(userId, factors, observed, issued.tokenHash),
+				insert: insertFor(userId, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},
@@ -268,7 +280,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions
 				.replaceSession({
 					previousTokenHash: sessionTokenHash(previousToken),
-					insert: await insertFor(userId, factors, observed, issued.tokenHash),
+					insert: insertFor(userId, factors, observed, issued.tokenHash),
 				})
 				.catch(replacedSessionFailure);
 			return { token: issued.token, session };
@@ -279,7 +291,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
-				insert: await insertFor(resolved.userId, factors, observed, issued.tokenHash),
+				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},
@@ -289,7 +301,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions.replaceSessionOwnedBy({
 				actor,
 				previousSessionId,
-				insert: await insertFor(actor, factors, observed, issued.tokenHash),
+				insert: insertFor(actor, factors, observed, issued.tokenHash),
 			});
 			return { token: issued.token, session };
 		},

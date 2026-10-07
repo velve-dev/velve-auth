@@ -27,7 +27,8 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	oauth_flow: "src/core/oauth/flow-repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
 	password_reset_required: "no repository: no module of the library reads or writes it",
-	security_state: "no repository: no module of the library reads or writes it yet (E-3086)",
+	//the session repository reads and raises the session epoch, and the seal branch adds the seal (E-3138)
+	security_state: "src/core/db/repositories/session.ts",
 };
 
 const NO_REPOSITORY = "no repository:";

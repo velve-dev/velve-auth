@@ -64,9 +64,14 @@ function assignedColumns(sql: string): string {
 	return /\bSET\b([\s\S]*?)\bWHERE\b/i.exec(sql)?.[1] ?? "";
 }
 
+/** An insert reads the account's session epoch first (S-INTEG-9), from its seal row and not a session. */
+function readsTheEpochAlone(sql: string): boolean {
+	return sql.includes(`${SCHEMA}.security_state`) && !sql.includes(`${SCHEMA}.session`);
+}
+
 describe("the statements this repository actually runs (S-FIX-2, E-23)", () => {
 	it("names the session table in every one of them, so the scan has something to see", async () => {
-		const statements = await statementsAsTheyRun();
+		const statements = (await statementsAsTheyRun()).filter((sql) => !readsTheEpochAlone(sql));
 
 		expect(statements.length).toBeGreaterThan(8);
 		expect(statements.every((sql) => sql.includes(`${SCHEMA}.session`))).toBe(true);

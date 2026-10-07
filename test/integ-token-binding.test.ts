@@ -1,5 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+	createSessionRepository,
+	SessionEpochMovedError,
+} from "../src/core/db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -13,6 +17,7 @@ import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import {
+	bindToken,
 	canonicalPayloadOf,
 	encodeTokenBinding,
 	type TokenBinding,
@@ -22,6 +27,7 @@ import { createOneTimeTokens, type OneTimeTokens } from "../src/core/token/one-t
 import { toSecretToken } from "../src/core/token/secret-token.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import { sessionInsertFor } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 /**
@@ -454,6 +460,159 @@ describe("a row under an older key version (S-KEY-5)", () => {
 	});
 });
 
+describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
+	async function sealedAccount(): Promise<string> {
+		const userId = await createUser(migrated.connection, schema);
+		await sql(
+			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
+			 VALUES ($1, 1, $2, 1)`,
+			[userId, randomBytes(32)],
+		);
+		return userId;
+	}
+
+	//the seal branch raises the epoch with a reseal, and this stands in for it
+	async function raiseEpochOf(userId: string): Promise<void> {
+		await sql(
+			`UPDATE ${schema}.security_state SET session_epoch = session_epoch + 1 WHERE user_id = $1`,
+			[userId],
+		);
+	}
+
+	async function savedRow(sessionId: string): Promise<Record<string, unknown>> {
+		const [row] = await migrated.connection.query<Record<string, unknown>>(
+			`SELECT * FROM ${schema}.session WHERE id = $1`,
+			[sessionId],
+		);
+		if (row === undefined) {
+			throw new Error("the issued session left no row to save");
+		}
+		return row;
+	}
+
+	async function writtenBack(row: Record<string, unknown>): Promise<void> {
+		const columns = Object.keys(row);
+		await sql(
+			`INSERT INTO ${schema}.session (${columns.join(", ")})
+			 VALUES (${columns.map((_, index) => `$${index + 1}`).join(", ")})`,
+			columns.map((column) => row[column]),
+		);
+	}
+
+	it("refuses a session issued under an older epoch than the account's", async () => {
+		const userId = await sealedAccount();
+		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		await raiseEpochOf(userId);
+		refusals = [];
+
+		expect(await sessions.resolve(issued.token)).toBeNull();
+		expectOneRefusal("session_resolve", userId);
+	});
+
+	it("refuses a row written back after every session was deleted and the epoch raised", async () => {
+		const userId = await sealedAccount();
+		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const row = await savedRow(issued.session.id);
+		await sql(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
+		await raiseEpochOf(userId);
+		await writtenBack(row);
+		refusals = [];
+
+		expect(await sessions.resolve(issued.token)).toBeNull();
+		const fresh = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		expect((await sessions.resolve(fresh.token))?.userId).toBe(userId);
+		expectOneRefusal("session_resolve", userId);
+	});
+
+	it("binds an account without a seal row to epoch 1 and checks it against 1", async () => {
+		const userId = await createUser(migrated.connection, schema);
+		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		refusals = [];
+
+		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
+		await sql(
+			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
+			 VALUES ($1, 1, $2, 1, 2)`,
+			[userId, randomBytes(32)],
+		);
+		expect(await sessions.resolve(issued.token)).toBeNull();
+		expectOneRefusal("session_resolve", userId);
+	});
+
+	it("does not lift a session into a newer epoch when it rebinds", async () => {
+		const ring = testKeyRing(2);
+		const before = servicesUnder(ring.providerAt(1, [1]));
+		const rotated = servicesUnder(ring.providerAt(2, [1, 2]));
+		const userId = await sealedAccount();
+		const issued = await before.sessions.issue({
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
+		await raiseEpochOf(userId);
+
+		expect(await rotated.sessions.resolve(issued.token)).toBeNull();
+		const [stored] = await migrated.connection.query<{ version: number }>(
+			`SELECT token_mac_key_version AS version FROM ${schema}.session WHERE id = $1`,
+			[issued.session.id],
+		);
+		expect(stored?.version).toBe(1);
+	});
+
+	it("inserts only under the epoch it bound, and reads it once more when it moved", async () => {
+		const userId = await sealedAccount();
+		const repository = createSessionRepository({ driver: migrated.connection, schema });
+		const boundEpochs: number[] = [];
+		const token = chosenToken();
+
+		const inserted = await repository.insertSession(
+			sessionInsertFor(userId, {
+				tokenHash: sha256Of(token),
+				bindUnderEpoch: async (sessionEpoch) => {
+					boundEpochs.push(sessionEpoch);
+					if (boundEpochs.length === 1) {
+						await raiseEpochOf(userId);
+					}
+					return bindToken(keys, {
+						purpose: "session",
+						ownerId: userId,
+						tokenSha256: sha256Of(token),
+						content: { factors: ["password"], sessionEpoch },
+					});
+				},
+			}),
+		);
+		refusals = [];
+
+		expect(boundEpochs).toStrictEqual([1, 2]);
+		expect((await sessions.resolve(token))?.session.id).toBe(inserted.id);
+		expect(refusals).toStrictEqual([]);
+	});
+
+	it("gives up after the epoch moved a second time, and writes no row", async () => {
+		const userId = await sealedAccount();
+		const repository = createSessionRepository({ driver: migrated.connection, schema });
+		const token = chosenToken();
+
+		await expect(
+			repository.insertSession(
+				sessionInsertFor(userId, {
+					tokenHash: sha256Of(token),
+					bindUnderEpoch: async () => {
+						await raiseEpochOf(userId);
+						return { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 };
+					},
+				}),
+			),
+		).rejects.toThrow(SessionEpochMovedError);
+		const [row] = await migrated.connection.query<{ present: number }>(
+			`SELECT count(*)::int AS present FROM ${schema}.session WHERE user_id = $1`,
+			[userId],
+		);
+		expect(row?.present).toBe(0);
+	});
+});
+
 describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 	function randomBinding(): TokenBinding {
 		const pick = <T>(values: readonly T[]): T => values[byte() % values.length] as T;
@@ -474,7 +633,7 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 					? { payload: pick([null, {}, { a: "" }, { a: ",", b: [1, "x"] }, { "": null }]) }
 					: purpose === "pending_authentication"
 						? { factors, attempts: byte() % 3 }
-						: { factors },
+						: { factors, sessionEpoch: byte() % 3 },
 		};
 	}
 
@@ -514,8 +673,15 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 		const base = { purpose: "session", ownerId: "a", tokenSha256: new Uint8Array(32) } as const;
 
 		expect(
-			Buffer.from(encodeTokenBinding({ ...base, content: { factors: ["password,totp"] } })).equals(
-				Buffer.from(encodeTokenBinding({ ...base, content: { factors: ["password", "totp"] } })),
+			Buffer.from(
+				encodeTokenBinding({ ...base, content: { factors: ["password,totp"], sessionEpoch: 1 } }),
+			).equals(
+				Buffer.from(
+					encodeTokenBinding({
+						...base,
+						content: { factors: ["password", "totp"], sessionEpoch: 1 },
+					}),
+				),
 			),
 		).toBe(false);
 	});

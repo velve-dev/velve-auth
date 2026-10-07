@@ -21,8 +21,7 @@ export function sessionInsertFor(
 		userAgent: null,
 		idleTimeoutMs: 7 * DAY,
 		absoluteTimeoutMs: 30 * DAY,
-		tokenMac: new Uint8Array(32),
-		tokenMacKeyVersion: 1,
+		bindUnderEpoch: () => Promise.resolve({ tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 }),
 		...overrides,
 	};
 }
@@ -96,7 +95,8 @@ export async function withProcessClockShiftedBy<T>(
 
 /**
  * The two MAC columns a session row written by hand needs to resolve, taken the way the session
- * service takes them (S-INTEG-9): pass them as the last two parameters of the insert.
+ * service takes them (S-INTEG-9): pass them as the last two parameters of the insert. An account
+ * without a seal row is at epoch 1.
  */
 export async function sessionMacParameters(
 	keys: KeyProvider,
@@ -104,13 +104,14 @@ export async function sessionMacParameters(
 		readonly userId: string;
 		readonly tokenHash: Uint8Array;
 		readonly factors: readonly string[];
+		readonly sessionEpoch?: number;
 	},
 ): Promise<[Uint8Array, number]> {
 	const { tokenMac, tokenMacKeyVersion } = await bindToken(keys, {
 		purpose: "session",
 		ownerId: row.userId,
 		tokenSha256: row.tokenHash,
-		content: { factors: row.factors },
+		content: { factors: row.factors, sessionEpoch: row.sessionEpoch ?? 1 },
 	});
 	return [tokenMac, tokenMacKeyVersion];
 }

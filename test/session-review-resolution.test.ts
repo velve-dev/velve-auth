@@ -154,7 +154,8 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 	 * T-CACHE-2 fixes the threshold at "byte for byte equal to a fixture", so that every change to
 	 * the one authorisation query is a decision somebody made on purpose. This is that fixture.
 	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232); the factors are
-	 * read as JSON and the two MAC columns beside them, because S-INTEG-9 checks the row before use.
+	 * read as JSON, and the two MAC columns and the account's session epoch are read beside them,
+	 * because S-INTEG-9 checks the row before use.
 	 */
 	it("runs the statement this fixture pins, byte for byte", async () => {
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
@@ -165,9 +166,11 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 		expect(recorder.recorded[0]?.sql).toBe(
 			`SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 \t\ts.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
-\t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at
+\t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
+\t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch
 \tFROM ${migrated.schema}.session s
 \tJOIN ${migrated.schema}.user u ON u.id = s.user_id
+\tLEFT JOIN ${migrated.schema}.security_state st ON st.user_id = s.user_id
 \tWHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`,
 		);
 	});

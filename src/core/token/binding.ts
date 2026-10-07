@@ -7,7 +7,8 @@ export type TokenBindingPurpose = "session" | "pending_authentication" | OneTime
 
 /** the security-relevant content of a token row, in the form it is stored in */
 export type TokenRowContent =
-	| { readonly factors: readonly string[]; readonly attempts?: number }
+	| { readonly factors: readonly string[]; readonly sessionEpoch: number }
+	| { readonly factors: readonly string[]; readonly attempts: number }
 	| { readonly payload: OneTimeTokenPayload | null };
 
 /** everything a token MAC is taken over */
@@ -69,15 +70,15 @@ function bytesField(value: Uint8Array): Uint8Array {
 
 const ABSENT_FIELD = field(ABSENT, 0, new Uint8Array(0));
 
-const INTEGER_BYTES = 4;
+const INTEGER_BYTES = 8;
 
-//a count outside a signed 32 bit integer is no value postgres stores in an integer column
+//a value past the exact javascript integers would encode a number nobody stored
 function integerField(value: number): Uint8Array {
-	if (!Number.isSafeInteger(value) || value < -(2 ** 31) || value >= 2 ** 31) {
-		throw new RangeError("a bound integer must fit a signed 32 bit integer");
+	if (!Number.isSafeInteger(value)) {
+		throw new RangeError("a bound integer must be an exact integer");
 	}
 	const body = new Uint8Array(INTEGER_BYTES);
-	new DataView(body.buffer).setInt32(0, value, false);
+	new DataView(body.buffer).setBigInt64(0, BigInt(value), false);
 	return field(INTEGER, INTEGER_BYTES, body);
 }
 
@@ -119,14 +120,13 @@ export function canonicalPayloadOf(payload: OneTimeTokenPayload | null): string 
 	return payload === null ? null : canonicalJsonOf(JSON.parse(JSON.stringify(payload)));
 }
 
-//a session has no attempt counter so its content is the factor list alone
+//the purpose field tells a session epoch from an attempt count so both take the same place
 function contentField(content: TokenRowContent): Uint8Array {
 	if (!("factors" in content)) {
 		return optionalTextField(canonicalPayloadOf(content.payload));
 	}
-	return content.attempts === undefined
-		? listField(content.factors)
-		: concatenated([listField(content.factors), integerField(content.attempts)]);
+	const counter = "sessionEpoch" in content ? content.sessionEpoch : content.attempts;
+	return concatenated([listField(content.factors), integerField(counter)]);
 }
 
 //every field carries its type and length so two different rows never encode alike (S-INTEG-9)
