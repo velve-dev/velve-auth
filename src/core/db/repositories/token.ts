@@ -35,16 +35,17 @@ type StoredOneTimeToken = RedeemedOneTimeToken & {
 	readonly payload: OneTimeTokenPayload | null;
 };
 
-/** a removed row whose MAC is still to be checked before its owner or payload is used */
-export interface OneTimeTokenCandidate extends StoredTokenMac {
-	readonly userId: string;
+interface ConsumedOneTimeToken extends StoredTokenMac {
 	readonly storedPayload: StoredPayload;
-	accept(): StoredOneTimeToken;
 }
+
+/** a removed row whose MAC is still to be checked before its owner or payload is used */
+export type OneTimeTokenCandidate = ConsumedOneTimeToken &
+	({ readonly userId: null } | { readonly userId: string; accept(): StoredOneTimeToken });
 
 export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
-	//a row that names no account is answered exactly as no row is (S-TOKEN-4)
+	//a row that names no account is still checked and then answered exactly as no row is (S-TOKEN-4)
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<OneTimeTokenCandidate | null>;
 }
 
@@ -181,18 +182,19 @@ RETURNING user_id, payload, token_mac, token_mac_key_version`;
 				tokenSha256,
 				purpose,
 			]);
-			if (row === undefined || row.user_id === null) {
+			if (row === undefined) {
 				return null;
 			}
 			const userId = row.user_id;
 			const storedPayload = storedPayloadOf(row.payload);
-			return {
-				userId,
+			const consumed = {
 				storedPayload,
 				tokenMac: row.token_mac,
 				tokenMacKeyVersion: row.token_mac_key_version,
-				accept: () => redeemedBy(userId, storedPayload?.payload ?? null),
 			};
+			return userId === null
+				? { ...consumed, userId }
+				: { ...consumed, userId, accept: () => redeemedBy(userId, storedPayload?.payload ?? null) };
 		},
 	};
 }

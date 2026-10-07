@@ -41,7 +41,8 @@ export type TokenBindingOccasion =
 
 /** what a refused token row tells the security-state alarm, and never the token or a hash */
 export interface TokenBindingRefusal {
-	readonly userId: string;
+	/** null for a row that names no account, such as the cover artefact of an unknown address */
+	readonly userId: string | null;
 	readonly occasion: TokenBindingOccasion;
 	/** seal_mismatch where the row was the library's but the account's state around it was not */
 	readonly reason: "token_binding_mismatch" | "seal_mismatch";

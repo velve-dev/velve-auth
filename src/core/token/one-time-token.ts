@@ -94,7 +94,7 @@ export function createOneTimeTokens(
 				});
 				return null;
 			}
-			return { ...candidate.accept(), purpose };
+			return candidate.userId === null ? null : { ...candidate.accept(), purpose };
 		},
 	};
 }

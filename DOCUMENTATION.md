@@ -8918,6 +8918,10 @@ first address confirmation, the ids told to `beforeSessionRevoke`, and the
 plugin context's `revokeSession`, which removes a forged row without announcing
 it. Each refused row is reported with the occasion `session_resolve`.
 
+A one-time token row that names no account — the cover artefact an unknown
+address is answered with — is checked as well, with the owner field absent, and is
+then answered as no row whether it passes or not; only a failing one is reported.
+
 A refusal has no code of its own and reaches the outside exactly as a missing
 row does. An unknown `token_mac_key_version` is refused the same way. A one-time
 token is consumed by the statement that reads it. Every email flow redeems inside
@@ -8935,7 +8939,7 @@ the rollback of the transaction that would have issued the session.
 
 | Field | Value |
 |---|---|
-| `userId` | the account the refused row names |
+| `userId` | the account the refused row names, or `null` for a row that names none, such as a forged cover artefact of an unknown address |
 | `occasion` | `sign_in` for a session insert that wrote nothing, `session_resolve`, `factor_check`, `token_redemption`, `change` for a kept session whose rebinding missed, or `maintenance` for the rebinding pass |
 | `reason` | `token_binding_mismatch` for a row whose MAC does not match, or `seal_mismatch` for a state around a genuine row that is not what the library left |
 | `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |

@@ -3,6 +3,7 @@ import type { Driver } from "../src/core/db/driver.js";
 import { InvalidIdentifierError } from "../src/core/db/identifier.js";
 import {
 	createOneTimeTokenRepository,
+	type OneTimeTokenCandidate,
 	OneTimeTokenError,
 } from "../src/core/db/repositories/token.js";
 import {
@@ -45,6 +46,10 @@ const MAC = { tokenMac: new Uint8Array(32).fill(9), tokenMacKeyVersion: 1 };
 
 /** A driver decodes `timestamptz` into a `Date`, and E-598 makes the repository read one. */
 const EXPIRY = new Date("2026-09-08T00:00:00.000Z");
+
+function acceptedOf(candidate: OneTimeTokenCandidate | null) {
+	return candidate === null || candidate.userId === null ? null : candidate.accept();
+}
 
 describe("the parameters the repository sends", () => {
 	it("binds owner, purpose, hash, payload and the purpose's own deadline, in that order", async () => {
@@ -131,7 +136,7 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(stored?.accept()).toStrictEqual({
+		expect(acceptedOf(stored)).toStrictEqual({
 			userId: "a",
 			payload: { newEmail: "next@example.com" },
 		});
@@ -147,7 +152,7 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(stored?.accept()).toStrictEqual({
+		expect(acceptedOf(stored)).toStrictEqual({
 			userId: "a",
 			payload: { newEmail: "next@example.com" },
 		});
@@ -157,9 +162,9 @@ describe("the payload a driver hands back", () => {
 		const { repository } = repositoryReturning([{ user_id: "a", payload: null }]);
 
 		expect(
-			(
-				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" })
-			)?.accept(),
+			acceptedOf(
+				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			),
 		).toStrictEqual({ userId: "a", payload: null });
 	});
 
@@ -167,9 +172,9 @@ describe("the payload a driver hands back", () => {
 		const { repository } = repositoryReturning([{ user_id: "a" }]);
 
 		expect(
-			(
-				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" })
-			)?.accept(),
+			acceptedOf(
+				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			),
 		).toStrictEqual({ userId: "a", payload: null });
 	});
 });

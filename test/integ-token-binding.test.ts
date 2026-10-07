@@ -1264,3 +1264,37 @@ describe("the creation time a session MAC binds (section 3.18 point 3)", () => {
 		expectOneRefusal("session_resolve", userId);
 	});
 });
+
+describe("a one-time token row that names no account (S-TOKEN-4, S-INTEG-9)", () => {
+	it("is answered as no row whether genuine or forged, and only the forged one is reported, without an owner", async () => {
+		const cover = await oneTimeTokens.issue({
+			purpose: "password_reset",
+			userId: null,
+			serialisedOn: "nobody@example.com",
+		});
+		const forged = chosenToken();
+		await sql(
+			`INSERT INTO ${schema}.one_time_token
+			   (token_sha256, purpose, user_id, payload, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'password_reset', NULL, NULL, now() + interval '1 hour', $2, 1)`,
+			[sha256Of(forged), randomBytes(32)],
+		);
+		refusals = [];
+
+		expect(
+			await oneTimeTokens.redeem({ token: cover.token, purpose: "password_reset" }),
+		).toBeNull();
+		expect(refusals).toStrictEqual([]);
+		expect(
+			await oneTimeTokens.redeem({ token: toSecretToken(forged), purpose: "password_reset" }),
+		).toBeNull();
+		expect(refusals).toStrictEqual([
+			{
+				userId: null,
+				occasion: "token_redemption",
+				reason: "token_binding_mismatch",
+				verdict: "mismatch",
+			},
+		]);
+	});
+});

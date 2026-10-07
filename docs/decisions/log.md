@@ -15888,3 +15888,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Trusting the resolution that authorised the call, which happened before the lock and proves nothing about the row under it. (b) Keeping the caller's row when its rebinding misses, which keeps a row nobody can vouch for after an operation meant to leave exactly one.
 **Reason.** The one session a mass revocation leaves is the one a writer would most like to choose, so it is checked where the revocation holds the account.
 **Price.** One more statement, one HMAC and one update per call, and the call now waits for any transaction holding the account. A writer who changes the kept row signs the caller out, which is the outcome for a broken state.
+
+<a id="e-3262"></a>
+
+### A row that names no account is checked too, and its report carries no owner
+`E-3262` · security-state-tokens · S-INTEG-9, S-TOKEN-4, settled
+
+**Context.** The one-time token repository answered a consumed row whose `user_id` is null as no row before anything checked it. That row is the cover artefact an unknown address is answered with (S-TIM-6). A writer could insert one, and nothing raised an alarm, because the refusal type required an owner. Section 3.18 now says that a report about a row without an owner carries `userId: null`. The refusal type's `userId` is now `string | null`. The consume returns such a row as a candidate without `accept`, so it cannot be turned into an actor, and the redemption checks its MAC with the owner field absent. It then answers no row whether the check passes or not, and reports only a failing one, with `userId: null`. `test/integ-token-binding.test.ts` redeems a genuine cover artefact without a report and a forged ownerless row with one. `test/db-entity-id.test.ts` now holds that an ownerless candidate offers no `accept`, where it held that the repository answered it as `null`.
+**Rejected.** (a) Leaving ownerless rows unchecked, which leaves the one table writable without an alarm for rows nothing redeems. (b) Answering a genuine ownerless row with anything but no row, which S-TOKEN-4 rules out.
+**Reason.** The alarm is about writes to token tables, and a write of an ownerless row is one.
+**Price.** Redeeming a cover artefact now costs an HMAC, as redeeming any other row does. An operator's alarm handler has to accept a null `userId`.
