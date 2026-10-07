@@ -16018,3 +16018,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Binding the challenge's `expires_at` or `created_at`, which no other token row binds and *The limits* already names as unbound deadlines.
 **Reason.** Every row a sign-in consumes to learn which account it acts for has to be one the writer cannot have made.
 **Price.** Every open WebAuthn ceremony fails once at the upgrade, and the user starts it again.
+
+<a id="e-3315"></a>
+
+### disabled_at joins the seal, and the limits name the import mapping and the scheme
+`E-3315` · security-state · specification, S-INTEG-2, test plan, settled
+
+**Context.** *The limits* said that two tables stand under no seal and no MAC and that `disabled_at` is not in the seal, so a writer can unlock a disabled account; 5.21(a) repeated both. The sixth review found the list incomplete and decided three things. First, an administrator's block must not be silently lifted, so whether `user.disabled_at` is set joins the canonical encoding, S-INTEG-2 and the list of changes that seal (`user.disable`, `user.enable`), and T-INTEG-2 gains clearing `disabled_at` on a disabled account, now 32/32. Second, `velve.import_mapping` is named: a writer who points a source ID at a victim makes a later import run attach legacy credentials to the victim, and the import seals them as a legitimate change. The import is operator-run, so the recommendation is to run it before the estate is reachable and to check the mappings before any further run. Third, `password_credential.scheme` is named as unbound, and a changed scheme makes verification fail, never succeed, because the ciphertext stays bound. `webauthn_challenge` leaves the list with its MAC (E-3314). The sentence now counts three tables, and 5.21(a) drops `disabled_at` and adds the import mappings. Since E-3313 binds a session's `created_at`, the unbound timestamps in *The limits* now except it, which no finding asked for and the binding made necessary. All of it is in both languages. Tests that disable an account by SQL, such as `test/factor-pending-state.test.ts` and `test/oauth-flow.test.ts`, will meet a broken seal rather than `account_disabled` once sealing lands; that is the seal branch's to adjust.
+**Rejected.** Leaving `disabled_at` unsealed and naming it, which the orchestrator declined because a block that a writer can lift silently is no block.
+**Reason.** A limit has to name everything a writer gains, and the list was written before the challenge table and the import were held against it.
+**Price.** Disabling and enabling an account now take the account lock and reseal, one more transaction on an administrative path.
