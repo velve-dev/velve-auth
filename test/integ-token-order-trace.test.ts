@@ -103,7 +103,9 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 		transactions.length = 0;
 		cookie = cookieOf(await post("/sign-up", { email: ADDRESS, password: PASSWORD }));
 
-		expect(transactions.some((trace) => trace.some((sql) => sql.includes("FOR NO KEY UPDATE")))).toBe(true);
+		expect(
+			transactions.some((trace) => trace.some((sql) => sql.includes("FOR NO KEY UPDATE"))),
+		).toBe(true);
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
 	});
 
@@ -141,7 +143,9 @@ describe("velve.one_time_token before velve.user in every flow that mints or red
 			newPassword: "another-horse-battery-staple",
 		});
 
-		expect(transactions.some((trace) => trace.some((sql) => sql.includes("FOR NO KEY UPDATE")))).toBe(true);
+		expect(
+			transactions.some((trace) => trace.some((sql) => sql.includes("FOR NO KEY UPDATE"))),
+		).toBe(true);
 		expect(tokenStatementsAfterTheAccountLock()).toStrictEqual([]);
 	});
 });
