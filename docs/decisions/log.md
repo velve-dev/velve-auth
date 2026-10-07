@@ -16378,3 +16378,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A count in the specification has to change with the schema it counts.
 **Price.** None.
+
+<a id="e-3351"></a>
+
+### The epoch is drawn at random, and a failed recordSeal raises the alarm
+`E-3351` · security-state · specification, S-INTEG-6, S-INTEG-7, S-INTEG-9, test plan, settled
+
+**Context.** E-3195 set the administrator reseal's `session_epoch` to the new version and relied on `session_epoch ≤ version`, so the new version would lie above every epoch the account ever had. *Resealing* admitted that this holds only with an anchor. The eighth review showed that it does not hold with one either. When `recordSeal` fails or the process crashes before calling it, the anchor misses the latest seal. A writer can then restore the version before it together with saved sessions, the next reseal lands on an epoch a saved session was issued under, and the session lives again, permanently and silently. Four things were decided. First, a failed `recordSeal` raises the alarm `anchor_unavailable`, not only a log line. Second, a check that finds a stored version above the anchor's re-records the seal, off the response path, with its errors caught. Third, every epoch change draws a fresh random `session_epoch` from the cryptographically secure source in 1 to 2^53 − 1, different from the current one. That applies to every mass revocation, every administrator reseal and a first sealing that raises the epoch. The epoch is compared only for equality, so "epoch = version" and the invariant `session_epoch ≤ version` are dropped, and E-3195's wording is superseded here without being edited. Fourth, the window that remains is named in *The limits*, S-INTEG-6 and S-INTEG-7: a writer who acts between a commit and a failed `recordSeal`, before the alarm is handled and before a check re-records, can reset the account to the anchor's last version. *Resealing*, *Sealing*'s mass revocation, *The missing seal row*, S-INTEG-3 and S-INTEG-7 say so in both languages. T-INTEG-7's lowered-version case is now refused with and without an anchor, 2/2, and its epoch is a new number rather than the new version.
+**Rejected.** Keeping the epoch tied to the version and requiring an anchor, which the failed-`recordSeal` window defeats. Re-reading the anchor until it agrees, which waits on the application's code.
+**Reason.** An epoch exists to make an earlier session unequal to the current state, and a random value does that without any order a writer can lower.
+**Price.** The epoch no longer tells an operator how many revocations an account has seen. A random collision is possible with probability about 2^-53 per revocation.
