@@ -67,3 +67,32 @@ describe("the start check for the integrity purposes (E-3093)", () => {
 		});
 	});
 });
+
+function providerAnsweringStateMacWithTheKeyOf(other: "token-mac" | "cookie-sig"): KeyProvider {
+	return {
+		async current(purpose) {
+			return purpose === "state-mac" ? genuine.current(other) : genuine.current(purpose);
+		},
+		async byVersion(purpose, version) {
+			return genuine.byVersion(purpose === "state-mac" ? other : purpose, version);
+		},
+	};
+}
+
+describe("the start check against one key answering two purposes (E-3324)", () => {
+	it.each([
+		["token-mac", "state-mac and token-mac"],
+		["cookie-sig", "cookie-sig and state-mac"],
+	] as const)("refuses a provider that answers state-mac with the %s key", async (other, pair) => {
+		await expect(
+			assertKeysAnswerForEveryPurpose(providerAnsweringStateMacWithTheKeyOf(other)),
+		).rejects.toMatchObject({
+			code: "keys_unusable",
+			message: `keys answered ${pair} with the same key, so a value taken for one purpose would verify for the other`,
+		});
+	});
+
+	it("starts with the derived keys, which differ for every purpose", async () => {
+		await expect(assertKeysAnswerForEveryPurpose(genuine)).resolves.toBeUndefined();
+	});
+});

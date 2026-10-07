@@ -16108,3 +16108,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Rewriting the digest under the new key while keeping the version, which leaves the anchor holding the old digest for that version and, under E-3318, reads as `anchor_mismatch`.
 **Reason.** Every write of a seal row has to be one the anchor learns, or the anchor stops describing the account.
 **Price.** A rotation raises every account's version by one and calls the anchor once per account.
+
+<a id="e-3324"></a>
+
+### The start refuses one HMAC key answering two purposes
+`E-3324` · security-state · keys, start-up, settled
+
+**Context.** Point 1 gives `state-mac` and `token-mac` a derivation context each, and the root key provider derives different keys. The sixth review pointed out that a `KeyProvider` of an application's own could hand one HMAC key to both, or to an integrity purpose and `cookie-sig` or `token-pepper`, and the start accepted it, so a MAC taken for one purpose would verify for another. As the orchestrator decided, `assertKeysAnswerForEveryPurpose` takes `sameKeyFingerprintOf` for the current key of every purpose. That is the HMAC of one fixed probe message under every HMAC key that may sign. Two equal outputs refuse the start with `keys_unusable` and a message naming both purposes. Encryption keys are not compared, because a non-extractable AES key gives nothing to compare without being used. `test/keys-integrity-start.test.ts` refuses `state-mac` sharing the `token-mac` key and the `cookie-sig` key and starts with the derived keys; removing the refusal failed the two refusal cases. Point 1 says so in both languages, and `DOCUMENTATION.md` documents the function and the message.
+**Rejected.** Comparing the `CryptoKey` objects by identity, which misses the same key bytes imported twice.
+**Reason.** Domain separation between purposes is a property of the keys, and a provider of its own can break it without the library noticing unless the start checks it.
+**Price.** One HMAC per HMAC purpose at start.

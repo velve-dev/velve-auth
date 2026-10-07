@@ -56,6 +56,20 @@ export async function keyTakesMac(key: CryptoKey): Promise<boolean> {
 	return (await hmacUnderIfUsable(key, new Uint8Array(0))) !== null;
 }
 
+const SAME_KEY_PROBE = new TextEncoder().encode("velve-auth/same-key-probe/v1");
+
+//two purposes answered with one hmac key give the same output for one message (E-3324)
+export async function sameKeyFingerprintOf(key: CryptoKey): Promise<string | null> {
+	const algorithm: NamedHashAlgorithm = key.algorithm;
+	if (algorithm.name !== "HMAC" || !key.usages.includes("sign")) {
+		return null;
+	}
+	const mac = await hmacUnder(key, SAME_KEY_PROBE).catch(() => null);
+	return mac === null
+		? null
+		: Array.from(mac, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function macUnderCurrentKey(
 	keys: KeyProvider,
 	purpose: IntegrityKeyPurpose,

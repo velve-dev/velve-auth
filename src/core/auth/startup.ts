@@ -1,7 +1,7 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
-import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
-import { keyTakesMac } from "../keys/mac.js";
+import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
+import { keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
@@ -242,8 +242,15 @@ export function storedIntegrityKeyUnusable(keyVersion: number): VelveStartupErro
 	return refusal;
 }
 
+function keySharedByTwoPurposes(first: KeyPurpose, second: KeyPurpose): VelveStartupError {
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered ${first} and ${second} with the same key, so a value taken for one purpose would verify for the other`;
+	return refusal;
+}
+
 //a key provider that answers for no purpose protects nothing and must refuse the start
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
+	const purposeByFingerprint = new Map<string, KeyPurpose>();
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);
 		if (current === null || !Number.isInteger(current.version) || current.version < 1) {
@@ -251,6 +258,14 @@ export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promis
 		}
 		if (isIntegrityPurpose(purpose) && !(await keyTakesMac(current.key))) {
 			throw new VelveStartupError("keys_unusable");
+		}
+		const fingerprint = await sameKeyFingerprintOf(current.key);
+		const sharedWith = fingerprint === null ? undefined : purposeByFingerprint.get(fingerprint);
+		if (sharedWith !== undefined) {
+			throw keySharedByTwoPurposes(sharedWith, purpose);
+		}
+		if (fingerprint !== null) {
+			purposeByFingerprint.set(fingerprint, purpose);
 		}
 	}
 }

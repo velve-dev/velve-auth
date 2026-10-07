@@ -5963,7 +5963,7 @@ nothing else would tell you.
 | `code` | Raised when |
 |---|---|
 | `keys_missing` | `keys` is absent or is not a `KeyProvider` (S-KEY-6) |
-| `keys_unusable` | the provider has no current key for some purpose, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written; or the ring answers a `state-mac` version a stored seal names with such a key, which the message states with that version |
+| `keys_unusable` | the provider has no current key for some purpose, or its current key for `state-mac` or `token-mac` cannot take an HMAC, so something protected could not be written; or the ring answers a `state-mac` version a stored seal names with such a key, which the message states with that version; or the provider answers two purposes with the same HMAC key, which the message names |
 | `origins_empty` | `origins` is empty |
 | `email_callback_missing` | the mode has addresses and `email.send` is absent |
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
@@ -8722,6 +8722,17 @@ output is 32 bytes, and `false` otherwise; it never throws. A shorter HMAC-SHA25
 key signs and gives a 32-byte output, so the key length is checked on its own. The start probes and
 `verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
 key the check can use.
+
+### `sameKeyFingerprintOf(key)`
+
+Internal, in `src/core/keys/mac.ts`. Resolves the hex HMAC of one fixed probe
+message under `key` when it is an HMAC key that may sign, and `null` otherwise.
+`assertKeysAnswerForEveryPurpose` takes it for the current key of every purpose
+and refuses the start with `keys_unusable` when two purposes give the same
+output, so a provider of its own cannot answer `state-mac` and `token-mac`, or an
+integrity purpose and `cookie-sig` or `token-pepper`, with one key. Encryption
+keys are not compared, because a non-extractable AES key gives nothing to
+compare without using it.
 
 ### `isIntegrityPurpose(purpose)`
 
