@@ -15898,3 +15898,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reading the epoch first and the session row second, which has the same window in the other order. Treating an epoch mismatch right after a revocation as no alarm, which would hide a reinserted row in exactly the case the epoch exists for.
 **Reason.** Under READ COMMITTED only a single statement sees one consistent state, and the epoch check compares two values that have to come from the same state.
 **Price.** The resolution's one query grows by the seal's components, which the branch that builds it has to keep within the one statement S-CACHE-2 already demanded; the cost of that query is not measured here.
+
+<a id="e-3300"></a>
+
+### A re-encryption writes by compare-and-set on the ciphertext it verified
+`E-3300` · security-state · specification, S-INTEG-8, test plan, settled
+
+**Context.** E-3280 has the new seal computed from the one verified read and the transaction's own change, never from a second read. The fifth review pointed out that a re-encryption is a change whose input is a ciphertext, and nothing said it re-encrypts the ciphertext the one read returned or writes conditional on it. A re-encryption that read the column again, or wrote without comparing, let a writer put an older ciphertext of the same row in place between the read and the rewrite; because the older one is bound to the same owner, row and column it still opens, the rewrite carries it forward, and the new seal hashes it as the transaction's own change, ratifying the rollback T-INTEG-2 is there to detect. As the orchestrator decided, every re-encryption, at the first seal and in the maintenance step, opens exactly the ciphertext of the verified read and writes `… WHERE <column> = <read value>`; a write that hits no row is a broken state, rolled back with the alarm `seal_mismatch`. *Sealing* and point 5 say so in both languages, and T-INTEG-8 gains the swapped password ciphertext with 1 alarm and nothing written. `test/security-state-reencrypt-compare.test.ts` holds the miss, the hit when nobody writes and, as a control, the older ciphertext a second read would have returned; the review's file is folded into it.
+**Rejected.** Re-reading the column under a row lock before the rewrite, which still re-encrypts whatever the writer left there.
+**Reason.** The seal vouches for what the verified read saw, so the only ciphertext the transaction may carry forward is that one.
+**Price.** The reason `seal_mismatch` covers a write that missed as well as a digest that did not match, so the alarm does not tell the two apart.
