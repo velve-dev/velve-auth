@@ -7,7 +7,8 @@ import { toWebHandler } from "../src/core/http/web-handler.js";
 import { decryptBound } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createOAuthIdentityRepository } from "../src/core/oauth/identity-repository.js";
-import { createVelveAuth } from "../src/index.js";
+import type { VelvePlugin } from "../src/core/plugin/config.js";
+import { createVelveAuth, registerPluginErrorCodes, VelveError } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -297,6 +298,66 @@ describe("a flow whose steering columns a database writer rewrote", () => {
 						!line.startsWith(`${DEFAULT_COOKIE_NAMES.session}=;`),
 				),
 		).toBe(false);
+	});
+});
+
+//no column of a flow row is acted on before its verifier proves the row (E-3128)
+describe("a link flow whose link_to_user_id a writer set to NULL", () => {
+	const fired: string[] = [];
+	let veto = false;
+	let hooked: Handler;
+	const spy: VelvePlugin = {
+		id: "spy",
+		hooks: {
+			beforeSignIn: () => {
+				fired.push("beforeSignIn");
+				return veto ? Promise.reject(new VelveError("spy.refused")) : Promise.resolve();
+			},
+		},
+	};
+
+	beforeAll(() => {
+		registerPluginErrorCodes({
+			"spy.refused": { httpStatus: 403, message: "Refused by the spy." },
+		});
+		hooked = instance(v1, { plugins: [spy] });
+	});
+
+	async function linkFlowWithItsOwnerRemoved() {
+		const account = await signUp(hooked);
+		const session = cookieOf(await signIn(hooked, account.email), DEFAULT_COOKIE_NAMES.session);
+		const flow = await startLink(hooked, `${DEFAULT_COOKIE_NAMES.session}=${session}`);
+		return flow;
+	}
+
+	it("asks no hook before the verifier proves the row", async () => {
+		veto = false;
+		const flow = await linkFlowWithItsOwnerRemoved();
+		await connection.query(
+			`UPDATE ${schema}.oauth_flow SET link_to_user_id = NULL WHERE state_sha256 = $1`,
+			[stateHashOf(flow.state)],
+		);
+		fired.length = 0;
+
+		await callback(hooked, flow);
+
+		expect(fired, "beforeSignIn fired on a row the verifier refuses").toStrictEqual([]);
+	});
+
+	it("answers as for an unknown state even when a plugin vetoes sign-ins", async () => {
+		veto = false;
+		const flow = await linkFlowWithItsOwnerRemoved();
+		veto = true;
+		const unknownState = await answerOf(
+			await callback(hooked, { state: "no-such-state", pointer: flow.pointer, nonce: null }),
+		);
+		await connection.query(
+			`UPDATE ${schema}.oauth_flow SET link_to_user_id = NULL WHERE state_sha256 = $1`,
+			[stateHashOf(flow.state)],
+		);
+
+		expect(await answerOf(await callback(hooked, flow))).toStrictEqual(unknownState);
+		veto = false;
 	});
 });
 

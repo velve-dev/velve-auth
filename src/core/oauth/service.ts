@@ -545,6 +545,8 @@ export function createOAuthService(input: {
 				throw new ConcealedError("state_not_found");
 			}
 
+			//no column of the row is acted on before its verifier proves the row unchanged (E-3128)
+			const codeVerifier = await verifierOf(flow, stateSha256);
 			const linked = linkedSessionOf(flow);
 			if (linked === null) {
 				await askBeforeSignIn(services.pluginRuntime.hooks, "oauth", arrival.observed);
@@ -554,7 +556,7 @@ export function createOAuthService(input: {
 				fetch: outbound,
 				provider,
 				code: arrival.code,
-				codeVerifier: await verifierOf(flow, stateSha256),
+				codeVerifier,
 			});
 			const read = await claimsOfProvider(provider, tokens, flow.nonce);
 			assertClaimsAnswerForTheIssuer({ provider, iss: arrival.iss, ...read });
