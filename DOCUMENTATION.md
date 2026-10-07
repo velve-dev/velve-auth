@@ -8834,8 +8834,8 @@ for an unknown state. The deadline is drawn from the database clock before the
 insert, truncated to milliseconds, and bound as its epoch milliseconds. The
 callback opens the verifier straight after it consumes the row and checks its
 provider, before it reads whether the flow links and before any plugin hook,
-so no column of a rewritten row is acted on. This binds more than the table of
-section 3.18 names, which gives `state_sha256` alone (E-3123, E-3128).
+so no column of a rewritten row is acted on. The table of section 3.18 point 2
+names the same six columns (E-3123, E-3128).
 
 The identity repository takes the key ring (`createOAuthIdentityRepository({
 driver, schema, keys })`) and encrypts the tokens itself once owner and row are
