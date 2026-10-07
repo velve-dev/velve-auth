@@ -269,10 +269,10 @@ function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig
 	};
 }
 
-//session options nobody configured must also reach the completion as absent keys (E-1258)
 //every account is served unsealed until securityState.sealing exists to say otherwise (E-3142)
 const SEALING_UNTIL_IT_IS_CONFIGURED: SecurityStateSealing = "migrating";
 
+//session options nobody configured must also reach the completion as absent keys (E-1258)
 function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
 		...(config.session === undefined ? {} : { session: config.session }),

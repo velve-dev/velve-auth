@@ -100,6 +100,10 @@ function attemptsRemainingAfter(attempts: number): number {
 
 const FIRST_ATTEMPT_COUNT = 0;
 
+function budgetIsSpentBy(attempts: number): boolean {
+	return attempts >= MAXIMUM_PENDING_ATTEMPTS;
+}
+
 export function createPendingAuthenticationService(
 	options: PendingAuthenticationServiceOptions,
 ): PendingAuthenticationService {
@@ -216,7 +220,7 @@ export function createPendingAuthenticationService(
 			outcome: "booked",
 			resolution,
 			failed: async () =>
-				attempts >= MAXIMUM_PENDING_ATTEMPTS
+				budgetIsSpentBy(attempts)
 					? exhaust(tokenHash)
 					: { outcome: "attempts_remain", attemptsRemaining: attemptsRemainingAfter(attempts) },
 		};
@@ -230,8 +234,7 @@ export function createPendingAuthenticationService(
 	): Promise<BookedAttempt> {
 		let row: CheckedPendingRow | "missing" = checked;
 		for (let tries = 0; tries <= MAXIMUM_PENDING_ATTEMPTS && row !== "missing"; tries += 1) {
-			//the attempt that spent the budget is still evaluated and removes the row itself
-			if (row.attempts >= MAXIMUM_PENDING_ATTEMPTS) {
+			if (budgetIsSpentBy(row.attempts)) {
 				return { outcome: "exhausted" };
 			}
 			if (await bookedOver(tokenHash, row)) {
