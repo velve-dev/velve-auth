@@ -11,13 +11,25 @@ interface VersionedMac {
 }
 
 /** what checking a stored MAC found, where an unknown version is told apart from a mismatch */
-type MacVerdict = "valid" | "mismatch" | "key_version_unknown";
+type MacVerdict = "valid" | "mismatch" | "key_version_unknown" | "key_unusable";
 
 async function hmacUnder(
 	key: CryptoKey,
 	message: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer>> {
 	return new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
+}
+
+//a provider of its own can hand over a key web crypto refuses to sign with (E-3093)
+async function hmacUnderIfUsable(
+	key: CryptoKey,
+	message: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+	return hmacUnder(key, message).catch(() => null);
+}
+
+export async function keyTakesMac(key: CryptoKey): Promise<boolean> {
+	return (await hmacUnderIfUsable(key, new Uint8Array(0))) !== null;
 }
 
 export async function macUnderCurrentKey(
@@ -32,7 +44,7 @@ export async function macUnderCurrentKey(
 	return { keyVersion: version, mac: await hmacUnder(key, message) };
 }
 
-//web crypto promises no constant time for verify so the comparison is made here (S-INTEG-2)
+//a stored mac is compared in constant time and never through web crypto verify (E-3088)
 export async function verifyMacUnderKeyVersion(
 	keys: KeyProvider,
 	purpose: IntegrityKeyPurpose,
@@ -45,5 +57,9 @@ export async function verifyMacUnderKeyVersion(
 	if (key === null) {
 		return "key_version_unknown";
 	}
-	return equalsInConstantTime(await hmacUnder(key, message), stored.mac) ? "valid" : "mismatch";
+	const recomputed = await hmacUnderIfUsable(key, message);
+	if (recomputed === null) {
+		return "key_unusable";
+	}
+	return equalsInConstantTime(recomputed, stored.mac) ? "valid" : "mismatch";
 }

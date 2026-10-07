@@ -15194,7 +15194,7 @@ One consequence of restating in place that the rule does not mention, and that s
 ### The foundation writes into Key management and The instance as well as its own chapter
 `E-3089` · security-state · documentation, settled
 
-**Context.** The stub cut gave the foundation the chapter *Security state*. Two facts it changes stand in other chapters and would be false if left: *Key management* counts the purposes in its prose and lists them in a table, and the configuration table of *The instance* said all six purpose keys are derived from the root key. Both are corrected in place, with a row for each new purpose in the purpose table, and the instance row now says a provider of its own must answer every name in `KEY_PURPOSES`. Commit 7 adds the table to *Schema* and the migration to *Migrations* for the same reason. *Note added before merge, by the commit that adds migration 3: it also changed the count of core table names in* Plugins *from seventeen to eighteen, which the sentence before this note does not name.*
+**Context.** The stub cut gave the foundation the chapter *Security state*. Two facts it changes stand in other chapters and would be false if left: *Key management* counts the purposes in its prose and lists them in a table, and the configuration table of *The instance* said all six purpose keys are derived from the root key. Both are corrected in place, with a row for each new purpose in the purpose table, and the instance row now says a provider of its own must answer every name in `KEY_PURPOSES`. Commit 7 adds the table to *Schema* and the migration to *Migrations* for the same reason. *Note added before merge: "Commit 7" is the plan's numbering and names no commit of this branch; the commit meant is `feat(db): add the security-state table and its migration` (512e0de).* *Note added before merge, by the commit that adds migration 3: it also changed the count of core table names in* Plugins *from seventeen to eighteen, which the sentence before this note does not name.*
 **Rejected.** Describing the purposes only in *Security state*, which leaves *Key management* stating six purposes the code no longer has.
 **Reason.** A count in another chapter that the change makes false is a defect in that chapter, and the partition of §5 is about who writes a chapter's content, not about leaving a number wrong.
 **Price.** Those chapters are owned by no current feature, and the edit is reported here rather than reviewed by an owner.
@@ -15204,10 +15204,190 @@ One consequence of restating in place that the rule does not mention, and that s
 ### Tests that append a migration of their own number it past the shipped plan
 `E-3090` · security-state · test, migration runner, settled
 
-**Context.** Migration 3 broke twenty-five cases in twelve test files. Most asserted the shipped plan itself — the versions `[1, 2]`, sixteen tables, thirteen user-owned tables, the columns and indexes of the schema — and now assert the plan with migration 3 in it. Seven cases in `test/db-runner-integrity.test.ts` and `test/db-schema-status.test.ts` appended a step of their own with the literal version 3 or 4, and two of them failed only because the runner refused two migrations claiming version 3. Those files now read the shipped versions from `coreMigrations("email")` and number their own steps past the highest, and the two plugin ledger cases in `test/db-cascade-guard-evasion.test.ts` and `test/db-plugin-migration.test.ts` expect the shipped versions followed by the plugin's.
+**Context.** Migration 3 broke twenty-eight cases in thirteen test files. Most asserted the shipped plan itself — the versions `[1, 2]`, sixteen tables, thirteen user-owned tables, the columns and indexes of the schema — and now assert the plan with migration 3 in it. Seven cases in `test/db-runner-integrity.test.ts` and `test/db-schema-status.test.ts` appended a step of their own with the literal version 3 or 4, and two of them failed only because the runner refused two migrations claiming version 3. Those files now read the shipped versions from `coreMigrations("email")` and number their own steps past the highest, and the two plugin ledger cases in `test/db-cascade-guard-evasion.test.ts` and `test/db-plugin-migration.test.ts` expect the shipped versions followed by the plugin's.
 **Rejected.** Renumbering the test steps to 4 and 5, which collides again with migration 4 on the token branch (E-3086).
 **Reason.** A test about the runner's behaviour should not have to change each time the library ships a migration; a test about the shipped plan should.
-**Price.** The cases that state the plan — `test/db-migration-runner.test.ts`, `test/db-schema.test.ts`, `test/db-schema-conformance.test.ts`, `test/db-user-cascade.test.ts`, `test/db-subpath-exports.test.ts`, `test/plugin-migration-run.test.ts` — still change with every migration, and the token branch edits them again. *Note added before merge: the count in the first sentence was twenty-two in ten files when written, measured over the unit project alone; the concurrency project's `test/db-runner-concurrency.test.ts` (two cases, the plan again) and `test/owner-actor-census.test.ts` (one case, which now records `security_state` as a table no module reads or writes yet) were found by the full gate afterwards.*
+**Price.** The cases that state the plan — `test/db-migration-runner.test.ts`, `test/db-schema.test.ts`, `test/db-schema-conformance.test.ts`, `test/db-user-cascade.test.ts`, `test/db-subpath-exports.test.ts`, `test/plugin-migration-run.test.ts` — still change with every migration, and the token branch edits them again. *Note added before merge: the count in the first sentence was twenty-two in ten files when written, measured over the unit project alone; the concurrency project's `test/db-runner-concurrency.test.ts` (two cases, the plan again) and `test/owner-actor-census.test.ts` (one case, which now records `security_state` as a table no module reads or writes yet) were found by the full gate afterwards.* *Second note added before merge: the count was twenty-five in twelve files after the first note; it left out `test/db-shipped-sql-drift.test.ts`, whose three cases on the shipped files, their checksums and the plan were changed in the same commit and are counted now.*
+
+<a id="e-3091"></a>
+
+### The attempt counter, the reset-required row and set_by_session_id are bound; rate buckets and used steps are named as limits
+`E-3091` · security-state · specification, S-INTEG-2, S-INTEG-9, settled
+
+**Context.** A review of the foundation found that a writer who knows an account's password can reset `pending_authentication.attempts` and guess the second factor without the bound L-8 sets; its test counted sixteen guesses answered against a budget of five. Section 3.18 named unbound deadlines, `disabled_at` and `sign_count` as limits and none of `attempts`, `velve.rate_bucket`, `velve.totp_used_step`, `velve.password_reset_required` or `password_credential.set_by_session_id`. The orchestrator decided the treatment: `attempts` joins the pending token MAC and every counted attempt rewrites the MAC in the same transaction; the presence of a `password_reset_required` row and `set_by_session_id` join the seal and its encoding; rate buckets and used time steps are named as limits, with what a writer gains from them. Writing the limits down showed two more that this entry adds without anyone having decided them: binding `attempts` stops a writer from setting the counter, and not from playing back an earlier version of the same row with its MAC of that time, which gives a full budget again on every playback within the pending authentication's deadline; and a deleted session row can be inserted again with its MAC, so a revocation is final only against an attacker without write access. T-INTEG-2 detects fourteen changes instead of twelve, and T-INTEG-9 adds the counter reset as a tenth altered row. The reviewer's case is committed as `test/security-state-attempt-budget.test.ts` with `it.fails`, because the MAC is written on the token branch; that branch turns it into a plain case.
+**Rejected.** (a) Naming `attempts` as a limit only, which leaves L-8 open to a writer who sets a number. (b) A counter outside the database, which no process shares with another and which a restart empties.
+**Reason.** A bound that is checked against a value the attacker can set is no bound; one checked against a MAC at least forces the attacker to replay rows they saw.
+**Price.** The playback limit means the binding narrows the attack and does not close it: a writer who recorded the fresh row still gets five guesses per playback. Every failed attempt costs an HMAC and a second write. `set_by_session_id` in the seal means a password set by a session reseals with that session's id, so a change of it by a writer is a broken state.
+
+<a id="e-3092"></a>
+
+### The seal version stops at Number.MAX_SAFE_INTEGER, and migration 3 is changed in place
+`E-3092` · security-state · schema, migration 3, settled
+
+**Context.** The seal's version reaches the application as a `number` — the result of `resealSecurityState`, the `version` of `recordSeal`, the floor `minimumVersion` returns — while `velve.security_state.version` was an unbounded `bigint`. A writer could store a version no JavaScript number represents, and "the new version lies above the stored one" (S-INTEG-7) would then have no exact answer. A reviewer's test stored `9223372036854775807` and the table accepted it. The column's check is now `version BETWEEN 1 AND 9007199254740991` in `src/core/db/migrations/security-state.ts`, in `migrations/0003_security_state.sql` and in the SQL of section 3.18 in both languages, which now also says why. Migration 3 is edited in place: it exists only on this unmerged branch and in no published version, so no database has it in its ledger under the old checksum except the branch's own test schemas. The reviewer's case is committed as `test/security-state-table.test.ts`, with the boundary and zero beside it.
+**Rejected.** (a) A migration 4 that alters the check, which would ship a migration only to repair an unreleased one, and migration 4 is reserved (E-3086). (b) Reading the version as a string or `bigint` in the interface, which changes three signatures of section 3.15 for a range no legitimate account reaches.
+**Reason.** A check in the table is the one place a writer cannot step around, and an unreleased migration has no ledger to protect.
+**Price.** A database that ran this branch's earlier migration 3 refuses to start with `migration_checksum_changed` until its schema is recreated; that is only a test or development database.
+
+<a id="e-3093"></a>
+
+### The start takes a probe HMAC under each integrity purpose, and a key that cannot sign is a verdict
+`E-3093` · security-state · keys, startup, settled
+
+**Context.** `assertKeysAnswerForEveryPurpose` checked only that `current(purpose)` returned a version, so a provider of its own could answer `state-mac` with an AES key and pass the start; `verifyMacUnderKeyVersion` then threw a `DOMException` (`InvalidAccessError`) on the request path, which made the chapter's sentence that it never throws for a stored value false. A reviewer's test showed both. The start now takes one HMAC over the empty message under the current key of every purpose `isIntegrityPurpose` names, and refuses with `keys_unusable` if Web Crypto will not sign with it, a verify-only HMAC key included. `verifyMacUnderKeyVersion` answers `"key_unusable"` when the key of the stored version cannot sign. The probe lives in `src/core/keys/mac.ts` as `keyTakesMac`, and the change to `src/core/auth/startup.ts` is the two imports and one condition inside `assertKeysAnswerForEveryPurpose`, so a parallel change to the weakening report in that file merges beside it. The reviewer's cases are committed as `test/keys-integrity-start.test.ts`, with the shipped provider and a verify-only key beside them.
+**Rejected.** (a) Probing every purpose, encryption ones included, which no finding asked for and which belongs to whoever reworks the start check. (b) Mapping an unusable key to `"key_version_unknown"`, which would tell an operator the ring lost a version when it holds a key of the wrong kind.
+**Reason.** A key that cannot do its job is a configuration fault, and configuration faults are refused at the start, not discovered by the first request that needs them.
+**Price.** The start takes two more HMACs. `macUnderCurrentKey` still throws the platform error for an unusable current key; the start check is what keeps that from being reachable, and a provider that changes its answer after the start is not covered. The `keys_unusable` row of *The instance* was rewritten for the same reason as E-3089.
+
+<a id="e-3094"></a>
+
+### A change to an unsealed account in migrating mode converts the whole account first
+`E-3094` · security-state · specification, S-INTEG-3, S-INTEG-8, settled
+
+**Context.** A review found section 3.18 silent on a legitimate change — a passkey registered, a password changed — to an account that has no seal row yet in mode `"migrating"`. Sealing it after the change would lock the user out of their remaining old-form envelopes, which are readable only for an unsealed account (S-INTEG-1), and refusing the change would stop a signed-in user from working while the maintenance step runs, which S-INTEG-8 forbids. *Sealing* now says such a change first re-encrypts every old-form envelope of the account into the bound form, in the same transaction under the account lock, and then writes the first seal; point 2 and S-INTEG-3 say the same, and T-INTEG-8 registers a passkey on an unconverted account mid-run and expects its TOTP secret and password to stay usable.
+**Rejected.** (a) Sealing only the changed component and leaving the rest in the old form, which leaves a sealed account with envelopes no sealed account may read. (b) Refusing changes until the account is converted, for S-INTEG-8.
+**Reason.** The account is converted entirely or not at all, which is the property the maintenance step already promises per account; a change becomes one more way to reach it.
+**Price.** The first change after the upgrade costs a re-encryption of every envelope of that account inside the request.
+
+<a id="e-3095"></a>
+
+### The seal check reads one snapshot
+`E-3095` · security-state · specification, S-INTEG-4, settled
+
+**Context.** A review found that *Checking* did not say how the state is read. A check that reads the seal row and the components in several statements under PostgreSQL's default `READ COMMITTED` can see a legitimate reseal between them, compute the old state against the new seal and refuse a valid account — a spurious sign-out and a false alarm. Section 3.18 and S-INTEG-4 now require the seal row and every component to come from a single snapshot, one statement or one `REPEATABLE READ` transaction, and T-INTEG-3 runs 20 session resolutions beside each of its 50 change pairs and expects none of the 1000 refused.
+**Rejected.** Taking the account lock for a check, which would serialise every request of an account behind every change of it.
+**Reason.** A snapshot gives a consistent read without a lock, which is what the check needs and all it needs.
+**Price.** The implementation is constrained to one statement or an explicit transaction per check, which the seal branch builds and measures.
+
+<a id="e-3096"></a>
+
+### A broken-state refusal costs what the ordinary failure costs
+`E-3096` · security-state · specification, S-INTEG-5, settled
+
+**Context.** A review found that S-INTEG-5 spoke of the answer and not of the time it takes. A sign-in that refused a broken account before the KDF, or one that checked the seal only after a correct password, would answer measurably differently from a wrong password or an unknown account, and S-TIM-1 exists because that difference is visible over the network. Section 3.18 *Outwards* and S-INTEG-5 now require the refusal to do the same work as the ordinary failure — the same queries, the same KDF, the same HMAC — so password sign-in checks the seal on every attempt, and against a stand-in state for an unknown account, as it already derives a stand-in KDF. T-INTEG-5 gains a call-sequence part in the form of T-TIM-1b on every commit and a timing part at T-TIM-1's threshold, which section 6's rule puts on the nightly tier like the concurrency part of T-RACE-2; the opening of section 6 says so. The tier counts are unchanged, because T-INTEG-5 is still one case blocking every commit.
+**Rejected.** Checking the seal only on a successful password, which my first draft of 3.18 intended and which a password holder can time.
+**Reason.** The same reason S-TIM-1 gives: a difference in work is a difference in time, and time is an answer.
+**Price.** Every password attempt, including every failed and every unknown one, pays a state read and an HMAC.
+
+<a id="e-3097"></a>
+
+### The alarm has a global bound and counts what it does not deliver
+`E-3097` · security-state · specification, S-INTEG-5, settled
+
+**Context.** A review found three faults in *The alarm*. The deduplication was per process, account and reason only, so a writer who broke many accounts let an unauthenticated caller raise one alarm per account per minute; one path's alarm could hide another's on the same account for sixty seconds, because the occasion was not in the key; and what happened when the 10,000 entries were full, and to the log line, was not said. The orchestrator decided the shape: a global per-process bound, aggregation beyond it carried on the next delivered alarm or a periodic aggregate, never silent, eviction allowed only when it is counted, the occasion in the key, and the log following the same rule. Section 3.18 now keys deduplication by account, occasion and reason; delivers at most 100 alarms per process in 60 seconds; counts every undelivered alarm into `suppressed`, which the next delivered alarm carries; sends an aggregate alarm with `userId: null`, `occasion: "aggregate"` and `reason: "suppressed"` when counted alarms have waited 60 seconds; and passes an evicted entry's count into the total. `SecurityStateAlarm` in A.8 gains `suppressed` and the two aggregate values, and its `userId` becomes nullable. S-INTEG-5 and T-INTEG-5 state the bound and a case over 1000 broken accounts. The number 100 is the writer's choice and was measured against nothing.
+**Rejected.** (a) Dropping alarms over the bound, which makes a flood a way to hide the alarm that matters. (b) A bound per account only, which is the fault.
+**Reason.** An alarm exists to be read by a person, who can read a count and cannot read a flood.
+**Price.** An operator learns of the hundred-and-first broken account only as a number, without its id, until the window passes. A callback written for the first draft breaks on a nullable `userId`.
+
+<a id="e-3098"></a>
+
+### T-INTEG-4 and T-INTEG-9 attack one account per path
+`E-3098` · security-state · specification, test plan, settled
+
+**Context.** A review found T-INTEG-4's threshold — seven paths refused, one alarm each — unreachable on one account, because the alarm is deduplicated per account and reason, and T-INTEG-9's twelve rows "with alarm" the same. With the occasion now in the deduplication key (E-3097) the paths of T-INTEG-4 would be separable on one account, but T-INTEG-9's rows share occasion and reason. Both cases now break an account of their own for every path or attack, and the thresholds say one alarm each, T-INTEG-4's with the path's occasion.
+**Rejected.** An injected clock advanced past the window between paths, which the review offered; it tests the window rather than the paths and needs a clock seam the alarm does not have yet.
+**Reason.** One account per path makes each alarm attributable without depending on the deduplication rule at all.
+**Price.** The two cases create about twenty accounts each.
+
+<a id="e-3099"></a>
+
+### The INTEG test cases cover the whole attacker matrix of the plan
+`E-3099` · security-state · specification, test plan, settled
+
+**Context.** A review held the T-INTEG cases against the plan's attacker matrix and found gaps. No case tampered with the migration state. T-INTEG-2 did not toggle `totp_credential.confirmed_at`, insert a recovery code or delete the password row, all three of which change the seal. T-INTEG-4 left out the redemption of an address confirmation and of an address change, and the passkey and the recovery code as second factor, all four of which S-INTEG-4 names by their kind. T-INTEG-2 now detects seventeen changes; T-INTEG-4 refuses eleven paths and T-INTEG-5 compares eleven pairs; T-INTEG-8 puts an old-form ciphertext into a sealed account during the run, deletes a seal row after it and restarts in `"required"`, and deletes migration 3's ledger row and calls `migrate()`, expecting the runner to fail on the table that already exists rather than leave a seal changed. That last expectation is the writer's reading of the runner and was not run.
+**Rejected.** Folding the migration-state cases into T-INTEG-4, which is about the paths a request takes and not about the maintenance step.
+**Reason.** A matrix the plan lists case by case is met case by case, or the gap is a finding again at the next review.
+**Price.** T-INTEG-8 becomes the longest case of the class.
+
+<a id="e-3100"></a>
+
+### T-INTEG-1 copies between columns of one purpose
+`E-3100` · security-state · specification, test plan, settled
+
+**Context.** T-INTEG-1 copied each of its four ciphertexts into another column of the same account. Most such copies cross purposes — a TOTP secret into a password column — and fail under S-KEY-2 before the binding of S-INTEG-1 is reached, so the case tested the key separation a second time. The column part now copies within one purpose: `identity.access_token_enc` into `refresh_token_enc` and `id_token_enc` of the same row, which share the key `oauth-token-enc`, the owner and the row, and differ only in the column the binding names. The threshold moves from eight copies to six.
+**Rejected.** Keeping the cross-purpose copies beside them, which would add cases T-KEY-2 already decides.
+**Reason.** A case belongs to the requirement whose failure alone would let it pass.
+**Price.** The column binding is tested on one table only, the only one with several columns under one purpose.
+
+<a id="e-3101"></a>
+
+### T-INTEG-9 changes a purpose by moving the row between tables
+`E-3101` · security-state · specification, test plan, settled
+
+**Context.** T-INTEG-9 asked to change the purpose of one real row in each of `session`, `one_time_token` and `pending_authentication`. Only `one_time_token` has a purpose column; for a session and a pending authentication the purpose is the table the row stands in, so "change its purpose" had no defined act. The case now moves one real row of each table into another of the three, which is the purpose change a writer can make there, and in addition sets a one-time token's `purpose` to another of the four. The altered rows rise from ten to eleven.
+**Rejected.** Dropping the purpose change for the two tables without a column, which would leave the purpose in their MAC untested.
+**Reason.** The MAC binds the purpose because a row could otherwise be read as another kind of token, and moving it is how that happens.
+**Price.** A moved row has to be given the target table's columns, which the test supplies with values of its own.
+
+<a id="e-3102"></a>
+
+### A reseal returns what it ratified, and the specification says that sealing checks nothing
+`E-3102` · security-state · specification, S-INTEG-7, settled
+
+**Context.** A review found that `maintenance.resealSecurityState` and the first seal written by the maintenance step accept whatever rows the account has — a passkey or an identity a writer inserted among them — while the call returned only `{ version }`, so an administrator could ratify an inserted credential without seeing it. Section 3.15 B now types the result as `SealedSecurityState`: the version, the address and whether it is confirmed, whether a password and a `password_reset_required` row exist, the state of TOTP, the `credential_id` of every passkey in base64url, `provider` and `subject` of every identity and the number of recovery codes. *Resealing* says the call checks none of the rows and returns them so that the application sees what it ratifies; *The limits* says the first sealing and every resealing take over inserted rows unchecked; S-INTEG-7 and T-INTEG-7, which now inserts a foreign passkey before the valid call, follow.
+**Rejected.** (a) Having the reseal refuse rows it cannot vouch for, which the library cannot do: it has no record of which rows were legitimate other than the seal that is broken. (b) Returning only counts, which do not let an administrator recognise a foreign credential.
+**Reason.** The library cannot tell a legitimate row from an inserted one once the seal is broken, so the decision is the administrator's, and it can only be made on what the call shows.
+**Price.** The result carries identifiers — credential ids, provider subjects, the address — that the application may log, where the library itself logs none of them. `SealedSecurityState` lists the recovery codes only by number, so an inserted code is visible only as a count that does not match.
+
+<a id="e-3103"></a>
+
+### T-KEY-3 counts the seal and the three token MACs
+`E-3103` · security-state · specification, test plan, settled
+
+**Context.** The specification commit widened S-KEY-3 to `security_state.key_version` and `token_mac_key_version` in `session`, `one_time_token` and `pending_authentication`, and left T-KEY-3 at five values, so the requirement named four versioned values its test case never reads. T-KEY-3 now creates the seal and a token MAC of each of the three kinds beside the five values it had, and its threshold is nine of nine. The four new values are written by the seal and token branches; until they merge no code produces them, and the case grows with them.
+**Rejected.** Leaving T-KEY-3 alone and relying on T-INTEG-3 and T-INTEG-9, which test the seal and the MACs but not that their stored version is the current one.
+**Reason.** A requirement and its test case are kept in step in the specification itself; section 6 says every requirement has a case meeting its threshold.
+**Price.** None beyond four more reads in an existing case.
+
+<a id="e-3104"></a>
+
+### Two stale details of the specification brought into step
+`E-3104` · security-state · specification, settled
+
+**Context.** A review found two details the specification commit left behind. Section 3.2 still said its block and 3.17's together make the schema of sixteen tables, while 3.18 adds the seventeenth; the sentence now points at 3.18 for the seal table and the token MAC columns. The SQL of migration 4 in 3.18 gave `token_mac` and `token_mac_key_version` no checks, while migration 3 checks the digest's length and the key version; the three tables now check `octet_length(token_mac) = 32` and `token_mac_key_version >= 1`. Migration 4 is not built yet; the token branch writes it to this SQL.
+**Rejected.** Nothing; both were omissions.
+**Reason.** A writer and a reader of the table cannot disagree about a length the table refuses.
+**Price.** None.
+
+<a id="e-3105"></a>
+
+### The cost of a check is marked as an estimate
+`E-3105` · security-state · specification, settled
+
+**Context.** Section 3.18's limits stated that every check costs one query and one HMAC per request, as a fact, and nothing had been measured; the plan asks for the extra cost per sign-in to be measured and recorded. The sentence is now marked `SCHÄTZUNG` in German and `ESTIMATE` in English, the way the specification marks its other unmeasured claims, and says the measurement replaces it. The measurement belongs to the seal branch, which builds the check.
+**Rejected.** Removing the sentence until a number exists, which hides the cost from a reader deciding whether to upgrade.
+**Reason.** The specification separates what it measured from what it guessed, and this was a guess.
+**Price.** None.
+
+<a id="e-3106"></a>
+
+### Seven commits of this branch do not pass the gate on their own
+`E-3106` · security-state · history, settled
+
+**Context.** History on this branch is not rewritten, so what each commit fails stays in it, and this entry says which. `737f7ec`, the German specification, fails `test/architecture-translation.test.ts` until `9abde36` brings the English into step, as its own message says. `95890cb` through `512e0de` fail `pnpm knip` on two exported types of `src/core/keys/mac.ts` that nothing imported, until `9a8346f`. `b130ae3` fails `pnpm lint` on a line of `test/keys-cross-purpose.test.ts` until `b1dbb1a`, whose message calls the line a comment when it was the `SIGNING_PURPOSES` array. `512e0de` fails three cases of the concurrency and census tests until `f222206`. `21c536b`, the first commit fixing the review of the foundation, carried two of the reviewer's red tests by an `git add -A` that should have named its paths; one goes green in `578cdb8`, the other in `6abacf9`.
+**Rejected.** Squashing or amending, which CLAUDE.md §4 and the brief forbid.
+**Reason.** A bisect that lands on one of these commits should find the reason here rather than in a reviewer's report.
+**Price.** The branch's history cannot be bisected by the gate without this list.
+
+<a id="e-3107"></a>
+
+### A mass revocation raises a session epoch the session MAC binds
+`E-3107` · security-state · specification, S-INTEG-2, S-INTEG-3, S-INTEG-9, settled
+
+**Context.** E-3091 named as a limit that a writer can re-insert a deleted session row with its MAC and so undo a revocation. The orchestrator did not accept that for a mass revocation — the sign-out everywhere a user reaches for after a theft, and the revocation S-FIX-6 makes unconditional — and decided the remedy: an epoch per account in `velve.security_state`, covered by the seal, bound into every session's MAC at its issue, and raised with a reseal by every mass revocation in the same transaction under the account lock. Section 3.18 now adds `session_epoch bigint NOT NULL DEFAULT 1` with the same bound as the version (E-3092) to migration 3's SQL, puts it into the encoding, binds it into the session MAC, refuses a session under an older epoch like a missing row with the alarm, and lists the mass revocations: `session.revokeAll`, `session.revokeAllOther`, the four writing methods of `password` (3.15 B.4) and the S-LINK-4 sweep. The one session such an operation keeps or issues is bound under the new epoch in the same transaction; rebinding under a new key version keeps the epoch it was issued under. S-INTEG-2, S-INTEG-3 and S-INTEG-9 follow, and T-INTEG-9 re-inserts a saved row after `session.revokeAll` and after a password change. *The limits* now name only what stays: an individually revoked session — `session.revoke`, `signOut` — can be played back while the epoch has not risen, and a pending authentication within its deadline; the anchor bounds them only indirectly, because getting a mass-revoked session back needs the epoch reset, which breaks the seal or needs the old seal row below the anchor's floor.
+**Rejected.** (a) Raising the epoch on every single revocation, which would end every other session of the account each time one device signs out. (b) A tombstone row per revoked session, which a writer deletes with the same ease as they re-insert the session.
+**Reason.** A counter the seal covers is the one thing a writer cannot roll back without breaking the seal, and one counter per account is enough to make every older session row worthless at once.
+**Price.** A session resolution reads the account's epoch with the seal, inside the snapshot of E-3095. `session.revokeAllOther` rebinds the kept session's MAC, which is possible without its token because the MAC runs over `token_sha256` (E-3081). An individual revocation stays reversible for a writer, and the alarm cannot tell an epoch mismatch from a forged row, since both are a MAC that does not match.
+
+<a id="e-3108"></a>
+
+### Migration 3 gains session_epoch in place
+`E-3108` · security-state · schema, migration 3, settled
+
+**Context.** E-3107 puts `session_epoch` into `velve.security_state`. The column is added to migration 3 itself — `session_epoch bigint NOT NULL DEFAULT 1 CHECK (session_epoch BETWEEN 1 AND 9007199254740991)` — in `src/core/db/migrations/security-state.ts` and `migrations/0003_security_state.sql`, for the reason E-3092 gives: migration 3 has not been released, so no ledger outside this branch's test schemas holds its checksum. The default is 1 so that the maintenance step's first seal and a new account need not name it. `test/db-schema-conformance.test.ts` lists the column, `test/security-state-table.test.ts` holds its default and both ends of its range, and *Schema* documents it. Nothing writes the column yet: binding it is the token branch's, sealing it the seal branch's.
+**Rejected.** A migration 4 or 5 for one column, for the same reason as in E-3092, and because 4 is the token branch's (E-3086).
+**Reason.** An unreleased migration is a draft, and a draft is edited.
+**Price.** Every database built from this branch's earlier migration 3, the parallel branches' test schemas included, refuses to start with `migration_checksum_changed` until it is recreated; the token and envelope branches must merge this commit before their gates run against a fresh schema.
 
 <a id="e-3110"></a>
 
