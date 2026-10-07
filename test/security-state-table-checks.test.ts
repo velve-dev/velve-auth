@@ -40,6 +40,10 @@ describe("velve.security_state digest and key_version (migration 3)", () => {
 		expect(await outcomeOf("00".repeat(32), 1)).toBe("stored");
 	});
 
+	it("takes the largest key version an integer column holds", async () => {
+		expect(await outcomeOf("00".repeat(32), 2_147_483_647)).toBe("stored");
+	});
+
 	it("refuses a key version of zero and a negative one", async () => {
 		expect(await outcomeOf("00".repeat(32), 0)).toBe("23514");
 		expect(await outcomeOf("00".repeat(32), -1)).toBe("23514");

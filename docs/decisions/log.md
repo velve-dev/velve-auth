@@ -16168,3 +16168,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Comparing every stored version against every other stored version of every purpose, which a writer could make quadratic in the number of versions they store.
 **Reason.** A start check exists so that a configuration that will fail at the first write fails at the start instead.
 **Price.** One more HMAC per stored `state-mac` version at start, on top of E-3216's per-version cost.
+
+<a id="e-3330"></a>
+
+### The second reviewer's plant killers are kept after failing on their plants
+`E-3330` · security-state · tests, settled
+
+**Context.** The seventh review's second reviewer found no code defect. They wrote cases that a planted fault would turn red and the committed suite would not notice. Each was run here against its plant before it was kept. `test/keys-integrity-key-sharing.test.ts` refuses one HMAC key answering any two HMAC purposes, `token-pepper` and `cookie-sig` among them. Restricting the comparison to the integrity purposes (P-A) failed all four cases, so the check already covered every pair, as point 1 and E-3324 say. `test/keys-integrity-ring-probe.test.ts` refuses the start when only the later of two stored `state-mac` versions cannot take an HMAC; probing only the first stored version (P-B) failed it. `test/db-read-committed-passthrough.test.ts` holds that the wrapper passes a plain statement through without opening a transaction and gives a joined transaction no second isolation statement. Wrapping a joined transaction again failed it, and so did running `query` inside a transaction (both P-C). `test/security-state-table-checks.test.ts` gains the boundary case P-D, a `key_version` of 2,147,483,647 stored.
+**Rejected.** Nothing.
+**Reason.** A guard that no test sees removed is a guard by intention only, as E-3311 said.
+**Price.** None.
