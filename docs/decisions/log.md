@@ -15748,3 +15748,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A timer of the library's own, which needs a background task in every runtime the library supports, some of which run none.
 **Reason.** A count that needs a timer nobody runs is a promise nothing keeps; one that rides on the next alarm is kept whenever there is a next alarm.
 **Price.** The limit above: a quiet attacker leaves the count waiting, and a restart drops it.
+
+<a id="e-3285"></a>
+
+### Not every sealed column had a case when E-3201 said so
+`E-3285` · security-state · specification, test plan, settled
+
+**Context.** E-3201's heading says every sealed column has a case, and its Reason argues from that. The fourth review listed six sealed values T-INTEG-2 still did not change in place: the `key_version` of the password, the TOTP secret and a recovery code, a recovery code's `code_hmac`, a passkey's `credential_id` and an identity's `provider`. E-3201's claim was false when written and is not edited. T-INTEG-2 now changes those six in place too and detects thirty-one changes in both languages; with them every value the encoding of section 3.18 lists is changed by at least one case.
+**Rejected.** Nothing; the claim was wrong.
+**Reason.** A matrix claimed complete has to be checked against the encoding it covers, field by field, and E-3201 was checked against the components instead.
+**Price.** None beyond six more cases.
