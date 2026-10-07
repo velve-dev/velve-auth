@@ -15888,3 +15888,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Retrying the issue, which against a writer only repeats the miss or, worse, issues under the writer's epoch.
 **Reason.** Only a writer outside the library can change the epoch under the lock, because every legitimate change takes the lock first, so a miss is evidence of tampering and nothing else.
 **Price.** An issue that misses refuses a legitimate sign-in of an account a writer has touched, which is what a broken state does on every other path.
+
+<a id="e-3299"></a>
+
+### The session resolution reads session, epoch and seal in one statement
+`E-3299` · security-state · specification, S-CACHE-2, S-INTEG-4, test plan, settled
+
+**Context.** S-CACHE-2 makes the session resolution one query over `velve.session` and `velve.user`, and S-INTEG-4 has seal row and components read in one statement, but nothing said that the session row and the account's `session_epoch` come from the same statement. The fifth review showed what two statements do: a legitimate `session.revokeAll` committing between them leaves the resolution holding a session bound to the old epoch and an account at the new one, which point 3 answers like a missing row with the alarm, so a user who signs out everywhere while another tab resolves raises `token_binding_mismatch`. T-INTEG-3 raced resolutions only against changes that leave the epoch alone. As the orchestrator decided, the resolution reads the session row, the account's `session_epoch`, the seal row and the seal's components in one statement. *Checking*, S-CACHE-2 and S-INTEG-4 say so in both languages, and T-INTEG-3 adds 50 resolutions racing `session.revokeAll` with 0 alarms. T-CACHE-2's text names no table and is unchanged; its fixture holds the query's literal and changes with the branch that builds the resolution. `test/security-state-resolve-revocation.test.ts` holds the one statement and, as its control, the false alarm of two; the review's file is folded into it.
+**Rejected.** Reading the epoch first and the session row second, which has the same window in the other order. Treating an epoch mismatch right after a revocation as no alarm, which would hide a reinserted row in exactly the case the epoch exists for.
+**Reason.** Under READ COMMITTED only a single statement sees one consistent state, and the epoch check compares two values that have to come from the same state.
+**Price.** The resolution's one query grows by the seal's components, which the branch that builds it has to keep within the one statement S-CACHE-2 already demanded; the cost of that query is not measured here.
