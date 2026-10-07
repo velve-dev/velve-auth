@@ -15918,3 +15918,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Resolving the kept session again after the lock in a separate statement and keeping it if it resolves, which re-reads the writer's row and accepts it under the old epoch the revocation has already replaced.
 **Reason.** A session that is kept is promoted to the new epoch, and a promotion has to vouch for exactly the row it promotes under the state it read under the lock.
 **Price.** The caller of a `revokeAllOther` that loses to a concurrent `revokeAll` is signed out by the call that was meant to keep it signed in, which is what the `revokeAll` asked for.
+
+<a id="e-3302"></a>
+
+### The consumption-order test no longer describes a snapshot
+`E-3302` · security-state · tests, settled
+
+**Context.** `test/security-state-snapshot-order.test.ts` was written for E-3209's rule that a sealing change's snapshot is taken by its first statement, the consumption where §7 puts one first. E-3280 abandoned snapshots for READ COMMITTED, and the fifth review found that the test's comment and its title still described the abandoned rule. What the test checks did not change and is still required: `redeemReset` consumes its one-time token before it reaches the account lock. The comment and the title now say that, and cite E-3280 for why the old wording is gone. The file keeps its name, because renaming it would break the references to it in E-3209 and E-3280.
+**Rejected.** Deleting the test with the rule, which would drop the only check that the §7 order holds in the reset flow.
+**Reason.** A test whose title describes a rule nobody follows tells the next reader the rule still holds.
+**Price.** The file name still says "snapshot".
