@@ -25,8 +25,8 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["one_time_token"]);
 	});
 
-	it.each(["replaceOneTimeToken", "consumeOneTimeToken"])(
-		"reports %s, because the repository method is the only other way to that table",
+	it.each(["replaceOneTimeToken", "consumeOneTimeToken", "mintArtefact"])(
+		"reports %s, because it is one of the other ways to that table",
 		(method) => {
 			expect(tokenReachedAfterAccountLock(`${LOCK}\nawait tokens.${method}({});`)).toStrictEqual([
 				method,

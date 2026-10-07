@@ -96,6 +96,10 @@ const NAMED_BY_NO_TEST: ReadonlyMap<string, string> = new Map([
 		"S-INTEG-9",
 		"Stated by section 5.21 ahead of the code that meets it. The specification, the state-mac and token-mac purposes and the velve.security_state table are the foundation the requirement is built on; the requirement itself belongs to the `security-state-tokens` range of the decision log and is unbuilt until that branch merges, which removes this line by citing it (E-3087).",
 	],
+	[
+		"S-INTEG-10",
+		"Stated by section 5.21 ahead of the code that meets it. The bound on passkeys and identities per account is checked at registration and linking, which the passkey and identity code of the seal branch builds; that branch removes this line by citing it (E-3354).",
+	],
 ]);
 
 describe("every requirement of section 5 has a test case in section 6", () => {

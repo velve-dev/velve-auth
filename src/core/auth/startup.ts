@@ -2,7 +2,7 @@ import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
 import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
 import { isStorableKeyVersion } from "../keys/key-version.js";
-import { keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
+import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
@@ -276,7 +276,7 @@ export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promis
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);
 		//a version no key_version column holds would refuse every write under it (E-3329)
-		if (current === null || !isStorableKeyVersion(current.version)) {
+		if (current === null || !isStorableKeyVersion(current.version) || !isKeyShaped(current.key)) {
 			throw new VelveStartupError("keys_unusable");
 		}
 		if (isIntegrityPurpose(purpose) && !(await keyTakesMac(current.key))) {

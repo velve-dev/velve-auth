@@ -372,7 +372,7 @@ the seal covers and when it is written and checked is in
 | `version` | `bigint` | from 1 to 9007199254740991, `Number.MAX_SAFE_INTEGER`, because it reaches the application as a `number`; rises by one with every seal of the account |
 | `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
 | `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
-| `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; rises by one with every revocation of all of the account's sessions, and every session's MAC binds the epoch it was issued under |
+| `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; replaced by a new random value, different from the current one, on every revocation of all of the account's sessions and every administrator reseal, compared only for equality, and every session's MAC binds the epoch it was issued under |
 | `sealed_at` | `timestamptz` | when the row was last written |
 
 ### `velve.schema_migration`
@@ -8758,7 +8758,8 @@ means rather than catching it.
 
 Internal, in `src/core/keys/mac.ts`. Resolves `true` when `key` is an HMAC key
 with hash SHA-256 of at least 256 bits that Web Crypto signs with and whose
-output is 32 bytes, and `false` otherwise; it never throws. A shorter HMAC-SHA256
+output is 32 bytes, and `false` otherwise; it never throws, also not for a value
+a provider of its own hands over that is no key at all. A shorter HMAC-SHA256
 key signs and gives a 32-byte output, so the key length is checked on its own.
 The output-length check is redundant: HMAC with SHA-256 always gives 32 bytes,
 and a key that Web Crypto refuses to sign with fails the signing step first. It
@@ -8766,6 +8767,14 @@ is kept as a second guard on the length the seal table and the token columns
 require, not because any input reaches it. The start probes and
 `verifyMacUnderKeyVersion` use the same rule, so a key the start accepts is a
 key the check can use.
+
+### `isKeyShaped(key)`
+
+Internal, in `src/core/keys/mac.ts`. `true` when `key` is an object with an
+`algorithm` object and a `usages` array, and `false` for anything else a provider
+of its own might hand over, such as `{}` or `null`. The start refuses a current key
+that is not shaped like one with `keys_unusable`, and `keyTakesMac` and
+`sameKeyFingerprintOf` answer `false` and `null` for it instead of throwing.
 
 ### `sameKeyFingerprintOf(key)`
 
@@ -8806,9 +8815,9 @@ database or the role sets `default_transaction_isolation` to something else, whi
 the sealing of section 3.18 relies on. A transaction joined from inside one, by
 calling `transaction` on the bound driver, is not given the statement again,
 because PostgreSQL accepts it only before the first query of the outer
-transaction. `runMigrations` wraps the driver it is handed the same way, and so
-does the instance for `pluginDatabase`; the owned-row repository and the schema
-status open no transaction. Wrapping a driver twice returns the wrapped one, so a
+transaction. `runMigrations` wraps the driver it is handed the same way; the
+owned-row repository, the schema status and the plugin connection over
+`pluginDatabase` open no transaction. Wrapping a driver twice returns the wrapped one, so a
 transaction is never given the statement twice.
 
 ### The seal table

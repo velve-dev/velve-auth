@@ -15361,10 +15361,10 @@ One consequence of restating in place that the rule does not mention, and that s
 
 <a id="e-3106"></a>
 
-### Seven commits of this branch do not pass the gate on their own
+### Eight commits of this branch do not pass the gate on their own
 `E-3106` · security-state · history, settled
 
-**Context.** History on this branch is not rewritten, so what each commit fails stays in it, and this entry says which. `737f7ec`, the German specification, fails `test/architecture-translation.test.ts` until `9abde36` brings the English into step, as its own message says. `95890cb` through `512e0de` fail `pnpm knip` on two exported types of `src/core/keys/mac.ts` that nothing imported, until `9a8346f`. `b130ae3` fails `pnpm lint` on a line of `test/keys-cross-purpose.test.ts` until `b1dbb1a`, whose message calls the line a comment when it was the `SIGNING_PURPOSES` array. `512e0de` fails three cases of the concurrency and census tests until `f222206`. *Note added before merge: `9a8346f`, which fixed the knip finding, still carries those three failures and is the eighth; the heading's count was seven when written and is eight.* *Measurement restated after the seventh review: the commits this entry names are seven distinct ones — `737f7ec`, `95890cb`, `b130ae3`, `b1dbb1a`, `512e0de`, `9a8346f` and `21c536b` — because the range `95890cb` through `512e0de` is four commits and `512e0de` is named twice; the heading now says seven, and the note before this one counted wrong. The failures were not re-run per commit for this note.* `21c536b`, the first commit fixing the review of the foundation, carried two of the reviewer's red tests by an `git add -A` that should have named its paths; one goes green in `578cdb8`, the other in `6abacf9`.
+**Context.** History on this branch is not rewritten, so what each commit fails stays in it, and this entry says which. `737f7ec`, the German specification, fails `test/architecture-translation.test.ts` until `9abde36` brings the English into step, as its own message says. `95890cb` through `512e0de` fail `pnpm knip` on two exported types of `src/core/keys/mac.ts` that nothing imported, until `9a8346f`. `b130ae3` fails `pnpm lint` on a line of `test/keys-cross-purpose.test.ts` until `b1dbb1a`, whose message calls the line a comment when it was the `SIGNING_PURPOSES` array. `512e0de` fails three cases of the concurrency and census tests until `f222206`. *Note added before merge: `9a8346f`, which fixed the knip finding, still carries those three failures and is the eighth; the heading's count was seven when written and is eight.* *Measurement restated after the seventh review: the commits this entry names are seven distinct ones — `737f7ec`, `95890cb`, `b130ae3`, `b1dbb1a`, `512e0de`, `9a8346f` and `21c536b` — because the range `95890cb` through `512e0de` is four commits and `512e0de` is named twice; the heading now says seven, and the note before this one counted wrong. The failures were not re-run per commit for this note.* *Measurement restated again after the ninth review: by this entry's own last sentence `578cdb8` still carries one of the two red tests `21c536b` brought, until `6abacf9`, so it fails too; the commits are eight — the seven above and `578cdb8` — and the heading says eight again. The note before this one missed it.* `21c536b`, the first commit fixing the review of the foundation, carried two of the reviewer's red tests by an `git add -A` that should have named its paths; one goes green in `578cdb8`, the other in `6abacf9`.
 **Rejected.** Squashing or amending, which CLAUDE.md §4 and the brief forbid.
 **Reason.** A bisect that lands on one of these commits should find the reason here rather than in a reviewer's report.
 **Price.** The branch's history cannot be bisected by the gate without this list.
@@ -15899,6 +15899,46 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Removing a factor is a downgrade of the account, and the library performs no downgrade an attacker can provoke; an administrator deleting a row by hand decides it knowingly.
 **Price.** An operator who loses a ring version before the maintenance step has run faces an SQL recovery per affected account. This entry uses the last number of the second range.
 
+<a id="e-3220"></a>
+
+### The fourth foundation round is merged, and what it closes and leaves open for the envelopes
+`E-3220` · security-state-envelopes · specification, merge, settled
+
+**Context.** Merging origin/feature/security-state-integrity at 076ace9 brought the specification into step with what this branch built in three places. The table of 3.18 point 2 names `state_sha256`, `provider`, `nonce`, `redirect_path`, `link_from_session_id` and `expires_at` as the row of `oauth_flow.pkce_verifier_enc`, which is the binding of E-3123 and E-3128; the second review's F3 is closed. S-INTEG-5 promises equal running time on the password sign-in only, which covers the TOTP refusal of E-3127; F9 is closed. The paragraph after the table says the first byte separates the two forms in one direction only, which is E-3111's finding. The foundation's model is READ COMMITTED throughout; no statement of this branch opens a transaction under another isolation level, and the seal-row read of E-3121 is one statement, which is one snapshot under READ COMMITTED. The H2 re-encryption runs inside the change's own transaction, which is what `rebindEnvelopesOfAccount` takes through `inOneTransaction`. The merge itself had four conflicts, all both-sided: this log, the `KeyErrorCode` list and its paragraph in *Key management*, and the census line of `security_state`. One sentence of the chapter, that the flow binding covers more than the table names, became false and was corrected. T-INTEG-1 now also asks one alarm `envelope_binding_mismatch` per refused copy; the alarm does not exist on this branch, and raising it where `decryptBound` fails is the seal branch's, as E-3112 says.
+**Rejected.** Raising the alarm here, which builds the alarm module of another branch.
+**Reason.** A merge that changes the binding text has to say which of this branch's statements it made true and which it made false.
+**Price.** Until the seal branch merges, T-INTEG-1's alarm half is unmet, and `test/integ-bound-envelopes.test.ts` counts the six copies without their alarms.
+
+<a id="e-3221"></a>
+
+### The bound envelopes' guards each get a test that fails without them, and the account rewrite's transaction states READ COMMITTED
+`E-3221` · security-state-envelopes · test, db, settled
+
+**Context.** A mutation run over this branch found guards no test reached, and each now has one that is shown failing with the guard removed: the compare-and-swap of the account rewrite on the TOTP secret and on an identity's tokens, and the lost outcome each reports (`test/integ-bound-envelopes.test.ts`); the callback's refusal of a flow whose provider is not the one it names (`test/integ-envelope-attacks.test.ts`); the `"required"` fallback of the password repository and the TOTP service built without a sealing mode (`test/integ-envelope-sealing-default.test.ts`); the anchors of the uuid shape; and the frozen layout of the additional data and of the row of several columns, byte for byte, with each column opening under its own purpose's key alone (`test/integ-envelope-binding.test.ts`). A case for the wiring of the stored integrity-key probe into `migrate()` was not added, because `test/keys-integrity-migrate-wiring.test.ts` from the foundation already fails with that call removed. A vector encrypted under a fixed key was not added either: CLAUDE.md §8 keeps every test key generated, and the key-independent layout is what pins the format. Every transaction the library opens states READ COMMITTED first (E-3310), and `inOneTransaction` now opens its transaction through `withReadCommittedTransactions`, so the account rewrite does too even over a driver nobody wrapped; its compare-and-swaps were already on the ciphertext the rewrite opened and verified. The statement that writes an unconfirmed TOTP secret returned a seal-row column nothing read; it now returns `user_id` and the method answers a boolean. Eleven comments used the "X so Y" clause CLAUDE.md §3 rules out and were rewritten as the rule that holds. Two commits of this branch, 59ed9f1 and the comment rewrite after this entry's own changes, carry the type `style`, which the list of Conventional Commit types in CLAUDE.md §4 does not name; history is not rewritten.
+**Rejected.** (a) A keyed golden vector with a committed key, which §8 forbids. (b) A second copy of the migrate-wiring case beside the foundation's.
+**Reason.** A guard that can be removed with the suite green is not known to work, and a test that only restates another test adds nothing.
+**Price.** The encoding is pinned by its additional data and by the independent proof of T-REST-4, not by a ciphertext; a change in how the AES-GCM step lays out nonce and tag shows only in the latter.
+
+<a id="e-3222"></a>
+
+### An OAuth sign-in of a known identity refreshes its provider tokens under the account lock
+`E-3222` · security-state-envelopes · lock order, settled
+
+**Context.** The rewrite of one account's envelopes takes the account lock and replaces each provider token only if the ciphertext it opened is still stored. An OAuth sign-in of an identity already linked refreshed those tokens without the account lock, so a legitimate sign-in that landed between the rewrite's read and its write made the compare-and-swap lose, and the rewrite failed with internal_error for an account nobody attacked. The sign-in now consumes its flow row first, as before, then takes `lockAccountRow` for the identity's owner, reads the identity again under that lock, and fails as an unknown state, the ordinary OAuth failure, if the identity is gone or its owner or id changed in between. It is the tenth statement that takes the account lock; `test/lock-order-declaration.test.ts` counts it, and `test/integ-envelope-refresh-race.test.ts` holds the rewrite at its token update and shows the sign-in waiting and both succeeding, where without the lock the rewrite fails. The specification has no sentence that every write to an account's credential rows, provider tokens included, runs under the account lock; this branch does not own the specification, and the sentence is reported rather than added. Two other writes to those rows outside the lock, the background rehash of a password and the secret written by the start of a TOTP enrolment, belong to another branch and are not touched here.
+**Rejected.** (a) Retrying the rewrite when a compare-and-swap loses, which turns a concurrent writer into a loop with no bound and still leaves the sign-in's write outside any order. (b) Letting the rewrite accept a token it did not open, which would seal an account over a value it never checked.
+**Reason.** Two writers of the same rows that do not share a lock race, and the account lock is the one the rewrite already takes.
+**Price.** Every OAuth sign-in of a known identity takes one more row lock, and one that lands during the account's rewrite waits for it.
+
+<a id="e-3223"></a>
+
+### The account rewrite and the isolation wrapper get the tests their guards lacked, and the runner's isolation is not tested twice
+`E-3223` · security-state-envelopes · test, settled
+
+**Context.** A mutation run found changes to the bound envelopes and to the READ COMMITTED wrapper that left every test green. `test/integ-envelope-rewrite-guards.test.ts` now holds the account rewrite to four properties: its TOTP and provider-token passes refuse an old-form value copied onto a sealed account with envelope_unbound, where each pass survived being handed `"readable"`; provider tokens are re-keyed under the current key version after a rotation; an account with no envelope reports nothing rewritten; and the rewrite waits for a transaction holding the account row. `test/integ-envelope-binding.test.ts` adds an empty unbound value whose nonce opens with the marker byte, which is one byte too short to be a bound value and so fails the bound reading as ciphertext_malformed rather than authentication_failed; the fallback to the old form must accept both. `test/db-read-committed-wrapper-guards.test.ts` pins three properties of the wrapper of E-3310: wrapping a wrapped driver states the isolation once, a failure of the isolation statement other than 25001 reaches the caller unchanged, and 25001 under `code`, as node-postgres reports it, is named transaction_isolation_refused. Each case was shown failing on the change it guards against before it was committed. A fourth wrapper case, a migration run at read committed under a repeatable-read default, was not added, because `test/db-migration-runner-isolation.test.ts` already fails when the runner stops wrapping its driver. The eight test files of the bound envelopes opened with blocks of several sentences, one citing two identifiers; each now opens with one sentence citing at most one (E-3344).
+**Rejected.** A second copy of the runner case beside the one that already fails without the wrapping.
+**Reason.** A guard that can be removed with the suite green is not known to work, and a test that restates another adds nothing.
+**Price.** The empty-value case draws unbound values until one opens with the marker byte, about two hundred and fifty draws on average.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model
@@ -16058,16 +16098,6 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing; E-3294 followed an instruction that was withdrawn.
 **Reason.** Without the maintenance rebind a pending row's MAC stays under the old key version until a booking happens, and the case table of the booking already treats the rebind as legitimate.
 **Price.** E-3282's Price stands as written; E-3294's grown Price does not apply.
-
-<a id="e-3220"></a>
-
-### The fourth foundation round is merged, and what it closes and leaves open for the envelopes
-`E-3220` · security-state-envelopes · specification, merge, settled
-
-**Context.** Merging origin/feature/security-state-integrity at 076ace9 brought the specification into step with what this branch built in three places. The table of 3.18 point 2 names `state_sha256`, `provider`, `nonce`, `redirect_path`, `link_from_session_id` and `expires_at` as the row of `oauth_flow.pkce_verifier_enc`, which is the binding of E-3123 and E-3128; the second review's F3 is closed. S-INTEG-5 promises equal running time on the password sign-in only, which covers the TOTP refusal of E-3127; F9 is closed. The paragraph after the table says the first byte separates the two forms in one direction only, which is E-3111's finding. The foundation's model is READ COMMITTED throughout; no statement of this branch opens a transaction under another isolation level, and the seal-row read of E-3121 is one statement, which is one snapshot under READ COMMITTED. The H2 re-encryption runs inside the change's own transaction, which is what `rebindEnvelopesOfAccount` takes through `inOneTransaction`. The merge itself had four conflicts, all both-sided: this log, the `KeyErrorCode` list and its paragraph in *Key management*, and the census line of `security_state`. One sentence of the chapter, that the flow binding covers more than the table names, became false and was corrected. T-INTEG-1 now also asks one alarm `envelope_binding_mismatch` per refused copy; the alarm does not exist on this branch, and raising it where `decryptBound` fails is the seal branch's, as E-3112 says.
-**Rejected.** Raising the alarm here, which builds the alarm module of another branch.
-**Reason.** A merge that changes the binding text has to say which of this branch's statements it made true and which it made false.
-**Price.** Until the seal branch merges, T-INTEG-1's alarm half is unmet, and `test/integ-bound-envelopes.test.ts` counts the six copies without their alarms.
 
 <a id="e-3296"></a>
 
@@ -16529,32 +16559,282 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The explanations belong where reasons live, the log, and the comment rule exists so that the code does not grow a second log.
 **Price.** A reader of a test file has to follow the cited entry for the why.
 
-<a id="e-3221"></a>
+<a id="e-3345"></a>
 
-### The bound envelopes' guards each get a test that fails without them, and the account rewrite's transaction states READ COMMITTED
-`E-3221` · security-state-envelopes · test, db, settled
+### A provider value that is no key is unusable, not a TypeError
+`E-3345` · security-state · keys, start-up, settled
 
-**Context.** A mutation run over this branch found guards no test reached, and each now has one that is shown failing with the guard removed: the compare-and-swap of the account rewrite on the TOTP secret and on an identity's tokens, and the lost outcome each reports (`test/integ-bound-envelopes.test.ts`); the callback's refusal of a flow whose provider is not the one it names (`test/integ-envelope-attacks.test.ts`); the `"required"` fallback of the password repository and the TOTP service built without a sealing mode (`test/integ-envelope-sealing-default.test.ts`); the anchors of the uuid shape; and the frozen layout of the additional data and of the row of several columns, byte for byte, with each column opening under its own purpose's key alone (`test/integ-envelope-binding.test.ts`). A case for the wiring of the stored integrity-key probe into `migrate()` was not added, because `test/keys-integrity-migrate-wiring.test.ts` from the foundation already fails with that call removed. A vector encrypted under a fixed key was not added either: CLAUDE.md §8 keeps every test key generated, and the key-independent layout is what pins the format. Every transaction the library opens states READ COMMITTED first (E-3310), and `inOneTransaction` now opens its transaction through `withReadCommittedTransactions`, so the account rewrite does too even over a driver nobody wrapped; its compare-and-swaps were already on the ciphertext the rewrite opened and verified. The statement that writes an unconfirmed TOTP secret returned a seal-row column nothing read; it now returns `user_id` and the method answers a boolean. Eleven comments used the "X so Y" clause CLAUDE.md §3 rules out and were rewritten as the rule that holds. Two commits of this branch, 59ed9f1 and the comment rewrite after this entry's own changes, carry the type `style`, which the list of Conventional Commit types in CLAUDE.md §4 does not name; history is not rewritten.
-**Rejected.** (a) A keyed golden vector with a committed key, which §8 forbids. (b) A second copy of the migrate-wiring case beside the foundation's.
-**Reason.** A guard that can be removed with the suite green is not known to work, and a test that only restates another test adds nothing.
-**Price.** The encoding is pinned by its additional data and by the independent proof of T-REST-4, not by a ciphertext; a change in how the AES-GCM step lays out nonce and tag shows only in the latter.
+**Context.** `keyTakesMac` and `sameKeyFingerprintOf` read `key.algorithm` and `key.usages` without checking that a provider of an application's own had handed over a key at all. A value such as `{}` for `cookie-sig` made the start throw a `TypeError` instead of `keys_unusable`, and the same value answered for a stored `state-mac` version made `verifyMacUnderKeyVersion` throw instead of answering `key_unusable`. The review's cases were red. `src/core/keys/mac.ts` now reads the algorithm through a guard that tolerates any value, `isKeyShaped` requires an algorithm object and a usages array, and the start refuses a current key that is not shaped like one with `keys_unusable`. `test/keys-integrity-non-key.test.ts` holds both, and `DOCUMENTATION.md` says `keyTakesMac` never throws for such a value.
+**Rejected.** Requiring `instanceof CryptoKey`, which fails across realms and for keys from another Web Crypto implementation.
+**Reason.** A start check that crashes on a bad configuration tells the operator less than one that names it.
+**Price.** None.
 
-<a id="e-3222"></a>
+<a id="e-3346"></a>
 
-### An OAuth sign-in of a known identity refreshes its provider tokens under the account lock
-`E-3222` · security-state-envelopes · lock order, settled
+### A relabelled seal under an unnamed version is a limit, and E-3191's premise was incomplete
+`E-3346` · security-state · keys, specification, settled
 
-**Context.** The rewrite of one account's envelopes takes the account lock and replaces each provider token only if the ciphertext it opened is still stored. An OAuth sign-in of an identity already linked refreshed those tokens without the account lock, so a legitimate sign-in that landed between the rewrite's read and its write made the compare-and-swap lose, and the rewrite failed with internal_error for an account nobody attacked. The sign-in now consumes its flow row first, as before, then takes `lockAccountRow` for the identity's owner, reads the identity again under that lock, and fails as an unknown state, the ordinary OAuth failure, if the identity is gone or its owner or id changed in between. It is the tenth statement that takes the account lock; `test/lock-order-declaration.test.ts` counts it, and `test/integ-envelope-refresh-race.test.ts` holds the rewrite at its token update and shows the sign-in waiting and both succeeding, where without the lock the rewrite fails. The specification has no sentence that every write to an account's credential rows, provider tokens included, runs under the account lock; this branch does not own the specification, and the sentence is reported rather than added. Two other writes to those rows outside the lock, the background rehash of a password and the secret written by the start of a TOTP enrolment, belong to another branch and are not touched here.
-**Rejected.** (a) Retrying the rewrite when a compare-and-swap loses, which turns a concurrent writer into a loop with no bound and still leaves the sign-in's write outside any order. (b) Letting the rewrite accept a token it did not open, which would seal an account over a value it never checked.
-**Reason.** Two writers of the same rows that do not share a lock race, and the account lock is the one the rewrite already takes.
-**Price.** Every OAuth sign-in of a known identity takes one more row lock, and one that lands during the account's rewrite waits for it.
+**Context.** E-3191 skipped probing the `state-mac` versions no seal row names, on the premise that such a version is never read. The eighth review showed that the premise does not hold against a writer. After the start, a writer can set a seal row's `key_version` to such a version. If the ring answers that version with another purpose's key, which is an operator's misconfiguration, the writer can then take a MAC under that purpose and present it as a valid seal. E-3191's premise was incomplete when written and is not edited. As decided, this is named as a limit in *The limits* in both languages, since it needs the misconfiguration and the writer together. The case in `test/keys-integrity-non-key.test.ts` is kept as a characterization of the limit, green and titled as one: the start does not refuse such a ring, and a relabelled MAC verifies.
+**Rejected.** Probing every version the ring holds at start, which the ring does not enumerate; `KeyProvider` answers versions it is asked for.
+**Reason.** What a check cannot see has to be named, and the condition that makes it reachable stated.
+**Price.** An operator who answers an old version with the wrong purpose's key is exposed to a writer until the ring is corrected.
 
-<a id="e-3223"></a>
+<a id="e-3347"></a>
 
-### The account rewrite and the isolation wrapper get the tests their guards lacked, and the runner's isolation is not tested twice
-`E-3223` · security-state-envelopes · test, settled
+### The read-committed wrapper, the stored-key probe and the instance wiring each have a plant killer
+`E-3347` · security-state · tests, settled
 
-**Context.** A mutation run found changes to the bound envelopes and to the READ COMMITTED wrapper that left every test green. `test/integ-envelope-rewrite-guards.test.ts` now holds the account rewrite to four properties: its TOTP and provider-token passes refuse an old-form value copied onto a sealed account with envelope_unbound, where each pass survived being handed `"readable"`; provider tokens are re-keyed under the current key version after a rotation; an account with no envelope reports nothing rewritten; and the rewrite waits for a transaction holding the account row. `test/integ-envelope-binding.test.ts` adds an empty unbound value whose nonce opens with the marker byte, which is one byte too short to be a bound value and so fails the bound reading as ciphertext_malformed rather than authentication_failed; the fallback to the old form must accept both. `test/db-read-committed-wrapper-guards.test.ts` pins three properties of the wrapper of E-3310: wrapping a wrapped driver states the isolation once, a failure of the isolation statement other than 25001 reaches the caller unchanged, and 25001 under `code`, as node-postgres reports it, is named transaction_isolation_refused. Each case was shown failing on the change it guards against before it was committed. A fourth wrapper case, a migration run at read committed under a repeatable-read default, was not added, because `test/db-migration-runner-isolation.test.ts` already fails when the runner stops wrapping its driver. The eight test files of the bound envelopes opened with blocks of several sentences, one citing two identifiers; each now opens with one sentence citing at most one (E-3344).
-**Rejected.** A second copy of the runner case beside the one that already fails without the wrapping.
-**Reason.** A guard that can be removed with the suite green is not known to work, and a test that restates another adds nothing.
-**Price.** The empty-value case draws unbound values until one opens with the marker byte, about two hundred and fifty draws on average.
+**Context.** The eighth review planted faults the suite did not notice and wrote cases that would. Each was run here against its plant before it was kept. `test/db-read-committed-refusal.test.ts` names a refused isolation statement whether the driver carries 25001 as `code`, as node-postgres and postgres.js do, or as `sqlState`, as the test connection does; ignoring either field failed it. It passes a serialization failure, a connection loss and a failure carrying neither field through unchanged; renaming every failure failed it. It also gives a twice-wrapped driver the statement once; removing the idempotence failed it. `test/keys-integrity-stored-key-sharing.test.ts` refuses a stored `state-mac` version answered with the current `cookie-sig` or `token-pepper` key, so the probe compares against every other HMAC purpose, as E-3329 says; restricting it to the integrity purposes failed it. `test/db-read-committed-instance.test.ts` holds that every transaction a sign-up opens through the assembled instance starts with the isolation statement; unwrapping the instance's driver failed it.
+**Rejected.** Nothing.
+**Reason.** A guard no test sees removed is a guard by intention only.
+**Price.** None.
+
+<a id="e-3348"></a>
+
+### The plugin connection is not wrapped, because it opens no transaction
+`E-3348` · security-state · db, settled
+
+**Context.** E-3328 wrapped `pluginDatabase` with `withReadCommittedTransactions` together with `runMigrations`, saying the rule holds for every transaction the library opens. The eighth review pointed out that the plugin connection built over `pluginDatabase` in `src/core/plugin/login-connection.ts` only ever calls `query`, so the wrap changed nothing and the documentation claimed an effect it did not have. E-3328's sentence about the plugin connection was wrong when written and is not edited. The wrap is removed, and `DOCUMENTATION.md` now lists the plugin connection among the paths that open no transaction.
+**Rejected.** Keeping the wrap as harmless, which would leave a reader looking for the transaction it guards.
+**Reason.** Code that guards nothing misstates what it protects.
+**Price.** If the plugin connection ever opens a transaction, the wrap has to come back; `test/db-read-committed-instance.test.ts` covers only the instance's own driver.
+
+<a id="e-3349"></a>
+
+### Three lost citations come back, and the comparison row lists all eight purposes
+`E-3349` · security-state · tests, specification, settled
+
+**Context.** E-3340 says `test/keys-integrity-mac-guards.test.ts` cites T-INTEG-4, and E-3344 says nothing was lost when the header blocks became one sentence. Both were false after the commit that rewrote the headers. It dropped the T-INTEG-4 citation from the mac-guards header and the T-INTEG-3 citations from `test/security-state-seal-snapshot.test.ts` and `test/security-state-session-issue.test.ts`. The eighth review's cases showed it. The three one-sentence headers now name their T-INTEG case in the sentence, with the entry still the one identifier in parentheses. E-3344's "nothing was lost" was wrong when written and is not edited. Separately, the comparison row on purpose-separated keys, line 907 in German and 909 in English, still listed six purposes; it now lists `state-mac` and `token-mac` too. `test/security-state-log-claims.test.ts` and `test/security-state-spec-purposes.test.ts` hold both.
+**Rejected.** Weakening E-3340's sentence instead of restoring the citation, which would trade a true test for a vaguer log.
+**Reason.** A log entry's statement about a file has to stay true of the file.
+**Price.** None.
+
+<a id="e-3350"></a>
+
+### The table counts include the seal table
+`E-3350` · security-state · specification, settled
+
+**Context.** Migration 3 added `velve.security_state`, a user-bound table whose foreign key cascades from `velve.user`, and `test/db-user-cascade.test.ts` already counts fourteen user-owned tables from the catalogue. S-TOKEN-5 still named thirteen user-bound tables and T-TOKEN-5 still expected 13/13, and the comparison row J37 still said the schema has sixteen tables. The eighth review found all three. S-TOKEN-5 now names fourteen tables with `security_state` among them, T-TOKEN-5 expects 14/14, and J37 says seventeen, counted over the `CREATE TABLE` statements of the shipped migrations, `schema_migration` included. Both languages say so.
+**Rejected.** Nothing.
+**Reason.** A count in the specification has to change with the schema it counts.
+**Price.** None.
+
+<a id="e-3351"></a>
+
+### The epoch is drawn at random, and a failed recordSeal raises the alarm
+`E-3351` · security-state · specification, S-INTEG-6, S-INTEG-7, S-INTEG-9, test plan, settled
+
+**Context.** E-3195 set the administrator reseal's `session_epoch` to the new version and relied on `session_epoch ≤ version`, so the new version would lie above every epoch the account ever had. *Resealing* admitted that this holds only with an anchor. The eighth review showed that it does not hold with one either. When `recordSeal` fails or the process crashes before calling it, the anchor misses the latest seal. A writer can then restore the version before it together with saved sessions, the next reseal lands on an epoch a saved session was issued under, and the session lives again, permanently and silently. Four things were decided. First, a failed `recordSeal` raises the alarm `anchor_unavailable`, not only a log line. Second, a check that finds a stored version above the anchor's re-records the seal, off the response path, with its errors caught. Third, every epoch change draws a fresh random `session_epoch` from the cryptographically secure source in 1 to 2^53 − 1, different from the current one. That applies to every mass revocation, every administrator reseal and a first sealing that raises the epoch. The epoch is compared only for equality, so "epoch = version" and the invariant `session_epoch ≤ version` are dropped, and E-3195's wording is superseded here without being edited. Fourth, the window that remains is named in *The limits*, S-INTEG-6 and S-INTEG-7: a writer who acts between a commit and a failed `recordSeal`, before the alarm is handled and before a check re-records, can reset the account to the anchor's last version. *Resealing*, *Sealing*'s mass revocation, *The missing seal row*, S-INTEG-3 and S-INTEG-7 say so in both languages. T-INTEG-7's lowered-version case is now refused with and without an anchor, 2/2, and its epoch is a new number rather than the new version.
+**Rejected.** Keeping the epoch tied to the version and requiring an anchor, which the failed-`recordSeal` window defeats. Re-reading the anchor until it agrees, which waits on the application's code.
+**Reason.** An epoch exists to make an earlier session unequal to the current state, and a random value does that without any order a writer can lower.
+**Price.** The epoch no longer tells an operator how many revocations an account has seen. A random collision is possible with probability about 2^-53 per revocation.
+
+<a id="e-3352"></a>
+
+### The password sign-in asks the anchor for an unknown account too
+`E-3352` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** S-INTEG-5 promises that the password sign-in reveals nothing in its running time, and *Outwards* has it check a stand-in state for an unknown account. The eighth review found that with an anchor, `minimumVersion` was called only on the path of a known account. A call into the application's store is not free, so a missing call told an unknown account apart. As decided, the unknown-account path also calls `minimumVersion`. It uses a stand-in `userId` derived deterministically from the presented identifier: a UUID-shaped value from an HMAC under `token-pepper` with a context of its own, so the same identifier always gives the same stand-in. The answer is discarded. What remains is how the application's store answers for an id it does not hold, and that is named as a limit in *Outwards* and S-INTEG-5. T-INTEG-5's timing part gains a variant with an anchor that takes equally long for every id. Both languages say so.
+**Rejected.** A fresh random stand-in per attempt, which a store with a cache would answer differently on the second attempt for a known account than for an unknown one.
+**Reason.** A side channel is closed only when both paths do the same work, and the library can make its own work equal but not the application's store.
+**Price.** One more call into the application per unknown-account sign-in.
+
+<a id="e-3353"></a>
+
+### Session resolution asks the anchor after its one statement and re-reads once
+`E-3353` · security-state · specification, S-CACHE-2, S-INTEG-6, test plan, settled
+
+**Context.** E-3304 and E-3339 consult the anchor before the account is read under the lock, and a consuming path reads its row first to learn the owner. The eighth review pointed out that session resolution cannot do either. S-CACHE-2 makes it one query, and only that query names the account. Asking the anchor afterwards lets a legitimate reseal, recorded by the anchor between the query and the call, look like a rollback. As decided, session resolution is the exception named in *Anchor*. It consults the anchor after its one statement. If the comparison gives `version_below_anchor`, it runs the statement once more and compares again, so a reseal recorded in between is seen, and only a second failure is refused with the alarm. S-CACHE-2 now says one query holds per attempt and the repetition is a second attempt of the same query. T-INTEG-3 keeps 0 refused resolutions, now also with an anchor that learns every seal during the pairs. Both languages say so.
+**Rejected.** Reading the session row in a separate statement first to learn the account, which breaks S-CACHE-2 and reopens the two-statement race E-3299 closed.
+**Reason.** The anchor can only be ahead of a legitimate state by a reseal that committed after the read, and one re-read sees that reseal.
+**Price.** A resolution that meets a rollback costs two queries before it refuses.
+
+<a id="e-3354"></a>
+
+### An account holds at most twenty passkeys and ten identities
+`E-3354` · security-state · specification, S-INTEG-10, test plan, settled
+
+**Context.** Every check of the seal reads and encodes every passkey and identity of the account, and since E-3299 every session resolution does so too. The eighth review found nothing that bounds how many of either an account holds, so one account holder could make every resolution and change of their account arbitrarily expensive. The cost paragraph of *The limits* still carried an unmeasured estimate. As decided, a configurable maximum per account is added: `limits.passkeysPerAccount`, default 20, and `limits.identitiesPerAccount`, default 10. It is enforced under the account lock at registration and linking, and exceeding it answers the new stable codes `passkey_limit_reached` and `identity_limit_reached`, which `src/core/http/error-map.ts` decides. The decision suggested `factor_limit_reached` as one possible name; `passkey_limit_reached` was chosen so the code says which limit it is. A.2 gains the `limits` row, the config types gain `LimitsConfig`, F gains both codes and their table rows, 5.21 gains S-INTEG-10 and 6.24 T-INTEG-10, and the estimate is replaced by the bound and the rule that the seal branch measures the cost at it. All of it is in both languages. `test/requirement-coverage.test.ts` lists S-INTEG-10 as stated ahead of its code. `test/security-state-spec-anchor.test.ts` holds this bound together with the table counts of E-3350 and the anchor statements of E-3351 to E-3353, against the German text. It builds the requirement identifiers it reads instead of spelling them, so it is not counted as covering them.
+**Rejected.** A bound fixed in code, which leaves an application with a legitimate need for more passkeys no option.
+**Reason.** A cost an account holder can raise without limit is a denial of service against their own account and the process serving it.
+**Price.** A user with more than twenty authenticators has to remove one before adding another. The two new codes and the `limits` option are additions to the unreleased 2.0.0 surface.
+
+<a id="e-3355"></a>
+
+### The spec-coverage case reads the German, and T-KEY-5 states how it counts
+`E-3355` · security-state · tests, test plan, settled
+
+**Context.** `test/security-state-spec-coverage.test.ts` checked its four statements against `VELVE-AUTH-ARCHITECTURE.md`, the translation, while CLAUDE.md says to decide from the German. The eighth review asked for it to read the German. It now runs every case against the German specification and against its translation, so a statement missing in either fails. The constant-time check accepts the German "konstant" as well as "constant". Separately, T-KEY-5's "7/7 assertions" counted two assertions that range over every account the maintenance step passed, and did not say whether each counts once or once per account. The threshold now states that every assertion counts once, also where it ranges over all accounts or rows, in both languages.
+**Rejected.** Recounting per account, which would make the threshold depend on the size of the test's estate.
+**Reason.** A threshold whose unit is unstated cannot be checked by anyone but the person who wrote it.
+**Price.** None.
+
+<a id="e-3356"></a>
+
+### The second security-state range row was widened once, and stays as it is
+`E-3356` · security-state · rules, settled
+
+**Context.** The commit recorded in E-3291 added a sentence to the CLAUDE.md §6 row of E-3190 … E-3219. The row had named only the second review, and the sentence says the range also holds the queued items and the third review's answers. Its range stayed unchanged. The eighth review asked for the widening of a reserved row's description to be recorded as such, since §6 says a range is not changed after assignment and a reader could take the edit for a change of the reservation. This entry records that only the description was extended, by one sentence and once. The row will not be edited again.
+**Rejected.** Reverting the sentence, which would bring back the description E-3291 found misleading.
+**Reason.** An edit to a row the rules call fixed has to be recorded where the rules' readers look, even when it changes no number.
+**Price.** None.
+
+<a id="e-3357"></a>
+
+### A consuming path consumes first and asks the anchor inside its transaction
+`E-3357` · security-state · specification, S-INTEG-6, settled
+
+**Context.** E-3339 had a path that learns its account by consuming a row read that row first, outside any transaction, to ask the anchor about its owner before consuming it. That rule contradicts S-RACE-2, which forbids any read of a row before its consumption, and with it T-RACE-2. It also contradicts S-TOKEN-4's requirement that the statements be the same whatever the token. The token branch found the contradiction when it built the paths. As decided, the read-first step is dropped. Such a path consumes the row first, as §7 orders. Then, in the same transaction and before the account lock, it asks `minimumVersion` for the consumed row's owner, takes the account lock, reads the seal in one statement and compares. The only lock held across the call into the application is the consumed row's own, which holds up nothing but that one token. The case of an owner changing between a read and the consumption, and its `token_binding_mismatch`, disappears. *Anchor* says so in both languages and names these paths as the exception to consulting the anchor outside any transaction. E-3339 is not edited.
+**Rejected.** Keeping the read and exempting it from S-RACE-2, which would give a racing redemption the window S-RACE-2 closes.
+**Reason.** A rule added later has to fit the requirements already standing, and S-RACE-2 is the older and the more basic one.
+**Price.** A consuming path's transaction stays open across the anchor call, holding the consumed row's lock and a connection for as long as the application's store takes.
+
+<a id="e-3358"></a>
+
+### The specification follows what the token branch built
+`E-3358` · security-state · specification, settled
+
+**Context.** The token branch built migration 4, the token MACs and the rebind seam. Five details in its code are more specific than the specification or named differently. First, migration 4 adds an index on `token_mac_key_version` to all four token tables, so the rebind pass and the per-version count can step from version to version. Second, the rebind seam reports `rowsByKeyVersion`, where E-3335 had named the report field `underKeyVersion`. Third, the challenge MAC encodes its ceremony, the `purpose`, as a text field, and the session MAC encodes `created_at` in whole microseconds since the Unix epoch. Fourth, the address a mailed token binds is stored under the payload key `accountEmail`. Fifth, a missed session issue raises its alarm with the occasion `sign_in` or `change`, depending on what it completes, and a refusal in the maintenance run with `maintenance`. The migration 4 block, 3.15 B's report type, point 3 and *The alarm* now say so in both languages, with `SecurityStateReport`'s field renamed to `rowsByKeyVersion` and its shape kept. E-3335 is not edited.
+**Rejected.** Asking the token branch to rename its field to `underKeyVersion`, which would change built and tested code to match a name chosen one round earlier.
+**Reason.** The specification has to describe the encoding as built, because a second implementation that followed the old text would compute different MACs.
+**Price.** None.
+
+<a id="e-3359"></a>
+
+### What a path evaluates comes from its verified read
+`E-3359` · security-state · specification, S-INTEG-4, test plan, settled
+
+**Context.** *Checking* reads the seal row and every component in one statement and compares the digest. The ninth review showed that nothing tied what the path then evaluates to that read. A passkey sign-in looks up the credential and its public key, a factor check its secret, a recovery-code redemption deletes the matching code. A writer can swap a passkey's public key, insert a foreign identity or insert a copied recovery code, whose `code_hmac` binds no owner, in the gap between the checked read and the lookup or the consuming `DELETE`. With `LOCK TABLE velve.security_state IN ACCESS EXCLUSIVE MODE`, which plain `UPDATE` privilege permits, the writer can make that gap as wide as they like. The review's premise cases showed both windows. As decided, *Checking*, *Sealing* and S-INTEG-4 require, in both languages, that the factor material a sign-in, factor check or consumption evaluates comes from the one verified read itself, or is checked to be a member of exactly that read. This covers the passkey row and public key, the identity's provider and subject, the PHC, the TOTP ciphertext and the recovery code. One that is not in the read is a broken state, answered as the path's ordinary failure with `seal_mismatch`. *The limits* names the `LOCK TABLE` hold as a denial of service and no bypass once this holds. T-INTEG-4 gains both windows, refused with one alarm each. The premises are `test/security-state-check-use-window.test.ts`, together with the case that the German text states the rule.
+**Rejected.** Taking a row lock on the factor rows during the check, which a writer with `LOCK TABLE` or plain `UPDATE` on those rows defeats the same way.
+**Reason.** A check vouches for the rows it read, and only those rows may then be used.
+**Price.** Paths that looked a factor up separately have to take it from the check's statement or test membership in it; that is the seal and token branches' work.
+
+<a id="e-3360"></a>
+
+### The session MAC binds the session's id, and the confirming session must be the account's
+`E-3360` · security-state · specification, S-INTEG-9, S-LINK-4, test plan, settled
+
+**Context.** L-12 and S-LINK-4 keep a password at the first confirmation of an address only if it was set in the confirming session, by comparing `set_by_session_id` with that session's id. The session MAC bound the factors, the creation time and the epoch, but not `session.id`. The ninth review's premise case showed that a writer who renames the victim's session row to the id `set_by_session_id` names keeps an attacker's password through the first confirmation. The same holds for `link_from_session_id` under S-FIX-1. As decided, `session.id` is bound into the session MAC. Point 3, S-INTEG-9 and T-INTEG-9, with a renamed session as the fourteenth altered row, say so. S-LINK-4 now requires that the confirming session belongs to the confirmed account and that its MAC matches, or else the password counts as set in another session. Both languages say so. The MAC is the token branch's to build and the account check the owner of the confirmation flow's. `test/security-state-session-id.test.ts` holds the premise and the case that the German text binds the id.
+**Rejected.** Binding `set_by_session_id` into the seal only, which leaves the session side of the comparison renameable.
+**Reason.** A comparison between two ids proves nothing when one side can be rewritten freely.
+**Price.** None at run time beyond one more field in the session MAC's encoding.
+
+<a id="e-3361"></a>
+
+### Trace rows are counted apart and do not hold a key version in the ring
+`E-3361` · security-state · specification, S-KEY-5, test plan, settled
+
+**Context.** E-3332 keeps a token row that fails its check as an unusable trace, and E-3335 lets an old key version leave the ring only after a run reports zero seal and token rows under it. The ninth review pointed out that the two together block every key removal for good as soon as one trace exists, because a trace stays under the old version and is counted. As decided, `rowsByKeyVersion` reports usable rows and traces separately, `{ seals, tokens, traces }`. Traces do not block removing a version: after removal they answer `key_version_unknown` and stay unusable, and the administrator deletes them by SQL after handling their alarm. 3.8, 3.15 B's report type, point 5, S-KEY-5 and T-KEY-5 say so in both languages. T-KEY-5 inserts a forged session row under `v1` before the last run and expects it in `traces` and refused after the removal, now 8/8. `test/security-state-rotation-trace.test.ts` holds that the German text resolves the conflict.
+**Rejected.** Deleting traces in the maintenance step, which E-3332 rejected because it destroys the evidence.
+**Reason.** A rule that keeps evidence and a rule that requires zero rows have to say which rows each counts, or one makes the other impossible.
+**Price.** The administrator has to clean traces up by hand.
+
+<a id="e-3362"></a>
+
+### A kept session rebound in the meantime is retried, not alarmed
+`E-3362` · security-state · specification, S-INTEG-9, settled
+
+**Context.** E-3301 rebinds the session that `revokeAllOther` keeps by compare-and-set on its MAC under the account lock, and raised the alarm whenever the swap hit no row. The ninth review's premise case showed that a resolution's rebind under a new key version takes no account lock, so it can commit while the lock is held. The keeping swap then misses on a row that was rebound legitimately, and the caller is signed out with a false alarm. As decided, the rule follows the booking's: when the swap misses, the row is read once more. If it shows the same session with a matching MAC under a newer key version, the swap is repeated against the new MAC without an alarm. Any other answer counts as a MAC that does not match. *Sealing* says so in both languages. `test/security-state-kept-session-rebind.test.ts` holds the premise and that the German text exempts the rebind. E-3301 is not edited.
+**Rejected.** Taking the account lock for the resolution's rebind, which would make every resolution under an old key version wait on changes.
+**Reason.** A legitimate race must never raise the alarm, which is the rule point 3 already set for the booking.
+**Price.** One more read in the rare case of a rotation landing between the lock and the swap.
+
+<a id="e-3363"></a>
+
+### The resolution premise races the revocation against a statement in flight
+`E-3363` · security-state · tests, settled
+
+**Context.** `test/security-state-resolve-revocation.test.ts` was to hold E-3299's rule that one statement reading session and epoch raises no false alarm against a racing `session.revokeAll`. Its first case resolved before the revocation and again after it, never during it. The ninth review's case showed that a resolver of two statements passes that procedure too, so the case could not tell the rule from its violation. The file now has a case in which the one statement is slowed with `pg_sleep`, seen running in `pg_stat_activity`, and the revocation commits while it is in flight. The statement still returns the session under its epoch, with no alarm. The control, in which two statements with the revocation between them raise the false alarm, stays. The review's file is folded into this one.
+**Rejected.** Relying on timing without observing the statement in flight, which a fast machine turns into the old before-and-after case.
+**Reason.** A premise about a race has to run the race.
+**Price.** The case sleeps 300 ms.
+
+<a id="e-3364"></a>
+
+### Sign-up is the named exception to locking the account row, and the ordering check sees the mint helper
+`E-3364` · security-state · specification, rules, gate, settled
+
+**Context.** *Sealing* and CLAUDE.md §7 have every sealing change lock `velve.user` first, and §7 forbids reaching `velve.one_time_token` after that lock. The ninth review pointed out that sign-up can do neither literally. It creates the account row, so there is nothing to lock yet, and it mints the `email_verify` token in the same transaction. That is safe, because no other transaction can hold a row that does not exist until this one commits, but nothing said so. Sign-up is now named as the exception in *Sealing* in both languages and in CLAUDE.md §7. The review also asked for `pnpm check:token-after-lock` to recognise the flows' `mintArtefact`, if feasible, since minting through it reaches the token table without naming it. It was feasible: the check's pattern now includes `mintArtefact(`, and the shipped tree still passes, 11 account locks over 176 files, because no file mints after it locks. `test/token-after-lock.test.ts` reports `mintArtefact` after a lock beside the two repository methods, and CLAUDE.md §9 describes the check accordingly. Those files belong to the gate, and this is a recorded change to them.
+**Rejected.** Locking a placeholder row before the insert, which would add a statement to every sign-up to satisfy a rule whose reason does not apply.
+**Reason.** An exception a rule's reason does not cover has to be named, or the next reader takes the code for a violation.
+**Price.** None.
+
+<a id="e-3365"></a>
+
+### Maintenance reads session and epoch together, and two cases get their procedure and bound
+`E-3365` · security-state · specification, test plan, settled
+
+**Context.** The ninth review raised three smaller gaps. First, E-3332 has the maintenance step verify a session's MAC against the account's current `session_epoch`, but did not say how the two are read. Read in two statements, a revocation between them gives a legitimate session a false failure, exactly as E-3299 found for resolution. Point 5 now requires the session row and the epoch in one statement. Second, T-INTEG-6's window procedure did not say when the change that reseals happens relative to the anchor call and the reset. It now registers a passkey after the change's `minimumVersion` call and before its read under the lock, then resets. Third, T-INTEG-10's cost part had no threshold. At the bound, a session resolution may cost at most three times the resolution on an account with one passkey, as a median over at least 1000 requests. That factor is the decision's choice, not a measurement. All of it is in both languages.
+**Rejected.** Nothing.
+**Reason.** A rule about a race has to fix the reads it relies on, and a cost case without a bound cannot fail.
+**Price.** If the seal branch measures more than three times, the cap or the encoding has to change, not the threshold.
+
+<a id="e-3366"></a>
+
+### Migration 4 as printed locks the token tables first, and the upgrade stops 1.x
+`E-3366` · security-state · specification, settled
+
+**Context.** The token branch's migration 4, as built in its commit 00e3a44, begins with four `LOCK TABLE … IN ACCESS EXCLUSIVE MODE` statements, in the order `pending_authentication`, `one_time_token`, `webauthn_challenge`, `session`. They keep its deletes from deadlocking with a factor completion or a reset in flight. The SQL printed in point 4 lacked them. They are now printed in both languages, and the sentence before the block says why they are there. The ninth review also asked for the upgrade sequence to say that 1.x instances are stopped first, since a 1.x process would keep writing token rows without a MAC into tables migration 4 has just cleared. The upgrade sequence now begins with stopping every 1.x instance.
+**Rejected.** Leaving the lock statements to the code alone, which would let a second implementation following the printed SQL deadlock.
+**Reason.** Printed SQL that differs from the shipped migration misleads every reader who trusts it.
+**Price.** None.
+
+<a id="e-3367"></a>
+
+### The requirement and test-case counts follow S-INTEG-10 and T-INTEG-10
+`E-3367` · security-state · specification, settled
+
+**Context.** E-3354 added S-INTEG-10 and T-INTEG-10 without raising the counts the specification states in its summary, its table of contents, the opening of section 6 and the coverage paragraph. The ninth review counted the list items and table rows. There are 133 requirements and 137 test cases, where the text still said 132 and 136, and the commit-blocking count of 118 already matched. The four places now say 133 and 137 in both languages. The English rendering of "zusammen" in the opening of section 6 now reads "in total", as the German says. The *Runs in* sentence now names the part of T-INTEG-5 other than its timing part among the per-commit work, beside T-RACE-2's static part.
+**Rejected.** Nothing.
+**Reason.** A stated count is a measurement the text makes about itself, and it has to change with what it counts.
+**Price.** None.
+
+<a id="e-3368"></a>
+
+### S-KEY-3 and T-KEY-3 count the challenge's token MAC
+`E-3368` · security-state · specification, S-KEY-3, test plan, settled
+
+**Context.** E-3314 gave `velve.webauthn_challenge` a token MAC with its own `token_mac_key_version`, which makes it a generated protected value carrying its key version. S-KEY-3 lists every column that carries one, and T-KEY-3 creates every such value. The ninth review found that both still stopped at the three other token tables. S-KEY-3 now names `webauthn_challenge`, and T-KEY-3 creates the challenge's MAC too and expects 10/10, in both languages.
+**Rejected.** Nothing.
+**Reason.** A list that claims to be every protected value has to grow with the values.
+**Price.** None.
+
+<a id="e-3369"></a>
+
+### The aggregate alarm gets a case, and E-3201's title was one reason short
+`E-3369` · security-state · specification, test plan, settled
+
+**Context.** E-3201's heading says every alarm reason has a case. E-3340 found `seal_missing` without one. The ninth review found a second: `suppressed`, the reason only the aggregate alarm carries, appeared in no T-INTEG case. And *The alarm* listed its occasions and reasons as if the lists were closed, while the aggregate alarm uses `aggregate` and `suppressed` from neither. E-3201's claim was wrong when written, by two reasons, and it is not edited. *The alarm* now names the aggregate alarm as the only exception to both enumerations. T-INTEG-5 gains a case: on the same instance, the same path is raised again on the account last delivered while its key is still deduplicated, and one aggregate alarm `{ userId: null, occasion: "aggregate", reason: "suppressed" }` goes out with the rest held back since. Both languages say so.
+**Rejected.** Folding `suppressed` into the reason list, which would let an ordinary alarm carry it.
+**Reason.** A claim that every member of a list has a case is checked against the whole list, including the members a paragraph further down adds.
+**Price.** None.
+
+<a id="e-3370"></a>
+
+### Five more plant killers are kept, and isKeyShaped is documented
+`E-3370` · security-state · tests, keys, settled
+
+**Context.** The ninth review planted five more faults the suite did not notice. Each case was run here against its plant before it was kept, in `test/keys-integrity-gaps.test.ts`. A plugin migration's transactions start with the isolation statement; handing `applyOwnedMigration` the unwrapped driver failed it, so the runner already uses the wrapped one and nothing had to be fixed. A provider whose `current()` rejects is refused with `keys_unusable`; dropping the rejection's catch failed it. An HMAC-looking value without `usages` is refused; dropping the `usages` check from `isKeyShaped` failed it. The same-key fingerprint is the whole 32-byte probe MAC; truncating it failed it. The stored-version probe asks the ring once per distinct version; dropping `DISTINCT` failed it. `isKeyShaped`, added by E-3345, had no entry in `DOCUMENTATION.md`; it now has one.
+**Rejected.** Nothing.
+**Reason.** A guard no test sees removed is a guard by intention only.
+**Price.** None.
+
+<a id="e-3371"></a>
+
+### S-INTEG-7 is split into three sentences
+`E-3371` · security-state · specification, S-INTEG-7, settled
+
+**Context.** E-3351 added the random epoch and the named window to S-INTEG-7 inside its one long sentence. The ninth review pointed out that the sentence then read as if the reseal "remains as a named limit, and returns the components it sealed". The requirement is now three sentences in both languages: only the administrator reseal seals a broken state, and nothing else does; the call draws a new random epoch, signing out every session, and returns what it sealed; resetting to the anchor's last version after a failed `recordSeal` remains a named limit. The content is unchanged.
+**Rejected.** Nothing.
+**Reason.** A requirement that cannot be parsed cannot be tested against.
+**Price.** None.
+
+<a id="e-3372"></a>
+
+### Commit 08486c5 fails the lint step on its own
+`E-3372` · security-state · history, settled
+
+**Context.** Commit `08486c5` widened the pattern in `tools/token-after-lock.mjs` to recognise `mintArtefact`. It made the line longer than the formatter allows, and the file was not run through `biome` before that commit, so `pnpm lint` fails on it and on every commit up to the one that formats the line. History is not rewritten, so this entry names it, as E-3106 does for the earlier ones, and the next commit applies the formatter's line break without changing the pattern.
+**Rejected.** Amending the commit, which CLAUDE.md §4 forbids.
+**Reason.** A bisect that lands on these commits should find the reason here.
+**Price.** The commits from `08486c5` to the fix fail `pnpm gate` at the lint step.
