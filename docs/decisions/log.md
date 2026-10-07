@@ -15998,3 +15998,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Checking the seal when the link is requested, which the writer passes by flipping the address and the seal together, or which a valid seal at request time does not refute when the writer restores before redemption.
 **Reason.** The address a link went to is the fact the redemption has to vouch for, and only the token can carry it from the moment of mailing to the moment of redemption.
 **Price.** A user whose address legitimately changes between request and redemption, by a confirmed address change, loses the outstanding link and requests another; the alarm raised then is a false one in that one case. The seal read at redemption has to include `user.email`, which it already does.
+
+<a id="e-3313"></a>
+
+### The session MAC binds created_at
+`E-3313` · security-state · specification, S-INTEG-9, test plan, settled
+
+**Context.** Point 3 bound `session.factors` and the epoch into the session MAC and not `session.created_at`, although freshness is measured from it in `src/core/session/freshness.ts`. The sixth review showed that a writer who holds a stale session token can move `created_at` to now and pass every freshness gate, so the stale session can register a passkey or link an identity that the next seal then ratifies. The review's case was red. As the orchestrator decided, `session.created_at` is bound into the session MAC; it never changes after issue, so nothing has to rebind it. Point 3 says so in both languages, and T-INTEG-9 gains the renewed session, with its altered rows counted 13/13. The MAC belongs to the token branch. `test/security-state-session-freshness.test.ts` holds the case as an `it.fails` placeholder for that branch, with the control that today the renewed session passes the freshness gate.
+**Rejected.** Measuring freshness from a column the library rewrites, such as `last_used_at`, which the resolution moves on every request.
+**Reason.** A value a security decision is measured from has to be under the same MAC as the row that carries it.
+**Price.** None at run time; the MAC's encoding grows by one field.
