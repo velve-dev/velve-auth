@@ -15878,3 +15878,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Removing the three-attempt bound, which would turn a writer's seal row into an unhandled 23505 instead of a restart that reads and checks it.
 **Reason.** E-3280 changed the model and missed the two places that still described the old one.
 **Price.** None beyond the edits.
+
+<a id="e-3298"></a>
+
+### A missed conditional session insert is a broken state
+`E-3298` · security-state · specification, S-INTEG-9, test plan, settled
+
+**Context.** Point 3 carried, from the wording E-3294 took over, the sentence that under the account lock the session issue's condition does not miss. The fifth review showed it false: the lock is `FOR NO KEY UPDATE` on `velve.user`, and a database writer's `UPDATE` of `velve.security_state` takes no lock there, so it commits between the epoch read and the conditional insert and the insert inserts nothing. Point 3 also said nothing about what the issue then answers. As the orchestrator decided, the sentence is dropped and a miss is a broken state: the issue is answered like a missing row, raises the alarm with the reason `seal_mismatch` and is not repeated. T-INTEG-9 gains the case, an epoch changed by SQL after the issue read it, with 1 alarm `seal_mismatch`, 0 sessions and 0 retries, in both languages. `test/security-state-issue-condition-miss.test.ts` holds the premise that the insert misses under the lock, with the control that it inserts when nobody writes; the review's file is folded into it. E-3294 is not edited; the sentence it carried was wrong when written.
+**Rejected.** Retrying the issue, which against a writer only repeats the miss or, worse, issues under the writer's epoch.
+**Reason.** Only a writer outside the library can change the epoch under the lock, because every legitimate change takes the lock first, so a miss is evidence of tampering and nothing else.
+**Price.** An issue that misses refuses a legitimate sign-in of an account a writer has touched, which is what a broken state does on every other path.
