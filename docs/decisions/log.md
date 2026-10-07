@@ -15738,3 +15738,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Raising the reseal's version by a margin above the stored one, which narrows the collision without excluding it.
 **Reason.** Without something outside the database the reseal cannot know which epochs the account really had; the anchor is that something.
 **Price.** An installation without an anchor gets a reseal that may revive a session a writer saved, and its recovery from a version at the ceiling exposes every unsealed account while it runs.
+
+<a id="e-3284"></a>
+
+### The suppressed count travels with the next alarm, and no timer sends it
+`E-3284` · security-state · specification, S-INTEG-5, settled
+
+**Context.** E-3097 sent an aggregate alarm "when counted alarms have waited 60 seconds", and E-3214 built T-INTEG-5 on it. The fourth review found that nothing could trigger it: `Clock` has `now()` and no timer, and the library runs no background task. The orchestrator decided: no timer. The count travels with the next alarm after the window; if that alarm is itself held back by its key's deduplication, an aggregate goes out in its place. If no further alarm occurs the count waits, and *The alarm* now says so in both languages: an attacker who stops at the bound leaves the held-back alarms unreported until the next alarm, and a restart loses the in-memory count. T-INTEG-5 advances `config.clock` past the window, raises one more alarm, and expects delivered plus suppressed to equal all 1001 events. The orchestrator's note also said that the per-alarm log line still records each suppression locally; that contradicts the rule E-3097 set and this section keeps — the log follows the alarm, and a held-back alarm writes no line — so the specification keeps E-3097's rule, and the discrepancy is reported back rather than resolved here.
+**Rejected.** A timer of the library's own, which needs a background task in every runtime the library supports, some of which run none.
+**Reason.** A count that needs a timer nobody runs is a promise nothing keeps; one that rides on the next alarm is kept whenever there is a next alarm.
+**Price.** The limit above: a quiet attacker leaves the count waiting, and a restart drops it.
