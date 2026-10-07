@@ -15848,3 +15848,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping E-3282's compare-and-set rebind by the maintenance step beside the booking, which the code no longer has and the specification would then describe falsely.
 **Reason.** Point 3 has to describe the booking that runs, and the wording came from the branch that built it.
 **Price.** E-3282's Price grows: a pending authentication whose key version leaves the ring before any booking is lost even when a maintenance pass ran, because the pass no longer rebinds it. Its deadline is minutes, so the price is still a restarted sign-in. The seam's table list, `session` and `one_time_token`, was read on the token branch; the booking and issue wording was not checked here against its code.
+
+<a id="e-3295"></a>
+
+### The maintenance step does rebind a pending row, by compare-and-set
+`E-3295` · security-state · specification, S-INTEG-9, settled
+
+**Context.** E-3294 wrote into point 3 that a pending row is rebound under a new key version only by its booking, said that the maintenance step leaves pending rows alone, and called that a supersession of E-3282's maintenance half. The orchestrator then corrected its own instruction: the maintenance step does rebind `pending_authentication` rows, with a compare-and-set on the old `token_mac` and `attempts` and the new MAC computed over the verified count, as E-3282 decided; only outside the maintenance step is a pending row rebound by its booking alone. The handed-down sentence now reads "outside the maintenance step, a pending row is rebound under a new key version only by its booking". Point 3 says the maintenance step rebinds sessions and one-time tokens row by row by compare-and-set outside the account lock and a pending row by compare-and-set on `token_mac` and `attempts`, and that an equal count under a newer key version in the booking's re-read is that legitimate rebind. Point 5 says the same in both languages. E-3294 is not edited: its statement that the maintenance step no longer rebinds pending rows, its claim to supersede E-3282 and the grown Price it drew from that were wrong when written, and E-3282 stands. Whether the token branch's maintenance seam `rebindTokenRowsUnderCurrentKey`, whose table list at its last push named only `session` and `one_time_token`, rebinds pending rows elsewhere was not checked here.
+**Rejected.** Nothing; E-3294 followed an instruction that was withdrawn.
+**Reason.** Without the maintenance rebind a pending row's MAC stays under the old key version until a booking happens, and the case table of the booking already treats the rebind as legitimate.
+**Price.** E-3282's Price stands as written; E-3294's grown Price does not apply.
