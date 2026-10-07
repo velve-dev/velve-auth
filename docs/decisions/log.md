@@ -16498,3 +16498,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Taking the account lock for the resolution's rebind, which would make every resolution under an old key version wait on changes.
 **Reason.** A legitimate race must never raise the alarm, which is the rule point 3 already set for the booking.
 **Price.** One more read in the rare case of a rotation landing between the lock and the swap.
+
+<a id="e-3363"></a>
+
+### The resolution premise races the revocation against a statement in flight
+`E-3363` · security-state · tests, settled
+
+**Context.** `test/security-state-resolve-revocation.test.ts` was to hold E-3299's rule that one statement reading session and epoch raises no false alarm against a racing `session.revokeAll`. Its first case resolved before the revocation and again after it, never during it. The ninth review's case showed that a resolver of two statements passes that procedure too, so the case could not tell the rule from its violation. The file now has a case in which the one statement is slowed with `pg_sleep`, seen running in `pg_stat_activity`, and the revocation commits while it is in flight. The statement still returns the session under its epoch, with no alarm. The control, in which two statements with the revocation between them raise the false alarm, stays. The review's file is folded into this one.
+**Rejected.** Relying on timing without observing the statement in flight, which a fast machine turns into the old before-and-after case.
+**Reason.** A premise about a race has to run the race.
+**Price.** The case sleeps 300 ms.
