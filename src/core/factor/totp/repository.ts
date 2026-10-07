@@ -1,3 +1,8 @@
+import {
+	type SealRowPresence,
+	sealRowPresenceOf,
+	sealRowPresentFor,
+} from "../../auth/security-state.js";
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../../db/identifier.js";
@@ -13,6 +18,8 @@ export interface StoredTotpCredential {
 	readonly secretEnc: Uint8Array<ArrayBuffer>;
 	readonly keyVersion: number;
 	readonly confirmedAt: Date | null;
+	/** whether the owner had a seal row in the statement that read the secret */
+	readonly sealRow: SealRowPresence;
 }
 
 export interface TotpCredentialInsert {
@@ -55,6 +62,7 @@ interface CredentialRow {
 	secret_enc: Uint8Array;
 	key_version: number;
 	confirmed_at: Date | null;
+	sealed: boolean;
 }
 
 function readCredential(row: CredentialRow | undefined): StoredTotpCredential | null {
@@ -65,6 +73,7 @@ function readCredential(row: CredentialRow | undefined): StoredTotpCredential | 
 		secretEnc: Uint8Array.from(row.secret_enc),
 		keyVersion: row.key_version,
 		confirmedAt: row.confirmed_at,
+		sealRow: sealRowPresenceOf(row.sealed),
 	};
 }
 
@@ -79,10 +88,12 @@ VALUES ($1, $2, $3, NULL)
 ON CONFLICT (user_id) DO UPDATE
 SET secret_enc = EXCLUDED.secret_enc, key_version = EXCLUDED.key_version, created_at = now()
 WHERE ${credentials}.user_id = $1 AND ${credentials}.confirmed_at IS NULL
-RETURNING secret_enc, key_version, confirmed_at`;
+RETURNING secret_enc, key_version, confirmed_at, ${sealRowPresentFor(schema, "$1::uuid")} AS sealed`;
 
-	const findStatement = `SELECT secret_enc, key_version, confirmed_at FROM ${credentials}
-WHERE user_id = $1`;
+	//the seal row is read in the statement that reads the secret so a seal written between cannot refuse it (S-INTEG-1)
+	const findStatement = `SELECT credential.secret_enc, credential.key_version, credential.confirmed_at,
+${sealRowPresentFor(schema, "credential.user_id")} AS sealed
+FROM ${credentials} credential WHERE credential.user_id = $1`;
 
 	const isConfirmedStatement = `SELECT EXISTS (
 	SELECT 1 FROM ${credentials} WHERE user_id = $1 AND confirmed_at IS NOT NULL

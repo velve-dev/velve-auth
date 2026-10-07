@@ -11,7 +11,6 @@ import type { IdentityConfiguration, UsernameRules } from "../identity/configura
 import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseUsername } from "../identity/normalise.js";
 import { usernameAvailability } from "../identity/resolution.js";
-import type { UnboundEnvelopePolicy } from "../keys/envelope-binding.js";
 import type { KeyProvider } from "../keys/index.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
@@ -25,6 +24,7 @@ import type {
 	EmailConfig,
 	RateLimitConfig,
 	RecoveryCodesConfig,
+	SecurityStateConfig,
 	TotpConfig,
 	WebAuthnConfig,
 } from "./config.js";
@@ -50,8 +50,8 @@ export interface RouteServices {
 	readonly driver: import("../db/driver.js").Driver;
 	readonly schema: string;
 	readonly keys: KeyProvider;
-	/** whether a ciphertext still in the unbound form of 1.x is read for a given owner */
-	readonly unboundEnvelopes: UnboundEnvelopePolicy;
+	/** the security-state options with the sealing mode resolved */
+	readonly securityState: SecurityStateConfig;
 	readonly clock: Clock;
 	readonly oneTimeTokens: OneTimeTokens;
 	/** the one bound on concurrent key derivation every route source in the process shares */

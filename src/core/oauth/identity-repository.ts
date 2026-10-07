@@ -6,9 +6,11 @@ import { VelveError } from "../http/error-map.js";
 import {
 	type BoundColumn,
 	encryptBound,
+	type RebindOutcome,
 	rebindEnvelope,
 	type UnboundEnvelopeReading,
 } from "../keys/envelope-binding.js";
+import { KeyError } from "../keys/errors.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { randomUuid } from "../token/random.js";
 import type { ProviderTokens } from "./token-exchange.js";
@@ -104,7 +106,7 @@ interface OAuthIdentityRepository {
 	rebindTokensOwnedBy(input: {
 		readonly actor: Actor;
 		readonly unbound: UnboundEnvelopeReading;
-	}): Promise<number>;
+	}): Promise<readonly RebindOutcome[]>;
 }
 
 interface StoredTokenRow {
@@ -123,19 +125,31 @@ const REBINDABLE_COLUMNS: readonly (readonly [RebindableColumn, BoundColumn])[] 
 	["id_token_enc", "identity.id_token_enc"],
 ];
 
+type ReboundTokens =
+	| { readonly outcome: "absent" | "current" }
+	| { readonly outcome: "rebound"; readonly tokens: EncryptedProviderTokens };
+
+function hasStoredTokens(row: StoredTokenRow): boolean {
+	return REBINDABLE_COLUMNS.some(([name]) => row[name] !== null);
+}
+
 async function reboundTokensOf(
 	keys: KeyProvider,
 	owner: string,
 	row: StoredTokenRow,
 	unbound: UnboundEnvelopeReading,
-): Promise<EncryptedProviderTokens | null> {
+): Promise<ReboundTokens> {
 	const keyVersion = row.token_key_version;
+	if (!hasStoredTokens(row)) {
+		return { outcome: "absent" };
+	}
+	//a ciphertext whose key version column is empty can be read under no key (S-INTEG-1)
 	if (keyVersion === null) {
-		return null;
+		throw new KeyError("key_version_unknown");
 	}
 	const rewritten: Partial<Record<RebindableColumn, Uint8Array<ArrayBuffer> | null>> = {};
+	const versions = new Set<number>();
 	let changed = false;
-	let writtenVersion = keyVersion;
 	for (const [name, column] of REBINDABLE_COLUMNS) {
 		const stored = row[name];
 		if (stored === null) {
@@ -150,17 +164,25 @@ async function reboundTokensOf(
 			unbound,
 		);
 		rewritten[name] = rebound?.ciphertext ?? ciphertext;
+		versions.add(rebound?.keyVersion ?? keyVersion);
 		changed ||= rebound !== null;
-		writtenVersion = rebound?.keyVersion ?? writtenVersion;
 	}
-	return changed
-		? {
-				accessTokenEnc: rewritten.access_token_enc ?? null,
-				refreshTokenEnc: rewritten.refresh_token_enc ?? null,
-				idTokenEnc: rewritten.id_token_enc ?? null,
-				tokenKeyVersion: writtenVersion,
-			}
-		: null;
+	//one column carries the version of three ciphertexts so a rotation between them is refused
+	if (versions.size > 1) {
+		throw new VelveError("internal_error");
+	}
+	if (!changed) {
+		return { outcome: "current" };
+	}
+	return {
+		outcome: "rebound",
+		tokens: {
+			accessTokenEnc: rewritten.access_token_enc ?? null,
+			refreshTokenEnc: rewritten.refresh_token_enc ?? null,
+			idTokenEnc: rewritten.id_token_enc ?? null,
+			tokenKeyVersion: [...versions][0] ?? keyVersion,
+		},
+	};
 }
 
 interface IdentityRow {
@@ -331,27 +353,28 @@ RETURNING id`;
 
 		async rebindTokensOwnedBy({ actor, unbound }) {
 			const rows = await options.driver.query<StoredTokenRow>(storedTokensStatement, [actor]);
-			let rewritten = 0;
+			const outcomes: RebindOutcome[] = [];
 			for (const row of rows) {
 				const rebound = await reboundTokensOf(options.keys, actor, row, unbound);
-				if (rebound === null) {
+				if (rebound.outcome !== "rebound") {
+					outcomes.push(rebound.outcome);
 					continue;
 				}
 				const replaced = await options.driver.query(replaceTokensStatement, [
 					row.id,
 					actor,
-					rebound.accessTokenEnc,
-					rebound.refreshTokenEnc,
-					rebound.idTokenEnc,
-					rebound.tokenKeyVersion,
+					rebound.tokens.accessTokenEnc,
+					rebound.tokens.refreshTokenEnc,
+					rebound.tokens.idTokenEnc,
+					rebound.tokens.tokenKeyVersion,
 					row.token_key_version,
 					row.access_token_enc,
 					row.refresh_token_enc,
 					row.id_token_enc,
 				]);
-				rewritten += replaced.length;
+				outcomes.push(replaced.length === 1 ? "rebound" : "lost");
 			}
-			return rewritten;
+			return outcomes;
 		},
 
 		async listIdentitiesOwnedBy({ actor }) {

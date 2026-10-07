@@ -62,6 +62,7 @@ export async function createDummyCredential(
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: CREATED_SCHEME,
+		unbound: "refused",
 		openedPhc: phc,
 	};
 }
@@ -168,13 +169,10 @@ async function openCredential(
 	environment: PasswordEnvironment,
 	row: PasswordCredentialRow,
 ): Promise<OpenedCredential> {
-	return environment.credentials
-		.unboundEnvelopeReadingFor(row.userId)
-		.then((unbound) => openPhc(environment.keys, row, unbound))
-		.then(
-			(phc) => ({ phc, scheme: row.scheme }),
-			() => openedDummy(environment),
-		);
+	return openPhc(environment.keys, row).then(
+		(phc) => ({ phc, scheme: row.scheme }),
+		() => openedDummy(environment),
+	);
 }
 
 function isAcceptedScheme(scheme: PasswordScheme, config: ResolvedPasswordConfig): boolean {

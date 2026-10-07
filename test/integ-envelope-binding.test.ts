@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import {
-	NO_SEAL_ROW_IS_READ,
-	type SealRowPresence,
-	unboundEnvelopePolicyOf,
-} from "../src/core/auth/security-state.js";
+import { sealRowPresenceOf, unboundReadingOf } from "../src/core/auth/security-state.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import { encryptWithPurposeKey, type PurposeCiphertext } from "../src/core/keys/envelope.js";
 import {
@@ -293,29 +289,30 @@ describe("rebindEnvelope, the rewrite the maintenance step calls (S-INTEG-1, E-3
 });
 
 describe("securityState.sealing decides whether the unbound form is read (S-INTEG-1)", () => {
-	it("reads it under migrating for an account without a seal row and refuses it otherwise", async () => {
-		const owner = randomUUID();
-		const sealRows: Record<string, SealRowPresence> = { [owner]: "present" };
-		const lookup = (userId: string) => Promise.resolve(sealRows[userId] ?? "absent");
+	it("reads it under migrating for an account without a seal row and refuses it otherwise", () => {
+		const readings = (["required", "migrating"] as const).flatMap((sealing) =>
+			(["present", "absent"] as const).map(
+				(sealRow) => `${sealing}/${sealRow}: ${unboundReadingOf(sealing, sealRow)}`,
+			),
+		);
 
-		expect(await unboundEnvelopePolicyOf("required", lookup).readingFor(randomUUID())).toBe(
-			"refused",
-		);
-		expect(await unboundEnvelopePolicyOf("migrating", lookup).readingFor(randomUUID())).toBe(
-			"readable",
-		);
-		expect(await unboundEnvelopePolicyOf("migrating", lookup).readingFor(owner)).toBe("refused");
+		expect(readings).toStrictEqual([
+			"required/present: refused",
+			"required/absent: refused",
+			"migrating/present: refused",
+			"migrating/absent: readable",
+		]);
 	});
 
-	it("asks no seal lookup at all under required", async () => {
-		let asked = 0;
-		const policy = unboundEnvelopePolicyOf("required", () => {
-			asked += 1;
-			return NO_SEAL_ROW_IS_READ(randomUUID());
-		});
-
-		await policy.readingFor(randomUUID());
-		expect(asked).toBe(0);
+	it("reads a seal row as present only from an explicit true", () => {
+		expect([true, false, null, undefined, "t", 1].map(sealRowPresenceOf)).toStrictEqual([
+			"present",
+			"absent",
+			"absent",
+			"absent",
+			"absent",
+			"absent",
+		]);
 	});
 
 	it.each([

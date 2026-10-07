@@ -133,6 +133,7 @@ async function createHarness(
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: "argon2id",
+		unbound: "refused",
 	});
 
 	const driver: Driver = {

@@ -197,6 +197,7 @@ beforeEach(async () => {
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: "argon2id",
+		unbound: "refused",
 	});
 	probe.reset();
 }, 120_000);
@@ -242,6 +243,7 @@ describe("S-TIM-1 / L-1 — one code path that does the same work whatever the o
 			phc: sealed.ciphertext,
 			keyVersion: sealed.keyVersion,
 			scheme: "bcrypt",
+			unbound: "refused",
 		});
 
 		const narrowed: PasswordEnvironment = {
@@ -298,7 +300,7 @@ describe("S-TIM-1 / L-1 — one code path that does the same work whatever the o
 describe("S-TIM-2 — the dummy is a real credential read by the real verifier", () => {
 	it("is sealed under password-enc and decrypts to the configured Argon2id parameters", async () => {
 		const dummy = probe.environment.dummy;
-		const opened = await credential.openPhc(probe.environment.keys, dummy, "refused");
+		const opened = await credential.openPhc(probe.environment.keys, dummy);
 
 		expect(dummy.scheme).toBe("argon2id");
 		expect(dummy.userId).toBe(verify.ABSENT_USER_ID);
@@ -313,14 +315,10 @@ describe("S-TIM-2 — the dummy is a real credential read by the real verifier",
 	}, 120_000);
 
 	it("costs the absent-user path exactly what the present-user path costs", async () => {
-		const stored = await credential.openPhc(
-			probe.environment.keys,
-			probe.environment.dummy,
-			"refused",
-		);
+		const stored = await credential.openPhc(probe.environment.keys, probe.environment.dummy);
 		const real = stored.split("$");
 		const row = probe.rows.get(USER_WITH_CREDENTIAL) as PasswordCredentialRow;
-		const other = (await credential.openPhc(probe.environment.keys, row, "refused")).split("$");
+		const other = (await credential.openPhc(probe.environment.keys, row)).split("$");
 
 		expect(real[1]).toBe(other[1]);
 		expect(real[2]).toBe(other[2]);
@@ -341,6 +339,7 @@ describe("S-TIM-5 — a rehash never lengthens the sign-in that triggered it", (
 			phc: sealed.ciphertext,
 			keyVersion: sealed.keyVersion,
 			scheme: "bcrypt",
+			unbound: "refused",
 		});
 
 		probe.reset();
@@ -374,6 +373,7 @@ describe("S-TIM-5 — a rehash never lengthens the sign-in that triggered it", (
 			phc: sealed.ciphertext,
 			keyVersion: sealed.keyVersion,
 			scheme: "bcrypt",
+			unbound: "refused",
 		});
 
 		for (const attemptInput of [

@@ -237,7 +237,7 @@ describe("every account lock outside the interleavings is declared before the ta
 					schema,
 					keys: ring.providerAt(2, [1, 2]),
 					actor: actorOfTestUser(userId),
-					unbound: "refused",
+					sealing: "required",
 				}),
 			);
 			expect(rewrite.passwordRewritten && rewrite.totpRewritten).toBe(true);

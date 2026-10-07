@@ -618,7 +618,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		pending: services.pending,
 		issuer: totpIssuerOf(services),
 		toleranceInSteps: totpToleranceOf(services.totp?.stepToleranceInSteps),
-		unboundEnvelopes: services.unboundEnvelopes,
+		sealing: services.securityState.sealing,
 	});
 	const recovery: RecoveryCodeService = createRecoveryCodeService({
 		driver: services.driver,

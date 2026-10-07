@@ -34,15 +34,8 @@ export interface EnvelopeBinding {
 /** whether a ciphertext in the unbound form of 1.x is read or refused */
 export type UnboundEnvelopeReading = "readable" | "refused";
 
-/** answers for one owner whether the unbound form of its ciphertexts is still read */
-export interface UnboundEnvelopePolicy {
-	readingFor(owner: string): Promise<UnboundEnvelopeReading>;
-}
-
-/** the policy of a sealed estate, under which no unbound ciphertext is read */
-export const UNBOUND_ENVELOPES_REFUSED: UnboundEnvelopePolicy = {
-	readingFor: () => Promise.resolve("refused"),
-};
+/** what rewriting one stored envelope into the bound form under the current key came to */
+export type RebindOutcome = "rebound" | "current" | "absent" | "lost";
 
 //a bound value carries this first byte and the unbound form a random nonce byte (E-3111)
 const BOUND_FORM_MARKER = 0x02;

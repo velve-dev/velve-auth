@@ -1,3 +1,9 @@
+import {
+	type SealingMode,
+	sealRowPresenceOf,
+	sealRowPresentFor,
+	unboundReadingOf,
+} from "../auth/security-state.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
@@ -5,9 +11,8 @@ import {
 	decryptBound,
 	type EnvelopeBinding,
 	encryptBound,
+	type RebindOutcome,
 	rebindEnvelope,
-	UNBOUND_ENVELOPES_REFUSED,
-	type UnboundEnvelopePolicy,
 	type UnboundEnvelopeReading,
 } from "../keys/envelope-binding.js";
 import type { EncryptionKeyPurpose, KeyProvider } from "../keys/index.js";
@@ -28,6 +33,8 @@ export interface PasswordCredentialRow {
 	readonly keyVersion: number;
 	//the scheme stays cleartext for a PHC estate to be surveyed without a key
 	readonly scheme: PasswordScheme;
+	/** whether the PHC string may still be in the unbound form, decided with the row it was read in */
+	readonly unbound: UnboundEnvelopeReading;
 }
 
 export interface SealedPhc {
@@ -45,17 +52,13 @@ export function sealPhc(keys: KeyProvider, userId: string, phc: string): Promise
 	return encryptBound(keys, phcBindingOf(userId), utf8.encode(phc));
 }
 
-export async function openPhc(
-	keys: KeyProvider,
-	row: PasswordCredentialRow,
-	unbound: UnboundEnvelopeReading,
-): Promise<string> {
+export async function openPhc(keys: KeyProvider, row: PasswordCredentialRow): Promise<string> {
 	return new TextDecoder().decode(
 		await decryptBound(
 			keys,
 			phcBindingOf(row.userId),
 			{ keyVersion: row.keyVersion, ciphertext: row.phc },
-			unbound,
+			row.unbound,
 		),
 	);
 }
@@ -68,8 +71,6 @@ interface PasswordCredentialWrite {
 }
 
 export interface PasswordCredentialRepository {
-	/** whether a PHC string of this owner still in the unbound form of 1.x is read */
-	unboundEnvelopeReadingFor(userId: string): Promise<UnboundEnvelopeReading>;
 	//a sign-in has no proof yet as the row read here is what the proof is made from (E-2423)
 	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
 	findOwnedBy(input: { readonly actor: Actor }): Promise<PasswordCredentialRow | null>;
@@ -80,7 +81,7 @@ export interface PasswordCredentialRepository {
 	rebindOwnedBy(input: {
 		readonly actor: Actor;
 		readonly unbound: UnboundEnvelopeReading;
-	}): Promise<boolean>;
+	}): Promise<RebindOutcome>;
 	replaceIfUnchanged(input: {
 		userId: string;
 		previous: Uint8Array<ArrayBuffer>;
@@ -94,6 +95,7 @@ interface RawRow {
 	readonly phc: Uint8Array<ArrayBuffer>;
 	readonly key_version: number;
 	readonly scheme: PasswordScheme;
+	readonly sealed: boolean;
 }
 
 export interface PasswordCredentialRepositoryOptions {
@@ -101,8 +103,8 @@ export interface PasswordCredentialRepositoryOptions {
 	readonly keys: KeyProvider;
 	readonly schema?: string;
 	readonly memoryCeilingKiB: number;
-	/** whether a PHC string still in the unbound form of 1.x is read, refused when absent */
-	readonly unboundEnvelopes?: UnboundEnvelopePolicy;
+	/** the sealing mode a PHC string in the unbound form is read under, `"required"` when absent */
+	readonly sealing?: SealingMode;
 }
 
 function assertSchemeMatchesCredential(phc: string, scheme: PasswordScheme): void {
@@ -126,18 +128,18 @@ function assertCredentialIsVerifiable(
 export function createPasswordCredentialRepository(
 	options: PasswordCredentialRepositoryOptions,
 ): PasswordCredentialRepository {
-	const table = qualifiedTableName(
-		options.schema ?? PASSWORD_CREDENTIAL_SCHEMA,
-		PASSWORD_CREDENTIAL_TABLE,
-	);
+	const schema = options.schema ?? PASSWORD_CREDENTIAL_SCHEMA;
+	const table = qualifiedTableName(schema, PASSWORD_CREDENTIAL_TABLE);
 	const { memoryCeilingKiB } = options;
-	const unboundEnvelopes = options.unboundEnvelopes ?? UNBOUND_ENVELOPES_REFUSED;
+	const sealing = options.sealing ?? "required";
+
+	//the seal row is read in the statement that reads the envelope so a seal written between cannot refuse it (S-INTEG-1)
+	const findStatement = `SELECT credential.user_id, credential.phc, credential.key_version, credential.scheme,
+${sealRowPresentFor(schema, "credential.user_id")} AS sealed
+FROM ${table} credential WHERE credential.user_id = $1`;
 
 	async function findOne(ownerId: string): Promise<PasswordCredentialRow | null> {
-		const [row] = await options.driver.query<RawRow>(
-			`SELECT user_id, phc, key_version, scheme FROM ${table} WHERE user_id = $1`,
-			[ownerId],
-		);
+		const [row] = await options.driver.query<RawRow>(findStatement, [ownerId]);
 
 		return row === undefined
 			? null
@@ -146,6 +148,7 @@ export function createPasswordCredentialRepository(
 					phc: row.phc,
 					keyVersion: row.key_version,
 					scheme: row.scheme,
+					unbound: unboundReadingOf(sealing, sealRowPresenceOf(row.sealed)),
 				};
 	}
 
@@ -193,8 +196,6 @@ export function createPasswordCredentialRepository(
 	}
 
 	return {
-		unboundEnvelopeReadingFor: (userId) => unboundEnvelopes.readingFor(userId),
-
 		findByUserId: findOne,
 
 		findOwnedBy: ({ actor }) => findOne(actor),
@@ -206,7 +207,7 @@ export function createPasswordCredentialRepository(
 		async rebindOwnedBy({ actor, unbound }) {
 			const row = await findOne(actor);
 			if (row === null) {
-				return false;
+				return "absent";
 			}
 			const rebound = await rebindEnvelope(
 				options.keys,
@@ -215,7 +216,7 @@ export function createPasswordCredentialRepository(
 				unbound,
 			);
 			if (rebound === null) {
-				return false;
+				return "current";
 			}
 			const changed = await options.driver.query(
 				`UPDATE ${table} SET phc = $2, key_version = $3
@@ -223,7 +224,7 @@ export function createPasswordCredentialRepository(
 				 RETURNING user_id`,
 				[actor, rebound.ciphertext, rebound.keyVersion, row.phc],
 			);
-			return changed.length === 1;
+			return changed.length === 1 ? "rebound" : "lost";
 		},
 
 		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)

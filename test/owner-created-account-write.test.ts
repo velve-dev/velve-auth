@@ -58,9 +58,7 @@ describe("a write without a proof reaches only an account no other caller owns y
 
 		const row = await credentials.findOwnedBy({ actor: actorOfTestUser(userId) });
 		expect(row?.scheme).toBe("argon2id");
-		expect(row === null ? null : await openPhc(keys, row, "refused")).toBe(
-			stored.byScheme.argon2id,
-		);
+		expect(row === null ? null : await openPhc(keys, row)).toBe(stored.byScheme.argon2id);
 		await expect(overwrite).rejects.toThrow();
 	});
 });

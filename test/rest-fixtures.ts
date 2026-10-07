@@ -294,7 +294,7 @@ export async function driveOneUserThroughEveryFlow(prefix: string): Promise<Driv
 		providerTokens: tokens,
 		secrets: [
 			{ name: "password", value: REST_PASSWORD },
-			{ name: "password hash (PHC)", value: await openPhc(keys, stored, "refused") },
+			{ name: "password hash (PHC)", value: await openPhc(keys, stored) },
 			{ name: "session token", value: sessionToken },
 			{ name: "pending token", value: pendingToken },
 			{ name: "one-time token (email_verify)", value: tokenSent(mounted, "email_verification") },

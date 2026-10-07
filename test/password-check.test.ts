@@ -85,6 +85,7 @@ function recordingDriver(): Recorder {
 					phc: params[1] as Uint8Array<ArrayBuffer>,
 					keyVersion: params[2] as number,
 					scheme: params[3] as PasswordScheme,
+					unbound: "refused",
 				});
 				// The upsert returns the row it wrote; answering nothing is what a false
 				// `DO UPDATE … WHERE` looks like, and the repository refuses that (E-185).
@@ -101,6 +102,7 @@ function recordingDriver(): Recorder {
 				phc: params[1] as Uint8Array<ArrayBuffer>,
 				keyVersion: params[3] as number,
 				scheme: params[2] as PasswordScheme,
+				unbound: "refused",
 			});
 			return [{ user_id: params[0] }] as T[];
 		},
@@ -157,6 +159,7 @@ async function seed(phc: string, scheme: PasswordScheme, userId = USER_ID): Prom
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme,
+		unbound: "refused",
 	});
 }
 
@@ -175,7 +178,7 @@ describe("the stored credential", () => {
 		expect(row?.scheme).toBe("argon2id");
 		expect(row?.keyVersion).toBe(1);
 		expect(new TextDecoder().decode(row?.phc)).not.toContain("$argon2id$");
-		expect(await openPhc(environment.keys, row as PasswordCredentialRow, "refused")).toMatch(
+		expect(await openPhc(environment.keys, row as PasswordCredentialRow)).toMatch(
 			/^\$argon2id\$v=19\$/,
 		);
 	}, 30_000);
@@ -239,7 +242,7 @@ describe("the stored credential", () => {
 			keysByVersion: { 1: generateRootKey() },
 		});
 
-		await expect(openPhc(otherKeys, row, "refused")).rejects.toMatchObject({
+		await expect(openPhc(otherKeys, row)).rejects.toMatchObject({
 			code: "authentication_failed",
 		});
 	}, 30_000);
@@ -277,7 +280,7 @@ describe("one code path regardless of the outcome", () => {
 	}, 30_000);
 
 	it("verifies against the dummy with the configured parameters, not against a fresh hash", async () => {
-		const dummy = parsePhc(await openPhc(environment.keys, environment.dummy, "refused"));
+		const dummy = parsePhc(await openPhc(environment.keys, environment.dummy));
 
 		expect(dummy?.id).toBe("argon2id");
 		expect(dummy?.parameters.get("m")).toBe(String(CHEAP_ARGON2ID.memoryKiB));
@@ -407,7 +410,7 @@ describe("needsRehash and the silent rehash", () => {
 
 		const after = recorder.rows.get(USER_ID) as PasswordCredentialRow;
 		expect(after.scheme).toBe("argon2id");
-		expect(await openPhc(environment.keys, after, "refused")).toMatch(/^\$argon2id\$v=19\$/);
+		expect(await openPhc(environment.keys, after)).toMatch(/^\$argon2id\$v=19\$/);
 		expect(await checkPassword({ userId: USER_ID, plaintext: PASSWORD }, environment)).toEqual({
 			outcome: "verified",
 			userId: USER_ID,

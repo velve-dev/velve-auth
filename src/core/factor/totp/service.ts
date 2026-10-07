@@ -1,14 +1,9 @@
+import { type SealingMode, unboundReadingOf } from "../../auth/security-state.js";
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import type { Clock } from "../../http/environment.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
-import {
-	decryptBound,
-	type EnvelopeBinding,
-	encryptBound,
-	UNBOUND_ENVELOPES_REFUSED,
-	type UnboundEnvelopePolicy,
-} from "../../keys/envelope-binding.js";
+import { decryptBound, type EnvelopeBinding, encryptBound } from "../../keys/envelope-binding.js";
 import { KeyError } from "../../keys/errors.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import { verifyUnderPendingAttemptLimit } from "../pending/attempt-limit.js";
@@ -31,8 +26,8 @@ export interface TotpServiceOptions {
 	readonly clock: Clock;
 	readonly schema?: string;
 	readonly toleranceInSteps?: TotpToleranceInSteps;
-	/** whether a secret still in the unbound form of 1.x is read, refused when absent */
-	readonly unboundEnvelopes?: UnboundEnvelopePolicy;
+	/** the sealing mode the unbound form is read under, `"required"` when absent */
+	readonly sealing?: SealingMode;
 }
 
 //the row of a totp credential is its owner so both name the same account (S-INTEG-1)
@@ -61,7 +56,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 	});
 	const toleranceInSteps = options.toleranceInSteps ?? TOTP_TOLERANCE_STEPS;
 	const retentionSeconds = usedStepRetentionSeconds(toleranceInSteps);
-	const unboundEnvelopes = options.unboundEnvelopes ?? UNBOUND_ENVELOPES_REFUSED;
+	const sealing = options.sealing ?? "required";
 
 	//an unreadable secret answers as a factor nobody can hold (E-428)
 	async function decryptSecret(
@@ -73,7 +68,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				options.keys,
 				secretBindingOf(owner),
 				{ keyVersion: credential.keyVersion, ciphertext: credential.secretEnc },
-				await unboundEnvelopes.readingFor(owner),
+				unboundReadingOf(sealing, credential.sealRow),
 			);
 		} catch (failure) {
 			throw failure instanceof KeyError ? new ConcealedError("totp_not_confirmed") : failure;

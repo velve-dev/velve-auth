@@ -685,7 +685,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 				schema,
 				keys: beforeRotation,
 				actor: actorOfTestUser(account.userId),
-				unbound: "readable",
+				sealing: "migrating",
 			}),
 		);
 		expect(rewrite.passwordRewritten).toBe(true);
@@ -747,14 +747,14 @@ async function unboundTokensOf(identity: { userId: string; identityId: string })
 const STORED_PHC = `$argon2id$v=19$m=19456,t=2,p=1$${"c2FsdA".repeat(4)}$${"aGFzaA".repeat(7)}`;
 
 describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account runs first (S-INTEG-1, E-3117)", () => {
-	async function rebind(userId: string, keys: KeyProvider, unbound: "readable" | "refused") {
+	async function rebind(userId: string, keys: KeyProvider, sealing: "migrating" | "required") {
 		return connection.transaction((transaction) =>
 			rebindEnvelopesOfAccount({
 				driver: transaction,
 				schema,
 				keys,
 				actor: actorOfTestUser(userId),
-				unbound,
+				sealing,
 			}),
 		);
 	}
@@ -788,10 +788,10 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		);
 		await unboundTokensOf(identity);
 
-		await expect(rebind(identity.userId, beforeRotation, "refused")).rejects.toMatchObject({
+		await expect(rebind(identity.userId, beforeRotation, "required")).rejects.toMatchObject({
 			name: "KeyError",
 		});
-		const rewrite = await rebind(identity.userId, beforeRotation, "readable");
+		const rewrite = await rebind(identity.userId, beforeRotation, "migrating");
 
 		expect(rewrite).toStrictEqual({
 			passwordRewritten: true,
@@ -818,7 +818,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 				),
 			).toBe(true);
 		}
-		expect(await rebind(identity.userId, beforeRotation, "readable")).toStrictEqual({
+		expect(await rebind(identity.userId, beforeRotation, "migrating")).toStrictEqual({
 			passwordRewritten: false,
 			totpRewritten: false,
 			identitiesRewritten: 0,
@@ -829,7 +829,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		const account = await signUp();
 		await enrolTotp(account);
 
-		const rewrite = await rebind(account.userId, afterRotation, "refused");
+		const rewrite = await rebind(account.userId, afterRotation, "required");
 
 		expect(rewrite).toStrictEqual({
 			passwordRewritten: true,
@@ -845,8 +845,71 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		const attacker = await signUp();
 		await writePhc(victim.userId, await readPhc(attacker.userId));
 
-		await expect(rebind(victim.userId, beforeRotation, "readable")).rejects.toMatchObject({
+		await expect(rebind(victim.userId, beforeRotation, "migrating")).rejects.toMatchObject({
 			code: "authentication_failed",
 		});
+	});
+	it("refuses an identity whose token columns hold ciphertexts and whose key version is empty", async () => {
+		const identity = await signInThroughOAuth(`no-version-${accountNumber}`);
+		await connection.query(`UPDATE ${schema}.identity SET token_key_version = NULL WHERE id = $1`, [
+			identity.identityId,
+		]);
+
+		await expect(rebind(identity.userId, beforeRotation, "migrating")).rejects.toMatchObject({
+			code: "key_version_unknown",
+		});
+	});
+
+	it("refuses to write three tokens of one identity under two key versions", async () => {
+		const identity = await signInThroughOAuth(`two-versions-${accountNumber}`);
+		let calls = 0;
+		const alternating: KeyProvider = {
+			current: (purpose) => {
+				calls += 1;
+				return (calls % 2 === 0 ? afterRotation : ring.providerAt(1, [1, 2])).current(purpose);
+			},
+			byVersion: (purpose, version) => afterRotation.byVersion(purpose, version),
+		};
+		await unboundTokensOf(identity);
+
+		await expect(rebind(identity.userId, alternating, "migrating")).rejects.toMatchObject({
+			code: "internal_error",
+		});
+	});
+
+	it("fails rather than reporting success when the row changed under the rewrite", async () => {
+		const account = await signUp();
+		const other = await signUp();
+		const unbound = await unboundPhcOf(account.userId);
+		await writePhc(account.userId, unbound);
+		const replacement = await readPhc(other.userId);
+
+		const attempt = connection.transaction((transaction) =>
+			rebindEnvelopesOfAccount({
+				driver: {
+					async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
+						if (/^UPDATE \S+\.password_credential SET phc = \$2/.test(sql.trim())) {
+							await transaction.query(
+								`UPDATE ${schema}.password_credential SET phc = $2 WHERE user_id = $1`,
+								[account.userId, replacement.ciphertext],
+							);
+						}
+						return transaction.query<T>(sql, parameters);
+					},
+					transaction: (work) => transaction.transaction(work),
+				},
+				schema,
+				keys: beforeRotation,
+				actor: actorOfTestUser(account.userId),
+				sealing: "migrating",
+			}),
+		);
+
+		await expect(attempt).rejects.toMatchObject({ code: "internal_error" });
+		expect(
+			Buffer.from((await readPhc(account.userId)).ciphertext).equals(
+				Buffer.from(unbound.ciphertext),
+			),
+		).toBe(true);
 	});
 });

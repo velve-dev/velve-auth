@@ -367,16 +367,13 @@ describe("lowering argon2id.memoryKiB after hashes were written above the new va
 			);
 			const sealed = row as { user_id: string; phc: Uint8Array<ArrayBuffer>; key_version: number };
 			const phc = parsePhc(
-				await openPhc(
-					keys,
-					{
-						userId: sealed.user_id,
-						phc: sealed.phc,
-						keyVersion: sealed.key_version,
-						scheme: "argon2id",
-					},
-					"refused",
-				),
+				await openPhc(keys, {
+					userId: sealed.user_id,
+					phc: sealed.phc,
+					keyVersion: sealed.key_version,
+					scheme: "argon2id",
+					unbound: "refused",
+				}),
 			);
 			return phc === null ? null : integerParameter(phc, "m");
 		};

@@ -1,8 +1,9 @@
-import { UNBOUND_ENVELOPES_REFUSED, type UnboundEnvelopePolicy } from "../keys/envelope-binding.js";
+import { qualifiedTableName } from "../db/identifier.js";
+import type { UnboundEnvelopeReading } from "../keys/envelope-binding.js";
 import type { SecurityStateConfig } from "./config.js";
 
 /** whether every account must carry a seal or the estate is still being sealed */
-type SealingMode = SecurityStateConfig["sealing"];
+export type SealingMode = SecurityStateConfig["sealing"];
 
 export const DEFAULT_SEALING: SealingMode = "required";
 
@@ -24,24 +25,22 @@ export function sealingOf(securityState: SecurityStateConfig | undefined): Seali
 	return securityState?.sealing ?? DEFAULT_SEALING;
 }
 
-/** whether an account has a row in velve.security_state */
+/** whether the account a stored envelope belongs to has a row in velve.security_state */
 export type SealRowPresence = "present" | "absent";
 
-/** looks up whether an account has a seal row */
-type SealRowLookup = (userId: string) => Promise<SealRowPresence>;
+/** the condition a statement selects beside an envelope, so the envelope and its account's seal row are one snapshot */
+export function sealRowPresentFor(schema: string, ownerColumn: string): string {
+	return `EXISTS (SELECT 1 FROM ${qualifiedTableName(schema, "security_state")} seal WHERE seal.user_id = ${ownerColumn})`;
+}
 
-//nothing writes a seal row before the seal is built so every account reads as unsealed (E-3112)
-export const NO_SEAL_ROW_IS_READ: SealRowLookup = () => Promise.resolve("absent");
+export function sealRowPresenceOf(sealed: unknown): SealRowPresence {
+	return sealed === true ? "present" : "absent";
+}
 
 //the unbound form is read only while migrating and only for an account without a seal row (S-INTEG-1)
-export function unboundEnvelopePolicyOf(
+export function unboundReadingOf(
 	sealing: SealingMode,
-	sealRowOf: SealRowLookup,
-): UnboundEnvelopePolicy {
-	if (sealing === "required") {
-		return UNBOUND_ENVELOPES_REFUSED;
-	}
-	return {
-		readingFor: async (owner) => ((await sealRowOf(owner)) === "absent" ? "readable" : "refused"),
-	};
+	sealRow: SealRowPresence,
+): UnboundEnvelopeReading {
+	return sealing === "migrating" && sealRow === "absent" ? "readable" : "refused";
 }

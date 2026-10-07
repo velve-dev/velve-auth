@@ -45,6 +45,7 @@ async function createHarness(limit: number, waitLimitInMilliseconds: number): Pr
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: "argon2id",
+		unbound: "refused",
 	};
 
 	const driver: Driver = {
@@ -253,7 +254,16 @@ describe("S-DOS-3, S-DOS-4 — a flood is refused, not queued forever", () => {
 		const config = resolvePasswordConfig({ argon2id: CHEAP_ARGON2ID });
 		const sealed = await sealPhc(keys, USER_ID, stored.byScheme.bcrypt);
 		const rows = new Map<string, PasswordCredentialRow>([
-			[USER_ID, { userId: USER_ID, phc: sealed.ciphertext, keyVersion: 1, scheme: "bcrypt" }],
+			[
+				USER_ID,
+				{
+					userId: USER_ID,
+					phc: sealed.ciphertext,
+					keyVersion: 1,
+					scheme: "bcrypt",
+					unbound: "refused",
+				},
+			],
 		]);
 
 		const driver: Driver = {
