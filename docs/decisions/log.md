@@ -15378,3 +15378,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Raising the epoch on every single revocation, which would end every other session of the account each time one device signs out. (b) A tombstone row per revoked session, which a writer deletes with the same ease as they re-insert the session.
 **Reason.** A counter the seal covers is the one thing a writer cannot roll back without breaking the seal, and one counter per account is enough to make every older session row worthless at once.
 **Price.** A session resolution reads the account's epoch with the seal, inside the snapshot of E-3095. `session.revokeAllOther` rebinds the kept session's MAC, which is possible without its token because the MAC runs over `token_sha256` (E-3081). An individual revocation stays reversible for a writer, and the alarm cannot tell an epoch mismatch from a forged row, since both are a MAC that does not match.
+
+<a id="e-3108"></a>
+
+### Migration 3 gains session_epoch in place
+`E-3108` · security-state · schema, migration 3, settled
+
+**Context.** E-3107 puts `session_epoch` into `velve.security_state`. The column is added to migration 3 itself — `session_epoch bigint NOT NULL DEFAULT 1 CHECK (session_epoch BETWEEN 1 AND 9007199254740991)` — in `src/core/db/migrations/security-state.ts` and `migrations/0003_security_state.sql`, for the reason E-3092 gives: migration 3 has not been released, so no ledger outside this branch's test schemas holds its checksum. The default is 1 so that the maintenance step's first seal and a new account need not name it. `test/db-schema-conformance.test.ts` lists the column, `test/security-state-table.test.ts` holds its default and both ends of its range, and *Schema* documents it. Nothing writes the column yet: binding it is the token branch's, sealing it the seal branch's.
+**Rejected.** A migration 4 or 5 for one column, for the same reason as in E-3092, and because 4 is the token branch's (E-3086).
+**Reason.** An unreleased migration is a draft, and a draft is edited.
+**Price.** Every database built from this branch's earlier migration 3, the parallel branches' test schemas included, refuses to start with `migration_checksum_changed` until it is recreated; the token and envelope branches must merge this commit before their gates run against a fresh schema.

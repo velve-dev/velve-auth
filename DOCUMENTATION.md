@@ -372,6 +372,7 @@ the seal covers and when it is written and checked is in
 | `version` | `bigint` | from 1 to 9007199254740991, `Number.MAX_SAFE_INTEGER`, because it reaches the application as a `number`; rises by one with every seal of the account |
 | `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
 | `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
+| `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; rises by one with every revocation of all of the account's sessions, and every session's MAC binds the epoch it was issued under |
 | `sealed_at` | `timestamptz` | when the row was last written |
 
 ### `velve.schema_migration`

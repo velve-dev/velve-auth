@@ -78,6 +78,7 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"security_state.digest bytea NOT NULL",
 	"security_state.key_version integer NOT NULL",
 	"security_state.sealed_at timestamp with time zone NOT NULL DEFAULT",
+	"security_state.session_epoch bigint NOT NULL DEFAULT",
 	"security_state.user_id uuid NOT NULL",
 	"security_state.version bigint NOT NULL",
 	"session.absolute_expires_at timestamp with time zone NOT NULL",

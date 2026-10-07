@@ -62,3 +62,35 @@ VALUES ($1, 0, decode(repeat('00', 32), 'hex'), 1)`,
 		expect(stored).toBe("refused");
 	});
 });
+
+describe("velve.security_state.session_epoch (section 3.18, migration 3)", () => {
+	async function storedWithEpoch(epoch: string): Promise<string> {
+		const userId = await createUser(connection, schema);
+		return connection
+			.query(
+				`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
+VALUES ($1, 1, decode(repeat('00', 32), 'hex'), 1, $2::bigint)`,
+				[userId, epoch],
+			)
+			.then(() => "stored")
+			.catch(() => "refused");
+	}
+
+	it("starts every account at epoch 1", async () => {
+		const userId = await createUser(connection, schema);
+
+		const [row] = await connection.query<{ session_epoch: string }>(
+			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
+VALUES ($1, 1, decode(repeat('00', 32), 'hex'), 1) RETURNING session_epoch::text AS session_epoch`,
+			[userId],
+		);
+
+		expect(row?.session_epoch).toBe("1");
+	});
+
+	it("refuses an epoch of zero and one above Number.MAX_SAFE_INTEGER", async () => {
+		expect(await storedWithEpoch("0")).toBe("refused");
+		expect(await storedWithEpoch("9007199254740992")).toBe("refused");
+		expect(await storedWithEpoch(String(Number.MAX_SAFE_INTEGER))).toBe("stored");
+	});
+});
