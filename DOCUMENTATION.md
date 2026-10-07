@@ -8734,6 +8734,8 @@ Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
 every distinct `key_version` of `velve.security_state` and refuses the start with
 `keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects. A
 version the ring does not hold is skipped.
+It makes one `byVersion` call and at most one probe per distinct stored version,
+and how many distinct versions there are is up to whoever writes the table.
 
 ### The seal table
 

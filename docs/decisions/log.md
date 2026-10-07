@@ -15658,3 +15658,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Returning `null` from `macUnderCurrentKey`, which every writer of a seal or a token would have to remember to check.
 **Reason.** A write under a key the check would refuse must not happen, and an error with a code is how this module refuses.
 **Price.** `KeyErrorCode` grows by one value, which an exhaustive switch over it has to handle.
+
+<a id="e-3216"></a>
+
+### The stored-version probe costs what a writer chooses, and E-3191's reason was weak
+`E-3216` · security-state · keys, startup, settled
+
+**Context.** The third review found two things in E-3191. `assertStoredIntegrityKeysTakeMac` makes one `byVersion` call, and for a held version one probe HMAC, per distinct `key_version` in `velve.security_state`, and a writer decides how many distinct values that column holds — up to two billion rows of distinct versions would make `migrate()` as slow as the writer likes. And E-3191 justified skipping an unknown version with the claim that refusing it would let a writer stop the service with one inserted row; a writer can stop `migrate()` anyway, for instance by deleting a ledger row (E-3099's case), so that reason carries little. E-3191 is not edited; this entry states both. The *Security state* chapter now says the probe's cost is set by whoever writes the table.
+**Rejected.** Capping the number of versions probed, which a writer would defeat by placing the unusable version past the cap.
+**Reason.** A writer who can slow the start can also stop it in other ways, so the cost adds no attack; skipping an unknown version still keeps it a per-account broken state, which is the more useful answer for the accounts concerned, whatever the weight of the denial-of-service argument.
+**Price.** `migrate()` has no bound on its running time against a hostile table.
