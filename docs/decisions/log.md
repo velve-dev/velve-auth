@@ -16248,3 +16248,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Exempting the isolation statement in the specification instead, which would make the specification yield to the rules file.
 **Reason.** The architecture is the source of truth, and the rules file is fixed when it disagrees.
 **Price.** None.
+
+<a id="e-3338"></a>
+
+### A link from before an address change raises a documented false alarm
+`E-3338` · security-state · specification, settled
+
+**Context.** E-3312 binds a mailed token to the address it was sent to, and its Price admitted that a link mailed before a confirmed address change and redeemed afterwards is refused with a false alarm. The seventh review asked for that to be said where operators look, since it is the one legitimate flow that raises `seal_mismatch`. As the orchestrator decided, *The limits* and *The alarm* now name it in both languages. They also say why it is accepted: deleting outstanding tokens in the address-change transaction would reach `velve.one_time_token` after the account lock, against §7's order that E-1616 and `check:token-after-lock` hold.
+**Rejected.** Sweeping outstanding links in a separate transaction before the change, which leaves a window in which a link mailed in between survives anyway.
+**Reason.** An alarm an operator will see in normal use has to be documented as such, or it teaches them to ignore the alarm.
+**Price.** The user requests the link again, and the operator sees one alarm they have to recognise.
