@@ -3,7 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-//a session issue takes the account lock before it reads the epoch and inserts conditionally (E-3207)
+//a session issue takes the account lock before it reads the epoch and inserts conditionally, the premise of T-INTEG-3's sign-ins racing a revocation (E-3207)
 
 let revoker: TestConnection;
 let signer: TestConnection;

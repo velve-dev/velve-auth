@@ -16358,3 +16358,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the wrap as harmless, which would leave a reader looking for the transaction it guards.
 **Reason.** Code that guards nothing misstates what it protects.
 **Price.** If the plugin connection ever opens a transaction, the wrap has to come back; `test/db-read-committed-instance.test.ts` covers only the instance's own driver.
+
+<a id="e-3349"></a>
+
+### Three lost citations come back, and the comparison row lists all eight purposes
+`E-3349` · security-state · tests, specification, settled
+
+**Context.** E-3340 says `test/keys-integrity-mac-guards.test.ts` cites T-INTEG-4, and E-3344 says nothing was lost when the header blocks became one sentence. Both were false after the commit that rewrote the headers. It dropped the T-INTEG-4 citation from the mac-guards header and the T-INTEG-3 citations from `test/security-state-seal-snapshot.test.ts` and `test/security-state-session-issue.test.ts`. The eighth review's cases showed it. The three one-sentence headers now name their T-INTEG case in the sentence, with the entry still the one identifier in parentheses. E-3344's "nothing was lost" was wrong when written and is not edited. Separately, the comparison row on purpose-separated keys, line 907 in German and 909 in English, still listed six purposes; it now lists `state-mac` and `token-mac` too. `test/security-state-log-claims.test.ts` and `test/security-state-spec-purposes.test.ts` hold both.
+**Rejected.** Weakening E-3340's sentence instead of restoring the citation, which would trade a true test for a vaguer log.
+**Reason.** A log entry's statement about a file has to stay true of the file.
+**Price.** None.

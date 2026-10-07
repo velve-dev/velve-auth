@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-//a stored mac is compared only in constant time and only under a version a column holds (E-3311)
+//the static part of T-INTEG-4 holds a stored mac compared only in constant time and only under a version a column holds (E-3311)
 
 const compared = vi.hoisted(() => ({ calls: 0 }));
 

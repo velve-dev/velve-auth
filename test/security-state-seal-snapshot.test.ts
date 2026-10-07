@@ -3,7 +3,7 @@ import { lockAccountRowStatement } from "../src/core/db/lock.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-//a writer's row committed during a change stays out of the seal computed from the one read (E-3280)
+//a writer's row committed during a change stays out of the seal computed from the one read, the premise of T-INTEG-3's foreign passkey (E-3280)
 
 let owner: TestConnection;
 let writer: TestConnection;
