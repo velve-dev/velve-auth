@@ -15438,3 +15438,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) `FOR UPDATE` on the account row, which blocks the writer's insert but is the mode E-1604 removed because it deadlocks with every foreign-key insert. (b) `SERIALIZABLE`, which adds predicate locks the change does not need; the snapshot alone decides what the seal covers.
 **Reason.** What the seal covers must be what the check read, and only a snapshot makes the two the same without locking the writer out.
 **Price.** A change that loses a serialization race is retried, and after three losses the user's change is refused. The writer's row is not prevented, only kept out of the seal, so the account reads as broken at the next check — which is the detection the seal exists for.
+
+<a id="e-3194"></a>
+
+### The attempt count is conditional on the value and the MAC the resolution verified
+`E-3194` · security-state, second range · specification, S-INTEG-9, settled
+
+**Context.** E-3091 bound `attempts` into the pending token MAC and had every counted attempt rewrite the MAC. The review showed that this launders a writer's reset: the count is `UPDATE … SET attempts = attempts + 1 … RETURNING`, which continues from whatever the row holds when the update runs, and a MAC recomputed over what it returns makes the writer's value legitimate. The reviewer's test held the row, set `attempts` to 0 while a fifth failure waited on it, and the count answered one attempt, not exhausted. The orchestrator decided the remedy: the count is conditional on the `attempts` value and the `token_mac` the resolution verified, in the same transaction, and a miss is a missing row with the alarm. Section 3.18 point 3 says so, and T-INTEG-9 adds a reset made while a counted attempt waits on the row (12 altered rows). The reviewer's case is committed as `test/security-state-attempt-count.test.ts` with `it.fails`, expecting the miss; the token branch builds the conditional count, changes how the verified values reach `countFailedAttempt`, adapts the case and turns it into a plain one.
+**Rejected.** Recomputing the MAC over the stored value before the update, in a separate statement, which leaves the same window between the read and the update.
+**Reason.** A count that does not check what it counts from proves nothing about the row, and the condition in the `WHERE` is the same pattern S-RACE-2 uses for consumption.
+**Price.** A legitimate concurrent count on the same pending row now misses as well and ends the pending authentication with an alarm, where it used to count twice; two simultaneous wrong codes on one pending authentication are rare, and the alarm says so.
