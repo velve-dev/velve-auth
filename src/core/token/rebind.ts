@@ -21,12 +21,19 @@ export type TokenTable =
 	| "pending_authentication"
 	| "webauthn_challenge";
 
+/** the rows one key version still holds after a pass, the usable apart from the ones it refused */
+interface RowsUnderKeyVersion {
+	readonly tokens: number;
+	/** rows this pass refused and left standing as evidence, which do not hold the version in the ring */
+	readonly traces: number;
+}
+
 /** what one rebinding pass over a table did, and how many rows each key version still holds after it */
 interface TokenRebinding {
 	readonly rebound: number;
 	readonly refused: number;
-	/** a version may leave the ring only once a pass reports no row under it */
-	readonly rowsByKeyVersion: Readonly<Record<number, number>>;
+	/** a version may leave the ring only once a pass reports no usable token row under it */
+	readonly rowsByKeyVersion: Readonly<Record<number, RowsUnderKeyVersion>>;
 }
 
 interface StoredTokenRow {
@@ -168,9 +175,18 @@ function rebindStatement(table: string, shape: TableShape): string {
 	RETURNING ${shape.hashColumn}`;
 }
 
-function rowsByKeyVersionStatement(table: string): string {
-	return `SELECT token_mac_key_version, count(*)::int AS rows FROM ${table}
-	GROUP BY token_mac_key_version ORDER BY token_mac_key_version`;
+//a trace is the refused row itself so a row rewritten since its refusal counts as a token again (S-KEY-5)
+function rowsByKeyVersionStatement(table: string, shape: TableShape): string {
+	return `WITH trace AS (
+		SELECT decode(refused->>0, 'hex') AS token_hash, decode(refused->>1, 'hex') AS token_mac
+		FROM jsonb_array_elements($1::jsonb) AS refused
+	)
+	SELECT t.token_mac_key_version,
+		count(*) FILTER (WHERE trace.token_hash IS NULL)::int AS tokens,
+		count(trace.token_hash)::int AS traces
+	FROM ${table} t
+	LEFT JOIN trace ON trace.token_hash = t.${shape.hashColumn} AND trace.token_mac = t.token_mac
+	GROUP BY t.token_mac_key_version ORDER BY t.token_mac_key_version`;
 }
 
 interface RebindingPass {
@@ -225,15 +241,27 @@ async function rebindRow(
 	return written.length === 1 ? "rebound" : "left";
 }
 
+function hexOf(bytes: Uint8Array): string {
+	return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function rowsByKeyVersionOf(
 	driver: Driver,
 	table: string,
-): Promise<Readonly<Record<number, number>>> {
-	const rows = await driver.query<{ token_mac_key_version: number; rows: number }>(
-		rowsByKeyVersionStatement(table),
-		[],
+	shape: TableShape,
+	traces: readonly StoredTokenRow[],
+): Promise<Readonly<Record<number, RowsUnderKeyVersion>>> {
+	const refused = JSON.stringify(
+		traces.map((row) => [hexOf(row.token_hash), hexOf(row.token_mac)]),
 	);
-	return Object.fromEntries(rows.map((row) => [row.token_mac_key_version, row.rows]));
+	const rows = await driver.query<{
+		token_mac_key_version: number;
+		tokens: number;
+		traces: number;
+	}>(rowsByKeyVersionStatement(table, shape), [refused]);
+	return Object.fromEntries(
+		rows.map((row) => [row.token_mac_key_version, { tokens: row.tokens, traces: row.traces }]),
+	);
 }
 
 /**
@@ -252,7 +280,7 @@ export async function rebindTokenRowsUnderCurrentKey(
 	const { version } = await input.keys.current(TOKEN_MAC_PURPOSE);
 	let after: Uint8Array = FIRST_TOKEN_HASH;
 	let rebound = 0;
-	let refused = 0;
+	const traces: StoredTokenRow[] = [];
 	for (;;) {
 		const rows = await input.driver.query<StoredTokenRow>(selectSql, [
 			version,
@@ -262,11 +290,17 @@ export async function rebindTokenRowsUnderCurrentKey(
 		for (const row of rows) {
 			const outcome = await rebindRow(pass, row);
 			rebound += outcome === "rebound" ? 1 : 0;
-			refused += outcome === "refused" ? 1 : 0;
+			if (outcome === "refused") {
+				traces.push(row);
+			}
 		}
 		const last = rows.at(-1);
 		if (last === undefined || rows.length < input.batchSize) {
-			return { rebound, refused, rowsByKeyVersion: await rowsByKeyVersionOf(input.driver, table) };
+			return {
+				rebound,
+				refused: traces.length,
+				rowsByKeyVersion: await rowsByKeyVersionOf(input.driver, table, shape, traces),
+			};
 		}
 		after = last.token_hash;
 	}

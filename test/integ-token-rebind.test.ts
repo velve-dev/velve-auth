@@ -126,10 +126,18 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		}
 
 		expect(results).toStrictEqual({
-			session: { rebound: 3, refused: 0, rowsByKeyVersion: { 2: 3 } },
-			one_time_token: { rebound: 2, refused: 0, rowsByKeyVersion: { 2: 2 } },
-			pending_authentication: { rebound: 1, refused: 0, rowsByKeyVersion: { 2: 1 } },
-			webauthn_challenge: { rebound: 1, refused: 0, rowsByKeyVersion: { 2: 1 } },
+			session: { rebound: 3, refused: 0, rowsByKeyVersion: { 2: { tokens: 3, traces: 0 } } },
+			one_time_token: { rebound: 2, refused: 0, rowsByKeyVersion: { 2: { tokens: 2, traces: 0 } } },
+			pending_authentication: {
+				rebound: 1,
+				refused: 0,
+				rowsByKeyVersion: { 2: { tokens: 1, traces: 0 } },
+			},
+			webauthn_challenge: {
+				rebound: 1,
+				refused: 0,
+				rowsByKeyVersion: { 2: { tokens: 1, traces: 0 } },
+			},
 		});
 		expect(refusals).toStrictEqual([]);
 		for (const token of sessionTokens) {
@@ -176,8 +184,16 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		const session = await rebind(rotatedKeys, "session");
 		const oneTime = await rebind(rotatedKeys, "one_time_token");
 
-		expect(session).toStrictEqual({ rebound: 0, refused: 1, rowsByKeyVersion: { 1: 1 } });
-		expect(oneTime).toStrictEqual({ rebound: 0, refused: 1, rowsByKeyVersion: { 1: 1 } });
+		expect(session).toStrictEqual({
+			rebound: 0,
+			refused: 1,
+			rowsByKeyVersion: { 1: { tokens: 0, traces: 1 } },
+		});
+		expect(oneTime).toStrictEqual({
+			rebound: 0,
+			refused: 1,
+			rowsByKeyVersion: { 1: { tokens: 0, traces: 1 } },
+		});
 		expect(refusals).toStrictEqual([
 			{ userId, occasion: "maintenance", reason: "token_binding_mismatch", verdict: "mismatch" },
 			{ userId, occasion: "maintenance", reason: "token_binding_mismatch", verdict: "mismatch" },
@@ -223,7 +239,11 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		);
 
 		expect(booked).toBe(true);
-		expect(pass).toStrictEqual({ rebound: 0, refused: 0, rowsByKeyVersion: { 1: 1 } });
+		expect(pass).toStrictEqual({
+			rebound: 0,
+			refused: 0,
+			rowsByKeyVersion: { 1: { tokens: 1, traces: 0 } },
+		});
 		expect(row).toStrictEqual({ attempts: 1, version: 1 });
 		expect(refusals).toStrictEqual([]);
 	});
@@ -302,6 +322,84 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		});
 
 		expect(moved).toBe(true);
-		expect(pass).toStrictEqual({ rebound: 0, refused: 0, rowsByKeyVersion: { 7: 1 } });
+		expect(pass).toStrictEqual({
+			rebound: 0,
+			refused: 0,
+			rowsByKeyVersion: { 7: { tokens: 1, traces: 0 } },
+		});
+	});
+});
+
+describe("the rows a pass reports under each key version (S-KEY-5, E-3277)", () => {
+	it("counts a forged row under the old version as a trace, which is refused once the version has left", async () => {
+		await emptyTokenTables();
+		const ring = testKeyRing(2);
+		const before = servicesUnder(ring.providerAt(1, [1]));
+		const userId = await createUser(migrated.connection, schema);
+		const genuine = await before.sessions.issue({
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
+		const forged = randomBytes(32).toString("base64url");
+		await migrated.connection.query(
+			`INSERT INTO ${schema}.session
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days', '{password}', $3, 1)`,
+			[userId, sha256Of(forged), randomBytes(32)],
+		);
+		refusals = [];
+
+		const pass = await rebind(ring.providerAt(2, [1, 2]), "session");
+		const removed = servicesUnder(ring.providerAt(2, [2]));
+		refusals = [];
+
+		expect(pass).toStrictEqual({
+			rebound: 1,
+			refused: 1,
+			rowsByKeyVersion: { 1: { tokens: 0, traces: 1 }, 2: { tokens: 1, traces: 0 } },
+		});
+		expect(await removed.sessions.resolve(genuine.token)).not.toBeNull();
+		expect(await removed.sessions.resolve(forged)).toBeNull();
+		expect(refusals.map((refusal) => refusal.verdict)).toStrictEqual(["key_version_unknown"]);
+	});
+
+	it("counts a refused row a writer rewrote after the refusal as a token again", async () => {
+		await emptyTokenTables();
+		const ring = testKeyRing(2);
+		const userId = await createUser(migrated.connection, schema);
+		const forged = randomBytes(32).toString("base64url");
+		await migrated.connection.query(
+			`INSERT INTO ${schema}.session
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 day', now() + interval '2 days', '{password}', $3, 1)`,
+			[userId, sha256Of(forged), randomBytes(32)],
+		);
+		const rewriting = {
+			...migrated.connection,
+			query: async <T>(sql: string, params: unknown[]): Promise<T[]> => {
+				if (sql.includes("WITH trace AS")) {
+					await migrated.connection.query(
+						`UPDATE ${schema}.session SET token_mac = $2 WHERE token_sha256 = $1`,
+						[sha256Of(forged), randomBytes(32)],
+					);
+				}
+				return migrated.connection.query<T>(sql, params);
+			},
+		};
+		refusals = [];
+
+		const pass = await rebindTokenRowsUnderCurrentKey({
+			driver: rewriting,
+			schema,
+			keys: ring.providerAt(2, [1, 2]),
+			sealing: "migrating",
+			table: "session",
+			batchSize: BATCH,
+		});
+
+		expect(pass.rowsByKeyVersion).toStrictEqual({ 1: { tokens: 1, traces: 0 } });
 	});
 });
