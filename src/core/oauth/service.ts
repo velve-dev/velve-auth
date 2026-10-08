@@ -15,7 +15,13 @@ import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
 import { identityColumns } from "../identity/columns.js";
 import { removeSignInMethod } from "../identity/sign-in-methods.js";
-import { decryptWithPurposeKey, encryptWithPurposeKey } from "../keys/index.js";
+import {
+	decryptBound,
+	type EnvelopeBinding,
+	encryptBound,
+	rowOfParts,
+} from "../keys/envelope-binding.js";
+import { KeyError } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
@@ -40,9 +46,8 @@ import {
 import { claimsOfIdToken } from "./id-token.js";
 import {
 	createOAuthIdentityRepository,
-	type EncryptedProviderTokens,
 	type IdentityFacts,
-	NO_STORED_TOKENS,
+	type OwnedIdentity,
 } from "./identity-repository.js";
 import { accountAnAutomaticLinkMayJoin } from "./linking.js";
 import type { OutboundFetch } from "./outbound.js";
@@ -189,6 +194,32 @@ function refuseIfAlreadyLinked(inserted: Identity | null): Identity {
 	return inserted;
 }
 
+/** the columns of a flow row that decide where the flow leads, bound with its verifier */
+interface FlowIdentity {
+	readonly stateSha256: Uint8Array;
+	readonly provider: string;
+	readonly nonce: string | null;
+	readonly redirectPath: string | null;
+	readonly linkFromSessionId: string | null;
+	readonly expiresAtMicros: string;
+}
+
+//a writer who changes any column that steers a flow must make its verifier unreadable (E-3123)
+function pkceBindingOf(owner: string | null, flow: FlowIdentity): EnvelopeBinding {
+	return {
+		column: "oauth_flow.pkce_verifier_enc",
+		owner,
+		row: rowOfParts([
+			flow.stateSha256,
+			flow.provider,
+			flow.nonce,
+			flow.redirectPath,
+			flow.linkFromSessionId,
+			flow.expiresAtMicros,
+		]),
+	};
+}
+
 export function createOAuthService(input: {
 	readonly services: RouteServices;
 	readonly providers: ProviderTable;
@@ -197,35 +228,10 @@ export function createOAuthService(input: {
 	const driver: Driver = services.driver;
 	const schema = services.schema;
 	const flows = createOAuthFlowRepository({ driver, schema });
-	const identities = createOAuthIdentityRepository({ driver, schema });
+	const keys = services.keys;
+	const identities = createOAuthIdentityRepository({ driver, schema, keys });
 	const outbound: OutboundFetch = services.fetch ?? globalThis.fetch;
 	const storeTokens = services.oauth?.storeTokens === true;
-
-	async function encryptedProviderTokens(tokens: ProviderTokens): Promise<EncryptedProviderTokens> {
-		if (!storeTokens) {
-			return NO_STORED_TOKENS;
-		}
-		const sealed = await Promise.all(
-			[tokens.accessToken, tokens.refreshToken, tokens.idToken].map(async (token) =>
-				token === null
-					? null
-					: encryptWithPurposeKey(services.keys, "oauth-token-enc", utf8.encode(token)),
-			),
-		);
-		const versions = new Set(
-			sealed.filter((written) => written !== null).map((written) => written.keyVersion),
-		);
-		//one column carries the version of three ciphertexts, so a rotation between them is refused
-		if (versions.size > 1) {
-			throw new VelveError("internal_error");
-		}
-		return {
-			accessTokenEnc: sealed[0]?.ciphertext ?? null,
-			refreshTokenEnc: sealed[1]?.ciphertext ?? null,
-			idTokenEnc: sealed[2]?.ciphertext ?? null,
-			tokenKeyVersion: [...versions][0] ?? null,
-		};
-	}
 
 	async function factsOf(
 		provider: ResolvedProvider,
@@ -240,7 +246,7 @@ export function createOAuthService(input: {
 			profile: account.claims,
 			scopes: tokens.scopes,
 			tokenLifetimeInSeconds: storeTokens ? tokens.expiresInSeconds : null,
-			tokens: await encryptedProviderTokens(tokens),
+			tokens: storeTokens ? tokens : null,
 		};
 	}
 
@@ -326,13 +332,51 @@ export function createOAuthService(input: {
 		return created;
 	}
 
+	//every write to an account's provider tokens runs under the account lock (E-3222)
+	async function theIdentityUnderItsAccountLock(
+		transaction: Driver,
+		owned: ReturnType<typeof createOAuthIdentityRepository>,
+		existing: OwnedIdentity,
+	): Promise<OwnedIdentity> {
+		await lockAccountRow(transaction, schema, existing.userId);
+		const locked = await owned.findIdentityBySubject({
+			provider: existing.identity.provider,
+			subject: existing.identity.subject,
+		});
+		if (
+			locked === null ||
+			locked.userId !== existing.userId ||
+			locked.identity.id !== existing.identity.id
+		) {
+			throw new ConcealedError("state_not_found");
+		}
+		return locked;
+	}
+
+	//an automatic link joins only the account that still qualifies once its lock is held (E-3227)
+	async function theJoinableAccountUnderItsLock(
+		transaction: Driver,
+		users: UserRepository,
+		joinable: User,
+		provider: ResolvedProvider,
+		account: ProviderAccount,
+	): Promise<User> {
+		await lockAccountRow(transaction, schema, joinable.id);
+		const locked = await accountAnAutomaticLinkMayJoin({ users, account, provider });
+		if (locked === null || locked.id !== joinable.id) {
+			throw new ConcealedError("state_not_found");
+		}
+		assertTheAccountIsEnabled(locked);
+		return locked;
+	}
+
 	async function accountForSignIn(
 		provider: ResolvedProvider,
 		account: ProviderAccount,
 		facts: IdentityFacts,
 	): Promise<ResolvedAccount> {
 		return driver.transaction(async (transaction) => {
-			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
+			const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
 			const users: UserRepository = createUserRepository({ driver: transaction, schema });
 			const existing = await owned.findIdentityBySubject({
 				provider: provider.id,
@@ -340,15 +384,19 @@ export function createOAuthService(input: {
 			});
 
 			if (existing !== null) {
-				assertTheAccountIsEnabled(await users.findUserById(existing.userId));
-				return { userId: existing.userId, identity: await owned.refreshIdentity(facts) };
+				const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
+				assertTheAccountIsEnabled(await users.findUserById(locked.userId));
+				return {
+					userId: locked.userId,
+					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
+				};
 			}
 
 			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
-			if (joinable !== null) {
-				assertTheAccountIsEnabled(joinable);
-			}
-			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
+			const owner =
+				joinable === null
+					? await createAccountFor(transaction, provider, account)
+					: await theJoinableAccountUnderItsLock(transaction, users, joinable, provider, account);
 			return {
 				userId: owner.id,
 				identity: refuseIfAlreadyLinked(
@@ -444,7 +492,7 @@ export function createOAuthService(input: {
 		return driver.transaction(async (transaction) => {
 			//identity and session are both written below, so the account row is locked first
 			await lockAccountRow(transaction, schema, userId);
-			const owned = createOAuthIdentityRepository({ driver: transaction, schema });
+			const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
 			assertTheAccountIsEnabled(
 				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
 			);
@@ -465,13 +513,26 @@ export function createOAuthService(input: {
 		});
 	}
 
-	async function verifierOf(flow: {
-		readonly pkceVerifierEnc: Uint8Array<ArrayBuffer>;
-		readonly keyVersion: number;
-	}): Promise<string> {
-		return new TextDecoder().decode(
-			await decryptWithPurposeKey(services.keys, "pkce-enc", flow.keyVersion, flow.pkceVerifierEnc),
-		);
+	//a flow that began before the upgrade holds an unbound verifier and is begun again (S-INTEG-1)
+	async function verifierOf(flow: ConsumedOAuthFlowRow, stateSha256: Uint8Array): Promise<string> {
+		try {
+			const verifier = await decryptBound(
+				services.keys,
+				pkceBindingOf(flow.linkTo?.userId ?? null, {
+					stateSha256,
+					provider: flow.provider,
+					nonce: flow.nonce,
+					redirectPath: flow.redirectPath,
+					linkFromSessionId: flow.linkFromSessionId,
+					expiresAtMicros: flow.expiresAtMicros,
+				}),
+				{ keyVersion: flow.keyVersion, ciphertext: flow.pkceVerifierEnc },
+				"refused",
+			);
+			return new TextDecoder().decode(verifier);
+		} catch (failure) {
+			throw failure instanceof KeyError ? new ConcealedError("state_not_found") : failure;
+		}
 	}
 
 	return {
@@ -481,15 +542,24 @@ export function createOAuthService(input: {
 			const state = stateOfPointer(pointer);
 			const verifier = createPkceVerifier();
 			const nonce = provider.jwksUri === null ? null : createNonce();
-			const sealed = await encryptWithPurposeKey(services.keys, "pkce-enc", utf8.encode(verifier));
-
-			await flows.insertFlow({
+			const flow: FlowIdentity = {
 				stateSha256: stateHash(state),
 				provider: provider.id,
-				pkceVerifierEnc: sealed.ciphertext,
-				keyVersion: sealed.keyVersion,
 				nonce,
 				redirectPath: redirectPath === undefined ? null : acceptedRedirectPath(redirectPath),
+				linkFromSessionId: linkTo?.sessionId ?? null,
+				expiresAtMicros: await flows.deadlineOfANewFlow(),
+			};
+			const sealed = await encryptBound(
+				services.keys,
+				pkceBindingOf(linkTo?.actor ?? null, flow),
+				utf8.encode(verifier),
+			);
+
+			await flows.insertFlow({
+				...flow,
+				pkceVerifierEnc: sealed.ciphertext,
+				keyVersion: sealed.keyVersion,
 				linkTo,
 			});
 
@@ -516,11 +586,14 @@ export function createOAuthService(input: {
 			}
 			assertIssuerMatches(provider, arrival.iss);
 
-			const flow = await flows.consumeFlow({ stateSha256: stateHash(arrival.state) });
+			const stateSha256 = stateHash(arrival.state);
+			const flow = await flows.consumeFlow({ stateSha256 });
 			if (flow === null || flow.provider !== provider.id) {
 				throw new ConcealedError("state_not_found");
 			}
 
+			//no column of the row is acted on before its verifier proves the row unchanged (E-3128)
+			const codeVerifier = await verifierOf(flow, stateSha256);
 			const linked = linkedSessionOf(flow);
 			if (linked === null) {
 				await askBeforeSignIn(services.pluginRuntime.hooks, "oauth", arrival.observed);
@@ -530,7 +603,7 @@ export function createOAuthService(input: {
 				fetch: outbound,
 				provider,
 				code: arrival.code,
-				codeVerifier: await verifierOf(flow),
+				codeVerifier,
 			});
 			const read = await claimsOfProvider(provider, tokens, flow.nonce);
 			assertClaimsAnswerForTheIssuer({ provider, iss: arrival.iss, ...read });

@@ -8,6 +8,7 @@ import { DEFAULT_SESSION_CONFIG, type SessionSettings } from "../session/config.
 import { DEFAULT_SESSION_METADATA_MODE } from "../session/metadata.js";
 import type { BaseConfig, RateLimitConfig, VelveAuthConfig } from "./config.js";
 import { rateLimitConfigOf } from "./rate-limiting.js";
+import { DEFAULT_SEALING, sealingOf } from "./security-state.js";
 
 /** every key of the option type */
 type OptionKey = keyof VelveAuthConfig<IdentityMode>;
@@ -139,6 +140,12 @@ export const SECURITY_OPTIONS: readonly SecurityOption[] = [
 		weakenedBy: "any other clock, because a settable one belongs to a test run",
 	},
 	{
+		option: "securityState",
+		safeDefault: `sealing "${DEFAULT_SEALING}"`,
+		weakenedBy:
+			'sealing "migrating", which serves an account without a seal row and reads its unbound envelopes, so every unsealed account is open to an old envelope copied from another account until it is sealed; run the maintenance step at once and then switch to "required"',
+	},
+	{
 		option: "log",
 		safeDefault: "no default: the sink is optional",
 		weakenedBy: NOTHING_WEAKENS_IT,
@@ -261,6 +268,14 @@ const DETECTORS: readonly Detector[] = [
 
 	(config) =>
 		config.clock === undefined ? null : { option: "clock", chosen: "a clock the caller supplied" },
+
+	(config) =>
+		sealingOf(config.securityState) === DEFAULT_SEALING
+			? null
+			: {
+					option: "securityState",
+					chosen: `sealing "${sealingOf(config.securityState)}", unsealed accounts open to old envelopes copied from another account`,
+				},
 ];
 
 //each weakened option appears once, as the operator reads what was given up (S-DEFAULT-1)

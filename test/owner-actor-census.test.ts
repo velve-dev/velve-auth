@@ -27,9 +27,9 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	oauth_flow: "src/core/oauth/flow-repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
 	password_reset_required: "no repository: no module of the library reads or writes it",
-	//the session repository reads the session epoch, the start probes key versions (E-3138, E-3191)
+	//the session and pending repositories read the session epoch, the start probes key versions (E-3138, E-3191)
 	security_state:
-		"src/core/db/repositories/session.ts, src/core/auth/integrity-key-ring.ts, src/core/factor/pending/repository.ts",
+		"src/core/db/repositories/session.ts, src/core/factor/pending/repository.ts, src/core/auth/security-state.ts and src/core/auth/integrity-key-ring.ts",
 };
 
 const NO_REPOSITORY = "no repository:";
@@ -45,7 +45,8 @@ type ExceptionClass =
 	| "shipped surface"
 	| "created with its account"
 	| "account a sign-in decided"
-	| "the repository on another driver";
+	| "the repository on another driver"
+	| "seal row beside its envelope";
 
 //each class narrows the requirement the way the decision log records it (E-242)
 const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
@@ -71,6 +72,8 @@ const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 		"the method returns the same repository, keys and mode over a lent connection and reads no row itself (E-3144)",
 	"created with its account":
 		"the account row was inserted by the same transaction, so no other caller can own it yet (E-2428)",
+	"seal row beside its envelope":
+		"the condition only asks whether a seal row exists, correlated to the owner of the row the enclosing statement already reached by its own predicate (E-3121)",
 };
 
 const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
@@ -140,6 +143,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"account a sign-in decided",
 
 	"src/core/auth/maintenance.ts#sweepExpiredRows": "maintenance or start-up",
+	"src/core/auth/security-state.ts#sealRowPresentFor": "seal row beside its envelope",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/auth/integrity-key-ring.ts#assertStoredIntegrityKeysTakeMac": "maintenance or start-up",

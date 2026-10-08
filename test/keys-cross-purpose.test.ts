@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { NONCE_BYTES } from "../src/core/keys/aes-gcm.js";
+import { openEnvelope, sealEnvelope } from "../src/core/keys/envelope.js";
 import {
 	type EncryptionKeyPurpose,
 	KEY_PURPOSES,
 	type KeyPurpose,
-	openEnvelope,
 	rootKeyProvider,
-	sealEnvelope,
 } from "../src/core/keys/index.js";
 import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";

@@ -827,6 +827,7 @@ method that reaches them some other way says which way, by name.**
 | maintenance or start-up | every owner at once, by a deadline or a catalogue (E-2426) | `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown`, `assertEveryUserReferenceCascades` |
 | shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findOwnerOfSession`, `deleteSessionById` behind `FrozenRepositories`; TOTP `isConfirmedFor`, which answers `TotpService.isEnrolled` with a boolean and no secret (E-2435); `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
 | created with its account | the account row was inserted by the same transaction (E-2428) | password `writeForCreatedAccount` |
+| seal row beside its envelope | the condition only asks whether a seal row exists, correlated to the owner of the row the enclosing statement already reached (E-3121) | `sealRowPresentFor` |
 
 Where a caller holds a proof, the method takes it:
 
@@ -920,7 +921,7 @@ other request is observably waiting for a lock, reads the SQLSTATE where the ser
 raises it rather than at the HTTP boundary, and looks for any two transactions that
 take two tables in opposite orders in modes that wait for each other.
 
-**Where each of the eight is pinned.** The declaration audit — the statement carrying
+**Where each of the ten is pinned.** The declaration audit — the statement carrying
 `/* locks: … */` must appear, and must precede the first of the account's own tables —
 reads the statements a transaction ran, so a transaction has only to be *driven*. No
 interleaving, no second connection and no deadlock are needed, which is what makes the
@@ -933,21 +934,25 @@ audit cheap enough to point at flows that never race.
 | `replacePasswordOfSession` | `test/lock-order-declaration.test.ts`, `/password/change` |
 | `linkIdentityAndReissue` | `test/lock-order-declaration.test.ts`, `/identity/link/start` and the callback |
 | `removeCredential` (TOTP) | `test/lock-order-declaration.test.ts`, the repository transaction |
+| `rebindEnvelopesOfAccount` | `test/lock-order-declaration.test.ts`, the bound-envelope rewrite in a transaction of its own ([Security state: bound envelopes](#security-state-bound-envelopes)) |
 | `redeemResetWithRecoveryCode` | nothing; the audit skips it |
 | `replaceEveryCode` | nothing; the audit skips it |
 | `removeSignInMethod` | nothing; the audit skips it |
+| `accountForSignIn`, the OAuth sign-in of a known identity | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` drives it against the bound-envelope rewrite, which it waits for |
+| `accountForSignIn`, the automatic link of a new identity to an existing account | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` shows it waiting for a transaction that holds the account row (E-3225) |
 
-The last three are not an omission of the audit but a property of it: it considers only
+The last five are not an omission of the audit but a property of it: it considers only
 a transaction that writes **two or more** of the account's own tables, and on the tree as
-it stands each of those three writes fewer than two. The first two are E-1617's
+it stands each of those five writes fewer than two; the OAuth sign-in of a known identity
+and the automatic link each write `velve.identity` alone. The first two are E-1617's
 measurement — the recovery-code redemption is refused after one table on the repaired
 tree, and the regeneration touches one. The third was established by reading
 `removeSignInMethod`, which issues one `DELETE` against whichever single table the
 removal names; it has not been driven, and driving it is the stronger statement nobody
 has made. A transaction with one child table has no two tables to put in an order, so
 there is nothing for this audit to decide about it. Each case in
-`test/lock-order-declaration.test.ts` reports how many transactions it read, and a fourth
-case counts the eight statements themselves, so a ninth added anywhere reddens and has to
+`test/lock-order-declaration.test.ts` reports how many transactions it read, and a fifth
+case counts the eleven statements themselves, so a twelfth added anywhere reddens and has to
 be placed in this table.
 
 **What none of them covers.** The order is not enforced for a transaction no test
@@ -1068,7 +1073,11 @@ to no key at all (section 3.8).
 
 ### Encrypting a value
 
-Two shapes, one representation of the version.
+Two shapes, one representation of the version. Both are the unbound form of
+1.x and internal to `src/core/keys/envelope.ts`; they are not exported from the
+keys module's index, and no module of the library writes them any more. The
+stored columns use the bound form, which is built on the same AES-256-GCM step
+([Security state: bound envelopes](#security-state-bound-envelopes), E-3124).
 
 ```ts
 const { keyVersion, ciphertext } = await encryptWithPurposeKey(keys, purpose, plaintext);
@@ -1129,9 +1138,12 @@ Every failure of this module is a `KeyError` with a `code` from a fixed set:
 `key_version_out_of_range`, `key_version_unknown`,
 `key_material_not_exportable`, `purpose_cannot_encrypt`,
 `ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`,
-`authentication_failed`, `key_unusable`. The message is fixed per code, so no key
-material can reach an error string. `key_unusable` comes from `macUnderCurrentKey`
-when the current key of an integrity purpose is not HMAC-SHA256 or does not sign
+`authentication_failed`, `key_unusable`, and the two of the bound envelope,
+`envelope_unbound` and `envelope_binding_malformed`
+([Security state: bound envelopes](#security-state-bound-envelopes)). The
+message is fixed per code, so no key material can reach an error string.
+`key_unusable` comes from `macUnderCurrentKey` when the current key of an
+integrity purpose is not HMAC-SHA256 or does not sign
 ([Security state](#security-state)).
 
 That includes the failure a caller most has to handle: a ciphertext that does
@@ -2541,10 +2553,13 @@ The price is stated where it belongs, at the top of the operational
 documentation: **losing the key means losing every password.** That is the same
 risk class as a pepper.
 
-#### `sealPhc(keys, phc)` and `openPhc(keys, row)`
+#### `sealPhc(keys, userId, phc)` and `openPhc(keys, row)`
 
 The only two ways a PHC string crosses the column boundary. `sealPhc` returns
-`{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
+`{ keyVersion, ciphertext }` in the bound form, bound to `userId` as owner and
+row; `openPhc` reads a row back under the binding of `row.userId`, reading the
+old 1.x form only where `row.unbound` is `"readable"`
+([Security state: bound envelopes](#security-state-bound-envelopes)). There is no write path
 that puts a cleartext string into the column, and the import module
 architecture 4.0.3 describes is to use these same two functions rather than a
 path of its own. That module does not ship (E-3021).
@@ -2554,7 +2569,14 @@ version that has left the ring, and `KeyError("authentication_failed")` when the
 ciphertext does not authenticate. `checkPassword` does not let either reach the
 caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
-#### `createPasswordCredentialRepository({ driver, keys, schema?, memoryCeilingKiB })`
+#### `createPasswordCredentialRepository({ driver, keys, schema?, memoryCeilingKiB, sealing? })`
+
+`sealing` is the sealing mode an old-form PHC string is read under, `"required"`
+when absent; the sign-in repository is built with the instance's
+`securityState.sealing`. A row the repository reads carries
+`unbound: "readable" | "refused"`, decided from `sealing` and from whether the
+owner had a row in `velve.security_state` **in the same statement** that read
+the credential (E-3121).
 
 `memoryCeilingKiB` is the memory ceiling a written credential is held to, and it
 has no default, so a caller that forgets it cannot fall back to a ceiling below
@@ -2569,6 +2591,7 @@ writes what it verifies (E-2615).
 | `write({ actor, phc, scheme, setBySessionId })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
 | `writeForCreatedAccount({ userId, phc, scheme, setBySessionId })` | the same statement, for sign-up, whose transaction inserted the account (E-2428) |
 | `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
+| `rebindOwnedBy({ actor, read, unbound })` | reads nothing: opens `read`, the ciphertext and key version the caller's one verified read returned, rewrites it into the bound form under the current key with `UPDATE … WHERE user_id = $1 AND phc = $4 AND key_version = $5` on exactly those, and answers `{ outcome: "rebound", stored }` with the new ciphertext and key version, `{ outcome: "current", stored: read }` (already bound under the current key) or `{ outcome: "lost" }` (the row no longer holds `read`); called by `rebindEnvelopesOfAccount` only |
 
 `replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
 the stored **ciphertext**, not the PHC string, so a password the user changed
@@ -4212,6 +4235,16 @@ period and, by default, a tolerance of one step in each direction (architecture
 | `clock` | `Clock` | yes | The only time the module reads. There is no default: architecture 6.19 says the core reads the time through `clock` alone, and a default would be a second source. Tests pass `createTestClock()` from `@velve/auth/testing`. |
 | `toleranceInSteps` | `0 \| 1` | no | How far either side of the current step a code is still accepted. `1` is A.8's default and 3.6's `±1 Schritt`; `0` accepts the current step alone. It also sizes `totp_used_step` retention. |
 | `schema` | `string` | no | Defaults to `velve`. |
+| `sealing` | `"required" \| "migrating"` | no | The sealing mode an old-form secret is read under, `"required"` when absent. The secret is read together with whether its owner has a seal row, in one statement (E-3121). |
+
+The secret is stored in the bound form, bound to the account as owner and row
+([Security state: bound envelopes](#security-state-bound-envelopes)). The TOTP
+repository gains `replaceSecretIfUnchanged({ actor, previous, secretEnc,
+keyVersion })`, where `previous` is the `{ ciphertext, keyVersion }` of the
+caller's verified read, an `UPDATE … WHERE user_id = $1 AND secret_enc = $2 AND
+key_version = $5` answering whether one row changed, which
+`rebindEnvelopesOfAccount` uses, and every credential it reads carries
+`sealRow: "present" | "absent"`.
 
 #### `totp.enroll.start({ actor, accountName })`
 
@@ -5907,7 +5940,9 @@ the ID token are stored AES-256-GCM encrypted under the purpose key
 
 The library never reads them back and offers no method that returns them: it
 does not refresh a provider token and does not call provider APIs. An
-application that needs them reads and decrypts the columns itself.
+application that needs them reads and decrypts the columns itself. Each is
+bound to its account, its identity row and its column, and decrypting one
+needs that binding ([Security state: bound envelopes](#security-state-bound-envelopes)).
 
 ### Rate limits and cookies
 
@@ -6008,6 +6043,7 @@ compile (E-349).
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
+| `securityState` | `SecurityStateConfig` | `{ sealing: "required" }` | whether every account must carry a seal or the estate is still being sealed; see [Security state: bound envelopes](#security-state-bound-envelopes) |
 | `log` | `(level, message, fields?) => void` | a sink that drops everything, except a weakening at start and a route alarm, which go to `console.warn` | where the true reason of a refusal is written |
 
 There is no option that disables the origin check, the rate limiter, PKCE or the
@@ -6051,6 +6087,7 @@ nothing else would tell you.
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
+| `security_state_sealing_unknown` | `securityState` is given and its `sealing` is neither `"required"` nor `"migrating"` (S-INTEG-1, E-3112) |
 
 #### A route conflict names both contributors
 
@@ -6147,6 +6184,7 @@ What counts as weaker, option by option:
 | `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
 | `recoveryCodes` | `count` below ten |
 | `clock` | any clock the caller supplies |
+| `securityState` | `sealing: "migrating"`; the line says that unsealed accounts are open to old envelopes copied from another account |
 
 The other rows say nothing weakens them: `password` and a username mode without
 recovery codes are refused instead, and a TOTP tolerance above one step is not
@@ -8905,7 +8943,349 @@ in [Security state: keyed token hashes](#security-state-keyed-token-hashes).
 
 ## Security state: bound envelopes
 
-> Reserved for `security-state-envelopes`: every envelope bound to its owner, its row and its column (S-INTEG-1). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Every ciphertext the library stores is bound to the account it belongs to, the
+row it stands in and the column it was written for (S-INTEG-1, architecture
+section 3.18 point 2). A bound ciphertext a database writer copies to another
+account, another row or another column does not decrypt: the AES-256-GCM tag
+fails, and the path that wanted the value answers as it answers its ordinary
+failure. Before 2.0.0 the additional data bound only the algorithm and the key
+version, so an encrypted password or TOTP secret could be moved between
+accounts and still open.
+
+> **Under `securityState.sealing: "migrating"` this does not hold for an
+> unsealed account.** The old 1.x form carries no binding, and it is read for
+> every account without a seal row. A writer who kept an old-form ciphertext of
+> their own account — their password or their TOTP secret from before the
+> upgrade — can copy it into any unsealed account and sign in as that account
+> with their own password or code. Nothing in the code can tell that copy from
+> the account's own old value until the account has a seal. Run the
+> maintenance step immediately after the upgrade, and switch to `"required"` as
+> soon as it has finished; every hour in `"migrating"` is an hour this copy
+> works (E-3122).
+
+### The bound columns
+
+| Column | Purpose | Owner | Row |
+|---|---|---|---|
+| `password_credential.phc` | `password-enc` | `user_id` | `user_id` |
+| `totp_credential.secret_enc` | `totp-enc` | `user_id` | `user_id` |
+| `identity.access_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
+| `identity.refresh_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
+| `identity.id_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
+| `oauth_flow.pkce_verifier_enc` | `pkce-enc` | `link_to_user_id`, or none | `state_sha256`, `provider`, `nonce`, `redirect_path`, `link_from_session_id` and `expires_at` |
+
+The three token columns share one purpose key, so the column in the additional
+data is what keeps an access token from opening as a refresh token. The column
+decides the purpose: a caller names the column, and the key follows from it.
+
+An OAuth sign-in of a known identity locks the account row through
+`src/core/db/lock.ts` before it refreshes the stored tokens, re-reads the
+identity under the lock, and fails the flow as an unknown state when the
+identity's owner or id changed meanwhile, so a sign-in waits for the account
+rewrite rather than making its compare-and-swap lose (E-3222). An automatic
+link of a new identity to an existing account takes the same lock before it
+inserts the identity with its tokens. Under the lock it decides again, with
+every condition of S-LINK-2, which account the link may join; if that is no
+longer the account it locked — its address changed or lost its verification
+while the sign-in waited — the sign-in fails as an unknown state and inserts
+nothing (E-3225, E-3227).
+
+`identity.id` is drawn by the library before the row is inserted, so the
+tokens can be bound to it; a refresh of an existing identity writes its new
+tokens only to the row whose id they are bound to, and a row replaced between
+the lookup and the refresh fails the flow as an unknown state (E-3113).
+
+The row of a flow is more than its key: every column that steers the flow —
+the provider, the nonce an ID token is checked against, the redirect path, the
+session a link replaces and the deadline — is part of it, so a writer who
+rewrites any of them makes the verifier unreadable and the callback answers as
+for an unknown state. The deadline is drawn from the database clock before the
+insert and bound at the full precision PostgreSQL stores, as the decimal of
+its whole microseconds since the epoch, which both the statement that draws it
+and the statement that consumes the row read in SQL rather than through a
+driver `Date`, which holds milliseconds only; a deadline moved by one
+microsecond makes the verifier unreadable (E-3228). The
+callback opens the verifier straight after it consumes the row and checks its
+provider, before it reads whether the flow links and before any plugin hook,
+so no column of a rewritten row is acted on. The table of section 3.18 point 2
+names the same six columns (E-3123, E-3128).
+
+The identity repository takes the key ring (`createOAuthIdentityRepository({
+driver, schema, keys })`) and encrypts the tokens itself once owner and row are
+known. `IdentityFacts.tokens` is the plaintext `{ accessToken, refreshToken,
+idToken }` to store, or `null` where `storeTokens` is off; `refreshIdentity({
+existing, …facts })` takes the identity the lookup by provider and subject
+found. `rebindTokensOwnedBy({ actor, read, unbound })` reads nothing: `read` is
+the token columns of each identity row of the account as the caller's verified
+read returned them (`StoredProviderTokens`: `identityId`, `accessTokenEnc`,
+`refreshTokenEnc`, `idTokenEnc`, `tokenKeyVersion`). It opens exactly those,
+replaces a row only with `UPDATE … WHERE id = $1 AND user_id = $2 AND
+token_key_version = $7` and each token column `IS NOT DISTINCT FROM` its read
+value, and answers one rewrite per row: `{ outcome: "rebound", stored }` with the
+new ciphertexts and key version, `{ outcome: "current", stored }` for a row
+already bound under the current key or holding no token, or `{ outcome: "lost"
+}`. It refuses a row
+whose token columns hold ciphertexts and whose `token_key_version` is empty
+(`key_version_unknown`), and three tokens of one row that would end under two
+key versions (`internal_error`).
+
+### The stored form
+
+A bound value in the `bytea` column is:
+
+| Bytes | Content |
+|---|---|
+| 1 | `0x02`, the bound form |
+| 12 | nonce |
+| rest | AES-256-GCM ciphertext with its 16-byte tag |
+
+The key version stays in the row's `key_version` column (`token_key_version`
+on `velve.identity`), as before.
+
+The additional data is six fields in this order, each a type byte, a length of
+four bytes in network order and the bytes:
+
+| Field | Type byte | Bytes |
+|---|---|---|
+| context | `0x01` text | `velve-auth/envelope/v2` |
+| algorithm | `0x01` text | `A256GCM` |
+| key version | `0x04` integer | the version as a big-endian signed 32-bit integer |
+| column | `0x01` text | `table.column` as in the table above, without the schema |
+| owner | `0x02` uuid, or `0x00` absent | the sixteen bytes of the uuid, or nothing |
+| row | `0x02` uuid, or `0x03` bytes | the sixteen bytes of the uuid, or, for a flow, the fields of its row columns |
+
+A uuid is read in either case and written as its bytes, so the same account
+spelled in upper or lower case binds the same way. An owner or a row that is
+not a uuid is refused with `KeyError` code `envelope_binding_malformed`. The
+row of a flow is written by `rowOfParts([state_sha256, provider, nonce,
+redirect_path, link_from_session_id, expires_at in epoch microseconds])` as
+fields of the same kind — `0x03`
+bytes, `0x01` text, `0x00` absent — and that encoding is the row field's
+bytes. The
+schema is not part of the binding: changing `schema` in the configuration does
+not make stored values unreadable (E-3110).
+
+An application that reads stored provider tokens itself (`storeTokens: true`)
+has to build this additional data to decrypt them: skip the first byte, take
+the nonce and the ciphertext from the rest, and use the owner, the identity id
+and the column of the row it read.
+
+### The old form
+
+A value written by 1.x has no first byte of its own: it is nonce, ciphertext and
+tag, and its first byte is random. Whether it is still read is decided by
+`securityState.sealing`:
+
+| `sealing` | The old form |
+|---|---|
+| `"required"` (default) | refused; the path answers as its ordinary failure, and the `KeyError` code is `envelope_unbound` |
+| `"migrating"` | read for an account without a seal row, and refused for one with a seal row |
+
+Whether the account has a seal row is selected **in the statement that reads
+the envelope** — an `EXISTS` over `velve.security_state` beside the credential
+— so the ciphertext and the decision come from one snapshot, and a maintenance
+step that converts and seals the account right after the read cannot refuse
+the user who was reading. `unboundReadingOf(sealing, sealRow)` in
+`src/core/auth/security-state.ts` turns the mode and the presence into
+`"readable"` or `"refused"`, and `sealRowPresentFor(schema, ownerColumn)` is the
+condition the readers embed. The sign-in runs that one statement for a known
+and an unknown account alike, so the sequence of statements does not change
+(S-TIM-1) (E-3121).
+
+`oauth_flow.pkce_verifier_enc` is never read in the old form. Its rows live ten
+minutes and are not rewritten: a flow that was open across the upgrade answers
+its callback as a flow with an unknown state and is begun again (E-3114).
+
+One old value in 256 also starts with `0x02`. Such a value is tried as bound
+first and, where the old form is read, as old second, so no row is stranded by
+its nonce and none is misread: an old value opens as bound only by a forged
+128-bit tag. Where the old form is refused it fails as `authentication_failed`
+(E-3111, E-3120).
+
+
+### `securityState`
+
+```ts
+interface SecurityStateConfig {
+  readonly sealing: "required" | "migrating";
+}
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `sealing` | `"required" \| "migrating"` | `"required"` | whether every account must carry a seal, or the estate is still being sealed and the old envelope form is read for an account without one |
+
+`"migrating"` is reported at start as a weakening of `securityState`. Any other
+value — a misspelling, `{}`, a value that is not an object — refuses the start
+with `VelveStartupError` code `security_state_sealing_unknown`. The upgrade runs
+in `"migrating"` until the maintenance step has rewritten every account, and
+then in `"required"` (section 3.18 point 5).
+
+The start check and the resolution of the mode live in
+`src/core/auth/security-state.ts`: `isStartableSecurityState(value)` answers
+whether a configured `securityState` names one of the two modes, which
+`assertConfigurationIsStartable` turns into `security_state_sealing_unknown`;
+`sealingOf(securityState)` resolves an absent option to `DEFAULT_SEALING`,
+`"required"`; and `sealRowPresenceOf(sealed)` reads the selected `EXISTS` as
+`"present"` only from an explicit `true`.
+
+### What the readers do with a value that does not open
+
+| Path | Answer |
+|---|---|
+| password sign-in | the dummy credential is verified instead, and the answer is `invalid_credentials`, as for a wrong password (S-TIM-1) |
+| TOTP check, enrolment finish and removal | the factor answers as one nobody holds, as for a wrong code (E-428) |
+| OAuth callback | the flow answers as an unknown state |
+
+No alarm is raised for it yet; the alarm and its reason
+`envelope_binding_mismatch` arrive with the seal (E-3112). The TOTP paths
+refuse an unreadable secret before a code is matched, so they do less work for
+it than for a wrong code; the same-work promise covers the password sign-in
+alone (E-3127).
+
+### `encryptBound(keys, binding, plaintext)`
+
+Internal, in `src/core/keys/envelope-binding.ts`. Returns a `PurposeCiphertext`
+— `{ keyVersion, ciphertext }` — in the bound form under the current key of the
+column's purpose.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `keys` | `KeyProvider` | the ring |
+| `binding` | `EnvelopeBinding` | `{ column, owner, row }`: a `BoundColumn`, the owner's uuid or `null`, and the row's uuid or the bytes of its `bytea` key |
+| `plaintext` | `Uint8Array` | the value |
+
+### `decryptBound(keys, binding, stored, unbound)`
+
+Internal, same module. Returns the plaintext of `stored` — `{ keyVersion,
+ciphertext }` as read from the row — if it is bound to `binding`, or if it is in
+the old form and `unbound` is `"readable"`. Throws `KeyError`:
+`authentication_failed` for a value bound elsewhere or tampered with,
+`envelope_unbound` for an old value where `unbound` is `"refused"`,
+`key_version_unknown` for a version that left the ring, `ciphertext_malformed`
+below the length of a nonce and a tag.
+
+### `boundAdditionalData(binding, keyVersion)`
+
+Internal, same module. Returns the additional data of the table above for a
+binding under a key version: the bytes `encryptBound` and `decryptBound` pass
+to AES-GCM. Exported for the tests that check the encoding is unambiguous.
+
+### `encryptUnderAdditionalData(keys, purpose, additionalDataFor, plaintext)` and `decryptUnderAdditionalData(keys, purpose, stored, additionalData)`
+
+Internal, in `src/core/keys/envelope.ts`. The AES-256-GCM step both forms share:
+the first encrypts under the current key of `purpose` with the additional data
+`additionalDataFor(keyVersion)` yields for the version it chose, and returns `{
+keyVersion, ciphertext }` with the nonce in front; the second decrypts such a
+value under its stored version with the given additional data, with the error
+codes of `decryptWithPurposeKey`. Only `envelope.ts` and the binding module may
+name them, or `decryptWithPurposeKey`, and only `envelope.ts` the unbound
+writers; `test/integ-envelope-binding.test.ts` scans `src/` for it and is shown
+failing on planted modules (E-3124, E-3129).
+
+### `rebindEnvelope(keys, binding, stored, unbound)`
+
+Internal, same module, for the maintenance step (S-INTEG-8). Opens `stored` as
+`decryptBound` does and returns the bound form of the same plaintext under the
+current key, or `null` when `stored` is already bound under the current key
+version. It throws for a value that does not open, so a copied or tampered value
+is never rewritten into a valid one. `unbound` is the caller's to decide
+(E-3115).
+
+### `rebindEnvelopesOfAccount(input)`
+
+Internal, in `src/core/auth/account-envelopes.ts`. Rewrites every envelope of
+one account — the password, the TOTP secret and the tokens of each identity —
+into the bound form under the current key, inside the caller's transaction. It
+is what a change on an unsealed account in `"migrating"` runs first (section
+3.18 point 4, E-3094) and what the maintenance step runs per account.
+
+It reads nothing itself. Section 3.18 point 4 has the change read the seal row
+and every component in **one** statement after the account lock, and every
+re-encryption open exactly the ciphertext that read returned and swap on that
+value, never after a second read. So the caller passes that read, and the
+rewrite works from it alone (E-3224):
+
+1. It locks the account row through `src/core/db/lock.ts`, which is harmless
+   where the caller already holds the lock, as it must before its read.
+2. It decides the old form from `sealing` and the `sealRow` of the read, and
+   from nothing else. Where the read showed a seal row, an old-form envelope
+   throws and nothing is laundered (E-3121), and a seal row deleted after the
+   read changes nothing. It cannot tell a verified read from a value built by
+   hand: a caller that passes `sealRow: "absent"` for an account whose read
+   showed one has the old form opened and re-encrypted. Passing the one
+   verified read unchanged is the caller's obligation (E-3229).
+3. It opens each envelope of the read with `rebindEnvelope` and, where it is not
+   already bound under the current key, writes the new value with a
+   compare-and-swap on exactly the ciphertext and key version of the read. A
+   swap that finds anything else throws `EnvelopeChangedSinceReadError` (code
+   `envelope_changed_since_read`): a writer replaced the envelope after the
+   read, the state is broken, and the caller's transaction rolls back. The seal
+   branch answers it as `seal_mismatch`.
+
+A value that does not open throws, and the caller's transaction then writes
+nothing. One undecryptable value anywhere in the account therefore blocks every
+later change of it in `"migrating"` and its maintenance; E-3126 says how an
+administrator recovers (E-3117).
+
+| Field of `input` | Type | Meaning |
+|---|---|---|
+| `driver` | `OpenTransaction` | the open transaction, from `inOneTransaction` |
+| `schema` | `string` | the schema |
+| `keys` | `KeyProvider` | the ring |
+| `actor` | `Actor` | the account |
+| `sealing` | `"required" \| "migrating"` | the sealing mode the instance runs in |
+| `read` | `VerifiedEnvelopeRead` | what the one statement after the account lock returned |
+
+`VerifiedEnvelopeRead` is filled column for column from that statement, which
+selects beside the seal row:
+
+| Field | Type | Column |
+|---|---|---|
+| `sealRow` | `"present" \| "absent"` | whether `security_state` has a row for the account, the `EXISTS` of `sealRowPresentFor` |
+| `password` | `{ ciphertext, keyVersion } \| null` | `password_credential.phc` and `key_version`, `null` without a row |
+| `totpSecret` | `{ ciphertext, keyVersion } \| null` | `totp_credential.secret_enc` and `key_version`, `null` without a row |
+| `identities` | `StoredProviderTokens[]` | one entry per `identity` row of the account: `identityId` (`id`), `accessTokenEnc`, `refreshTokenEnc`, `idTokenEnc` (each `null` where the column is) and `tokenKeyVersion` (`token_key_version`) |
+
+The ciphertexts are the bytes exactly as stored; a statement that aggregates the
+identity rows, for instance with `json_agg` and `encode(…, 'hex')`, decodes them
+back to those bytes. `test/envelope-read-fixtures.ts` has such a statement.
+
+Returns `{ envelopes, passwordRewritten, totpRewritten, identitiesRewritten }`.
+`envelopes` has the shape of the read without `sealRow` and holds each envelope
+as stored once the rewrite is done — the new ciphertext and key version where it
+rewrote one, the read value where it did not — so the caller computes the new
+seal from the read and this change, with no second read. A second call on the
+same account reports nothing rewritten. `oauth_flow` is not touched.
+
+The repository methods it is built on — password `rebindOwnedBy`, TOTP
+`replaceSecretIfUnchanged`, identity `rebindTokensOwnedBy` — take the read
+values and answer an `EnvelopeRewrite`: `{ outcome: "rebound" | "current",
+stored }` or `{ outcome: "lost" }`.
+
+### `inOneTransaction(driver, work)`
+
+Internal, in `src/core/auth/account-envelopes.ts`. Opens a transaction on
+`driver` and hands `work` its driver as an `OpenTransaction`, a `Driver` branded
+by this function alone. `rebindEnvelopesOfAccount` takes nothing else, so a
+caller cannot pass the pool, on which the account lock would end with the
+statement that took it (E-3129).
+
+### Rotation
+
+Rotation works as before ([Key management](#key-management)): a value bound
+under version 1 opens while version 1 is in the ring, and the key version is
+part of the additional data, so rewriting the `key_version` column to another
+version in the ring fails the tag. `rebindEnvelope` is what moves a value to the
+current version.
+
+### Cost
+
+One measurement on the development machine, 20 000 decryptions of a PHC
+string: 175 µs bound against 129 µs unbound, about 46 µs more per sign-in
+(E-3110). Reading the seal row in the credential's statement measured, over
+three rounds of 5 000 statements against the test cluster, 31, 112 and 45 µs
+more than the statement without it, on round trips of 225 to 275 µs (E-3121).
 
 ## Security state: keyed token hashes
 

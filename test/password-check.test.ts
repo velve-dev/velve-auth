@@ -85,6 +85,7 @@ function recordingDriver(): Recorder {
 					phc: params[1] as Uint8Array<ArrayBuffer>,
 					keyVersion: params[2] as number,
 					scheme: params[3] as PasswordScheme,
+					unbound: "refused",
 				});
 				// The upsert returns the row it wrote; answering nothing is what a false
 				// `DO UPDATE … WHERE` looks like, and the repository refuses that (E-185).
@@ -101,6 +102,7 @@ function recordingDriver(): Recorder {
 				phc: params[1] as Uint8Array<ArrayBuffer>,
 				keyVersion: params[3] as number,
 				scheme: params[2] as PasswordScheme,
+				unbound: "refused",
 			});
 			return [{ user_id: params[0] }] as T[];
 		},
@@ -151,12 +153,13 @@ beforeEach(async () => {
 }, 60_000);
 
 async function seed(phc: string, scheme: PasswordScheme, userId = USER_ID): Promise<void> {
-	const sealed: SealedPhc = await sealPhc(environment.keys, phc);
+	const sealed: SealedPhc = await sealPhc(environment.keys, userId, phc);
 	recorder.rows.set(userId, {
 		userId,
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme,
+		unbound: "refused",
 	});
 }
 

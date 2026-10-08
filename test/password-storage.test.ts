@@ -94,10 +94,11 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 			expect(raw.scheme, prefix).toBe(scheme);
 			expect(raw.key_version, prefix).toBe(1);
 
-			// The column holds nonce, ciphertext and tag and no header, so its first byte is a random
-			// nonce byte: asserting that it is not `$` passes 255 runs in 256 and says nothing. What
-			// the requirement means is that the bytes are not a PHC string, and that is decidable.
-			expect(raw.phc.length, prefix).toBe(12 + Buffer.byteLength(phc, "utf8") + 16);
+			// The column holds the bound-form marker, nonce, ciphertext and tag and no header, so its
+			// first byte is the marker and its second a random nonce byte: asserting that either is not
+			// `$` says nothing. What the requirement means is that the bytes are not a PHC string, and
+			// that is decidable (S-INTEG-1).
+			expect(raw.phc.length, prefix).toBe(1 + 12 + Buffer.byteLength(phc, "utf8") + 16);
 			expect(parsePhc(new TextDecoder().decode(raw.phc)), prefix).toBeNull();
 			expect(Buffer.from(raw.phc).includes(Buffer.from(phc, "utf8")), prefix).toBe(false);
 
@@ -106,6 +107,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 				phc: raw.phc,
 				keyVersion: raw.key_version,
 				scheme: raw.scheme as PasswordCredentialRow["scheme"],
+				unbound: "refused",
 			});
 			expect(opened, prefix).toBe(phc);
 			expect(opened.startsWith(prefix), prefix).toBe(true);
@@ -192,6 +194,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 				phc: raw.phc,
 				keyVersion: raw.key_version,
 				scheme: "argon2id",
+				unbound: "refused",
 			}),
 		).rejects.toMatchObject({ name: "KeyError" });
 	}, 180_000);
@@ -235,6 +238,7 @@ describe("L-2 / S-REST-5 — the PHC string is stored encrypted", () => {
 				phc: raw.phc,
 				keyVersion: raw.key_version,
 				scheme: "argon2id",
+				unbound: "refused",
 			}),
 		).toBe(stored.byScheme.argon2id);
 	}, 180_000);
@@ -278,6 +282,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 				phc: after.phc,
 				keyVersion: after.key_version,
 				scheme: "argon2id",
+				unbound: "refused",
 			}),
 		).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
 

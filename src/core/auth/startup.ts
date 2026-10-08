@@ -6,6 +6,7 @@ import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
+import { isStartableSecurityState } from "./security-state.js";
 
 type StartupErrorCode =
 	| "keys_missing"
@@ -33,7 +34,8 @@ type StartupErrorCode =
 	| "plugin_database_and_role_both_set"
 	| "plugin_database_reaches_the_core"
 	| "route_namespace_conflict"
-	| "route_name_segment_reserved";
+	| "route_name_segment_reserved"
+	| "security_state_sealing_unknown";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
@@ -84,6 +86,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"two route names fold onto the same object path, so one server method would shadow the other",
 	route_name_segment_reserved:
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
+	security_state_sealing_unknown:
+		'securityState.sealing must be "required" or "migrating"; any other value leaves unsaid whether an account must carry a seal',
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -222,6 +226,13 @@ function assertPluginSqlHasOneDestination(config: {
 	}
 }
 
+//a javascript caller can name a sealing mode the type does not and it must not read as either (S-INTEG-1)
+function assertSealingModeIsKnown(securityState: unknown): void {
+	if (!isStartableSecurityState(securityState)) {
+		throw new VelveStartupError("security_state_sealing_unknown");
+	}
+}
+
 //checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
@@ -234,6 +245,7 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 	assertEveryConfiguredBucketIsUsable(config.rateLimit);
 	assertPluginSqlHasOneDestination(config);
+	assertSealingModeIsKnown(config.securityState);
 }
 
 //an operator must learn which stored version made the start refuse (E-3289)

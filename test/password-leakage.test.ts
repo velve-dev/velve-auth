@@ -127,12 +127,13 @@ async function createHarness(
 	});
 
 	const rows = new Map<string, PasswordCredentialRow>();
-	const sealed = await sealPhc(inner, stored.byScheme.argon2id);
+	const sealed = await sealPhc(inner, USER_ID, stored.byScheme.argon2id);
 	rows.set(USER_ID, {
 		userId: USER_ID,
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: "argon2id",
+		unbound: "refused",
 	});
 
 	const driver: Driver = {

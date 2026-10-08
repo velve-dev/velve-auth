@@ -24,6 +24,7 @@ import type {
 	EmailConfig,
 	RateLimitConfig,
 	RecoveryCodesConfig,
+	SecurityStateConfig,
 	TotpConfig,
 	WebAuthnConfig,
 } from "./config.js";
@@ -49,6 +50,8 @@ export interface RouteServices {
 	readonly driver: import("../db/driver.js").Driver;
 	readonly schema: string;
 	readonly keys: KeyProvider;
+	/** the security-state options with the sealing mode resolved */
+	readonly securityState: SecurityStateConfig;
 	readonly clock: Clock;
 	readonly oneTimeTokens: OneTimeTokens;
 	/** the one bound on concurrent key derivation every route source in the process shares */

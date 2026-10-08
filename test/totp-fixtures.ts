@@ -9,7 +9,7 @@ import {
 	type PendingToken,
 } from "../src/core/factor/pending/index.js";
 import { createTotpSecret } from "../src/core/factor/totp/index.js";
-import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
+import { encryptBound } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { rootKeyProvider } from "../src/core/keys/root-key-provider.js";
 
@@ -133,7 +133,11 @@ export async function enrolConfirmedCredential(
 	userId: string,
 ): Promise<Uint8Array<ArrayBuffer>> {
 	const secretBytes = createTotpSecret();
-	const { keyVersion, ciphertext } = await encryptWithPurposeKey(keys, "totp-enc", secretBytes);
+	const { keyVersion, ciphertext } = await encryptBound(
+		keys,
+		{ column: "totp_credential.secret_enc", owner: userId, row: userId },
+		secretBytes,
+	);
 	await driver.query(
 		`INSERT INTO ${schema}.totp_credential (user_id, secret_enc, key_version, confirmed_at)
 		 VALUES ($1, $2, $3, now())`,
