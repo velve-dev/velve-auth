@@ -8145,7 +8145,7 @@ route with your own `fetch` against `/x/<plugin-id>/…`.
 route for route, the provider routes as `OAuthRouteTable` from
 `src/core/oauth/routes.ts`, which `OAuthSurface` reads too, so the shipped
 declarations name the routes and never the services that build them.
-`test/client-route-table.test.ts` holds it against `ReturnType<typeof sessionRoutes>`
+`test/client-route-table-type.test.ts` holds it against `ReturnType<typeof sessionRoutes>`
 and its siblings: each must be assignable to the other, so a route added,
 dropped, renamed, repathed or given another input, output or error code in any
 route module fails the type check there. The value table is then held against it
