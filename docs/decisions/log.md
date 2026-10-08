@@ -15969,6 +15969,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A guard that can be removed with the suite green is not known to work.
 **Price.** Three more OAuth sign-ins through the stub provider per run, each with a second connection writing after the lock.
 
+<a id="e-3227"></a>
+
+### An automatic link decides again under the account lock which account it joins
+`E-3227` · security-state-envelopes · OAuth, S-LINK-2, lock order, settled
+
+**Context.** E-3225 put the automatic link under the account lock and re-read the account under it for existence and the disabled flag only. Its price said that an address changed while the sign-in waited still links under the decision taken before the lock, and its rejected alternative (b) declined to re-run `accountAnAutomaticLinkMayJoin` under the lock. The maintainer decided that the link must re-run that qualification under the lock: a user who moves off a compromised mailbox changes the account's address under the same lock, and the holder of the old address must not be linked into the account in the window between the first decision and the lock. E-3225 is not edited; this entry corrects its price and its rejection (b). The sign-in now takes `lockAccountRow` for the account the first decision chose, runs `accountAnAutomaticLinkMayJoin` again — the address, its verified state on the local row and the provider's two conditions — and fails as an unknown state, the ordinary OAuth failure, inserting nothing, unless that returns the same account; the disabled check follows on the account read under the lock. `test/integ-envelope-refresh-race.test.ts` holds the account row, waits until the sign-in queues on it, and from the holding connection changes the account's address in one case and clears `email_verified_at` in the other; both answer exactly like an unknown state and leave no identity row, and with the round-five form, lock plus existence and disabled check, both linked the identity.
+**Rejected.** (a) Falling back to creating a new account when the account no longer qualifies, which turns one sign-in into a second account for the same address while the first decision was a link. (b) Following the address to whichever account holds it now, which would link into an account the first decision never chose and whose lock the sign-in does not hold.
+**Reason.** The decision to join an account is only as good as the state it was made on, and only the state read under the lock is the one no other change can move.
+**Price.** An automatic link reads the account by address twice, once before and once under the lock. A sign-in that raced a legitimate address change fails and is begun again; it then creates a new account or fails as any other sign-in for that address would.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

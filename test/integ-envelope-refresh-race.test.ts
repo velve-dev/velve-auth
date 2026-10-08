@@ -277,6 +277,66 @@ async function identityOf(subject: string): Promise<{ id: string; user_id: strin
 	return row ?? { id: "", user_id: "" };
 }
 
+describe("an automatic link decides again under the lock which account it joins (S-LINK-2)", () => {
+	async function linkWhileTheAccountChanges(change: string) {
+		const handler = handlerOn(other, true);
+		const subject = `requalify-${randomBytes(4).toString("hex")}`;
+		const address = `${subject}@provider.example`;
+		const [user] = await connection.query<{ id: string }>(
+			`INSERT INTO ${schema}.user (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+			[address],
+		);
+		const userId = user?.id ?? "";
+		provider.reportClaims({ sub: subject, email: address, email_verified: true });
+		const flow = await startedFlow(handler);
+		const holder = await openTestConnection();
+
+		let waited = false;
+		let signIn: Promise<Response> = Promise.resolve(new Response());
+		await holder.transaction(async (holding) => {
+			await lockAccountRow(holding, schema, userId);
+			signIn = completed(handler, flow);
+			waited = await aBackendWaitsForALock();
+			await holding.query(change, [userId, `moved-${subject}@elsewhere.example`]);
+		});
+		await holder.close();
+		const answer = await signIn;
+		const unknown = await handlerOn(connection)(
+			requestTo("/sign-in/oauth/callback/stubby?code=x&state=nope", {
+				method: "GET",
+				cookie: `${DEFAULT_COOKIE_NAMES.oauthState}=nope`,
+			}),
+		);
+		const [linked] = await connection.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM ${schema}.identity WHERE subject = $1`,
+			[subject],
+		);
+		return { waited, answer, unknown, identities: linked?.count };
+	}
+
+	it("links nothing into an account whose address moved while the sign-in waited", async () => {
+		const outcome = await linkWhileTheAccountChanges(
+			`UPDATE ${schema}.user SET email = $2 WHERE id = $1`,
+		);
+
+		expect(outcome.waited).toBe(true);
+		expect(outcome.identities).toBe(0);
+		expect(outcome.answer.status).toBe(outcome.unknown.status);
+		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
+	});
+
+	it("links nothing into an account whose address lost its verification while the sign-in waited", async () => {
+		const outcome = await linkWhileTheAccountChanges(
+			`UPDATE ${schema}.user SET email_verified_at = NULL WHERE id = $1 AND $2::text IS NOT NULL`,
+		);
+
+		expect(outcome.waited).toBe(true);
+		expect(outcome.identities).toBe(0);
+		expect(outcome.answer.status).toBe(outcome.unknown.status);
+		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
+	});
+});
+
 describe("a known identity's sign-in reads the identity again under the account lock (S-INTEG-1)", () => {
 	it("refuses a sign-in whose identity changed owner while it waited for the lock", async () => {
 		const subjectA = `owner-a-${randomBytes(4).toString("hex")}`;

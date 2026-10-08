@@ -355,6 +355,23 @@ export function createOAuthService(input: {
 		return locked;
 	}
 
+	//an automatic link joins only the account that still qualifies once its lock is held (E-3227)
+	async function theJoinableAccountUnderItsLock(
+		transaction: Driver,
+		users: UserRepository,
+		joinable: User,
+		provider: ResolvedProvider,
+		account: ProviderAccount,
+	): Promise<User> {
+		await lockAccountRow(transaction, schema, joinable.id);
+		const locked = await accountAnAutomaticLinkMayJoin({ users, account, provider });
+		if (locked === null || locked.id !== joinable.id) {
+			throw new ConcealedError("state_not_found");
+		}
+		assertTheAccountIsEnabled(locked);
+		return locked;
+	}
+
 	async function accountForSignIn(
 		provider: ResolvedProvider,
 		account: ProviderAccount,
@@ -378,11 +395,10 @@ export function createOAuthService(input: {
 			}
 
 			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
-			if (joinable !== null) {
-				await lockAccountRow(transaction, schema, joinable.id);
-				assertTheAccountIsEnabled(await users.findUserById(joinable.id));
-			}
-			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
+			const owner =
+				joinable === null
+					? await createAccountFor(transaction, provider, account)
+					: await theJoinableAccountUnderItsLock(transaction, users, joinable, provider, account);
 			return {
 				userId: owner.id,
 				identity: refuseIfAlreadyLinked(

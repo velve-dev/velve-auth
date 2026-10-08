@@ -8879,8 +8879,11 @@ identity under the lock, and fails the flow as an unknown state when the
 identity's owner or id changed meanwhile, so a sign-in waits for the account
 rewrite rather than making its compare-and-swap lose (E-3222). An automatic
 link of a new identity to an existing account takes the same lock before it
-inserts the identity with its tokens, and checks under the lock that the
-account still exists and is enabled (E-3225).
+inserts the identity with its tokens. Under the lock it decides again, with
+every condition of S-LINK-2, which account the link may join; if that is no
+longer the account it locked — its address changed or lost its verification
+while the sign-in waited — the sign-in fails as an unknown state and inserts
+nothing (E-3225, E-3227).
 
 `identity.id` is drawn by the library before the row is inserted, so the
 tokens can be bound to it; a refresh of an existing identity writes its new
