@@ -26,9 +26,10 @@ import {
 	sealCreatedAccount,
 	sealUnderAccountLock,
 } from "../src/core/security-state/sealing.js";
-import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import { createUser, dropSchema, openMigratedSchema, readUserOwnedTables } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
+import { accountLockAudit, HeldDriver } from "./lock-order-fixtures.js";
 import { insertPasskey, seedAccount } from "./security-state-fixtures.js";
 
 //the sealing core of T-INTEG-3 against the database, one account per case (E-3156)
@@ -197,6 +198,39 @@ describe("a change seals from its one verified read", () => {
 
 		expect(seen).toEqual([userId]);
 		expect(await verdictOf(userId)).toBe("valid");
+	});
+});
+
+describe("the account lock of a sealing change", () => {
+	it("is declared before the recovery codes and the seal row a regeneration orders", async () => {
+		const userId = await seedAccount(connection, schema, { password: true, passkeys: 1 });
+		await sealAccount(services(), userId, unchanged);
+		const held = new HeldDriver(connection);
+		const owned = new Set(
+			(await readUserOwnedTables(connection, schema)).map((table) => table.table),
+		);
+
+		const replacement = randomBytes(32);
+		const outcome = await sealAccount(services({ driver: held }), userId, {
+			epoch: "keep",
+			write: async (tx, read) => {
+				await tx.query(`DELETE FROM ${schema}.recovery_code WHERE user_id = $1`, [read.userId]);
+				await tx.query(
+					`INSERT INTO ${schema}.recovery_code (user_id, code_hmac, key_version) VALUES ($1, $2, 1)`,
+					[read.userId, replacement],
+				);
+				return null;
+			},
+			after: (read) => ({
+				...sealedComponentsOf(read),
+				recoveryCodes: [{ keyVersion: 1, codeHmac: replacement }],
+			}),
+		});
+
+		expect(outcome.kind).toBe("sealed");
+		const { late, considered } = accountLockAudit(held.transactions, schema, owned);
+		expect(late, late.join("\n")).toEqual([]);
+		expect(considered).toBe(1);
 	});
 });
 

@@ -239,6 +239,7 @@ describe("every account lock outside the interleavings is declared before the ta
 		const listing = sites.map((source) => `${source.path}: ${source.count}`).join("\n");
 
 		expect(sites.length, listing).toBeGreaterThan(5);
-		expect(total, listing).toBe(8);
+		//the ninth seals a change and test/security-state-sealing.test.ts audits its order (E-3160)
+		expect(total, listing).toBe(9);
 	});
 });
