@@ -17768,3 +17768,103 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reading the provider tokens in a statement of the rewrite's own, which would be a second read in the sealing transaction and could hand the rewrite a ciphertext a writer put in after the check.
 **Reason.** Whatever the rewrite opens has to be what the verified read returned, as E-3300 requires of every re-encryption.
 **Price.** The read grows by up to three ciphertexts per identity, at most ten identities an account, which E-3153's measurement did not include.
+
+<a id="e-3162"></a>
+
+### A change that holds no proof of ownership leaves an unsealed account unsealed
+`E-3162` · security-state-seal · sealing transaction, settled
+
+**Context.** Section 3.18 *Sealing* has a change to an unsealed account in mode `"migrating"` first rewrite the account's old-form envelopes and write the first seal. The bound-envelope branch's `rebindEnvelopesOfAccount` takes an `Actor`, and an actor comes only from a proof of ownership (S-OWNER-7). Wiring the paths, `sealChange` first minted one with `userId as Actor`, and `test/owner-proof-brand-proof.test.ts`, `test/db-entity-id.test.ts` and `test/session-review-surface.test.ts` refused it, as they should. Most changes hold a proof before the lock: a resolved session, a redeemed one-time token or a consumed OAuth flow. Five do not: `user.disable` and `user.enable`, which an operator calls with an account id; the background rehash after a password sign-in; the recovery code as a second factor, whose pending row is no proof of the account; the reset with a recovery code, whose proof is the consumed code and is consumed inside the change; and the automatic link of an OAuth sign-in to an existing account. `sealChange` now takes a `ChangedAccount`, either the `Actor` a path holds or `{ unproven: userId }`. With a proof, an unsealed account is converted and sealed as before. Without one, `sealUnderAccountLock` takes the lock, reads once and checks as always, and for an account without a seal row in mode `"migrating"` writes the change and no seal row; `SealWritten.leftUnsealed` says so, `recordSealLater` skips it, and `issueAuthorisationOf` hands a session issued after it the `"unsealed"` authorisation. In mode `"required"` such an account is a broken state before any of this.
+**Rejected.** A proof type produced by the account lock, which would make the lock a proof of ownership and is exactly the user id from a request that S-OWNER-7 excludes. Refusing these five paths for an unsealed account, which would lock users out of a password sign-in's rehash and an operator out of disabling an account while the estate is still being sealed.
+**Reason.** The rewrite of an envelope changes rows by owner, and the library's rule for that is a proof, not a convenient id.
+**Price.** In mode `"migrating"` an unsealed account changed by one of the five paths stays unsealed until a change with a proof or `maintenance.sealSecurityState()` seals it; a reset with a recovery code on such an account deletes every session but draws no epoch, since an unsealed account has none to raise. In mode `"required"` nothing changes.
+
+<a id="e-3163"></a>
+
+### The seal is wired into every path, and the account lock count falls from thirteen to nine
+`E-3163` · security-state-seal · wiring, settled
+
+**Context.** E-3159 listed what the seal branch wires once the bound-envelope and token branches had merged. `src/core/security-state/runtime.ts` now holds it: `createSecurityStateRuntime` builds the alarms from `securityState.alarm`, `config.log` and `config.clock`, and the instance hands one runtime to every service; `sealChange` runs a `SealingChange` with the anchors asked before the lock and told after commit; `checkAccount`, `checkAccountOrStandIn` and `sessionStateCheckOf` are the three checks of *Checking*. Every change of *Sealing* is a `SealingChange`: the password set, change, reset, reset with a recovery code and background rehash; the address confirmation, which raises the epoch only when its first confirmation removes a password another session set, decided on the verified read; TOTP `enroll.start`, its confirmation and removal; passkey registration and removal; recovery-code generation and redemption; the OAuth link, automatic link and unlink; `user.disable` and `user.enable`; `session.revokeAll` and `session.revokeAllOther`, which raise the epoch and rebind the kept session under the new one. Sign-up seals the account it creates. A change that signs the caller in issues its session in the new `afterSeal` step, under the version and epoch it just wrote, and the password set and change draw the new session's id before the change so the sealed `set_by_session_id` names it. Every sign-in, factor check and redemption takes the version and epoch its check read as the issue's authorisation, and a pending authentication binds the epoch of its first factor's check. Five statements that took the account lock themselves — the address confirmation, the token and recovery-code resets, the identity link and the password change — now reach it through `sealUnderAccountLock`, so `test/lock-order-declaration.test.ts` counts nine. The count of thirteen was confirmed with the database tests at the merge commit `60f7086`, before this wiring.
+**Rejected.** Leaving each path's own lock statement beside the sealing transaction's, which would lock the account row twice in one transaction and keep two places where the lock's mode and declaration have to agree.
+**Reason.** S-INTEG-3 puts the lock, the one read and the seal in one order, and one function that takes the lock is the only way that order cannot vary between paths.
+**Price.** The count of nine is lower than the thirteen the merge had, and a reader comparing the two has to come here for why.
+
+<a id="e-3164"></a>
+
+### The session resolution reads the account's whole state in its one statement
+`E-3164` · security-state-seal · storage read, settled
+
+**Context.** S-INTEG-4 has the session resolution read the session row, the epoch, the seal row and the components in one statement. `securityStateDocumentOf(schema, accountIdSql)` in `src/core/security-state/read.ts` returns the one read's document as a scalar subquery for any account id expression; `securityStateReadStatement` selects it for `$1`, and the session repository's resolve statement selects it for `s.user_id` beside the session row. The session service hands the document to `sessionStateCheckOf`, which checks it before the session's MAC is verified, asks the anchor after the statement and reads once more when the read lies below a floor. `test/session-review-resolution.test.ts` pins the statement byte for byte, with the document interpolated from the function rather than written out a second time.
+**Rejected.** A second statement for the state after the session row, which under READ COMMITTED can see a revocation the first did not.
+**Reason.** A session row and the state that vouches for it have to be one snapshot, or a revocation can fall between them.
+**Price.** Every resolution reads the whole state of its account; T-INTEG-10's measurement in E-3169 is of that cost.
+
+<a id="e-3165"></a>
+
+### A test that writes a sealed component by SQL seals the account again, or removes its seal row to stand for an account from before the seal
+`E-3165` · security-state-seal · tests, settled
+
+**Context.** With the seal wired and `"required"` the default, every test that set up an account by SQL, or changed a sealed component by SQL to reach the state it tests, met a broken state first: the first full run after the wiring failed 106 of 3,871 cases across 48 files. A test of another layer still has to reach that layer. `resealDirectly(driver, schema, keys, userId)` in `test/security-state-fixtures.ts` seals an account's current rows as the library would, and `MountedAuth` and `WidestMount` gain `reseal(userId)` under the keys they were mounted with. Tests that stand for an account from before the upgrade delete its seal row, since a sign-up now writes one. A few expectations change with the design rather than with the setup: `test/factor-key-ring.test.ts`, `test/recovery-codes.test.ts` and `test/totp-concealment.test.ts` seal again under the rotated ring so that only the factor stays under the dropped key version; `test/integ-envelope-sealing-default.test.ts` now expects the account without a seal row in mode `"required"` to be refused by the seal check, `broken_state_on_change`, before the envelope is read; `test/integ-envelope-snapshot.test.ts` moves the planted conversion from after the secret's read to before the lock, because the sealing transaction reads the secret under the lock and nothing can convert it in between; `test/integ-session-issue-miss-answer.test.ts` moves the seal at the issue's insert, because a sealed issue reads no epoch of its own; `test/dos-kdf-ceiling-proof.test.ts` accepts `401` in its import wave, the price E-3377 names for a sign-in that loses the race against its account's first rehash; and `test/password-check.test.ts` and `test/password-storage.test.ts` swap a rehash's hash in through `rehashSwapped`, since the rehash now hands its hash to the caller.
+**Rejected.** Mounting these tests in mode `"migrating"`, which would test a weaker configuration than the default and still fail every test that seals a change.
+**Reason.** A test of the token binding, the envelope binding or a rate limit has to fail for its own reason, and the seal's reason belongs to the seal's tests.
+**Price.** About forty test files now know that a write by SQL needs a reseal, and a new test that forgets it fails with a broken state rather than with what it meant to test.
+
+<a id="e-3166"></a>
+
+### A rehash whose swap misses under the account lock is refused, and T-RACE-6 is served by the lock
+`E-3166` · security-state-seal · password, settled
+
+**Context.** E-3385 put the background rehash under the account lock and the seal. The rehash compares the ciphertext the sign-in verified with the one the locked read holds, in constant time, and writes nothing when a legitimate change replaced it. The compare-and-swap `replaceIfUnchanged` stays as it was, and under the lock it can only miss when the row was written past the lock, by something that is not the library. Such a miss now throws `SealingRefusedError("seal_mismatch")`, which raises the alarm and rolls the rehash back, instead of sealing a state the rows no longer hold. `test/race-rehash-compare-and-swap-proof.test.ts` changes with it: of two simultaneous rehashes the second now waits for the first one's lock and then finds the swapped hash, so exactly one reaches the swap rather than both reaching it and one losing; the third-party write between read and swap is a write past the lock, and the test seals the account again before it signs in with the third party's password.
+**Rejected.** Sealing the read's components after a missed swap, which would write a seal for a password the row no longer holds and leave the broken state to the next check.
+**Reason.** Under the lock a missed swap is evidence of a writer the seal does not know, and S-INTEG-3 refuses a change over a broken state.
+**Price.** S-RACE-6's two-swap race can no longer be shown at the swap itself, since the lock orders the two before either reaches it.
+
+<a id="e-3167"></a>
+
+### A password set or change whose session a concurrent change revoked is refused as that first
+`E-3167` · security-state-seal · password, settled
+
+**Context.** E-2701 has a held `password.set` or `password.change` that waited for the account lock while a reset committed be refused with `session_required`. Under the seal the change checks the read under the lock for the password it verified, and that check came first, so a held set answered `factor_already_enrolled` and a held change `invalid_credentials`. The change now lists the account's sessions under the lock and refuses a calling session that is no longer among them before it compares passwords.
+**Rejected.** Leaving the order, which answers the same refused change differently depending on which check it reaches first.
+**Reason.** E-2701 decided the answer, and the seal changes how the change is checked, not what it answers.
+**Price.** One more statement under the lock for every password set and change.
+
+<a id="e-3168"></a>
+
+### A consumed recovery code carries its HMAC beside the proof, and a missing account keeps its own answer
+`E-3168` · security-state-seal · recovery codes, settled
+
+**Context.** A spent recovery code has to be found among the codes the seal covers, so `consumeCode` returns the HMAC that matched. It first returned `ConsumedRecoveryCode & { codeHmac }` under a cast, which `test/owner-proof-brand-proof.test.ts` read as a proof asserted outside `src/core/db/actor.ts`. It now returns `{ consumed, codeHmac }`, with the proof asserted where it was before. Recovery-code generation for an account that no longer exists answered `RecoveryCodeOwnerUnknownError`; under the seal the sealing transaction refuses first with `account_missing`, and `sealChange` takes an `accountMissing` option a path gives its own error in.
+**Rejected.** Answering a missing account as a broken state, which raises no alarm and would change what `test/totp-surface.test.ts` holds the generation to.
+**Reason.** An account that is gone is not a broken state, and the error that says so was decided before the seal.
+**Price.** None beyond the option.
+
+<a id="e-3169"></a>
+
+### The limits are configured, reported at start, refused with their own codes and measured at the cap
+`E-3169` · security-state-seal · limits, settled
+
+**Context.** E-3158 built the counting. `limits` is now a configuration option with `LimitsConfig` exported as a type; the start refuses a limit that is not a safe integer of at least 1 with `limits_unusable`; `SECURITY_OPTIONS` gains a `limits` row and the start reports a limit raised above its default as a weakening, since every check reads and seals every passkey and identity. `CredentialLimitReachedError` is mapped in `src/core/http/error-map.ts` to `409 passkey_limit_reached` and `409 identity_limit_reached`. `test/security-state-limits-cap.test.ts` registers 20 passkeys over the routes and refuses the 21st, links 10 identities over the OAuth link flow and refuses the 11th without writing it, and holds the median session resolution at the cap to at most three times the one at one passkey over 1,000 requests after 100 warm-up requests. Measured once on the development machine against the local PostgreSQL 16 while another test run used the same server, the medians were 3.00 ms at one passkey and 3.34 ms at 20 passkeys and 10 identities. The two simultaneous registrations and links of T-INTEG-10 stay in `test/security-state-limits-race.test.ts`.
+**Rejected.** Measuring the resolution without the handler, which would leave out the cost a caller pays.
+**Reason.** S-INTEG-10 bounds the work every check does, and the bound is only worth what its measurement at the cap shows.
+**Price.** The cap test registers twenty passkeys and links ten identities on every run, a few seconds of the blocking tier.
+
+<a id="e-3400"></a>
+
+### The placeholders that waited for the seal are plain cases, and the requirements it builds are cited
+`E-3400` · security-state-seal · tests, settled
+
+**Context.** `test/security-state-issue-after-revocation.test.ts` held two `it.fails` cases, a pending authentication completed after `password.change` and after `session.revokeAll`; both now yield no session, and the two controls that showed today's completion issuing one are replaced by a control that the completion without a revocation still issues a session that resolves. `test/security-state-session-epoch.test.ts` held one: a session row saved before a mass revocation and inserted again afterwards. Its revocation now runs as the library runs one, a sealing change that raises the epoch, and the replayed row resolves to nothing; its first control now names what it shows, that a deletion drawing no new epoch lets the row resolve. `test/security-state-checking.test.ts` runs the eleven paths of T-INTEG-4 over the mounted handler, each on an account of its own whose digest a writer overwrote, and holds each answer byte for byte against the path's ordinary failure with exactly one alarm of its occasion, and the missing seal row refused with `seal_missing` in mode `"required"` and served in mode `"migrating"`. `test/security-state-read.test.ts` attempts the sign-in T-INTEG-2 asks for after each of its changes and holds its alarm. S-INTEG-2 to S-INTEG-6 and S-INTEG-10 leave the list of requirements no test names in `test/requirement-coverage.test.ts`.
+**Rejected.** Keeping the old controls beside the flipped cases, which would assert the behaviour the cases now refuse.
+**Reason.** A placeholder states what the branch it waits for must deliver, and it is turned once that branch delivers it.
+**Price.** T-INTEG-5's timing part, its 1,000-request deduplication runs and its secret search, T-INTEG-6's end-to-end replay with and without an anchor, and the library-level pairs of T-INTEG-3 that race a sign-in and a resolution against `session.revokeAll` are not built here; the anchor ports stay empty until the administration branch registers a plugin's anchor.
+
+<a id="e-3401"></a>
+
+### What the seal branch leaves for later
+`E-3401` · security-state-seal · plan, open
+
+**Context.** Four things are known and not done. `convertingUnsealed` in `src/core/security-state/runtime.ts` hands the bound-envelope branch's rewrite the sealing transaction's guarded driver as an `OpenTransaction` by a cast, because the guard that refuses a second read wraps the transaction `inOneTransaction` branded; E-3129 gives that brand to `inOneTransaction` alone. The merge commit `60f7086` carries git's default subject rather than a Conventional Commit, and history is not rewritten. The anchor ports are built and consulted on every path, but the instance builds the runtime with none until the administration branch registers them. And the alarm's occasion for a broken state found while listing sessions is `session_resolve` by E-3381, which the token branch's report already carries.
+**Rejected.** Moving the guard into `account-envelopes.ts` so it could hand out the brand itself, which would put the seal's one-read rule into the bound-envelope branch's module.
+**Reason.** Each of the four is either another branch's or a fact about history, and is reported rather than repaired in passing.
+**Price.** The cast stays until the two modules agree on who brands a guarded transaction.
