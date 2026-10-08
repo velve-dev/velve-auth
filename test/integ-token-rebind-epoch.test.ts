@@ -125,3 +125,62 @@ describe("a one-time token whose payload jsonb stores differently from how it wa
 		expect(redeemed?.userId).toBe(userId);
 	});
 });
+
+describe("the maintenance rebinding against a mass revocation (section 3.18 point 5, E-3277)", () => {
+	it("reads the session and the account's epoch in one statement, so a revocation after it raises nothing", async () => {
+		const ring = testKeyRing(2);
+		await migrated.connection.query(`DELETE FROM ${schema}.session`, []);
+		const before = createSessionService({
+			sealing: "migrating",
+			driver: migrated.connection,
+			keys: ring.providerAt(1, [1]),
+			schema,
+		});
+		const userId = await createUser(migrated.connection, schema);
+		await migrated.connection.query(
+			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
+			 VALUES ($1, 1, $2, 1, $3)`,
+			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
+		);
+		await before.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const reads: string[] = [];
+		let revoked = false;
+		const revokingAfterTheRead = {
+			...migrated.connection,
+			query: async <T>(sql: string, params: unknown[]): Promise<T[]> => {
+				const rows = await migrated.connection.query<T>(sql, params);
+				if (!revoked && /token_mac_key_version <> \$1/.test(sql)) {
+					revoked = true;
+					reads.push(sql);
+					await migrated.connection.query(`DELETE FROM ${schema}.session WHERE user_id = $1`, [
+						userId,
+					]);
+					await migrated.connection.query(
+						`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
+						[userId, aFreshEpochOtherThan(1)],
+					);
+				}
+				return rows;
+			},
+		};
+		const refusals: unknown[] = [];
+
+		const pass = await rebindTokenRowsUnderCurrentKey({
+			driver: revokingAfterTheRead,
+			schema,
+			keys: ring.providerAt(2, [1, 2]),
+			sealing: "migrating",
+			table: "session",
+			batchSize: 100,
+			reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
+		});
+
+		expect(reads[0]).toMatch(/SELECT session_epoch FROM \S+\.security_state/);
+		expect({ revoked, rebound: pass.rebound, refused: pass.refused, refusals }).toStrictEqual({
+			revoked: true,
+			rebound: 0,
+			refused: 0,
+			refusals: [],
+		});
+	});
+});
