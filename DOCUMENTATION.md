@@ -9583,8 +9583,9 @@ with a MAC under the current version; a booking that finds the row rebound by th
 maintenance at the same count under a newer version books over it without a
 report. Every statement runs at `READ COMMITTED`; none of this opens a `REPEATABLE
 READ` transaction. The statements whose miss the library reads as a race — the
-booking and its re-read, the rebinding at resolution and each compare-and-set of
-the maintenance pass — run in a transaction of the library, each as its only
+booking and its re-read, the consumption of a WebAuthn challenge, the rebinding
+at resolution and each compare-and-set of the maintenance pass — run in a
+transaction of the library, each as its only
 statement, so a database whose `default_transaction_isolation` is `repeatable
 read` gives them no `40001` where the case tables expect a miss.
 

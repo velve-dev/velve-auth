@@ -17618,3 +17618,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Reading the seal and verifying it on a miss in this branch, which would duplicate the seal branch's canonical read without its components.
 **Reason.** The token branch owns the conditional insert, and the seal branch owns what a seal verifies to.
 **Price.** `authorisedBy` on five shipped methods and a new option on two factories. Until the seal branch wires both, a sign-in that loses to a legitimate reseal raises a false `seal_mismatch`.
+
+<a id="e-3486"></a>
+
+### A WebAuthn challenge is consumed in a library transaction
+`E-3486` · security-state-tokens · S-INTEG-3, S-INTEG-9, settled
+
+**Context.** E-3481 moved the statements whose miss the library interprets into a library transaction, and missed the consumption of a WebAuthn challenge, whose miss is answered as `challenge_not_found`. On a connection whose default is `repeatable read`, a consumption that waited on a row a concurrent transaction had written failed with `40001` instead of consuming. The consuming `DELETE` now runs in `driver.transaction`, which the instance's driver opens with the isolation statement first. No finish path of this branch opens a registering or issuing transaction around the consumption: the registration's insert and the assertion's verification run as statements of their own. When the seal branch opens one, it builds the challenge store over that transaction and consumes first and locks afterwards, as §7 orders, and the nested call is then a savepoint of it. `test/webauthn-challenge-repeatable-read.test.ts` consumes a registration challenge on a second connection whose default is `repeatable read` while the first holds the row. It consumes once the lock is released, and fails with `40001` when the consumption is a standalone statement. While merging the bound envelopes, commit a686f06 gave the account-lock count of `test/lock-order-declaration.test.ts` as this branch's one new lock and the envelope branch's two over a base of nine. The counts at that merge were eight at the base, one new here and three new there, which make the twelve the test holds.
+**Rejected.** Opening the registering transaction here to consume inside it, which would move the seal branch's transaction into this branch.
+**Reason.** The case table of a miss is only reached if the statement can miss, as E-3379 said.
+**Price.** A `BEGIN`, the isolation statement and a `COMMIT` per consumption.

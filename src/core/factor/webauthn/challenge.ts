@@ -129,11 +129,10 @@ RETURNING user_id, token_mac, token_mac_key_version`;
 		async consume({ challengeToken, purpose, userId }) {
 			//the shape is unchecked so every rejection looks like no row (S-REPLAY-5)
 			const challengeSha256 = hashSecretToken(toSecretToken(challengeToken));
-			const [row] = await options.driver.query<ConsumedChallengeRow>(consumeStatement, [
-				challengeSha256,
-				purpose,
-				userId,
-			]);
+			//a consumption whose miss is read as an unknown challenge runs at read committed (E-3486)
+			const [row] = await options.driver.transaction((tx) =>
+				tx.query<ConsumedChallengeRow>(consumeStatement, [challengeSha256, purpose, userId]),
+			);
 			if (row === undefined) {
 				return false;
 			}
