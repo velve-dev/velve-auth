@@ -22,6 +22,7 @@ import {
 } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { asJavaScriptPlugin, unreachableDriver } from "./plugin-fixtures.js";
+import { SESSION_FIXTURE_KEYS } from "./session-fixtures.js";
 
 //the plugin member of T-INTEG-4 and T-INTEG-6 reaches the request path as one port per plugin (E-3170)
 
@@ -35,7 +36,7 @@ function servicesOver(driver: Driver): FrozenContextServices {
 		identityMode: "email",
 		schema: "velve",
 		users: createUserRepository({ driver, schema: "velve" }),
-		sessions: createSessionRepository({ driver, schema: "velve" }),
+		sessions: createSessionRepository({ keys: SESSION_FIXTURE_KEYS, driver, schema: "velve" }),
 		driver,
 		log: () => undefined,
 	};
@@ -356,34 +357,22 @@ describe("an anchor that cannot be read fails the request closed (T-INTEG-4, E-3
 		expect(failures).toStrictEqual(["reported"]);
 	});
 
-	const unavailable = { kind: "unavailable" } as const;
-	const answeredNull = { kind: "answered", floors: [null] } as const;
-	const incomplete: ReadonlyArray<readonly [string, unknown, unknown, number]> = [
-		["null", null, unavailable, 1],
-		["true", true, unavailable, 1],
-		["an empty object", {}, unavailable, 1],
-		[
-			"a minimumVersion that is no function",
-			{ minimumVersion: 3, recordSeal: async () => {} },
-			unavailable,
-			0,
-		],
-		["no recordSeal", { minimumVersion: async () => null }, answeredNull, 1],
+	const incomplete: ReadonlyArray<readonly [string, unknown]> = [
+		["null", null],
+		["true", true],
+		["a string", "anchor"],
+		["an empty object", {}],
+		["a minimumVersion that is no function", { minimumVersion: 3, recordSeal: async () => {} }],
+		["no recordSeal", { minimumVersion: async () => null }],
+		["a recordSeal that is no function", { minimumVersion: async () => null, recordSeal: "x" }],
 	];
 
-	for (const [name, anchor, expectedReading, expectedFailures] of incomplete) {
-		it(`starts with ${name} as the anchor and refuses every call through the missing member`, async () => {
+	for (const [name, anchor] of incomplete) {
+		it(`refuses the start with ${name} as the anchor (E-3174)`, () => {
 			const plugin = asJavaScriptPlugin({ id: "audit", securityStateAnchor: anchor });
-			expect(codeOfRefusal([plugin])).toBe("the configuration started");
-			const ports = runtimeOf([plugin]).securityStateAnchors;
-			const failures: string[] = [];
 
-			const reading = await consultAnchors(ports, USER_ID);
-			await recordSealWithAnchors(ports, EVENT, () => failures.push("reported"));
-
-			expect(ports).toHaveLength(1);
-			expect(reading).toStrictEqual(expectedReading);
-			expect(failures).toHaveLength(expectedFailures);
+			expect(codeOfRefusal([plugin])).toBe("plugin_anchor_incomplete");
+			expect(() => runtimeOf([plugin])).toThrow(VelveStartupError);
 		});
 	}
 });

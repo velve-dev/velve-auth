@@ -51,6 +51,7 @@ import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
+import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
 import {
 	createSecurityStateRuntime,
@@ -347,6 +348,7 @@ function securityStateOf<M extends IdentityMode>(
 		readonly schema: string;
 		readonly clock: Clock;
 		readonly log: HttpEnvironment["log"];
+		readonly anchors: readonly SecurityStateAnchorPort[];
 	},
 ): SecurityStateRuntime {
 	return createSecurityStateRuntime({
@@ -355,7 +357,7 @@ function securityStateOf<M extends IdentityMode>(
 		keys: config.keys,
 		sealing: sealingOf(config.securityState),
 		limits: resolveLimits(config.limits) ?? DEFAULT_LIMITS,
-		anchors: [],
+		anchors: resolved.anchors,
 		alarm: config.securityState?.alarm,
 		log: (level, message, fields) => resolved.log(level, message, fields),
 		clock: resolved.clock,
@@ -382,7 +384,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
-	const securityState = securityStateOf(config, { driver, schema, clock, log });
+	//the plugins that contribute an anchor are registered after the services that consult it (E-3175)
+	const anchors: SecurityStateAnchorPort[] = [];
+	const securityState = securityStateOf(config, { driver, schema, clock, log, anchors });
 	const { sealing } = securityState;
 	const sealSeams = {
 		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
@@ -441,6 +445,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		plugins: config.plugins ?? [],
 		services: frozenContextServices,
 	});
+	anchors.push(...pluginRuntime.securityStateAnchors);
 
 	const services: RouteServices = {
 		sessions,

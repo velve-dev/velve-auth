@@ -1,3 +1,4 @@
+import { VelveStartupError } from "../auth/startup.js";
 import type {
 	SecurityStateAnchorPort,
 	SecurityStateFloor,
@@ -5,26 +6,22 @@ import type {
 } from "../security-state/anchor.js";
 import type { FrozenContext, SecurityStateAnchor, VelvePlugin } from "./config.js";
 
-class AnchorMemberMissingError extends Error {
-	readonly code = "plugin_anchor_member_missing";
-
-	constructor(member: keyof SecurityStateAnchor) {
-		super(`a securityStateAnchor carries no function ${member}, so it cannot be asked`);
-		this.name = "AnchorMemberMissingError";
-	}
-}
-
 type AnchorMember = (...args: unknown[]) => unknown;
 
 //an anchor that keeps its own store is called with itself as this (E-3171)
-function calledOn(holder: unknown, member: unknown, name: keyof SecurityStateAnchor): AnchorMember {
-	return (...args: unknown[]) =>
-		typeof member === "function"
-			? (member as AnchorMember).apply(holder, args)
-			: Promise.reject(new AnchorMemberMissingError(name));
+function calledOn(holder: unknown, member: AnchorMember): AnchorMember {
+	return (...args: unknown[]) => member.apply(holder, args);
 }
 
-//each member is read once at the start and a missing one fails every call closed (E-3171)
+function memberOf(anchor: unknown, name: keyof SecurityStateAnchor): AnchorMember {
+	const member: unknown = (anchor as Partial<Record<keyof SecurityStateAnchor, unknown>>)[name];
+	if (typeof member !== "function") {
+		throw new VelveStartupError("plugin_anchor_incomplete");
+	}
+	return calledOn(anchor, member as AnchorMember);
+}
+
+//an anchor that cannot be asked must refuse the start and never be read as one without a floor (E-3174)
 export function asOneReadingOfTheAnchor(
 	anchor: SecurityStateAnchor | undefined,
 ): SecurityStateAnchor | undefined {
@@ -32,15 +29,12 @@ export function asOneReadingOfTheAnchor(
 		return undefined;
 	}
 	const holder: unknown = anchor;
-	const recordSeal: unknown = (anchor as Partial<SecurityStateAnchor> | null)?.recordSeal;
-	const minimumVersion: unknown = (anchor as Partial<SecurityStateAnchor> | null)?.minimumVersion;
+	if (holder === null || (typeof holder !== "object" && typeof holder !== "function")) {
+		throw new VelveStartupError("plugin_anchor_incomplete");
+	}
 	return {
-		recordSeal: calledOn(holder, recordSeal, "recordSeal") as SecurityStateAnchor["recordSeal"],
-		minimumVersion: calledOn(
-			holder,
-			minimumVersion,
-			"minimumVersion",
-		) as SecurityStateAnchor["minimumVersion"],
+		recordSeal: memberOf(holder, "recordSeal") as SecurityStateAnchor["recordSeal"],
+		minimumVersion: memberOf(holder, "minimumVersion") as SecurityStateAnchor["minimumVersion"],
 	};
 }
 

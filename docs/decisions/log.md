@@ -17918,3 +17918,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the field table without the member and the count at seven, which leaves the reference wrong about the type it documents.
 **Reason.** A field table that omits a field is wrong, and a count that is one short is wrong, so each is fixed where it stands.
 **Price.** This branch writes two lines outside its partition, in a chapter the integration branch may also change.
+
+<a id="e-3174"></a>
+
+### An incomplete anchor refuses the start, and E-3171's run-time refusal is withdrawn
+`E-3174` · security-state-administration · plugin registration, settled
+
+**Context.** E-3171 let a plugin start whose `securityStateAnchor` was `null`, not an object, or lacked a function `recordSeal` or `minimumVersion`, and failed every call through the missing member closed at run time, because a start error needed `src/core/auth/startup.ts`, which was outside that change's files. Its own Rejected named the start error as the better answer. The orchestrator decided for it once the file could be changed. `StartupErrorCode` gains `plugin_anchor_incomplete` with its message, and `asOneReadingOfTheAnchor` raises it while it reads the two members once at start, so the check and the reading are the same reading (E-900). E-3171's statement that a misconfigured anchor starts and refuses every request with `anchor_unavailable` no longer holds; its reading of the members once, and the call with the anchor as `this`, still do. E-3171 is not edited.
+**Rejected.** Keeping the run-time refusal beside the start error, which would leave a path no configuration can reach.
+**Reason.** A configuration that cannot work is answered when `createVelveAuth` runs, as every other plugin misconfiguration is (3.11).
+**Price.** One more start error code, and the Plugins chapter's count of start errors goes from eighteen to nineteen.
+
+<a id="e-3175"></a>
+
+### The instance hands the security-state runtime the plugins' anchor ports
+`E-3175` · security-state-administration · instance wiring, settled
+
+**Context.** E-3401 left the instance building the security-state runtime with no anchor ports until this branch registered them. The runtime is built before the plugin runtime, because the session service and the frozen context the plugins are given take the runtime's seams, while the ports need the plugins registered. `assembleVelveAuth` therefore hands the runtime an array it fills with `pluginRuntime.securityStateAnchors` once the plugins are registered, before anything can call it; the runtime keeps the array, not a copy.
+**Rejected.** Building the plugin runtime first, which needs the session repository and so the runtime's seams. Passing a getter, which changes `SecurityStateRuntime`'s type, a module of the seal branch.
+**Reason.** The one ordering problem is solved where it arises, in the instance, without changing the seal branch's interface.
+**Price.** The array is mutable for the length of `assembleVelveAuth`; nothing reads it before the push.

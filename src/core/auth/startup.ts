@@ -23,6 +23,7 @@ type StartupErrorCode =
 	| "plugin_dependency_cycle"
 	| "plugin_route_conflict"
 	| "plugin_field_unknown"
+	| "plugin_anchor_incomplete"
 	| "plugin_route_reads_a_core_cookie"
 	| "plugin_route_exempts_the_origin_check"
 	| "plugin_route_without_address_rate_limit"
@@ -62,6 +63,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a plugin route collides with a core route or with another plugin's; 3.11 makes that a start error and not a warning",
 	plugin_field_unknown:
 		"a plugin carries a field the interface does not enumerate; the extension points are enumerated and the security middleware is not one of them (S-CSRF-6)",
+	plugin_anchor_incomplete:
+		"a plugin's securityStateAnchor is not an object carrying the functions recordSeal and minimumVersion, so it could not be asked for a floor and every check would be refused",
 	plugin_route_reads_a_core_cookie:
 		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes __Host-velve_pending authorises and the two that read it, and a plugin route is none of them',
 	plugin_route_exempts_the_origin_check:
