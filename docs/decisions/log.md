@@ -15979,6 +15979,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The decision to join an account is only as good as the state it was made on, and only the state read under the lock is the one no other change can move.
 **Price.** An automatic link reads the account by address twice, once before and once under the lock. A sign-in that raced a legitimate address change fails and is begun again; it then creates a new account or fails as any other sign-in for that address would.
 
+<a id="e-3228"></a>
+
+### The flow deadline is bound at the microsecond PostgreSQL stores, not at the millisecond a driver reads
+`E-3228` · security-state-envelopes · OAuth, S-INTEG-1, storage format, settled
+
+**Context.** E-3128 bound an OAuth flow's `expires_at` into the row of its PKCE verifier as epoch milliseconds, from the driver's `Date`, and truncated the deadline to milliseconds when it was drawn so that it read back exactly. A review of this branch found that the binding covered the deadline only to the millisecond: `timestamptz` stores microseconds, a `Date` drops them, and a writer who moved the stored deadline by less than a millisecond, 900 microseconds in the review's case, still had the verifier open. The shift is too small to extend a flow in any way that matters, but the binding promised that a moved deadline makes the verifier unreadable, and it did not hold. The deadline is now read in SQL as `(extract(epoch FROM …) * 1000000)::bigint::text`, the decimal of its whole microseconds, both in the statement that draws it and in the `DELETE … RETURNING` that consumes the flow; that text is bound, and the insert writes `timestamptz 'epoch' + $9::bigint * interval '1 microsecond'`, which is exact. The truncation to milliseconds is gone, because nothing reads the value through a `Date` any more. The row field of `pkce_verifier_enc` changes from epoch milliseconds to epoch microseconds; a flow begun under the old form fails and is begun again, which section 3.18 already says of every flow across an upgrade, and none has shipped. `test/integ-envelope-attacks.test.ts` moves a flow's deadline by 900 microseconds and by one microsecond, and both callbacks answer as for an unknown state; the one-microsecond case fails with the binding cut back to milliseconds, and the 900-microsecond case was the review's and failed on the previous code. E-3128 is not edited; this entry corrects its precision.
+**Rejected.** (a) Truncating the stored deadline to milliseconds with a check constraint, which a writer with write access on the table drops. (b) Reading the deadline as a `Date` and adding the microseconds from a second column, which is a second read of the same value.
+**Reason.** A binding that covers a value only up to a rounding covers a different value from the one stored.
+**Price.** The deadline travels through the code as a decimal string rather than a `Date`, and `deadlineOf` refuses anything else.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

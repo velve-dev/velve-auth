@@ -8895,7 +8895,11 @@ the provider, the nonce an ID token is checked against, the redirect path, the
 session a link replaces and the deadline — is part of it, so a writer who
 rewrites any of them makes the verifier unreadable and the callback answers as
 for an unknown state. The deadline is drawn from the database clock before the
-insert, truncated to milliseconds, and bound as its epoch milliseconds. The
+insert and bound at the full precision PostgreSQL stores, as the decimal of
+its whole microseconds since the epoch, which both the statement that draws it
+and the statement that consumes the row read in SQL rather than through a
+driver `Date`, which holds milliseconds only; a deadline moved by one
+microsecond makes the verifier unreadable (E-3228). The
 callback opens the verifier straight after it consumes the row and checks its
 provider, before it reads whether the flow links and before any plugin hook,
 so no column of a rewritten row is acted on. The table of section 3.18 point 2
@@ -8949,7 +8953,7 @@ A uuid is read in either case and written as its bytes, so the same account
 spelled in upper or lower case binds the same way. An owner or a row that is
 not a uuid is refused with `KeyError` code `envelope_binding_malformed`. The
 row of a flow is written by `rowOfParts([state_sha256, provider, nonce,
-redirect_path, link_from_session_id, expires_at in epoch milliseconds])` as
+redirect_path, link_from_session_id, expires_at in epoch microseconds])` as
 fields of the same kind — `0x03`
 bytes, `0x01` text, `0x00` absent — and that encoding is the row field's
 bytes. The

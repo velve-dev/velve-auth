@@ -332,10 +332,10 @@ async function pkceRowOf(state: string): Promise<Uint8Array<ArrayBuffer>> {
 		nonce: string | null;
 		redirect_path: string | null;
 		link_from_session_id: string | null;
-		expires_ms: string;
+		expires_micros: string;
 	}>(
 		`SELECT provider, nonce, redirect_path, link_from_session_id,
-		 (extract(epoch from expires_at) * 1000)::bigint::text AS expires_ms
+		 (extract(epoch from expires_at) * 1000000)::bigint::text AS expires_micros
 		 FROM ${schema}.oauth_flow WHERE state_sha256 = $1`,
 		[stateHashOf(state)],
 	);
@@ -348,7 +348,7 @@ async function pkceRowOf(state: string): Promise<Uint8Array<ArrayBuffer>> {
 		row.nonce,
 		row.redirect_path,
 		row.link_from_session_id,
-		row.expires_ms,
+		row.expires_micros,
 	]);
 }
 

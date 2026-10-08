@@ -203,7 +203,7 @@ interface FlowIdentity {
 	readonly nonce: string | null;
 	readonly redirectPath: string | null;
 	readonly linkFromSessionId: string | null;
-	readonly expiresAt: Date;
+	readonly expiresAtMicros: string;
 }
 
 //a writer who changes any column that steers a flow must make its verifier unreadable (E-3123)
@@ -217,7 +217,7 @@ function pkceBindingOf(owner: string | null, flow: FlowIdentity): EnvelopeBindin
 			flow.nonce,
 			flow.redirectPath,
 			flow.linkFromSessionId,
-			String(flow.expiresAt.getTime()),
+			flow.expiresAtMicros,
 		]),
 	};
 }
@@ -524,7 +524,7 @@ export function createOAuthService(input: {
 					nonce: flow.nonce,
 					redirectPath: flow.redirectPath,
 					linkFromSessionId: flow.linkFromSessionId,
-					expiresAt: flow.expiresAt,
+					expiresAtMicros: flow.expiresAtMicros,
 				}),
 				{ keyVersion: flow.keyVersion, ciphertext: flow.pkceVerifierEnc },
 				"refused",
@@ -548,7 +548,7 @@ export function createOAuthService(input: {
 				nonce,
 				redirectPath: redirectPath === undefined ? null : acceptedRedirectPath(redirectPath),
 				linkFromSessionId: linkTo?.sessionId ?? null,
-				expiresAt: await flows.deadlineOfANewFlow(),
+				expiresAtMicros: await flows.deadlineOfANewFlow(),
 			};
 			const sealed = await encryptBound(
 				services.keys,

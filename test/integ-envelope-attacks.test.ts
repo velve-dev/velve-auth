@@ -247,6 +247,8 @@ describe("a flow whose steering columns a database writer rewrote", () => {
 		["the redirect path", "redirect_path = '/elsewhere'"],
 		["the provider", "provider = 'stubby2'"],
 		["the deadline", "expires_at = now() + interval '30 days'"],
+		["the deadline by 900 microseconds", "expires_at = expires_at + interval '900 microseconds'"],
+		["the deadline by one microsecond", "expires_at = expires_at - interval '1 microsecond'"],
 	])(
 		"refuses the callback after %s was rewritten, as for an unknown state",
 		async (_label, change) => {
@@ -374,10 +376,10 @@ describe("the owner binding of a link flow's PKCE verifier", () => {
 			nonce: string | null;
 			redirect_path: string | null;
 			link_from_session_id: string | null;
-			expires_ms: string;
+			expires_micros: string;
 		}>(
 			`SELECT pkce_verifier_enc, key_version, provider, nonce, redirect_path, link_from_session_id,
-			 (extract(epoch from expires_at) * 1000)::bigint::text AS expires_ms
+			 (extract(epoch from expires_at) * 1000000)::bigint::text AS expires_micros
 			 FROM ${schema}.oauth_flow WHERE state_sha256 = $1`,
 			[stateHashOf(flow.state)],
 		);
@@ -391,7 +393,7 @@ describe("the owner binding of a link flow's PKCE verifier", () => {
 			row?.nonce ?? null,
 			row?.redirect_path ?? null,
 			row?.link_from_session_id ?? null,
-			row?.expires_ms ?? "",
+			row?.expires_micros ?? "",
 		]);
 		const openAs = (owner: string | null) =>
 			decryptBound(
