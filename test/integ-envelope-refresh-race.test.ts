@@ -232,3 +232,107 @@ describe("an automatic link writes provider tokens into an existing account (S-I
 		expect(linked?.landed).toBe(1);
 	});
 });
+
+async function signedInAs(handler: (request: Request) => Promise<Response>, subject: string) {
+	provider.reportClaims({
+		sub: subject,
+		email: `${subject}@provider.example`,
+		email_verified: true,
+	});
+	return completed(handler, await startedFlow(handler));
+}
+
+//every statement passes through, and the first that takes the account lock is followed by the change
+function changingAfterTheLock(change: () => Promise<void>): {
+	readonly pool: Driver;
+	readonly changed: () => boolean;
+} {
+	let changed = false;
+	const intercepting = (transaction: Driver): Driver => ({
+		async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
+			const answer = await transaction.query<T>(sql, parameters);
+			if (!changed && sql.includes(`/* locks: ${schema}.user */`)) {
+				changed = true;
+				await change();
+			}
+			return answer;
+		},
+		transaction: (work) => transaction.transaction(work),
+	});
+	return {
+		pool: {
+			query: (sql, parameters) => connection.query(sql, parameters),
+			transaction: (work) =>
+				connection.transaction((transaction) => work(intercepting(transaction))),
+		},
+		changed: () => changed,
+	};
+}
+
+async function identityOf(subject: string): Promise<{ id: string; user_id: string }> {
+	const [row] = await connection.query<{ id: string; user_id: string }>(
+		`SELECT id, user_id FROM ${schema}.identity WHERE subject = $1`,
+		[subject],
+	);
+	return row ?? { id: "", user_id: "" };
+}
+
+describe("a known identity's sign-in reads the identity again under the account lock (S-INTEG-1)", () => {
+	it("refuses a sign-in whose identity changed owner while it waited for the lock", async () => {
+		const subjectA = `owner-a-${randomBytes(4).toString("hex")}`;
+		const subjectB = `owner-b-${randomBytes(4).toString("hex")}`;
+		const plain = handlerOn(connection);
+		expect((await signedInAs(plain, subjectA)).status).toBeLessThan(400);
+		expect((await signedInAs(plain, subjectB)).status).toBeLessThan(400);
+		const a = await identityOf(subjectA);
+		const b = await identityOf(subjectB);
+		const moving = changingAfterTheLock(async () => {
+			await other.query(`UPDATE ${schema}.identity SET user_id = $2 WHERE id = $1`, [
+				a.id,
+				b.user_id,
+			]);
+		});
+
+		const answer = await signedInAs(handlerOn(moving.pool), subjectA);
+
+		expect(moving.changed()).toBe(true);
+		expect(answer.status).toBeGreaterThanOrEqual(400);
+	});
+
+	it("refuses a sign-in whose identity row was replaced by another row of the same subject", async () => {
+		const subject = `replaced-${randomBytes(4).toString("hex")}`;
+		expect((await signedInAs(handlerOn(connection), subject)).status).toBeLessThan(400);
+		const identity = await identityOf(subject);
+		const replacing = changingAfterTheLock(async () => {
+			await other.query(`UPDATE ${schema}.identity SET id = gen_random_uuid() WHERE id = $1`, [
+				identity.id,
+			]);
+		});
+
+		const answer = await signedInAs(handlerOn(replacing.pool), subject);
+
+		expect(replacing.changed()).toBe(true);
+		expect(answer.status).toBeGreaterThanOrEqual(400);
+	});
+
+	it("answers a sign-in whose identity vanished while it waited exactly like an unknown state", async () => {
+		const subject = `vanished-${randomBytes(4).toString("hex")}`;
+		expect((await signedInAs(handlerOn(connection), subject)).status).toBeLessThan(400);
+		const identity = await identityOf(subject);
+		const deleting = changingAfterTheLock(async () => {
+			await other.query(`DELETE FROM ${schema}.identity WHERE id = $1`, [identity.id]);
+		});
+
+		const answer = await signedInAs(handlerOn(deleting.pool), subject);
+		const unknown = await handlerOn(connection)(
+			requestTo("/sign-in/oauth/callback/stubby?code=x&state=nope", {
+				method: "GET",
+				cookie: `${DEFAULT_COOKIE_NAMES.oauthState}=nope`,
+			}),
+		);
+
+		expect(deleting.changed()).toBe(true);
+		expect(answer.status).toBe(unknown.status);
+		expect(await answer.text()).toBe(await unknown.text());
+	});
+});

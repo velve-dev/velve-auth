@@ -87,6 +87,15 @@ describe("the additional data is a canonical and unambiguous encoding (S-INTEG-1
 		expect(seen.size).toBe(1000);
 	});
 
+	it("tells key versions apart whatever their low byte, 1 from 257 and from 65537", () => {
+		const binding = bindingFor("password_credential.phc");
+		const versions = [1, 257, 65_537, 16_777_217].map((version) =>
+			hex(boundAdditionalData(binding, version)),
+		);
+
+		expect(new Set(versions).size).toBe(versions.length);
+	});
+
 	it("tells an absent owner from every present one, and a uuid row from its bytes", () => {
 		const uuid = randomUUID();
 		const asUuid = boundAdditionalData(

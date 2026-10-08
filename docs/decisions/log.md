@@ -15959,6 +15959,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** Every writer of an account's sealed rows has to share the one lock the rewrite and the seal take, or a write lands between a verified read and the change built on it.
 **Price.** An automatic link takes one more row lock and one more read of the account, and waits behind any change of that account in progress. An address changed while the sign-in waited still links under the decision taken before the lock.
 
+<a id="e-3226"></a>
+
+### The token swap's empty column, the sign-in's three re-checks under the lock and the whole key version get tests
+`E-3226` · security-state-envelopes · test, settled
+
+**Context.** A mutation run of 141 mutants over this branch left 12 alive, and three groups of them were guards no test reached. The identity token swap compares each column with `IS NOT DISTINCT FROM`, and with `=` in its place a row whose access token is empty never matched and lost; `test/integ-envelope-rewrite-guards.test.ts` now rewrites an identity whose access token is NULL and whose refresh token is in the old form, and reports it rewritten with the empty column kept empty. The OAuth sign-in of a known identity reads the identity again under the account lock and refuses it when it vanished, when its owner changed or when its id changed (E-3222); each of the three checks could be removed with every test green. `test/integ-envelope-refresh-race.test.ts` now changes the identity in another connection right after the sign-in's lock statement and shows the owner change and the replaced row refused, and the vanished row answered exactly like an unknown state, which without the check is a 500. The key version is a four-byte field of the additional data (E-3110), and a mutant writing its low byte alone survived; `test/integ-envelope-binding.test.ts` now tells versions 1, 257, 65 537 and 16 777 217 apart. Each case was shown failing on its mutant before it was committed, the token case on the reshaped swap of E-3224.
+**Rejected.** Leaving the vanished-row case to the generic error mapping, which answers 500 and so tells the caller something an unknown state does not.
+**Reason.** A guard that can be removed with the suite green is not known to work.
+**Price.** Three more OAuth sign-ins through the stub provider per run, each with a second connection writing after the lock.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

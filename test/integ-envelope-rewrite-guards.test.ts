@@ -115,6 +115,40 @@ describe("the rewrite of one account's envelopes (S-INTEG-1)", () => {
 		).resolves.toStrictEqual(new TextEncoder().encode("access"));
 	});
 
+	it("rewrites an identity whose access token is empty and whose refresh token is old", async () => {
+		const userId = await createUser(connection, schema);
+		const identity = await createOAuthIdentityRepository({
+			driver: connection,
+			schema,
+			keys: beforeRotation,
+		}).insertIdentityOfSignIn({
+			userId,
+			provider: "stubby",
+			subject: `empty-access-${userId}`,
+			providerEmail: null,
+			providerEmailVerified: false,
+			profile: null,
+			scopes: [],
+			tokenLifetimeInSeconds: 3600,
+			tokens: { accessToken: "access", refreshToken: "refresh", idToken: null },
+		});
+		const old = await encryptWithPurposeKey(
+			beforeRotation,
+			"oauth-token-enc",
+			new TextEncoder().encode("refresh"),
+		);
+		await connection.query(
+			`UPDATE ${schema}.identity SET access_token_enc = NULL, refresh_token_enc = $2,
+			 id_token_enc = NULL, token_key_version = $3 WHERE id = $1`,
+			[identity?.id, old.ciphertext, old.keyVersion],
+		);
+
+		const outcome = await migratingRewrite(userId);
+
+		expect(outcome.identitiesRewritten).toBe(1);
+		expect(outcome.envelopes.identities[0]?.accessTokenEnc).toBeNull();
+	});
+
 	it("reports nothing rewritten for an account that holds no envelope", async () => {
 		const userId = await createUser(connection, schema);
 
