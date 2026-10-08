@@ -4022,15 +4022,16 @@ read.
 
 | Method | What it does |
 |---|---|
-| `issue({ completes?, userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
-| `issueReplacingPresented({ completes, presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
-| `reissue({ completes, previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
-| `reissueAfterCredentialChange({ completes, resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+| `issue({ completes?, authorisedBy, userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
+| `issueReplacingPresented({ completes, authorisedBy, presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
+| `reissue({ completes, authorisedBy, previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
+| `reissueAfterCredentialChange({ completes, authorisedBy, resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
 
 `completes`, which every issuing method takes, names what the issue completes
 (`SessionIssuePath`) and decides how an issue that writes no row is answered
 ([The session epoch](#the-session-epoch)); `issue` completes a sign-up unless it
-names another path.
+names another path. `authorisedBy`, which every issuing method takes, is the
+seal row the authorising check read ([The session epoch](#the-session-epoch)).
 
 `sessionRowsOn(service, driver)`, internal in `src/core/session/rows.ts` and not
 part of the shipped `SessionService`, returns the session rows a flow announces or
@@ -5749,7 +5750,7 @@ device that started a link cancels the link**, rather than the callback quietly
 signing that device back in.
 
 The session service call behind this is
-`reissueSessionOfUser({ completes, actor, previousSessionId, factors, observed })`,
+`reissueSessionOfUser({ completes, authorisedBy, actor, previousSessionId, factors, observed })`,
 with `completes: "oauth_link"`. It is
 the third re-issue shape beside `reissue`, which finds the previous row by its
 token, and `reissueAfterCredentialChange`, which replaces every row the account
@@ -9392,20 +9393,23 @@ hold here as stated:
 
 A session's MAC also binds the account's `session_epoch` from `velve.security_state`.
 Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
-waits for a mass revocation that holds the account. It inserts only while the seal
-row still holds the `version` and `session_epoch` the check that authorised the
-session read: the caller names them in `authorisedBy` (`IssueAuthorisation`,
-`{ version?, sessionEpoch? }` or `"unsealed"` where the check read no seal row),
-and a member it leaves out is read under the lock, together with the
-transaction's `now()`. A second-factor completion names the epoch the consumed
-pending row stores. The MAC is taken over that epoch and that time, the time is
+waits for a mass revocation that holds the account. Every issue names its
+authorisation in `authorisedBy` (`IssueAuthorisation`): `{ version, sessionEpoch }`,
+the seal row the check that authorised the session read; `"unsealed"`, where that
+check read none; or `"read_under_lock"`, the interim for a caller whose check of
+the seal is not wired yet, which takes the version and epoch the issue reads under
+the lock, together with the transaction's `now()`. Today every route, flow and
+the second-factor completion passes `"read_under_lock"`. The MAC is taken over
+that epoch and that time, the time is
 written as `created_at`, and for an account with a seal row the insert is
 `INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $11 AND version = $12`;
 for one without a seal row, only in `"migrating"`, only at epoch 1 and only where
 the check read none either, it is
-`… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. A sign-in
-whose check came before a password change or any other reseal, with the KDF
-running in between outside any transaction, therefore inserts nothing. An insert
+`… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. Once a
+caller names the version and epoch its check read, a sign-in whose check came
+before a password change or any other reseal, with the KDF running in between
+outside any transaction, inserts nothing; under `"read_under_lock"` it still
+inserts under the state the lock reads, as before. An insert
 that writes nothing is told apart under the lock by `sealVerifiesAfterMissedIssue`,
 an optional member of the session service's options and of
 `createSecondFactorCompletion`'s, which the seal branch supplies: a seal that
