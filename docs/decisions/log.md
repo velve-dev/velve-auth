@@ -16698,3 +16698,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping E-3338's documented false alarm, which teaches operators to dismiss the one alarm reason a writer who moves an address raises.
 **Reason.** An alarm that legitimate use raises routinely stops being read.
 **Price.** A user who asked for a reset or a magic link and then changed their address has to ask again, which the old address could no longer receive anyway. The window between deletion and commit remains a false alarm.
+
+<a id="e-3383"></a>
+
+### Point 3 states the factor order the token MAC encodes
+`E-3383` · security-state · specification, S-INTEG-9, storage format, settled
+
+**Context.** Point 3 says the token MAC's encoding follows the seal's rules, and point 4 writes every list in ascending order of its encoding. The token branch built the factors, `session.factors` and `pending_authentication.factors_completed`, as their count followed by each name in the order the row stores it, and froze that format in its own decision log, so that a reordered or repeated factor fails the check. A second implementation following the specification would have sorted the list and computed different MACs. Point 3 now names the factors as the one exception to the sorted-list rule, in both languages, and says the encoding is frozen. `test/security-state-spec-factor-order.test.ts` holds both sentences.
+**Rejected.** Asking the token branch to sort the factors, which would change a frozen format and let a writer reorder a stored list unnoticed.
+**Reason.** The specification has to describe the encoding as built, as E-3358 said for the other details.
+**Price.** None.
