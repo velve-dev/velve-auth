@@ -9826,9 +9826,11 @@ is a broken state raises the alarm with the occasion `change`, and a failing
 The order of section 3.18 *Sealing* on an open transaction: `lockAccountRow`, one
 `readSecurityState`, `checkSecurityState`, the comparison with the anchors,
 `context.convertUnsealed` for an account without a seal row, `change.write`,
-`change.after`, `computeSeal`, the seal row written and `change.afterSeal`. With
-`context.leaveUnsealed` an account without a seal row gets `change.write` and no
-seal row. A path that learns its account by consuming a row calls it itself after
+`change.after`, `computeSeal`, the seal row written and `change.afterSeal`. A
+change that keeps the epoch and leaves every component as the read held it writes
+no seal row and hands `change.afterSeal` the version and epoch it verified
+(E-3402). With `context.leaveUnsealed` an account without a seal row gets
+`change.write` and no seal row. A path that learns its account by consuming a row calls it itself after
 the consumption and after `consultAnchors`, inside `runSealingTransaction`. It
 resolves `SealWritten`: `userId`, `version`, `sessionEpoch`, `keyVersion`,
 `digest`, `firstSeal`, `leftUnsealed`, the `read` the seal was computed from, and
@@ -9958,7 +9960,7 @@ each (S-INTEG-10).
 
 `resolveLimits(configured)` fills in the defaults and returns `null` when a
 limit is not an integer of at least 1. `assertBelowCredentialLimit(read,
-credential, limits)` throws `CredentialLimitReachedError` with the code
+credential, limits)` throws a `VelveError` with the code
 `passkey_limit_reached` or `identity_limit_reached` when the verified read already
 holds as many as the limit; a registration or a link calls it first in its
 sealing change's `write`, so the count is the one the account lock protects and
