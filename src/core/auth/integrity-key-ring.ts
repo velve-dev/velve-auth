@@ -47,3 +47,12 @@ async function currentPurposesByFingerprint(keys: KeyProvider): Promise<Map<stri
 	}
 	return byFingerprint;
 }
+
+//a schema migration 3 has not reached yet holds no seal whose key could be probed
+export async function schemaHoldsTheSealTable(driver: Driver, schema: string): Promise<boolean> {
+	const [present] = await driver.query<{ relation: string | null }>(
+		"SELECT to_regclass($1)::text AS relation",
+		[qualifiedTableName(schema, "security_state")],
+	);
+	return present?.relation != null;
+}

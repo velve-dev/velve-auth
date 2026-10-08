@@ -16608,3 +16608,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Resolving imports across files, which a pattern scan cannot do and which a re-export would still defeat.
 **Reason.** A rule that a rename defeats is a rule about spelling, not about order.
 **Price.** A re-export under another name, or a helper passed around as a value, is still not followed. The check stays a scan within one file, as E-1616 said it was.
+
+<a id="e-3374"></a>
+
+### The key probes run before migrate() applies a migration
+`E-3374` · security-state · keys, start, settled
+
+**Context.** `migrate()` applied the core and plugin migrations first and asked the key provider afterwards. The tenth review's case gave it a provider that answers `token-mac` with an AES key on a fresh schema: the start was refused with `keys_unusable`, but only after every migration had been applied, so a refused start had already written the schema, and on an upgrade migration 4 had already deleted every session and token. As decided, the key start checks now run before any migration. `assertKeysAnswerForEveryPurpose` needs no table and runs first. `assertStoredIntegrityKeysTakeMac` reads `velve.security_state`, so it runs before the migrations only where `schemaHoldsTheSealTable` finds that table already there; a schema migration 3 has not reached holds no seal to probe, and after the run its new table is empty, so nothing is skipped. `test/keys-integrity-start-before-migrations.test.ts` shows the fresh schema refused with no `schema_migration` table created, and a migrated schema with a seal row and a provider whose `cookie-sig` key rejects refused with `keys_unusable` rather than the provider's own error, which pins that the purpose probe precedes the stored-version probe. Both fail with the purpose probe moved back after the migrations.
+**Rejected.** Moving `assertStoredKeyVersionsAreKnown` and `assertStoredFactorKeyVersionsAreKnown` as well. They read `password_credential`, `totp_credential` and `recovery_code`, which E-330 calls guaranteed only once `migrate()` has run, and they report key versions that have left the ring rather than a provider that answers wrongly. They stay after the migrations, so a ring that lost a version can still refuse a start that has applied migrations.
+**Reason.** A start that is going to be refused for its keys has no reason to change the database first.
+**Price.** One `to_regclass` statement per `migrate()`. The token-mac part of the stored-version probe, which the token branch adds over the four token tables, needs the same guard for columns migration 4 creates when it merges.
