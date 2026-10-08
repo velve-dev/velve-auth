@@ -8931,6 +8931,40 @@ and `"seal_missing"` when it is `"required"`. Every verdict but `"valid"` and
 `"unsealed"` is a broken state. The read handed back is the only one the path
 may evaluate.
 
+### The alarm
+
+`src/core/security-state/alarm.ts`. `createSecurityStateAlarms({ callback, log, clock })`
+returns `{ raise(alarm) }`, where every path reports a broken state:
+
+| Field of `alarm` | Type | Meaning |
+|---|---|---|
+| `userId` | `string \| null` | the account, or `null` for a row without an owner |
+| `occasion` | `"sign_in" \| "factor_check" \| "session_resolve" \| "token_redemption" \| "change" \| "maintenance"` | the path that met the broken state |
+| `reason` | `"seal_missing" \| "seal_mismatch" \| "key_version_unknown" \| "version_below_anchor" \| "anchor_unavailable" \| "anchor_mismatch" \| "token_binding_mismatch" \| "envelope_binding_mismatch" \| "key_unusable"` | why |
+
+`raise` returns nothing and never throws; it decides at once and delivers
+later. The callback, `securityState.alarm` of the configuration, receives a
+frozen `SecurityStateAlarm` — the three fields and `suppressed` — and the log
+receives a `warn` line `security state alarm` with the same four fields. Both
+start in a `setTimeout` of zero, after the refusal has returned; a callback
+that throws or rejects, and a log that throws, are caught and logged at `error`
+with the occasion and the reason only.
+
+| Rule | Value |
+|---|---|
+| deduplication key | account, occasion and reason; for `userId: null` occasion and reason |
+| deduplication window | 60 seconds by `clock` |
+| delivered alarms per process | at most 100 in any 60 seconds, the aggregate not counted |
+| keys held | 10,000, the oldest delivery evicted first |
+
+One counter takes every alarm that is held back, by its key or by the bound,
+and the next delivered alarm carries its value in `suppressed` and resets it.
+When an alarm is held back by its key and 60 seconds have passed since the
+last aggregate, or since the alarm module was created, an aggregate
+`{ userId: null, occasion: "aggregate", reason: "suppressed", suppressed }`
+goes out in its place. There is no timer: a count with no later alarm waits,
+and a restart loses it (E-3155).
+
 ### The anchor port
 
 `src/core/security-state/anchor.ts`. The request path calls an anchor through
