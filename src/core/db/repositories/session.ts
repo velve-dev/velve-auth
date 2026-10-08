@@ -1,12 +1,14 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
 import { ConcealedError } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
-import { isLibrarySessionRow, type SessionIssue, sessionBinding } from "../../session/binding.js";
+import { librarySessionBinding, type SessionIssue } from "../../session/binding.js";
 import {
 	bindToken,
+	decodedOrNull,
 	reportBrokenState,
 	reportRefusedTokenRow,
 	type StoredTokenMac,
+	type TokenBinding,
 	type TokenBindingRefusalReport,
 } from "../../token/binding.js";
 import type { Actor } from "../actor.js";
@@ -78,8 +80,10 @@ export interface SessionCandidate extends StoredTokenMac {
 	readonly storedFactorNames: readonly string[] | null;
 	/** the account's current session epoch, or null for an account that has none to be checked against */
 	readonly sessionEpoch: number | null;
-	readonly createdAtMicros: number;
-	decode(): SessionWithOwner;
+	/** null where the stored creation time is no exact count of microseconds the library could have bound */
+	readonly createdAtMicros: number | null;
+	/** null where a column the MAC does not bind holds a value no date of this runtime can carry */
+	decode(): SessionWithOwner | null;
 }
 
 /** the account a session row names, and whether the row passed the MAC check */
@@ -187,7 +191,7 @@ interface SessionRowShape {
 interface VerifiedRowShape {
 	readonly id: string;
 	readonly user_id: string;
-	readonly created_at_us: string;
+	readonly created_at_us: string | null;
 	readonly token_sha256: Uint8Array;
 	readonly factor_names: string;
 	readonly token_mac: Uint8Array;
@@ -198,7 +202,7 @@ interface VerifiedRowShape {
 interface ListedRowShape extends SessionRowShape, VerifiedRowShape {}
 
 interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
-	readonly created_at_us: string;
+	readonly created_at_us: string | null;
 	readonly factor_names: string;
 	readonly session_epoch: string | null;
 	readonly token_mac: Uint8Array;
@@ -284,8 +288,9 @@ const INSERTED_VALUES = `$1, $2, now() + make_interval(secs => $3::double precis
 const INSERTED_COLUMNS = `(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip,
 		user_agent, token_mac, token_mac_key_version, created_at)`;
 
-function microsOf(timestamp: string): string {
-	return `(extract(epoch FROM ${timestamp}) * 1000000)::bigint::text`;
+//a creation time no bigint holds must read as none and not fail the statement (S-INTEG-9)
+export function microsOf(timestamp: string): string {
+	return `CASE WHEN isfinite(${timestamp}) THEN trunc(extract(epoch FROM ${timestamp}) * 1000000)::text END`;
 }
 
 //a session must be written only while the account is at the epoch its mac binds (S-INTEG-9)
@@ -366,12 +371,9 @@ function issuingStateStatement(states: string): string {
 }
 
 //a count of microseconds must be exact before a mac binds it (S-INTEG-9)
-function microsFrom(value: string): number {
-	const micros = Number(value);
-	if (!Number.isSafeInteger(micros)) {
-		throw new TypeError("velve.session.created_at lies outside what this library binds");
-	}
-	return micros;
+function microsFrom(value: string | null): number | null {
+	const micros = value === null ? Number.NaN : Number(value);
+	return Number.isSafeInteger(micros) ? micros : null;
 }
 
 //an epoch must be an exact integer before a mac binds it (S-INTEG-9)
@@ -474,12 +476,13 @@ function candidateOf(row: OwnedRowShape): SessionCandidate {
 		createdAtMicros: microsFrom(row.created_at_us),
 		tokenMac: row.token_mac,
 		tokenMacKeyVersion: row.token_mac_key_version,
-		decode: () => ({
-			session: toSession({ ...row, factors: (storedFactorNames ?? []).join(",") }, NOT_LISTED),
-			userId: row.user_id,
-			userDisabledAt: toOptionalDate(row.disabled_at),
-			observedAt: toDate(row.observed_at),
-		}),
+		decode: () =>
+			decodedOrNull(() => ({
+				session: toSession({ ...row, factors: (storedFactorNames ?? []).join(",") }, NOT_LISTED),
+				userId: row.user_id,
+				userDisabledAt: toOptionalDate(row.disabled_at),
+				observedAt: toDate(row.observed_at),
+			})),
 	};
 }
 
@@ -505,8 +508,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const listOwnedSql = listOwnedStatement(table, states, sealing);
 	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
 
-	function isLibraryRow(row: VerifiedRowShape): Promise<boolean> {
-		return isLibrarySessionRow(
+	function libraryBindingOf(row: VerifiedRowShape): Promise<TokenBinding | null> {
+		return librarySessionBinding(
 			options.keys,
 			{
 				userId: row.user_id,
@@ -522,8 +525,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	}
 
 	async function libraryRowsAmong<T extends VerifiedRowShape>(rows: readonly T[]): Promise<T[]> {
-		const verdicts = await Promise.all(rows.map(isLibraryRow));
-		return rows.filter((_, index) => verdicts[index] === true);
+		const bindings = await Promise.all(rows.map(libraryBindingOf));
+		return rows.filter((_, index) => bindings[index] !== null);
 	}
 
 	//a row the library did not write is not listed, announced or shown to a plugin (S-INTEG-9)
@@ -531,15 +534,40 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return libraryRowsAmong(await options.driver.query<ListedRowShape>(statement, [userId]));
 	}
 
+	//a library row whose unbound columns no longer decode is reported and left out (S-INTEG-9)
+	async function librarySessionsOf(
+		userId: string,
+		statement: string,
+		currentSessionId: string | null,
+	): Promise<Session[]> {
+		const sessions: Session[] = [];
+		for (const row of await libraryRowsOf(userId, statement)) {
+			const session = decodedOrNull(() => toSession(row, row.id === currentSessionId));
+			if (session === null) {
+				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+					userId: row.user_id,
+					occasion: "session_resolve",
+					verdict: "mismatch",
+				});
+			} else {
+				sessions.push(session);
+			}
+		}
+		return sessions;
+	}
+
 	async function issuingStateOf(driver: Driver, userId: string): Promise<IssuingState | null> {
-		const [row] = await driver.query<{ session_epoch: string | null; created_at_us: string }>(
-			issuingStateSql,
-			[userId],
-		);
+		const [row] = await driver.query<{
+			session_epoch: string | null;
+			created_at_us: string | null;
+		}>(issuingStateSql, [userId]);
 		if (row === undefined) {
 			throw new TypeError("the read of the issuing state returned no row");
 		}
 		const createdAtMicros = microsFrom(row.created_at_us);
+		if (createdAtMicros === null) {
+			throw new TypeError("the database clock lies outside what this library binds");
+		}
 		if (row.session_epoch !== null) {
 			return { sessionEpoch: epochFrom(row.session_epoch), createdAtMicros, sealed: true };
 		}
@@ -601,18 +629,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	}
 
 	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
-		const sessionEpoch = toEpoch(kept.session_epoch);
-		if (sessionEpoch === null || !(await isLibraryRow(kept))) {
+		const binding = await libraryBindingOf(kept);
+		if (binding === null) {
 			return false;
 		}
-		const tokenHash = new Uint8Array(kept.token_sha256);
-		const next = await bindToken(
-			options.keys,
-			sessionBinding(kept.user_id, tokenHash, storedNamesOf(kept.factor_names) ?? [], {
-				sessionEpoch,
-				createdAtMicros: microsFrom(kept.created_at_us),
-			}),
-		);
+		const next = await bindToken(options.keys, binding);
 		const rebound = await tx.query(keptRebindSql, [
 			kept.id,
 			kept.user_id,
@@ -662,9 +683,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			return (await libraryRowsOf(actor, listEveryIdOwnedSql)).map((row) => row.id);
 		},
 
-		async listSessionsOfUser({ userId }) {
-			return (await libraryRowsOf(userId, listOwnedSql)).map((row) => toSession(row, NOT_LISTED));
-		},
+		listSessionsOfUser: ({ userId }) => librarySessionsOf(userId, listOwnedSql, null),
 
 		async deleteSessionById({ sessionId, ownerReadBefore }) {
 			const rows = await options.driver.query(deleteOwnedSql, [sessionId, ownerReadBefore]);
@@ -675,7 +694,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			const [row] = await options.driver.query<VerifiedRowShape>(findOwnerSql, [sessionId]);
 			return row === undefined
 				? null
-				: { userId: row.user_id, libraryRow: await isLibraryRow(row) };
+				: { userId: row.user_id, libraryRow: (await libraryBindingOf(row)) !== null };
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {
@@ -690,11 +709,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 
 		deleteSessionByTokenHash: (tokenHash) => deleteSessionByTokenHash(options.driver, tokenHash),
 
-		async listSessionsOwnedBy({ actor, currentSessionId }) {
-			return (await libraryRowsOf(actor, listOwnedSql)).map((row) =>
-				toSession(row, row.id === currentSessionId),
-			);
-		},
+		listSessionsOwnedBy: ({ actor, currentSessionId }) =>
+			librarySessionsOf(actor, listOwnedSql, currentSessionId),
 
 		async deleteSessionOwnedBy({ sessionId, actor }) {
 			const rows = await options.driver.query(deleteOwnedSql, [sessionId, actor]);

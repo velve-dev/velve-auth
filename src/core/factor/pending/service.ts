@@ -9,6 +9,7 @@ import type { KeyProvider } from "../../keys/provider.js";
 import {
 	bindToken,
 	checkTokenBinding,
+	decodedOrNull,
 	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBinding,
@@ -135,11 +136,12 @@ export function createPendingAuthenticationService(
 			return null;
 		}
 		const verdict = await verdictOf(tokenHash, candidate);
-		if (verdict !== "valid") {
-			reportRefusal(candidate.userId, verdict);
+		const decoded = verdict === "valid" ? decodedOrNull(() => candidate.decode()) : null;
+		if (decoded === null) {
+			reportRefusal(candidate.userId, verdict === "valid" ? "mismatch" : verdict);
 			return null;
 		}
-		return { binding: bindingOf(tokenHash, candidate), decoded: candidate.decode() };
+		return { binding: bindingOf(tokenHash, candidate), decoded };
 	}
 
 	function checkedRow(candidate: PendingCandidate<unknown>): CheckedPendingRow {

@@ -1,6 +1,6 @@
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
-import { epochOf, type SecurityStateSealing } from "../db/repositories/session.js";
+import { epochOf, microsOf, type SecurityStateSealing } from "../db/repositories/session.js";
 import { pendingBinding } from "../factor/pending/binding.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { sessionBinding } from "../session/binding.js";
@@ -111,7 +111,7 @@ const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 	session: {
 		hashColumn: "token_sha256",
 		contentColumns: (states, sealing) => `array_to_json(t.factors)::text AS factor_names,
-		(extract(epoch FROM t.created_at) * 1000000)::bigint::text AS created_at_us,
+		${microsOf("t.created_at")} AS created_at_us,
 		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`,
 		guardsAttempts: false,
 		bindingOf: sessionBindingOf,

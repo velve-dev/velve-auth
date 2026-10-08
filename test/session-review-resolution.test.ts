@@ -169,7 +169,7 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 			`SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
 \t\ts.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 \t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
-\t\t(extract(epoch FROM s.created_at) * 1000000)::bigint::text AS created_at_us,
+\t\tCASE WHEN isfinite(s.created_at) THEN trunc(extract(epoch FROM s.created_at) * 1000000)::text END AS created_at_us,
 \t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch
 \tFROM ${migrated.schema}.session s
 \tJOIN ${migrated.schema}.user u ON u.id = s.user_id

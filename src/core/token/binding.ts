@@ -241,6 +241,18 @@ export async function reboundTokenMacIfStale(
 	return version === stored.tokenMacKeyVersion ? null : bindToken(keys, binding);
 }
 
+//a column the mac leaves unbound may hold a value nothing here can carry and that row is then unusable (S-INTEG-9)
+export function decodedOrNull<T>(decode: () => T): T | null {
+	try {
+		return decode();
+	} catch (failure) {
+		if (failure instanceof TypeError) {
+			return null;
+		}
+		throw failure;
+	}
+}
+
 //an alarm that throws must not turn a refusal into a different answer (S-INTEG-5)
 function reportSwallowingFailure(
 	report: TokenBindingRefusalReport | undefined,

@@ -15,10 +15,11 @@ import type { KeyProvider } from "../keys/provider.js";
 import {
 	bindToken,
 	reboundTokenMacIfStale,
+	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBindingRefusalReport,
 } from "../token/binding.js";
-import { isLibrarySessionRow, sessionBinding } from "./binding.js";
+import { librarySessionBinding, sessionBinding } from "./binding.js";
 import { type SessionConfig, type SessionSettings, sessionSettingsOf } from "./config.js";
 import { assertSessionIsFresh } from "./freshness.js";
 import {
@@ -177,16 +178,25 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		if (candidate === null || candidate.sessionEpoch === null) {
 			return null;
 		}
-		const row = { ...candidate, tokenHash };
-		if (!(await isLibrarySessionRow(options.keys, row, options.reportTokenBindingRefusal))) {
+		const binding = await librarySessionBinding(
+			options.keys,
+			{ ...candidate, tokenHash },
+			options.reportTokenBindingRefusal,
+		);
+		if (binding === null) {
 			return null;
 		}
-		const binding = sessionBinding(candidate.userId, tokenHash, candidate.storedFactorNames ?? [], {
-			sessionEpoch: candidate.sessionEpoch,
-			createdAtMicros: candidate.createdAtMicros,
-		});
+		const found = candidate.decode();
+		if (found === null) {
+			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+				userId: candidate.userId,
+				occasion: "session_resolve",
+				verdict: "mismatch",
+			});
+			return null;
+		}
 		return {
-			found: candidate.decode(),
+			found,
 			stored: candidate,
 			rebound: await reboundTokenMacIfStale(options.keys, binding, candidate),
 		};

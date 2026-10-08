@@ -15,7 +15,8 @@ interface StoredSessionRow extends StoredTokenMac {
 	readonly storedFactorNames: readonly string[] | null;
 	/** null for an account that has no epoch to be checked against */
 	readonly sessionEpoch: number | null;
-	readonly createdAtMicros: number;
+	/** null where the stored creation time is no exact count of microseconds the library could have bound */
+	readonly createdAtMicros: number | null;
 }
 
 /** what a session's MAC binds beside its owner, token and factors */
@@ -41,22 +42,25 @@ export function sessionBinding(
 }
 
 //an account without an epoch is refused by the seal check and its sessions count as none
-export async function isLibrarySessionRow(
+export async function librarySessionBinding(
 	keys: KeyProvider,
 	row: StoredSessionRow,
 	report: TokenBindingRefusalReport | undefined,
-): Promise<boolean> {
+): Promise<TokenBinding | null> {
 	if (row.sessionEpoch === null) {
-		return false;
+		return null;
 	}
-	const binding = sessionBinding(row.userId, row.tokenHash, row.storedFactorNames ?? [], {
-		sessionEpoch: row.sessionEpoch,
-		createdAtMicros: row.createdAtMicros,
-	});
-	const verdict =
-		row.storedFactorNames === null ? "mismatch" : await checkTokenBinding(keys, binding, row);
+	const binding =
+		row.storedFactorNames === null || row.createdAtMicros === null
+			? null
+			: sessionBinding(row.userId, row.tokenHash, row.storedFactorNames, {
+					sessionEpoch: row.sessionEpoch,
+					createdAtMicros: row.createdAtMicros,
+				});
+	const verdict = binding === null ? "mismatch" : await checkTokenBinding(keys, binding, row);
 	if (verdict !== "valid") {
 		reportRefusedTokenRow(report, { userId: row.userId, occasion: "session_resolve", verdict });
+		return null;
 	}
-	return verdict === "valid";
+	return binding;
 }
