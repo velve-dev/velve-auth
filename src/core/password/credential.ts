@@ -42,7 +42,7 @@ export interface SealedPhc {
 	readonly ciphertext: Uint8Array<ArrayBuffer>;
 }
 
-//a password credential is bound to its owner as both owner and row (S-INTEG-1)
+//the owner names the row as the table holds one row per account and no id of its own (S-INTEG-1)
 function phcBindingOf(userId: string): EnvelopeBinding {
 	return { column: "password_credential.phc", owner: userId, row: userId };
 }
