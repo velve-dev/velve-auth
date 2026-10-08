@@ -16678,3 +16678,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Never re-recording from a check and leaving the catch-up to the next change, which keeps the window E-3351 closes open until the account changes.
 **Reason.** The anchor exists to hold what the writer cannot reach, and a value the library has not verified is the writer's.
 **Price.** None at run time; the check already holds its verdict when it decides to re-record.
+
+<a id="e-3381"></a>
+
+### Every alarm occasion names the paths that raise it and has a case
+`E-3381` · security-state · specification, S-INTEG-5, test plan, settled
+
+**Context.** *The alarm* lists six occasions, and E-3358 said which occasion a missed session issue and the maintenance run carry. The tenth review found that `factor_check`, `session_resolve`, `token_redemption` and `change` were named only in the list and in the interface of A.8. No sentence said which path raises them, and no case of 6.24 asserted an alarm carrying them. *The alarm* now names, in both languages, the path behind each occasion. `sign_in` is the password, passkey and OAuth sign-in and a missed issue that completes one. `factor_check` is the check of a pending authentication. `session_resolve` is every check of a session row, including the listing of an account's sessions and the counting of the rows a revocation removes. The token branch reports those with this occasion, and the queue after its third review asked whether listing and counting need an occasion of their own; `session_resolve` covers them, so none is added. `token_redemption` is every one-time token, magic link included. `change` is every sealing change and a missed issue that completes one. A WebAuthn challenge carries the occasion of its ceremony, `sign_in`, `factor_check` or `change`. T-INTEG-4 now states the occasion of each of its eleven paths, and T-INTEG-7 expects its legitimate change refused with one alarm carrying `change`. `test/security-state-spec-occasions.test.ts` holds that every occasion appears in 6.24 in both languages and that 3.18 names the paths for four of them.
+**Rejected.** A separate occasion for listing and counting, which would split one kind of check, a session row's MAC, across two keys of the deduplication.
+**Reason.** An occasion no path is said to raise cannot be tested, and an operator reading an alarm has to know which path it came from.
+**Price.** The token branch reports a consumed WebAuthn challenge with `factor_check` for every ceremony; the discoverable sign-in's and the registration's challenge now have to carry `sign_in` and `change`, which T-INTEG-5 already expected for the discoverable one.
