@@ -40,7 +40,7 @@ function envelopeOf(bytes: Uint8Array | null, keyVersion: number | null) {
 		: { ciphertext: Uint8Array.from(bytes), keyVersion };
 }
 
-//the seal row and every envelope come from one statement as the seal branch reads them (S-INTEG-3)
+//the seal row and every envelope come from one statement as the seal branch reads them (E-3224)
 export async function verifiedEnvelopeReadOf(
 	driver: Driver,
 	schema: string,
@@ -81,7 +81,7 @@ export async function verifiedEnvelopeReadOf(
 	};
 }
 
-//the read follows the account lock in the transaction that rewrites, as a change of section 3.18 orders it (S-INTEG-3)
+//the read follows the account lock in the transaction that rewrites, as a change of section 3.18 orders it (E-3224)
 export async function rebindAfterOneRead(input: {
 	readonly driver: OpenTransaction;
 	readonly schema: string;

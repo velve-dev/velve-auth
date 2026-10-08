@@ -234,7 +234,7 @@ describe("the rewrite never opens the old form of a sealed account (S-INTEG-1)",
 	});
 });
 
-describe("the rewrite opens and swaps only what the one verified read returned (S-INTEG-3)", () => {
+describe("the rewrite opens and swaps only what the one verified read returned (S-INTEG-1, E-3224)", () => {
 	const utf8 = new TextEncoder();
 
 	//the read, then a write the account lock does not hold off, then the rewrite of that read
