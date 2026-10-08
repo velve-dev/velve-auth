@@ -2,13 +2,13 @@ import type { RouteServices } from "../auth/routes.js";
 import { type Actor, actorOfResolvedSession } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository, type SessionRepository } from "../db/repositories/session.js";
 import { observedIn } from "../flows/environment.js";
 import type { SetPasswordResult } from "../flows/results.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { createSessionUnderHooks } from "../plugin/sign-in.js";
+import { sessionRowsOn } from "../session/rows.js";
 import type { SessionResolution } from "../session/service.js";
 import { createArgon2idHash } from "./argon2.js";
 import { createPasswordCredentialRepository } from "./credential.js";
@@ -25,10 +25,6 @@ export async function refuseIfCredentialExists(
 	if ((await environment.credentials.findOwnedBy({ actor })) !== null) {
 		throw new VelveError("factor_already_enrolled");
 	}
-}
-
-function sessionRowsOn(transaction: Driver, services: RouteServices): SessionRepository {
-	return createSessionRepository({ driver: transaction, schema: services.schema });
 }
 
 function refuseUnlessCallingSessionIsAmong(
@@ -48,7 +44,7 @@ async function announceEverySessionAboutToBeDeleted(
 	if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
 		return;
 	}
-	const standing = await sessionRowsOn(transaction, services).listEverySessionIdOwnedBy({
+	const standing = await sessionRowsOn(services.sessions, transaction).listEverySessionIdOwnedBy({
 		actor: actorOfResolvedSession(resolved),
 	});
 	//a call that is going to be refused announces nothing (E-2705)
@@ -65,7 +61,11 @@ export async function replacePasswordOfSession(
 	services: RouteServices,
 	environment: PasswordEnvironment,
 	context: RequestContext,
-	input: { readonly resolved: SessionResolution; readonly newPassword: string },
+	input: {
+		readonly completes: "password_set" | "password_change";
+		readonly resolved: SessionResolution;
+		readonly newPassword: string;
+	},
 ): Promise<SetPasswordResult> {
 	const accepted = await acceptNewPassword(input.newPassword, services.password);
 	const phc = await environment.semaphore.run(() =>
@@ -79,12 +79,14 @@ export async function replacePasswordOfSession(
 			//a refused revocation must refuse the change before anything is written (S-RACE-5)
 			await announceEverySessionAboutToBeDeleted(services, transaction, input.resolved);
 			const deleted = await sessionRowsOn(
+				services.sessions,
 				transaction,
-				services,
 			).deleteEverySessionOwnedByReturningIds({ actor: actorOfResolvedSession(input.resolved) });
 			//a session a concurrent credential change revoked must not be reissued (E-2701)
 			refuseUnlessCallingSessionIsAmong(deleted, input.resolved);
 			const reissued = await services.sessions.boundTo(transaction).issue({
+				completes: input.completes,
+				authorisedBy: "read_under_lock",
 				userId: input.resolved.userId,
 				factors: ["password"],
 				observed: observedIn(context),

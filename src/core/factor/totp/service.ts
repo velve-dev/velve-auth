@@ -1,8 +1,9 @@
+import { type SealingMode, unboundReadingOf } from "../../auth/security-state.js";
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import type { Clock } from "../../http/environment.js";
 import { ConcealedError, VelveError } from "../../http/error-map.js";
-import { decryptWithPurposeKey, encryptWithPurposeKey } from "../../keys/envelope.js";
+import { decryptBound, type EnvelopeBinding, encryptBound } from "../../keys/envelope-binding.js";
 import { KeyError } from "../../keys/errors.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import { verifyUnderPendingAttemptLimit } from "../pending/attempt-limit.js";
@@ -25,6 +26,13 @@ export interface TotpServiceOptions {
 	readonly clock: Clock;
 	readonly schema?: string;
 	readonly toleranceInSteps?: TotpToleranceInSteps;
+	/** the sealing mode the unbound form is read under, `"required"` when absent */
+	readonly sealing?: SealingMode;
+}
+
+//the owner names the row as the table holds one row per account and no id of its own (S-INTEG-1)
+function secretBindingOf(userId: string): EnvelopeBinding {
+	return { column: "totp_credential.secret_enc", owner: userId, row: userId };
 }
 
 export interface TotpService {
@@ -48,15 +56,19 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 	});
 	const toleranceInSteps = options.toleranceInSteps ?? TOTP_TOLERANCE_STEPS;
 	const retentionSeconds = usedStepRetentionSeconds(toleranceInSteps);
+	const sealing = options.sealing ?? "required";
 
 	//an unreadable secret answers as a factor nobody can hold (E-428)
-	async function decryptSecret(credential: StoredTotpCredential): Promise<Uint8Array<ArrayBuffer>> {
+	async function decryptSecret(
+		owner: string,
+		credential: StoredTotpCredential,
+	): Promise<Uint8Array<ArrayBuffer>> {
 		try {
-			return await decryptWithPurposeKey(
+			return await decryptBound(
 				options.keys,
-				"totp-enc",
-				credential.keyVersion,
-				credential.secretEnc,
+				secretBindingOf(owner),
+				{ keyVersion: credential.keyVersion, ciphertext: credential.secretEnc },
+				unboundReadingOf(sealing, credential.sealRow),
 			);
 		} catch (failure) {
 			throw failure instanceof KeyError ? new ConcealedError("totp_not_confirmed") : failure;
@@ -65,6 +77,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 
 	//an absent factor and one not held answer alike
 	async function matchConfirmedCode(input: {
+		readonly owner: string;
 		readonly credential: StoredTotpCredential | null;
 		readonly code: string;
 	}): Promise<number> {
@@ -72,7 +85,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 			throw new ConcealedError("totp_not_confirmed");
 		}
 		const step = matchingTimeStep({
-			secretBytes: await decryptSecret(input.credential),
+			secretBytes: await decryptSecret(input.owner, input.credential),
 			submittedCode: input.code,
 			at: options.clock.now(),
 			toleranceInSteps,
@@ -103,9 +116,9 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		enroll: {
 			async start({ actor, accountName }) {
 				const secretBytes = createTotpSecret();
-				const { keyVersion, ciphertext } = await encryptWithPurposeKey(
+				const { keyVersion, ciphertext } = await encryptBound(
 					options.keys,
-					"totp-enc",
+					secretBindingOf(actor),
 					secretBytes,
 				);
 				const written = await credentials.putUnconfirmedCredential({
@@ -113,7 +126,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					secretEnc: ciphertext,
 					keyVersion,
 				});
-				if (written === null) {
+				if (!written) {
 					throw new VelveError("factor_already_enrolled");
 				}
 				return totpEnrollment({ secretBytes, issuer: options.issuer, accountName });
@@ -129,7 +142,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					throw new VelveError("factor_already_enrolled");
 				}
 				const step = matchingTimeStep({
-					secretBytes: await decryptSecret(credential),
+					secretBytes: await decryptSecret(actor, credential),
 					submittedCode: code,
 					at: options.clock.now(),
 					toleranceInSteps,
@@ -149,6 +162,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		verify({ pendingToken, code }) {
 			return verifyUnderPendingAttemptLimit(options.pending, pendingToken, async (resolution) => {
 				const step = await matchConfirmedCode({
+					owner: resolution.userId,
 					credential: await credentials.findCredentialOf({ userId: resolution.userId }),
 					code,
 				});
@@ -169,7 +183,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 			if (credential === null || credential.confirmedAt === null) {
 				throw new VelveError("factor_not_enrolled");
 			}
-			const step = await matchConfirmedCode({ credential, code });
+			const step = await matchConfirmedCode({ owner: actor, credential, code });
 			rejectAReplayedStep(
 				await credentials.claimTimeStep({ actor, timeStep: step, retentionSeconds }),
 			);

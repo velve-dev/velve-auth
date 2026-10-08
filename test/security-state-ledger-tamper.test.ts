@@ -61,7 +61,7 @@ VALUES ($1, 7, decode(repeat('ab', 32), 'hex'), 1, 3)`,
 			sqlState: "42P07",
 			message: 'relation "security_state" already exists',
 		});
-		expect(ledger.map((row) => row.version)).toStrictEqual([1, 2]);
+		expect(ledger.map((row) => row.version)).toStrictEqual([1, 2, 4]);
 		expect(after).toEqual(before);
 	});
 });

@@ -107,7 +107,6 @@ const storedAboveTheStartBound: string[] = [];
 
 //the rows are written in SQL as an import would since the repository refuses one above the ceiling (E-2616)
 async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
-	const sealed = await sealPhc(keys, phc);
 	const emails: string[] = [];
 	for (let index = 0; index < ACCOUNTS; index += 1) {
 		const email = `${prefix}${index}@ceiling.example`;
@@ -115,10 +114,12 @@ async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
 			`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
 			[email],
 		);
+		const userId = (row as { id: string }).id;
+		const sealed = await sealPhc(keys, userId, phc);
 		await migrated.connection.query(
 			`INSERT INTO ${migrated.schema}.password_credential (user_id, phc, key_version, scheme)
 			 VALUES ($1, $2, $3, 'argon2id')`,
-			[(row as { id: string }).id, sealed.ciphertext, sealed.keyVersion],
+			[userId, sealed.ciphertext, sealed.keyVersion],
 		);
 		emails.push(email);
 	}

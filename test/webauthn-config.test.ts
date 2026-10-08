@@ -12,6 +12,7 @@ import {
 	type WebAuthnConfigErrorCode,
 	webAuthnSettingsOf,
 } from "../src/core/factor/webauthn/config.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 
 const A_CONFIGURATION = {
 	relyingPartyId: "example.com",
@@ -99,7 +100,11 @@ describe("the challenge purposes", () => {
 			},
 			transaction: (run) => run(driver),
 		};
-		const options: WebAuthnChallengeRepositoryOptions = { driver, schema: "tenant_one" };
+		const options: WebAuthnChallengeRepositoryOptions = {
+			driver,
+			schema: "tenant_one",
+			keys: testKeyProvider(),
+		};
 
 		void createWebAuthnChallenges(options).consume({
 			challengeToken: "x",

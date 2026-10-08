@@ -4,7 +4,6 @@ import type { Driver } from "../db/driver.js";
 import { assertIdentifier, InvalidIdentifierError } from "../db/identifier.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
 import { type BucketRule, isUsableBucketRule, type RateLimitRule } from "../http/rate-limit.js";
 import {
@@ -468,7 +467,7 @@ function servicesBoundTo(services: FrozenContextServices, lent: Driver): FrozenC
 		...services,
 		driver: lent,
 		users: createUserRepository({ driver: lent, schema: services.schema }),
-		sessions: createSessionRepository({ driver: lent, schema: services.schema }),
+		sessions: services.sessions.boundTo(lent),
 		insideATransaction: true,
 	};
 }

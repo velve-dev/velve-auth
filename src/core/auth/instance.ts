@@ -4,7 +4,7 @@ import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
 import { withReadCommittedTransactions } from "../db/read-committed.js";
-import { createSessionRepository } from "../db/repositories/session.js";
+import { createSessionRepository, type SecurityStateSealing } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -68,6 +68,7 @@ import {
 	usernameRoutes,
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
+import { sealingOf } from "./security-state.js";
 import {
 	assertConfigurationIsStartable,
 	assertKeysAnswerForEveryPurpose,
@@ -270,6 +271,9 @@ function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig
 	};
 }
 
+//every account is served unsealed until securityState.sealing exists to say otherwise (E-3142)
+const SEALING_UNTIL_IT_IS_CONFIGURED: SecurityStateSealing = "migrating";
+
 //session options nobody configured must also reach the completion as absent keys (E-1258)
 function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
@@ -328,12 +332,20 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
-	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
-	const pending = createPendingAuthenticationService({ driver, schema });
+	const sessions = createSessionService({
+		driver,
+		keys: config.keys,
+		sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
+		schema,
+		...sessionOptionsOf(config),
+	});
+	const pending = createPendingAuthenticationService({ driver, keys: config.keys, schema });
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
-	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
+	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }), {
+		keys: config.keys,
+	});
 
 	const pluginDatabaseRole =
 		config.pluginDatabaseRole === undefined
@@ -348,7 +360,12 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		identityMode: identity.mode,
 		schema,
 		users,
-		sessions: createSessionRepository({ driver, schema }),
+		sessions: createSessionRepository({
+			driver,
+			schema,
+			keys: config.keys,
+			sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
+		}),
 		driver,
 		log,
 		...(pluginDatabaseRole === undefined ? {} : { pluginDatabaseRole }),
@@ -371,12 +388,15 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		driver,
 		schema,
 		keys: config.keys,
+		securityState: { sealing: sealingOf(config.securityState) },
 		clock,
 		oneTimeTokens,
 		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
 		origins: config.origins,
 		completeSecondFactor: createSecondFactorCompletion({
 			driver,
+			keys: config.keys,
+			sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
 			schema,
 			...sessionOptionsOf(config),
 		}),

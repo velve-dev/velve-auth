@@ -16,7 +16,8 @@ const genuine = rootKeyProvider({
 
 function sealRowsNaming(...versions: number[]): Driver {
 	return {
-		query: async <T>() => versions.map((key_version) => ({ key_version })) as T[],
+		query: async <T>() =>
+			versions.map((key_version) => ({ purpose: "state-mac", key_version })) as T[],
 		transaction: () => Promise.reject(new Error("not used")),
 	};
 }

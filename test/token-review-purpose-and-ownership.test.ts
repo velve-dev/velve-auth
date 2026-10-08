@@ -9,8 +9,11 @@ import {
 	type SecretToken,
 	toSecretToken,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let connection: TestConnection;
 let schema: string;
@@ -22,7 +25,9 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("velve_review_purpose");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	tokens = createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }));
+	tokens = createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }), {
+		keys: TOKEN_KEYS,
+	});
 	alice = await createUser(connection, schema);
 	bob = await createUser(connection, schema);
 });
@@ -165,18 +170,19 @@ describe("a redemption yields the account the row names (S-TOKEN-4)", () => {
 		expect(answer?.userId).not.toBe(alice);
 	});
 
-	it("yields the owner of a row written around the library, whoever wrote it", async () => {
+	//a row written around the library carries no MAC the library took, so it names no owner (S-INTEG-9)
+	it("refuses a row written around the library, whoever it names", async () => {
 		await clear();
 		const planted = toSecretToken("written-past-the-library-for-bob");
 		await connection.query(
-			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
-			 VALUES ($1, $2, $3, now() + interval '1 hour')`,
+			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, $2, $3, now() + interval '1 hour', decode(repeat('ab', 32), 'hex'), 1)`,
 			[hashSecretToken(planted), "password_reset", bob],
 		);
 
 		const answer = await tokens.redeem({ token: planted, purpose: "password_reset" });
 
-		expect(answer?.userId).toBe(bob);
+		expect(answer).toBeNull();
 	});
 
 	it("cannot be pointed at an account the row does not name", async () => {
@@ -197,8 +203,8 @@ describe("a redemption yields the account the row names (S-TOKEN-4)", () => {
 		await clear();
 		const planted = toSecretToken("an-owner-less-row");
 		await connection.query(
-			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at)
-			 VALUES ($1, $2, now() + interval '1 hour')`,
+			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 hour', decode(repeat('ab', 32), 'hex'), 1)`,
 			[hashSecretToken(planted), "email_verify"],
 		);
 

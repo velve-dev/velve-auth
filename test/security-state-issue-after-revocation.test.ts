@@ -205,9 +205,11 @@ describe("premise: the issue point 3 prescribed until now, after a check that pr
 			[userId],
 		);
 		const inserted = await signer.query(
-			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+				token_mac, token_mac_key_version)
 			 SELECT s.user_id, decode(md5(random()::text) || md5(random()::text), 'hex'),
-				now() + interval '1 hour', now() + interval '1 day'
+				now() + interval '1 hour', now() + interval '1 day',
+				decode(md5(random()::text) || md5(random()::text), 'hex'), 1
 			 FROM ${schema}.security_state s WHERE s.user_id = $1 AND s.session_epoch = $2
 			 RETURNING id`,
 			[userId, Number(underLock?.epoch)],
@@ -235,9 +237,11 @@ describe("premise: the issue point 3 prescribed until now, after a check that pr
 		await signer.query("BEGIN", []);
 		await signer.query(lockAccountRowStatement(schema), [userId]);
 		const inserted = await signer.query(
-			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+				token_mac, token_mac_key_version)
 			 SELECT s.user_id, decode(md5(random()::text) || md5(random()::text), 'hex'),
-				now() + interval '1 hour', now() + interval '1 day'
+				now() + interval '1 hour', now() + interval '1 day',
+				decode(md5(random()::text) || md5(random()::text), 'hex'), 1
 			 FROM ${schema}.security_state s WHERE s.user_id = $1 AND s.session_epoch = $2 AND s.version = $3
 			 RETURNING id`,
 			[userId, 1, 1],

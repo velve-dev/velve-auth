@@ -4,7 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const SESSION_DIRECTORY = fileURLToPath(new URL("../src/core/session/", import.meta.url));
@@ -59,6 +62,8 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_resolution");
 	recorder = recordingDriver(migrated.connection);
 	service = createSessionService({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
 		driver: recorder.driver,
 		schema: migrated.schema,
 	});
@@ -72,7 +77,12 @@ afterAll(async () => {
 
 describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", () => {
 	it("issues exactly one statement for each of fifty consecutive answers", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		recorder.reset();
 
 		for (let call = 0; call < 50; call += 1) {
@@ -94,7 +104,12 @@ describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", 
 	});
 
 	it("asks again after the row is deleted behind its back, and changes its answer", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		expect(await service.resolve(issued.token)).not.toBeNull();
 
 		await migrated.connection.query(
@@ -116,7 +131,8 @@ describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", 
 			)
 			.map(([name]) => name);
 
-		expect(readdirSync(SESSION_DIRECTORY).filter((name) => name.endsWith(".ts")).length).toBe(8);
+		//the ninth is binding.ts and the tenth rows.ts, which lends checked rows to flows (E-3144, E-3259)
+		expect(readdirSync(SESSION_DIRECTORY).filter((name) => name.endsWith(".ts")).length).toBe(10);
 		expect(holding).toEqual([]);
 	});
 
@@ -131,7 +147,12 @@ describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", 
 
 describe("S-CACHE-2: the four conditions of the one resolving statement", () => {
 	it("reads the token hash, both deadlines and the account state in a single statement", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		recorder.reset();
 
 		await service.resolve(issued.token);
@@ -149,26 +170,41 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 	/**
 	 * T-CACHE-2 fixes the threshold at "byte for byte equal to a fixture", so that every change to
 	 * the one authorisation query is a decision somebody made on purpose. This is that fixture.
-	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232).
+	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232); the factors are
+	 * read as JSON, and the two MAC columns and the account's session epoch are read beside them,
+	 * because S-INTEG-9 checks the row before use.
 	 */
 	it("runs the statement this fixture pins, byte for byte", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		recorder.reset();
 
 		await service.resolve(issued.token);
 
 		expect(recorder.recorded[0]?.sql).toBe(
 			`SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
-\t\ts.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
-\t\tu.disabled_at, now() AS observed_at
+\t\ts.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
+\t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
+\t\tCASE WHEN isfinite(s.created_at) THEN trunc(extract(epoch FROM s.created_at) * 1000000)::text END AS created_at_us,
+\t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch
 \tFROM ${migrated.schema}.session s
 \tJOIN ${migrated.schema}.user u ON u.id = s.user_id
+\tLEFT JOIN ${migrated.schema}.security_state st ON st.user_id = s.user_id
 \tWHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`,
 		);
 	});
 
 	it("answers resolve and refresh from that one statement and no other", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		recorder.reset();
 
 		await service.resolve(issued.token);
@@ -180,7 +216,12 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 	});
 
 	it("never puts the plaintext token in a statement or a parameter (S-TIM-4)", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		recorder.reset();
 
 		await service.resolve(issued.token);
@@ -197,7 +238,12 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 
 describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 	it("takes effect on the very next request of an existing session", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		expect(await service.resolve(issued.token)).not.toBeNull();
 
 		await migrated.connection.query(
@@ -215,7 +261,12 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 	});
 
 	it("does not extend the idle deadline of a session it refuses", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await migrated.connection.query(
 			`UPDATE ${migrated.schema}.session
 			 SET last_used_at = last_used_at - interval '2 hours' WHERE id = $1 AND user_id = $2`,
@@ -231,7 +282,12 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 	});
 
 	it("goes away again when the account is enabled, without a lifetime to wait out", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await expect(service.resolve(issued.token)).rejects.toMatchObject({
 			code: "account_disabled",
 		});
@@ -284,8 +340,15 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 			[userId],
 		);
 
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const reissued = await service.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: issued.token,
 			userId,
 			factors: ["password"],

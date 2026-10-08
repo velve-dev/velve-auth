@@ -2,7 +2,6 @@ import type { EmailConfig } from "../auth/config.js";
 import { type Actor, actorOfConsumedRecoveryCode } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/pepper.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import { ConcealedError } from "../http/error-map.js";
@@ -13,6 +12,7 @@ import { findUserByIdentifier } from "../identity/resolution.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { tellAfterSessionCreate } from "../plugin/sign-in.js";
+import { sessionRowsOn } from "../session/rows.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import {
@@ -39,12 +39,13 @@ export async function requestReset(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	//the unknown branch must mint a row too and call send exactly once (E-597)
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "password_reset",
 			subject: subjectOfAddress(owner, address),
+			accountEmail: owner?.email ?? address,
 		}),
 	);
 	await sendOrUndo(
@@ -81,7 +82,7 @@ async function replacePassword(
 		userId: input.userId,
 		factors: ["password"],
 	});
-	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
+	const sessionRows = sessionRowsOn(sessions, input.transaction);
 	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
 	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
 		await announceEachRevocation(
@@ -98,6 +99,8 @@ async function replacePassword(
 		actor: input.actor,
 	});
 	const issued = await sessions.boundTo(input.transaction).issueReplacingPresented({
+		completes: "password_reset",
+		authorisedBy: "read_under_lock",
 		presentedToken: context.sessionToken,
 		userId: input.userId,
 		factors: ["password"],
@@ -126,10 +129,10 @@ export async function redeemReset(
 		environment.services.password,
 		environment.semaphore,
 	);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 
 	const result = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "password_reset",
 		});

@@ -9,7 +9,7 @@ import {
 import { InvalidSessionConfigError, sessionSettingsOf } from "../src/core/session/config.js";
 import type { Duration } from "../src/core/session/duration.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { DAY, sessionInsertFor } from "./session-fixtures.js";
+import { DAY, SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 /** This file names both shapes in order to reject them, so it is the one file the scan skips. */
@@ -108,6 +108,8 @@ describe("the deadlines the database actually stores (PostgreSQL 14 and newer)",
 	beforeAll(async () => {
 		migrated = await openMigratedSchema("sessioninterval");
 		sessions = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
+			sealing: "migrating",
 			driver: migrated.connection,
 			schema: migrated.schema,
 		});

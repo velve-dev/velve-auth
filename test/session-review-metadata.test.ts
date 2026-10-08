@@ -4,7 +4,10 @@ import { truncatedIpAddress } from "../src/core/session/ip-address.js";
 import { DEFAULT_SESSION_METADATA_MODE, sessionMetadataFor } from "../src/core/session/metadata.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { truncatedUserAgent } from "../src/core/session/user-agent.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const CHROME_ON_MACOS =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.205 Safari/537.36";
@@ -65,6 +68,8 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_metadata");
 	sent = capturingDriver(migrated.connection);
 	truncating = createSessionService({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
 		driver: sent.driver,
 		schema: migrated.schema,
 	});
@@ -79,6 +84,7 @@ afterAll(async () => {
 describe("L-10: truncated is the default, and it is what the column holds", () => {
 	it("stores an IPv4 address as its /24 network and the user agent as two families", async () => {
 		const issued = await truncating.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
@@ -92,6 +98,7 @@ describe("L-10: truncated is the default, and it is what the column holds", () =
 
 	it("stores an IPv6 address as its /64 network", async () => {
 		const issued = await truncating.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "2001:db8:1:2:dead:beef:1234:5678", userAgent: SAFARI_ON_IOS },
@@ -109,6 +116,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		sent.reset();
 
 		await truncating.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
@@ -126,6 +134,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		sent.reset();
 
 		await truncating.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "198.51.100.200", userAgent: SAFARI_ON_IOS },
@@ -140,6 +149,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 
 	it("truncates on a re-issue and on a credential change as well, not only on the first insert", async () => {
 		const first = await truncating.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "192.0.2.77", userAgent: CHROME_ON_MACOS },
@@ -147,6 +157,8 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		sent.reset();
 
 		const next = await truncating.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "totp"],
@@ -157,6 +169,8 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 			throw new Error("the re-issued session did not resolve");
 		}
 		const after = await truncating.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
+			completes: "password_change",
 			resolved,
 			factors: ["password"],
 			observed: { ipAddress: "192.0.2.77", userAgent: CHROME_ON_MACOS },
@@ -169,22 +183,28 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 
 	it("stores nothing at all in mode none, and the observed values in mode full", async () => {
 		const nothing = createSessionService({
+			sealing: "migrating",
+			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "none",
 		});
 		const everything = createSessionService({
+			sealing: "migrating",
+			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 			sessionMetadata: "full",
 		});
 
 		const blank = await nothing.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
 		});
 		const complete = await everything.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
@@ -208,6 +228,7 @@ describe("what truncation refuses to pass through", () => {
 			"'; DROP TABLE velve.session; --",
 		]) {
 			const issued = await truncating.issue({
+				authorisedBy: "read_under_lock",
 				userId,
 				factors: ["password"],
 				observed: { ipAddress: hostile, userAgent: null },
@@ -247,11 +268,14 @@ describe("what truncation refuses to pass through", () => {
 
 	it("is what a service built without the option does, and the option's default says so", async () => {
 		const unconfigured = createSessionService({
+			sealing: "migrating",
+			keys: TOKEN_KEYS,
 			driver: sent.driver,
 			schema: migrated.schema,
 		});
 
 		const issued = await unconfigured.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },

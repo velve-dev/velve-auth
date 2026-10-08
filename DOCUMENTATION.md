@@ -225,7 +225,9 @@ email address is an attribute, never a key.
 |---|---|---|
 | `id` | `uuid` | primary key |
 | `user_id` | `uuid` | cascades from `velve.user`, indexed, **immutable** |
-| `token_sha256` | `bytea` | SHA-256 of the session token, unique |
+| `token_sha256` | `bytea` | SHA-256 of the session token, unique; the lookup key |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 ([Security state: keyed token hashes](#security-state-keyed-token-hashes)) |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 | `created_at`, `last_used_at` | `timestamptz` | |
 | `idle_expires_at`, `absolute_expires_at` | `timestamptz` | `absolute_expires_at` is indexed for the sweep |
 | `factors` | `text[]` | `password`, `totp`, `webauthn`, `recovery`, `oauth` |
@@ -247,6 +249,8 @@ in one transaction (E-23).
 | `payload` | `jsonb` | |
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 
 ### `velve.pending_authentication`
 
@@ -257,9 +261,12 @@ The state between the first factor and the second.
 | `token_sha256` | `bytea` | primary key |
 | `user_id` | `uuid` | cascades from `velve.user` |
 | `factors_completed` | `text[]` | |
-| `attempts` | `integer` | default 0, counts against five |
+| `attempts` | `integer` | default 0, counts against five; bound into `token_mac` |
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
+| `session_epoch` | `bigint` | 1 to 2^53 − 1; the account's `session_epoch` when the row was created, 1 for an account without a seal row; bound into `token_mac` (migration 4) |
 
 ### `velve.totp_credential`
 
@@ -313,6 +320,8 @@ One row per code, never a blob.
 | `user_id` | `uuid` | cascades from `velve.user`; null for a discoverable sign-in |
 | `created_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
+| `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
+| `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 
 ### `velve.oauth_flow`
 
@@ -404,10 +413,11 @@ the two byte for byte.
 | `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
+| `0004_token_mac.sql` | 4 | locks the four token tables, deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables; stop every 1.x instance first, and rerun it if PostgreSQL aborted it with a deadlock against a 1.x request still in flight |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migration 3 is the same in every mode, and migration 4
-is reserved by architecture section 3.18 for the token MAC columns. Changing the mode of a database that has already
+configured identity mode. Migrations 3 and 4 are the same in every mode; migration 4
+signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
 
@@ -815,8 +825,9 @@ method that reaches them some other way says which way, by name.**
 | provider subject | the identity is addressed by `(provider, subject)` and the account is the answer (S-LINK-1, E-2425) | `findIdentityBySubject`, `refreshIdentity` |
 | account a sign-in decided | the account is one the OAuth sign-in created in the same transaction, or one automatic linking joined for a trusted provider, before any session exists (E-558, E-2434) | `insertIdentityOfSignIn` |
 | maintenance or start-up | every owner at once, by a deadline or a catalogue (E-2426) | `sweepExpiredRows`, `assertStoredFactorKeyVersionsAreKnown`, `assertEveryUserReferenceCascades` |
-| shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findUserIdOfSession`, `deleteSessionById` behind `FrozenRepositories`; TOTP `isConfirmedFor`, which answers `TotpService.isEnrolled` with a boolean and no secret (E-2435); `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
+| shipped surface | the only caller is a shipped declaration that takes a user id (E-737, E-2427) | session `listSessionsOfUser`, `findOwnerOfSession`, `deleteSessionById` behind `FrozenRepositories`; TOTP `isConfirmedFor`, which answers `TotpService.isEnrolled` with a boolean and no secret (E-2435); `findUserById`, `findUserByEmail`, `findUserByUsernameKey`, which read only whether a password row exists |
 | created with its account | the account row was inserted by the same transaction (E-2428) | password `writeForCreatedAccount` |
+| seal row beside its envelope | the condition only asks whether a seal row exists, correlated to the owner of the row the enclosing statement already reached (E-3121) | `sealRowPresentFor` |
 
 Where a caller holds a proof, the method takes it:
 
@@ -910,7 +921,7 @@ other request is observably waiting for a lock, reads the SQLSTATE where the ser
 raises it rather than at the HTTP boundary, and looks for any two transactions that
 take two tables in opposite orders in modes that wait for each other.
 
-**Where each of the eight is pinned.** The declaration audit — the statement carrying
+**Where each of the ten is pinned.** The declaration audit — the statement carrying
 `/* locks: … */` must appear, and must precede the first of the account's own tables —
 reads the statements a transaction ran, so a transaction has only to be *driven*. No
 interleaving, no second connection and no deadlock are needed, which is what makes the
@@ -923,21 +934,25 @@ audit cheap enough to point at flows that never race.
 | `replacePasswordOfSession` | `test/lock-order-declaration.test.ts`, `/password/change` |
 | `linkIdentityAndReissue` | `test/lock-order-declaration.test.ts`, `/identity/link/start` and the callback |
 | `removeCredential` (TOTP) | `test/lock-order-declaration.test.ts`, the repository transaction |
+| `rebindEnvelopesOfAccount` | `test/lock-order-declaration.test.ts`, the bound-envelope rewrite in a transaction of its own ([Security state: bound envelopes](#security-state-bound-envelopes)) |
 | `redeemResetWithRecoveryCode` | nothing; the audit skips it |
 | `replaceEveryCode` | nothing; the audit skips it |
 | `removeSignInMethod` | nothing; the audit skips it |
+| `accountForSignIn`, the OAuth sign-in of a known identity | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` drives it against the bound-envelope rewrite, which it waits for |
+| `accountForSignIn`, the automatic link of a new identity to an existing account | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` shows it waiting for a transaction that holds the account row (E-3225) |
 
-The last three are not an omission of the audit but a property of it: it considers only
+The last five are not an omission of the audit but a property of it: it considers only
 a transaction that writes **two or more** of the account's own tables, and on the tree as
-it stands each of those three writes fewer than two. The first two are E-1617's
+it stands each of those five writes fewer than two; the OAuth sign-in of a known identity
+and the automatic link each write `velve.identity` alone. The first two are E-1617's
 measurement — the recovery-code redemption is refused after one table on the repaired
 tree, and the regeneration touches one. The third was established by reading
 `removeSignInMethod`, which issues one `DELETE` against whichever single table the
 removal names; it has not been driven, and driving it is the stronger statement nobody
 has made. A transaction with one child table has no two tables to put in an order, so
 there is nothing for this audit to decide about it. Each case in
-`test/lock-order-declaration.test.ts` reports how many transactions it read, and a fourth
-case counts the eight statements themselves, so a ninth added anywhere reddens and has to
+`test/lock-order-declaration.test.ts` reports how many transactions it read, and a fifth
+case counts the eleven statements themselves, so a twelfth added anywhere reddens and has to
 be placed in this table.
 
 **What none of them covers.** The order is not enforced for a transaction no test
@@ -1058,7 +1073,11 @@ to no key at all (section 3.8).
 
 ### Encrypting a value
 
-Two shapes, one representation of the version.
+Two shapes, one representation of the version. Both are the unbound form of
+1.x and internal to `src/core/keys/envelope.ts`; they are not exported from the
+keys module's index, and no module of the library writes them any more. The
+stored columns use the bound form, which is built on the same AES-256-GCM step
+([Security state: bound envelopes](#security-state-bound-envelopes), E-3124).
 
 ```ts
 const { keyVersion, ciphertext } = await encryptWithPurposeKey(keys, purpose, plaintext);
@@ -1119,9 +1138,12 @@ Every failure of this module is a `KeyError` with a `code` from a fixed set:
 `key_version_out_of_range`, `key_version_unknown`,
 `key_material_not_exportable`, `purpose_cannot_encrypt`,
 `ciphertext_malformed`, `envelope_malformed`, `envelope_algorithm_unsupported`,
-`authentication_failed`, `key_unusable`. The message is fixed per code, so no key
-material can reach an error string. `key_unusable` comes from `macUnderCurrentKey`
-when the current key of an integrity purpose is not HMAC-SHA256 or does not sign
+`authentication_failed`, `key_unusable`, and the two of the bound envelope,
+`envelope_unbound` and `envelope_binding_malformed`
+([Security state: bound envelopes](#security-state-bound-envelopes)). The
+message is fixed per code, so no key material can reach an error string.
+`key_unusable` comes from `macUnderCurrentKey` when the current key of an
+integrity purpose is not HMAC-SHA256 or does not sign
 ([Security state](#security-state)).
 
 That includes the failure a caller most has to handle: a ciphertext that does
@@ -1698,15 +1720,21 @@ code itself.
 
 | Visible code | Internal reasons |
 |---|---|
-| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled_on_sign_in` |
+| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled_on_sign_in`, `session_issue_missed_on_password_sign_in`, `session_issue_missed_on_password_change` |
 | `session_required` | `cookie_absent`, `session_not_found`, `session_idle_expired`, `session_absolute_expired` |
-| `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled_on_token_redemption` |
-| `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed` |
-| `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated` |
+| `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled_on_token_redemption`, `session_issue_missed_on_token_redemption` |
+| `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`, `session_issue_missed_on_totp_second_factor` |
+| `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated`, `session_issue_missed_on_recovery_second_factor` |
 | `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent` |
-| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow` |
+| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow`, `session_issue_missed_on_oauth_flow` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
-| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion` |
+| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion`, `session_issue_missed_on_passkey_sign_in`, `session_issue_missed_on_passkey_second_factor` |
+
+Two concealed reasons answer with a code that is not merged with others:
+`session_issue_missed_on_sign_up` with `invalid_input` and
+`session_issue_missed_on_password_set` with `factor_already_enrolled`, the
+ordinary failures of a sign-up and of `password.set` whose session issue wrote no
+row ([Security state: keyed token hashes](#security-state-keyed-token-hashes)).
 
 An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `internal_error` with no detail in the body. The log line for it carries
@@ -2525,10 +2553,13 @@ The price is stated where it belongs, at the top of the operational
 documentation: **losing the key means losing every password.** That is the same
 risk class as a pepper.
 
-#### `sealPhc(keys, phc)` and `openPhc(keys, row)`
+#### `sealPhc(keys, userId, phc)` and `openPhc(keys, row)`
 
 The only two ways a PHC string crosses the column boundary. `sealPhc` returns
-`{ keyVersion, ciphertext }`; `openPhc` reads a row back. There is no write path
+`{ keyVersion, ciphertext }` in the bound form, bound to `userId` as owner and
+row; `openPhc` reads a row back under the binding of `row.userId`, reading the
+old 1.x form only where `row.unbound` is `"readable"`
+([Security state: bound envelopes](#security-state-bound-envelopes)). There is no write path
 that puts a cleartext string into the column, and the import module
 architecture 4.0.3 describes is to use these same two functions rather than a
 path of its own. That module does not ship (E-3021).
@@ -2538,7 +2569,14 @@ version that has left the ring, and `KeyError("authentication_failed")` when the
 ciphertext does not authenticate. `checkPassword` does not let either reach the
 caller — see `assertStoredKeyVersionsAreKnown` below (E-179).
 
-#### `createPasswordCredentialRepository({ driver, keys, schema?, memoryCeilingKiB })`
+#### `createPasswordCredentialRepository({ driver, keys, schema?, memoryCeilingKiB, sealing? })`
+
+`sealing` is the sealing mode an old-form PHC string is read under, `"required"`
+when absent; the sign-in repository is built with the instance's
+`securityState.sealing`. A row the repository reads carries
+`unbound: "readable" | "refused"`, decided from `sealing` and from whether the
+owner had a row in `velve.security_state` **in the same statement** that read
+the credential (E-3121).
 
 `memoryCeilingKiB` is the memory ceiling a written credential is held to, and it
 has no default, so a caller that forgets it cannot fall back to a ceiling below
@@ -2553,6 +2591,7 @@ writes what it verifies (E-2615).
 | `write({ actor, phc, scheme, setBySessionId })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
 | `writeForCreatedAccount({ userId, phc, scheme, setBySessionId })` | the same statement, for sign-up, whose transaction inserted the account (E-2428) |
 | `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
+| `rebindOwnedBy({ actor, read, unbound })` | reads nothing: opens `read`, the ciphertext and key version the caller's one verified read returned, rewrites it into the bound form under the current key with `UPDATE … WHERE user_id = $1 AND phc = $4 AND key_version = $5` on exactly those, and answers `{ outcome: "rebound", stored }` with the new ciphertext and key version, `{ outcome: "current", stored: read }` (already bound under the current key) or `{ outcome: "lost" }` (the row no longer holds `read`); called by `rebindEnvelopesOfAccount` only |
 
 `replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
 the stored **ciphertext**, not the PHC string, so a password the user changed
@@ -3497,8 +3536,9 @@ library that do.
 
 | Method | Does |
 |---|---|
-| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row in one statement, returning `{ expiresAt }` |
-| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload`; a `StoredOneTimeToken` or `null` |
+| `replaceOneTimeToken({ tokenSha256, purpose, userId, payload, tokenMac, tokenMacKeyVersion })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row with its token MAC in one statement, returning `{ expiresAt }` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version`; a `OneTimeTokenCandidate` whose MAC the caller checks before using it, or `null`. The payload is read as the text of its `jsonb` and parsed once, so every driver hands it back alike |
+| `withdrawTokensOf({ actor, purpose })` | `DELETE … WHERE user_id = $1 AND purpose = $2`; the confirmation of an address change calls it once per purpose, before the account lock, to withdraw every link still mailed to the old address |
 
 `replaceOneTimeToken` runs in a transaction and serialises the requests about one
 subject with `pg_advisory_xact_lock` before it writes, **not** with a row lock: the
@@ -3564,9 +3604,12 @@ The deadline is computed by the database from `now()`, so it is the database
 clock that decides both when a token expires and whether it has; and the string
 form is the one every driver agrees on.
 
-### `createOneTimeTokens(repository)`
+### `createOneTimeTokens(repository, { keys, reportTokenBindingRefusal? })`
 
-The two operations a flow needs, over that repository.
+The two operations a flow needs, over that repository. `keys` takes the token MAC
+of every row it writes and checks the MAC of every row it redeems;
+`reportTokenBindingRefusal` receives a redeemed row whose MAC fails
+([Security state: keyed token hashes](#security-state-keyed-token-hashes)).
 
 | Method | Parameters | Returns |
 |---|---|---|
@@ -3583,7 +3626,8 @@ carries the token cannot be sent (section 3.15 A.7) — subject to the driver
 joining the open transaction, as described under `replaceOneTimeToken` above.
 
 `redeem` answers `null` for a token that expired, for one already used, for one
-minted for a different purpose and for one that never existed. The four are the
+minted for a different purpose and for one that never existed, and in the same
+way for a row whose token MAC fails (S-INTEG-9). The four are the
 same answer on purpose (S-REPLAY-3): they are indistinguishable to the caller
 because they are indistinguishable to the statement, which learns only whether a
 row came back. Nothing downstream may reintroduce the difference; the visible
@@ -3591,14 +3635,17 @@ code for all four is `invalid_token`, decided in `error-map.ts` and nowhere else
 
 `userId` in the answer is the account the token was minted for, and it is the
 only account the redemption may act on. No session, cookie or input field takes
-part in that decision (S-TOKEN-4). A row that names no user is not redeemable and
-answers `null` like the rest.
+part in that decision (S-TOKEN-4). A row that names no user is not redeemable:
+`OneTimeTokens.redeem` checks its MAC, reports it if it fails, and answers `null`
+like the rest ([Security state: keyed token hashes](#security-state-keyed-token-hashes)).
 
 The row the repository removed is also the evidence an `Actor` is minted from.
-`consumeOneTimeToken` returns a `RedeemedOneTimeToken` — the branded shape
-`actorOfRedeemedOneTimeToken` takes — and that brand is asserted in this
-repository and nowhere else, so a redemption that no `DELETE … RETURNING`
-produced cannot become an actor (E-234, E-93).
+`consumeOneTimeToken` returns a candidate whose `accept()`, present only when the
+row names an account, gives the `RedeemedOneTimeToken` — the branded shape
+`actorOfRedeemedOneTimeToken` takes — and `OneTimeTokens.redeem` calls it only
+after the row's MAC has passed. The brand is asserted in this repository and
+nowhere else, so a redemption that no `DELETE … RETURNING` produced cannot become
+an actor (E-234, E-93).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -3618,16 +3665,16 @@ produced cannot become an actor (E-234, E-93).
 | `OneTimeTokenRedemption` | `{ purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the result of `redeem` |
 | `OneTimeTokens` | `{ issue; redeem }` | the result of `createOneTimeTokens` |
 | `OneTimeTokenRepositoryOptions` | `{ driver: Driver; schema: string }` | the argument of `createOneTimeTokenRepository` |
-| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; userId: string; payload: OneTimeTokenPayload \| null }` | the argument of `replaceOneTimeToken` |
+| `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; payload: OneTimeTokenPayload \| null; tokenMac: Uint8Array; tokenMacKeyVersion: number }` with a `userId`, or `userId: null` and `serialisedOn` for a cover | the argument of `replaceOneTimeToken` |
 | `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
-| `StoredOneTimeToken` | `RedeemedOneTimeToken & { payload: OneTimeTokenPayload \| null }` | the row `consumeOneTimeToken` returns; a row that names no account answers `null`, exactly as no row does (S-TOKEN-4) |
+| `OneTimeTokenCandidate` | `{ storedPayload; tokenMac; tokenMacKeyVersion }` with `userId: string` and `accept()`, or `userId: null` and no `accept` | the row `consumeOneTimeToken` returns, to be checked before use; `storedPayload` is `{ payload }`, or `null` where the column holds a value no issue writes |
 | `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
 | `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
 | `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
 
 `payload` is `Readonly`: the object `redeem` hands back is the row's, not a copy
 to edit. `userId` is `string` in `OneTimeTokenRedemption` and `string | null` in
-`StoredOneTimeToken`, because the column is nullable and a row that names no
+`OneTimeTokenCandidate`, because the column is nullable and a row that names no
 account is not redeemable — the service turns that row into `null` rather than
 handing a caller a target it does not have.
 
@@ -3814,8 +3861,15 @@ freshness is time since sign-in, and only a new sign-in restores it.
 ### `createSessionRepository(options)`
 
 ```ts
-createSessionRepository(options: { driver: Driver; schema: string }): SessionRepository
+createSessionRepository(options: {
+  driver: Driver; schema: string; keys: KeyProvider;
+  sealing?: SecurityStateSealing; reportTokenBindingRefusal?: TokenBindingRefusalReport;
+}): SessionRepository
 ```
+
+`keys` checks the token MAC of every row the repository lists, counts or announces;
+`sealing` defaults to `"required"`; both are described under [Security state:
+keyed token hashes](#security-state-keyed-token-hashes).
 
 Every statement the library issues against `velve.session`. All SQL lives here;
 nothing above this module writes SQL, and no method takes a table or column name
@@ -3823,13 +3877,20 @@ from a caller.
 
 | Method | Statement | Result |
 |---|---|---|
-| `insertSession(insert)` | `INSERT … RETURNING …` | the new `Session` |
-| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` | `{ session, userId, userDisabledAt, observedAt }` or `null` |
+| `boundTo(driver)` | none | the same repository, keys and mode over another driver |
+| `insertSession(insert)` | the account lock, the epoch read, then `INSERT … SELECT … WHERE` the epoch still holds, `RETURNING …`, one transaction | the new `Session` |
+| `findSessionByTokenHash(hash)` | one `SELECT` joined on `velve.user` and `velve.security_state` | a `SessionCandidate` to be checked before use, or `null` |
+| `rebindSessionTokenMac({ actor, sessionId, previous, next })` | `UPDATE … WHERE id = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5` | nothing; a row changed since it was read is left |
+| `listSessionsOfUser({ userId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions whose MAC passes, newest first |
+| `listEverySessionIdOwnedBy({ actor })` | `SELECT … WHERE user_id = $1`, deadlines ignored | the ids of every row whose MAC passes |
+| `findOwnerOfSession({ sessionId })` | `SELECT … WHERE id = $1` | `{ userId, libraryRow }` or `null` |
+| `deleteSessionById({ sessionId, ownerReadBefore })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
 | `extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs })` | `UPDATE … WHERE id = $1 AND user_id = $2 AND last_used_at <= now() - $4` | the new idle deadline, or `null` if nothing was written |
 | `deleteSessionByTokenHash(hash)` | `DELETE … WHERE token_sha256 = $1 RETURNING id, user_id` | what was removed, or `null` |
 | `deleteSessionOwnedBy({ sessionId, actor })` | `DELETE … WHERE id = $1 AND user_id = $2` | how many rows went |
-| `deleteEverySessionOwnedBy({ actor })` | `DELETE … WHERE user_id = $1` | how many rows went |
-| `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | `DELETE … WHERE user_id = $1 AND id <> $2` | how many rows went |
+| `deleteEverySessionOwnedBy({ actor })` | `DELETE … WHERE user_id = $1 RETURNING` what the check needs | how many of the removed rows passed their check |
+| `deleteEverySessionOwnedByReturningIds({ actor })` | the same statement | the ids of the removed rows that passed |
+| `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | the account lock, the kept row read, `DELETE … WHERE user_id = $1 AND id <> $2`, then the kept row checked and rebound by compare-and-set, or deleted, one transaction | how many of the other rows passed their check |
 | `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
 | `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
 | `replacePresentedSession({ presentedTokenHash, insert })` | `DELETE … WHERE token_sha256 = $1` when a token was presented, plus `INSERT`, one transaction | the new `Session` |
@@ -3841,7 +3902,9 @@ session is still fresh — is measured against it, so no decision compares two
 clocks (E-232, E-238).
 
 `SessionInsert` carries `userId`, `tokenHash`, `factors`, `ipAddress`,
-`userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`. Both deadlines are
+`userAgent`, `idleTimeoutMs` and `absoluteTimeoutMs`, and `bindUnder({
+sessionEpoch, createdAtMicros })`, which takes the token MAC over the epoch and
+creation time the inserting transaction read. Both deadlines and `created_at` are
 computed by the database from `now()`, so a session's clock is the database's
 clock and not the application's.
 
@@ -3899,7 +3962,10 @@ driver's work; the repository reads values, it does not parse them.
 ```ts
 createSessionService(options: {
   driver: Driver
+  keys: KeyProvider                                 // takes and checks every token MAC
+  sealing: "required" | "migrating"                 // whether an account without a seal row has an epoch
   schema?: string                                   // "velve"
+  reportTokenBindingRefusal?: TokenBindingRefusalReport
   session?: Partial<SessionConfig>
   sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
 }): SessionService
@@ -3956,10 +4022,30 @@ read.
 
 | Method | What it does |
 |---|---|
-| `issue({ userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
-| `issueReplacingPresented({ presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
-| `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
-| `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+| `issue({ completes?, authorisedBy, userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
+| `issueReplacingPresented({ completes, authorisedBy, presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
+| `reissue({ completes, authorisedBy, previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
+| `reissueAfterCredentialChange({ completes, authorisedBy, resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+
+`completes`, which every issuing method takes, names what the issue completes
+(`SessionIssuePath`) and decides how an issue that writes no row is answered
+([The session epoch](#the-session-epoch)); `issue` completes a sign-up unless it
+names another path. `authorisedBy`, which every issuing method takes, is the
+seal row the authorising check read ([The session epoch](#the-session-epoch)).
+
+`sessionRowsOn(service, driver)`, internal in `src/core/session/rows.ts` and not
+part of the shipped `SessionService`, returns the session rows a flow announces or
+revokes — `listEverySessionIdOwnedBy`, `deleteEverySessionOwnedBy` and
+`deleteEverySessionOwnedByReturningIds` — over another driver, a caller's
+transaction, with that service's `keys`, `sealing` and refusal report. It answers
+only for a service `createSessionService` built. The session
+repository checks each row's token MAC over the account's epoch before it lists
+one, in `session.list`, in the plugin context's `listSessionsForUser` and in the
+ids announced to a revocation hook, and leaves out, and reports, a row the library
+did not write; a forged or written-back session is neither listed nor announced
+(S-INTEG-9). The flows that revoke every session of an account, the password
+change and the OAuth link announcement take their rows this way, and the instance
+builds the plugin context's repository with the same key and mode.
 
 `observed` is `{ ipAddress, userAgent }` as the request layer saw them; what is
 stored follows `sessionMetadata` (L-10).
@@ -4014,7 +4100,7 @@ a session the caller could not use is not a device that is still signed in.
 |---|---|---|
 | `signOut({ token })` | not required | removes the one row the token addresses; an unknown token is not an error |
 | `revoke({ resolved, targetSessionId })` | required | removes that session if it belongs to the caller; `void` either way, and also for a `targetSessionId` that is not spelled as a `uuid`, which names no session (E-2242) |
-| `revokeEveryOther({ resolved })` | required | removes all but the calling session |
+| `revokeEveryOther({ resolved })` | required | removes all but the calling session, under the account lock; the calling session is checked again there and rebound by a compare-and-set on its MAC, and goes with the others if it fails ([Security state: keyed token hashes](#security-state-keyed-token-hashes)) |
 | `revokeEvery({ resolved })` | required | removes all, including the calling one |
 | `revokeEverySessionOfUser({ actor })` | — | removes every session of that user |
 | `listEveryIdOwnedBy({ resolved })` | required | the ids of every row the four revocations above can remove |
@@ -4115,7 +4201,10 @@ Types the interface carries: `SessionToken` and `IssuedSessionToken` (from
 `FreshnessWindow` (`{ freshnessWindowMs, now }`), `SessionResolution`,
 `IssuedSession` (`{ token, session }`), `ObservedRequest`
 (`{ ipAddress, userAgent }`), `SessionServiceOptions` and `SessionService`, and
-on the repository `SessionInsert`, `SessionWithOwner`, `RemovedSession` and
+on the repository `SessionInsert`, `SessionWithOwner`, `SessionCandidate` (the
+row with its stored factors, MAC, key version, the account's epoch and
+`createdAtMicros`, and `decode()`), `SessionOwner` (`{ userId, libraryRow }`),
+`RemovedSession`, `SecurityStateSealing` (`"required" | "migrating"`) and
 `SessionRepository`. The errors are `InvalidSessionConfigError` (startup),
 `SessionOwnerMismatchError` and `PreviousSessionMissingError` (re-issue).
 
@@ -4147,6 +4236,16 @@ period and, by default, a tolerance of one step in each direction (architecture
 | `clock` | `Clock` | yes | The only time the module reads. There is no default: architecture 6.19 says the core reads the time through `clock` alone, and a default would be a second source. Tests pass `createTestClock()` from `@velve/auth/testing`. |
 | `toleranceInSteps` | `0 \| 1` | no | How far either side of the current step a code is still accepted. `1` is A.8's default and 3.6's `±1 Schritt`; `0` accepts the current step alone. It also sizes `totp_used_step` retention. |
 | `schema` | `string` | no | Defaults to `velve`. |
+| `sealing` | `"required" \| "migrating"` | no | The sealing mode an old-form secret is read under, `"required"` when absent. The secret is read together with whether its owner has a seal row, in one statement (E-3121). |
+
+The secret is stored in the bound form, bound to the account as owner and row
+([Security state: bound envelopes](#security-state-bound-envelopes)). The TOTP
+repository gains `replaceSecretIfUnchanged({ actor, previous, secretEnc,
+keyVersion })`, where `previous` is the `{ ciphertext, keyVersion }` of the
+caller's verified read, an `UPDATE … WHERE user_id = $1 AND secret_enc = $2 AND
+key_version = $5` answering whether one row changed, which
+`rebindEnvelopesOfAccount` uses, and every credential it reads carries
+`sealRow: "present" | "absent"`.
 
 #### `totp.enroll.start({ actor, accountName })`
 
@@ -4403,11 +4502,14 @@ the ring read finds one version and the redemption is one statement.
 `verifyUnderPendingAttemptLimit(pending, token, verify)` holds L-8 for every
 factor a pending state can be spent on: TOTP, a recovery code and a WebAuthn
 assertion. It lives in the pending module, beside the state whose attempts it
-counts, and is re-exported from nowhere else. It resolves the state, runs the
-verification, and on failure calls `registerFailedAttempt`. The limit itself is
-`MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not restated here.
+counts, and is re-exported from nowhere else. It books one attempt with the
+internal `bookAttemptOn(pending, token)` before it runs the verification, and on failure reports it, which
+removes the row once the budget is spent ([The attempt budget](#the-attempt-budget)).
+The limit itself is `MAXIMUM_PENDING_ATTEMPTS` in the pending module and is not
+restated here.
 
-A correct code — or a verifying assertion — spends no attempt. Failures one to
+A correct code — or a verifying assertion — spends the attempt it booked, and the
+sign-in it completes removes the row with it. Failures one to
 four answer whatever the factor answers, `invalid_factor_code`,
 `invalid_recovery_code` or `webauthn_credential_rejected`; the failure that
 exhausts the budget answers `too_many_factor_attempts` and takes the pending row
@@ -5648,7 +5750,8 @@ device that started a link cancels the link**, rather than the callback quietly
 signing that device back in.
 
 The session service call behind this is
-`reissueSessionOfUser({ actor, previousSessionId, factors, observed })`. It is
+`reissueSessionOfUser({ completes, authorisedBy, actor, previousSessionId, factors, observed })`,
+with `completes: "oauth_link"`. It is
 the third re-issue shape beside `reissue`, which finds the previous row by its
 token, and `reissueAfterCredentialChange`, which replaces every row the account
 has; this one names the row by id, touches no other, and refuses when the named
@@ -5838,7 +5941,9 @@ the ID token are stored AES-256-GCM encrypted under the purpose key
 
 The library never reads them back and offers no method that returns them: it
 does not refresh a provider token and does not call provider APIs. An
-application that needs them reads and decrypts the columns itself.
+application that needs them reads and decrypts the columns itself. Each is
+bound to its account, its identity row and its column, and decrypting one
+needs that binding ([Security state: bound envelopes](#security-state-bound-envelopes)).
 
 ### Rate limits and cookies
 
@@ -5939,6 +6044,7 @@ compile (E-349).
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
 | `schema` | `string` | `"velve"` | the PostgreSQL schema name |
 | `clock` | `Clock` | the system clock | the time source; `@velve/auth/testing` supplies a settable one |
+| `securityState` | `SecurityStateConfig` | `{ sealing: "required" }` | whether every account must carry a seal or the estate is still being sealed; see [Security state: bound envelopes](#security-state-bound-envelopes) |
 | `log` | `(level, message, fields?) => void` | a sink that drops everything, except a weakening at start and a route alarm, which go to `console.warn` | where the true reason of a refusal is written |
 
 There is no option that disables the origin check, the rate limiter, PKCE or the
@@ -5982,6 +6088,7 @@ nothing else would tell you.
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
+| `security_state_sealing_unknown` | `securityState` is given and its `sealing` is neither `"required"` nor `"migrating"` (S-INTEG-1, E-3112) |
 
 #### A route conflict names both contributors
 
@@ -6078,6 +6185,7 @@ What counts as weaker, option by option:
 | `webauthn` | `userVerification: "preferred"`; a block that leaves the field out gets `"required"` and is not logged |
 | `recoveryCodes` | `count` below ten |
 | `clock` | any clock the caller supplies |
+| `securityState` | `sealing: "migrating"`; the line says that unsealed accounts are open to old envelopes copied from another account |
 
 The other rows say nothing weakens them: `password` and a username mode without
 recovery codes are refused instead, and a TOTP tolerance above one step is not
@@ -6402,7 +6510,7 @@ request carrying only it byte for byte as it answers a request carrying no
 cookie at all.
 
 ```ts
-createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationService
+createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRefusal? }): PendingAuthenticationService
 ```
 
 | Method | Meaning |
@@ -6410,11 +6518,18 @@ createPendingAuthenticationService({ driver, schema? }): PendingAuthenticationSe
 | `begin({ userId, factorsCompleted })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied |
 | `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
 | `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
-| `registerFailedAttempt(token)` | `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome: "exhausted" }` |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
 
+The booking is not a method of the shipped service. `bookAttemptOn(pending, token)`,
+internal in `src/core/factor/pending/booking.ts`, books one attempt before a factor
+is evaluated and answers a `BookedAttempt`: `{ outcome: "booked", resolution,
+failed() }`, `{ outcome: "exhausted" }` or `{ outcome: "missing" }`; `failed()`
+answers `{ outcome: "attempts_remain", attemptsRemaining }` or `{ outcome:
+"exhausted" }`. It answers only for a service `createPendingAuthenticationService`
+built.
+
 ```ts
-createSecondFactorCompletion({ driver, schema?, session?, sessionMetadata? })
+createSecondFactorCompletion({ driver, keys, sealing, schema?, session?, sessionMetadata?, reportTokenBindingRefusal? })
   .complete({ pendingToken, factor, observed }): Promise<IssuedSession>
 ```
 
@@ -8021,17 +8136,20 @@ route with your own `fetch` against `/x/<plugin-id>/…`.
 | `VelveResult<Value, Code>` | The result object. |
 | `VelveFailure<Code>` | Its `error` half. |
 | `ClientRoute` | One row of the table: `name`, `method`, `path`. |
-| `VelveRouteTable` | The tuple type of every row the library declares, derived from the route factories themselves. |
+| `VelveRouteTable` | The tuple type of every row the library declares, written out route for route and held against the route factories by a test. |
 | `ClientMethodOf<Route>` | One route's client signature: `(input) => Promise<VelveResult<Output, Code>>`. |
 | `ClientSurface<Routes>` | The nested surface of a whole table, the mirror of `ServerSurface`. |
 | `VelveError`, `VelveErrorCode` | Re-exported from `@velve/auth`, so a browser bundle gets them without importing the core. |
 
-`VelveRouteTable` is the mechanism that keeps this table honest. It is built from
-`ReturnType<typeof sessionRoutes>` and its four siblings through type-only
-imports, so the client's types come from the route declarations themselves and
-are erased entirely at build time; the value table is then held against it with
-`satisfies`. A row added, dropped, renamed or repathed in any route module fails
-to compile here. A row whose **method** changes does not — `defineRoute` does not
+`VelveRouteTable` is the mechanism that keeps this table honest. It is written out
+route for route, the provider routes as `OAuthRouteTable` from
+`src/core/oauth/routes.ts`, which `OAuthSurface` reads too, so the shipped
+declarations name the routes and never the services that build them.
+`test/client-route-table-type.test.ts` holds it against `ReturnType<typeof sessionRoutes>`
+and its siblings: each must be assignable to the other, so a route added,
+dropped, renamed, repathed or given another input, output or error code in any
+route module fails the type check there. The value table is then held against it
+with `satisfies`. A row whose **method** changes does not — `defineRoute` does not
 carry the method as a type parameter — and is caught by a test against a live
 instance instead.
 
@@ -8682,7 +8800,9 @@ application's own must answer both with a key that can take an HMAC, or `migrate
 start with `keys_unusable`; the start takes one probe HMAC under each to find
 out, and requires the key to be HMAC with SHA-256 and the output to be 32 bytes.
 `migrate()` also probes the `state-mac` key of every version a row of
-`velve.security_state` names, and refuses the start with `keys_unusable` if the ring
+`velve.security_state` names, and the `token-mac` key of every version a row of
+`velve.session`, `velve.one_time_token` or `velve.pending_authentication` names,
+and refuses the start with `keys_unusable` if the ring
 answers one of them with a key that cannot take that MAC; a version the ring no
 longer holds is not a start error but a broken state of the accounts it seals.
 Both checks run in `migrate()` and nowhere else: a serving process that does
@@ -8770,20 +8890,25 @@ uses it to decide which purposes get the probe.
 ### `assertStoredIntegrityKeysTakeMac({ driver, keys, schema })`
 
 Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()` before
-it applies a migration, and only when `schemaHoldsTheSealTable` finds the table
-already there, since a schema migration 3 has not reached holds no seal. Reads
-every distinct `key_version` of `velve.security_state` and refuses the start with
-`keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects,
-or with a key of another HMAC purpose: that purpose's current key, or its key
-under any version number a seal row names (E-3375). A version the ring does not
-hold is skipped. The refusal shares its code with the purpose probe and has a
-message of its own, which names the stored version and the other key, such as
-`the token-mac key of version 1`. It makes one `byVersion` call and at most one
-probe per distinct stored version for `state-mac`, and for each of the seven
-other purposes one `current` call plus one `byVersion` call and at most one probe
-per distinct stored version, and how many distinct versions there are is up to
-whoever writes the table. A `state-mac` version answered with another purpose's
-key under a different version number is not compared.
+it applies a migration, and only when `schemaHoldsTheSealTable` finds the seal
+table already there, since a schema migration 3 has not reached holds no seal.
+Reads every distinct `key_version` of `velve.security_state` under `state-mac`
+and every distinct `token_mac_key_version` of the four token tables under
+`token-mac`, and refuses the start with `keys_unusable` if the ring answers one
+of them with a key `keyTakesMac` rejects, or with a key of another HMAC purpose:
+that purpose's current key, or its key under any version number a row of the
+same kind names (E-3375). A version the ring does not hold is skipped. The
+refusal shares its code with the purpose probe and has a message of its own,
+which names the stored version and the other key, such as `the token-mac key of
+version 1`. It makes one `byVersion` call and at most one probe per distinct
+stored version, and for each other purpose one `current` call plus one
+`byVersion` call per distinct stored version, and how many distinct versions
+there are is up to whoever writes the tables. A version answered with another
+purpose's key under a different version number is not compared. A token table is
+read down its `token_mac_key_version` index one version at a time, so the read
+costs one index step per stored version rather than one per row: measured on
+PostgreSQL 16 over 300,000 rows under two versions at 0.4 to 0.9 ms, against 26
+to 35 ms for a `SELECT DISTINCT` over the same index.
 
 ### `withReadCommittedTransactions(driver)`
 
@@ -8822,11 +8947,753 @@ in [Security state: keyed token hashes](#security-state-keyed-token-hashes).
 
 ## Security state: bound envelopes
 
-> Reserved for `security-state-envelopes`: every envelope bound to its owner, its row and its column (S-INTEG-1). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Every ciphertext the library stores is bound to the account it belongs to, the
+row it stands in and the column it was written for (S-INTEG-1, architecture
+section 3.18 point 2). A bound ciphertext a database writer copies to another
+account, another row or another column does not decrypt: the AES-256-GCM tag
+fails, and the path that wanted the value answers as it answers its ordinary
+failure. Before 2.0.0 the additional data bound only the algorithm and the key
+version, so an encrypted password or TOTP secret could be moved between
+accounts and still open.
+
+> **Under `securityState.sealing: "migrating"` this does not hold for an
+> unsealed account.** The old 1.x form carries no binding, and it is read for
+> every account without a seal row. A writer who kept an old-form ciphertext of
+> their own account — their password or their TOTP secret from before the
+> upgrade — can copy it into any unsealed account and sign in as that account
+> with their own password or code. Nothing in the code can tell that copy from
+> the account's own old value until the account has a seal. Run the
+> maintenance step immediately after the upgrade, and switch to `"required"` as
+> soon as it has finished; every hour in `"migrating"` is an hour this copy
+> works (E-3122).
+
+### The bound columns
+
+| Column | Purpose | Owner | Row |
+|---|---|---|---|
+| `password_credential.phc` | `password-enc` | `user_id` | `user_id` |
+| `totp_credential.secret_enc` | `totp-enc` | `user_id` | `user_id` |
+| `identity.access_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
+| `identity.refresh_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
+| `identity.id_token_enc` | `oauth-token-enc` | `user_id` | `identity.id` |
+| `oauth_flow.pkce_verifier_enc` | `pkce-enc` | `link_to_user_id`, or none | `state_sha256`, `provider`, `nonce`, `redirect_path`, `link_from_session_id` and `expires_at` |
+
+The three token columns share one purpose key, so the column in the additional
+data is what keeps an access token from opening as a refresh token. The column
+decides the purpose: a caller names the column, and the key follows from it.
+
+An OAuth sign-in of a known identity locks the account row through
+`src/core/db/lock.ts` before it refreshes the stored tokens, re-reads the
+identity under the lock, and fails the flow as an unknown state when the
+identity's owner or id changed meanwhile, so a sign-in waits for the account
+rewrite rather than making its compare-and-swap lose (E-3222). An automatic
+link of a new identity to an existing account takes the same lock before it
+inserts the identity with its tokens. Under the lock it decides again, with
+every condition of S-LINK-2, which account the link may join; if that is no
+longer the account it locked — its address changed or lost its verification
+while the sign-in waited — the sign-in fails as an unknown state and inserts
+nothing (E-3225, E-3227).
+
+`identity.id` is drawn by the library before the row is inserted, so the
+tokens can be bound to it; a refresh of an existing identity writes its new
+tokens only to the row whose id they are bound to, and a row replaced between
+the lookup and the refresh fails the flow as an unknown state (E-3113).
+
+The row of a flow is more than its key: every column that steers the flow —
+the provider, the nonce an ID token is checked against, the redirect path, the
+session a link replaces and the deadline — is part of it, so a writer who
+rewrites any of them makes the verifier unreadable and the callback answers as
+for an unknown state. The deadline is drawn from the database clock before the
+insert and bound at the full precision PostgreSQL stores, as the decimal of
+its whole microseconds since the epoch, which both the statement that draws it
+and the statement that consumes the row read in SQL rather than through a
+driver `Date`, which holds milliseconds only; a deadline moved by one
+microsecond makes the verifier unreadable (E-3228). The
+callback opens the verifier straight after it consumes the row and checks its
+provider, before it reads whether the flow links and before any plugin hook,
+so no column of a rewritten row is acted on. The table of section 3.18 point 2
+names the same six columns (E-3123, E-3128).
+
+The identity repository takes the key ring (`createOAuthIdentityRepository({
+driver, schema, keys })`) and encrypts the tokens itself once owner and row are
+known. `IdentityFacts.tokens` is the plaintext `{ accessToken, refreshToken,
+idToken }` to store, or `null` where `storeTokens` is off; `refreshIdentity({
+existing, …facts })` takes the identity the lookup by provider and subject
+found. `rebindTokensOwnedBy({ actor, read, unbound })` reads nothing: `read` is
+the token columns of each identity row of the account as the caller's verified
+read returned them (`StoredProviderTokens`: `identityId`, `accessTokenEnc`,
+`refreshTokenEnc`, `idTokenEnc`, `tokenKeyVersion`). It opens exactly those,
+replaces a row only with `UPDATE … WHERE id = $1 AND user_id = $2 AND
+token_key_version = $7` and each token column `IS NOT DISTINCT FROM` its read
+value, and answers one rewrite per row: `{ outcome: "rebound", stored }` with the
+new ciphertexts and key version, `{ outcome: "current", stored }` for a row
+already bound under the current key or holding no token, or `{ outcome: "lost"
+}`. It refuses a row
+whose token columns hold ciphertexts and whose `token_key_version` is empty
+(`key_version_unknown`), and three tokens of one row that would end under two
+key versions (`internal_error`).
+
+### The stored form
+
+A bound value in the `bytea` column is:
+
+| Bytes | Content |
+|---|---|
+| 1 | `0x02`, the bound form |
+| 12 | nonce |
+| rest | AES-256-GCM ciphertext with its 16-byte tag |
+
+The key version stays in the row's `key_version` column (`token_key_version`
+on `velve.identity`), as before.
+
+The additional data is six fields in this order, each a type byte, a length of
+four bytes in network order and the bytes:
+
+| Field | Type byte | Bytes |
+|---|---|---|
+| context | `0x01` text | `velve-auth/envelope/v2` |
+| algorithm | `0x01` text | `A256GCM` |
+| key version | `0x04` integer | the version as a big-endian signed 32-bit integer |
+| column | `0x01` text | `table.column` as in the table above, without the schema |
+| owner | `0x02` uuid, or `0x00` absent | the sixteen bytes of the uuid, or nothing |
+| row | `0x02` uuid, or `0x03` bytes | the sixteen bytes of the uuid, or, for a flow, the fields of its row columns |
+
+A uuid is read in either case and written as its bytes, so the same account
+spelled in upper or lower case binds the same way. An owner or a row that is
+not a uuid is refused with `KeyError` code `envelope_binding_malformed`. The
+row of a flow is written by `rowOfParts([state_sha256, provider, nonce,
+redirect_path, link_from_session_id, expires_at in epoch microseconds])` as
+fields of the same kind — `0x03`
+bytes, `0x01` text, `0x00` absent — and that encoding is the row field's
+bytes. The
+schema is not part of the binding: changing `schema` in the configuration does
+not make stored values unreadable (E-3110).
+
+An application that reads stored provider tokens itself (`storeTokens: true`)
+has to build this additional data to decrypt them: skip the first byte, take
+the nonce and the ciphertext from the rest, and use the owner, the identity id
+and the column of the row it read.
+
+### The old form
+
+A value written by 1.x has no first byte of its own: it is nonce, ciphertext and
+tag, and its first byte is random. Whether it is still read is decided by
+`securityState.sealing`:
+
+| `sealing` | The old form |
+|---|---|
+| `"required"` (default) | refused; the path answers as its ordinary failure, and the `KeyError` code is `envelope_unbound` |
+| `"migrating"` | read for an account without a seal row, and refused for one with a seal row |
+
+Whether the account has a seal row is selected **in the statement that reads
+the envelope** — an `EXISTS` over `velve.security_state` beside the credential
+— so the ciphertext and the decision come from one snapshot, and a maintenance
+step that converts and seals the account right after the read cannot refuse
+the user who was reading. `unboundReadingOf(sealing, sealRow)` in
+`src/core/auth/security-state.ts` turns the mode and the presence into
+`"readable"` or `"refused"`, and `sealRowPresentFor(schema, ownerColumn)` is the
+condition the readers embed. The sign-in runs that one statement for a known
+and an unknown account alike, so the sequence of statements does not change
+(S-TIM-1) (E-3121).
+
+`oauth_flow.pkce_verifier_enc` is never read in the old form. Its rows live ten
+minutes and are not rewritten: a flow that was open across the upgrade answers
+its callback as a flow with an unknown state and is begun again (E-3114).
+
+One old value in 256 also starts with `0x02`. Such a value is tried as bound
+first and, where the old form is read, as old second, so no row is stranded by
+its nonce and none is misread: an old value opens as bound only by a forged
+128-bit tag. Where the old form is refused it fails as `authentication_failed`
+(E-3111, E-3120).
+
+
+### `securityState`
+
+```ts
+interface SecurityStateConfig {
+  readonly sealing: "required" | "migrating";
+}
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `sealing` | `"required" \| "migrating"` | `"required"` | whether every account must carry a seal, or the estate is still being sealed and the old envelope form is read for an account without one |
+
+`"migrating"` is reported at start as a weakening of `securityState`. Any other
+value — a misspelling, `{}`, a value that is not an object — refuses the start
+with `VelveStartupError` code `security_state_sealing_unknown`. The upgrade runs
+in `"migrating"` until the maintenance step has rewritten every account, and
+then in `"required"` (section 3.18 point 5).
+
+The start check and the resolution of the mode live in
+`src/core/auth/security-state.ts`: `isStartableSecurityState(value)` answers
+whether a configured `securityState` names one of the two modes, which
+`assertConfigurationIsStartable` turns into `security_state_sealing_unknown`;
+`sealingOf(securityState)` resolves an absent option to `DEFAULT_SEALING`,
+`"required"`; and `sealRowPresenceOf(sealed)` reads the selected `EXISTS` as
+`"present"` only from an explicit `true`.
+
+### What the readers do with a value that does not open
+
+| Path | Answer |
+|---|---|
+| password sign-in | the dummy credential is verified instead, and the answer is `invalid_credentials`, as for a wrong password (S-TIM-1) |
+| TOTP check, enrolment finish and removal | the factor answers as one nobody holds, as for a wrong code (E-428) |
+| OAuth callback | the flow answers as an unknown state |
+
+No alarm is raised for it yet; the alarm and its reason
+`envelope_binding_mismatch` arrive with the seal (E-3112). The TOTP paths
+refuse an unreadable secret before a code is matched, so they do less work for
+it than for a wrong code; the same-work promise covers the password sign-in
+alone (E-3127).
+
+### `encryptBound(keys, binding, plaintext)`
+
+Internal, in `src/core/keys/envelope-binding.ts`. Returns a `PurposeCiphertext`
+— `{ keyVersion, ciphertext }` — in the bound form under the current key of the
+column's purpose.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `keys` | `KeyProvider` | the ring |
+| `binding` | `EnvelopeBinding` | `{ column, owner, row }`: a `BoundColumn`, the owner's uuid or `null`, and the row's uuid or the bytes of its `bytea` key |
+| `plaintext` | `Uint8Array` | the value |
+
+### `decryptBound(keys, binding, stored, unbound)`
+
+Internal, same module. Returns the plaintext of `stored` — `{ keyVersion,
+ciphertext }` as read from the row — if it is bound to `binding`, or if it is in
+the old form and `unbound` is `"readable"`. Throws `KeyError`:
+`authentication_failed` for a value bound elsewhere or tampered with,
+`envelope_unbound` for an old value where `unbound` is `"refused"`,
+`key_version_unknown` for a version that left the ring, `ciphertext_malformed`
+below the length of a nonce and a tag.
+
+### `boundAdditionalData(binding, keyVersion)`
+
+Internal, same module. Returns the additional data of the table above for a
+binding under a key version: the bytes `encryptBound` and `decryptBound` pass
+to AES-GCM. Exported for the tests that check the encoding is unambiguous.
+
+### `encryptUnderAdditionalData(keys, purpose, additionalDataFor, plaintext)` and `decryptUnderAdditionalData(keys, purpose, stored, additionalData)`
+
+Internal, in `src/core/keys/envelope.ts`. The AES-256-GCM step both forms share:
+the first encrypts under the current key of `purpose` with the additional data
+`additionalDataFor(keyVersion)` yields for the version it chose, and returns `{
+keyVersion, ciphertext }` with the nonce in front; the second decrypts such a
+value under its stored version with the given additional data, with the error
+codes of `decryptWithPurposeKey`. Only `envelope.ts` and the binding module may
+name them, or `decryptWithPurposeKey`, and only `envelope.ts` the unbound
+writers; `test/integ-envelope-binding.test.ts` scans `src/` for it and is shown
+failing on planted modules (E-3124, E-3129).
+
+### `rebindEnvelope(keys, binding, stored, unbound)`
+
+Internal, same module, for the maintenance step (S-INTEG-8). Opens `stored` as
+`decryptBound` does and returns the bound form of the same plaintext under the
+current key, or `null` when `stored` is already bound under the current key
+version. It throws for a value that does not open, so a copied or tampered value
+is never rewritten into a valid one. `unbound` is the caller's to decide
+(E-3115).
+
+### `rebindEnvelopesOfAccount(input)`
+
+Internal, in `src/core/auth/account-envelopes.ts`. Rewrites every envelope of
+one account — the password, the TOTP secret and the tokens of each identity —
+into the bound form under the current key, inside the caller's transaction. It
+is what a change on an unsealed account in `"migrating"` runs first (section
+3.18 point 4, E-3094) and what the maintenance step runs per account.
+
+It reads nothing itself. Section 3.18 point 4 has the change read the seal row
+and every component in **one** statement after the account lock, and every
+re-encryption open exactly the ciphertext that read returned and swap on that
+value, never after a second read. So the caller passes that read, and the
+rewrite works from it alone (E-3224):
+
+1. It locks the account row through `src/core/db/lock.ts`, which is harmless
+   where the caller already holds the lock, as it must before its read.
+2. It decides the old form from `sealing` and the `sealRow` of the read, and
+   from nothing else. Where the read showed a seal row, an old-form envelope
+   throws and nothing is laundered (E-3121), and a seal row deleted after the
+   read changes nothing. It cannot tell a verified read from a value built by
+   hand: a caller that passes `sealRow: "absent"` for an account whose read
+   showed one has the old form opened and re-encrypted. Passing the one
+   verified read unchanged is the caller's obligation (E-3229).
+3. It opens each envelope of the read with `rebindEnvelope` and, where it is not
+   already bound under the current key, writes the new value with a
+   compare-and-swap on exactly the ciphertext and key version of the read. A
+   swap that finds anything else throws `EnvelopeChangedSinceReadError` (code
+   `envelope_changed_since_read`): a writer replaced the envelope after the
+   read, the state is broken, and the caller's transaction rolls back. The seal
+   branch answers it as `seal_mismatch`.
+
+A value that does not open throws, and the caller's transaction then writes
+nothing. One undecryptable value anywhere in the account therefore blocks every
+later change of it in `"migrating"` and its maintenance; E-3126 says how an
+administrator recovers (E-3117).
+
+| Field of `input` | Type | Meaning |
+|---|---|---|
+| `driver` | `OpenTransaction` | the open transaction, from `inOneTransaction` |
+| `schema` | `string` | the schema |
+| `keys` | `KeyProvider` | the ring |
+| `actor` | `Actor` | the account |
+| `sealing` | `"required" \| "migrating"` | the sealing mode the instance runs in |
+| `read` | `VerifiedEnvelopeRead` | what the one statement after the account lock returned |
+
+`VerifiedEnvelopeRead` is filled column for column from that statement, which
+selects beside the seal row:
+
+| Field | Type | Column |
+|---|---|---|
+| `sealRow` | `"present" \| "absent"` | whether `security_state` has a row for the account, the `EXISTS` of `sealRowPresentFor` |
+| `password` | `{ ciphertext, keyVersion } \| null` | `password_credential.phc` and `key_version`, `null` without a row |
+| `totpSecret` | `{ ciphertext, keyVersion } \| null` | `totp_credential.secret_enc` and `key_version`, `null` without a row |
+| `identities` | `StoredProviderTokens[]` | one entry per `identity` row of the account: `identityId` (`id`), `accessTokenEnc`, `refreshTokenEnc`, `idTokenEnc` (each `null` where the column is) and `tokenKeyVersion` (`token_key_version`) |
+
+The ciphertexts are the bytes exactly as stored; a statement that aggregates the
+identity rows, for instance with `json_agg` and `encode(…, 'hex')`, decodes them
+back to those bytes. `test/envelope-read-fixtures.ts` has such a statement.
+
+Returns `{ envelopes, passwordRewritten, totpRewritten, identitiesRewritten }`.
+`envelopes` has the shape of the read without `sealRow` and holds each envelope
+as stored once the rewrite is done — the new ciphertext and key version where it
+rewrote one, the read value where it did not — so the caller computes the new
+seal from the read and this change, with no second read. A second call on the
+same account reports nothing rewritten. `oauth_flow` is not touched.
+
+The repository methods it is built on — password `rebindOwnedBy`, TOTP
+`replaceSecretIfUnchanged`, identity `rebindTokensOwnedBy` — take the read
+values and answer an `EnvelopeRewrite`: `{ outcome: "rebound" | "current",
+stored }` or `{ outcome: "lost" }`.
+
+### `inOneTransaction(driver, work)`
+
+Internal, in `src/core/auth/account-envelopes.ts`. Opens a transaction on
+`driver` and hands `work` its driver as an `OpenTransaction`, a `Driver` branded
+by this function alone. `rebindEnvelopesOfAccount` takes nothing else, so a
+caller cannot pass the pool, on which the account lock would end with the
+statement that took it (E-3129).
+
+### Rotation
+
+Rotation works as before ([Key management](#key-management)): a value bound
+under version 1 opens while version 1 is in the ring, and the key version is
+part of the additional data, so rewriting the `key_version` column to another
+version in the ring fails the tag. `rebindEnvelope` is what moves a value to the
+current version.
+
+### Cost
+
+One measurement on the development machine, 20 000 decryptions of a PHC
+string: 175 µs bound against 129 µs unbound, about 46 µs more per sign-in
+(E-3110). Reading the seal row in the credential's statement measured, over
+three rounds of 5 000 statements against the test cluster, 31, 112 and 45 µs
+more than the statement without it, on round trips of 225 to 275 µs (E-3121).
 
 ## Security state: keyed token hashes
 
-> Reserved for `security-state-tokens`: the token MAC of sessions, one-time tokens and pending authentications (S-INTEG-9). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+A database writer without the root key could, until 2.0.0, create a session, a
+one-time token, a pending authentication or a WebAuthn challenge for any account:
+`token_sha256` is an unkeyed SHA-256 value, so whoever chooses a token knows its
+hash. Every row of `velve.session`, `velve.one_time_token`,
+`velve.pending_authentication` and `velve.webauthn_challenge` now also carries `token_mac`, an HMAC-SHA256 under the `token-mac` purpose key, and
+`token_mac_key_version`, the version it was taken under (architecture section
+3.18, point 3, and S-INTEG-9). Nothing in this chapter is configured; it holds
+for every instance.
+
+### What the MAC covers
+
+`token_sha256` stays the lookup key, so a row is still found by the hash of the
+presented token. The MAC is taken over a length-prefixed encoding of:
+
+| Field | Session | Pending authentication | One-time token |
+|---|---|---|---|
+| context | `velve-auth/token-binding/v1` | the same | the same |
+| purpose | `session` | `pending_authentication` | the row's `purpose` |
+| owner | `user_id` | `user_id` | `user_id`, or absent |
+| token | `token_sha256` | `token_sha256` | `token_sha256` |
+| content | the row's `id`, `factors` in stored order, the account's `session_epoch` at issue, and `created_at` in whole microseconds since the Unix epoch | `factors_completed`, in stored order, `attempts`, and the `session_epoch` it was created under | `payload` as canonical JSON, or absent |
+
+Each field is a type byte, a four-byte length in network order and its bytes,
+and an absent value has its own type byte, so two different rows never encode
+alike. The owner is encoded in the lower-case, hyphenated spelling PostgreSQL
+hands a `uuid` back in, whatever spelling the caller passed. The canonical JSON of a payload sorts every object's keys and is taken
+after a JSON round trip, which is the form `jsonb` hands back. A payload is read
+as `payload::text`, which every driver hands back as text, and parsed exactly
+once, so one stored row gets one verdict whatever the driver does with `jsonb`; a
+stored payload that is not an object, an array or SQL `NULL` — a `jsonb` string,
+number or boolean, which no issue writes, a string holding JSON text among them —
+has no binding, and its row is refused and reported like any row whose MAC does
+not match. A session's id is drawn before the insert, so the MAC can bind it: a
+writer who renames a session row to the id `set_by_session_id` or
+`link_from_session_id` names leaves a row that is refused. The factor lists are
+bound in the order the row stores them, not sorted as the seal sorts its lists.
+
+A column the MAC does not bind can still hold a value the library never writes —
+a deadline or `last_used_at` moved to `infinity`. A row whose `created_at` is no
+exact count of microseconds, or whose unbound columns no date of the runtime can
+carry, is refused and reported like a row whose MAC does not match; no reader
+throws on it. The owner's list, every revocation, a password change and the
+maintenance pass go on over the genuine rows and still delete such a row where
+they delete.
+
+A writer who inserts a row for a token of their own, moves a real row to another
+account, into another table or to another purpose, raises its factors, rewrites
+a payload, renames a session or resets a pending attempt counter leaves a row
+whose MAC does not match.
+
+A WebAuthn challenge is bound the same way, with `challenge_sha256` in the token
+field: purpose `webauthn_challenge`, the owner or the absent field for a
+discoverable sign-in, and as content the ceremony, `register` or `authenticate`,
+as one text field. A challenge a writer inserts again after it was consumed, moves
+to the other ceremony or inserts for a challenge of their own is refused at
+consumption like an unknown challenge (`challenge_not_found`) and reported with
+the occasion of its ceremony: `sign_in` for the challenge of a discoverable
+sign-in, `factor_check` for a passkey as the second factor, and `change` for a
+registration.
+
+**The address a link was mailed to.** Every one-time token the email flows mint
+carries `accountEmail` in its payload, and so under its MAC: the account's
+`user.email` when the token was issued — the address a reset, a magic link or an
+address verification is mailed to, and for an address change the old address,
+beside the new one in `newEmail`. A cover artefact for an unknown address carries
+that address. The redemption reads the account and compares: if `user.email` is
+no longer the bound address, the state is broken — a writer set the address to
+their own only for the request and restored it — and the redemption is answered
+as a missing token (`invalid_token`) and reported with `reason: "seal_mismatch"`
+and the occasion `token_redemption`. A legitimate change of address does not
+leave the older links to raise it: the confirmation of the change consumes its
+own token first and then, in the same transaction and still before the account
+lock, withdraws every other one-time token of the account, so `velve.one_time_token`
+stays ahead of `velve.user`. A mismatch at redemption can then only come from a
+write outside the library. Until the seal branch reads the sealed
+address in the statement that reads the seal, the comparison is against the
+stored `user.email` (`refuseUnlessTheAddressIsStillTheAccounts` in
+`src/core/flows/artefact.ts`, called by every redemption through
+`accountOrDisabledOfRedemption`).
+
+**What the MAC leaves to a writer.** Section 3.18 names these limits, and they
+hold here as stated:
+
+- Deadlines are not bound — `idle_expires_at`, `absolute_expires_at`,
+  `expires_at` — nor are `last_used_at`, `ip`, `user_agent` and the `created_at`
+  of a one-time token or a pending authentication. A writer can extend the life of
+  an existing row and change what a session list shows about it, but cannot
+  create a row or point one at another account. A session's `created_at` is
+  bound, because freshness is measured from it: a writer who moves it to make a
+  stale session fresh again leaves a row that is refused.
+- A row is proved to be the library's, not to be its latest version. A writer
+  who saved a row can write it back with its MAC of that time: a session revoked
+  on its own (`session.revoke`, `signOut`) becomes valid again as long as the
+  account's `session_epoch` has not changed since; a consumed one-time token becomes
+  redeemable again within its deadline; a pending row gets its older attempt
+  budget back ([The attempt budget](#the-attempt-budget)). A session ended by a
+  mass revocation does not come back this way, because its MAC binds an epoch the
+  revocation left behind.
+
+### The session epoch
+
+A session's MAC also binds the account's `session_epoch` from `velve.security_state`.
+Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
+waits for a mass revocation that holds the account. Every issue names its
+authorisation in `authorisedBy` (`IssueAuthorisation`): `{ version, sessionEpoch }`,
+the seal row the check that authorised the session read; `"unsealed"`, where that
+check read none; or `"read_under_lock"`, the interim for a caller whose check of
+the seal is not wired yet, which takes the version and epoch the issue reads under
+the lock, together with the transaction's `now()`. Today every route, flow and
+the second-factor completion passes `"read_under_lock"`. The MAC is taken over
+that epoch and that time, the time is
+written as `created_at`, and for an account with a seal row the insert is
+`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $11 AND version = $12`;
+for one without a seal row, only in `"migrating"`, only at epoch 1 and only where
+the check read none either, it is
+`… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. Once a
+caller names the version and epoch its check read, a sign-in whose check came
+before a password change or any other reseal, with the KDF running in between
+outside any transaction, inserts nothing; under `"read_under_lock"` it still
+inserts under the state the lock reads, as before. An insert
+that writes nothing is told apart under the lock by `sealVerifiesAfterMissedIssue`,
+an optional member of the session service's options and of
+`createSecondFactorCompletion`'s, which the seal branch supplies: a seal that
+verifies there was a legitimate change that won the race, and nothing is
+reported; otherwise the state is broken and the refusal report receives
+`reason: "seal_mismatch"`. Nothing is retried either way, and without the member
+every miss is reported. The answer is the ordinary failure of the path the issue
+completes, decided in `src/core/http/error-map.ts` by a concealed reason of its
+own:
+
+| `completes` | Occasion | Answered as |
+|---|---|---|
+| `password_sign_in` | `sign_in` | `invalid_credentials` |
+| `passkey_sign_in` | `sign_in` | `webauthn_credential_rejected` |
+| `totp_second_factor` | `sign_in` | `invalid_factor_code` |
+| `passkey_second_factor` | `sign_in` | `webauthn_credential_rejected` |
+| `recovery_second_factor` | `sign_in` | `invalid_recovery_code` |
+| `magic_link` | `sign_in` | `invalid_token` |
+| `oauth_sign_in` | `sign_in` | `oauth_flow_invalid` |
+| `sign_up` | `change` | `invalid_input` |
+| `password_set` | `change` | `factor_already_enrolled` |
+| `password_change` | `change` | `invalid_credentials` |
+| `password_reset` | `change` | `invalid_token` |
+| `oauth_link` | `change` | `oauth_flow_invalid` |
+
+None of them is `session_required`, which belongs to session resolution alone.
+
+An issue for an account that has no epoch is answered the same way, without a
+report.
+Because the issue now takes the account row, a flow that mints a one-time token
+and issues a session in one transaction mints first: sign-up writes its
+verification token before it issues the session, so `velve.one_time_token` still
+comes before `velve.user` in every transaction. `test/integ-token-order-trace.test.ts`
+traces the statements of the sign-up and of every email flow and fails on a
+token-table statement after the account lock.
+Whether an account without a seal row has an epoch is the sealing mode's to say:
+the session service takes `sealing`, `"required"` or `"migrating"`. In
+`"migrating"` such an account is at epoch 1. In `"required"`, and in a session
+repository built without a mode, it has none: issuing a session for it answers as
+the table above says, and its existing sessions resolve to nothing. The
+instance passes `"migrating"` until the `securityState.sealing` configuration
+exists, because nothing writes a seal row before the seal branch does. A
+resolve checks the MAC over the account's current epoch, so a session issued under
+any other — a row a writer saved and wrote back after a mass revocation drew a new
+epoch — is answered as no session. Epochs are compared for equality only: a mass
+revocation draws a fresh random epoch from 1 to 2^53 − 1, different from the
+current one, so nothing here assumes that epochs rise or relates them to the seal's
+version. Rebinding under a new key version keeps the epoch a session was issued
+under and never moves it to another, because a session under any epoch but the
+current one never resolves. The lock costs
+one statement per issued session: measured at 0.73 to 0.78 ms on a local PostgreSQL
+16, against 2.8 to 3.3 ms for the whole issue.
+
+Raising the epoch at every mass revocation is part of resealing the account and is
+described with the seal.
+
+### The epoch of a pending authentication
+
+A pending authentication stores in `session_epoch` the epoch of the check that
+created it: the epoch the first factor's check read where the caller names it to
+`begin({ userId, factorsCompleted, sessionEpoch })`, and otherwise the account's
+current one, read just before the insert; an account without a seal row is at
+epoch 1. Resolving, booking and consuming the row read the account's current
+epoch in the statement that reads the row. A row whose MAC holds but whose stored
+epoch is not the current one was overtaken by a mass revocation, which cannot
+delete it because §7 puts `pending_authentication` before `velve.user`: it is
+answered as missing, without a report, before its booking and before the
+submitted factor is evaluated. `consume` hands the stored epoch on as
+`sessionEpoch`, for the session the completion issues.
+
+### When it is checked
+
+The MAC is recomputed under the stored version and compared in constant time
+before anything in the row is used:
+
+| Path | Where | A refused row answers |
+|---|---|---|
+| session resolve, refresh and every route that reads the session cookie | `SessionService.resolve` | as no session |
+| pending resolve, every failed attempt, and the consume that completes a sign-in | `PendingAuthenticationService` | as no pending authentication (`pending_not_found`, `pending_consumed`) |
+| redemption of an email verification, a reset, an address change or a magic link | `OneTimeTokens.redeem` | as no token (`invalid_token`) |
+| a WebAuthn registration or authentication finished against its challenge | the challenge store of `src/core/factor/webauthn/challenge.ts` | as no challenge (`challenge_not_found`) |
+
+`session.revokeEveryOther` takes the account lock first, reads the session it
+keeps and the account's epoch under it, checks that row and rebinds it under the
+current key by a compare-and-set on the MAC it read, before the others go. A kept
+row that fails its check, or that a writer changed between the read and the
+rebinding, goes with the others: the caller is signed out too, and the refusal
+report receives `occasion: "change"`. A compare-and-set that misses reads the row
+once more: the same session over the same token hash under a newer key version,
+whose MAC verifies, was rebound by a resolution in the meantime, which takes no
+account lock, and the swap is repeated against its MAC without a report; a row
+that is gone means no session is kept, without a report; any other row is treated
+as a MAC that does not match. The seal branch
+draws the new epoch in the same transaction, and the rebinding is where the kept
+session moves to the epoch the revocation leaves.
+
+**Consumed first, asked about second.** A redemption learns its account from the
+row it consumes, and it consumes that row first, without reading it before (§7,
+S-RACE-2). In the same transaction and before the account lock, the owner of the
+consumed row is passed to `beforeLockingTheOwnerOf(ownerId)`, an optional member
+of the store `redeemOrRefuse` takes and of `createSecondFactorCompletion`'s
+options, which may refuse by throwing; the transaction then rolls back and the row
+stands again. Section 3.18 asks the seal's anchor there. The instance passes
+nothing yet, and the WebAuthn challenge, whose consuming statement names the owner
+it expects, has no such hook.
+
+A revocation removes a session row whether or not it passes, but counts,
+returns and announces only the rows that do: `revokedOtherSessionsCount` of a
+password change or reset, `revokedCount` of `session.revokeAll`, the count of a
+first address confirmation, the ids told to `beforeSessionRevoke`, and the
+plugin context's `revokeSession`, which removes a forged row without announcing
+it. Each refused row is reported with the occasion `change`, and a row the owner's
+list leaves out with `session_list`.
+
+A one-time token row that names no account — the cover artefact an unknown
+address is answered with — is checked as well, with the owner field absent, and is
+then answered as no row whether it passes or not; only a failing one is reported.
+
+Each check costs one HMAC-SHA256 over about 150 bytes; measured on one machine
+at 90 to 130 microseconds per check through `rootKeyProvider`, the key lookup
+included.
+
+A refusal has no code of its own and reaches the outside exactly as a missing
+row does. An unknown `token_mac_key_version` is refused the same way. A one-time
+token is consumed by the statement that reads it. Every email flow redeems inside
+its own transaction and answers a refused row with `invalid_token`, which rolls
+the transaction back and leaves the refused row where it was; only a redemption
+outside a transaction, such as the one that spends a token whose mail could not
+be sent, deletes it. A refused pending row being consumed is likewise restored by
+the rollback of the transaction that would have issued the session.
+
+### The refusal report
+
+`createSessionService`, `createPendingAuthenticationService`,
+`createSecondFactorCompletion` and `createOneTimeTokens` take an optional
+`reportTokenBindingRefusal(refusal)`. It receives
+
+| Field | Value |
+|---|---|
+| `userId` | the account the refused row names, or `null` for a row that names none, such as a forged cover artefact of an unknown address |
+| `occasion` | `sign_in` or `change` for a session insert that wrote nothing, after what it completes; `session_resolve` for a resolution; `session_list` for the owner's list and a plugin's `listSessionsOfUser`; `factor_check` for a pending authentication and a passkey as the second factor; `token_redemption`; `sign_in` or `change` for a WebAuthn challenge of a discoverable sign-in or a registration; `change` for every check made for a revocation — the kept session, the rows a mass revocation removes and announces, a plugin's `revokeSession`; or `maintenance` for the rebinding pass |
+| `reason` | `token_binding_mismatch` for a row whose MAC does not match, or `seal_mismatch` for a state around a genuine row that is not what the library left |
+| `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |
+
+and nothing else: no token, no hash, no MAC. Whatever the report throws is
+swallowed, so it cannot change the refusal. The instance does not pass one yet;
+the security-state alarm of section 3.18 is what it is there for.
+
+### The types
+
+| Type | Shape | Where it appears |
+|---|---|---|
+| `TokenBindingRefusal` | `{ userId: string \| null; occasion; reason: "token_binding_mismatch" \| "seal_mismatch"; verdict: "mismatch" \| "key_version_unknown" \| "key_unusable" }` | what `reportTokenBindingRefusal` receives |
+| `TokenBindingOccasion` | `"sign_in" \| "session_resolve" \| "session_list" \| "factor_check" \| "token_redemption" \| "change" \| "maintenance"` | the `occasion` of a refusal |
+| `SessionIssuePath` | `"password_sign_in" \| "passkey_sign_in" \| "totp_second_factor" \| "passkey_second_factor" \| "recovery_second_factor" \| "magic_link" \| "oauth_sign_in" \| "sign_up" \| "password_set" \| "password_change" \| "password_reset" \| "oauth_link"` | the `completes` of every issuing method of the session service |
+| `TokenBindingRefusalReport` | `(refusal: TokenBindingRefusal) => void` | the option every factory above takes |
+| `SecurityStateSealing` | `"required" \| "migrating"` | the `sealing` of the session service, the session repository, the second-factor completion and the maintenance pass |
+
+Internal, in `src/core/token/binding.ts` and not in the shipped declarations:
+`TokenBinding` (`{ purpose, ownerId, tokenSha256, content }`), `TokenRowContent`
+(a session's `sessionId`, factors, epoch and `createdAtMicros`, a pending row's factors and
+`attempts`, a one-time token's `payload`, or a challenge's `ceremony`),
+`StoredTokenMac` (`{ tokenMac, tokenMacKeyVersion }`), `StoredPayload` and
+`TokenBindingVerdict`. `SessionRows` lives in `src/core/session/rows.ts` and
+`BookedAttempt` in `src/core/factor/pending/booking.ts`, both internal.
+
+### Writing and rebinding
+
+Every insert takes the MAC under the current `token-mac` version in the
+statement that writes the row. A session that resolves under an older version is
+rebound under the current one by a compare-and-set on the stored MAC, and a
+concurrent rebinding is not overwritten. Outside maintenance a pending
+authentication is rebound only by its booking, which writes the raised counter
+with a MAC under the current version; a booking that finds the row rebound by the
+maintenance at the same count under a newer version books over it without a
+report. Every statement runs at `READ COMMITTED`; none of this opens a `REPEATABLE
+READ` transaction. The statements whose miss the library reads as a race — the
+booking and its re-read, the consumption of a WebAuthn challenge, the rebinding
+at resolution and each compare-and-set of the maintenance pass — run in a
+transaction of the library, each as its only
+statement, so a database whose `default_transaction_isolation` is `repeatable
+read` gives them no `40001` where the case tables expect a miss.
+
+A row that is never resolved while two versions are in the ring keeps the old
+version. Section 3.18 gives that rebinding to `maintenance.sealSecurityState()`,
+and S-KEY-5 holds only if it has run between putting a new version in front and
+removing the old one; the start does not refuse a ring that lacks a stored
+`token_mac_key_version`, and a row left behind is refused and its user signed
+out. The step it calls is internal:
+
+```ts
+rebindTokenRowsUnderCurrentKey({ driver, schema, keys, sealing, table, batchSize, reportTokenBindingRefusal? })
+  : Promise<{
+      rebound: number;
+      refused: number;
+      rowsByKeyVersion: Record<number, { tokens: number; traces: number }>;
+    }>
+```
+
+in `src/core/token/rebind.ts`, for `table` one of `session`, `one_time_token`,
+`pending_authentication` and `webauthn_challenge`. It visits every row not under
+the current `token-mac` version, `batchSize` at a time in hash order, including a
+one-time token or a challenge without an owner, and recomputes and checks its MAC
+under the row's own version over everything the MAC binds: a session against the
+account's current epoch and its `created_at`, a pending authentication over its
+stored `attempts`, a one-time token over its payload with the bound address, a
+challenge over its ceremony. A row that passes is rebound by a compare-and-set on
+the MAC and key version it read, and a pending row also on the `attempts` it read; a row that
+changed in between is left for the next pass. A row that fails is not rebound and
+not deleted: it keeps its version, stays unusable, is counted as `refused` and is
+reported with the occasion `maintenance`. It takes no account lock: each row is its
+own compare-and-set. A session and the account's epoch it is checked against are
+read in the one statement that selects the batch, so a mass revocation between
+the read and the rebinding leaves the row to its missed compare-and-set and raises
+nothing. `rowsByKeyVersion` gives, for each version, the rows the table still
+holds under it after the pass: `traces` are the rows this pass refused, matched by
+token hash and the MAC it refused, and `tokens` all the others, a refused row a
+writer rewrote since among them. Remove a version from the ring only after a
+final pass over all four tables reports no `tokens` under it. Traces do not hold
+it there: once the version is gone they are refused as `key_version_unknown`, and
+the administrator deletes them by SQL after handling their alarm.
+
+### The attempt budget
+
+Every second-factor check books one attempt before the submitted factor is
+evaluated (`bookAttemptOn` in `src/core/factor/pending/booking.ts`, used by
+`verifyUnderPendingAttemptLimit`). The booking resolves and checks the row, then
+writes `attempts + 1` and a MAC over it only where `attempts` and `token_mac`
+still hold the values it verified. When that write finds nothing it reads the row
+once more:
+
+| The row read again | Answer | Report |
+|---|---|---|
+| gone, consumed or expired | no pending authentication (`invalid_pending_authentication`) | none |
+| verifies, with more attempts than the booking saw, or the same count rebound under a newer key version | a concurrent attempt or a rebinding: the booking retries over it, and checks the budget again on the row it retries over | none |
+| verifies, with `attempts` at the budget | `too_many_factor_attempts` | none |
+| fails its MAC, or verifies with fewer attempts or the same count under no newer version | no pending authentication | `token_binding_mismatch` |
+
+The booking keeps no retry count of its own: it retries only over a row that
+verifies and advanced, in attempts, which cannot pass the budget, or at the same
+count under a newer key version, which cannot pass the newest in the ring, so it
+ends.
+
+A correct factor is evaluated after its booking, and the sign-in it completes
+removes the row; a wrong one has already been counted, and the attempt that
+spends the budget removes the row when it fails. Any failure of the check counts
+the same way, so a check the seal of section 3.18 refuses as a broken state is
+booked and, at the budget, removes the row exactly as a rejected factor does. Guesses that arrive together are
+therefore evaluated at most as often as the budget allows.
+
+**What the MAC does not stop.** The MAC proves that the library wrote a row, not
+that it is the row's latest version. A writer who saved a pending row and writes it
+back later with its old `attempts` and its old MAC has a row that verifies: before a
+booking reads it, the writer has the budget of the saved version back, and can do
+it again within the five minutes the row lives. Only a booking already in flight
+notices, because it finds fewer attempts than it read. Section 3.18 names this
+replay among its limits; the attempt budget against a database writer is therefore
+five per write-back, not five per pending sign-in.
+
+### Configuring a key provider
+
+A custom `KeyProvider` must answer `token-mac` as an HMAC-SHA256 key; the
+[Key management](#key-management) chapter lists the purposes. `rootKeyProvider`
+derives it from the root key with no configuration.
+
+### Upgrading
+
+Migration 4 locks the four token tables, deletes every row of them and then adds
+the `NOT NULL` columns: every session ends, and every open link, pending sign-in
+and WebAuthn challenge expires. **Stop every 1.x instance before you migrate.**
+The lock keeps a 1.x instance that still runs from inserting a row between the
+deletes and the new columns, which would make the migration fail and roll back.
+It takes the tables one at a time — `pending_authentication`, then
+`one_time_token`, then `webauthn_challenge`, then `session` — the order a 1.x
+second-factor completion or password reset reaches them, so one of those in
+flight finishes first and the migration waits for it. A 1.x sign-up reaches
+`session` before `one_time_token`, the other way round, so a sign-up still in
+flight can deadlock with the migration, and PostgreSQL then aborts one of the
+two. The migration is one transaction: an abort leaves nothing behind, and you
+run it again. A 1.x insert that arrives after the lock waits, and fails once
+the columns exist.
 
 ## Security state: the seal
 

@@ -42,6 +42,7 @@ describe("the webauthn challenge", () => {
 		challenges = createWebAuthnChallenges({
 			driver: fixture.connection,
 			schema: fixture.schema,
+			keys: fixture.keys,
 		});
 	});
 

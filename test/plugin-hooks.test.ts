@@ -12,8 +12,11 @@ import type {
 import type { FrozenContextServices } from "../src/core/plugin/context.js";
 import { createPluginRuntime } from "../src/core/plugin/registry.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
+import { SESSION_FIXTURE_KEYS, sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const HOOK_POINTS = [
 	"beforeSignIn",
@@ -57,7 +60,7 @@ function servicesOver(driver: Driver): FrozenContextServices {
 		identityMode: "email",
 		schema: "velve",
 		users: createUserRepository({ driver, schema: "velve" }),
-		sessions: createSessionRepository({ driver, schema: "velve" }),
+		sessions: createSessionRepository({ keys: SESSION_FIXTURE_KEYS, driver, schema: "velve" }),
 		driver,
 		log: () => undefined,
 	};
@@ -216,10 +219,19 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 		const idleDeadline = expired ? "now() - interval '1 hour'" : "now() + interval '7 days'";
 		const [row] = await mounted.connection.query<{ id: string }>(
 			`INSERT INTO ${mounted.schema}.session
-			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-			 VALUES ($1, $2, ${idleDeadline}, now() + interval '30 days', '{password}'::text[])
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version, created_at, id)
+			 VALUES ($1, $2, ${idleDeadline}, now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)
 			 RETURNING id`,
-			[userId, issued.tokenHash],
+			[
+				userId,
+				issued.tokenHash,
+				...(await sessionMacParameters(TOKEN_KEYS, {
+					userId,
+					tokenHash: issued.tokenHash,
+					factors: ["password"],
+				})),
+			],
 		);
 		return { token: issued.token, id: row?.id ?? "" };
 	}
@@ -278,7 +290,7 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 	}
 
 	beforeAll(async () => {
-		mounted = await mountAuth("pluginhooks", { plugins: [watcher] });
+		mounted = await mountAuth("pluginhooks", { keys: TOKEN_KEYS, plugins: [watcher] });
 		userId = await createUser(mounted.connection, mounted.schema);
 	});
 

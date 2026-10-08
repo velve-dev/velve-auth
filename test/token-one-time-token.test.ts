@@ -14,8 +14,11 @@ import {
 	type OneTimeTokens,
 	toSecretToken,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let connection: TestConnection;
 let schema: string;
@@ -29,7 +32,7 @@ beforeAll(async () => {
 	connection = migrated.connection;
 	schema = migrated.schema;
 	repository = createOneTimeTokenRepository({ driver: connection, schema });
-	tokens = createOneTimeTokens(repository);
+	tokens = createOneTimeTokens(repository, { keys: TOKEN_KEYS });
 	user = await createUser(connection, schema);
 	otherUser = await createUser(connection, schema);
 });
@@ -257,8 +260,8 @@ describe("the target account comes from the row alone (S-TOKEN-4)", () => {
 		await clear();
 		const token = toSecretToken("a-row-written-around-the-library");
 		await connection.query(
-			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at)
-			 VALUES ($1, $2, now() + interval '1 hour')`,
+			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 hour', decode(repeat('ab', 32), 'hex'), 1)`,
 			[hashSecretToken(token), "magic_link"],
 		);
 

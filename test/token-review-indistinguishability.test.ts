@@ -11,8 +11,11 @@ import {
 	type SecretToken,
 	toSecretToken,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 interface Call {
 	readonly sql: string;
@@ -47,6 +50,7 @@ beforeAll(async () => {
 	otherUser = await createUser(connection, schema);
 	tokens = createOneTimeTokens(
 		createOneTimeTokenRepository({ driver: recording(connection), schema }),
+		{ keys: TOKEN_KEYS },
 	);
 });
 
@@ -196,8 +200,8 @@ describe("expired, consumed, never existed and every other failure are one answe
 		await clear();
 		const planted = toSecretToken("a-row-written-around-the-library");
 		await connection.query(
-			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at)
-			 VALUES ($1, $2, now() + interval '1 hour')`,
+			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '1 hour', decode(repeat('ab', 32), 'hex'), 1)`,
 			[hashSecretToken(planted), "magic_link"],
 		);
 

@@ -92,6 +92,11 @@ export interface RateLimitConfig {
 	};
 }
 
+/** whether every account must carry a seal, or the estate is still being sealed */
+export interface SecurityStateConfig {
+	readonly sealing: "required" | "migrating";
+}
+
 /** the identity options for mode `M`, where only a username mode carries the username rules */
 export type IdentityConfig<M extends IdentityMode> = IdentityConfigurationInput & {
 	readonly mode: M;
@@ -125,6 +130,7 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly totp?: Partial<TotpConfig>;
 	readonly schema?: string;
 	readonly clock?: Clock;
+	readonly securityState?: SecurityStateConfig;
 	readonly log?: (
 		level: "info" | "warn" | "error",
 		message: string,

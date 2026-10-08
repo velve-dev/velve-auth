@@ -6,6 +6,7 @@ import {
 	type SessionServiceOptions,
 } from "../src/core/session/service.js";
 import { createSessionToken, sessionTokenHash } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -13,7 +14,9 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
-import { MINUTE } from "./session-fixtures.js";
+import { MINUTE, rebindSessionsOf } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 const A_BROWSER = {
@@ -41,10 +44,16 @@ async function ageBeyondFreshness(sessionId: string): Promise<void> {
 		 WHERE id = $1 AND user_id = $2`,
 		[sessionId, userId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, TOKEN_KEYS, { sessionId });
 }
 
 async function signIn(): Promise<{ token: string; sessionId: string }> {
-	const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+	const issued = await service.issue({
+		authorisedBy: "read_under_lock",
+		userId,
+		factors: ["password"],
+		observed: NOWHERE,
+	});
 	return { token: issued.token, sessionId: issued.session.id };
 }
 
@@ -59,7 +68,9 @@ async function resolvedNow(token: string) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_lifecycle");
 	const options: SessionServiceOptions = {
+		sealing: "migrating",
 		driver: migrated.connection,
+		keys: TOKEN_KEYS,
 		schema: migrated.schema,
 	};
 	service = createSessionService(options);
@@ -84,6 +95,7 @@ describe("issuing a session", () => {
 
 	it("stores the metadata truncated unless told otherwise (L-10)", async () => {
 		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: A_BROWSER,
@@ -95,12 +107,19 @@ describe("issuing a session", () => {
 
 	it("stores the observed values when the configuration says full", async () => {
 		const full = createSessionService({
+			sealing: "migrating",
+			keys: TOKEN_KEYS,
 			driver: migrated.connection,
 			schema: migrated.schema,
 			sessionMetadata: "full",
 		});
 
-		const issued = await full.issue({ userId, factors: ["password"], observed: A_BROWSER });
+		const issued = await full.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: A_BROWSER,
+		});
 
 		expect(issued.session.ipAddress).toBe("203.0.113.42");
 		expect(issued.session.userAgent).toBe(A_BROWSER.userAgent);
@@ -112,6 +131,8 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 		const first = await signIn();
 
 		const second = await service.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "totp"],
@@ -127,6 +148,8 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 	it("answers a request with the previous token exactly as one without a cookie", async () => {
 		const first = await signIn();
 		await service.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "totp"],
@@ -146,6 +169,8 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 		});
 
 		const second = await service.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "webauthn"],
@@ -161,6 +186,8 @@ describe("a credential change (S-FIX-6)", () => {
 		const here = await signIn();
 
 		const replacement = await service.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
+			completes: "password_change",
 			resolved: await resolvedNow(here.token),
 			factors: ["password"],
 			observed: NOWHERE,
@@ -175,6 +202,8 @@ describe("a credential change (S-FIX-6)", () => {
 		const here = await signIn();
 
 		await service.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
+			completes: "password_change",
 			resolved: await resolvedNow(here.token),
 			factors: ["password"],
 			observed: NOWHERE,
@@ -203,6 +232,7 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 
 	it("changes nothing for a session of another user or one that never existed", async () => {
 		const stranger = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId: strangerId,
 			factors: ["password"],
 			observed: NOWHERE,
