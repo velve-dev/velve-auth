@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationRepository,
 	createPendingAuthenticationService,
@@ -14,8 +15,12 @@ import {
 } from "../src/core/factor/pending/index.js";
 import { ConcealedError } from "../src/core/http/error-map.js";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { failOneAttempt } from "./totp-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let connection: TestConnection;
 let schema: string;
@@ -26,7 +31,7 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("pending");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	pending = createPendingAuthenticationService({ driver: connection, schema });
+	pending = createPendingAuthenticationService({ keys: TOKEN_KEYS, driver: connection, schema });
 });
 
 afterAll(async () => {
@@ -206,7 +211,7 @@ describe("the attempt budget (L-8)", () => {
 
 		const outcomes = [];
 		for (let attempt = 0; attempt < MAXIMUM_PENDING_ATTEMPTS; attempt += 1) {
-			outcomes.push(await pending.registerFailedAttempt(token));
+			outcomes.push(await failOneAttempt(pending, token));
 		}
 
 		expect(outcomes).toStrictEqual([
@@ -220,9 +225,9 @@ describe("the attempt budget (L-8)", () => {
 		expect(await pending.resolve(token)).toBeNull();
 	});
 
-	it("reports a token it cannot find as exhausted, not as a fresh budget", async () => {
-		expect(await pending.registerFailedAttempt(toPendingToken("w".repeat(43)))).toStrictEqual({
-			outcome: "exhausted",
+	it("books nothing for a token it cannot find, and answers it as missing", async () => {
+		expect(await bookAttemptOn(pending, toPendingToken("w".repeat(43)))).toStrictEqual({
+			outcome: "missing",
 		});
 	});
 });
@@ -233,7 +238,7 @@ describe("consumption", () => {
 
 		const consumed = await pending.consume(token);
 
-		expect(consumed).toStrictEqual({ userId, factorsCompleted: ["password"] });
+		expect(consumed).toStrictEqual({ userId, factorsCompleted: ["password"], sessionEpoch: 1 });
 		expect(await countRows()).toBe(0);
 	});
 
@@ -258,15 +263,16 @@ describe("the token and the repository underneath the service", () => {
 		expect(drawn.size).toBe(1000);
 	});
 
-	it("reports a missing row rather than inventing an attempt count", async () => {
+	it("books nothing on a row that is not there", async () => {
 		const repository = createPendingAuthenticationRepository({ driver: connection, schema });
 
-		const counted = await repository.countFailedAttempt({
+		const booked = await repository.bookAttempt({
 			tokenHash: hashPendingToken(toPendingToken("x".repeat(43))),
-			maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
+			checked: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1, attempts: 0 },
+			next: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 },
 		});
 
-		expect(counted).toBeNull();
+		expect(booked).toBe(false);
 	});
 });
 

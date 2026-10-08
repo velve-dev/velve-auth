@@ -20,8 +20,14 @@ export interface RecoveryCodeRepository {
 	consumeCode(input: {
 		readonly userId: string;
 		readonly candidateHmacs: readonly Uint8Array<ArrayBuffer>[];
-	}): Promise<ConsumedRecoveryCode | null>;
+	}): Promise<SpentRecoveryCode | null>;
 	countCodes(input: { readonly actor: Actor }): Promise<number>;
+}
+
+/** a consumed code together with the HMAC that matched, which the seal check must find among its codes */
+export interface SpentRecoveryCode {
+	readonly consumed: ConsumedRecoveryCode;
+	readonly codeHmac: Uint8Array<ArrayBuffer>;
 }
 
 export class RecoveryCodeOwnerUnknownError extends Error {
@@ -84,7 +90,10 @@ RETURNING key_version`;
 				const rows = await options.driver.query(consumeStatement, [userId, candidateHmac]);
 				if (rows.length === 1) {
 					//the brand is asserted where the row was removed and nowhere else (E-234)
-					return { userId: toEntityId<"user">(userId) } as ConsumedRecoveryCode;
+					return {
+						consumed: { userId: toEntityId<"user">(userId) } as ConsumedRecoveryCode,
+						codeHmac: candidateHmac,
+					};
 				}
 			}
 			return null;

@@ -35,8 +35,9 @@ async function sealedAccountWithSessionUnderEpochOne(): Promise<{
 	const tokenHash = Buffer.alloc(32, 9);
 	tokenHash.write(userId.replaceAll("-", "").slice(0, 16), "hex");
 	await resolver.query(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-		 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day')`,
+		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+			   token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day', decode(repeat('00', 32), 'hex'), 1)`,
 		[userId, tokenHash],
 	);
 	return { userId, tokenHash };

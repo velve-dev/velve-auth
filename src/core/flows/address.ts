@@ -1,7 +1,9 @@
 import type { EmailConfig } from "../auth/config.js";
+import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
+import { ONE_TIME_TOKEN_PURPOSES } from "../token/purpose.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
@@ -12,7 +14,7 @@ import {
 	readAccountOfSession,
 	readUserOrRefuse,
 	refuseADisabledAccount,
-	sessionIdOfCaller,
+	sessionOfCaller,
 } from "./environment.js";
 import type { ChangedUser } from "./results.js";
 
@@ -40,9 +42,13 @@ export async function requestVerification(
 		throw new VelveError("invalid_input");
 	}
 	await context.enforceAccountRateLimit(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, { purpose: "email_verify", subject: { userId: user.id } }),
+		mintArtefact(transaction, environment.services, {
+			purpose: "email_verify",
+			subject: { userId: user.id },
+			accountEmail: address,
+		}),
 	);
 	await sendOrUndo(mailerOf(environment, email), minted, {
 		kind: "email_verification",
@@ -59,10 +65,10 @@ export async function redeemVerification(
 	input: { readonly token: string },
 ): Promise<ChangedUser> {
 	const { driver, schema } = environment.services;
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const userId = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "email_verify",
 		});
@@ -76,9 +82,11 @@ export async function redeemVerification(
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
+			sessions: environment.services.sessions,
 			actor: account.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: null,
+			securityState: environment.services.securityState,
 		});
 		return account.user.id;
 	});
@@ -106,11 +114,12 @@ export async function requestChange(
 
 	const user = await readAccountOfSession(environment, userId);
 	const previousEmail = user.email ?? "";
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "email_change",
 			subject: { userId: user.id },
+			accountEmail: user.email,
 			payload: { [CHANGED_ADDRESS]: address },
 		}),
 	);
@@ -130,10 +139,10 @@ export async function redeemChange(
 	input: { readonly token: string },
 ): Promise<ChangedUser> {
 	const { driver, schema } = environment.services;
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const userId = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "email_change",
 		});
@@ -142,14 +151,21 @@ export async function redeemChange(
 		if (account === A_DISABLED_ACCOUNT) {
 			return account;
 		}
+		//the old address's links go before the account lock as one_time_token precedes velve.user (E-3278)
+		const tokens = createOneTimeTokenRepository({ driver: transaction, schema });
+		for (const purpose of ONE_TIME_TOKEN_PURPOSES) {
+			await tokens.withdrawTokensOf({ actor: account.actor, purpose });
+		}
 		//redeeming proves the new address and a collision must leave both changes undone
 		await confirmAddress({
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
+			sessions: environment.services.sessions,
 			actor: account.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: addressIn(redeemed.payload),
+			securityState: environment.services.securityState,
 		});
 		return account.user.id;
 	});

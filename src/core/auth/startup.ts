@@ -3,9 +3,11 @@ import { isUsableBucketRule } from "../http/rate-limit.js";
 import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
 import { isStorableKeyVersion } from "../keys/key-version.js";
 import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
-import { isIntegrityPurpose } from "../keys/purpose.js";
+import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
+import { resolveLimits } from "../security-state/limits.js";
 import type { BaseConfig } from "./config.js";
+import { isStartableSecurityState } from "./security-state.js";
 
 type StartupErrorCode =
 	| "keys_missing"
@@ -33,7 +35,9 @@ type StartupErrorCode =
 	| "plugin_database_and_role_both_set"
 	| "plugin_database_reaches_the_core"
 	| "route_namespace_conflict"
-	| "route_name_segment_reserved";
+	| "route_name_segment_reserved"
+	| "security_state_sealing_unknown"
+	| "limits_unusable";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
@@ -84,6 +88,10 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"two route names fold onto the same object path, so one server method would shadow the other",
 	route_name_segment_reserved:
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
+	security_state_sealing_unknown:
+		'securityState.sealing must be "required" or "migrating"; any other value leaves unsaid whether an account must carry a seal',
+	limits_unusable:
+		"limits.passkeysPerAccount and limits.identitiesPerAccount must each be a whole number of at least 1, since every check of the seal reads and encodes them all",
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -222,6 +230,13 @@ function assertPluginSqlHasOneDestination(config: {
 	}
 }
 
+//a javascript caller can name a sealing mode the type does not and it must not read as either (S-INTEG-1)
+function assertSealingModeIsKnown(securityState: unknown): void {
+	if (!isStartableSecurityState(securityState)) {
+		throw new VelveStartupError("security_state_sealing_unknown");
+	}
+}
+
 //checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
@@ -234,21 +249,43 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 	assertEveryConfiguredBucketIsUsable(config.rateLimit);
 	assertPluginSqlHasOneDestination(config);
+	assertSealingModeIsKnown(config.securityState);
+	assertLimitsAreUsable(config.limits);
+}
+
+//a limit that is no count of at least one would refuse every registration or none (S-INTEG-10)
+function assertLimitsAreUsable(limits: unknown): void {
+	if (
+		limits !== undefined &&
+		(typeof limits !== "object" || limits === null || resolveLimits(limits) === null)
+	) {
+		throw new VelveStartupError("limits_unusable");
+	}
 }
 
 //an operator must learn which stored version made the start refuse (E-3289)
-export function storedIntegrityKeyUnusable(keyVersion: number): VelveStartupError {
+const WHAT_STORES_A_VERSION: Readonly<Record<IntegrityKeyPurpose, readonly [string, string]>> = {
+	"state-mac": ["a stored seal names", "no seal"],
+	"token-mac": ["a stored token row names", "no token row"],
+};
+
+export function storedIntegrityKeyUnusable(
+	stored: IntegrityKeyPurpose,
+	keyVersion: number,
+): VelveStartupError {
+	const [naming, nothing] = WHAT_STORES_A_VERSION[stored];
 	const refusal = new VelveStartupError("keys_unusable");
-	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with a key that cannot take HMAC-SHA256, so no seal under that version could be checked`;
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${naming}, with a key that cannot take HMAC-SHA256, so ${nothing} under that version could be checked`;
 	return refusal;
 }
 
-export function storedStateMacKeySharedWith(
+export function storedIntegrityKeySharedWith(
+	stored: IntegrityKeyPurpose,
 	keyVersion: number,
 	otherKey: string,
 ): VelveStartupError {
 	const refusal = new VelveStartupError("keys_unusable");
-	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with ${otherKey}`;
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${WHAT_STORES_A_VERSION[stored][0]}, with ${otherKey}`;
 	return refusal;
 }
 

@@ -9,7 +9,14 @@ import type { VelvePlugin } from "../src/core/plugin/config.js";
 import type { SessionConfig } from "../src/core/session/config.js";
 import { createSessionService } from "../src/core/session/service.js";
 import { createVelveAuth, registerPluginErrorCodes, VelveError } from "../src/index.js";
-import { configFor, type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
+import {
+	configFor,
+	type MountedAuth,
+	mountAuth,
+	requestTo,
+	TEST_ORIGIN,
+	testKeyProvider,
+} from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import {
 	CALLBACK_BASE_URL,
@@ -20,12 +27,25 @@ import {
 	type StubProvider,
 } from "./oauth-provider.js";
 
+const TOKEN_KEYS = testKeyProvider();
+
 interface Mounted {
 	readonly auth: MountedAuth;
 	readonly provider: StubProvider;
 }
 
 const mountedInstances: MountedAuth[] = [];
+
+/** seals every account again after a test wrote one by SQL, as the library would have */
+async function resealEveryAccount(mounted: Mounted): Promise<void> {
+	const rows = await mounted.auth.connection.query<{ id: string }>(
+		`SELECT id FROM ${mounted.auth.schema}.user`,
+		[],
+	);
+	for (const row of rows) {
+		await mounted.auth.reseal(row.id);
+	}
+}
 
 async function mountWith(input: {
 	readonly claims: ProviderClaims;
@@ -42,6 +62,7 @@ async function mountWith(input: {
 		...(input.openIdConnect === undefined ? {} : { openIdConnect: input.openIdConnect }),
 	});
 	const auth = await mountAuth("oauthflow", {
+		keys: TOKEN_KEYS,
 		oauth: oauthConfigFor({
 			openIdConnect: input.openIdConnect === true,
 			...(input.trusted === undefined ? {} : { trusted: input.trusted }),
@@ -286,6 +307,7 @@ describe("S-LINK-2: all three conditions, and never two of them", () => {
 			`INSERT INTO ${mounted.auth.schema}.user (email) VALUES ($1)`,
 			["signed.in@example.com"],
 		);
+		await resealEveryAccount(mounted);
 		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
 
 		expect(refused.status).toBe(400);
@@ -299,6 +321,7 @@ describe("S-LINK-2: all three conditions, and never two of them", () => {
 			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
 			["signed.in@example.com"],
 		);
+		await resealEveryAccount(mounted);
 		const response = await mounted.auth.handler(callbackRequest(await start(mounted)));
 
 		expect(response.status).toBe(302);
@@ -312,6 +335,7 @@ describe("S-LINK-2: all three conditions, and never two of them", () => {
 			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
 			["signed.in@example.com"],
 		);
+		await resealEveryAccount(mounted);
 		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
 
 		expect(refused.status).toBe(400);
@@ -402,6 +426,7 @@ describe("S-LINK-2, condition one: the verified flag is a boolean", () => {
 			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
 			["number.flag@example.com"],
 		);
+		await resealEveryAccount(mounted);
 		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
 
 		expect(refused.status).toBe(400);
@@ -779,6 +804,8 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
 		const session = sessionCookieOf(signedIn) ?? "";
 		const sessions = createSessionService({
+			sealing: "migrating",
+			keys: TOKEN_KEYS,
 			driver: mounted.auth.connection,
 			schema: mounted.auth.schema,
 		});
@@ -790,6 +817,8 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 			throw new Error("the session the credential change replaces must resolve");
 		}
 		await sessions.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
+			completes: "password_change",
 			resolved,
 			factors: ["oauth"],
 			observed: { ipAddress: null, userAgent: null },
@@ -980,6 +1009,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 			`UPDATE ${mounted.auth.schema}.user SET disabled_at = now()`,
 			[],
 		);
+		await resealEveryAccount(mounted);
 		const resolved = await mounted.auth.handler(
 			requestTo("/session", { method: "GET", cookie: session }),
 		);
@@ -1005,6 +1035,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 			`UPDATE ${mounted.auth.schema}.user SET disabled_at = now()`,
 			[],
 		);
+		await resealEveryAccount(mounted);
 		await mounted.auth.connection.query(`DELETE FROM ${mounted.auth.schema}.session`, []);
 
 		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));

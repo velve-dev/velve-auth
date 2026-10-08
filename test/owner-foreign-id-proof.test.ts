@@ -58,8 +58,9 @@ function credentialOf(userId: string): Promise<string> {
 
 function secondSessionOf(userId: string): Promise<string> {
 	return insertedId(
-		`INSERT INTO ${mount.schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-		 VALUES ($1, $2, now() + interval '1 day', now() + interval '7 days') RETURNING id`,
+		`INSERT INTO ${mount.schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '1 day', now() + interval '7 days', decode(repeat('ab', 32), 'hex'), 1) RETURNING id`,
 		[userId, randomBytes(32)],
 	);
 }
@@ -73,6 +74,7 @@ beforeAll(async () => {
 		identityId: await identityOf(owner.userId),
 		credentialId: await credentialOf(owner.userId),
 	};
+	await mount.reseal(owner.userId);
 });
 
 afterAll(async () => {
@@ -149,6 +151,7 @@ describe("T-OWNER-8: a foreign identifier and an invented one are one answer (S-
 			"factor.webauthn.rename": { credentialId: await credentialOf(caller.userId) },
 			"factor.webauthn.remove": { credentialId: await credentialOf(caller.userId) },
 		};
+		await mount.reseal(caller.userId);
 
 		for (const route of routesTakingAnId(mount.auth.routes)) {
 			const before = await rowsOf(caller.userId);

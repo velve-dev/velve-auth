@@ -7,8 +7,11 @@ import {
 	type OneTimeTokens,
 	type SecretToken,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 // Eight is enough to show the effect and small enough to leave the suite its connections;
 // the writer's own race file already holds fifty open.
@@ -44,7 +47,9 @@ beforeAll(async () => {
 	}
 	user = await createUser(connections[0] as TestConnection, schema);
 	issuers = connections.map((connection) =>
-		createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema })),
+		createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }), {
+			keys: TOKEN_KEYS,
+		}),
 	);
 }, 120_000);
 

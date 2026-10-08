@@ -8,8 +8,11 @@ import type {
 	VelvePlugin,
 } from "../src/core/plugin/config.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const ACTOR: PluginActor = { pluginId: "revoker", reason: "the test asked for it" };
 
@@ -72,10 +75,19 @@ async function insertSession(): Promise<string> {
 	const issued = createSessionToken();
 	const [row] = await mounted.connection.query<{ id: string }>(
 		`INSERT INTO ${mounted.schema}.session
-		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version, created_at, id)
+		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)
 		 RETURNING id`,
-		[userId, issued.tokenHash],
+		[
+			userId,
+			issued.tokenHash,
+			...(await sessionMacParameters(TOKEN_KEYS, {
+				userId,
+				tokenHash: issued.tokenHash,
+				factors: ["password"],
+			})),
+		],
 	);
 	return row?.id ?? "";
 }
@@ -93,8 +105,9 @@ function revoke(sessionId: string): Promise<Response> {
 }
 
 beforeAll(async () => {
-	mounted = await mountAuth("pluginrevocation", { plugins: [REVOKER, WATCHER] });
+	mounted = await mountAuth("pluginrevocation", { keys: TOKEN_KEYS, plugins: [REVOKER, WATCHER] });
 	userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 });
 
 afterAll(async () => {
@@ -142,6 +155,23 @@ describe("a revocation a plugin performs is announced like any other (E-766)", (
 		expect(answer.status).toBe(200);
 		expect(announced).toStrictEqual([]);
 		expect(await liveSessionIds()).toStrictEqual([sessionId]);
+	});
+
+	it("removes a session row that fails its MAC without announcing it (S-INTEG-9)", async () => {
+		const [forged] = await mounted.connection.query<{ id: string }>(
+			`INSERT INTO ${mounted.schema}.session
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version)
+			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}', $3, 1)
+			 RETURNING id`,
+			[userId, createSessionToken().tokenHash, new Uint8Array(32).fill(5)],
+		);
+
+		const answer = await revoke(forged?.id ?? "");
+
+		expect(answer.status).toBe(200);
+		expect(announced).toStrictEqual([]);
+		expect(await liveSessionIds()).toStrictEqual([]);
 	});
 
 	/**

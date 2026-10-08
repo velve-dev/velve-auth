@@ -1,26 +1,37 @@
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
-import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import type { SecurityStateRead } from "../security-state/read.js";
+import { type SecurityStateRuntime, sealChange } from "../security-state/runtime.js";
+import { componentsAfter, type SealTarget } from "../security-state/sealing.js";
+import { sessionRowsOn } from "../session/rows.js";
+import type { SessionService } from "../session/service.js";
 import { createPasswordProvenance } from "./credential.js";
+import type { ConfirmingSession } from "./environment.js";
 
-interface ConfirmationOutcome {
+interface ConfirmationWrite {
 	readonly wasTheFirstConfirmation: boolean;
 	readonly passwordCredentialDeleted: boolean;
 	readonly revokedSessionCount: number;
+}
+
+interface ConfirmationOutcome extends ConfirmationWrite {
+	/** the version and epoch the confirmation sealed, which a session it leads to is bound to */
+	readonly sealed: SealTarget;
 }
 
 interface AddressConfirmation {
 	readonly transaction: Driver;
 	readonly schema: string;
 	readonly pluginRuntime: PluginRuntime;
+	readonly sessions: SessionService;
 	readonly actor: Actor;
-	readonly confirmingSessionId: string | null;
+	readonly confirmingSession: ConfirmingSession | null;
 	readonly newEmail: string | null;
+	readonly securityState: SecurityStateRuntime;
 }
 
 function markFirstConfirmationStatement(schema: string): string {
@@ -55,10 +66,56 @@ function refuseAnAddressTakenMeanwhile(cause: unknown): never {
 	throw cause;
 }
 
+//a session of another account counts as one the password was not set in (S-LINK-4)
+function sessionIdOnTheAccount(session: ConfirmingSession | null, actor: Actor): string | null {
+	return session !== null && session.userId === actor ? session.sessionId : null;
+}
+
+function passwordSetInTheConfirmingSession(
+	read: SecurityStateRead,
+	sessionId: string | null,
+): boolean {
+	return sessionId !== null && read.password?.setBySessionId === sessionId;
+}
+
 //the deletion is unconditional as a guard would spare a pre-registered account (S-LINK-4)
 export async function confirmAddress(input: AddressConfirmation): Promise<ConfirmationOutcome> {
-	//the account row is locked first to order this against a password replacement (E-1602)
-	await lockAccountRow(input.transaction, input.schema, input.actor);
+	const sessionId = sessionIdOnTheAccount(input.confirmingSession, input.actor);
+	//the first confirmation that removes a password is a mass revocation and draws a new epoch (S-INTEG-3)
+	const sealed = await sealChange(
+		input.securityState,
+		input.actor,
+		{
+			epoch: (read) =>
+				!read.emailVerified &&
+				read.password !== null &&
+				!passwordSetInTheConfirmingSession(read, sessionId)
+					? "raise"
+					: "keep",
+			write: (tx) => confirmUnderTheLock({ ...input, transaction: tx }, sessionId),
+			after: (read, outcome) =>
+				componentsAfter(read, {
+					email: input.newEmail ?? read.email,
+					emailVerified: true,
+					password: outcome.passwordCredentialDeleted ? null : read.password,
+				}),
+		},
+		{
+			driver: input.transaction,
+			refusal: "broken_state_on_token_redemption",
+			occasion: "token_redemption",
+		},
+	);
+	return {
+		...sealed.written,
+		sealed: { version: sealed.version, sessionEpoch: sealed.sessionEpoch },
+	};
+}
+
+async function confirmUnderTheLock(
+	input: AddressConfirmation,
+	sessionId: string | null,
+): Promise<ConfirmationWrite> {
 	const marked = await input.transaction.query(markFirstConfirmationStatement(input.schema), [
 		input.actor,
 	]);
@@ -80,14 +137,14 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 	const passwordCredentialDeleted = await createPasswordProvenance({
 		driver: input.transaction,
 		schema: input.schema,
-	}).deleteUnlessSetInSession({ actor: input.actor, sessionId: input.confirmingSessionId });
+	}).deleteUnlessSetInSession({ actor: input.actor, sessionId });
 
 	//an account that had no password loses nothing and keeps its sessions (E-608)
 	if (!passwordCredentialDeleted) {
 		return { wasTheFirstConfirmation, passwordCredentialDeleted, revokedSessionCount: 0 };
 	}
 
-	const sessionRows = createSessionRepository({ driver: input.transaction, schema: input.schema });
+	const sessionRows = sessionRowsOn(input.sessions, input.transaction);
 	//a refusal must roll the redemption and the deleted password back with it (E-2730)
 	if (input.pluginRuntime.listensTo("beforeSessionRevoke")) {
 		await announceEachRevocation(

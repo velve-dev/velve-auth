@@ -117,7 +117,7 @@ VALUES ($1, $2, $3, false, false, true)`,
 	};
 }
 
-describe("a change seals from its one verified read", () => {
+describe("a change seals from its one verified read (S-INTEG-3)", () => {
 	it("writes the first seal of an unsealed account in migrating mode at version 1 and epoch 1", async () => {
 		const userId = await seedAccount(connection, schema, { password: true, passkeys: 1 });
 
@@ -288,8 +288,8 @@ describe("a change refuses a broken state and writes nothing", () => {
 
 		const outcome = await sealAccount(services(), userId, {
 			...passkeyRegistration(),
-			write: async (tx, read) => {
-				await passkeyRegistration().write(tx, read);
+			write: async (tx, read, next) => {
+				await passkeyRegistration().write(tx, read, next);
 				await writer.query(
 					`UPDATE ${schema}.security_state SET sealed_at = sealed_at, session_epoch = session_epoch + 1 WHERE user_id = $1`,
 					[userId],
@@ -323,8 +323,8 @@ describe("a change refuses a broken state and writes nothing", () => {
 
 		const attempt = sealAccount(services(), userId, {
 			...passkeyRegistration(),
-			write: async (tx, read) => {
-				await passkeyRegistration().write(tx, read);
+			write: async (tx, read, next) => {
+				await passkeyRegistration().write(tx, read, next);
 				await readSecurityState(tx, schema, userId);
 				return null;
 			},
@@ -353,13 +353,26 @@ describe("the anchor around a change", () => {
 		};
 	}
 
+	it("keeps the verified seal when a change leaves every component and the epoch as they were", async () => {
+		const userId = await seedAccount(connection, schema, { password: true });
+		await sealAccount(services(), userId, unchanged);
+		const before = await readOf(userId);
+
+		const outcome = await sealAccount(services(), userId, unchanged);
+		const after = await readOf(userId);
+
+		expect(outcome.kind).toBe("sealed");
+		expect(after.seal?.version).toBe(before.seal?.version);
+		expect(Buffer.from(after.seal?.digest ?? [])).toEqual(Buffer.from(before.seal?.digest ?? [1]));
+	});
+
 	it("records every new seal with the anchor after commit", async () => {
 		const userId = await seedAccount(connection, schema, { password: true });
 		const recorded: SecurityStateSealedEvent[] = [];
 		const anchor = anchorWith(() => null, recorded);
 
 		for (let change = 0; change < 5; change += 1) {
-			await sealAccount(services({ anchors: [anchor] }), userId, unchanged);
+			await sealAccount(services({ anchors: [anchor] }), userId, passkeyRegistration());
 		}
 		await new Promise((resolve) => setTimeout(resolve, 0));
 

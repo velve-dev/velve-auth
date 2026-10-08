@@ -579,6 +579,8 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3370 … E-3399 | outside the waves · `security-state`, sixth range — the foundation's answers to its ninth and later reviews. Counted over the rows standing at d377d43 |
 | E-3400 … E-3449 | outside the waves · `security-state-seal`, second range — the seal's build and its reviews. Counted over the rows standing at d9561d9 |
 | E-3450 … E-3479 | outside the waves · `security-state-administration`, second range — administration and migration's build and its reviews. Counted over the rows standing at d9561d9 |
+| E-3480 … E-3509 | outside the waves · `security-state-tokens`, third range — the keyed token hashes' answers to their third and later reviews and the foundation's final round. Counted over the rows standing at 8bdfd1e |
+| E-3510 … E-3539 | outside the waves · `security-state`, seventh range — the specification brought into step with what the branches built. Counted over the rows standing at 8bdfd1e |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not

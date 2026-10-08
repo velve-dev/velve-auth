@@ -31,7 +31,12 @@ import {
 } from "../src/core/password/verify.js";
 import { actorOfTestUser } from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
-import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
+import {
+	drawTestPassword,
+	rehashSwapped,
+	type StoredHashes,
+	storedHashesFor,
+} from "./password-fixtures.js";
 
 const USER_ID = "11111111-2222-3333-4444-555555555555";
 const PASSWORD = drawTestPassword();
@@ -85,6 +90,7 @@ function recordingDriver(): Recorder {
 					phc: params[1] as Uint8Array<ArrayBuffer>,
 					keyVersion: params[2] as number,
 					scheme: params[3] as PasswordScheme,
+					unbound: "refused",
 				});
 				// The upsert returns the row it wrote; answering nothing is what a false
 				// `DO UPDATE … WHERE` looks like, and the repository refuses that (E-185).
@@ -101,6 +107,7 @@ function recordingDriver(): Recorder {
 				phc: params[1] as Uint8Array<ArrayBuffer>,
 				keyVersion: params[3] as number,
 				scheme: params[2] as PasswordScheme,
+				unbound: "refused",
 			});
 			return [{ user_id: params[0] }] as T[];
 		},
@@ -151,12 +158,13 @@ beforeEach(async () => {
 }, 60_000);
 
 async function seed(phc: string, scheme: PasswordScheme, userId = USER_ID): Promise<void> {
-	const sealed: SealedPhc = await sealPhc(environment.keys, phc);
+	const sealed: SealedPhc = await sealPhc(environment.keys, userId, phc);
 	recorder.rows.set(userId, {
 		userId,
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme,
+		unbound: "refused",
 	});
 }
 
@@ -403,7 +411,7 @@ describe("needsRehash and the silent rehash", () => {
 		if (check.outcome !== "verified" || check.rehash === undefined) {
 			throw new Error("an imported bcrypt credential must ask to be rehashed");
 		}
-		expect(await check.rehash()).toBe(true);
+		expect(await rehashSwapped(environment.credentials, USER_ID, check.rehash)).toBe(true);
 
 		const after = recorder.rows.get(USER_ID) as PasswordCredentialRow;
 		expect(after.scheme).toBe("argon2id");
@@ -438,7 +446,7 @@ describe("needsRehash and the silent rehash", () => {
 		);
 		const chosen = recorder.rows.get(USER_ID);
 
-		expect(await check.rehash()).toBe(false);
+		expect(await rehashSwapped(environment.credentials, USER_ID, check.rehash)).toBe(false);
 		expect(recorder.rows.get(USER_ID)).toBe(chosen);
 		expect(
 			await checkPassword({ userId: USER_ID, plaintext: WRONG_PASSWORD }, environment),

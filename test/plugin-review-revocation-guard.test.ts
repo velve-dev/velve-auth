@@ -9,8 +9,11 @@ import type {
 	VelvePlugin,
 } from "../src/core/plugin/config.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const ACTOR: PluginActor = { pluginId: "watch", reason: "the review asked for it" };
 
@@ -66,10 +69,19 @@ async function insertSession(): Promise<string> {
 	const issued = createSessionToken();
 	const [row] = await mounted.connection.query<{ id: string }>(
 		`INSERT INTO ${mounted.schema}.session
-		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version, created_at, id)
+		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)
 		 RETURNING id`,
-		[userId, issued.tokenHash],
+		[
+			userId,
+			issued.tokenHash,
+			...(await sessionMacParameters(TOKEN_KEYS, {
+				userId,
+				tokenHash: issued.tokenHash,
+				factors: ["password"],
+			})),
+		],
 	);
 	return row?.id ?? "";
 }
@@ -88,9 +100,11 @@ function revoke(sessionId: string): Promise<Response> {
 
 beforeAll(async () => {
 	mounted = await mountAuth("pluginguard", {
+		keys: TOKEN_KEYS,
 		plugins: [{ id: "revoker", routes: [revokeRoute] } as VelvePlugin<"revoker">, WATCHER],
 	});
 	userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 });
 
 afterAll(async () => {

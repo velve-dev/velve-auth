@@ -100,6 +100,14 @@ async function sessionIds(): Promise<readonly string[]> {
 	return rows.map((row) => row.id);
 }
 
+async function tokenMacVersionsOfSessions(): Promise<readonly number[]> {
+	const rows = await connection.query<{ version: number }>(
+		`SELECT DISTINCT token_mac_key_version AS version FROM ${schema}.session ORDER BY 1`,
+		[],
+	);
+	return rows.map((row) => Number(row.version));
+}
+
 async function passwordRewrittenUnder(version: number, userId: string): Promise<boolean> {
 	const deadline = Date.now() + REWRITE_SETTLE_LIMIT_MS;
 	while (Date.now() < deadline) {
@@ -129,6 +137,8 @@ describe("T-KEY-5 — a rotation of the root key ends no session (S-KEY-5)", () 
 
 		const readDuring = await duringRotation.session.resolve({ origin: TEST_ORIGIN, sessionToken });
 		expect(readDuring?.user.id, "the session after v2 was put in front").toBe(userId);
+		//the resolve rebinds the token mac so the session survives v1 leaving the ring (S-INTEG-9)
+		expect(await tokenMacVersionsOfSessions()).toStrictEqual([2]);
 
 		const begun = await duringRotation.signIn.password({
 			email: "rotating@example.com",

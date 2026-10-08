@@ -9,6 +9,7 @@ import {
 } from "../src/core/db/repositories/session.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken, sessionTokenHash } from "../src/core/session/token.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import {
 	actorOfTestUser,
 	createUser,
@@ -17,7 +18,9 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { sessionInsertFor } from "./session-fixtures.js";
+import { SESSION_FIXTURE_KEYS, sessionInsertFor } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -90,10 +93,17 @@ beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_reissue");
 	traced = tracingDriver(migrated.connection);
 	service = createSessionService({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
 		driver: traced.driver,
 		schema: migrated.schema,
 	});
-	sessions = createSessionRepository({ driver: traced.driver, schema: migrated.schema });
+	sessions = createSessionRepository({
+		keys: SESSION_FIXTURE_KEYS,
+		sealing: "migrating",
+		driver: traced.driver,
+		schema: migrated.schema,
+	});
 	userId = await createUser(migrated.connection, migrated.schema);
 	owner = actorOfTestUser(userId);
 	strangerId = await createUser(migrated.connection, migrated.schema);
@@ -106,21 +116,41 @@ afterAll(async () => {
 
 describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction", () => {
 	it("runs one transaction holding one DELETE and one INSERT, and no UPDATE", async () => {
-		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		traced.reset();
 
 		await service.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: previous.token,
 			userId,
 			factors: ["password", "totp"],
 			observed: NOWHERE,
 		});
 
-		expect(traced.log).toEqual(["BEGIN", "tx DELETE", "tx INSERT", "COMMIT"]);
+		//the account lock comes first and the select before the insert reads the epoch (S-INTEG-9, E-3141)
+		expect(traced.log).toEqual([
+			"BEGIN",
+			"tx SELECT",
+			"tx DELETE",
+			"tx SELECT",
+			"tx INSERT",
+			"COMMIT",
+		]);
 	});
 
 	it("does the same when every other session goes with it", async () => {
-		const here = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const resolved = await service.resolve(here.token);
 		if (resolved === null) {
 			throw new Error("the session under test did not resolve");
@@ -128,12 +158,22 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		traced.reset();
 
 		await service.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
+			completes: "password_change",
 			resolved,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
 
-		expect(traced.log).toEqual(["BEGIN", "tx DELETE", "tx INSERT", "COMMIT"]);
+		//the account lock comes first and the select before the insert reads the epoch (S-INTEG-9, E-3141)
+		expect(traced.log).toEqual([
+			"BEGIN",
+			"tx SELECT",
+			"tx DELETE",
+			"tx SELECT",
+			"tx INSERT",
+			"COMMIT",
+		]);
 	});
 
 	it("leaves the previous row in place when the insert fails halfway", async () => {
@@ -169,10 +209,17 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 	});
 
 	it("refuses the same at the service, so no caller can move a session between accounts", async () => {
-		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		await expect(
 			service.reissue({
+				authorisedBy: "read_under_lock",
+				completes: "totp_second_factor",
 				previousToken: previous.token,
 				userId: strangerId,
 				factors: ["password"],
@@ -184,9 +231,16 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 	});
 
 	it("leaves the previous token addressing nothing afterwards (S-FIX-3)", async () => {
-		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		const next = await service.reissue({
+			authorisedBy: "read_under_lock",
+			completes: "totp_second_factor",
 			previousToken: previous.token,
 			userId,
 			factors: ["password", "webauthn"],
@@ -229,7 +283,12 @@ describe("S-FIX-2: the trigger is the second lock, and the code does not lean on
 			},
 			transaction: (fn) => fn(recording),
 		};
-		const quiet = createSessionRepository({ driver: recording, schema: "velve" });
+		const quiet = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
+			sealing: "migrating",
+			driver: recording,
+			schema: "velve",
+		});
 		const insert = sessionInsertFor(userId);
 
 		await quiet.insertSession(insert).catch(() => undefined);
@@ -254,7 +313,12 @@ describe("S-FIX-2: the trigger is the second lock, and the code does not lean on
 describe("two re-issues of one session at the same moment", () => {
 	it("leaves one live session behind, not two", async () => {
 		const second: TestConnection = await openTestConnection();
-		const other = createSessionRepository({ driver: second, schema: migrated.schema });
+		const other = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
+			sealing: "migrating",
+			driver: second,
+			schema: migrated.schema,
+		});
 		const previous = createSessionToken();
 		await sessions.deleteEverySessionOwnedBy({ actor: owner });
 		await sessions.insertSession(sessionInsertFor(userId, { tokenHash: previous.tokenHash }));

@@ -1,3 +1,4 @@
+import { VelveError } from "../http/error-map.js";
 import type { SecurityStateRead } from "./read.js";
 
 /** how many passkeys and identities one account may hold, which bounds what every seal check reads */
@@ -6,21 +7,7 @@ export interface LimitsConfig {
 	readonly identitiesPerAccount: number;
 }
 
-/** the stable code a registration or a link over the account's limit is refused with */
-type CredentialLimitCode = "passkey_limit_reached" | "identity_limit_reached";
-
-/** a registration or a link would take the account past its limit, and the change is rolled back */
-export class CredentialLimitReachedError extends Error {
-	readonly code: CredentialLimitCode;
-
-	constructor(code: CredentialLimitCode) {
-		super(`the account already holds as many as its limit allows: ${code}`);
-		this.name = "CredentialLimitReachedError";
-		this.code = code;
-	}
-}
-
-const DEFAULT_LIMITS: LimitsConfig = { passkeysPerAccount: 20, identitiesPerAccount: 10 };
+export const DEFAULT_LIMITS: LimitsConfig = { passkeysPerAccount: 20, identitiesPerAccount: 10 };
 
 function isCount(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
@@ -41,9 +28,9 @@ export function assertBelowCredentialLimit(
 	limits: LimitsConfig,
 ): void {
 	if (credential === "passkey" && read.passkeys.length >= limits.passkeysPerAccount) {
-		throw new CredentialLimitReachedError("passkey_limit_reached");
+		throw new VelveError("passkey_limit_reached");
 	}
 	if (credential === "identity" && read.identities.length >= limits.identitiesPerAccount) {
-		throw new CredentialLimitReachedError("identity_limit_reached");
+		throw new VelveError("identity_limit_reached");
 	}
 }

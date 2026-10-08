@@ -7,6 +7,7 @@ import { createLogSink, type LogSink, TEST_ORIGIN, testKeyProvider } from "./aut
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { createStubProvider, oauthConfigFor, type StubProvider } from "./oauth-provider.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 
 const WIDEST_PASSWORD = "a password the widest mount accepts 7c1e";
 
@@ -26,6 +27,8 @@ export interface WidestMount {
 	readonly schema: string;
 	readonly log: LogSink;
 	readonly provider: StubProvider;
+	/** seals an account again after a test changed its rows by SQL, as the library would have */
+	reseal(userId: string): Promise<void>;
 	close(): Promise<void>;
 }
 
@@ -40,11 +43,12 @@ export async function mountWidest(
 		openIdConnect: true,
 	});
 	const log = createLogSink();
+	const keys = overrides.keys ?? testKeyProvider();
 	const auth = createVelveAuth<"username_email">({
 		identity: { mode: "username_email", username: { minimumLength: 3, maximumLength: 32 } },
 		database: connection,
 		schema,
-		keys: testKeyProvider(),
+		keys,
 		origins: [TEST_ORIGIN],
 		email: { send: () => Promise.resolve() },
 		log: log.write,
@@ -62,6 +66,7 @@ export async function mountWidest(
 		schema,
 		log,
 		provider,
+		reseal: (userId) => resealDirectly(connection, schema, keys, userId),
 		async close() {
 			await dropSchema(connection, schema);
 			await connection.close();

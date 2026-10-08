@@ -14,12 +14,28 @@ import { object, string } from "../http/validators.js";
 import type { IdentityConfiguration } from "../identity/configuration.js";
 import { comparisonFormOf } from "../identity/fold.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
+import { equalsInConstantTime } from "../keys/constant-time.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
+import { sealedComponentsOf } from "../security-state/read.js";
+import {
+	type AccountCheck,
+	checkAccount,
+	checkAccountOrStandIn,
+	passwordCredentialOf,
+	sealChange,
+	sessionEpochOf,
+} from "../security-state/runtime.js";
+import { componentsAfter, SealingRefusedError } from "../security-state/sealing.js";
 import type { SessionResolution } from "../session/service.js";
+import { createPasswordCredentialRepository, type PasswordCredentialRow } from "./credential.js";
 import { createPasswordEnvironmentReader, type PasswordEnvironmentReader } from "./environment.js";
+import { storedMemoryCeilingKiB } from "./limits.js";
 import { acceptSubmittedPassword } from "./policy.js";
+import { CREATED_SCHEME } from "./scheme.js";
 import { refuseIfCredentialExists, replacePasswordOfSession } from "./set-credential.js";
-import { checkPassword, type PasswordEnvironment } from "./verify.js";
+import { checkPassword, type PasswordEnvironment, type SealedRehash } from "./verify.js";
+
+type UsableCheck = Extract<AccountCheck, { kind: "usable" }>;
 
 export interface SignInPasswordNamespace<M extends IdentityMode> {
 	password(input: SignInLookup<M> & { password: string } & ServerCallFields): Promise<SignInResult>;
@@ -83,10 +99,73 @@ function requireSessionResolution(
 	return resolved;
 }
 
+//the rehash writes the account's credential under the lock and reseals like any change (E-3385)
+function rehashUnderTheLock(
+	services: RouteServices,
+	environment: PasswordEnvironment,
+	userId: string,
+	rehash: () => Promise<SealedRehash | null>,
+): () => Promise<unknown> {
+	return async () => {
+		const rewritten = await rehash();
+		if (rewritten === null) {
+			return false;
+		}
+		return sealChange(
+			services.securityState,
+			{ unproven: userId },
+			{
+				epoch: "keep",
+				write: async (tx, read) => {
+					//a rehash only replaces the ciphertext the sign-in verified and the read still holds (S-INTEG-4)
+					if (
+						read.password === null ||
+						!equalsInConstantTime(read.password.phc, rewritten.previous)
+					) {
+						return null;
+					}
+					const stored = await createPasswordCredentialRepository({
+						driver: tx,
+						keys: environment.keys,
+						schema: services.schema,
+						memoryCeilingKiB: storedMemoryCeilingKiB(services.password.argon2id.memoryKiB),
+					}).replaceIfUnchanged({
+						userId,
+						previous: rewritten.previous,
+						phc: rewritten.phc,
+						scheme: CREATED_SCHEME,
+					});
+					//a swap that misses under the lock met a credential written past it (E-3166)
+					if (stored === null) {
+						throw new SealingRefusedError("seal_mismatch");
+					}
+					return stored;
+				},
+				after: (read, stored) =>
+					stored === null || read.password === null
+						? sealedComponentsOf(read)
+						: componentsAfter(read, {
+								password: {
+									...read.password,
+									phc: stored.ciphertext,
+									keyVersion: stored.keyVersion,
+									scheme: CREATED_SCHEME,
+								},
+							}),
+			},
+		).catch(() => false);
+	};
+}
+
 async function verifiedAccount(
+	services: RouteServices,
 	environment: PasswordEnvironment,
 	context: RequestContext,
-	input: { readonly userId: string | null; readonly plaintext: string },
+	input: {
+		readonly userId: string | null;
+		readonly plaintext: string;
+		readonly checked: PasswordCredentialRow | null;
+	},
 ): Promise<string> {
 	const check = await checkPassword(input, environment);
 	//the true reason is raised and only error-map decides what the caller learns (S-ENUM-6)
@@ -97,18 +176,40 @@ async function verifiedAccount(
 		throw new ConcealedError("password_mismatch");
 	}
 	if (check.rehash !== undefined) {
-		deferUntilAnswered(context, check.rehash);
+		deferUntilAnswered(
+			context,
+			rehashUnderTheLock(services, environment, check.userId, check.rehash),
+		);
 	}
 	return check.userId;
+}
+
+//a broken account must cost a password sign-in what a wrong password costs (S-INTEG-5)
+async function checkedCredential(
+	services: RouteServices,
+	userId: string | null,
+	identifier: string,
+): Promise<{ readonly check: AccountCheck; readonly checked: PasswordCredentialRow | null }> {
+	const check = await checkAccountOrStandIn(services.securityState, userId, identifier);
+	return {
+		check,
+		checked:
+			check.kind === "usable" ? passwordCredentialOf(services.securityState, check.read) : null,
+	};
 }
 
 async function signedIn(
 	services: RouteServices,
 	context: RequestContext,
 	userId: string,
+	check: UsableCheck,
 ): Promise<SignInResult> {
 	//a correct password is no session while the account still offers a second factor (S-FIX-4)
-	const begun = await services.pending.begin({ userId, factorsCompleted: ["password"] });
+	const begun = await services.pending.begin({
+		userId,
+		factorsCompleted: ["password"],
+		sessionEpoch: sessionEpochOf(check),
+	});
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);
 		return { status: "second_factor_required", pendingToken: begun.token, pending: begun.pending };
@@ -119,6 +220,8 @@ async function signedIn(
 	const hooks = services.pluginRuntime.hooks;
 	const issued = await createSessionUnderHooks(hooks, { userId, factors: ["password"] }, () =>
 		services.sessions.issueReplacingPresented({
+			completes: "password_sign_in",
+			authorisedBy: check.authorisedBy,
 			presentedToken: context.sessionToken,
 			userId,
 			factors: ["password"],
@@ -166,15 +269,25 @@ export function passwordRoutes(services: RouteServices) {
 				configuration: services.identity,
 				identifier,
 			});
-			const userId = await verifiedAccount(environment, context, {
+			const { check, checked } = await checkedCredential(
+				services,
+				found === null ? null : found.id,
+				identifier,
+			);
+			const userId = await verifiedAccount(services, environment, context, {
 				userId: found === null ? null : found.id,
 				plaintext: input.password,
+				checked,
 			});
+			//a broken state is told only by the alarm and answers like a wrong password (S-INTEG-5)
+			if (check.kind !== "usable") {
+				throw new ConcealedError("password_mismatch");
+			}
 			//a disabled account answers a correct password like a wrong one (S-ENUM-2)
-			if (found?.disabled) {
+			if (check.read.disabled) {
 				throw new ConcealedError("user_disabled_on_sign_in");
 			}
-			return signedIn(services, context, userId);
+			return signedIn(services, context, userId, check);
 		},
 	});
 
@@ -203,8 +316,10 @@ export function passwordRoutes(services: RouteServices) {
 			const environment = await readEnvironment();
 			await refuseIfCredentialExists(environment, actorOfResolvedSession(resolved));
 			return replacePasswordOfSession(services, environment, context, {
+				completes: "password_set",
 				resolved,
 				newPassword: input.newPassword,
+				checkedPhc: null,
 			});
 		},
 	});
@@ -232,13 +347,22 @@ export function passwordRoutes(services: RouteServices) {
 			const resolved = requireSessionResolution(services, context.session);
 			await context.enforceAccountRateLimit(await accountKeyOfSession(services, resolved.userId));
 			const environment = await readEnvironment();
-			await verifiedAccount(environment, context, {
+			const check = await checkAccount(services.securityState, resolved.userId, "change");
+			const checked =
+				check.kind === "usable" ? passwordCredentialOf(services.securityState, check.read) : null;
+			await verifiedAccount(services, environment, context, {
 				userId: resolved.userId,
 				plaintext: input.currentPassword,
+				checked,
 			});
+			if (checked === null) {
+				throw new ConcealedError("password_mismatch");
+			}
 			return replacePasswordOfSession(services, environment, context, {
+				completes: "password_change",
 				resolved,
 				newPassword: input.newPassword,
+				checkedPhc: checked.phc,
 			});
 		},
 	});

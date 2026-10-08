@@ -21,9 +21,10 @@ afterAll(async () => {
 
 async function sessionOf(userId: string): Promise<string> {
 	const [row] = await connection.query<{ id: string }>(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-		 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day') RETURNING id`,
-		[userId, randomBytes(32)],
+		`INSERT INTO ${schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day', $3, 1) RETURNING id`,
+		[userId, randomBytes(32), randomBytes(32)],
 	);
 	return String(row?.id);
 }

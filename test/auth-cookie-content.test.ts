@@ -7,8 +7,11 @@ import {
 } from "../src/core/http/cookies.js";
 import { decodeBase64Url } from "../src/core/keys/base64url.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let mounted: MountedAuth;
 let sessionToken: string;
@@ -19,15 +22,25 @@ const SESSION_COOKIE = DEFAULT_COOKIE_NAMES.session;
 const EXPECTED_ATTRIBUTES = ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"];
 
 beforeAll(async () => {
-	mounted = await mountAuth("cookie");
+	mounted = await mountAuth("cookie", { keys: TOKEN_KEYS });
 	const userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 	const issued = createSessionToken();
 	sessionToken = issued.token;
 	await mounted.connection.query(
 		`INSERT INTO ${mounted.schema}.session
-		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])`,
-		[userId, issued.tokenHash],
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version, created_at, id)
+		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)`,
+		[
+			userId,
+			issued.tokenHash,
+			...(await sessionMacParameters(TOKEN_KEYS, {
+				userId,
+				tokenHash: issued.tokenHash,
+				factors: ["password"],
+			})),
+		],
 	);
 });
 

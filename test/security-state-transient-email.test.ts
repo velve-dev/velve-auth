@@ -3,7 +3,7 @@ import type { EmailMessage } from "../src/core/auth/config.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 
-//a link mailed to an address set only for the request must not redeem once the token and seal branches bind it (E-3312)
+//a link mailed to an address set only for the request must not redeem (E-3312)
 
 let mounted: MountedAuth;
 
@@ -47,14 +47,10 @@ async function magicLinkRedeemedAfterAnAddressFlip(): Promise<{
 }
 
 describe("a writer who flips the address only while the link is requested (section 3.18 point 3)", () => {
-	it.fails("cannot redeem a magic link mailed to the address the seal never held", async () => {
-		expect((await magicLinkRedeemedAfterAnAddressFlip()).status).not.toBe(200);
-	});
-
-	it("control: today the link goes to the writer's address and its redemption succeeds", async () => {
+	it("cannot redeem a magic link mailed to the address the account held only for the request", async () => {
 		expect(await magicLinkRedeemedAfterAnAddressFlip()).toStrictEqual({
 			mailedTo: ATTACKER,
-			status: 200,
+			status: 400,
 		});
 	});
 });

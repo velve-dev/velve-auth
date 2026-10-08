@@ -34,9 +34,10 @@ async function revokeAllOtherAfterARevocationAndAReinsert(
 		[userId],
 	);
 	const [saved] = await caller.query<Record<string, unknown>>(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+			   token_mac, token_mac_key_version)
 		 VALUES ($1, decode(md5(random()::text) || md5(random()::text), 'hex'),
-		 now() + interval '1 hour', now() + interval '1 day')
+		 now() + interval '1 hour', now() + interval '1 day', decode(repeat('00', 32), 'hex'), 1)
 		 RETURNING *`,
 		[userId],
 	);

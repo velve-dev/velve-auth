@@ -2,7 +2,17 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
-import { readSecurityState, securityStateOf } from "../src/core/security-state/read.js";
+import type { SecurityStateAlarm } from "../src/core/security-state/alarm.js";
+import { DEFAULT_LIMITS } from "../src/core/security-state/limits.js";
+import {
+	readSecurityState,
+	sealedComponentsOf,
+	securityStateOf,
+} from "../src/core/security-state/read.js";
+import {
+	createSecurityStateRuntime,
+	type SecurityStateRuntime,
+} from "../src/core/security-state/runtime.js";
 import { computeSeal } from "../src/core/security-state/seal.js";
 import { createUser } from "./db-fixtures.js";
 
@@ -134,4 +144,58 @@ VALUES ($1, $2, $3, $4, $5)`,
 		[userId, seal.version, sealed.digest, sealed.keyVersion, seal.sessionEpoch],
 	);
 	return { version: seal.version, digest: encodeBase64Url(sealed.digest) };
+}
+
+/** a security-state runtime for a test that builds a service by hand, with the alarm collected */
+export function testSecurityState(
+	driver: Driver,
+	schema: string,
+	keys: KeyProvider,
+	options: {
+		readonly sealing?: "required" | "migrating";
+		readonly alarms?: SecurityStateAlarm[];
+	} = {},
+): SecurityStateRuntime {
+	return createSecurityStateRuntime({
+		driver,
+		schema,
+		keys,
+		//an account a test created by SQL is first sealed by its first change
+		sealing: options.sealing ?? "migrating",
+		limits: DEFAULT_LIMITS,
+		anchors: [],
+		alarm: (event) => {
+			options.alarms?.push(event);
+		},
+		log: () => undefined,
+		clock: { now: () => new Date() },
+	});
+}
+
+//a test that wrote sign-in rows by SQL seals what it wrote as the account's legitimate state
+export async function resealDirectly(
+	driver: Driver,
+	schema: string,
+	keys: KeyProvider,
+	userId: string,
+): Promise<void> {
+	const read = await readSecurityState(driver, schema, userId);
+	if (read === null) {
+		throw new Error("the account to seal does not exist");
+	}
+	const version = (read.seal?.version ?? 0) + 1;
+	const sessionEpoch = read.seal?.sessionEpoch ?? 1;
+	const sealed = await computeSeal(keys, {
+		userId,
+		version,
+		sessionEpoch,
+		...sealedComponentsOf(read),
+	});
+	await driver.query(
+		`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id) DO UPDATE SET version = EXCLUDED.version, digest = EXCLUDED.digest,
+  key_version = EXCLUDED.key_version, session_epoch = EXCLUDED.session_epoch`,
+		[userId, version, sealed.digest, sealed.keyVersion, sessionEpoch],
+	);
 }

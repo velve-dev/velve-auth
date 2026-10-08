@@ -44,6 +44,7 @@ async function linkAnIdentity(userId: string, subject: string): Promise<string> 
 		 VALUES ($1, 'stubby', $2) RETURNING id`,
 		[userId, subject],
 	);
+	await mounted.reseal(userId);
 	return row?.id ?? "";
 }
 

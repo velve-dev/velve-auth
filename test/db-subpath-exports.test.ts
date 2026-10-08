@@ -68,7 +68,7 @@ describe("@velve/auth/schema", () => {
 		const runnerOptions: MigrationRunnerOptions = { driver, migrations: plan };
 		const statusOptions: SchemaStatusOptions = { driver, migrations: plan };
 
-		expect(plan.map((migration) => migration.version)).toEqual([1, 2, 3]);
+		expect(plan.map((migration) => migration.version)).toEqual([1, 2, 3, 4]);
 		expect(typeof runMigrations).toBe("function");
 		expect(typeof readSchemaStatus).toBe("function");
 		expect(typeof assertSchemaUpToDate).toBe("function");

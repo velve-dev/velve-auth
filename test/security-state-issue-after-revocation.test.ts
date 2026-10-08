@@ -133,23 +133,23 @@ async function completedAfter(revocation: "password_change" | "revoke_all"): Pro
 }
 
 describe("a pending authentication from before a mass revocation (S-FIX-6, section 3.18 point 3)", () => {
-	it.fails("yields no session after the password it was authorised by has been changed, once the token branch binds the pending epoch", async () => {
+	it("yields no session after the password it was authorised by has been changed", async () => {
 		expect(await completedAfter("password_change")).toStrictEqual({
 			issued: false,
 			resolves: false,
 		});
 	});
 
-	it.fails("yields no session after the user signed out everywhere, once the token branch binds the pending epoch", async () => {
+	it("yields no session after the user signed out everywhere", async () => {
 		expect(await completedAfter("revoke_all")).toStrictEqual({ issued: false, resolves: false });
 	});
 
-	it("control: today the completion after a password change issues a session that resolves", async () => {
-		expect(await completedAfter("password_change")).toStrictEqual({ issued: true, resolves: true });
-	});
+	it("control: without a revocation the completion issues a session that resolves", async () => {
+		const victim = await victimWithTotp();
+		const pending = await pendingWithOldPassword(victim.email);
+		const issued = await completeWithTotp(pending, victim.secret);
 
-	it("control: today the completion after signing out everywhere issues a session that resolves", async () => {
-		expect(await completedAfter("revoke_all")).toStrictEqual({ issued: true, resolves: true });
+		expect(issued === null ? false : await resolves(issued)).toBe(true);
 	});
 });
 
@@ -205,9 +205,11 @@ describe("premise: the issue point 3 prescribed until now, after a check that pr
 			[userId],
 		);
 		const inserted = await signer.query(
-			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+				token_mac, token_mac_key_version)
 			 SELECT s.user_id, decode(md5(random()::text) || md5(random()::text), 'hex'),
-				now() + interval '1 hour', now() + interval '1 day'
+				now() + interval '1 hour', now() + interval '1 day',
+				decode(md5(random()::text) || md5(random()::text), 'hex'), 1
 			 FROM ${schema}.security_state s WHERE s.user_id = $1 AND s.session_epoch = $2
 			 RETURNING id`,
 			[userId, Number(underLock?.epoch)],
@@ -235,9 +237,11 @@ describe("premise: the issue point 3 prescribed until now, after a check that pr
 		await signer.query("BEGIN", []);
 		await signer.query(lockAccountRowStatement(schema), [userId]);
 		const inserted = await signer.query(
-			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+				token_mac, token_mac_key_version)
 			 SELECT s.user_id, decode(md5(random()::text) || md5(random()::text), 'hex'),
-				now() + interval '1 hour', now() + interval '1 day'
+				now() + interval '1 hour', now() + interval '1 day',
+				decode(md5(random()::text) || md5(random()::text), 'hex'), 1
 			 FROM ${schema}.security_state s WHERE s.user_id = $1 AND s.session_epoch = $2 AND s.version = $3
 			 RETURNING id`,
 			[userId, 1, 1],

@@ -13,7 +13,7 @@ import {
 	observedIn,
 	readUserOrRefuse,
 	refuseADisabledAccount,
-	sessionIdOfCaller,
+	sessionOfCaller,
 } from "./environment.js";
 
 //both branches must run the same statements and call send exactly once (S-TIM-6)
@@ -29,11 +29,12 @@ export async function requestMagicLink(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "magic_link",
 			subject: subjectOfAddress(owner, address),
+			accountEmail: owner?.email ?? address,
 		}),
 	);
 	await sendOrUndo(
@@ -62,10 +63,10 @@ export async function redeemMagicLink(
 	const observed = observedIn(context);
 	//a veto must come before the token is spent so the link can still be used
 	await askBeforeSignIn(hooks, "magic_link", observed);
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const account = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "magic_link",
 		});
@@ -74,22 +75,29 @@ export async function redeemMagicLink(
 		if (resolved === A_DISABLED_ACCOUNT) {
 			return resolved;
 		}
-		await confirmAddress({
+		const confirmed = await confirmAddress({
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
+			sessions: environment.services.sessions,
 			actor: resolved.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: null,
+			securityState: environment.services.securityState,
 		});
-		return resolved;
+		return { ...resolved, sealed: confirmed.sealed };
 	});
 	if (account === A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
 
 	//a link as the first factor must not skip the second factor (E-735)
-	const begun = await pending.begin({ userId: account.user.id, factorsCompleted: [] });
+	//the session and the pending row are bound to the seal the redemption wrote (S-INTEG-9)
+	const begun = await pending.begin({
+		userId: account.user.id,
+		factorsCompleted: [],
+		sessionEpoch: account.sealed.sessionEpoch,
+	});
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);
 		return { status: "second_factor_required", pendingToken: begun.token, pending: begun.pending };
@@ -101,6 +109,8 @@ export async function redeemMagicLink(
 		{ userId: account.user.id, factors: [] },
 		() =>
 			sessions.issueReplacingPresented({
+				completes: "magic_link",
+				authorisedBy: account.sealed,
 				presentedToken: context.sessionToken,
 				userId: account.user.id,
 				factors: [],

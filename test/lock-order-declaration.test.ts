@@ -1,11 +1,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { createTotpRepository } from "../src/core/factor/totp/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import type { OAuthConfig } from "../src/core/oauth/config.js";
+import { sealPhc } from "../src/core/password/credential.js";
 import { createVelveAuth } from "../src/index.js";
 import { withoutComments } from "../tools/source-text.mjs";
 import { configFor, TEST_ORIGIN } from "./auth-fixtures.js";
@@ -16,6 +18,7 @@ import {
 	readUserOwnedTables,
 } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
 import { accountLockAudit, HeldDriver } from "./lock-order-fixtures.js";
 import {
 	CALLBACK_BASE_URL,
@@ -23,6 +26,7 @@ import {
 	createStubProvider,
 	type StubProvider,
 } from "./oauth-provider.js";
+import { enrolConfirmedCredential, testKeyRing } from "./totp-fixtures.js";
 
 const PASSWORD = "correct-horse-battery-staple";
 const REPLACEMENT = "a different password entirely";
@@ -207,11 +211,52 @@ describe("every account lock outside the interleavings is declared before the ta
 		expect(considered).toBe(1);
 	}, 60_000);
 
+	it("takes the account row before the bound-envelope rewrite replaces the credential and the secret", async () => {
+		const ring = testKeyRing(2);
+		const { late, considered } = await auditOf(async (handler, held) => {
+			const cookie = await signUp(handler, "rebind@example.com");
+			const [account] = await connection.query<{ id: string }>(
+				`SELECT id FROM ${schema}.user WHERE email = $1`,
+				["rebind@example.com"],
+			);
+			const userId = account?.id ?? "";
+			expect(cookie).not.toBe("");
+			const sealed = await sealPhc(
+				ring.providerAt(1, [1]),
+				userId,
+				"$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNo",
+			);
+			await connection.query(
+				`UPDATE ${schema}.password_credential SET phc = $2, key_version = $3 WHERE user_id = $1`,
+				[userId, sealed.ciphertext, sealed.keyVersion],
+			);
+			await enrolConfirmedCredential(connection, schema, ring.providerAt(1, [1]), userId);
+			// A ring with a newer current version makes both envelopes due for the rewrite.
+			const rewrite = await inOneTransaction(held, (transaction) =>
+				rebindAfterOneRead({
+					driver: transaction,
+					schema,
+					keys: ring.providerAt(2, [1, 2]),
+					actor: actorOfTestUser(userId),
+					sealing: "required",
+				}),
+			);
+			expect(rewrite.passwordRewritten && rewrite.totpRewritten).toBe(true);
+		});
+
+		expect(late, late.join("\n")).toEqual([]);
+		expect(considered).toBe(1);
+	}, 60_000);
+
 	/**
-	 * The reach, counted rather than described. Eight statements take the account lock; this file
-	 * drives three of them, `test/lock-order-race.test.ts` drives two, and the remaining three write
-	 * fewer than two of the account's own tables, so the audit skips them by construction (E-1617).
-	 * A ninth site added anywhere reddens this and has to be placed in that account.
+	 * The reach, counted rather than described. Eleven statements take the account lock; this file
+	 * drives four of them, `test/lock-order-race.test.ts` drives two, and the remaining five write
+	 * fewer than two of the account's own tables, so the audit skips them by construction (E-1617);
+	 * the OAuth refresh of E-3222 is the fourth and the automatic link of E-3225 the fifth. A twelfth
+	 * site added anywhere reddens this and has to be placed in that account. The seal's wiring moved
+	 * five of them, the address confirmation, the token and recovery-code resets, the identity link and the
+	 * password change, into `sealUnderAccountLock`, which takes the lock for every sealing change, so the
+	 * count fell from thirteen to nine (E-3163).
 	 */
 	it("counts the statements that take the account lock, so the reach cannot drift unnoticed", () => {
 		const CALL = /\blockAccountRow(?:Statement)?\s*\(/g;
@@ -239,7 +284,7 @@ describe("every account lock outside the interleavings is declared before the ta
 		const listing = sites.map((source) => `${source.path}: ${source.count}`).join("\n");
 
 		expect(sites.length, listing).toBeGreaterThan(5);
-		//the ninth seals a change and test/security-state-sealing.test.ts audits its order (E-3160)
+		//one of them issues a session and one seals every change under the account lock (E-3163)
 		expect(total, listing).toBe(9);
 	});
 });

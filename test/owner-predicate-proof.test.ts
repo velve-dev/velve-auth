@@ -258,6 +258,8 @@ describe("T-OWNER-2: the owner condition stands in the outermost WHERE (S-OWNER-
 			"core/db/repositories/owned-row-repository.ts",
 			"core/identity/sign-in-methods.ts",
 			"core/password/credential.ts",
+			//the maintenance seam of the token MACs names its table at run time (E-3148)
+			"core/token/rebind.ts",
 		]);
 	});
 

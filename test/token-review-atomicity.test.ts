@@ -9,8 +9,11 @@ import {
 	type OneTimeTokenRedemption,
 	type OneTimeTokens,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 // T-RACE-1 fixes 50 simultaneous attempts, 20 repetitions per purpose, tolerance 0. The
 // repetitions, the purposes and the tolerance are kept; the attempt count is not, because a
@@ -83,9 +86,12 @@ beforeAll(async () => {
 	user = await createUser(connections[0] as TestConnection, schema);
 	issuer = createOneTimeTokens(
 		createOneTimeTokenRepository({ driver: connections[0] as TestConnection, schema }),
+		{ keys: TOKEN_KEYS },
 	);
 	atomicRedeemers = connections.map((connection) =>
-		createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema })),
+		createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }), {
+			keys: TOKEN_KEYS,
+		}),
 	);
 	readThenWriteRedeemers = connections.map((connection) =>
 		readThenWriteRedeemer(connection, schema),

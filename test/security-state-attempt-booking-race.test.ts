@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MAXIMUM_PENDING_ATTEMPTS } from "../src/core/factor/pending/index.js";
-import { createPendingAuthenticationRepository } from "../src/core/factor/pending/repository.js";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
+import { MAXIMUM_PENDING_ATTEMPTS, type PendingToken } from "../src/core/factor/pending/index.js";
 import { hashPendingToken } from "../src/core/factor/pending/token.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
@@ -27,10 +27,14 @@ afterAll(async () => {
 	await Promise.all(others.map((connection) => connection.close()));
 });
 
-async function pendingRow(): Promise<{ userId: string; tokenHash: Uint8Array }> {
+async function pendingRow(): Promise<{
+	userId: string;
+	token: PendingToken;
+	tokenHash: Uint8Array;
+}> {
 	const userId = await createUser(owner, schema);
 	const { token } = await beginPendingState(pendingAuthenticationsOn(owner, schema), userId);
-	return { userId, tokenHash: hashPendingToken(token) };
+	return { userId, token, tokenHash: hashPendingToken(token) };
 }
 
 async function attemptsOf(
@@ -74,17 +78,22 @@ async function bookOrRefuse(
 }
 
 describe("premise: concurrent wrong second-factor codes on one pending authentication (L-8)", () => {
-	it("control: the shipped unconditional count exhausts the budget and removes the row", async () => {
-		const { tokenHash } = await pendingRow();
-		await Promise.all(
+	it("the library's booking books exactly the budget and refuses the rest as exhausted", async () => {
+		const { tokenHash, token } = await pendingRow();
+		const outcomes = await Promise.all(
 			others.map((connection) =>
-				createPendingAuthenticationRepository({ driver: connection, schema }).countFailedAttempt({
-					tokenHash,
-					maximumAttempts: MAXIMUM_PENDING_ATTEMPTS,
-				}),
+				bookAttemptOn(pendingAuthenticationsOn(connection, schema), token),
 			),
 		);
-		expect(await attemptsOf(owner, tokenHash)).toBeNull();
+		expect({
+			booked: outcomes.filter((outcome) => outcome.outcome === "booked").length,
+			exhausted: outcomes.filter((outcome) => outcome.outcome === "exhausted").length,
+			attempts: await attemptsOf(owner, tokenHash),
+		}).toStrictEqual({
+			booked: MAXIMUM_PENDING_ATTEMPTS,
+			exhausted: GUESSES - MAXIMUM_PENDING_ATTEMPTS,
+			attempts: MAXIMUM_PENDING_ATTEMPTS,
+		});
 	});
 
 	it("a count conditional on the verified value, every miss a refusal, counts one of ten", async () => {

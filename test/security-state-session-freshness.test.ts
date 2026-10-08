@@ -1,15 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
+import { rebindSessionsOf } from "./session-fixtures.js";
 
-//a stale session renewed by a writer must stay stale once the token branch binds created_at (E-3313)
+const KEYS = testKeyProvider();
+
+//a stale session whose created_at a writer renews must be refused as no session (E-3313)
 
 let migrated: MigratedSchema;
 let service: SessionService;
 
 beforeAll(async () => {
 	migrated = await openMigratedSchema("session_freshness");
-	service = createSessionService({ driver: migrated.connection, schema: migrated.schema });
+	service = createSessionService({
+		driver: migrated.connection,
+		schema: migrated.schema,
+		keys: KEYS,
+		sealing: "migrating",
+	});
 });
 
 afterAll(async () => {
@@ -20,6 +29,7 @@ afterAll(async () => {
 async function staleSessionRenewedBySql() {
 	const userId = await createUser(migrated.connection, migrated.schema);
 	const issued = await service.issue({
+		authorisedBy: "read_under_lock",
 		userId,
 		factors: ["password"],
 		observed: { ipAddress: null, userAgent: null },
@@ -28,6 +38,9 @@ async function staleSessionRenewedBySql() {
 		`UPDATE ${migrated.schema}.session SET created_at = created_at - interval '16 minutes' WHERE id = $1`,
 		[issued.session.id],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, KEYS, {
+		sessionId: issued.session.id,
+	});
 	const stale = await service.resolve(issued.token);
 	await expect(service.list({ resolved: stale ?? never() })).rejects.toMatchObject({
 		code: "freshness_required",
@@ -40,16 +53,8 @@ async function staleSessionRenewedBySql() {
 }
 
 describe("a writer who renews the created_at of a stale session (section 3.18 point 3)", () => {
-	it.fails("does not make the stale session fresh", async () => {
-		const renewed = await staleSessionRenewedBySql();
-		await expect(service.list({ resolved: renewed ?? never() })).rejects.toMatchObject({
-			code: "freshness_required",
-		});
-	});
-
-	it("control: today the renewed session resolves and passes the freshness gate", async () => {
-		const renewed = await staleSessionRenewedBySql();
-		await expect(service.list({ resolved: renewed ?? never() })).resolves.toBeDefined();
+	it("does not make the stale session fresh, because the renewed row resolves to nothing", async () => {
+		expect(await staleSessionRenewedBySql()).toBeNull();
 	});
 });
 

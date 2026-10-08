@@ -16,6 +16,7 @@ export type {
 	RateLimitConfig,
 	RecoveryCodesConfig,
 	RecoveryCodesRequirement,
+	SecurityStateConfig,
 	SignInLookup,
 	TotpConfig,
 	VelveAuthConfig,
@@ -114,6 +115,8 @@ export type { UsernameRules } from "./core/identity/configuration.js";
 export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";
 export type * from "./core/oauth/index.js";
 export type * from "./core/plugin/index.js";
+export type { SecurityStateAlarm } from "./core/security-state/alarm.js";
+export type { LimitsConfig } from "./core/security-state/limits.js";
 export type { SessionToken } from "./core/session/token.js";
 
 //this is the one place in the package where a clock is read (E-231)

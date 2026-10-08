@@ -1,12 +1,21 @@
+import {
+	type SealingMode,
+	sealRowPresenceOf,
+	sealRowPresentFor,
+	unboundReadingOf,
+} from "../auth/security-state.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import {
-	decryptWithPurposeKey,
-	type EncryptionKeyPurpose,
-	encryptWithPurposeKey,
-	type KeyProvider,
-} from "../keys/index.js";
+	decryptBound,
+	type EnvelopeBinding,
+	type EnvelopeRewrite,
+	encryptBound,
+	rebindEnvelope,
+	type UnboundEnvelopeReading,
+} from "../keys/envelope-binding.js";
+import type { EncryptionKeyPurpose, KeyProvider } from "../keys/index.js";
 import { CredentialWriteError } from "./errors.js";
 import { type PasswordScheme, schemeOfStoredHash } from "./scheme.js";
 import { credentialReachesDerivation } from "./verify-switch.js";
@@ -24,6 +33,8 @@ export interface PasswordCredentialRow {
 	readonly keyVersion: number;
 	//the scheme stays cleartext for a PHC estate to be surveyed without a key
 	readonly scheme: PasswordScheme;
+	/** whether the PHC string may still be in the unbound form, decided with the row it was read in */
+	readonly unbound: UnboundEnvelopeReading;
 }
 
 export interface SealedPhc {
@@ -31,14 +42,24 @@ export interface SealedPhc {
 	readonly ciphertext: Uint8Array<ArrayBuffer>;
 }
 
+//the owner names the row as the table holds one row per account and no id of its own (S-INTEG-1)
+function phcBindingOf(userId: string): EnvelopeBinding {
+	return { column: "password_credential.phc", owner: userId, row: userId };
+}
+
 //this is the only place a PHC string becomes a column value
-export function sealPhc(keys: KeyProvider, phc: string): Promise<SealedPhc> {
-	return encryptWithPurposeKey(keys, PASSWORD_ENC_PURPOSE, utf8.encode(phc));
+export function sealPhc(keys: KeyProvider, userId: string, phc: string): Promise<SealedPhc> {
+	return encryptBound(keys, phcBindingOf(userId), utf8.encode(phc));
 }
 
 export async function openPhc(keys: KeyProvider, row: PasswordCredentialRow): Promise<string> {
 	return new TextDecoder().decode(
-		await decryptWithPurposeKey(keys, PASSWORD_ENC_PURPOSE, row.keyVersion, row.phc),
+		await decryptBound(
+			keys,
+			phcBindingOf(row.userId),
+			{ keyVersion: row.keyVersion, ciphertext: row.phc },
+			row.unbound,
+		),
 	);
 }
 
@@ -53,15 +74,21 @@ export interface PasswordCredentialRepository {
 	//a sign-in has no proof yet as the row read here is what the proof is made from (E-2423)
 	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
 	findOwnedBy(input: { readonly actor: Actor }): Promise<PasswordCredentialRow | null>;
-	write(input: { actor: Actor } & PasswordCredentialWrite): Promise<void>;
+	write(input: { actor: Actor } & PasswordCredentialWrite): Promise<SealedPhc>;
 	//the account row was inserted by the same transaction so no other caller can own it (E-2428)
-	writeForCreatedAccount(input: { userId: string } & PasswordCredentialWrite): Promise<void>;
+	writeForCreatedAccount(input: { userId: string } & PasswordCredentialWrite): Promise<SealedPhc>;
+	//the rewrite opens and re-encrypts the same string and never derives a new one (S-INTEG-8)
+	rebindOwnedBy(input: {
+		readonly actor: Actor;
+		readonly read: SealedPhc;
+		readonly unbound: UnboundEnvelopeReading;
+	}): Promise<EnvelopeRewrite<SealedPhc>>;
 	replaceIfUnchanged(input: {
 		userId: string;
 		previous: Uint8Array<ArrayBuffer>;
 		phc: string;
 		scheme: PasswordScheme;
-	}): Promise<boolean>;
+	}): Promise<SealedPhc | null>;
 }
 
 interface RawRow {
@@ -69,6 +96,7 @@ interface RawRow {
 	readonly phc: Uint8Array<ArrayBuffer>;
 	readonly key_version: number;
 	readonly scheme: PasswordScheme;
+	readonly sealed: boolean;
 }
 
 export interface PasswordCredentialRepositoryOptions {
@@ -76,6 +104,8 @@ export interface PasswordCredentialRepositoryOptions {
 	readonly keys: KeyProvider;
 	readonly schema?: string;
 	readonly memoryCeilingKiB: number;
+	/** the sealing mode a PHC string in the unbound form is read under, `"required"` when absent */
+	readonly sealing?: SealingMode;
 }
 
 function assertSchemeMatchesCredential(phc: string, scheme: PasswordScheme): void {
@@ -99,17 +129,18 @@ function assertCredentialIsVerifiable(
 export function createPasswordCredentialRepository(
 	options: PasswordCredentialRepositoryOptions,
 ): PasswordCredentialRepository {
-	const table = qualifiedTableName(
-		options.schema ?? PASSWORD_CREDENTIAL_SCHEMA,
-		PASSWORD_CREDENTIAL_TABLE,
-	);
+	const schema = options.schema ?? PASSWORD_CREDENTIAL_SCHEMA;
+	const table = qualifiedTableName(schema, PASSWORD_CREDENTIAL_TABLE);
 	const { memoryCeilingKiB } = options;
+	const sealing = options.sealing ?? "required";
+
+	//the seal row is read in the statement that reads the envelope (E-3121)
+	const findStatement = `SELECT credential.user_id, credential.phc, credential.key_version, credential.scheme,
+${sealRowPresentFor(schema, "credential.user_id")} AS sealed
+FROM ${table} credential WHERE credential.user_id = $1`;
 
 	async function findOne(ownerId: string): Promise<PasswordCredentialRow | null> {
-		const [row] = await options.driver.query<RawRow>(
-			`SELECT user_id, phc, key_version, scheme FROM ${table} WHERE user_id = $1`,
-			[ownerId],
-		);
+		const [row] = await options.driver.query<RawRow>(findStatement, [ownerId]);
 
 		return row === undefined
 			? null
@@ -118,16 +149,20 @@ export function createPasswordCredentialRepository(
 					phc: row.phc,
 					keyVersion: row.key_version,
 					scheme: row.scheme,
+					unbound: unboundReadingOf(sealing, sealRowPresenceOf(row.sealed)),
 				};
 	}
 
 	async function sealedRow(
 		ownerId: string,
 		{ phc, scheme, setBySessionId }: PasswordCredentialWrite,
-	): Promise<unknown[]> {
+	): Promise<{ readonly parameters: unknown[]; readonly stored: SealedPhc }> {
 		assertCredentialIsVerifiable(phc, scheme, memoryCeilingKiB);
-		const sealed = await sealPhc(options.keys, phc);
-		return [ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId];
+		const sealed = await sealPhc(options.keys, ownerId, phc);
+		return {
+			parameters: [ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
+			stored: sealed,
+		};
 	}
 
 	//a false conflict predicate writes nothing and must not be reported as stored (E-185)
@@ -137,7 +172,11 @@ export function createPasswordCredentialRepository(
 		}
 	}
 
-	async function writeOwnedBy(ownerId: string, credential: PasswordCredentialWrite): Promise<void> {
+	async function writeOwnedBy(
+		ownerId: string,
+		credential: PasswordCredentialWrite,
+	): Promise<SealedPhc> {
+		const row = await sealedRow(ownerId, credential);
 		//the conflict is on the owner column and the predicate says so explicitly (S-OWNER-2)
 		const written = await options.driver.query(
 			`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
@@ -148,20 +187,26 @@ export function createPasswordCredentialRepository(
 			     updated_at = now()
 			 WHERE credential.user_id = $1
 			 RETURNING user_id`,
-			await sealedRow(ownerId, credential),
+			row.parameters,
 		);
 		assertWritten(written);
+		return row.stored;
 	}
 
 	//without a proof only a first credential may be written so an existing one is a key violation (E-2428)
-	async function insertFirst(ownerId: string, credential: PasswordCredentialWrite): Promise<void> {
+	async function insertFirst(
+		ownerId: string,
+		credential: PasswordCredentialWrite,
+	): Promise<SealedPhc> {
+		const row = await sealedRow(ownerId, credential);
 		const written = await options.driver.query(
 			`INSERT INTO ${table} (user_id, phc, key_version, scheme, set_by_session_id)
 			 VALUES ($1, $2, $3, $4, $5)
 			 RETURNING user_id`,
-			await sealedRow(ownerId, credential),
+			row.parameters,
 		);
 		assertWritten(written);
+		return row.stored;
 	}
 
 	return {
@@ -173,10 +218,24 @@ export function createPasswordCredentialRepository(
 
 		writeForCreatedAccount: ({ userId, ...credential }) => insertFirst(userId, credential),
 
+		async rebindOwnedBy({ actor, read, unbound }) {
+			const rebound = await rebindEnvelope(options.keys, phcBindingOf(actor), read, unbound);
+			if (rebound === null) {
+				return { outcome: "current", stored: read };
+			}
+			const changed = await options.driver.query(
+				`UPDATE ${table} SET phc = $2, key_version = $3
+				 WHERE user_id = $1 AND phc = $4 AND key_version = $5
+				 RETURNING user_id`,
+				[actor, rebound.ciphertext, rebound.keyVersion, read.ciphertext, read.keyVersion],
+			);
+			return changed.length === 1 ? { outcome: "rebound", stored: rebound } : { outcome: "lost" };
+		},
+
 		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)
 		async replaceIfUnchanged({ userId, previous, phc, scheme }) {
 			assertCredentialIsVerifiable(phc, scheme, memoryCeilingKiB);
-			const sealed = await sealPhc(options.keys, phc);
+			const sealed = await sealPhc(options.keys, userId, phc);
 
 			const changed = await options.driver.query(
 				`UPDATE ${table}
@@ -186,7 +245,7 @@ export function createPasswordCredentialRepository(
 				[userId, sealed.ciphertext, scheme, sealed.keyVersion, previous],
 			);
 
-			return changed.length === 1;
+			return changed.length === 1 ? sealed : null;
 		},
 	};
 }

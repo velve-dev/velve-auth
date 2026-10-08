@@ -30,7 +30,7 @@ export interface SecurityStateAlarm {
 }
 
 /** the application's callback for a broken security state */
-type SecurityStateAlarmCallback = (event: SecurityStateAlarm) => void;
+export type SecurityStateAlarmCallback = (event: SecurityStateAlarm) => void;
 
 /** a broken state a path reports, with no account for a row that has no owner */
 export interface SecurityStateAlarmRaised {
@@ -45,7 +45,7 @@ export interface SecurityStateAlarms {
 }
 
 /** the log the alarm writes its warn line and a failed delivery to */
-type SecurityStateAlarmLog = (
+export type SecurityStateAlarmLog = (
 	level: "warn" | "error",
 	message: string,
 	fields: Readonly<Record<string, unknown>>,

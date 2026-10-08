@@ -10,8 +10,11 @@ import {
 	ONE_TIME_TOKEN_PURPOSES,
 	type OneTimeTokens,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -25,7 +28,9 @@ beforeAll(async () => {
 	connection = migrated.connection;
 	schema = migrated.schema;
 	user = await createUser(connection, schema);
-	tokens = createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }));
+	tokens = createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }), {
+		keys: TOKEN_KEYS,
+	});
 });
 
 afterAll(async () => {
@@ -124,6 +129,7 @@ describe("no plaintext token reaches a thrown value", () => {
 	it("carries neither the token nor its hash out of a failing redemption", async () => {
 		const failing = createOneTimeTokens(
 			createOneTimeTokenRepository({ driver: failingOn(/^DELETE/, connection), schema }),
+			{ keys: TOKEN_KEYS },
 		);
 		const issued = await tokens.issue({ purpose: "magic_link", userId: user });
 
@@ -149,6 +155,7 @@ describe("no plaintext token reaches a thrown value", () => {
 		};
 		const failing = createOneTimeTokens(
 			createOneTimeTokenRepository({ driver: empty, schema: "velve" }),
+			{ keys: TOKEN_KEYS },
 		);
 
 		const thrown = await failing
