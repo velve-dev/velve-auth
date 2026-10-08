@@ -159,7 +159,13 @@ describe("a writer who changes the account's state between the epoch read and th
 			reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
 		});
 		return racing
-			.issue({ userId, factors: ["password"], observed: NO_REQUEST })
+			.issueReplacingPresented({
+				completes: "password_sign_in",
+				presentedToken: null,
+				userId,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			})
 			.then(() => "issued")
 			.catch((failure: unknown) => failure);
 	}
@@ -182,7 +188,7 @@ describe("a writer who changes the account's state between the epoch read and th
 			]),
 		);
 
-		expect(outcome).toMatchObject({ reason: "session_not_found" });
+		expect(outcome).toMatchObject({ reason: "session_issue_missed_on_password_sign_in" });
 		expect(await sessionsOf(userId)).toBe(0);
 		expect(refusals).toStrictEqual([
 			{ userId, occasion: "sign_in", reason: "seal_mismatch", verdict: "mismatch" },
@@ -200,7 +206,7 @@ describe("a writer who changes the account's state between the epoch read and th
 			),
 		);
 
-		expect(outcome).toMatchObject({ reason: "session_not_found" });
+		expect(outcome).toMatchObject({ reason: "session_issue_missed_on_password_sign_in" });
 		expect(await sessionsOf(userId)).toBe(0);
 		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["seal_mismatch"]);
 	});
