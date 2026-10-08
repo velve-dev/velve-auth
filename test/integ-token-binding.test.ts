@@ -1375,7 +1375,7 @@ describe("a WebAuthn challenge row (section 3.18 point 3)", () => {
 		refusals = [];
 
 		expect(await challenges.consume({ challengeToken, purpose: "register", userId })).toBe(false);
-		expectOneRefusal("factor_check", userId);
+		expectOneRefusal("change", userId);
 	});
 
 	it("is refused when a writer moves it to the other ceremony, and reports no owner for a discoverable one", async () => {
@@ -1393,7 +1393,7 @@ describe("a WebAuthn challenge row (section 3.18 point 3)", () => {
 		expect(refusals).toStrictEqual([
 			{
 				userId: null,
-				occasion: "factor_check",
+				occasion: "sign_in",
 				reason: "token_binding_mismatch",
 				verdict: "mismatch",
 			},

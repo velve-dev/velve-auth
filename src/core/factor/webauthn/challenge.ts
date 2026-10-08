@@ -7,6 +7,7 @@ import {
 	checkTokenBinding,
 	reportRefusedTokenRow,
 	type TokenBinding,
+	type TokenBindingOccasion,
 	type TokenBindingRefusalReport,
 } from "../../token/binding.js";
 import {
@@ -80,6 +81,17 @@ interface ConsumedChallengeRow {
 	readonly token_mac_key_version: number;
 }
 
+//a refused challenge is reported under the ceremony it was presented in (E-3482)
+function occasionOfCeremony(
+	purpose: WebAuthnChallengePurpose,
+	userId: string | null,
+): TokenBindingOccasion {
+	if (purpose === "register") {
+		return "change";
+	}
+	return userId === null ? "sign_in" : "factor_check";
+}
+
 export function createWebAuthnChallenges(
 	options: WebAuthnChallengeRepositoryOptions,
 ): WebAuthnChallenges {
@@ -133,7 +145,7 @@ RETURNING user_id, token_mac, token_mac_key_version`;
 			if (verdict !== "valid") {
 				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
 					userId: row.user_id,
-					occasion: "factor_check",
+					occasion: occasionOfCeremony(purpose, userId),
 					verdict,
 				});
 			}

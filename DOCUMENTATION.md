@@ -8961,7 +8961,9 @@ discoverable sign-in, and as content the ceremony, `register` or `authenticate`,
 as one text field. A challenge a writer inserts again after it was consumed, moves
 to the other ceremony or inserts for a challenge of their own is refused at
 consumption like an unknown challenge (`challenge_not_found`) and reported with
-the occasion `factor_check`.
+the occasion of its ceremony: `sign_in` for the challenge of a discoverable
+sign-in, `factor_check` for a passkey as the second factor, and `change` for a
+registration.
 
 **The address a link was mailed to.** Every one-time token the email flows mint
 carries `accountEmail` in its payload, and so under its MAC: the account's
@@ -9129,7 +9131,7 @@ the rollback of the transaction that would have issued the session.
 | Field | Value |
 |---|---|
 | `userId` | the account the refused row names, or `null` for a row that names none, such as a forged cover artefact of an unknown address |
-| `occasion` | `sign_in` or `change` for a session insert that wrote nothing, after what it completes; `session_resolve` for a resolution; `session_list` for the owner's list and a plugin's `listSessionsOfUser`; `factor_check`; `token_redemption`; `change` for every check made for a revocation — the kept session, the rows a mass revocation removes and announces, a plugin's `revokeSession`; or `maintenance` for the rebinding pass |
+| `occasion` | `sign_in` or `change` for a session insert that wrote nothing, after what it completes; `session_resolve` for a resolution; `session_list` for the owner's list and a plugin's `listSessionsOfUser`; `factor_check` for a pending authentication and a passkey as the second factor; `token_redemption`; `sign_in` or `change` for a WebAuthn challenge of a discoverable sign-in or a registration; `change` for every check made for a revocation — the kept session, the rows a mass revocation removes and announces, a plugin's `revokeSession`; or `maintenance` for the rebinding pass |
 | `reason` | `token_binding_mismatch` for a row whose MAC does not match, or `seal_mismatch` for a state around a genuine row that is not what the library left |
 | `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |
 
