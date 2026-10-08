@@ -1,9 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { VelveError } from "../src/core/http/error-map.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
 import {
 	assertBelowCredentialLimit,
-	CredentialLimitReachedError,
 	type LimitsConfig,
 	resolveLimits,
 } from "../src/core/security-state/limits.js";
@@ -122,10 +122,10 @@ describe("a registration or a link over the limit (T-INTEG-10)", () => {
 		});
 
 		await expect(sealAccount(services(first), userId, passkeyRegistration())).rejects.toEqual(
-			new CredentialLimitReachedError("passkey_limit_reached"),
+			new VelveError("passkey_limit_reached"),
 		);
 		await expect(sealAccount(services(first), userId, identityLink())).rejects.toEqual(
-			new CredentialLimitReachedError("identity_limit_reached"),
+			new VelveError("identity_limit_reached"),
 		);
 		expect(await countsOf(userId)).toEqual({ passkeys: 20, identities: 10 });
 	});
@@ -140,7 +140,7 @@ describe("a registration or a link over the limit (T-INTEG-10)", () => {
 
 		expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
 		expect(outcomes.filter((outcome) => outcome.status === "rejected")).toEqual([
-			{ status: "rejected", reason: new CredentialLimitReachedError("passkey_limit_reached") },
+			{ status: "rejected", reason: new VelveError("passkey_limit_reached") },
 		]);
 		expect((await countsOf(userId)).passkeys).toBe(20);
 	});

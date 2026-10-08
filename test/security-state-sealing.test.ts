@@ -353,13 +353,26 @@ describe("the anchor around a change", () => {
 		};
 	}
 
+	it("keeps the verified seal when a change leaves every component and the epoch as they were", async () => {
+		const userId = await seedAccount(connection, schema, { password: true });
+		await sealAccount(services(), userId, unchanged);
+		const before = await readOf(userId);
+
+		const outcome = await sealAccount(services(), userId, unchanged);
+		const after = await readOf(userId);
+
+		expect(outcome.kind).toBe("sealed");
+		expect(after.seal?.version).toBe(before.seal?.version);
+		expect(Buffer.from(after.seal?.digest ?? [])).toEqual(Buffer.from(before.seal?.digest ?? [1]));
+	});
+
 	it("records every new seal with the anchor after commit", async () => {
 		const userId = await seedAccount(connection, schema, { password: true });
 		const recorded: SecurityStateSealedEvent[] = [];
 		const anchor = anchorWith(() => null, recorded);
 
 		for (let change = 0; change < 5; change += 1) {
-			await sealAccount(services({ anchors: [anchor] }), userId, unchanged);
+			await sealAccount(services({ anchors: [anchor] }), userId, passkeyRegistration());
 		}
 		await new Promise((resolve) => setTimeout(resolve, 0));
 

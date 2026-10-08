@@ -3,6 +3,7 @@ import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
 import { encodeBase64Url } from "../keys/base64url.js";
+import { equalsInConstantTime } from "../keys/constant-time.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { randomBytes } from "../token/random.js";
 import type { SecurityStateAlarmReason, SecurityStateAlarms } from "./alarm.js";
@@ -13,7 +14,7 @@ import {
 	recordSealWithAnchors,
 	type SecurityStateAnchorPort,
 } from "./anchor.js";
-import type { SealedComponents } from "./encoding.js";
+import { encodeSecurityState, type SealedComponents } from "./encoding.js";
 import {
 	checkSecurityState,
 	readSecurityState,
@@ -238,11 +239,15 @@ export async function sealUnderAccountLock<T>(
 	const epoch = typeof change.epoch === "function" ? change.epoch(read) : change.epoch;
 	const sessionEpoch = epoch === "raise" ? drawSessionEpochOtherThan(currentEpoch) : currentEpoch;
 	const written = await change.write(guarded, read, { version, sessionEpoch });
+	const after = change.after(read, written);
+	if (current !== null && epoch === "keep" && sameComponents(read, after)) {
+		return unchanged(guarded, change, current, read, written);
+	}
 	const { keyVersion, digest } = await computeSeal(context.keys, {
 		userId: read.userId,
 		version,
 		sessionEpoch,
-		...change.after(read, written),
+		...after,
 	});
 	await writeSealRow(tx, context.schema, read, { version, sessionEpoch, keyVersion, digest });
 	await change.afterSeal?.(guarded, { version, sessionEpoch }, written);
@@ -253,6 +258,40 @@ export async function sealUnderAccountLock<T>(
 		keyVersion,
 		digest,
 		firstSeal: current === null,
+		leftUnsealed: false,
+		read,
+		written,
+	};
+}
+
+function sameComponents(read: SecurityStateRead, after: SealedComponents): boolean {
+	const unchangedState = { userId: read.userId, version: 0, sessionEpoch: 0 };
+	return equalsInConstantTime(
+		encodeSecurityState({ ...unchangedState, ...sealedComponentsOf(read) }),
+		encodeSecurityState({ ...unchangedState, ...after }),
+	);
+}
+
+//a change that leaves every component and the epoch as they were keeps the seal it verified (E-3402)
+async function unchanged<T>(
+	guarded: Driver,
+	change: SealingChange<T>,
+	current: NonNullable<SecurityStateRead["seal"]>,
+	read: SecurityStateRead,
+	written: T,
+): Promise<SealWritten<T>> {
+	await change.afterSeal?.(
+		guarded,
+		{ version: current.version, sessionEpoch: current.sessionEpoch },
+		written,
+	);
+	return {
+		userId: read.userId,
+		version: current.version,
+		sessionEpoch: current.sessionEpoch,
+		keyVersion: current.keyVersion,
+		digest: current.digest,
+		firstSeal: false,
 		leftUnsealed: false,
 		read,
 		written,

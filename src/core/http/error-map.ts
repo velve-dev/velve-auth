@@ -1,4 +1,3 @@
-import { CredentialLimitReachedError } from "../security-state/limits.js";
 export type VelveErrorCode =
 	| "invalid_input"
 	| "origin_not_allowed"
@@ -353,9 +352,6 @@ export function toVisibleFailure(cause: unknown): VisibleFailure {
 	}
 	if (cause instanceof VelveError) {
 		return { error: cause, loggedReason: cause.code };
-	}
-	if (cause instanceof CredentialLimitReachedError) {
-		return { error: new VelveError(cause.code), loggedReason: cause.code };
 	}
 	return {
 		error: new VelveError("internal_error"),
