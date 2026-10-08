@@ -47,10 +47,10 @@ export interface TotpRepository {
 	//only the secret the code was matched against may be confirmed
 	confirmCredential(input: { actor: Actor; secretEnc: Uint8Array<ArrayBuffer> }): Promise<boolean>;
 	removeCredential(input: { actor: Actor }): Promise<boolean>;
-	//only the ciphertext that was read and rebound may be replaced (S-INTEG-1)
+	//only the ciphertext and key version the verified read returned may be replaced (S-INTEG-3)
 	replaceSecretIfUnchanged(input: {
 		actor: Actor;
-		previous: Uint8Array<ArrayBuffer>;
+		previous: { readonly ciphertext: Uint8Array<ArrayBuffer>; readonly keyVersion: number };
 		secretEnc: Uint8Array<ArrayBuffer>;
 		keyVersion: number;
 	}): Promise<boolean>;
@@ -105,7 +105,7 @@ WHERE user_id = $1 AND secret_enc = $2 AND confirmed_at IS NULL
 RETURNING user_id`;
 
 	const replaceSecretStatement = `UPDATE ${credentials} SET secret_enc = $3, key_version = $4
-WHERE user_id = $1 AND secret_enc = $2
+WHERE user_id = $1 AND secret_enc = $2 AND key_version = $5
 RETURNING user_id`;
 
 	const removeCredentialStatement = `DELETE FROM ${credentials} WHERE user_id = $1 RETURNING user_id`;
@@ -157,9 +157,10 @@ RETURNING time_step`;
 		async replaceSecretIfUnchanged({ actor, previous, secretEnc, keyVersion }) {
 			const rows = await options.driver.query(replaceSecretStatement, [
 				actor,
-				previous,
+				previous.ciphertext,
 				secretEnc,
 				keyVersion,
+				previous.keyVersion,
 			]);
 			return rows.length === 1;
 		},

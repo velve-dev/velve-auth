@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { createTotpRepository } from "../src/core/factor/totp/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
@@ -18,6 +18,7 @@ import {
 	readUserOwnedTables,
 } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
 import { accountLockAudit, HeldDriver } from "./lock-order-fixtures.js";
 import {
 	CALLBACK_BASE_URL,
@@ -232,7 +233,7 @@ describe("every account lock outside the interleavings is declared before the ta
 			await enrolConfirmedCredential(connection, schema, ring.providerAt(1, [1]), userId);
 			// A ring with a newer current version makes both envelopes due for the rewrite.
 			const rewrite = await inOneTransaction(held, (transaction) =>
-				rebindEnvelopesOfAccount({
+				rebindAfterOneRead({
 					driver: transaction,
 					schema,
 					keys: ring.providerAt(2, [1, 2]),

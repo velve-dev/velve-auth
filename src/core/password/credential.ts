@@ -10,8 +10,8 @@ import { qualifiedTableName } from "../db/identifier.js";
 import {
 	decryptBound,
 	type EnvelopeBinding,
+	type EnvelopeRewrite,
 	encryptBound,
-	type RebindOutcome,
 	rebindEnvelope,
 	type UnboundEnvelopeReading,
 } from "../keys/envelope-binding.js";
@@ -80,8 +80,9 @@ export interface PasswordCredentialRepository {
 	//the rewrite opens and re-encrypts the same string and never derives a new one (S-INTEG-8)
 	rebindOwnedBy(input: {
 		readonly actor: Actor;
+		readonly read: SealedPhc;
 		readonly unbound: UnboundEnvelopeReading;
-	}): Promise<RebindOutcome>;
+	}): Promise<EnvelopeRewrite<SealedPhc>>;
 	replaceIfUnchanged(input: {
 		userId: string;
 		previous: Uint8Array<ArrayBuffer>;
@@ -204,27 +205,18 @@ FROM ${table} credential WHERE credential.user_id = $1`;
 
 		writeForCreatedAccount: ({ userId, ...credential }) => insertFirst(userId, credential),
 
-		async rebindOwnedBy({ actor, unbound }) {
-			const row = await findOne(actor);
-			if (row === null) {
-				return "absent";
-			}
-			const rebound = await rebindEnvelope(
-				options.keys,
-				phcBindingOf(actor),
-				{ keyVersion: row.keyVersion, ciphertext: row.phc },
-				unbound,
-			);
+		async rebindOwnedBy({ actor, read, unbound }) {
+			const rebound = await rebindEnvelope(options.keys, phcBindingOf(actor), read, unbound);
 			if (rebound === null) {
-				return "current";
+				return { outcome: "current", stored: read };
 			}
 			const changed = await options.driver.query(
 				`UPDATE ${table} SET phc = $2, key_version = $3
-				 WHERE user_id = $1 AND phc = $4
+				 WHERE user_id = $1 AND phc = $4 AND key_version = $5
 				 RETURNING user_id`,
-				[actor, rebound.ciphertext, rebound.keyVersion, row.phc],
+				[actor, rebound.ciphertext, rebound.keyVersion, read.ciphertext, read.keyVersion],
 			);
-			return changed.length === 1 ? "rebound" : "lost";
+			return changed.length === 1 ? { outcome: "rebound", stored: rebound } : { outcome: "lost" };
 		},
 
 		//compare and swap keeps a rehash from overwriting a password changed meanwhile (E-11)

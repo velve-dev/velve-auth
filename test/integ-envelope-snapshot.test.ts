@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { createTotpService, timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
 //a reader decides whether the old form opens from the snapshot it read the secret in (E-3121)
@@ -34,7 +35,7 @@ function sealingRightAfterTheRead(userId: string, readsSeen: { count: number }):
 			if (reading.test(sql) && readsSeen.count === 0) {
 				readsSeen.count += 1;
 				await inOneTransaction(connection, (transaction) =>
-					rebindEnvelopesOfAccount({
+					rebindAfterOneRead({
 						driver: transaction,
 						schema,
 						keys,

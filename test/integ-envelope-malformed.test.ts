@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import { VelveStartupError } from "../src/core/auth/startup.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
@@ -8,6 +8,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 const PASSWORD = "a password long enough for the policy 7c1e";
@@ -111,7 +112,7 @@ describe("S-INTEG-1: the old form only for an account without a seal row", () =>
 		await sealRowFor(victim.userId);
 		await expect(
 			inOneTransaction(connection, (tx) =>
-				rebindEnvelopesOfAccount({
+				rebindAfterOneRead({
 					driver: tx,
 					schema,
 					keys,

@@ -34,8 +34,10 @@ export interface EnvelopeBinding {
 /** whether a ciphertext in the unbound form of 1.x is read or refused */
 export type UnboundEnvelopeReading = "readable" | "refused";
 
-/** what rewriting one stored envelope into the bound form under the current key came to */
-export type RebindOutcome = "rebound" | "current" | "absent" | "lost";
+/** what rewriting one envelope of a verified read came to, with the value stored once it was done */
+export type EnvelopeRewrite<Stored> =
+	| { readonly outcome: "rebound" | "current"; readonly stored: Stored }
+	| { readonly outcome: "lost" };
 
 //a bound value carries this first byte and the unbound form a random nonce byte (E-3111)
 const BOUND_FORM_MARKER = 0x02;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { createTotpService, timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
@@ -20,6 +20,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { rebindAfterOneRead, verifiedEnvelopeReadOf } from "./envelope-read-fixtures.js";
 import {
 	codeCarrying,
 	createStubProvider,
@@ -706,7 +707,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 		);
 
 		const rewrite = await inOneTransaction(connection, (transaction) =>
-			rebindEnvelopesOfAccount({
+			rebindAfterOneRead({
 				driver: transaction,
 				schema,
 				keys: beforeRotation,
@@ -795,7 +796,7 @@ const STORED_PHC = `$argon2id$v=19$m=19456,t=2,p=1$${"c2FsdA".repeat(4)}$${"aGFz
 describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account runs first (S-INTEG-1, E-3117)", () => {
 	async function rebind(userId: string, keys: KeyProvider, sealing: "migrating" | "required") {
 		return inOneTransaction(connection, (transaction) =>
-			rebindEnvelopesOfAccount({
+			rebindAfterOneRead({
 				driver: transaction,
 				schema,
 				keys,
@@ -839,11 +840,18 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		});
 		const rewrite = await rebind(identity.userId, beforeRotation, "migrating");
 
-		expect(rewrite).toStrictEqual({
+		expect(rewrite).toMatchObject({
 			passwordRewritten: true,
 			totpRewritten: true,
 			identitiesRewritten: 1,
 		});
+		const { sealRow, ...stored } = await verifiedEnvelopeReadOf(
+			connection,
+			schema,
+			identity.userId,
+		);
+		expect(sealRow).toBe("absent");
+		expect(rewrite.envelopes).toStrictEqual(stored);
 		expect(
 			await decryptBound(
 				beforeRotation,
@@ -864,7 +872,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 				),
 			).toBe(true);
 		}
-		expect(await rebind(identity.userId, beforeRotation, "migrating")).toStrictEqual({
+		expect(await rebind(identity.userId, beforeRotation, "migrating")).toMatchObject({
 			passwordRewritten: false,
 			totpRewritten: false,
 			identitiesRewritten: 0,
@@ -878,6 +886,11 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		const rewrite = await rebind(account.userId, afterRotation, "required");
 
 		expect(rewrite).toStrictEqual({
+			envelopes: {
+				password: await readPhc(account.userId),
+				totpSecret: await readTotpSecret(account.userId),
+				identities: [],
+			},
 			passwordRewritten: true,
 			totpRewritten: true,
 			identitiesRewritten: 0,
@@ -904,26 +917,6 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		await expect(rebind(identity.userId, beforeRotation, "migrating")).rejects.toMatchObject({
 			code: "key_version_unknown",
 		});
-	});
-
-	//a ring whose current version moves between the two passes leaves the first pass behind
-	it("fails when the second pass finds an envelope the first one left under an older version", async () => {
-		const account = await signUp();
-		await writePhc(account.userId, await unboundPhcOf(account.userId));
-		let currentCalls = 0;
-		const movingRing: KeyProvider = {
-			current: (purpose) => {
-				currentCalls += 1;
-				return (currentCalls <= 2 ? ring.providerAt(1, [1, 2]) : afterRotation).current(purpose);
-			},
-			byVersion: (purpose, version) => afterRotation.byVersion(purpose, version),
-		};
-
-		await expect(rebind(account.userId, movingRing, "migrating")).rejects.toMatchObject({
-			code: "internal_error",
-		});
-		const left = await readPhc(account.userId);
-		expect(left.ciphertext[0]).not.toBe(0x02);
 	});
 
 	it("refuses to encrypt the tokens of a new identity under two key versions", async () => {
@@ -990,7 +983,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		);
 
 		const attempt = inOneTransaction(pool, (transaction) =>
-			rebindEnvelopesOfAccount({
+			rebindAfterOneRead({
 				driver: transaction,
 				schema,
 				keys: beforeRotation,
@@ -999,7 +992,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 			}),
 		);
 
-		await expect(attempt).rejects.toMatchObject({ code: "internal_error" });
+		await expect(attempt).rejects.toMatchObject({ code: "envelope_changed_since_read" });
 		expect(
 			Buffer.from((await readPhc(account.userId)).ciphertext).equals(
 				Buffer.from(unbound.ciphertext),
@@ -1028,7 +1021,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 
 		await expect(
 			inOneTransaction(pool, (transaction) =>
-				rebindEnvelopesOfAccount({
+				rebindAfterOneRead({
 					driver: transaction,
 					schema,
 					keys: beforeRotation,
@@ -1036,7 +1029,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 					sealing: "migrating",
 				}),
 			),
-		).rejects.toMatchObject({ code: "internal_error" });
+		).rejects.toMatchObject({ code: "envelope_changed_since_read" });
 		expect(
 			Buffer.from((await readTotpSecret(account.userId)).ciphertext).equals(
 				Buffer.from(unbound.ciphertext),
@@ -1064,7 +1057,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 
 		await expect(
 			inOneTransaction(pool, (transaction) =>
-				rebindEnvelopesOfAccount({
+				rebindAfterOneRead({
 					driver: transaction,
 					schema,
 					keys: beforeRotation,
@@ -1072,7 +1065,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 					sealing: "migrating",
 				}),
 			),
-		).rejects.toMatchObject({ code: "internal_error" });
+		).rejects.toMatchObject({ code: "envelope_changed_since_read" });
 		expect(
 			Buffer.from(
 				(await readToken(identity.identityId, "identity.access_token_enc")).ciphertext,

@@ -3,28 +3,52 @@ import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
 import { withReadCommittedTransactions } from "../db/read-committed.js";
 import { createTotpRepository } from "../factor/totp/repository.js";
-import { VelveError } from "../http/error-map.js";
+import type { PurposeCiphertext } from "../keys/envelope.js";
 import {
-	type RebindOutcome,
+	type EnvelopeRewrite,
 	rebindEnvelope,
 	type UnboundEnvelopeReading,
 } from "../keys/envelope-binding.js";
 import type { KeyProvider } from "../keys/provider.js";
-import { createOAuthIdentityRepository } from "../oauth/identity-repository.js";
+import {
+	createOAuthIdentityRepository,
+	type StoredProviderTokens,
+} from "../oauth/identity-repository.js";
 import { createPasswordCredentialRepository } from "../password/credential.js";
 import { MAXIMUM_STORED_MEMORY_KIB } from "../password/limits.js";
-import {
-	type SealingMode,
-	sealRowPresenceOf,
-	sealRowPresentFor,
-	unboundReadingOf,
-} from "./security-state.js";
+import { type SealingMode, type SealRowPresence, unboundReadingOf } from "./security-state.js";
 
-/** what rewriting one account's envelopes into the bound form touched */
+/** every envelope of one account that the rewrite converts, each as its bytes and key version */
+interface AccountEnvelopes {
+	/** `password_credential.phc` and its `key_version`, or null when the account has no row there */
+	readonly password: PurposeCiphertext | null;
+	/** `totp_credential.secret_enc` and its `key_version`, or null when the account has no row there */
+	readonly totpSecret: PurposeCiphertext | null;
+	/** the token columns and `token_key_version` of every `identity` row the account owns */
+	readonly identities: readonly StoredProviderTokens[];
+}
+
+/** the envelopes of one account and whether it had a seal row, all from the one statement after the account lock */
+export interface VerifiedEnvelopeRead extends AccountEnvelopes {
+	readonly sealRow: SealRowPresence;
+}
+
+/** the envelopes of the account as stored once the rewrite is done, and what it changed */
 interface AccountEnvelopeRewrite {
+	readonly envelopes: AccountEnvelopes;
 	readonly passwordRewritten: boolean;
 	readonly totpRewritten: boolean;
 	readonly identitiesRewritten: number;
+}
+
+/** an envelope no longer held the value the verified read returned when the rewrite swapped it */
+export class EnvelopeChangedSinceReadError extends Error {
+	readonly code = "envelope_changed_since_read";
+
+	constructor() {
+		super("an envelope was replaced between the verified read and its rewrite");
+		this.name = "EnvelopeChangedSinceReadError";
+	}
 }
 
 declare const openTransactionBrand: unique symbol;
@@ -50,67 +74,57 @@ interface AccountEnvelopeTransaction {
 	readonly keys: KeyProvider;
 	readonly actor: Actor;
 	readonly sealing: SealingMode;
+	readonly read: VerifiedEnvelopeRead;
+}
+
+//a swap that finds another value than the verified read is a broken state and rolls the change back (S-INTEG-3)
+function storedUnlessLost<Stored>(rewrite: EnvelopeRewrite<Stored>): {
+	readonly stored: Stored;
+	readonly rebound: boolean;
+} {
+	if (rewrite.outcome === "lost") {
+		throw new EnvelopeChangedSinceReadError();
+	}
+	return { stored: rewrite.stored, rebound: rewrite.outcome === "rebound" };
 }
 
 async function rebindTotpSecretOf(
 	input: AccountEnvelopeTransaction,
+	read: PurposeCiphertext,
 	unbound: UnboundEnvelopeReading,
-): Promise<RebindOutcome> {
-	const credentials = createTotpRepository({ driver: input.driver, schema: input.schema });
-	const stored = await credentials.findCredential({ actor: input.actor });
-	if (stored === null) {
-		return "absent";
-	}
+): Promise<EnvelopeRewrite<PurposeCiphertext>> {
 	const rebound = await rebindEnvelope(
 		input.keys,
 		{ column: "totp_credential.secret_enc", owner: input.actor, row: input.actor },
-		{ keyVersion: stored.keyVersion, ciphertext: stored.secretEnc },
+		read,
 		unbound,
 	);
 	if (rebound === null) {
-		return "current";
+		return { outcome: "current", stored: read };
 	}
-	const replaced = await credentials.replaceSecretIfUnchanged({
+	const replaced = await createTotpRepository({
+		driver: input.driver,
+		schema: input.schema,
+	}).replaceSecretIfUnchanged({
 		actor: input.actor,
-		previous: stored.secretEnc,
+		previous: read,
 		secretEnc: rebound.ciphertext,
 		keyVersion: rebound.keyVersion,
 	});
-	return replaced ? "rebound" : "lost";
+	return replaced ? { outcome: "rebound", stored: rebound } : { outcome: "lost" };
 }
 
-async function rewriteEveryEnvelope(
+function rebindPasswordOf(
 	input: AccountEnvelopeTransaction,
+	read: PurposeCiphertext,
 	unbound: UnboundEnvelopeReading,
-): Promise<readonly RebindOutcome[]> {
-	const passwords = createPasswordCredentialRepository({
+): Promise<EnvelopeRewrite<PurposeCiphertext>> {
+	return createPasswordCredentialRepository({
 		driver: input.driver,
 		keys: input.keys,
 		schema: input.schema,
 		memoryCeilingKiB: MAXIMUM_STORED_MEMORY_KIB,
-	});
-	const identities = createOAuthIdentityRepository({
-		driver: input.driver,
-		schema: input.schema,
-		keys: input.keys,
-	});
-	return [
-		await passwords.rebindOwnedBy({ actor: input.actor, unbound }),
-		await rebindTotpSecretOf(input, unbound),
-		...(await identities.rebindTokensOwnedBy({ actor: input.actor, unbound })),
-	];
-}
-
-async function sealRowUnderTheLock(input: AccountEnvelopeTransaction): Promise<boolean> {
-	const [row] = await input.driver.query<{ sealed: boolean }>(
-		`SELECT ${sealRowPresentFor(input.schema, "$1::uuid")} AS sealed`,
-		[input.actor],
-	);
-	return row?.sealed === true;
-}
-
-function wasLeftBehind(outcome: RebindOutcome): boolean {
-	return outcome !== "current" && outcome !== "absent";
+	}).rebindOwnedBy({ actor: input.actor, read, unbound });
 }
 
 //the account row is locked before any of its three envelope tables is written, even where the caller holds the lock already
@@ -118,23 +132,32 @@ export async function rebindEnvelopesOfAccount(
 	input: AccountEnvelopeTransaction,
 ): Promise<AccountEnvelopeRewrite> {
 	await lockAccountRow(input.driver, input.schema, input.actor);
+	const { read } = input;
 	//the old form of a sealed account is never opened, whatever the caller asks (E-3121)
-	const unbound = unboundReadingOf(
-		input.sealing,
-		sealRowPresenceOf(await sealRowUnderTheLock(input)),
-	);
-	const rewritten = await rewriteEveryEnvelope(input, unbound);
-	//a rewrite that lost its row or left an old envelope behind must not let the caller seal the account (E-3121)
-	if (rewritten.includes("lost")) {
-		throw new VelveError("internal_error");
-	}
-	if ((await rewriteEveryEnvelope(input, "refused")).some(wasLeftBehind)) {
-		throw new VelveError("internal_error");
-	}
-	const [password, totp, ...identities] = rewritten;
+	const unbound = unboundReadingOf(input.sealing, read.sealRow);
+	const password =
+		read.password === null
+			? null
+			: storedUnlessLost(await rebindPasswordOf(input, read.password, unbound));
+	const totpSecret =
+		read.totpSecret === null
+			? null
+			: storedUnlessLost(await rebindTotpSecretOf(input, read.totpSecret, unbound));
+	const identities = (
+		await createOAuthIdentityRepository({
+			driver: input.driver,
+			schema: input.schema,
+			keys: input.keys,
+		}).rebindTokensOwnedBy({ actor: input.actor, read: read.identities, unbound })
+	).map((rewrite) => storedUnlessLost(rewrite));
 	return {
-		passwordRewritten: password === "rebound",
-		totpRewritten: totp === "rebound",
-		identitiesRewritten: identities.filter((outcome) => outcome === "rebound").length,
+		envelopes: {
+			password: password?.stored ?? null,
+			totpSecret: totpSecret?.stored ?? null,
+			identities: identities.map(({ stored }) => stored),
+		},
+		passwordRewritten: password?.rebound === true,
+		totpRewritten: totpSecret?.rebound === true,
+		identitiesRewritten: identities.filter(({ rebound }) => rebound).length,
 	};
 }

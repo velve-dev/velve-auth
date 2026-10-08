@@ -2574,7 +2574,7 @@ writes what it verifies (E-2615).
 | `write({ actor, phc, scheme, setBySessionId })` | `INSERT … ON CONFLICT (user_id) DO UPDATE … RETURNING user_id` |
 | `writeForCreatedAccount({ userId, phc, scheme, setBySessionId })` | the same statement, for sign-up, whose transaction inserted the account (E-2428) |
 | `replaceIfUnchanged({ userId, previous, phc, scheme })` | `UPDATE … WHERE user_id = $1 AND phc = $5`, returning whether one row changed |
-| `rebindOwnedBy({ actor, unbound })` | reads the row, rewrites its PHC string into the bound form under the current key with `UPDATE … WHERE user_id = $1 AND phc = $4`, and answers `"rebound"`, `"current"` (already bound under the current key), `"absent"` (no row) or `"lost"` (the row changed in between); called by `rebindEnvelopesOfAccount` only |
+| `rebindOwnedBy({ actor, read, unbound })` | reads nothing: opens `read`, the ciphertext and key version the caller's one verified read returned, rewrites it into the bound form under the current key with `UPDATE … WHERE user_id = $1 AND phc = $4 AND key_version = $5` on exactly those, and answers `{ outcome: "rebound", stored }` with the new ciphertext and key version, `{ outcome: "current", stored: read }` (already bound under the current key) or `{ outcome: "lost" }` (the row no longer holds `read`); called by `rebindEnvelopesOfAccount` only |
 
 `replaceIfUnchanged` is the compare and swap of 3.3 step 6. What it compares is
 the stored **ciphertext**, not the PHC string, so a password the user changed
@@ -4174,9 +4174,11 @@ period and, by default, a tolerance of one step in each direction (architecture
 The secret is stored in the bound form, bound to the account as owner and row
 ([Security state: bound envelopes](#security-state-bound-envelopes)). The TOTP
 repository gains `replaceSecretIfUnchanged({ actor, previous, secretEnc,
-keyVersion })`, an `UPDATE … WHERE user_id = $1 AND secret_enc = $2` answering
-whether one row changed, which `rebindEnvelopesOfAccount` uses, and every
-credential it reads carries `sealRow: "present" | "absent"`.
+keyVersion })`, where `previous` is the `{ ciphertext, keyVersion }` of the
+caller's verified read, an `UPDATE … WHERE user_id = $1 AND secret_enc = $2 AND
+key_version = $5` answering whether one row changed, which
+`rebindEnvelopesOfAccount` uses, and every credential it reads carries
+`sealRow: "present" | "absent"`.
 
 #### `totp.enroll.start({ actor, accountName })`
 
@@ -8897,8 +8899,16 @@ driver, schema, keys })`) and encrypts the tokens itself once owner and row are
 known. `IdentityFacts.tokens` is the plaintext `{ accessToken, refreshToken,
 idToken }` to store, or `null` where `storeTokens` is off; `refreshIdentity({
 existing, …facts })` takes the identity the lookup by provider and subject
-found. `rebindTokensOwnedBy({ actor, unbound })` rewrites the tokens of each
-identity of the account and answers one outcome per row; it refuses a row
+found. `rebindTokensOwnedBy({ actor, read, unbound })` reads nothing: `read` is
+the token columns of each identity row of the account as the caller's verified
+read returned them (`StoredProviderTokens`: `identityId`, `accessTokenEnc`,
+`refreshTokenEnc`, `idTokenEnc`, `tokenKeyVersion`). It opens exactly those,
+replaces a row only with `UPDATE … WHERE id = $1 AND user_id = $2 AND
+token_key_version = $7` and each token column `IS NOT DISTINCT FROM` its read
+value, and answers one rewrite per row: `{ outcome: "rebound", stored }` with the
+new ciphertexts and key version, `{ outcome: "current", stored }` for a row
+already bound under the current key or holding no token, or `{ outcome: "lost"
+}`. It refuses a row
 whose token columns hold ciphertexts and whose `token_key_version` is empty
 (`key_version_unknown`), and three tokens of one row that would end under two
 key versions (`internal_error`).
@@ -9074,18 +9084,25 @@ into the bound form under the current key, inside the caller's transaction. It
 is what a change on an unsealed account in `"migrating"` runs first (section
 3.18 point 4, E-3094) and what the maintenance step runs per account.
 
+It reads nothing itself. Section 3.18 point 4 has the change read the seal row
+and every component in **one** statement after the account lock, and every
+re-encryption open exactly the ciphertext that read returned and swap on that
+value, never after a second read. So the caller passes that read, and the
+rewrite works from it alone (E-3224):
+
 1. It locks the account row through `src/core/db/lock.ts`, which is harmless
-   where the caller already holds the lock.
-2. Under the lock it reads whether the account has a seal row and decides the
-   old form from that and `sealing`. A caller cannot ask it to read the old
-   form of a sealed account: such an envelope throws, and nothing is laundered
-   (E-3121).
-3. It rewrites each envelope with `rebindEnvelope`, replacing a value only while
-   the row still holds what was read. A replacement that finds the row changed
-   fails the call with `internal_error`.
-4. It reads every envelope again with the old form refused; anything still old,
-   or rewritten again, fails the call with `internal_error`, so the caller never
-   seals an account with an old envelope left in it.
+   where the caller already holds the lock, as it must before its read.
+2. It decides the old form from `sealing` and the `sealRow` of the read. A
+   caller cannot have it read the old form of an account whose read showed a
+   seal row: such an envelope throws, and nothing is laundered (E-3121). A seal
+   row deleted after the read changes nothing.
+3. It opens each envelope of the read with `rebindEnvelope` and, where it is not
+   already bound under the current key, writes the new value with a
+   compare-and-swap on exactly the ciphertext and key version of the read. A
+   swap that finds anything else throws `EnvelopeChangedSinceReadError` (code
+   `envelope_changed_since_read`): a writer replaced the envelope after the
+   read, the state is broken, and the caller's transaction rolls back. The seal
+   branch answers it as `seal_mismatch`.
 
 A value that does not open throws, and the caller's transaction then writes
 nothing. One undecryptable value anywhere in the account therefore blocks every
@@ -9099,14 +9116,33 @@ administrator recovers (E-3117).
 | `keys` | `KeyProvider` | the ring |
 | `actor` | `Actor` | the account |
 | `sealing` | `"required" \| "migrating"` | the sealing mode the instance runs in |
+| `read` | `VerifiedEnvelopeRead` | what the one statement after the account lock returned |
 
-Returns `{ passwordRewritten: boolean, totpRewritten: boolean,
-identitiesRewritten: number }`; a second call on the same account reports
-nothing rewritten. `oauth_flow` is not touched.
+`VerifiedEnvelopeRead` is filled column for column from that statement, which
+selects beside the seal row:
+
+| Field | Type | Column |
+|---|---|---|
+| `sealRow` | `"present" \| "absent"` | whether `security_state` has a row for the account, the `EXISTS` of `sealRowPresentFor` |
+| `password` | `{ ciphertext, keyVersion } \| null` | `password_credential.phc` and `key_version`, `null` without a row |
+| `totpSecret` | `{ ciphertext, keyVersion } \| null` | `totp_credential.secret_enc` and `key_version`, `null` without a row |
+| `identities` | `StoredProviderTokens[]` | one entry per `identity` row of the account: `identityId` (`id`), `accessTokenEnc`, `refreshTokenEnc`, `idTokenEnc` (each `null` where the column is) and `tokenKeyVersion` (`token_key_version`) |
+
+The ciphertexts are the bytes exactly as stored; a statement that aggregates the
+identity rows, for instance with `json_agg` and `encode(…, 'hex')`, decodes them
+back to those bytes. `test/envelope-read-fixtures.ts` has such a statement.
+
+Returns `{ envelopes, passwordRewritten, totpRewritten, identitiesRewritten }`.
+`envelopes` has the shape of the read without `sealRow` and holds each envelope
+as stored once the rewrite is done — the new ciphertext and key version where it
+rewrote one, the read value where it did not — so the caller computes the new
+seal from the read and this change, with no second read. A second call on the
+same account reports nothing rewritten. `oauth_flow` is not touched.
 
 The repository methods it is built on — password `rebindOwnedBy`, TOTP
-`replaceSecretIfUnchanged`, identity `rebindTokensOwnedBy` — answer a
-`RebindOutcome`: `"rebound"`, `"current"`, `"absent"` or `"lost"`.
+`replaceSecretIfUnchanged`, identity `rebindTokensOwnedBy` — take the read
+values and answer an `EnvelopeRewrite`: `{ outcome: "rebound" | "current",
+stored }` or `{ outcome: "lost" }`.
 
 ### `inOneTransaction(driver, work)`
 

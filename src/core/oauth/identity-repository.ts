@@ -5,8 +5,8 @@ import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import {
 	type BoundColumn,
+	type EnvelopeRewrite,
 	encryptBound,
-	type RebindOutcome,
 	rebindEnvelope,
 	type UnboundEnvelopeReading,
 } from "../keys/envelope-binding.js";
@@ -18,11 +18,17 @@ import type { ProviderTokens } from "./token-exchange.js";
 /** the three provider tokens an identity row can store, before they are encrypted */
 type ProviderTokensToStore = Pick<ProviderTokens, "accessToken" | "refreshToken" | "idToken">;
 
+/** the three token ciphertexts of one identity row and the key version they share */
 interface EncryptedProviderTokens {
 	readonly accessTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly refreshTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly idTokenEnc: Uint8Array<ArrayBuffer> | null;
 	readonly tokenKeyVersion: number | null;
+}
+
+/** the token columns of one identity row of the account, as the verified read returned them */
+export interface StoredProviderTokens extends EncryptedProviderTokens {
+	readonly identityId: string;
 }
 
 const NO_STORED_TOKENS: EncryptedProviderTokens = {
@@ -105,43 +111,36 @@ interface OAuthIdentityRepository {
 	//the stored tokens are opened and re-encrypted and never fetched again from the provider (S-INTEG-8)
 	rebindTokensOwnedBy(input: {
 		readonly actor: Actor;
+		readonly read: readonly StoredProviderTokens[];
 		readonly unbound: UnboundEnvelopeReading;
-	}): Promise<readonly RebindOutcome[]>;
+	}): Promise<readonly EnvelopeRewrite<StoredProviderTokens>[]>;
 }
 
-interface StoredTokenRow {
-	readonly id: string;
-	readonly access_token_enc: Uint8Array | null;
-	readonly refresh_token_enc: Uint8Array | null;
-	readonly id_token_enc: Uint8Array | null;
-	readonly token_key_version: number | null;
-}
-
-type RebindableColumn = "access_token_enc" | "refresh_token_enc" | "id_token_enc";
+type RebindableColumn = "accessTokenEnc" | "refreshTokenEnc" | "idTokenEnc";
 
 const REBINDABLE_COLUMNS: readonly (readonly [RebindableColumn, BoundColumn])[] = [
-	["access_token_enc", "identity.access_token_enc"],
-	["refresh_token_enc", "identity.refresh_token_enc"],
-	["id_token_enc", "identity.id_token_enc"],
+	["accessTokenEnc", "identity.access_token_enc"],
+	["refreshTokenEnc", "identity.refresh_token_enc"],
+	["idTokenEnc", "identity.id_token_enc"],
 ];
 
 type ReboundTokens =
-	| { readonly outcome: "absent" | "current" }
-	| { readonly outcome: "rebound"; readonly tokens: EncryptedProviderTokens };
+	| { readonly outcome: "current" }
+	| { readonly outcome: "rebound"; readonly tokens: StoredProviderTokens };
 
-function hasStoredTokens(row: StoredTokenRow): boolean {
+function hasStoredTokens(row: StoredProviderTokens): boolean {
 	return REBINDABLE_COLUMNS.some(([name]) => row[name] !== null);
 }
 
 async function reboundTokensOf(
 	keys: KeyProvider,
 	owner: string,
-	row: StoredTokenRow,
+	row: StoredProviderTokens,
 	unbound: UnboundEnvelopeReading,
 ): Promise<ReboundTokens> {
-	const keyVersion = row.token_key_version;
+	const keyVersion = row.tokenKeyVersion;
 	if (!hasStoredTokens(row)) {
-		return { outcome: "absent" };
+		return { outcome: "current" };
 	}
 	//a ciphertext whose key version column is empty can be read under no key (S-INTEG-1)
 	if (keyVersion === null) {
@@ -156,14 +155,13 @@ async function reboundTokensOf(
 			rewritten[name] = null;
 			continue;
 		}
-		const ciphertext = Uint8Array.from(stored);
 		const rebound = await rebindEnvelope(
 			keys,
-			{ column, owner, row: row.id },
-			{ keyVersion, ciphertext },
+			{ column, owner, row: row.identityId },
+			{ keyVersion, ciphertext: stored },
 			unbound,
 		);
-		rewritten[name] = rebound?.ciphertext ?? ciphertext;
+		rewritten[name] = rebound?.ciphertext ?? stored;
 		versions.add(rebound?.keyVersion ?? keyVersion);
 		changed ||= rebound !== null;
 	}
@@ -177,9 +175,10 @@ async function reboundTokensOf(
 	return {
 		outcome: "rebound",
 		tokens: {
-			accessTokenEnc: rewritten.access_token_enc ?? null,
-			refreshTokenEnc: rewritten.refresh_token_enc ?? null,
-			idTokenEnc: rewritten.id_token_enc ?? null,
+			identityId: row.identityId,
+			accessTokenEnc: rewritten.accessTokenEnc ?? null,
+			refreshTokenEnc: rewritten.refreshTokenEnc ?? null,
+			idTokenEnc: rewritten.idTokenEnc ?? null,
 			tokenKeyVersion: [...versions][0] ?? keyVersion,
 		},
 	};
@@ -294,10 +293,7 @@ RETURNING ${RETURNED_COLUMNS}`;
 	const listStatement = `SELECT ${RETURNED_COLUMNS} FROM ${identities}
 WHERE user_id = $1 ORDER BY created_at, id`;
 
-	const storedTokensStatement = `SELECT id, access_token_enc, refresh_token_enc, id_token_enc,
-token_key_version FROM ${identities} WHERE user_id = $1 ORDER BY id`;
-
-	//a write to the row between the read and the rewrite must make the rewrite lose rather than be overwritten (E-3121)
+	//a write to the row after the verified read must make the rewrite lose rather than be overwritten (S-INTEG-3)
 	const replaceTokensStatement = `UPDATE ${identities}
 SET access_token_enc = $3, refresh_token_enc = $4, id_token_enc = $5, token_key_version = $6
 WHERE id = $1 AND user_id = $2 AND token_key_version = $7
@@ -352,28 +348,31 @@ RETURNING id`;
 			return toIdentity(row);
 		},
 
-		async rebindTokensOwnedBy({ actor, unbound }) {
-			const rows = await options.driver.query<StoredTokenRow>(storedTokensStatement, [actor]);
-			const outcomes: RebindOutcome[] = [];
-			for (const row of rows) {
+		async rebindTokensOwnedBy({ actor, read, unbound }) {
+			const outcomes: EnvelopeRewrite<StoredProviderTokens>[] = [];
+			for (const row of read) {
 				const rebound = await reboundTokensOf(options.keys, actor, row, unbound);
-				if (rebound.outcome !== "rebound") {
-					outcomes.push(rebound.outcome);
+				if (rebound.outcome === "current") {
+					outcomes.push({ outcome: "current", stored: row });
 					continue;
 				}
 				const replaced = await options.driver.query(replaceTokensStatement, [
-					row.id,
+					row.identityId,
 					actor,
 					rebound.tokens.accessTokenEnc,
 					rebound.tokens.refreshTokenEnc,
 					rebound.tokens.idTokenEnc,
 					rebound.tokens.tokenKeyVersion,
-					row.token_key_version,
-					row.access_token_enc,
-					row.refresh_token_enc,
-					row.id_token_enc,
+					row.tokenKeyVersion,
+					row.accessTokenEnc,
+					row.refreshTokenEnc,
+					row.idTokenEnc,
 				]);
-				outcomes.push(replaced.length === 1 ? "rebound" : "lost");
+				outcomes.push(
+					replaced.length === 1
+						? { outcome: "rebound", stored: rebound.tokens }
+						: { outcome: "lost" },
+				);
 			}
 			return outcomes;
 		},

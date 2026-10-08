@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { inOneTransaction, rebindEnvelopesOfAccount } from "../src/core/auth/account-envelopes.js";
+import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
@@ -10,6 +10,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
 import {
 	codeCarrying,
 	createStubProvider,
@@ -154,7 +155,7 @@ describe("a sign-in that refreshes provider tokens during the account rewrite (S
 		};
 
 		const rewrite = await inOneTransaction(pool, (transaction) =>
-			rebindEnvelopesOfAccount({
+			rebindAfterOneRead({
 				driver: transaction,
 				schema,
 				keys,
