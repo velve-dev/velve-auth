@@ -16628,3 +16628,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Probing every version from 1 to each purpose's current version, which costs what the provider's version numbers cost, and probing every version number any table stores, which would let a writer of a token table multiply the start's work.
 **Reason.** A key shared between two purposes is shared whatever version number either of them gives it.
 **Price.** The probe makes up to seven `byVersion` calls and seven HMAC probes more per distinct stored `state-mac` version. A stored `state-mac` version answered with another purpose's key under a different version number is still not compared; that needs a misconfigured provider and is the same limit *The limits* names for a relabelled seal.
+
+<a id="e-3376"></a>
+
+### Four more plant killers are kept, each after failing on its plant
+`E-3376` · security-state · tests, keys, specification, settled
+
+**Context.** The tenth review left six cases that passed on the branch. Two were folded into the commits whose code they pin, E-3374 and E-3375. Each of the other four was run here against a fault planted for it, and each failed where no existing case did, so each is kept. `test/keys-integrity-non-object.test.ts` holds `isKeyShaped`, `keyTakesMac`, `sameKeyFingerprintOf` and the start against `null`, `undefined`, a string, a number and `true`, and against an `algorithm` that is a string or a number; dropping the `null` test from `algorithmOf` failed three cases, and accepting an `algorithm` that is not an object failed two. `test/security-state-spec-printed-migration.test.ts` compares the `CREATE TABLE` of migration 3 printed in both languages with `migrations/0003_security_state.sql`; dropping the `CHECK` on `key_version` from the German print failed it. `test/security-state-spec-tier-counts.test.ts` compares the per-tier counts section 6 states with the rows of each tier in both languages; moving T-INTEG-10 to the nightly tier in the German failed both its cases. `test/security-state-spec-translation.test.ts` compares 3.18, 5.21 and 6.24 paragraph by paragraph across the two languages, numbers outside code spans and every plain code span, and the `securityState` and `limits` rows of 3.15 A.2; raising the alarm bound from 100 to 200 in the German alone failed it.
+**Rejected.** Dropping the four as covered, which the plants showed they were not.
+**Reason.** A guard no test sees removed is a guard by intention only, as E-3370 said for the last five.
+**Price.** The translation case compares numbers and code spans, not meaning; a paragraph translated with the same numbers and spans but another sense still passes.
