@@ -27,10 +27,10 @@ function storedTokenVersionsOf(table: string): string {
 }
 
 //the seal and the token tables are every place an integrity key version is stored (E-3191)
-function storedVersionsStatement(schema: string): string {
+function storedVersionsStatement(schema: string, tokenTables: readonly string[]): string {
 	return [
 		`SELECT DISTINCT 'state-mac' AS purpose, key_version FROM ${qualifiedTableName(schema, "security_state")}`,
-		...TOKEN_TABLES.map((name) => storedTokenVersionsOf(qualifiedTableName(schema, name))),
+		...tokenTables.map((name) => storedTokenVersionsOf(qualifiedTableName(schema, name))),
 	]
 		.map((part) => `(${part})`)
 		.join("\n\tUNION ")
@@ -46,7 +46,13 @@ export async function assertStoredIntegrityKeysTakeMac(options: {
 	const rows = await options.driver.query<{
 		purpose: IntegrityKeyPurpose;
 		key_version: number;
-	}>(storedVersionsStatement(options.schema), []);
+	}>(
+		storedVersionsStatement(
+			options.schema,
+			await tokenTablesHoldingAMac(options.driver, options.schema),
+		),
+		[],
+	);
 	const versionsOf = (purpose: IntegrityKeyPurpose) =>
 		rows.filter((row) => row.purpose === purpose).map((row) => row.key_version);
 	const otherKeysOf: Record<IntegrityKeyPurpose, Map<string, string>> = {
@@ -102,6 +108,19 @@ async function otherPurposeKeysByFingerprint(
 		}
 	}
 	return byFingerprint;
+}
+
+//a schema migration 4 has not reached yet holds no token mac whose key could be probed (E-3374)
+async function tokenTablesHoldingAMac(driver: Driver, schema: string): Promise<string[]> {
+	const rows = await driver.query<{ table_name: string }>(
+		`SELECT t.name AS table_name FROM unnest($1::text[]) AS t(name)
+		WHERE EXISTS (SELECT 1 FROM pg_attribute a
+			WHERE a.attrelid = to_regclass(quote_ident($2) || '.' || quote_ident(t.name))
+				AND a.attname = 'token_mac_key_version' AND NOT a.attisdropped)
+		ORDER BY t.name`,
+		[`{${TOKEN_TABLES.join(",")}}`, schema],
+	);
+	return rows.map((row) => row.table_name);
 }
 
 //a schema migration 3 has not reached yet holds no seal whose key could be probed

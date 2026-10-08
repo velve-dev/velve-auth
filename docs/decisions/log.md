@@ -17248,3 +17248,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Amending the commits, which CLAUDE.md §4 forbids.
 **Reason.** A bisect that lands on these commits should find the reason here.
 **Price.** The commits from `a7a78de` to the fix fail `pnpm test` at the owner census, and those from `ff08a71` at the literal walker as well.
+
+<a id="e-3480"></a>
+
+### The start probe reads token-mac versions only from the token tables migration 4 has reached
+`E-3480` · security-state-tokens · keys, start, settled
+
+**Context.** E-3374 runs the stored-version probe before `migrate()` applies a migration, wherever `schemaHoldsTheSealTable` finds `velve.security_state`. This branch's probe also reads every stored `token_mac_key_version` of the four token tables. A schema at migration 3 that already holds a seal has the seal table but not those columns, so the probe failed with `column "token_mac_key_version" does not exist`, and the upgrade from such a schema could not start. E-3374 named the guard as the token branch's to add. The probe now asks `pg_attribute` which of the four tables have the column and reads only those. After migration 4 the tables are empty, as it deletes every row, so nothing a later start would see is skipped. `test/keys-integrity-start-token-columns.test.ts` takes a schema at migration 3 with a seal row through `migrate()` and expects migration 4 applied; it fails without the guard.
+**Rejected.** Running the token part after the migrations, which brings back the refusal after a write that E-3374 removed.
+**Reason.** A probe has to read only what the schema it finds can hold.
+**Price.** One catalogue statement per start.
