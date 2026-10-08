@@ -14,7 +14,7 @@ import {
 	readAccountOfSession,
 	readUserOrRefuse,
 	refuseADisabledAccount,
-	sessionIdOfCaller,
+	sessionOfCaller,
 } from "./environment.js";
 import type { ChangedUser } from "./results.js";
 
@@ -65,7 +65,7 @@ export async function redeemVerification(
 	input: { readonly token: string },
 ): Promise<ChangedUser> {
 	const { driver, schema } = environment.services;
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const userId = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, environment.services, {
@@ -84,7 +84,7 @@ export async function redeemVerification(
 			pluginRuntime: environment.services.pluginRuntime,
 			sessions: environment.services.sessions,
 			actor: account.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: null,
 		});
 		return account.user.id;
@@ -138,7 +138,7 @@ export async function redeemChange(
 	input: { readonly token: string },
 ): Promise<ChangedUser> {
 	const { driver, schema } = environment.services;
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const userId = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, environment.services, {
@@ -162,7 +162,7 @@ export async function redeemChange(
 			pluginRuntime: environment.services.pluginRuntime,
 			sessions: environment.services.sessions,
 			actor: account.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: addressIn(redeemed.payload),
 		});
 		return account.user.id;

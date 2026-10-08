@@ -8,6 +8,7 @@ import { announceEachRevocation } from "../plugin/revocation.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { SessionService } from "../session/service.js";
 import { createPasswordProvenance } from "./credential.js";
+import type { ConfirmingSession } from "./environment.js";
 
 interface ConfirmationOutcome {
 	readonly wasTheFirstConfirmation: boolean;
@@ -21,7 +22,7 @@ interface AddressConfirmation {
 	readonly pluginRuntime: PluginRuntime;
 	readonly sessions: SessionService;
 	readonly actor: Actor;
-	readonly confirmingSessionId: string | null;
+	readonly confirmingSession: ConfirmingSession | null;
 	readonly newEmail: string | null;
 }
 
@@ -57,6 +58,11 @@ function refuseAnAddressTakenMeanwhile(cause: unknown): never {
 	throw cause;
 }
 
+//a session of another account counts as one the password was not set in (S-LINK-4)
+function sessionIdOnTheAccount(session: ConfirmingSession | null, actor: Actor): string | null {
+	return session !== null && session.userId === actor ? session.sessionId : null;
+}
+
 //the deletion is unconditional as a guard would spare a pre-registered account (S-LINK-4)
 export async function confirmAddress(input: AddressConfirmation): Promise<ConfirmationOutcome> {
 	//the account row is locked first to order this against a password replacement (E-1602)
@@ -82,7 +88,10 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 	const passwordCredentialDeleted = await createPasswordProvenance({
 		driver: input.transaction,
 		schema: input.schema,
-	}).deleteUnlessSetInSession({ actor: input.actor, sessionId: input.confirmingSessionId });
+	}).deleteUnlessSetInSession({
+		actor: input.actor,
+		sessionId: sessionIdOnTheAccount(input.confirmingSession, input.actor),
+	});
 
 	//an account that had no password loses nothing and keeps its sessions (E-608)
 	if (!passwordCredentialDeleted) {

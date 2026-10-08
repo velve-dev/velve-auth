@@ -13,7 +13,7 @@ import {
 	observedIn,
 	readUserOrRefuse,
 	refuseADisabledAccount,
-	sessionIdOfCaller,
+	sessionOfCaller,
 } from "./environment.js";
 
 //both branches must run the same statements and call send exactly once (S-TIM-6)
@@ -63,7 +63,7 @@ export async function redeemMagicLink(
 	const observed = observedIn(context);
 	//a veto must come before the token is spent so the link can still be used
 	await askBeforeSignIn(hooks, "magic_link", observed);
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const account = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, environment.services, {
@@ -81,7 +81,7 @@ export async function redeemMagicLink(
 			pluginRuntime: environment.services.pluginRuntime,
 			sessions: environment.services.sessions,
 			actor: resolved.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: null,
 		});
 		return resolved;

@@ -80,16 +80,22 @@ export async function readAccountOfSession(
 	return user;
 }
 
+/** the session a confirmation was presented with, which counts only for the account it belongs to */
+export interface ConfirmingSession {
+	readonly sessionId: string;
+	readonly userId: string;
+}
+
 //an unresolvable session must count as a different session and fail closed (S-LINK-4)
-export async function sessionIdOfCaller(
+export async function sessionOfCaller(
 	environment: FlowEnvironment,
 	context: RequestContext,
-): Promise<string | null> {
+): Promise<ConfirmingSession | null> {
 	if (context.sessionToken === null) {
 		return null;
 	}
 	const resolved = await environment.services.sessions
 		.resolve(context.sessionToken)
 		.catch(() => null);
-	return resolved === null ? null : resolved.session.id;
+	return resolved === null ? null : { sessionId: resolved.session.id, userId: resolved.userId };
 }
