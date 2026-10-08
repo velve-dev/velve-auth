@@ -16718,3 +16718,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A code of its own for the miss, which S-INTEG-5 forbids, since it would reveal the broken state.
 **Reason.** Every refusal of a broken state must look like the path's ordinary failure, and the issue is the last step of the path, not a path of its own.
 **Price.** The session repository has to learn which path called it, or hand the miss to the flow that answers.
+
+<a id="e-3385"></a>
+
+### Every write to an account's credential rows runs under the account lock
+`E-3385` · security-state · specification, S-INTEG-3, CLAUDE.md §7, settled
+
+**Context.** *Sealing* lists the changes that reseal and has each take the account lock first. The bound-envelope branch found writes to credential rows that the list does not name or that are not built under the lock: the stored provider tokens of an identity, which change no component of the seal and which it re-encrypts in bound form, and, on the seal branch's side, the background rehash of the password and the start of a TOTP enrolment, which run outside the request that caused them. A write without the lock can interleave with a sealing change's one read of the components and its rewrite of the same row, so a re-encryption or a reseal can overwrite or miss it. *Sealing* now says, in both languages, that every write to an account's credential rows runs under the account lock, whether or not it changes a component of the seal, and names those three. `test/security-state-spec-credential-writes.test.ts` holds the sentence in both languages. The rehash and `enroll.start` are the seal branch's to build that way.
+**Rejected.** Listing only the sealing changes and leaving the other writes to each feature, which is how these three were missed.
+**Reason.** The account lock orders writes to an account's rows only if every writer takes it.
+**Price.** The background rehash and the start of an enrolment wait behind any change of the account.
