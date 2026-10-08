@@ -8837,6 +8837,59 @@ documents the modules in `src/core/security-state/` that compute, check and
 write that row, the alarm a broken state raises, and the anchor an application
 can contribute. All of them are internal; none is exported from the package.
 
+### The canonical encoding
+
+`src/core/security-state/encoding.ts`. `encodeSecurityState(state)` returns the
+bytes the seal digest is taken over. `state` is a `SecurityState`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `userId` | `string` | the account id, a uuid in either case |
+| `version` | `number` | the seal row's `version` |
+| `sessionEpoch` | `number` | the seal row's `session_epoch` |
+| `email` | `string \| null` | `user.email`, or `null` where the account has none |
+| `emailVerified` | `boolean` | whether `user.email_verified_at` is set |
+| `disabled` | `boolean` | whether `user.disabled_at` is set |
+| `password` | `{ phcSha256, keyVersion, setBySessionId } \| null` | the SHA-256 of `password_credential.phc`, its `key_version` and `set_by_session_id`, or `null` without a password |
+| `passwordResetRequired` | `boolean` | whether a row in `velve.password_reset_required` exists |
+| `totp` | `{ confirmed, secretSha256, keyVersion } \| null` | whether `confirmed_at` is set, the SHA-256 of `secret_enc` and its `key_version`, or `null` |
+| `passkeys` | `{ credentialId, publicKey }[]` | every row of `velve.webauthn_credential` |
+| `identities` | `{ provider, subject }[]` | every row of `velve.identity` |
+| `recoveryCodes` | `{ keyVersion, codeHmac }[]` | every row of `velve.recovery_code` |
+
+Every field is a type byte, a four-byte big-endian length and its bytes:
+`0x00` absent, `0x01` text in UTF-8, `0x02` bytes, `0x03` list (the length is the
+count, followed by the elements), `0x04` integer (eight bytes big-endian),
+`0x05` boolean (one byte), `0x06` uuid (sixteen bytes), `0x07` record (the
+length is the byte length of the fields inside). The encoding begins with the
+text `velve-auth/security-state/v1` and continues in the order of the table.
+A present password or TOTP secret is a record; each passkey, identity and
+recovery code is a record of its pair, and each list is sorted bytewise by
+those records, so the order rows arrive in does not matter. A version, epoch or
+key version that is not an exact integer, an id that is not a uuid, and a
+ciphertext hash that is not 32 bytes throw a `RangeError`. The encoding is
+frozen (E-3151).
+
+### `computeSeal(keys, state)` and `verifySeal(keys, state, stored)`
+
+`src/core/security-state/seal.ts`. `computeSeal` takes the HMAC-SHA256 of the
+encoding under the current `state-mac` key through `macUnderCurrentKey` and
+resolves `{ keyVersion, digest }`. `verifySeal` recomputes it under
+`stored.keyVersion` through `verifyMacUnderKeyVersion`, which compares in constant
+time, and resolves a `SealVerdict`:
+
+| Verdict | When |
+|---|---|
+| `"valid"` | the digest matches |
+| `"seal_mismatch"` | it does not |
+| `"key_version_unknown"` | the ring does not hold the stored version |
+| `"key_unusable"` | the ring answers it with a key that cannot take the MAC |
+
+The three failures carry the alarm reason of the same name. Measured on the
+development machine, a computation costs a median of 86 µs for an account with
+one passkey and 180 µs at the cap of 20 passkeys and 10 identities, and a
+verification 80 µs and 166 µs (E-3152).
+
 ### The anchor port
 
 `src/core/security-state/anchor.ts`. The request path calls an anchor through
