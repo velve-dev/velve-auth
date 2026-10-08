@@ -413,6 +413,8 @@ import { SessionMetadataMode } from "../session/metadata.mjs";
 import { IdentityConfigurationInput } from "../identity/configuration.mjs";
 import { OAuthConfig } from "../oauth/config.mjs";
 import { PasswordConfig } from "../password/config.mjs";
+import { SecurityStateAlarm } from "../security-state/alarm.mjs";
+import { LimitsConfig } from "../security-state/limits.mjs";
 
 //#region src/core/auth/config.d.ts
 /** the identity fields each identity mode carries, one row per mode */
@@ -509,8 +511,9 @@ interface RateLimitConfig {
     readonly onAlert: (alert: RateAlert) => void;
   };
 }
-/** whether every account must carry a seal, or the estate is still being sealed */
+/** whether every account must carry a seal, or the estate is still being sealed, and who hears of a broken one */
 interface SecurityStateConfig {
+  readonly alarm?: (event: SecurityStateAlarm) => void;
   readonly sealing: "migrating" | "required";
 }
 /** the identity options for mode `M`, where only a username mode carries the username rules */
@@ -531,6 +534,8 @@ interface BaseConfig<M extends IdentityMode> {
   readonly fetch?: typeof globalThis.fetch;
   readonly identity: IdentityConfig<M>;
   readonly keys: KeyProvider;
+  /** how many passkeys and identities one account may hold */
+  readonly limits?: Partial<LimitsConfig>;
   readonly log?: (level: "error" | "info" | "warn", message: string, fields?: Readonly<Record<string, unknown>>) => void;
   readonly oauth?: OAuthConfig;
   readonly origins: readonly string[];
@@ -823,7 +828,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
@@ -1540,7 +1545,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;
@@ -2171,6 +2176,38 @@ export {
 	PluginSurface,
 };
 
+## core/security-state/alarm.d.mts
+
+//#region src/core/security-state/alarm.d.ts
+/** the path that met a broken state */
+type SecurityStateAlarmOccasion = "change" | "factor_check" | "maintenance" | "session_resolve" | "sign_in" | "token_redemption";
+/** why a state was found broken */
+type SecurityStateAlarmReason = "anchor_mismatch" | "anchor_unavailable" | "envelope_binding_mismatch" | "key_unusable" | "key_version_unknown" | "seal_mismatch" | "seal_missing" | "token_binding_mismatch" | "version_below_anchor";
+/** what the application's alarm callback receives, never a secret, a token, a hash or a ciphertext */
+interface SecurityStateAlarm {
+  readonly occasion: SecurityStateAlarmOccasion | "aggregate";
+  readonly reason: SecurityStateAlarmReason | "suppressed";
+  readonly suppressed: number;
+  readonly userId: string | null;
+}
+//#endregion
+export {
+	SecurityStateAlarm,
+};
+
+## core/security-state/limits.d.mts
+
+//#region src/core/security-state/limits.d.ts
+/** how many passkeys and identities one account may hold, which bounds what every seal check reads */
+interface LimitsConfig {
+  readonly identitiesPerAccount: number;
+  readonly passkeysPerAccount: number;
+}
+//#endregion
+export {
+	LimitsConfig,
+};
+
 ## core/session/config.d.mts
 
 import { CookieSameSite, HostPrefixedCookieName } from "../http/cookies.mjs";
@@ -2248,6 +2285,8 @@ import { KeyProvider } from "./core/keys/provider.mjs";
 import { UsernameRules } from "./core/identity/configuration.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
+import { SecurityStateAlarm } from "./core/security-state/alarm.mjs";
+import { LimitsConfig } from "./core/security-state/limits.mjs";
 import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SecurityStateConfig, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { TotpEnrollment } from "./core/factor/totp/secret.mjs";
@@ -2299,6 +2338,7 @@ export {
 	type ImportSource,
 	type KeyProvider,
 	KnownProvider,
+	type LimitsConfig,
 	MagicLinkNamespace,
 	MailedPasswordNamespace,
 	type ModeHasEmail,
@@ -2337,6 +2377,7 @@ export {
 	type RouteConflict,
 	SECURITY_OPTIONS,
 	type SecurityOption,
+	type SecurityStateAlarm,
 	type SecurityStateConfig,
 	type Session,
 	SessionCreateEvent,
