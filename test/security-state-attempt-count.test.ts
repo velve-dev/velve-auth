@@ -227,7 +227,7 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 		expect(refusals).toStrictEqual([]);
 	});
 
-	it("answers missing, with the alarm, when the row keeps moving past every retry", async () => {
+	it("follows a row rebound at the same count under every newer version of the ring, without an alarm", async () => {
 		const many = testKeyRing(MAXIMUM_PENDING_ATTEMPTS + 3);
 		const newest = MAXIMUM_PENDING_ATTEMPTS + 3;
 		const userId = await createUser(owner, schema);
@@ -240,7 +240,7 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 		const rebindingBeforeEveryBooking: typeof owner = {
 			...owner,
 			query: async (sql, params) => {
-				if (sql.includes("SET attempts =")) {
+				if (sql.includes("SET attempts =") && interposed + 1 < newest) {
 					interposed += 1;
 					const next = await bindToken(
 						many.providerAt(interposed + 1),
@@ -267,9 +267,17 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 			token,
 		);
 
-		expect(booked.outcome).toBe("missing");
-		expect(interposed).toBe(MAXIMUM_PENDING_ATTEMPTS + 1);
-		expect(refusals.map((refusal) => refusal.reason)).toStrictEqual(["token_binding_mismatch"]);
+		expect({
+			outcome: booked.outcome,
+			interposed,
+			attempts: await attemptsOf(userId),
+			refusals,
+		}).toStrictEqual({
+			outcome: "booked",
+			interposed: newest - 1,
+			attempts: 1,
+			refusals: [],
+		});
 	});
 });
 

@@ -216,14 +216,14 @@ export function createPendingAuthenticationService(
 		};
 	}
 
-	//the retries must stay within the budget that every concurrent booking raises (E-3140)
+	//a retry follows only a row that advanced in attempts within the budget or in key version within the ring (E-3140)
 	async function bookFrom(
 		tokenHash: Uint8Array,
 		resolution: PendingResolution,
 		checked: CheckedPendingRow,
 	): Promise<BookedAttempt> {
 		let row: CheckedPendingRow | "missing" = checked;
-		for (let tries = 0; tries <= MAXIMUM_PENDING_ATTEMPTS && row !== "missing"; tries += 1) {
+		while (row !== "missing") {
 			if (budgetIsSpentBy(row.attempts)) {
 				return { outcome: "exhausted" };
 			}
@@ -231,10 +231,6 @@ export function createPendingAuthenticationService(
 				return bookingOf(tokenHash, resolution, row.attempts + 1);
 			}
 			row = await afterMissedBooking(tokenHash, row);
-		}
-		//a row that kept moving past every retry has been written by more than the bookings (E-3257)
-		if (row !== "missing") {
-			reportRefusal(row.userId, "mismatch");
 		}
 		return { outcome: "missing" };
 	}
