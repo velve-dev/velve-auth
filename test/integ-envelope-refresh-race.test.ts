@@ -278,7 +278,9 @@ async function identityOf(subject: string): Promise<{ id: string; user_id: strin
 }
 
 describe("an automatic link decides again under the lock which account it joins (S-LINK-2)", () => {
-	async function linkWhileTheAccountChanges(change: string) {
+	async function linkWhileTheAccountChanges(
+		change: (holding: Driver, userId: string, address: string) => Promise<unknown>,
+	) {
 		const handler = handlerOn(other, true);
 		const subject = `requalify-${randomBytes(4).toString("hex")}`;
 		const address = `${subject}@provider.example`;
@@ -297,7 +299,7 @@ describe("an automatic link decides again under the lock which account it joins 
 			await lockAccountRow(holding, schema, userId);
 			signIn = completed(handler, flow);
 			waited = await aBackendWaitsForALock();
-			await holding.query(change, [userId, `moved-${subject}@elsewhere.example`]);
+			await change(holding, userId, address);
 		});
 		await holder.close();
 		const answer = await signIn;
@@ -315,8 +317,11 @@ describe("an automatic link decides again under the lock which account it joins 
 	}
 
 	it("links nothing into an account whose address moved while the sign-in waited", async () => {
-		const outcome = await linkWhileTheAccountChanges(
-			`UPDATE ${schema}.user SET email = $2 WHERE id = $1`,
+		const outcome = await linkWhileTheAccountChanges((holding, userId, address) =>
+			holding.query(`UPDATE ${schema}.user SET email = $2 WHERE id = $1`, [
+				userId,
+				`moved-${address}`,
+			]),
 		);
 
 		expect(outcome.waited).toBe(true);
@@ -325,9 +330,27 @@ describe("an automatic link decides again under the lock which account it joins 
 		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
 	});
 
+	it("links into neither account when the address moved to another verified account while the sign-in waited", async () => {
+		const outcome = await linkWhileTheAccountChanges(async (holding, userId, address) => {
+			await holding.query(`UPDATE ${schema}.user SET email = $2 WHERE id = $1`, [
+				userId,
+				`moved-${address}`,
+			]);
+			await holding.query(
+				`INSERT INTO ${schema}.user (email, email_verified_at) VALUES ($1, now())`,
+				[address],
+			);
+		});
+
+		expect(outcome.waited).toBe(true);
+		expect(outcome.identities).toBe(0);
+		expect(outcome.answer.status).toBe(outcome.unknown.status);
+		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
+	});
+
 	it("links nothing into an account whose address lost its verification while the sign-in waited", async () => {
-		const outcome = await linkWhileTheAccountChanges(
-			`UPDATE ${schema}.user SET email_verified_at = NULL WHERE id = $1 AND $2::text IS NOT NULL`,
+		const outcome = await linkWhileTheAccountChanges((holding, userId) =>
+			holding.query(`UPDATE ${schema}.user SET email_verified_at = NULL WHERE id = $1`, [userId]),
 		);
 
 		expect(outcome.waited).toBe(true);

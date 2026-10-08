@@ -15999,6 +15999,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A guard that depends on its input is only as strong as the caller's duty to pass that input untouched, and the duty has to be written down where the caller looks.
 **Price.** Until the seal branch makes the read constructible only from its statement, a caller in `src/` that edits the read before passing it launders an old-form envelope; the case in the test stops compiling the day the type no longer allows it, and is then rewritten as a refusal.
 
+<a id="e-3230"></a>
+
+### The automatic link's other-account case, every predicate of the swaps and the read fixture get tests
+`E-3230` · security-state-envelopes · test, settled
+
+**Context.** A mutation run of about a hundred mutants over this branch found no defect in the code and left guards no test reached. The automatic link refuses unless the account it qualifies under the lock is the one it locked (E-3227), and no case moved the address to a second verified account while the sign-in waited; `test/integ-envelope-refresh-race.test.ts` now does, and the sign-in links into neither account and answers as for an unknown state. The identity token swap compares `token_key_version`, `refresh_token_enc` and `id_token_enc` beside the access token, and only the access token had a case; `test/integ-envelope-rewrite-guards.test.ts` now changes each of the three alone after the read and the swap loses. The password and TOTP swaps name `user_id`, and no case held two accounts with the same ciphertext; the same file now rewrites one of two accounts holding byte-identical old-form values and leaves the other's row untouched. `test/envelope-read-fixtures.ts`, the one-statement read every rewrite test leans on, had no test of its own; `test/envelope-read-fixtures.test.ts` now holds it to one statement, to the read after the lock, and to each identity's own key version. Each case was shown failing on its mutant before it was committed.
+**Rejected.** Leaving the fixture untested because it is test code, which would let every rewrite test pass over a read that is not the one the specification describes.
+**Reason.** A guard that can be removed with the suite green is not known to work, and a fixture other tests trust is a guard of theirs.
+**Price.** Six more database cases and one more lock wait per run.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

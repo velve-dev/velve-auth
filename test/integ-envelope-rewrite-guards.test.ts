@@ -353,6 +353,42 @@ describe("the rewrite opens and swaps only what the one verified read returned (
 
 		await expect(attempt).rejects.toMatchObject({ code: "envelope_unbound" });
 	});
+
+	async function identityWithAllTokens(userId: string): Promise<string> {
+		const identity = await createOAuthIdentityRepository({
+			driver: connection,
+			schema,
+			keys: beforeRotation,
+		}).insertIdentityOfSignIn({
+			userId,
+			provider: "stubby",
+			subject: `all-tokens-${userId}`,
+			providerEmail: null,
+			providerEmailVerified: false,
+			profile: null,
+			scopes: [],
+			tokenLifetimeInSeconds: 3600,
+			tokens: { accessToken: "access", refreshToken: "refresh", idToken: "id" },
+		});
+		return identity?.id ?? "";
+	}
+
+	it.each([
+		["key version", "token_key_version = 2"],
+		["refresh token", "refresh_token_enc = '\\x02010203'::bytea"],
+		["id token", "id_token_enc = '\\x02010203'::bytea"],
+	])("refuses an identity whose %s alone changed after the read", async (_label, change) => {
+		const userId = await createUser(connection, schema);
+		const identityId = await identityWithAllTokens(userId);
+
+		const attempt = rewriteAfterAForeignWrite(
+			userId,
+			() => writer.query(`UPDATE ${schema}.identity SET ${change} WHERE id = $1`, [identityId]),
+			{ keys: afterRotation, sealing: "required" },
+		);
+
+		await expect(attempt).rejects.toBeInstanceOf(EnvelopeChangedSinceReadError);
+	});
 });
 
 describe("the caller must hand the rewrite its one verified read unchanged (E-3229)", () => {
@@ -384,5 +420,57 @@ describe("the caller must hand the rewrite its one verified read unchanged (E-32
 		});
 
 		expect(outcome.totpRewritten).toBe(true);
+	});
+});
+
+describe("a swap changes the rows of its own account only (S-OWNER-1)", () => {
+	it("leaves another account's identical old-form password ciphertext as it was", async () => {
+		const owner = await createUser(connection, schema);
+		const copy = await createUser(connection, schema);
+		const unbound = await encryptWithPurposeKey(
+			beforeRotation,
+			"password-enc",
+			new TextEncoder().encode(STORED_PHC),
+		);
+		for (const userId of [owner, copy]) {
+			await connection.query(
+				`INSERT INTO ${schema}.password_credential (user_id, phc, key_version, scheme)
+				 VALUES ($1, $2, $3, 'argon2id')`,
+				[userId, unbound.ciphertext, unbound.keyVersion],
+			);
+		}
+
+		await migratingRewrite(owner);
+
+		const [row] = await connection.query<{ phc: Uint8Array }>(
+			`SELECT phc FROM ${schema}.password_credential WHERE user_id = $1`,
+			[copy],
+		);
+		expect(Uint8Array.from(row?.phc ?? [])).toStrictEqual(unbound.ciphertext);
+	});
+
+	it("leaves another account's identical old-form TOTP secret as it was", async () => {
+		const owner = await createUser(connection, schema);
+		const copy = await createUser(connection, schema);
+		const unbound = await encryptWithPurposeKey(
+			beforeRotation,
+			"totp-enc",
+			new TextEncoder().encode("12345678901234567890"),
+		);
+		for (const userId of [owner, copy]) {
+			await connection.query(
+				`INSERT INTO ${schema}.totp_credential (user_id, secret_enc, key_version, confirmed_at)
+				 VALUES ($1, $2, $3, now())`,
+				[userId, unbound.ciphertext, unbound.keyVersion],
+			);
+		}
+
+		await migratingRewrite(owner);
+
+		const [row] = await connection.query<{ secret_enc: Uint8Array }>(
+			`SELECT secret_enc FROM ${schema}.totp_credential WHERE user_id = $1`,
+			[copy],
+		);
+		expect(Uint8Array.from(row?.secret_enc ?? [])).toStrictEqual(unbound.ciphertext);
 	});
 });
