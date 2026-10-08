@@ -94,3 +94,38 @@ describe("a session row replayed after a mass revocation (section 3.18, T-INTEG-
 		expect(await sessions.resolve(token)).toBeNull();
 	});
 });
+
+//a change without a proof of ownership never writes a first seal, and its revocation still reaches every row (E-3162)
+describe("a mass revocation without a proof of ownership on an unsealed account", () => {
+	it("deletes every session and leaves the account unsealed", async () => {
+		const userId = await createUser(connection, schema);
+		for (let issued = 0; issued < 3; issued += 1) {
+			await sessions.issue({
+				authorisedBy: "unsealed",
+				userId,
+				factors: ["password"],
+				observed: OBSERVED,
+			});
+		}
+		const actor = actorOfTestUser(userId);
+
+		const sealed = await sealChange(
+			testSecurityState(connection, schema, keys),
+			{ unproven: userId },
+			{
+				epoch: "raise",
+				write: (tx) => sessions.boundTo(tx).revokeEverySessionOfUser({ actor }),
+				after: (read) => sealedComponentsOf(read),
+			},
+		);
+		const [left] = await connection.query<{ sessions: number; seals: number }>(
+			`SELECT (SELECT count(*)::int FROM ${schema}.session WHERE user_id = $1) AS sessions,
+			        (SELECT count(*)::int FROM ${schema}.security_state WHERE user_id = $1) AS seals`,
+			[userId],
+		);
+
+		expect(sealed.leftUnsealed).toBe(true);
+		expect(sealed.written.revokedCount).toBe(3);
+		expect(left).toStrictEqual({ sessions: 0, seals: 0 });
+	});
+});
