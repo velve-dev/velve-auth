@@ -17638,3 +17638,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping an epoch-only variant for the completion, which brings back an authorisation with a member missing.
 **Reason.** An authorisation a caller can leave out is one the next caller will.
 **Price.** One more argument at every issue. The window between a pending row's consumption and the account lock stays open until the seal branch passes the checked version.
+
+<a id="e-3488"></a>
+
+### The client's route table is written out, so the issuing plumbing stays off the declarations
+`E-3488` · security-state-tokens · public interface, settled
+
+**Context.** `VelveRouteTable` was `ReturnType<typeof sessionRoutes>` and its siblings, and `OAuthSurface` read `ReturnType<typeof oauthRoutes>`. A declaration of `typeof` a factory carries the factory's parameter, `RouteServices`, and with it the session and pending services in full. So `IssueAuthorisation`, `SessionIssuePath`, `completes`, `authorisedBy` and the pending row's `sessionEpoch` shipped in `dist/`, where no user calls them. Stripping them with `stripInternal` would hide them by annotation and is not needed. `VelveRouteTable` is now written out route for route, from the expanded tuples the build had already printed for those factories. The provider routes are `OAuthRouteTable` in `src/core/oauth/routes.ts`, which `OAuthSurface` reads as well. `test/client-route-table.test.ts` holds the written table against the factories' types, each assignable to the other. A route output changed in the written table fails the type check there. After the build, `RouteServices`, the two session types and the three members no longer appear in any `.d.mts`, and `test/api-internal-issue-parameters.test.ts` reads the declarations for them. Its review form failed on the build before this change.
+**Rejected.** (a) `stripInternal` with `@internal` on each member. (b) Moving the issuing methods off `SessionService` behind lent functions, which changes every caller for a declaration concern.
+**Reason.** A public type should name what a user reads, and the client reads routes, not the services behind them.
+**Price.** The table is a second spelling of the routes, roughly 600 lines, and a route change means editing it beside the factory, which the type test enforces. Mutual assignability is weaker than identity: two spellings that accept the same values pass.

@@ -8136,17 +8136,20 @@ route with your own `fetch` against `/x/<plugin-id>/…`.
 | `VelveResult<Value, Code>` | The result object. |
 | `VelveFailure<Code>` | Its `error` half. |
 | `ClientRoute` | One row of the table: `name`, `method`, `path`. |
-| `VelveRouteTable` | The tuple type of every row the library declares, derived from the route factories themselves. |
+| `VelveRouteTable` | The tuple type of every row the library declares, written out route for route and held against the route factories by a test. |
 | `ClientMethodOf<Route>` | One route's client signature: `(input) => Promise<VelveResult<Output, Code>>`. |
 | `ClientSurface<Routes>` | The nested surface of a whole table, the mirror of `ServerSurface`. |
 | `VelveError`, `VelveErrorCode` | Re-exported from `@velve/auth`, so a browser bundle gets them without importing the core. |
 
-`VelveRouteTable` is the mechanism that keeps this table honest. It is built from
-`ReturnType<typeof sessionRoutes>` and its four siblings through type-only
-imports, so the client's types come from the route declarations themselves and
-are erased entirely at build time; the value table is then held against it with
-`satisfies`. A row added, dropped, renamed or repathed in any route module fails
-to compile here. A row whose **method** changes does not — `defineRoute` does not
+`VelveRouteTable` is the mechanism that keeps this table honest. It is written out
+route for route, the provider routes as `OAuthRouteTable` from
+`src/core/oauth/routes.ts`, which `OAuthSurface` reads too, so the shipped
+declarations name the routes and never the services that build them.
+`test/client-route-table.test.ts` holds it against `ReturnType<typeof sessionRoutes>`
+and its siblings: each must be assignable to the other, so a route added,
+dropped, renamed, repathed or given another input, output or error code in any
+route module fails the type check there. The value table is then held against it
+with `satisfies`. A row whose **method** changes does not — `defineRoute` does not
 carry the method as a type parameter — and is caught by a test against a live
 instance instead.
 
