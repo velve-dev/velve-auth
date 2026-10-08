@@ -99,6 +99,7 @@ async function replacePassword(
 		actor: input.actor,
 	});
 	const issued = await sessions.boundTo(input.transaction).issueReplacingPresented({
+		completes: "password_reset",
 		presentedToken: context.sessionToken,
 		userId: input.userId,
 		factors: ["password"],

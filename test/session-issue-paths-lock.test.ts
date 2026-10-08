@@ -69,6 +69,7 @@ const PATHS: readonly [string, Path][] = [
 		"issueReplacingPresented",
 		async (userId) => () =>
 			sessions.issueReplacingPresented({
+				completes: "password_sign_in",
 				presentedToken: null,
 				userId,
 				factors: ["password"],
@@ -110,6 +111,7 @@ const PATHS: readonly [string, Path][] = [
 			const first = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
 			return () =>
 				sessions.reissueSessionOfUser({
+					completes: "oauth_link",
 					actor: actorOfTestUser(userId),
 					previousSessionId: first.session.id,
 					factors: ["password"],

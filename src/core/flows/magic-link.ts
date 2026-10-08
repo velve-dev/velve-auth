@@ -103,6 +103,7 @@ export async function redeemMagicLink(
 		{ userId: account.user.id, factors: [] },
 		() =>
 			sessions.issueReplacingPresented({
+				completes: "magic_link",
 				presentedToken: context.sessionToken,
 				userId: account.user.id,
 				factors: [],

@@ -119,6 +119,7 @@ async function signedIn(
 	const hooks = services.pluginRuntime.hooks;
 	const issued = await createSessionUnderHooks(hooks, { userId, factors: ["password"] }, () =>
 		services.sessions.issueReplacingPresented({
+			completes: "password_sign_in",
 			presentedToken: context.sessionToken,
 			userId,
 			factors: ["password"],

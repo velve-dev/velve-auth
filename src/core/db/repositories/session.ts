@@ -1,5 +1,5 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
-import { ConcealedError } from "../../http/error-map.js";
+import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import { librarySessionBinding, type SessionIssue } from "../../session/binding.js";
 import {
@@ -52,8 +52,15 @@ export class SessionOwnerMismatchError extends Error {
 	}
 }
 
+/** how an issue that writes no row is reported and answered, which the path it completes decides */
+export interface MissedIssue {
+	readonly occasion: "sign_in" | "change";
+	readonly reason: ConcealedReason;
+}
+
 export interface SessionInsert {
 	readonly userId: string;
+	readonly missed: MissedIssue;
 	readonly tokenHash: Uint8Array;
 	readonly factors: readonly AuthenticationFactor[];
 	readonly ipAddress: string | null;
@@ -582,7 +589,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	): Promise<SessionRowShape | undefined> {
 		const issuing = await issuingStateOf(driver, insert.userId);
 		if (issuing === null) {
-			throw new ConcealedError("session_not_found");
+			throw new ConcealedError(insert.missed.reason);
 		}
 		const mac = await insert.bindUnder(issuing);
 		const parameters = [...insertParameters(insert), mac.tokenMac, mac.tokenMacKeyVersion];
@@ -610,10 +617,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		if (row === undefined) {
 			reportBrokenState(options.reportTokenBindingRefusal, {
 				userId: insert.userId,
-				occasion: "sign_in",
+				occasion: insert.missed.occasion,
 				reason: "seal_mismatch",
 			});
-			throw new ConcealedError("session_not_found");
+			throw new ConcealedError(insert.missed.reason);
 		}
 		return toSession(row, NOT_LISTED);
 	}

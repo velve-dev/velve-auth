@@ -198,6 +198,7 @@ describe("reissueSessionOfUser (S-FIX-1)", () => {
 		});
 
 		const reissued = await service.reissueSessionOfUser({
+			completes: "oauth_link",
 			actor: owner,
 			previousSessionId: previous.session.id,
 			factors: ["oauth"],
@@ -215,6 +216,7 @@ describe("reissueSessionOfUser (S-FIX-1)", () => {
 
 		await expect(
 			service.reissueSessionOfUser({
+				completes: "oauth_link",
 				actor: owner,
 				previousSessionId: crypto.randomUUID(),
 				factors: ["oauth"],

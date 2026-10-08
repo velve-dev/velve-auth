@@ -22,6 +22,7 @@ export function sessionInsertFor(
 ): SessionInsert {
 	const insert = {
 		userId,
+		missed: { occasion: "sign_in", reason: "session_not_found" } as const,
 		tokenHash: createSessionToken().tokenHash,
 		factors: ["password"] as const,
 		ipAddress: null,

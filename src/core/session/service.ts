@@ -2,6 +2,7 @@ import { type Actor, actorOfResolvedSession, type ResolvedSession } from "../db/
 import type { Driver } from "../db/driver.js";
 import {
 	createSessionRepository,
+	type MissedIssue,
 	PreviousSessionMissingError,
 	type SecurityStateSealing,
 	type SessionInsert,
@@ -48,6 +49,30 @@ export interface ObservedRequest {
 	readonly userAgent: string | null;
 }
 
+/** the sign-in or change a session issue completes, which decides how one that writes no row is answered */
+export type SessionIssuePath =
+	| "password_sign_in"
+	| "passkey_sign_in"
+	| "second_factor"
+	| "magic_link"
+	| "oauth_sign_in"
+	| "password_reset"
+	| "oauth_link";
+
+//a missed issue is reported with what it completes and answered as that path's ordinary failure (S-INTEG-5)
+const MISSED_ISSUE_BY_PATH: Readonly<Record<SessionIssuePath, MissedIssue>> = {
+	password_sign_in: { occasion: "sign_in", reason: "session_issue_missed_on_password_sign_in" },
+	passkey_sign_in: { occasion: "sign_in", reason: "session_issue_missed_on_passkey_sign_in" },
+	second_factor: { occasion: "sign_in", reason: "session_issue_missed_on_second_factor" },
+	magic_link: { occasion: "sign_in", reason: "session_issue_missed_on_token_redemption" },
+	oauth_sign_in: { occasion: "sign_in", reason: "session_issue_missed_on_oauth_flow" },
+	password_reset: { occasion: "change", reason: "session_issue_missed_on_token_redemption" },
+	oauth_link: { occasion: "change", reason: "session_issue_missed_on_oauth_flow" },
+};
+
+//a session issued by a change behind a resolved session answers a miss as no session
+const MISSED_CHANGE: MissedIssue = { occasion: "change", reason: "session_not_found" };
+
 export interface SessionServiceOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
@@ -69,6 +94,7 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	/** issues a session and removes the one the browser presented, whoever owns it, in one transaction */
 	issueReplacingPresented(input: {
+		readonly completes: SessionIssuePath;
 		readonly presentedToken: string | null;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -87,6 +113,7 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	/** replaces the one named session and leaves every other session of the account alone */
 	reissueSessionOfUser(input: {
+		readonly completes: SessionIssuePath;
 		readonly actor: Actor;
 		readonly previousSessionId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -157,10 +184,12 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		factors: readonly AuthenticationFactor[],
 		observed: ObservedRequest,
 		tokenHash: Uint8Array,
+		missed: MissedIssue,
 	): SessionInsert {
 		const storedFactors = factors.filter((factor, index) => factors.indexOf(factor) === index);
 		return {
 			userId,
+			missed,
 			tokenHash,
 			factors: storedFactors,
 			...metadataOf(observed),
@@ -256,17 +285,23 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		async issue({ userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.insertSession(
-				insertFor(userId, factors, observed, issued.tokenHash),
+				insertFor(userId, factors, observed, issued.tokenHash, MISSED_CHANGE),
 			);
 			return { token: issued.token, session };
 		},
 
 		//a sign-in must leave no row for the token the browser presented (S-FIX-3)
-		async issueReplacingPresented({ presentedToken, userId, factors, observed }) {
+		async issueReplacingPresented({ completes, presentedToken, userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.replacePresentedSession({
 				presentedTokenHash: presentedToken === null ? null : sessionTokenHash(presentedToken),
-				insert: insertFor(userId, factors, observed, issued.tokenHash),
+				insert: insertFor(
+					userId,
+					factors,
+					observed,
+					issued.tokenHash,
+					MISSED_ISSUE_BY_PATH[completes],
+				),
 			});
 			return { token: issued.token, session };
 		},
@@ -277,7 +312,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const session = await sessions
 				.replaceSession({
 					previousTokenHash: sessionTokenHash(previousToken),
-					insert: insertFor(userId, factors, observed, issued.tokenHash),
+					insert: insertFor(userId, factors, observed, issued.tokenHash, MISSED_CHANGE),
 				})
 				.catch(replacedSessionFailure);
 			return { token: issued.token, session };
@@ -288,17 +323,23 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
-				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash),
+				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash, MISSED_CHANGE),
 			});
 			return { token: issued.token, session };
 		},
 
-		async reissueSessionOfUser({ actor, previousSessionId, factors, observed }) {
+		async reissueSessionOfUser({ completes, actor, previousSessionId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.replaceSessionOwnedBy({
 				actor,
 				previousSessionId,
-				insert: insertFor(actor, factors, observed, issued.tokenHash),
+				insert: insertFor(
+					actor,
+					factors,
+					observed,
+					issued.tokenHash,
+					MISSED_ISSUE_BY_PATH[completes],
+				),
 			});
 			return { token: issued.token, session };
 		},

@@ -69,6 +69,7 @@ export function createSecondFactorCompletion(
 				//the anchor is asked about the consumed row's owner in this transaction before the account lock (E-3265)
 				await options.beforeLockingTheOwnerOf?.(consumed.userId);
 				return sessions.issueReplacingPresented({
+					completes: "second_factor",
 					presentedToken: presentedSessionToken,
 					userId: consumed.userId,
 					factors: [...consumed.factorsCompleted, factor],

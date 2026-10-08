@@ -392,6 +392,7 @@ export function createOAuthService(input: {
 
 		const { issued, user } = await issueSessionAround(userId, () =>
 			services.sessions.issueReplacingPresented({
+				completes: "oauth_sign_in",
 				presentedToken: arrival.presentedSessionToken,
 				userId,
 				factors: OAUTH_FACTORS,
@@ -453,6 +454,7 @@ export function createOAuthService(input: {
 			const issued = await services.sessions
 				.boundTo(transaction)
 				.reissueSessionOfUser({
+					completes: "oauth_link",
 					actor,
 					previousSessionId: input.linked.previousSessionId,
 					factors: OAUTH_FACTORS,
