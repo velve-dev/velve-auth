@@ -120,6 +120,7 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 		const first = await signIn();
 
 		const second = await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "totp"],
@@ -135,6 +136,7 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 	it("answers a request with the previous token exactly as one without a cookie", async () => {
 		const first = await signIn();
 		await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "totp"],
@@ -154,6 +156,7 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 		});
 
 		const second = await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "webauthn"],
@@ -169,6 +172,7 @@ describe("a credential change (S-FIX-6)", () => {
 		const here = await signIn();
 
 		const replacement = await service.reissueAfterCredentialChange({
+			completes: "password_change",
 			resolved: await resolvedNow(here.token),
 			factors: ["password"],
 			observed: NOWHERE,
@@ -183,6 +187,7 @@ describe("a credential change (S-FIX-6)", () => {
 		const here = await signIn();
 
 		await service.reissueAfterCredentialChange({
+			completes: "password_change",
 			resolved: await resolvedNow(here.token),
 			factors: ["password"],
 			observed: NOWHERE,

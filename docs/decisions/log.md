@@ -17278,3 +17278,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Folding the listing back into `session_resolve`, which lets a forged row met in a list hold back a resolution's alarm for its window of deduplication.
 **Reason.** An occasion says where a row was met, and a list is not a resolution.
 **Price.** One occasion more than *The alarm* lists, until the specification says it.
+
+<a id="e-3483"></a>
+
+### No missed session issue answers session_required, and a second factor answers with its own code
+`E-3483` · security-state-tokens · S-INTEG-5, settled, specification to follow
+
+**Context.** E-3275 mapped a missed issue per sign-in path but kept `session_required` for the issues a change makes: sign-up, `password.set` and `password.change`, and the two reissues no route calls. It also answered every second-factor completion with `invalid_pending_authentication`. E-3384 says a missed issue never answers `session_required`, which belongs to session resolution alone, and that the completion of a pending authentication answers with the factor path's code. Every issuing method now names what it completes. `issue` takes an optional `completes` that defaults to a sign-up, and `reissue` and `reissueAfterCredentialChange` take it as a required parameter. The completion of a second factor names `totp_second_factor`, `passkey_second_factor` or `recovery_second_factor` by the factor it completed, answered as `invalid_factor_code`, `webauthn_credential_rejected` and `invalid_recovery_code`. A sign-up answers `invalid_input` and `password.change` answers `invalid_credentials`, each a code its route declares and gives for its ordinary failure. `password.set` answers `factor_already_enrolled`, the code it gives when the account already has a password, which is what a concurrent change that wins the race leaves. The specification names no code for these three changes. E-3384 says only that such a change is refused like any other broken state, so the three choices are this branch's and are for the specification to state or replace. `test/integ-session-issue-miss-answer.test.ts` holds all twelve paths.
+**Rejected.** `session_required` for a change behind a resolved session, which its route also gives when a concurrent change revoked the caller and would be the most natural code, but which E-3384 forbids.
+**Reason.** S-INTEG-5 asks for the ordinary failure of the same path, and the specification reserves `session_required` for resolution.
+**Price.** `completes` is required on two more methods of the shipped `SessionService`, optional on a third, and six concealed reasons are new.

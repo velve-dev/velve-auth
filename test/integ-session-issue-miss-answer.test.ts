@@ -87,9 +87,14 @@ describe("a password sign-in whose session issue writes nothing (S-INTEG-9, E-32
 const ORDINARY_FAILURE: readonly [SessionIssuePath, "sign_in" | "change", string][] = [
 	["password_sign_in", "sign_in", "invalid_credentials"],
 	["passkey_sign_in", "sign_in", "webauthn_credential_rejected"],
-	["second_factor", "sign_in", "invalid_pending_authentication"],
+	["totp_second_factor", "sign_in", "invalid_factor_code"],
+	["passkey_second_factor", "sign_in", "webauthn_credential_rejected"],
+	["recovery_second_factor", "sign_in", "invalid_recovery_code"],
 	["magic_link", "sign_in", "invalid_token"],
 	["oauth_sign_in", "sign_in", "oauth_flow_invalid"],
+	["sign_up", "change", "invalid_input"],
+	["password_set", "change", "factor_already_enrolled"],
+	["password_change", "change", "invalid_credentials"],
 	["password_reset", "change", "invalid_token"],
 	["oauth_link", "change", "oauth_flow_invalid"],
 ];

@@ -223,6 +223,7 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
 
 		const next = await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: issued.token,
 			userId,
 			factors: ["password", "totp"],

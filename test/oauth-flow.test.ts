@@ -802,6 +802,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 			throw new Error("the session the credential change replaces must resolve");
 		}
 		await sessions.reissueAfterCredentialChange({
+			completes: "password_change",
 			resolved,
 			factors: ["oauth"],
 			observed: { ipAddress: null, userAgent: null },

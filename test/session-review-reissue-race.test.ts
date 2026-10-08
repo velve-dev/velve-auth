@@ -120,6 +120,7 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		traced.reset();
 
 		await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: previous.token,
 			userId,
 			factors: ["password", "totp"],
@@ -146,6 +147,7 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		traced.reset();
 
 		await service.reissueAfterCredentialChange({
+			completes: "password_change",
 			resolved,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -199,6 +201,7 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 
 		await expect(
 			service.reissue({
+				completes: "totp_second_factor",
 				previousToken: previous.token,
 				userId: strangerId,
 				factors: ["password"],
@@ -213,6 +216,7 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
 
 		const next = await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: previous.token,
 			userId,
 			factors: ["password", "webauthn"],

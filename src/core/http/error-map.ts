@@ -237,7 +237,12 @@ export type ConcealedReason =
 	| "user_disabled_on_webauthn_assertion"
 	| "session_issue_missed_on_password_sign_in"
 	| "session_issue_missed_on_passkey_sign_in"
-	| "session_issue_missed_on_second_factor"
+	| "session_issue_missed_on_totp_second_factor"
+	| "session_issue_missed_on_passkey_second_factor"
+	| "session_issue_missed_on_recovery_second_factor"
+	| "session_issue_missed_on_sign_up"
+	| "session_issue_missed_on_password_set"
+	| "session_issue_missed_on_password_change"
 	| "session_issue_missed_on_token_redemption"
 	| "session_issue_missed_on_oauth_flow";
 
@@ -287,7 +292,12 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	//a session issue that wrote no row answers as the ordinary failure of the path it completes (S-INTEG-5)
 	session_issue_missed_on_password_sign_in: "invalid_credentials",
 	session_issue_missed_on_passkey_sign_in: "webauthn_credential_rejected",
-	session_issue_missed_on_second_factor: "invalid_pending_authentication",
+	session_issue_missed_on_totp_second_factor: "invalid_factor_code",
+	session_issue_missed_on_passkey_second_factor: "webauthn_credential_rejected",
+	session_issue_missed_on_recovery_second_factor: "invalid_recovery_code",
+	session_issue_missed_on_sign_up: "invalid_input",
+	session_issue_missed_on_password_set: "factor_already_enrolled",
+	session_issue_missed_on_password_change: "invalid_credentials",
 	session_issue_missed_on_token_redemption: "invalid_token",
 	session_issue_missed_on_oauth_flow: "oauth_flow_invalid",
 };

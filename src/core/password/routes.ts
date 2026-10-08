@@ -204,6 +204,7 @@ export function passwordRoutes(services: RouteServices) {
 			const environment = await readEnvironment();
 			await refuseIfCredentialExists(environment, actorOfResolvedSession(resolved));
 			return replacePasswordOfSession(services, environment, context, {
+				completes: "password_set",
 				resolved,
 				newPassword: input.newPassword,
 			});
@@ -238,6 +239,7 @@ export function passwordRoutes(services: RouteServices) {
 				plaintext: input.currentPassword,
 			});
 			return replacePasswordOfSession(services, environment, context, {
+				completes: "password_change",
 				resolved,
 				newPassword: input.newPassword,
 			});

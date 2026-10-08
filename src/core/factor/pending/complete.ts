@@ -7,6 +7,7 @@ import {
 	createSessionService,
 	type IssuedSession,
 	type ObservedRequest,
+	type SessionIssuePath,
 } from "../../session/service.js";
 import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { SecondFactor } from "./repository.js";
@@ -33,6 +34,13 @@ export interface SecondFactorCompletion {
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
 }
+
+//a missed issue answers as the factor that completed the sign-in fails (S-INTEG-5)
+const SECOND_FACTOR_PATH: Readonly<Record<SecondFactor, SessionIssuePath>> = {
+	totp: "totp_second_factor",
+	webauthn: "passkey_second_factor",
+	recovery: "recovery_second_factor",
+};
 
 //the pending row must go in the same transaction that inserts the session (S-FIX-1)
 export function createSecondFactorCompletion(
@@ -69,7 +77,7 @@ export function createSecondFactorCompletion(
 				//the anchor is asked about the consumed row's owner in this transaction before the account lock (E-3265)
 				await options.beforeLockingTheOwnerOf?.(consumed.userId);
 				return sessions.issueReplacingPresented({
-					completes: "second_factor",
+					completes: SECOND_FACTOR_PATH[factor],
 					presentedToken: presentedSessionToken,
 					userId: consumed.userId,
 					factors: [...consumed.factorsCompleted, factor],

@@ -297,6 +297,7 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 
 		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
 		const reissued = await service.reissue({
+			completes: "totp_second_factor",
 			previousToken: issued.token,
 			userId,
 			factors: ["password"],

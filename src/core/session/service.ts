@@ -53,9 +53,14 @@ export interface ObservedRequest {
 export type SessionIssuePath =
 	| "password_sign_in"
 	| "passkey_sign_in"
-	| "second_factor"
+	| "totp_second_factor"
+	| "passkey_second_factor"
+	| "recovery_second_factor"
 	| "magic_link"
 	| "oauth_sign_in"
+	| "sign_up"
+	| "password_set"
+	| "password_change"
 	| "password_reset"
 	| "oauth_link";
 
@@ -63,15 +68,26 @@ export type SessionIssuePath =
 const MISSED_ISSUE_BY_PATH: Readonly<Record<SessionIssuePath, MissedIssue>> = {
 	password_sign_in: { occasion: "sign_in", reason: "session_issue_missed_on_password_sign_in" },
 	passkey_sign_in: { occasion: "sign_in", reason: "session_issue_missed_on_passkey_sign_in" },
-	second_factor: { occasion: "sign_in", reason: "session_issue_missed_on_second_factor" },
+	totp_second_factor: {
+		occasion: "sign_in",
+		reason: "session_issue_missed_on_totp_second_factor",
+	},
+	passkey_second_factor: {
+		occasion: "sign_in",
+		reason: "session_issue_missed_on_passkey_second_factor",
+	},
+	recovery_second_factor: {
+		occasion: "sign_in",
+		reason: "session_issue_missed_on_recovery_second_factor",
+	},
 	magic_link: { occasion: "sign_in", reason: "session_issue_missed_on_token_redemption" },
 	oauth_sign_in: { occasion: "sign_in", reason: "session_issue_missed_on_oauth_flow" },
+	sign_up: { occasion: "change", reason: "session_issue_missed_on_sign_up" },
+	password_set: { occasion: "change", reason: "session_issue_missed_on_password_set" },
+	password_change: { occasion: "change", reason: "session_issue_missed_on_password_change" },
 	password_reset: { occasion: "change", reason: "session_issue_missed_on_token_redemption" },
 	oauth_link: { occasion: "change", reason: "session_issue_missed_on_oauth_flow" },
 };
-
-//a session issued by a change behind a resolved session answers a miss as no session
-const MISSED_CHANGE: MissedIssue = { occasion: "change", reason: "session_not_found" };
 
 export interface SessionServiceOptions {
 	readonly driver: Driver;
@@ -87,7 +103,9 @@ export interface SessionService {
 	readonly settings: SessionSettings;
 	/** the same service over another driver, for a session written in a caller's own transaction */
 	boundTo(driver: Driver): SessionService;
+	/** a sign-up unless `completes` names the change it completes */
 	issue(input: {
+		readonly completes?: SessionIssuePath;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
@@ -101,12 +119,14 @@ export interface SessionService {
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
 	reissue(input: {
+		readonly completes: SessionIssuePath;
 		readonly previousToken: string;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
 	reissueAfterCredentialChange(input: {
+		readonly completes: SessionIssuePath;
 		readonly resolved: SessionResolution;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
@@ -286,10 +306,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 		boundTo: (driver) => createSessionService({ ...options, driver }),
 
-		async issue({ userId, factors, observed }) {
+		async issue({ completes = "sign_up", userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.insertSession(
-				insertFor(userId, factors, observed, issued.tokenHash, MISSED_CHANGE),
+				insertFor(userId, factors, observed, issued.tokenHash, MISSED_ISSUE_BY_PATH[completes]),
 			);
 			return { token: issued.token, session };
 		},
@@ -311,23 +331,35 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		},
 
 		//every change of the trust level must end the old session and begin a new one (S-FIX-1)
-		async reissue({ previousToken, userId, factors, observed }) {
+		async reissue({ completes, previousToken, userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions
 				.replaceSession({
 					previousTokenHash: sessionTokenHash(previousToken),
-					insert: insertFor(userId, factors, observed, issued.tokenHash, MISSED_CHANGE),
+					insert: insertFor(
+						userId,
+						factors,
+						observed,
+						issued.tokenHash,
+						MISSED_ISSUE_BY_PATH[completes],
+					),
 				})
 				.catch(replacedSessionFailure);
 			return { token: issued.token, session };
 		},
 
 		//a credential change must end every other session and nothing turns that off (S-FIX-6)
-		async reissueAfterCredentialChange({ resolved, factors, observed }) {
+		async reissueAfterCredentialChange({ completes, resolved, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
-				insert: insertFor(resolved.userId, factors, observed, issued.tokenHash, MISSED_CHANGE),
+				insert: insertFor(
+					resolved.userId,
+					factors,
+					observed,
+					issued.tokenHash,
+					MISSED_ISSUE_BY_PATH[completes],
+				),
 			});
 			return { token: issued.token, session };
 		},

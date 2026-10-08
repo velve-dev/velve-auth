@@ -152,6 +152,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		sent.reset();
 
 		const next = await truncating.reissue({
+			completes: "totp_second_factor",
 			previousToken: first.token,
 			userId,
 			factors: ["password", "totp"],
@@ -162,6 +163,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 			throw new Error("the re-issued session did not resolve");
 		}
 		const after = await truncating.reissueAfterCredentialChange({
+			completes: "password_change",
 			resolved,
 			factors: ["password"],
 			observed: { ipAddress: "192.0.2.77", userAgent: CHROME_ON_MACOS },

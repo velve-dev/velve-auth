@@ -82,6 +82,7 @@ const PATHS: readonly [string, Path][] = [
 			const first = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
 			return () =>
 				sessions.reissue({
+					completes: "totp_second_factor",
 					previousToken: first.token,
 					userId,
 					factors: ["password"],
@@ -99,6 +100,7 @@ const PATHS: readonly [string, Path][] = [
 			}
 			return () =>
 				sessions.reissueAfterCredentialChange({
+					completes: "password_change",
 					resolved,
 					factors: ["password"],
 					observed: NO_REQUEST,

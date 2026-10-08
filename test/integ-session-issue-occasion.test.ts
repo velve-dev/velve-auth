@@ -81,7 +81,12 @@ describe("a missed session issue that completes a change", () => {
 		});
 
 		await racing
-			.reissueAfterCredentialChange({ resolved, factors: ["password"], observed: NO_REQUEST })
+			.reissueAfterCredentialChange({
+				completes: "password_change",
+				resolved,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			})
 			.catch(() => null);
 
 		expect(refusals).toStrictEqual([

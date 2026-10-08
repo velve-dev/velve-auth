@@ -1707,15 +1707,21 @@ code itself.
 
 | Visible code | Internal reasons |
 |---|---|
-| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled_on_sign_in`, `session_issue_missed_on_password_sign_in` |
+| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled_on_sign_in`, `session_issue_missed_on_password_sign_in`, `session_issue_missed_on_password_change` |
 | `session_required` | `cookie_absent`, `session_not_found`, `session_idle_expired`, `session_absolute_expired` |
 | `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled_on_token_redemption`, `session_issue_missed_on_token_redemption` |
-| `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed` |
-| `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated` |
-| `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent`, `session_issue_missed_on_second_factor` |
+| `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`, `session_issue_missed_on_totp_second_factor` |
+| `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated`, `session_issue_missed_on_recovery_second_factor` |
+| `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent` |
 | `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow`, `session_issue_missed_on_oauth_flow` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
-| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion`, `session_issue_missed_on_passkey_sign_in` |
+| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion`, `session_issue_missed_on_passkey_sign_in`, `session_issue_missed_on_passkey_second_factor` |
+
+Two concealed reasons answer with a code that is not merged with others:
+`session_issue_missed_on_sign_up` with `invalid_input` and
+`session_issue_missed_on_password_set` with `factor_already_enrolled`, the
+ordinary failures of a sign-up and of `password.set` whose session issue wrote no
+row ([Security state: keyed token hashes](#security-state-keyed-token-hashes)).
 
 An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `internal_error` with no detail in the body. The log line for it carries
@@ -3992,18 +3998,15 @@ read.
 
 | Method | What it does |
 |---|---|
-| `issue({ userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
+| `issue({ completes?, userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
 | `issueReplacingPresented({ completes, presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
-| `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
-| `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+| `reissue({ completes, previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
+| `reissueAfterCredentialChange({ completes, resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
 
-`completes`, which `issueReplacingPresented` and `reissueSessionOfUser` take, names
-what the issue completes — `password_sign_in`, `passkey_sign_in`,
-`second_factor`, `magic_link`, `oauth_sign_in`, `password_reset` or
-`oauth_link` (`SessionIssuePath`) — and decides how an issue that writes no row
-is answered ([The session epoch](#the-session-epoch)). `issue`, `reissue` and
-`reissueAfterCredentialChange` complete a change behind a resolved session, or a
-sign-up, and answer such an issue as no session.
+`completes`, which every issuing method takes, names what the issue completes
+(`SessionIssuePath`) and decides how an issue that writes no row is answered
+([The session epoch](#the-session-epoch)); `issue` completes a sign-up unless it
+names another path.
 
 `sessionRowsOn(service, driver)`, internal in `src/core/session/rows.ts` and not
 part of the shipped `SessionService`, returns the session rows a flow announces or
@@ -9025,12 +9028,18 @@ by a concealed reason of its own:
 |---|---|---|
 | `password_sign_in` | `sign_in` | `invalid_credentials` |
 | `passkey_sign_in` | `sign_in` | `webauthn_credential_rejected` |
-| `second_factor` | `sign_in` | `invalid_pending_authentication` |
+| `totp_second_factor` | `sign_in` | `invalid_factor_code` |
+| `passkey_second_factor` | `sign_in` | `webauthn_credential_rejected` |
+| `recovery_second_factor` | `sign_in` | `invalid_recovery_code` |
 | `magic_link` | `sign_in` | `invalid_token` |
 | `oauth_sign_in` | `sign_in` | `oauth_flow_invalid` |
+| `sign_up` | `change` | `invalid_input` |
+| `password_set` | `change` | `factor_already_enrolled` |
+| `password_change` | `change` | `invalid_credentials` |
 | `password_reset` | `change` | `invalid_token` |
 | `oauth_link` | `change` | `oauth_flow_invalid` |
-| none: `issue`, `reissue`, `reissueAfterCredentialChange` | `change` | `session_required` |
+
+None of them is `session_required`, which belongs to session resolution alone.
 
 An issue for an account that has no epoch is answered the same way, without a
 report.
@@ -9145,7 +9154,7 @@ the security-state alarm of section 3.18 is what it is there for.
 |---|---|---|
 | `TokenBindingRefusal` | `{ userId: string \| null; occasion; reason: "token_binding_mismatch" \| "seal_mismatch"; verdict: "mismatch" \| "key_version_unknown" \| "key_unusable" }` | what `reportTokenBindingRefusal` receives |
 | `TokenBindingOccasion` | `"sign_in" \| "session_resolve" \| "session_list" \| "factor_check" \| "token_redemption" \| "change" \| "maintenance"` | the `occasion` of a refusal |
-| `SessionIssuePath` | `"password_sign_in" \| "passkey_sign_in" \| "second_factor" \| "magic_link" \| "oauth_sign_in" \| "password_reset" \| "oauth_link"` | the `completes` of `issueReplacingPresented` and `reissueSessionOfUser` |
+| `SessionIssuePath` | `"password_sign_in" \| "passkey_sign_in" \| "totp_second_factor" \| "passkey_second_factor" \| "recovery_second_factor" \| "magic_link" \| "oauth_sign_in" \| "sign_up" \| "password_set" \| "password_change" \| "password_reset" \| "oauth_link"` | the `completes` of every issuing method of the session service |
 | `TokenBindingRefusalReport` | `(refusal: TokenBindingRefusal) => void` | the option every factory above takes |
 | `SecurityStateSealing` | `"required" \| "migrating"` | the `sealing` of the session service, the session repository, the second-factor completion and the maintenance pass |
 

@@ -61,7 +61,11 @@ export async function replacePasswordOfSession(
 	services: RouteServices,
 	environment: PasswordEnvironment,
 	context: RequestContext,
-	input: { readonly resolved: SessionResolution; readonly newPassword: string },
+	input: {
+		readonly completes: "password_set" | "password_change";
+		readonly resolved: SessionResolution;
+		readonly newPassword: string;
+	},
 ): Promise<SetPasswordResult> {
 	const accepted = await acceptNewPassword(input.newPassword, services.password);
 	const phc = await environment.semaphore.run(() =>
@@ -81,6 +85,7 @@ export async function replacePasswordOfSession(
 			//a session a concurrent credential change revoked must not be reissued (E-2701)
 			refuseUnlessCallingSessionIsAmong(deleted, input.resolved);
 			const reissued = await services.sessions.boundTo(transaction).issue({
+				completes: input.completes,
 				userId: input.resolved.userId,
 				factors: ["password"],
 				observed: observedIn(context),
