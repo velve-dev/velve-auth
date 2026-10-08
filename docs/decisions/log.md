@@ -15949,6 +15949,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The specification puts the check and the rewrite on the same read; a rewrite that reads again checks a state nobody verified.
 **Price.** The caller has to read every envelope of the account in its one statement, identity tokens included, and pass the bytes on unchanged; a caller that passes a stale or partial read gets a lost swap or leaves an envelope unconverted, and the rewrite cannot tell which. The rewrite's own `lockAccountRow` stays and repeats a lock the caller must already hold.
 
+<a id="e-3225"></a>
+
+### An automatic link takes the account lock before it writes the identity and its tokens
+`E-3225` · security-state-envelopes · lock order, S-INTEG-1, settled
+
+**Context.** E-3222 put the OAuth refresh of a known identity under the account lock, and the comment above `theIdentityUnderItsAccountLock` in `src/core/oauth/service.ts` says every write to an account's provider tokens runs under that lock. A review of this branch found one that did not: when no identity matches and automatic linking joins an existing account, `accountForSignIn` inserted the identity with its encrypted tokens into that account without the lock, so the insert could land while the account rewrite or a sealing change held the lock and after its one read. The sign-in now consumes its flow row first, as before, then takes `lockAccountRow` for the joined account, reads the account again under the lock and refuses it as before if it is gone or disabled, and only then inserts. It is the eleventh statement that takes the account lock; `test/lock-order-declaration.test.ts` counts it, and the link writes `velve.identity` alone, so the audit skips it as it skips the refresh. `test/integ-envelope-refresh-race.test.ts` holds the account row in another transaction and shows no identity of the account landing while it is held, and the link succeeding once it is released; with the lock taken out the case fails. Linking an identity is a change to a component of the seal (section 3.18 point 4), so this is the transaction the seal branch reseals for the automatic link, and it now holds the lock that resealing needs; the reseal itself is the seal branch's. The re-read of the account under the lock checks existence and the disabled flag only; whether the account's address still qualifies it for the link was decided before the lock and is not checked again.
+**Rejected.** (a) Locking only around the insert without reading the account again, which would link into an account disabled while the sign-in waited. (b) Re-running the whole decision of `accountAnAutomaticLinkMayJoin` under the lock, which is more than closing the unlocked write and changes the linking rules this branch does not own.
+**Reason.** Every writer of an account's sealed rows has to share the one lock the rewrite and the seal take, or a write lands between a verified read and the change built on it.
+**Price.** An automatic link takes one more row lock and one more read of the account, and waits behind any change of that account in progress. An address changed while the sign-in waited still links under the decision taken before the lock.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { inOneTransaction } from "../src/core/auth/account-envelopes.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { lockAccountRow } from "../src/core/db/lock.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
@@ -19,10 +20,11 @@ import {
 } from "./oauth-provider.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
-//a sign-in that refreshes provider tokens waits for the account rewrite instead of breaking it (E-3222)
+//every OAuth sign-in writes an account's provider tokens under that account's lock (E-3222)
 
 const keys = testKeyRing(1).providerAt(1);
 const LOCK_WAIT_POLLS = 60;
+const LOCK_HELD_MS = 1_500;
 const POLL_INTERVAL_MS = 50;
 
 let connection: TestConnection;
@@ -47,14 +49,14 @@ afterAll(async () => {
 	await connection.close();
 });
 
-function handlerOn(database: Driver) {
+function handlerOn(database: Driver, trusted = false) {
 	return toWebHandler(
 		createVelveAuth(
 			configFor({
 				database,
 				schema,
 				keys,
-				oauth: oauthConfigFor({ openIdConnect: true, storeTokens: true }),
+				oauth: oauthConfigFor({ openIdConnect: true, storeTokens: true, trusted }),
 				fetch: provider.fetch,
 				rateLimit: {
 					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
@@ -188,5 +190,45 @@ describe("a sign-in that refreshes provider tokens during the account rewrite (S
 				"refused",
 			),
 		).resolves.toBeDefined();
+	});
+});
+
+describe("an automatic link writes provider tokens into an existing account (S-INTEG-1)", () => {
+	it("waits for a transaction holding that account's lock before its identity row and tokens land", async () => {
+		const handler = handlerOn(other, true);
+		const subject = `autolink-${randomBytes(4).toString("hex")}`;
+		const address = `${subject}@provider.example`;
+		const [user] = await connection.query<{ id: string }>(
+			`INSERT INTO ${schema}.user (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+			[address],
+		);
+		const userId = user?.id ?? "";
+		provider.reportClaims({ sub: subject, email: address, email_verified: true });
+		const flow = await startedFlow(handler);
+		const holder = await openTestConnection();
+
+		let landedWhileLocked = -1;
+		let signIn: Promise<Response> = Promise.resolve(new Response());
+		await holder.transaction(async (holding) => {
+			await lockAccountRow(holding, schema, userId);
+			signIn = completed(handler, flow);
+			await new Promise((resolve) => setTimeout(resolve, LOCK_HELD_MS));
+			const [row] = await connection.query<{ landed: number }>(
+				`SELECT count(*)::int AS landed FROM ${schema}.identity
+				 WHERE user_id = $1 AND access_token_enc IS NOT NULL`,
+				[userId],
+			);
+			landedWhileLocked = row?.landed ?? -1;
+		});
+		await holder.close();
+		const answer = await signIn;
+
+		expect(landedWhileLocked).toBe(0);
+		expect(answer.status).toBeLessThan(400);
+		const [linked] = await connection.query<{ landed: number }>(
+			`SELECT count(*)::int AS landed FROM ${schema}.identity WHERE user_id = $1`,
+			[userId],
+		);
+		expect(linked?.landed).toBe(1);
 	});
 });

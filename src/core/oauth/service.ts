@@ -379,7 +379,8 @@ export function createOAuthService(input: {
 
 			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
 			if (joinable !== null) {
-				assertTheAccountIsEnabled(joinable);
+				await lockAccountRow(transaction, schema, joinable.id);
+				assertTheAccountIsEnabled(await users.findUserById(joinable.id));
 			}
 			const owner = joinable ?? (await createAccountFor(transaction, provider, account));
 			return {

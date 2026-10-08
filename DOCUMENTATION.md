@@ -929,11 +929,12 @@ audit cheap enough to point at flows that never race.
 | `replaceEveryCode` | nothing; the audit skips it |
 | `removeSignInMethod` | nothing; the audit skips it |
 | `accountForSignIn`, the OAuth sign-in of a known identity | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` drives it against the bound-envelope rewrite, which it waits for |
+| `accountForSignIn`, the automatic link of a new identity to an existing account | nothing; the audit skips it, and `test/integ-envelope-refresh-race.test.ts` shows it waiting for a transaction that holds the account row (E-3225) |
 
-The last four are not an omission of the audit but a property of it: it considers only
+The last five are not an omission of the audit but a property of it: it considers only
 a transaction that writes **two or more** of the account's own tables, and on the tree as
-it stands each of those four writes fewer than two; the OAuth sign-in of a known identity
-writes `velve.identity` alone. The first two are E-1617's
+it stands each of those five writes fewer than two; the OAuth sign-in of a known identity
+and the automatic link each write `velve.identity` alone. The first two are E-1617's
 measurement — the recovery-code redemption is refused after one table on the repaired
 tree, and the regeneration touches one. The third was established by reading
 `removeSignInMethod`, which issues one `DELETE` against whichever single table the
@@ -941,7 +942,7 @@ removal names; it has not been driven, and driving it is the stronger statement 
 has made. A transaction with one child table has no two tables to put in an order, so
 there is nothing for this audit to decide about it. Each case in
 `test/lock-order-declaration.test.ts` reports how many transactions it read, and a fifth
-case counts the ten statements themselves, so an eleventh added anywhere reddens and has to
+case counts the eleven statements themselves, so a twelfth added anywhere reddens and has to
 be placed in this table.
 
 **What none of them covers.** The order is not enforced for a transaction no test
@@ -8876,7 +8877,10 @@ An OAuth sign-in of a known identity locks the account row through
 `src/core/db/lock.ts` before it refreshes the stored tokens, re-reads the
 identity under the lock, and fails the flow as an unknown state when the
 identity's owner or id changed meanwhile, so a sign-in waits for the account
-rewrite rather than making its compare-and-swap lose (E-3222).
+rewrite rather than making its compare-and-swap lose (E-3222). An automatic
+link of a new identity to an existing account takes the same lock before it
+inserts the identity with its tokens, and checks under the lock that the
+account still exists and is enabled (E-3225).
 
 `identity.id` is drawn by the library before the row is inserted, so the
 tokens can be bound to it; a refresh of an existing identity writes its new
