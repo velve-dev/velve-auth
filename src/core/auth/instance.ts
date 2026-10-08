@@ -68,6 +68,7 @@ import {
 	usernameRoutes,
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
+import { sealingOf } from "./security-state.js";
 import {
 	assertConfigurationIsStartable,
 	assertKeysAnswerForEveryPurpose,
@@ -371,6 +372,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		driver,
 		schema,
 		keys: config.keys,
+		securityState: { sealing: sealingOf(config.securityState) },
 		clock,
 		oneTimeTokens,
 		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),

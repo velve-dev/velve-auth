@@ -1,11 +1,7 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES } from "../src/core/keys/aes-gcm.js";
-import {
-	encryptWithPurposeKey,
-	openEnvelope,
-	rootKeyProvider,
-	sealEnvelope,
-} from "../src/core/keys/index.js";
+import { encryptWithPurposeKey, openEnvelope, sealEnvelope } from "../src/core/keys/envelope.js";
+import { rootKeyProvider } from "../src/core/keys/index.js";
 import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";
 

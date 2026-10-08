@@ -16,6 +16,7 @@ export type {
 	RateLimitConfig,
 	RecoveryCodesConfig,
 	RecoveryCodesRequirement,
+	SecurityStateConfig,
 	SignInLookup,
 	TotpConfig,
 	VelveAuthConfig,

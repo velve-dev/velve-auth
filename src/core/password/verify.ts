@@ -55,13 +55,14 @@ export async function createDummyCredential(
 		new TextEncoder().encode(encodeStandardBase64(randomBytes(32))),
 		config.argon2id,
 	);
-	const sealed = await sealPhc(keys, phc);
+	const sealed = await sealPhc(keys, ABSENT_USER_ID, phc);
 
 	return {
 		userId: ABSENT_USER_ID,
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: CREATED_SCHEME,
+		unbound: "refused",
 		openedPhc: phc,
 	};
 }

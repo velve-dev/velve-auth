@@ -10,6 +10,8 @@ export type KeyErrorCode =
 	| "authentication_failed"
 	| "envelope_malformed"
 	| "envelope_algorithm_unsupported"
+	| "envelope_unbound"
+	| "envelope_binding_malformed"
 	| "key_unusable";
 
 const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
@@ -24,6 +26,8 @@ const KEY_ERROR_MESSAGES: Record<KeyErrorCode, string> = {
 	authentication_failed: "the value does not authenticate under this key",
 	envelope_malformed: "the envelope is too short to carry a header",
 	envelope_algorithm_unsupported: "the envelope names an unsupported algorithm",
+	envelope_unbound: "the ciphertext is in the unbound form, which is not read for this owner",
+	envelope_binding_malformed: "an envelope binding names an owner or a row that is not a uuid",
 	key_unusable: "the key cannot take the HMAC-SHA256 its purpose requires",
 };
 
