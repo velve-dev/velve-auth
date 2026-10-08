@@ -16618,3 +16618,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving `assertStoredKeyVersionsAreKnown` and `assertStoredFactorKeyVersionsAreKnown` as well. They read `password_credential`, `totp_credential` and `recovery_code`, which E-330 calls guaranteed only once `migrate()` has run, and they report key versions that have left the ring rather than a provider that answers wrongly. They stay after the migrations, so a ring that lost a version can still refuse a start that has applied migrations.
 **Reason.** A start that is going to be refused for its keys has no reason to change the database first.
 **Price.** One `to_regclass` statement per `migrate()`. The token-mac part of the stored-version probe, which the token branch adds over the four token tables, needs the same guard for columns migration 4 creates when it merges.
+
+<a id="e-3375"></a>
+
+### The stored-version probe compares older keys of the other purposes too
+`E-3375` · security-state · keys, start, settled
+
+**Context.** E-3329 refuses a start whose ring answers a `state-mac` version a seal row names with the current key of another HMAC purpose. The tenth review's case answered stored `state-mac` version 1 with the `token-mac` key of version 1, an older version of the other purpose, under a ring at version 2; the probe compared only current keys and started. A seal under that version then verifies against any MAC the token purpose takes under its version 1, which is the sharing E-3324 refuses. `assertStoredIntegrityKeysTakeMac` now fingerprints, for each of the seven other purposes, the current key and the key under every version number a seal row names, and refuses a stored `state-mac` key that matches any of them. The refusal names the other key, `the current … key` or `the … key of version …`. `test/keys-integrity-stored-key-sharing.test.ts` gains the older-version case and a case reading the message for both kinds; both fail on the previous probe. The review's separate message case is folded in, because the message changed.
+**Rejected.** Probing every version from 1 to each purpose's current version, which costs what the provider's version numbers cost, and probing every version number any table stores, which would let a writer of a token table multiply the start's work.
+**Reason.** A key shared between two purposes is shared whatever version number either of them gives it.
+**Price.** The probe makes up to seven `byVersion` calls and seven HMAC probes more per distinct stored `state-mac` version. A stored `state-mac` version answered with another purpose's key under a different version number is still not compared; that needs a misconfigured provider and is the same limit *The limits* names for a relabelled seal.

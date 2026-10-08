@@ -8774,11 +8774,16 @@ it applies a migration, and only when `schemaHoldsTheSealTable` finds the table
 already there, since a schema migration 3 has not reached holds no seal. Reads
 every distinct `key_version` of `velve.security_state` and refuses the start with
 `keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects,
-or with the current key of another HMAC purpose. A version the ring does not hold
-is skipped. The refusal shares its code with the
-purpose probe and has a message of its own, which names the stored version.
-It makes one `byVersion` call and at most one probe per distinct stored version,
-and how many distinct versions there are is up to whoever writes the table.
+or with a key of another HMAC purpose: that purpose's current key, or its key
+under any version number a seal row names (E-3375). A version the ring does not
+hold is skipped. The refusal shares its code with the purpose probe and has a
+message of its own, which names the stored version and the other key, such as
+`the token-mac key of version 1`. It makes one `byVersion` call and at most one
+probe per distinct stored version for `state-mac`, and for each of the seven
+other purposes one `current` call plus one `byVersion` call and at most one probe
+per distinct stored version, and how many distinct versions there are is up to
+whoever writes the table. A `state-mac` version answered with another purpose's
+key under a different version number is not compared.
 
 ### `withReadCommittedTransactions(driver)`
 

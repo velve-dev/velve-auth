@@ -245,10 +245,10 @@ export function storedIntegrityKeyUnusable(keyVersion: number): VelveStartupErro
 
 export function storedStateMacKeySharedWith(
 	keyVersion: number,
-	purpose: string,
+	otherKey: string,
 ): VelveStartupError {
 	const refusal = new VelveStartupError("keys_unusable");
-	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with the current ${purpose} key`;
+	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with ${otherKey}`;
 	return refusal;
 }
 
