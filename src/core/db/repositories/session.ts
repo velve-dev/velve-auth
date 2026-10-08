@@ -715,7 +715,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	async function insertUnderAccountLock(tx: Driver, insert: SessionInsert): Promise<Session> {
 		const row = await insertUnderCurrentEpoch(tx, insert);
 		if (row === undefined) {
-			//the seal branch tells a legitimate change that won the race from a writer (E-3485)
+			//a miss under a seal that verifies was a legitimate change and raises no alarm (E-3485)
 			if (await options.sealVerifiesAfterMissedIssue?.(tx, insert.userId)) {
 				throw new ConcealedError(insert.missed.reason);
 			}
