@@ -1,7 +1,9 @@
 import type { EmailConfig } from "../auth/config.js";
+import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
+import { ONE_TIME_TOKEN_PURPOSES } from "../token/purpose.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
@@ -147,6 +149,11 @@ export async function redeemChange(
 		//a token presented for a disabled account stays spent once it is enabled again (E-2880)
 		if (account === A_DISABLED_ACCOUNT) {
 			return account;
+		}
+		//the old address's links go before the account lock as one_time_token precedes velve.user (E-3278)
+		const tokens = createOneTimeTokenRepository({ driver: transaction, schema });
+		for (const purpose of ONE_TIME_TOKEN_PURPOSES) {
+			await tokens.withdrawTokensOf({ actor: account.actor, purpose });
 		}
 		//redeeming proves the new address and a collision must leave both changes undone
 		await confirmAddress({

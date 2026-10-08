@@ -7,7 +7,7 @@ import {
 	type OneTimeTokenSubject,
 } from "../../token/purpose.js";
 import { randomUuid } from "../../token/random.js";
-import type { RedeemedOneTimeToken } from "../actor.js";
+import type { Actor, RedeemedOneTimeToken } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { toEntityId } from "../entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../identifier.js";
@@ -47,6 +47,11 @@ export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
 	//a row that names no account is still checked and then answered exactly as no row is (S-TOKEN-4)
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<OneTimeTokenCandidate | null>;
+	//a confirmed change of address withdraws every link still mailed to the old one (S-INTEG-9)
+	withdrawTokensOf(input: {
+		readonly actor: Actor;
+		readonly purpose: OneTimeTokenPurpose;
+	}): Promise<void>;
 }
 
 export type OneTimeTokenErrorCode =
@@ -135,6 +140,8 @@ RETURNING expires_at`;
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
 RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version`;
 
+	const withdrawStatement = `DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2`;
+
 	return {
 		async replaceOneTimeToken(replacement) {
 			const { tokenSha256, purpose, userId, payload } = replacement;
@@ -195,6 +202,10 @@ RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_versi
 			return userId === null
 				? { ...consumed, userId }
 				: { ...consumed, userId, accept: () => redeemedBy(userId, storedPayload?.payload ?? null) };
+		},
+
+		async withdrawTokensOf({ actor, purpose }) {
+			await options.driver.query(withdrawStatement, [actor, purpose]);
 		},
 	};
 }

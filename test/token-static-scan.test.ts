@@ -144,15 +144,15 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
-	it("writes three statements, two of them against the table", () => {
-		expect(statements, listing(statements)).toHaveLength(3);
-		expect(tokenStatements, listing(tokenStatements)).toHaveLength(2);
+	it("writes four statements, three of them against the table", () => {
+		expect(statements, listing(statements)).toHaveLength(4);
+		expect(tokenStatements, listing(tokenStatements)).toHaveLength(3);
 		expect(ownerStatements, listing(ownerStatements)).toHaveLength(1);
 	});
 
 	it("filters on the purpose in every predicate it writes against the table", () => {
 		const predicates = tokenStatements.flatMap(predicatesIn);
-		expect(predicates).toHaveLength(2);
+		expect(predicates).toHaveLength(3);
 		expect(predicates.filter((predicate) => !predicate.includes("purpose = $2"))).toStrictEqual([]);
 	});
 
