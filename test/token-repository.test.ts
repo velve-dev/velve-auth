@@ -126,9 +126,9 @@ describe("the parameters the repository sends", () => {
 });
 
 describe("the payload a driver hands back", () => {
-	it("is taken as it is when the driver decoded the jsonb", async () => {
+	it("is parsed once from the text the statement casts the jsonb to", async () => {
 		const { repository } = repositoryReturning([
-			{ user_id: "a", payload: { newEmail: "next@example.com" } },
+			{ user_id: "a", payload_text: '{"newEmail":"next@example.com"}' },
 		]);
 
 		const stored = await repository.consumeOneTimeToken({
@@ -142,9 +142,9 @@ describe("the payload a driver hands back", () => {
 		});
 	});
 
-	it("is parsed when the driver handed back the text PostgreSQL sent", async () => {
+	it("has no binding for a jsonb string that holds JSON text, which no issue writes", async () => {
 		const { repository } = repositoryReturning([
-			{ user_id: "a", payload: '{"newEmail":"next@example.com"}' },
+			{ user_id: "a", payload_text: '"{\\"newEmail\\":\\"next@example.com\\"}"' },
 		]);
 
 		const stored = await repository.consumeOneTimeToken({
@@ -152,14 +152,11 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(acceptedOf(stored)).toStrictEqual({
-			userId: "a",
-			payload: { newEmail: "next@example.com" },
-		});
+		expect(stored?.storedPayload).toBeNull();
 	});
 
 	it("is null for a row without one", async () => {
-		const { repository } = repositoryReturning([{ user_id: "a", payload: null }]);
+		const { repository } = repositoryReturning([{ user_id: "a", payload_text: null }]);
 
 		expect(
 			acceptedOf(

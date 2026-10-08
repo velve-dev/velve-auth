@@ -167,7 +167,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(asWritten(consume)).toBe(
 			"DELETE FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = $2 " +
-				"AND expires_at > now() RETURNING user_id, payload, token_mac, token_mac_key_version",
+				"AND expires_at > now() RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version",
 		);
 	});
 

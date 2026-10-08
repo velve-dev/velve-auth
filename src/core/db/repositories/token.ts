@@ -106,7 +106,7 @@ function redeemedBy(userId: string, payload: OneTimeTokenPayload | null): Stored
 
 interface ConsumedRowShape {
 	readonly user_id: string | null;
-	readonly payload: unknown;
+	readonly payload_text: string | null;
 	readonly token_mac: Uint8Array;
 	readonly token_mac_key_version: number;
 }
@@ -133,7 +133,7 @@ RETURNING expires_at`;
 	const consumeStatement = `DELETE FROM ${table}
 /* no owner predicate: S-TOKEN-4 */
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
-RETURNING user_id, payload, token_mac, token_mac_key_version`;
+RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version`;
 
 	return {
 		async replaceOneTimeToken(replacement) {
@@ -186,7 +186,7 @@ RETURNING user_id, payload, token_mac, token_mac_key_version`;
 				return null;
 			}
 			const userId = row.user_id;
-			const storedPayload = storedPayloadOf(row.payload);
+			const storedPayload = storedPayloadOf(row.payload_text);
 			const consumed = {
 				storedPayload,
 				tokenMac: row.token_mac,

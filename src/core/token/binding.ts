@@ -148,9 +148,9 @@ function parsedJsonOf(text: string): unknown {
 	}
 }
 
-//a jsonb value a writer chose must be refused and never thrown on (S-INTEG-9)
-export function storedPayloadOf(value: unknown): StoredPayload {
-	const decoded = typeof value === "string" ? parsedJsonOf(value) : (value ?? null);
+//the payload is read as its jsonb text and parsed once so every driver gives one row one verdict (S-INTEG-9)
+export function storedPayloadOf(text: string | null | undefined): StoredPayload {
+	const decoded = text === null || text === undefined ? null : parsedJsonOf(text);
 	return isContainerOrNull(decoded) ? { payload: decoded } : null;
 }
 

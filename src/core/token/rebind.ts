@@ -39,7 +39,7 @@ interface StoredTokenRow {
 	readonly created_at_us?: string;
 	readonly attempts?: number;
 	readonly purpose?: string;
-	readonly payload?: unknown;
+	readonly payload_text?: string | null;
 }
 
 /** how one table stores what its MAC is taken over */
@@ -83,7 +83,7 @@ function pendingBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBind
 }
 
 function oneTimeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
-	const stored = storedPayloadOf(row.payload);
+	const stored = storedPayloadOf(row.payload_text);
 	if (row.purpose === undefined || stored === null) {
 		return null;
 	}
@@ -118,7 +118,7 @@ const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 	},
 	one_time_token: {
 		hashColumn: "token_sha256",
-		contentColumns: () => "t.purpose, t.payload",
+		contentColumns: () => "t.purpose, t.payload::text AS payload_text",
 		guardsAttempts: false,
 		bindingOf: oneTimeBindingOf,
 	},
