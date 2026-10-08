@@ -72,7 +72,46 @@ async function resolveInOneStatement(tokenHash: Buffer) {
 	return rows.map((row) => alarmFor(row.epoch));
 }
 
+async function backendOf(connection: TestConnection): Promise<number> {
+	const [row] = await connection.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
+	return row?.pid ?? -1;
+}
+
+async function untilRunning(backend: number): Promise<void> {
+	for (let poll = 0; poll < 300; poll += 1) {
+		const [row] = await revoker.query<{ n: number }>(
+			"SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid = $1 AND state = 'active' AND query LIKE '%pg_sleep%'",
+			[backend],
+		);
+		if ((row?.n ?? 0) > 0) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error("the resolution statement never ran");
+}
+
+async function slowOneStatementResolution(tokenHash: Buffer) {
+	const rows = await resolver.query<{ epoch: string }>(
+		`SELECT st.session_epoch::text AS epoch, pg_sleep(0.3)::text AS slept FROM ${schema}.session s
+		 JOIN ${schema}.user u ON u.id = s.user_id
+		 JOIN ${schema}.security_state st ON st.user_id = s.user_id
+		 WHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`,
+		[tokenHash],
+	);
+	return rows.map((row) => alarmFor(row.epoch));
+}
+
 describe("premise: a session resolution racing session.revokeAll (section 3.18, Checking)", () => {
+	it("in one statement still in flight while the revocation commits raises no alarm", async () => {
+		const { userId, tokenHash } = await sealedAccountWithSessionUnderEpochOne();
+		const resolverBackend = await backendOf(resolver);
+		const resolving = slowOneStatementResolution(tokenHash);
+		await untilRunning(resolverBackend);
+		await revokeAllCommits(userId);
+		expect(await resolving).toStrictEqual([null]);
+	});
+
 	it("in one statement finds the session under its epoch before the revocation and no row after it", async () => {
 		const { userId, tokenHash } = await sealedAccountWithSessionUnderEpochOne();
 		const before = await resolveInOneStatement(tokenHash);

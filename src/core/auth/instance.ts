@@ -55,7 +55,7 @@ import { type SessionSettings, sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
-import { assertStoredIntegrityKeysTakeMac } from "./integrity-key-ring.js";
+import { assertStoredIntegrityKeysTakeMac, schemaHoldsTheSealTable } from "./integrity-key-ring.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeAlarmReportedTo, routeFloodWatchOf } from "./rate-limiting.js";
 import {
@@ -473,6 +473,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		maintenance: { sweep: () => sweepExpiredRows({ driver, schema }) },
 
 		async migrate(): Promise<MigrationReport> {
+			//a start the keys refuse must have written nothing to the schema (E-3374)
+			await assertKeysAnswerForEveryPurpose(config.keys);
+			if (await schemaHoldsTheSealTable(driver, schema)) {
+				await assertStoredIntegrityKeysTakeMac({ driver, keys: config.keys, schema });
+			}
 			const applied = await runMigrations({
 				driver,
 				schema,
@@ -492,8 +497,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 					migrations: pluginMigrations(services),
 				});
 			}
-			await assertKeysAnswerForEveryPurpose(config.keys);
-			await assertStoredIntegrityKeysTakeMac({ driver, keys: config.keys, schema });
 			//a dead key version is reported once at startup and not on the sign-in path (E-179)
 			await assertStoredKeyVersionsAreKnown({ driver, keys: config.keys, schema });
 			//totp-enc and token-pepper hide a dead key version harder and need the same report (E-428)

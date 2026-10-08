@@ -255,10 +255,10 @@ export function storedIntegrityKeyUnusable(
 export function storedIntegrityKeySharedWith(
 	stored: IntegrityKeyPurpose,
 	keyVersion: number,
-	purpose: string,
+	otherKey: string,
 ): VelveStartupError {
 	const refusal = new VelveStartupError("keys_unusable");
-	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${WHAT_STORES_A_VERSION[stored][0]}, with the current ${purpose} key`;
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${WHAT_STORES_A_VERSION[stored][0]}, with ${otherKey}`;
 	return refusal;
 }
 
