@@ -8793,7 +8793,13 @@ READ COMMITTED` as the first statement of every transaction before handing the
 bound driver to the work. `createVelveAuth` wraps the configured `database` with
 it, so every transaction the instance opens runs at READ COMMITTED even where the
 database or the role sets `default_transaction_isolation` to something else, which
-the sealing of section 3.18 relies on. A transaction joined from inside one, by
+the sealing of section 3.18 relies on. A statement run through `query` outside a
+transaction is not covered: it runs at the database's default, and under
+`repeatable read` a compare-and-set that loses to a concurrent change fails with
+`40001` instead of hitting no row. Section 3.18 therefore runs every statement
+whose miss it interprets — the booking and its re-read, the rebind at resolution
+and the maintenance step's rebind — in a transaction of its own, opened through
+the wrapped `transaction` (E-3379). A transaction joined from inside one, by
 calling `transaction` on the bound driver, is not given the statement again,
 because PostgreSQL accepts it only before the first query of the outer
 transaction. `runMigrations` wraps the driver it is handed the same way; the

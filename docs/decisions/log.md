@@ -16658,3 +16658,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Nothing.
 **Reason.** A correction is a new entry that names the old one, as §6 requires.
 **Price.** None.
+
+<a id="e-3379"></a>
+
+### Every statement whose miss the library interprets runs in a library transaction
+`E-3379` · security-state · specification, S-INTEG-3, S-INTEG-9, test plan, documentation, settled
+
+**Context.** E-3310 has every transaction the library opens begin with `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`, and point 3 interprets the miss of several compare-and-sets: the booking of an attempt and its re-read, the rebind of a session at resolution, and the maintenance step's rebinds. The tenth review showed those run as single statements outside any transaction, so they run at the database's default. Under `default_transaction_isolation = repeatable read` a booking that lost to a concurrent booking failed with `40001` instead of hitting no row, and never reached the re-read the case table describes. The sentence in `DOCUMENTATION.md` that every transaction runs at READ COMMITTED, "which the sealing of section 3.18 relies on", read as if it covered them. As decided, *Sealing* now requires, in both languages, that every statement whose miss the library interprets runs in a library transaction, even as that transaction's only statement. `DOCUMENTATION.md` says that a statement run through `query` outside a transaction is not covered, and why. T-INTEG-3 runs the 40 simultaneous wrong codes and a session rebind at resolution racing `session.revokeAll` on connections defaulting to `repeatable read`, with no `40001`. `test/security-state-standalone-isolation.test.ts` holds the premise: a standalone booking that loses its race on such a connection fails with `40001`, and the same statement in a transaction opened through `withReadCommittedTransactions` misses the row. It also holds the case that the German text states the rule. The statements are the token branch's to move.
+**Rejected.** Setting the session's isolation with `SET SESSION CHARACTERISTICS` on the connection, which a pooled driver hands to the next caller and which the library cannot assume it owns.
+**Reason.** The interpretation of a miss is only reached if the statement can miss, and at `repeatable read` it cannot.
+**Price.** Each of these statements costs a `BEGIN`, the isolation statement and a `COMMIT` beside it.
