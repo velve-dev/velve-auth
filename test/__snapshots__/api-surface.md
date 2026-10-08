@@ -424,6 +424,10 @@ interface RateLimitConfig {
     readonly onAlert: (alert: RateAlert) => void;
   };
 }
+/** whether every account must carry a seal, or the estate is still being sealed */
+interface SecurityStateConfig {
+  readonly sealing: "migrating" | "required";
+}
 /** the identity options for mode `M`, where only a username mode carries the username rules */
 type IdentityConfig<M extends IdentityMode> = IdentityConfigurationInput & {
   readonly mode: M;
@@ -453,6 +457,7 @@ interface BaseConfig<M extends IdentityMode> {
   readonly plugins?: readonly VelvePlugin[];
   readonly rateLimit?: Partial<RateLimitConfig>;
   readonly schema?: string;
+  readonly securityState?: SecurityStateConfig;
   readonly session?: Partial<SessionConfig>;
   readonly sessionMetadata?: SessionMetadataMode;
   readonly totp?: Partial<TotpConfig>;
@@ -474,6 +479,7 @@ export {
 	RateLimitConfig,
 	RecoveryCodesConfig,
 	RecoveryCodesRequirement,
+	SecurityStateConfig,
 	SignInLookup,
 	TotpConfig,
 	VelveAuthConfig,
@@ -695,7 +701,7 @@ import { ResolvedPasswordConfig } from "../password/config.mjs";
 import { KdfSemaphore } from "../password/semaphore.mjs";
 import { PluginRuntime } from "../plugin/registry.mjs";
 import { OneTimeTokens } from "../token/one-time-token.mjs";
-import { EmailConfig, RateLimitConfig, RecoveryCodesConfig, TotpConfig, WebAuthnConfig } from "./config.mjs";
+import { EmailConfig, RateLimitConfig, RecoveryCodesConfig, SecurityStateConfig, TotpConfig, WebAuthnConfig } from "./config.mjs";
 
 //#region src/core/auth/routes.d.ts
 interface ResolvedSessionView {
@@ -729,6 +735,8 @@ interface RouteServices {
   readonly recoveryCodes?: RecoveryCodesConfig;
   readonly resolutions: ResolutionMemo;
   readonly schema: string;
+  /** the security-state options with the sealing mode resolved */
+  readonly securityState: SecurityStateConfig;
   readonly sessions: SessionService;
   readonly totp?: Partial<TotpConfig>;
   readonly users: UserRepository;
@@ -799,7 +807,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
@@ -2844,7 +2852,7 @@ import { UsernameRules } from "./core/identity/configuration.mjs";
 import { KeyProvider } from "./core/keys/provider.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
-import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
+import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SecurityStateConfig, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
 import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
 import { TotpEnrollment } from "./core/factor/totp/secret.mjs";
@@ -2934,6 +2942,7 @@ export {
 	type RouteConflict,
 	SECURITY_OPTIONS,
 	type SecurityOption,
+	type SecurityStateConfig,
 	type Session,
 	SessionCreateEvent,
 	SessionCreatedEvent,
