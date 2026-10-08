@@ -577,6 +577,10 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3310 … E-3339 | outside the waves · `security-state`, fourth range — the foundation's answers to its sixth review. Counted over the rows standing at b718387 |
 | E-3340 … E-3369 | outside the waves · `security-state`, fifth range — the foundation's answers to its seventh review. Counted over the rows standing at 5096503 |
 | E-3370 … E-3399 | outside the waves · `security-state`, sixth range — the foundation's answers to its ninth and later reviews. Counted over the rows standing at d377d43 |
+| E-3400 … E-3449 | outside the waves · `security-state-seal`, second range — the seal's build and its reviews. Counted over the rows standing at d9561d9 |
+| E-3450 … E-3479 | outside the waves · `security-state-administration`, second range — administration and migration's build and its reviews. Counted over the rows standing at d9561d9 |
+| E-3480 … E-3509 | outside the waves · `security-state-tokens`, third range — the keyed token hashes' answers to their third and later reviews and the foundation's final round. Counted over the rows standing at 8bdfd1e |
+| E-3510 … E-3539 | outside the waves · `security-state`, seventh range — the specification brought into step with what the branches built. Counted over the rows standing at 8bdfd1e |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -676,9 +680,9 @@ pnpm check:token-after-lock
                  velve.one_time_token is ordered before velve.user, so no
                  transaction takes the account row and then reaches that table —
                  raw SQL, either repository method or the flows' mintArtefact,
-                 comments and imports
-                 stripped first so prose about the rule and a named import are
-                 not read as reaching for it.
+                 also under a name an import gives it or the lock, comments and
+                 imports stripped first so prose about the rule and a named
+                 import are not read as reaching for it.
 pnpm check:egress
                  only src/core/oauth/outbound.ts calls out, through the fetch
                  config.fetch injects, and only src/core/oauth/providers.ts

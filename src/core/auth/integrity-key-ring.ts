@@ -15,7 +15,8 @@ export async function assertStoredIntegrityKeysTakeMac(options: {
 		ORDER BY key_version`,
 		[],
 	);
-	const currentPurposeByFingerprint = await currentPurposesByFingerprint(options.keys);
+	const storedVersions = rows.map((row) => row.key_version);
+	const otherKeyByFingerprint = await otherPurposeKeysByFingerprint(options.keys, storedVersions);
 	for (const row of rows) {
 		const key = await options.keys.byVersion("state-mac", row.key_version);
 		//a version that left the ring is a broken state of those accounts and not a start error (E-3191)
@@ -26,24 +27,43 @@ export async function assertStoredIntegrityKeysTakeMac(options: {
 			throw storedIntegrityKeyUnusable(row.key_version);
 		}
 		const fingerprint = await sameKeyFingerprintOf(key);
-		const sharedWith =
-			fingerprint === null ? undefined : currentPurposeByFingerprint.get(fingerprint);
+		const sharedWith = fingerprint === null ? undefined : otherKeyByFingerprint.get(fingerprint);
 		if (sharedWith !== undefined) {
 			throw storedStateMacKeySharedWith(row.key_version, sharedWith);
 		}
 	}
 }
 
-async function currentPurposesByFingerprint(keys: KeyProvider): Promise<Map<string, string>> {
+//an older version of another purpose shares a key as dangerously as its current one (E-3375)
+async function otherPurposeKeysByFingerprint(
+	keys: KeyProvider,
+	storedVersions: readonly number[],
+): Promise<Map<string, string>> {
 	const byFingerprint = new Map<string, string>();
+	const remember = async (key: CryptoKey | null, described: string): Promise<void> => {
+		const fingerprint = key === null ? null : await sameKeyFingerprintOf(key);
+		if (fingerprint !== null && !byFingerprint.has(fingerprint)) {
+			byFingerprint.set(fingerprint, described);
+		}
+	};
 	for (const purpose of KEY_PURPOSES) {
 		if (purpose === "state-mac") {
 			continue;
 		}
-		const fingerprint = await sameKeyFingerprintOf((await keys.current(purpose)).key);
-		if (fingerprint !== null) {
-			byFingerprint.set(fingerprint, purpose);
+		await remember((await keys.current(purpose)).key, `the current ${purpose} key`);
+		for (const version of storedVersions) {
+			const older = await keys.byVersion(purpose, version).catch(() => null);
+			await remember(older, `the ${purpose} key of version ${version}`);
 		}
 	}
 	return byFingerprint;
+}
+
+//a schema migration 3 has not reached yet holds no seal whose key could be probed
+export async function schemaHoldsTheSealTable(driver: Driver, schema: string): Promise<boolean> {
+	const [present] = await driver.query<{ relation: string | null }>(
+		"SELECT to_regclass($1)::text AS relation",
+		[qualifiedTableName(schema, "security_state")],
+	);
+	return present?.relation != null;
 }

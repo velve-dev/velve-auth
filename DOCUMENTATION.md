@@ -6173,9 +6173,11 @@ interface AuthInternals {
 from; it is present at runtime because a client that has to guess is a client
 that guesses wrong. `http` is what `toWebHandler(auth)` takes.
 
-`migrate()` applies the core migrations for the configured mode, then asks the
-key provider for every purpose, then holds the `key_version` values already
-stored in `password_credential` against the ring. A version that has left the
+`migrate()` first asks the key provider for every purpose and, where the schema
+already holds `velve.security_state`, probes the `state-mac` versions its seals
+name, so a start the keys refuse writes nothing to the schema (E-3374). It then
+applies the core migrations for the configured mode, then holds the
+`key_version` values already stored in `password_credential` against the ring. A version that has left the
 ring locks out everyone whose row was written under it; the report is addressed
 to the operator and is made here, once, rather than on every sign-in, where it
 would also split accounts into those written before a rotation and those written
@@ -8790,6 +8792,13 @@ integrity purpose and `cookie-sig` or `token-pepper`, with one key. Encryption
 keys are not compared, because a non-extractable AES key gives nothing to
 compare without using it.
 
+### `schemaHoldsTheSealTable(driver, schema)`
+
+Internal, in `src/core/auth/integrity-key-ring.ts`. Resolves `true` when
+`velve.security_state` exists in `schema`, by `to_regclass`. `migrate()` asks it
+before applying any migration, because the stored-version probe reads that table
+and a schema migration 3 has not reached yet has no seal to probe.
+
 ### `isIntegrityPurpose(purpose)`
 
 Internal, in `src/core/keys/purpose.ts`. Narrows a `KeyPurpose` to
@@ -8798,14 +8807,21 @@ uses it to decide which purposes get the probe.
 
 ### `assertStoredIntegrityKeysTakeMac({ driver, keys, schema })`
 
-Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()`. Reads
+Internal, in `src/core/auth/integrity-key-ring.ts`, called by `migrate()` before
+it applies a migration, and only when `schemaHoldsTheSealTable` finds the table
+already there, since a schema migration 3 has not reached holds no seal. Reads
 every distinct `key_version` of `velve.security_state` and refuses the start with
 `keys_unusable` if the ring answers one of them with a key `keyTakesMac` rejects,
-or with the current key of another HMAC purpose. A version the ring does not hold
-is skipped. The refusal shares its code with the
-purpose probe and has a message of its own, which names the stored version.
-It makes one `byVersion` call and at most one probe per distinct stored version,
-and how many distinct versions there are is up to whoever writes the table.
+or with a key of another HMAC purpose: that purpose's current key, or its key
+under any version number a seal row names (E-3375). A version the ring does not
+hold is skipped. The refusal shares its code with the purpose probe and has a
+message of its own, which names the stored version and the other key, such as
+`the token-mac key of version 1`. It makes one `byVersion` call and at most one
+probe per distinct stored version for `state-mac`, and for each of the seven
+other purposes one `current` call plus one `byVersion` call and at most one probe
+per distinct stored version, and how many distinct versions there are is up to
+whoever writes the table. A `state-mac` version answered with another purpose's
+key under a different version number is not compared.
 
 ### `withReadCommittedTransactions(driver)`
 
@@ -8815,7 +8831,13 @@ READ COMMITTED` as the first statement of every transaction before handing the
 bound driver to the work. `createVelveAuth` wraps the configured `database` with
 it, so every transaction the instance opens runs at READ COMMITTED even where the
 database or the role sets `default_transaction_isolation` to something else, which
-the sealing of section 3.18 relies on. A transaction joined from inside one, by
+the sealing of section 3.18 relies on. A statement run through `query` outside a
+transaction is not covered: it runs at the database's default, and under
+`repeatable read` a compare-and-set that loses to a concurrent change fails with
+`40001` instead of hitting no row. Section 3.18 therefore runs every statement
+whose miss it interprets — the booking and its re-read, the rebind at resolution
+and the maintenance step's rebind — in a transaction of its own, opened through
+the wrapped `transaction` (E-3379). A transaction joined from inside one, by
 calling `transaction` on the bound driver, is not given the statement again,
 because PostgreSQL accepts it only before the first query of the outer
 transaction. `runMigrations` wraps the driver it is handed the same way; the

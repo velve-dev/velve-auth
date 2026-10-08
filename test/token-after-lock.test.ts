@@ -66,4 +66,35 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 			"consumeOneTimeToken",
 		]);
 	});
+
+	/** A helper imported under another name is called by that name, which the plain names miss. */
+	it("reports a mint helper the import renames, under the name it was exported as", () => {
+		const source = [
+			'import { mintArtefact as mint } from "./artefact.js";',
+			LOCK,
+			"await mint(transaction, schema, {});",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("reads a renamed lock as taking the account row", () => {
+		const source = [
+			'import { lockAccountRow as holdAccount } from "../db/lock.js";',
+			"await holdAccount(transaction, schema, userId);",
+			"await tokens.consumeOneTimeToken({});",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["consumeOneTimeToken"]);
+	});
+
+	it("does not read a renamed import of anything else as reaching for the table", () => {
+		const source = [
+			'import { createSessionRepository as sessions } from "../db/session.js";',
+			LOCK,
+			"await sessions(transaction);",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual([]);
+	});
 });
