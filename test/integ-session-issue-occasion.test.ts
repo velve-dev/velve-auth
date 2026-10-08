@@ -58,7 +58,12 @@ describe("a missed session issue that completes a change", () => {
 			keys,
 			schema,
 		});
-		const issued = await plain.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issued = await plain.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const resolved = await plain.resolve(issued.token);
 		if (resolved === null) {
 			throw new Error("the fresh session did not resolve");
@@ -82,6 +87,7 @@ describe("a missed session issue that completes a change", () => {
 
 		await racing
 			.reissueAfterCredentialChange({
+				authorisedBy: "read_under_lock",
 				completes: "password_change",
 				resolved,
 				factors: ["password"],

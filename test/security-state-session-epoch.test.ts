@@ -35,6 +35,7 @@ async function replayAfterRevokingEverySession(): Promise<{
 }> {
 	const userId = await createUser(connection, schema);
 	const { token, session } = await sessions.issue({
+		authorisedBy: "read_under_lock",
 		userId,
 		factors: ["password"],
 		observed: OBSERVED,
@@ -59,7 +60,12 @@ describe("a session row replayed after a mass revocation (section 3.18, T-INTEG-
 
 	it("control: a session issued after the revocation resolves", async () => {
 		const { userId } = await replayAfterRevokingEverySession();
-		const later = await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		const later = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
 		expect(await sessions.resolve(later.token)).not.toBeNull();
 	});
 

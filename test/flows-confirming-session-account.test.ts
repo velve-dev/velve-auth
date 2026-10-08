@@ -38,7 +38,12 @@ async function firstConfirmationDeletesThePassword(
 		schema,
 	});
 	const userId = await createUser(connection, schema);
-	const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+	const issued = await sessions.issue({
+		authorisedBy: "read_under_lock",
+		userId,
+		factors: ["password"],
+		observed: NO_REQUEST,
+	});
 	await connection.query(
 		`INSERT INTO ${schema}.password_credential (user_id, phc, key_version, scheme, set_by_session_id)
 		 VALUES ($1, $2, 1, 'argon2id', $3)`,

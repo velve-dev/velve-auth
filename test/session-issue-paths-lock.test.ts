@@ -63,12 +63,19 @@ type Path = (userId: string) => Promise<() => Promise<IssuedSession>>;
 const PATHS: readonly [string, Path][] = [
 	[
 		"issue",
-		async (userId) => () => sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST }),
+		async (userId) => () =>
+			sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			}),
 	],
 	[
 		"issueReplacingPresented",
 		async (userId) => () =>
 			sessions.issueReplacingPresented({
+				authorisedBy: "read_under_lock",
 				completes: "password_sign_in",
 				presentedToken: null,
 				userId,
@@ -79,9 +86,15 @@ const PATHS: readonly [string, Path][] = [
 	[
 		"reissue",
 		async (userId) => {
-			const first = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+			const first = await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			});
 			return () =>
 				sessions.reissue({
+					authorisedBy: "read_under_lock",
 					completes: "totp_second_factor",
 					previousToken: first.token,
 					userId,
@@ -93,13 +106,19 @@ const PATHS: readonly [string, Path][] = [
 	[
 		"reissueAfterCredentialChange",
 		async (userId) => {
-			const first = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+			const first = await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			});
 			const resolved = await sessions.resolve(first.token);
 			if (resolved === null) {
 				throw new Error("the first session did not resolve");
 			}
 			return () =>
 				sessions.reissueAfterCredentialChange({
+					authorisedBy: "read_under_lock",
 					completes: "password_change",
 					resolved,
 					factors: ["password"],
@@ -110,9 +129,15 @@ const PATHS: readonly [string, Path][] = [
 	[
 		"reissueSessionOfUser",
 		async (userId) => {
-			const first = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+			const first = await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			});
 			return () =>
 				sessions.reissueSessionOfUser({
+					authorisedBy: "read_under_lock",
 					completes: "oauth_link",
 					actor: actorOfTestUser(userId),
 					previousSessionId: first.session.id,

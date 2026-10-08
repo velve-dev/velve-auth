@@ -100,6 +100,7 @@ async function replacePassword(
 	});
 	const issued = await sessions.boundTo(input.transaction).issueReplacingPresented({
 		completes: "password_reset",
+		authorisedBy: "read_under_lock",
 		presentedToken: context.sessionToken,
 		userId: input.userId,
 		factors: ["password"],

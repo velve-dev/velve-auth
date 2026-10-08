@@ -86,6 +86,7 @@ export async function replacePasswordOfSession(
 			refuseUnlessCallingSessionIsAmong(deleted, input.resolved);
 			const reissued = await services.sessions.boundTo(transaction).issue({
 				completes: input.completes,
+				authorisedBy: "read_under_lock",
 				userId: input.resolved.userId,
 				factors: ["password"],
 				observed: observedIn(context),

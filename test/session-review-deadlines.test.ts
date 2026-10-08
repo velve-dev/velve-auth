@@ -78,7 +78,12 @@ afterAll(async () => {
 
 describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	it("writes nothing across twenty resolutions inside the interval", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const before = await deadlinesOf(issued.session.id);
 		counter.reset();
 
@@ -93,7 +98,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	});
 
 	it("writes once when the interval has passed, and then holds again", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at"], "2 hours");
 		counter.reset();
 
@@ -105,7 +115,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	});
 
 	it("moves the idle deadline forward by the configured timeout when it does write", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at", "idle_expires_at"], "2 hours");
 
 		const resolved = await service.resolve(issued.token);
@@ -125,7 +140,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 			schema: migrated.schema,
 			session: { idleWriteInterval: "1s" },
 		});
-		const issued = await eager.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await eager.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at"], "10 seconds");
 		counter.reset();
 
@@ -136,7 +156,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	});
 
 	it("never touches created_at or the absolute deadline, however hard the session is used", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const before = await deadlinesOf(issued.session.id);
 
 		for (let round = 0; round < 5; round += 1) {
@@ -153,7 +178,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 
 describe("E-22: the absolute deadline is never extended and cannot be revived", () => {
 	it("answers null once it has passed, whatever is done to the session", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["absolute_expires_at"], "31 days");
 
 		expect(await service.resolve(issued.token)).toBeNull();
@@ -162,7 +192,12 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	});
 
 	it("stays dead: neither resolve nor refresh writes anything to the expired row", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["absolute_expires_at"], "31 days");
 		const before = await deadlinesOf(issued.session.id);
 		counter.reset();
@@ -176,7 +211,12 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	});
 
 	it("cannot be revived by an idle write, even one that is due", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at"], "2 hours");
 		await shift(issued.session.id, ["absolute_expires_at"], "31 days");
 
@@ -201,7 +241,12 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 
 describe("freshness is fifteen minutes from created_at and nothing else restores it", () => {
 	it("is gone after the window and is not brought back by resolve, refresh or an idle write", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["created_at", "last_used_at"], "2 hours");
 
 		await service.resolve(issued.token);
@@ -220,9 +265,15 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 	});
 
 	it("comes back with a re-issue, because a re-issue is a new row with a new created_at", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		const next = await service.reissue({
+			authorisedBy: "read_under_lock",
 			completes: "totp_second_factor",
 			previousToken: issued.token,
 			userId,
@@ -242,7 +293,12 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 	});
 
 	it("is measured against created_at, so an old session is never fresh again", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["created_at"], "20 minutes");
 		const resolved = await service.resolve(issued.token);
 		if (resolved === null) {
@@ -262,7 +318,12 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
  */
 describe("freshness is decided by the clock created_at came from", () => {
 	async function resolvedSessionAgedBy(age: string) {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["created_at"], age);
 		const resolved = await service.resolve(issued.token);
 		if (resolved === null) {

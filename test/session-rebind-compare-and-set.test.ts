@@ -47,7 +47,12 @@ async function setup() {
 		keys,
 		schema,
 	});
-	await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+	await sessions.issue({
+		authorisedBy: "read_under_lock",
+		userId,
+		factors: ["password"],
+		observed: OBSERVED,
+	});
 	const repository = createSessionRepository({
 		driver: migrated.connection,
 		schema,

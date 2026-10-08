@@ -82,8 +82,7 @@ export function createSecondFactorCompletion(
 				await options.beforeLockingTheOwnerOf?.(consumed.userId);
 				return sessions.issueReplacingPresented({
 					completes: SECOND_FACTOR_PATH[factor],
-					//the factor check that authorises the session read the epoch the pending row stores (E-3485)
-					authorisedBy: { sessionEpoch: consumed.sessionEpoch },
+					authorisedBy: "read_under_lock",
 					presentedToken: presentedSessionToken,
 					userId: consumed.userId,
 					factors: [...consumed.factorsCompleted, factor],

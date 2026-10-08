@@ -120,6 +120,7 @@ describe("every path a session issue completes (S-INTEG-9, E-3275)", () => {
 				reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
 			});
 			const first = await sessions.issue({
+				authorisedBy: "read_under_lock",
 				userId,
 				factors: ["password"],
 				observed: { ipAddress: null, userAgent: null },
@@ -129,6 +130,7 @@ describe("every path a session issue completes (S-INTEG-9, E-3275)", () => {
 			const failure = await failureOf(() =>
 				completes === "oauth_link"
 					? sessions.reissueSessionOfUser({
+							authorisedBy: "read_under_lock",
 							completes,
 							actor: actorOfTestUser(userId),
 							previousSessionId: first.session.id,
@@ -136,6 +138,7 @@ describe("every path a session issue completes (S-INTEG-9, E-3275)", () => {
 							observed: { ipAddress: null, userAgent: null },
 						})
 					: sessions.issueReplacingPresented({
+							authorisedBy: "read_under_lock",
 							completes,
 							presentedToken: null,
 							userId,
@@ -171,6 +174,7 @@ describe("every path a session issue completes (S-INTEG-9, E-3275)", () => {
 
 			const failure = await failureOf(() =>
 				sessions.issueReplacingPresented({
+					authorisedBy: "read_under_lock",
 					completes,
 					presentedToken: null,
 					userId,

@@ -17628,3 +17628,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Opening the registering transaction here to consume inside it, which would move the seal branch's transaction into this branch.
 **Reason.** The case table of a miss is only reached if the statement can miss, as E-3379 said.
 **Price.** A `BEGIN`, the isolation statement and a `COMMIT` per consumption.
+
+<a id="e-3487"></a>
+
+### A session issue names its authorisation, and reading the seal row under the lock is a named interim
+`E-3487` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** E-3485 made `authorisedBy` optional, with both of its members optional, and filled what the caller left out from the seal row read under the account lock. A caller that forgot it therefore got the read under the lock silently, which is the behaviour E-3377 means to end. `IssueAuthorisation` is now `{ version, sessionEpoch }` with both members required, `"unsealed"`, or `"read_under_lock"`, and `authorisedBy` is required on every issuing method. `"read_under_lock"` is the interim for callers whose check of the seal the seal branch has not yet wired: every route, flow and the second-factor completion pass it by name, so `grep read_under_lock` lists what remains. The second-factor completion passes it too. E-3485 had it pass the epoch alone, and the pending row stores an epoch but no version, so it cannot carry both. Consumption already answers a pending row under another epoch as missing in the statement that consumes it (E-3484). The window left is between that statement and the account lock, until the factor check passes the version and epoch it verified. The tests pass `"read_under_lock"` to every session they issue as a fixture.
+**Rejected.** Keeping an epoch-only variant for the completion, which brings back an authorisation with a member missing.
+**Reason.** An authorisation a caller can leave out is one the next caller will.
+**Price.** One more argument at every issue. The window between a pending row's consumption and the account lock stays open until the seal branch passes the checked version.

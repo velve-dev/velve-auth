@@ -109,7 +109,14 @@ async function sql(statement: string, parameters: unknown[] = []): Promise<void>
 }
 
 async function issuedSession(userId: string): Promise<string> {
-	return (await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST })).token;
+	return (
+		await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		})
+	).token;
 }
 
 async function issuedPending(userId: string): Promise<PendingToken> {
@@ -545,7 +552,12 @@ describe("a row under an older key version (S-KEY-5)", () => {
 		const rotated = servicesUnder(ring.providerAt(2, [1, 2]));
 		const retired = servicesUnder(ring.providerAt(2, [2]));
 		const session = (
-			await before.sessions.issue({ userId: owner, factors: ["password"], observed: NO_REQUEST })
+			await before.sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId: owner,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			})
 		).token;
 		const pendingToken = (
 			await before.pending.begin({ userId: owner, factorsCompleted: ["password"] })
@@ -576,7 +588,12 @@ describe("a row under an older key version (S-KEY-5)", () => {
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const retired = servicesUnder(ring.providerAt(2, [2]));
 		const session = (
-			await before.sessions.issue({ userId: owner, factors: ["password"], observed: NO_REQUEST })
+			await before.sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId: owner,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			})
 		).token;
 		refusals = [];
 
@@ -623,7 +640,12 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 
 	it("refuses a session issued under an older epoch than the account's", async () => {
 		const userId = await sealedAccount();
-		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issued = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		await raiseEpochOf(userId);
 		refusals = [];
 
@@ -633,7 +655,12 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 
 	it("refuses a row written back after every session was deleted and the epoch raised", async () => {
 		const userId = await sealedAccount();
-		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issued = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const row = await savedRow(issued.session.id);
 		await sql(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
 		await raiseEpochOf(userId);
@@ -641,14 +668,24 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		refusals = [];
 
 		expect(await sessions.resolve(issued.token)).toBeNull();
-		const fresh = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const fresh = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		expect((await sessions.resolve(fresh.token))?.userId).toBe(userId);
 		expectOneRefusal("session_resolve", userId);
 	});
 
 	it("binds an account without a seal row to epoch 1 and checks it against 1", async () => {
 		const userId = await createUser(migrated.connection, schema);
-		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issued = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		refusals = [];
 
 		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
@@ -671,6 +708,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		});
 		const unsealed = await createUser(migrated.connection, schema);
 		const issuedWhileMigrating = await sessions.issue({
+			authorisedBy: "read_under_lock",
 			userId: unsealed,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -679,10 +717,16 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		refusals = [];
 
 		await expect(
-			required.issue({ userId: unsealed, factors: ["password"], observed: NO_REQUEST }),
+			required.issue({
+				authorisedBy: "read_under_lock",
+				userId: unsealed,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			}),
 		).rejects.toThrow(ConcealedError);
 		expect(await required.resolve(issuedWhileMigrating.token)).toBeNull();
 		const issued = await required.issue({
+			authorisedBy: "read_under_lock",
 			userId: sealed,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -697,6 +741,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		const rotated = servicesUnder(ring.providerAt(2, [1, 2]));
 		const userId = await sealedAccount();
 		const issued = await before.sessions.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -742,7 +787,12 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 describe("the session lists of an account (S-INTEG-9)", () => {
 	it("lists, shows to a plugin and announces only the rows the library wrote", async () => {
 		const userId = await createUser(migrated.connection, schema);
-		const own = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const own = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const resolved = await sessions.resolve(own.token);
 		if (resolved === null) {
 			throw new Error("the issued session did not resolve");
@@ -1098,6 +1148,7 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 		const userId = await createUser(migrated.connection, schema);
 
 		const issued = await sessions.issue({
+			authorisedBy: "read_under_lock",
 			userId: spell(userId),
 			factors: ["password"],
 			observed: NO_REQUEST,

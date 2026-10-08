@@ -66,7 +66,12 @@ afterAll(async () => {
 
 describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 	it("answers with the session and the user it belongs to", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		const resolved = await service.resolve(issued.token);
 
@@ -80,21 +85,36 @@ describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 	});
 
 	it("answers null once the idle deadline has passed", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shiftDeadline(issued.session.id, "idle_expires_at", "8 days");
 
 		expect(await service.resolve(issued.token)).toBeNull();
 	});
 
 	it("answers null once the absolute deadline has passed", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shiftDeadline(issued.session.id, "absolute_expires_at", "31 days");
 
 		expect(await service.resolve(issued.token)).toBeNull();
 	});
 
 	it("asks the database every single time (ratio 1.0)", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		counted.reset();
 
 		for (let call = 0; call < 10; call += 1) {
@@ -108,7 +128,12 @@ describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 
 describe("a disabled account (L-4, S-CACHE-3)", () => {
 	it("stops the next request of an existing session with account_disabled", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		expect(await service.resolve(issued.token)).not.toBeNull();
 
 		await migrated.connection.query(
@@ -122,7 +147,12 @@ describe("a disabled account (L-4, S-CACHE-3)", () => {
 	});
 
 	it("acts on the first following request, with no lifetime to wait out", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const failure = await service.resolve(issued.token).catch((error: unknown) => error);
 
 		expect(failure).toBeInstanceOf(VelveError);
@@ -151,7 +181,12 @@ describe("a disabled account (L-4, S-CACHE-3)", () => {
 
 describe("the idle deadline (architecture 3.5)", () => {
 	it("is not written again inside the write interval", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		counted.reset();
 
 		await service.resolve(issued.token);
@@ -161,7 +196,12 @@ describe("the idle deadline (architecture 3.5)", () => {
 	});
 
 	it("is written once the interval has passed, and moves forward", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await age(issued.session.id, "2 hours");
 		counted.reset();
 
@@ -174,7 +214,12 @@ describe("the idle deadline (architecture 3.5)", () => {
 	});
 
 	it("never moves the absolute deadline, however often the session is used", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await age(issued.session.id, "2 hours");
 
 		await service.resolve(issued.token);
@@ -193,7 +238,12 @@ describe("the idle deadline (architecture 3.5)", () => {
 
 describe("refresh (3.15 B.2)", () => {
 	it("forces the idle write the interval would otherwise hold back", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		counted.reset();
 
 		const refreshed = await service.refresh(issued.token);
@@ -203,7 +253,12 @@ describe("refresh (3.15 B.2)", () => {
 	});
 
 	it("leaves the token as it was — a refresh is not a re-issue", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		await service.refresh(issued.token);
 

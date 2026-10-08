@@ -44,7 +44,12 @@ describe("a rebound session keeps the epoch it was issued under", () => {
 			 VALUES ($1, 3, $2, 1, $3)`,
 			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
 		);
-		const issued = await before.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issued = await before.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 
 		const first = await rotated.resolve(issued.token);
 		const second = await rotated.resolve(issued.token);
@@ -70,6 +75,7 @@ describe("a session issued with a factor named twice", () => {
 		const userId = await createUser(migrated.connection, schema);
 
 		const issued = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password", "password"],
 			observed: NO_REQUEST,
@@ -90,7 +96,12 @@ describe('the maintenance rebinding of a session of an account without a seal ro
 			schema,
 		});
 		const userId = await createUser(migrated.connection, schema);
-		await before.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		await before.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 
 		const pass = await rebindTokenRowsUnderCurrentKey({
 			driver: migrated.connection,
@@ -143,7 +154,12 @@ describe("the maintenance rebinding against a mass revocation (section 3.18 poin
 			 VALUES ($1, 1, $2, 1, $3)`,
 			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
 		);
-		await before.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		await before.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const reads: string[] = [];
 		let revoked = false;
 		const revokingAfterTheRead = {

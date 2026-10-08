@@ -61,12 +61,13 @@ export interface MissedIssue {
 }
 
 /**
- * the seal row the check that authorised an issue read, or `"unsealed"` where it read none;
- * a member left out is read under the account lock instead
+ * the seal row the check that authorised an issue read, `"unsealed"` where it read none, or
+ * `"read_under_lock"` where no check of the seal authorises the issue yet
  */
 export type IssueAuthorisation =
-	| { readonly version?: number; readonly sessionEpoch?: number }
-	| "unsealed";
+	| { readonly version: number; readonly sessionEpoch: number }
+	| "unsealed"
+	| "read_under_lock";
 
 /** tells whether the seal verifies under the account lock after an issue wrote no row */
 export type SealVerification = (tx: Driver, userId: string) => Promise<boolean>;
@@ -74,7 +75,7 @@ export type SealVerification = (tx: Driver, userId: string) => Promise<boolean>;
 export interface SessionInsert {
 	readonly userId: string;
 	readonly missed: MissedIssue;
-	readonly authorisedBy?: IssueAuthorisation;
+	readonly authorisedBy: IssueAuthorisation;
 	readonly tokenHash: Uint8Array;
 	readonly factors: readonly AuthenticationFactor[];
 	readonly ipAddress: string | null;
@@ -650,26 +651,21 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		};
 	}
 
-	function conditionOf(
-		locked: LockedState,
-		authorisedBy: IssueAuthorisation | undefined,
-	): IssueCondition {
-		const unsealed =
-			authorisedBy === "unsealed" || (authorisedBy === undefined && locked.version === null);
-		if (unsealed) {
-			return sealing === "migrating" ? { sealed: false } : { unwritable: true };
+	function conditionWithoutASeal(): IssueCondition {
+		return sealing === "migrating" ? { sealed: false } : { unwritable: true };
+	}
+
+	//an issue no check of the seal names yet stands on the row the lock reads until the seal branch names it (E-3487)
+	function conditionOf(locked: LockedState, authorisedBy: IssueAuthorisation): IssueCondition {
+		if (authorisedBy === "unsealed") {
+			return conditionWithoutASeal();
 		}
-		const version = authorisedBy?.version ?? locked.version;
-		const sessionEpoch = authorisedBy?.sessionEpoch ?? locked.sessionEpoch;
-		if (version !== null && sessionEpoch !== null) {
-			return { sealed: true, version, sessionEpoch };
+		if (authorisedBy !== "read_under_lock") {
+			return { sealed: true, ...authorisedBy };
 		}
-		//a check of an unsealed account in migrating names only epoch 1 and still finds no seal row
-		return sealing === "migrating" &&
-			sessionEpoch === FIRST_SESSION_EPOCH &&
-			locked.version === null
-			? { sealed: false }
-			: { unwritable: true };
+		return locked.version === null || locked.sessionEpoch === null
+			? conditionWithoutASeal()
+			: { sealed: true, version: locked.version, sessionEpoch: locked.sessionEpoch };
 	}
 
 	async function insertUnderCurrentEpoch(

@@ -106,8 +106,14 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		const sessionTokens = [];
 		for (let index = 0; index < 3; index += 1) {
 			sessionTokens.push(
-				(await before.sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST }))
-					.token,
+				(
+					await before.sessions.issue({
+						authorisedBy: "read_under_lock",
+						userId,
+						factors: ["password"],
+						observed: NO_REQUEST,
+					})
+				).token,
 			);
 		}
 		const pendingToken = (await before.pending.begin({ userId, factorsCompleted: ["password"] }))
@@ -297,7 +303,12 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		const ring = testKeyRing(2);
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const userId = await createUser(migrated.connection, schema);
-		await before.sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		await before.sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		let moved = false;
 		const movingTheVersion = {
 			query: async <T>(sql: string, params: unknown[]) => {
@@ -344,6 +355,7 @@ describe("the rows a pass reports under each key version (S-KEY-5, E-3277)", () 
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const userId = await createUser(migrated.connection, schema);
 		const genuine = await before.sessions.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,

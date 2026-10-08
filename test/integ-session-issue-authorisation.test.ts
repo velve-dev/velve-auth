@@ -138,7 +138,7 @@ describe("an issue authorised by a check of the seal row", () => {
 		const outcome = await outcomeOf(() =>
 			sessions.issueReplacingPresented({
 				completes: "totp_second_factor",
-				authorisedBy: { sessionEpoch: aFreshEpochOtherThan(epoch) },
+				authorisedBy: { version: 2, sessionEpoch: aFreshEpochOtherThan(epoch) },
 				presentedToken: null,
 				userId,
 				factors: ["password", "totp"],
@@ -178,13 +178,13 @@ describe("an issue authorised by a check of the seal row", () => {
 		});
 	});
 
-	it("issues for an unsealed account whose check names epoch 1 in migrating", async () => {
+	it("issues for an unsealed account whose check read no seal row, in migrating", async () => {
 		const userId = await createUser(migrated.connection, schema);
 
 		const outcome = await outcomeOf(() =>
 			sessionsWith().issueReplacingPresented({
 				completes: "totp_second_factor",
-				authorisedBy: { sessionEpoch: 1 },
+				authorisedBy: "unsealed",
 				presentedToken: null,
 				userId,
 				factors: ["password", "totp"],

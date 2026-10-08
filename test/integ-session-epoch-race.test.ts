@@ -98,7 +98,12 @@ describe("a sign-in racing a mass revocation (section 3.18 point 3, T-INTEG-3)",
 			`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
 			[userId, aFreshEpochOtherThan(1)],
 		);
-		const issuing = sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issuing = sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const finishedBeforeCommit = await Promise.race([
 			issuing.then(() => true),
 			new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
@@ -117,7 +122,12 @@ describe("a sign-in racing a mass revocation (section 3.18 point 3, T-INTEG-3)",
 		for (let pair = 0; pair < PAIRS; pair += 1) {
 			const userId = await sealedAccount();
 			const [issued] = await Promise.all([
-				sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST }),
+				sessions.issue({
+					authorisedBy: "read_under_lock",
+					userId,
+					factors: ["password"],
+					observed: NO_REQUEST,
+				}),
 				revokeEverySession(pool, userId),
 			]);
 			for (const token of await tokensThatSurvived(userId, [issued.token])) {
@@ -160,6 +170,7 @@ describe("a writer who changes the account's state between the epoch read and th
 		});
 		return racing
 			.issueReplacingPresented({
+				authorisedBy: "read_under_lock",
 				completes: "password_sign_in",
 				presentedToken: null,
 				userId,
@@ -226,8 +237,18 @@ describe("signing out every other session (section 3.18 point 3)", () => {
 	}
 
 	async function signedInTwice(service: SessionService, userId: string) {
-		const kept = await service.issue({ userId, factors: ["password"], observed: NO_REQUEST });
-		const other = await service.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const kept = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
+		const other = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const resolved = await service.resolve(kept.token);
 		if (resolved === null) {
 			throw new Error("the kept session did not resolve");
@@ -323,7 +344,12 @@ describe("a resolve racing a mass revocation (section 3.18 point 3, S-CACHE-2)",
 		refusals = [];
 		for (let pair = 0; pair < PAIRS; pair += 1) {
 			const userId = await sealedAccount();
-			const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+			const issued = await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: NO_REQUEST,
+			});
 			await Promise.all([sessions.resolve(issued.token), revokeEverySession(pool, userId)]);
 		}
 

@@ -52,7 +52,12 @@ describe("signing out every other session while the same session resolves during
 			keys: old,
 			schema,
 		});
-		const { token } = await before.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const { token } = await before.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		const resolved = await before.resolve(token);
 		if (resolved === null) {
 			throw new Error("no resolution");

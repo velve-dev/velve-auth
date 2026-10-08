@@ -79,7 +79,12 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 			keys,
 			schema,
 		});
-		await sessions.issue({ userId, factors: ["password", "totp"], observed: OBSERVED });
+		await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password", "totp"],
+			observed: OBSERVED,
+		});
 		const [row] = await migrated.connection.query<{
 			id: string;
 			token_sha256: Buffer;

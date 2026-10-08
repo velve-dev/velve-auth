@@ -98,6 +98,7 @@ describe("the maintenance pass and a row that is rewritten after it was read", (
 		});
 		const userId = await createUser(migrated.connection, schema);
 		await sessions.issue({
+			authorisedBy: "read_under_lock",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: null, userAgent: null },

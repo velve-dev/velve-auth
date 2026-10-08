@@ -104,6 +104,7 @@ export async function redeemMagicLink(
 		() =>
 			sessions.issueReplacingPresented({
 				completes: "magic_link",
+				authorisedBy: "read_under_lock",
 				presentedToken: context.sessionToken,
 				userId: account.user.id,
 				factors: [],

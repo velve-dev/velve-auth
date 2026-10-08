@@ -116,10 +116,16 @@ afterAll(async () => {
 
 describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction", () => {
 	it("runs one transaction holding one DELETE and one INSERT, and no UPDATE", async () => {
-		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		traced.reset();
 
 		await service.reissue({
+			authorisedBy: "read_under_lock",
 			completes: "totp_second_factor",
 			previousToken: previous.token,
 			userId,
@@ -139,7 +145,12 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 	});
 
 	it("does the same when every other session goes with it", async () => {
-		const here = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const resolved = await service.resolve(here.token);
 		if (resolved === null) {
 			throw new Error("the session under test did not resolve");
@@ -147,6 +158,7 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		traced.reset();
 
 		await service.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
 			completes: "password_change",
 			resolved,
 			factors: ["password"],
@@ -197,10 +209,16 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 	});
 
 	it("refuses the same at the service, so no caller can move a session between accounts", async () => {
-		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		await expect(
 			service.reissue({
+				authorisedBy: "read_under_lock",
 				completes: "totp_second_factor",
 				previousToken: previous.token,
 				userId: strangerId,
@@ -213,9 +231,15 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 	});
 
 	it("leaves the previous token addressing nothing afterwards (S-FIX-3)", async () => {
-		const previous = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		const next = await service.reissue({
+			authorisedBy: "read_under_lock",
 			completes: "totp_second_factor",
 			previousToken: previous.token,
 			userId,

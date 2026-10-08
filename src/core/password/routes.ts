@@ -120,6 +120,7 @@ async function signedIn(
 	const issued = await createSessionUnderHooks(hooks, { userId, factors: ["password"] }, () =>
 		services.sessions.issueReplacingPresented({
 			completes: "password_sign_in",
+			authorisedBy: "read_under_lock",
 			presentedToken: context.sessionToken,
 			userId,
 			factors: ["password"],

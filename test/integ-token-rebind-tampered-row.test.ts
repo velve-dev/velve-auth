@@ -35,8 +35,18 @@ describe.each(["infinity", "-infinity", "9999-12-31 00:00:00+00"])(
 				schema,
 			});
 			const userId = await createUser(migrated.connection, schema);
-			await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
-			await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+			await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: OBSERVED,
+			});
+			await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: OBSERVED,
+			});
 			await migrated.connection.query(
 				`UPDATE ${schema}.session SET created_at = $2::timestamptz
 				 WHERE id = (SELECT id FROM ${schema}.session WHERE user_id = $1 ORDER BY id LIMIT 1)`,
@@ -77,7 +87,12 @@ describe.each(["infinity", "-infinity", "9999-12-31 00:00:00+00"])(
 				schema,
 			});
 			const userId = await createUser(migrated.connection, schema);
-			await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+			await sessions.issue({
+				authorisedBy: "read_under_lock",
+				userId,
+				factors: ["password"],
+				observed: OBSERVED,
+			});
 			await migrated.connection.query(
 				`UPDATE ${schema}.session SET created_at = $2::timestamptz WHERE user_id = $1`,
 				[userId, moved],

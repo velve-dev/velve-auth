@@ -52,7 +52,12 @@ describe("an unusable key for the stored version refuses the row", () => {
 			keys,
 			schema,
 		});
-		const { token } = await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		const { token } = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
 		expect(await sessions.resolve(token)).not.toBeNull();
 		await moveToVersionTwo("session", userId);
 		expect(await sessions.resolve(token)).toBeNull();
@@ -66,7 +71,12 @@ describe("an unusable key for the stored version refuses the row", () => {
 			keys,
 			schema,
 		});
-		await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
 		await moveToVersionTwo("session", userId);
 		const repository = (
 			await import("../src/core/db/repositories/session.js")

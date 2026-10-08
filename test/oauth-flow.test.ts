@@ -802,6 +802,7 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 			throw new Error("the session the credential change replaces must resolve");
 		}
 		await sessions.reissueAfterCredentialChange({
+			authorisedBy: "read_under_lock",
 			completes: "password_change",
 			resolved,
 			factors: ["oauth"],

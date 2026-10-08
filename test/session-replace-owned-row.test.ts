@@ -192,12 +192,14 @@ describe("reissueSessionOfUser (S-FIX-1)", () => {
 	it("hands back a token the previous one cannot be mistaken for", async () => {
 		await sessions.deleteEverySessionOwnedBy({ actor: owner });
 		const previous = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId: ownerId,
 			factors: ["oauth"],
 			observed: NOTHING_OBSERVED,
 		});
 
 		const reissued = await service.reissueSessionOfUser({
+			authorisedBy: "read_under_lock",
 			completes: "oauth_link",
 			actor: owner,
 			previousSessionId: previous.session.id,
@@ -216,6 +218,7 @@ describe("reissueSessionOfUser (S-FIX-1)", () => {
 
 		await expect(
 			service.reissueSessionOfUser({
+				authorisedBy: "read_under_lock",
 				completes: "oauth_link",
 				actor: owner,
 				previousSessionId: crypto.randomUUID(),

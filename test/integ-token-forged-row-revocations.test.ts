@@ -38,8 +38,18 @@ describe("a planted session row", () => {
 			schema,
 		});
 		const userId = await createUser(migrated.connection, schema);
-		const kept = await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
-		await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		const kept = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
+		await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
 		await plantedRow(userId);
 		const resolved = await sessions.resolve(kept.token);
 		if (resolved === null) throw new Error("kept did not resolve");
@@ -57,7 +67,12 @@ describe("a planted session row", () => {
 			schema,
 		});
 		const userId = await createUser(migrated.connection, schema);
-		const kept = await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		const kept = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
 		await plantedRow(userId);
 		const resolved = await sessions.resolve(kept.token);
 		if (resolved === null) throw new Error("kept did not resolve");

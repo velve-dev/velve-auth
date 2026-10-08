@@ -56,11 +56,17 @@ afterAll(async () => {
 describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same thing", () => {
 	it("answers both with undefined and changes no row in either case", async () => {
 		const foreign = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId: strangerId,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const resolved = await resolvedNow(here.token);
 		const before = await snapshotOf(strangerId);
 
@@ -74,11 +80,17 @@ describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same th
 
 	it("reaches no session of another user through revokeEveryOther or revokeEvery", async () => {
 		const foreign = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId: strangerId,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		await service.revokeEveryOther({ resolved: await resolvedNow(here.token) });
 		await service.revokeEvery({ resolved: await resolvedNow(here.token) });
@@ -88,10 +100,26 @@ describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same th
 
 	it("counts only the caller's rows, so the count is no report about another user", async () => {
 		await service.revokeEverySessionOfUser({ actor: actorOfTestUser(ownerId) });
-		await service.issue({ userId: strangerId, factors: ["password"], observed: NOWHERE });
-		await service.issue({ userId: strangerId, factors: ["password"], observed: NOWHERE });
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: strangerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
+		await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: strangerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const other = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId: ownerId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -104,8 +132,18 @@ describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same th
 	});
 
 	it("lists no session of another user", async () => {
-		await service.issue({ userId: strangerId, factors: ["password"], observed: NOWHERE });
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: strangerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
 		const listed = await service.list({ resolved: await resolvedNow(here.token) });
 
@@ -115,7 +153,12 @@ describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same th
 
 	/** A spelling no uuid column holds used to reach the cast and fail it with 22P02, which the route answered 500; it now names no row and answers like an invented id (E-2242). */
 	it("cannot be pointed at another user's row by a target id that is not a uuid either", async () => {
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const resolved = await resolvedNow(here.token);
 		const before = await snapshotOf(strangerId);
 
@@ -125,7 +168,12 @@ describe("S-OWNER-4, S-OWNER-8: a foreign id and an invented one are the same th
 	});
 
 	it("keeps every owner-scoped removal an owner predicate rather than a branch", async () => {
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const resolved = await resolvedNow(here.token);
 		const strangerBefore = await snapshotOf(strangerId);
 
@@ -144,7 +192,12 @@ describe("S-OWNER-7: the actor comes from a resolution and from nothing else", (
 	 * at run time. This pins what it does and does not buy.
 	 */
 	it("refuses a hand-built resolution in the type checker, and only there", async () => {
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const resolved = await resolvedNow(here.token);
 
 		const listed = await service.list({
@@ -157,11 +210,17 @@ describe("S-OWNER-7: the actor comes from a resolution and from nothing else", (
 
 	it("refuses a resolution assembled from a session that is not the caller's", async () => {
 		const foreign = await service.issue({
+			authorisedBy: "read_under_lock",
 			userId: strangerId,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
-		const here = await service.issue({ userId: ownerId, factors: ["password"], observed: NOWHERE });
+		const here = await service.issue({
+			authorisedBy: "read_under_lock",
+			userId: ownerId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const mine = await resolvedNow(here.token);
 		const theirs = await resolvedNow(foreign.token);
 		const before = await snapshotOf(strangerId);

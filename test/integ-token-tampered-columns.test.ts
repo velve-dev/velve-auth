@@ -45,8 +45,18 @@ function reporting() {
 async function twoSessionsWithOneMoved(column: string, moved: string): Promise<string> {
 	const userId = await createUser(migrated.connection, schema);
 	const sessions = createSessionService(reporting());
-	await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
-	await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+	await sessions.issue({
+		authorisedBy: "read_under_lock",
+		userId,
+		factors: ["password"],
+		observed: OBSERVED,
+	});
+	await sessions.issue({
+		authorisedBy: "read_under_lock",
+		userId,
+		factors: ["password"],
+		observed: OBSERVED,
+	});
 	await migrated.connection.query(
 		`UPDATE ${schema}.session SET ${column} = $2::timestamptz
 		 WHERE id = (SELECT id FROM ${schema}.session WHERE user_id = $1 ORDER BY id LIMIT 1)`,
@@ -67,7 +77,12 @@ describe.each([
 	it("resolves as no session, with one report", async () => {
 		const userId = await createUser(migrated.connection, schema);
 		const sessions = createSessionService(reporting());
-		const { token } = await sessions.issue({ userId, factors: ["password"], observed: OBSERVED });
+		const { token } = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: OBSERVED,
+		});
 		await migrated.connection.query(
 			`UPDATE ${schema}.session SET ${column} = $2::timestamptz WHERE user_id = $1`,
 			[userId, moved],

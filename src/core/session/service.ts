@@ -111,7 +111,7 @@ export interface SessionService {
 	issue(input: {
 		readonly completes?: SessionIssuePath;
 		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy?: IssueAuthorisation;
+		readonly authorisedBy: IssueAuthorisation;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
@@ -120,7 +120,7 @@ export interface SessionService {
 	issueReplacingPresented(input: {
 		readonly completes: SessionIssuePath;
 		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy?: IssueAuthorisation;
+		readonly authorisedBy: IssueAuthorisation;
 		readonly presentedToken: string | null;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -129,7 +129,7 @@ export interface SessionService {
 	reissue(input: {
 		readonly completes: SessionIssuePath;
 		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy?: IssueAuthorisation;
+		readonly authorisedBy: IssueAuthorisation;
 		readonly previousToken: string;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -138,7 +138,7 @@ export interface SessionService {
 	reissueAfterCredentialChange(input: {
 		readonly completes: SessionIssuePath;
 		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy?: IssueAuthorisation;
+		readonly authorisedBy: IssueAuthorisation;
 		readonly resolved: SessionResolution;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
@@ -147,7 +147,7 @@ export interface SessionService {
 	reissueSessionOfUser(input: {
 		readonly completes: SessionIssuePath;
 		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy?: IssueAuthorisation;
+		readonly authorisedBy: IssueAuthorisation;
 		readonly actor: Actor;
 		readonly previousSessionId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -222,13 +222,13 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		observed: ObservedRequest,
 		tokenHash: Uint8Array,
 		missed: MissedIssue,
-		authorisedBy: IssueAuthorisation | undefined,
+		authorisedBy: IssueAuthorisation,
 	): SessionInsert {
 		const storedFactors = factors.filter((factor, index) => factors.indexOf(factor) === index);
 		return {
 			userId,
 			missed,
-			...(authorisedBy === undefined ? {} : { authorisedBy }),
+			authorisedBy,
 			tokenHash,
 			factors: storedFactors,
 			...metadataOf(observed),

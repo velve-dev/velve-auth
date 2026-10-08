@@ -575,6 +575,7 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 				() =>
 					services.sessions.issueReplacingPresented({
 						completes: "passkey_sign_in",
+						authorisedBy: "read_under_lock",
 						presentedToken: context.sessionToken,
 						userId: assertion.userId,
 						factors: ["webauthn"],

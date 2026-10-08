@@ -56,7 +56,12 @@ describe("a MAC that differs from the genuine one in a late byte only", () => {
 			schema,
 		});
 		const userId = await createUser(migrated.connection, schema);
-		const issued = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const issued = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
 
 		await flipByte("session", sessionTokenHash(issued.token), index);
@@ -116,12 +121,22 @@ describe("the session list of an account whose epoch is above 1", () => {
 			 VALUES ($1, 1, $2, 1)`,
 			[userId, randomBytes(32)],
 		);
-		const old = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const old = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 		await migrated.connection.query(
 			`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
 			[userId, aFreshEpochOtherThan(1)],
 		);
-		const current = await sessions.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		const current = await sessions.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 
 		const listed = (await repository.listSessionsOfUser({ userId })).map((session) => session.id);
 
@@ -145,7 +160,12 @@ describe('the session list of an account without a seal row in "required"', () =
 			sealing: "required",
 		});
 		const userId = await createUser(migrated.connection, schema);
-		await migrating.issue({ userId, factors: ["password"], observed: NO_REQUEST });
+		await migrating.issue({
+			authorisedBy: "read_under_lock",
+			userId,
+			factors: ["password"],
+			observed: NO_REQUEST,
+		});
 
 		expect(await required.listSessionsOfUser({ userId })).toStrictEqual([]);
 		expect(
