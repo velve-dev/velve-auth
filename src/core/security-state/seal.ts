@@ -3,7 +3,7 @@ import type { KeyProvider } from "../keys/provider.js";
 import { encodeSecurityState, type SecurityState } from "./encoding.js";
 
 /** a seal digest with the state-mac version it was taken under */
-export interface SealDigest {
+interface SealDigest {
 	readonly keyVersion: number;
 	readonly digest: Uint8Array<ArrayBuffer>;
 }

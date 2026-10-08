@@ -27,12 +27,12 @@ interface DecodedFloor {
 }
 
 /** what asking every anchor about one account found, one floor or null per anchor */
-export type AnchorReading =
+type AnchorReading =
 	| { readonly kind: "answered"; readonly floors: readonly (DecodedFloor | null)[] }
 	| { readonly kind: "unavailable" };
 
 /** what comparing a stored seal with the anchors' floors found */
-export type AnchorVerdict =
+type AnchorVerdict =
 	| "within_floor"
 	| "ahead_of_anchor"
 	| "version_below_anchor"

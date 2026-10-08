@@ -26,7 +26,7 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	webauthn_challenge: "src/core/factor/webauthn/challenge.ts",
 	oauth_flow: "src/core/oauth/flow-repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
-	password_reset_required: "no repository: no module of the library reads or writes it",
+	password_reset_required: "src/core/security-state/read.ts",
 	security_state: "src/core/auth/integrity-key-ring.ts",
 };
 
@@ -35,6 +35,7 @@ const NO_REPOSITORY = "no repository:";
 type ExceptionClass =
 	| "secret address"
 	| "consumed single-use row"
+	| "account the path already named"
 	| "row that carries the proof"
 	| "credential under verification"
 	| "pending resolution"
@@ -50,6 +51,8 @@ const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 		"the row is addressed by the hash of a secret the caller presents, and the hash is a stronger predicate than the owner (E-242, E-2421)",
 	"consumed single-use row":
 		"the statement that removes the row is what proves the owner, and it hands that proof back (E-234, E-2421)",
+	"account the path already named":
+		"the statement reads or seals the security state of the one account the calling path has already named by its own proof, lookup, consumption or resolution, and decides nothing about which account that is (E-3153)",
 	"row that carries the proof":
 		"the insert writes the row whose secret later proves the owner, so no proof can precede it (E-242, E-2422)",
 	"credential under verification":
@@ -91,6 +94,8 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"consumed single-use row",
 	"src/core/factor/recovery/repository.ts#createRecoveryCodeRepository.consumeCode":
 		"consumed single-use row",
+
+	"src/core/security-state/read.ts#readSecurityState": "account the path already named",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.insertSession":
 		"row that carries the proof",

@@ -8890,6 +8890,47 @@ development machine, a computation costs a median of 86 µs for an account with
 one passkey and 180 µs at the cap of 20 passkeys and 10 identities, and a
 verification 80 µs and 166 µs (E-3152).
 
+### The one read
+
+`src/core/security-state/read.ts`. `readSecurityState(driver, schema, userId)`
+runs `securityStateReadStatement(schema)`, one statement that returns the
+account's seal row and every component as one JSON document, and resolves a
+`SecurityStateRead`, or `null` for an account that does not exist or an id
+that is not a uuid. Under READ COMMITTED a single statement sees one consistent
+state, which several statements would not; the statement takes no lock.
+
+| Field | Meaning |
+|---|---|
+| `userId` | the account |
+| `seal` | `{ version, digest, keyVersion, sessionEpoch }`, or `null` without a seal row |
+| `email`, `emailVerified`, `disabled`, `passwordResetRequired` | as the encoding covers them |
+| `password` | `{ phc, keyVersion, scheme, setBySessionId }` with the full ciphertext, or `null` |
+| `totp` | `{ secretEnc, keyVersion, confirmed }` with the full ciphertext, or `null` |
+| `passkeys` | `{ id, credentialId, publicKey, signCount }` per row |
+| `identities` | `{ id, provider, subject }` per row |
+| `recoveryCodes` | `{ keyVersion, codeHmac }` per row |
+
+What a sign-in, a factor check or a change evaluates — the passkey and its
+public key, the identity, the PHC, the TOTP ciphertext, the recovery code — is
+taken from this read or checked as a member of it (S-INTEG-4). A value the
+library never writes, such as an integer outside the exact range of a
+JavaScript number, makes the read throw rather than be guessed at. Measured on
+the development machine, the statement takes a median of 1.3 ms for an account
+with one passkey and 1.6 ms at the cap of 20 passkeys and 10 identities (E-3153).
+
+`sealedComponentsOf(read)` returns the components with each ciphertext
+replaced by its SHA-256 value, and `securityStateOf(read, seal)` the whole
+`SecurityState` a stored seal was taken over.
+
+#### `checkSecurityState(keys, read, sealing)`
+
+Resolves `{ verdict, read }`, the verdict being `"valid"`, `"seal_mismatch"`,
+`"key_version_unknown"` or `"key_unusable"` from `verifySeal` for an account
+with a seal row; without one it is `"unsealed"` when `sealing` is `"migrating"`
+and `"seal_missing"` when it is `"required"`. Every verdict but `"valid"` and
+`"unsealed"` is a broken state. The read handed back is the only one the path
+may evaluate.
+
 ### The anchor port
 
 `src/core/security-state/anchor.ts`. The request path calls an anchor through

@@ -107,11 +107,11 @@ function digestField(value: Uint8Array): Uint8Array {
 
 //a value past the exact javascript integers would encode a number nobody stored
 function integerField(value: number): Uint8Array {
-	if (!Number.isSafeInteger(value) || value < 0) {
-		throw new RangeError("a sealed integer must be an exact integer from 0");
+	if (!Number.isSafeInteger(value)) {
+		throw new RangeError("a sealed integer must be an exact integer");
 	}
 	const body = new Uint8Array(INTEGER_BYTES);
-	new DataView(body.buffer).setBigUint64(0, BigInt(value), false);
+	new DataView(body.buffer).setBigInt64(0, BigInt(value), false);
 	return field(INTEGER, INTEGER_BYTES, body);
 }
 
