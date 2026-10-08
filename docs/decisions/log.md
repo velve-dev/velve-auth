@@ -16708,3 +16708,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Asking the token branch to sort the factors, which would change a frozen format and let a writer reorder a stored list unnoticed.
 **Reason.** The specification has to describe the encoding as built, as E-3358 said for the other details.
 **Price.** None.
+
+<a id="e-3384"></a>
+
+### A missed session issue answers with the failure of the path it completes
+`E-3384` · security-state · specification, S-INTEG-5, settled
+
+**Context.** E-3298 had a missed conditional session insert answered "like a missing row". For a sign-in that phrase reads as the answer of a missing session, `session_required`, which no sign-in path otherwise gives, so the refusal would tell a broken or raced account apart from a wrong password. The token branch built it that way, answering the miss as a missing session. E-3377 already says the issue is answered with the path's ordinary failure. *Outward* and S-INTEG-5 now say it in both languages: a session issue that inserts nothing is answered with the ordinary failure of the path it completes, by the per-path list. At the completion of a pending authentication that is the factor path's code, at a magic-link redemption `invalid_token`, and never `session_required`, which belongs to session resolution alone. A change whose issue inserts nothing is refused like any other broken state and rolled back. `test/security-state-spec-issue-miss-answer.test.ts` holds both sentences in both languages.
+**Rejected.** A code of its own for the miss, which S-INTEG-5 forbids, since it would reveal the broken state.
+**Reason.** Every refusal of a broken state must look like the path's ordinary failure, and the issue is the last step of the path, not a path of its own.
+**Price.** The session repository has to learn which path called it, or hand the miss to the flow that answers.
