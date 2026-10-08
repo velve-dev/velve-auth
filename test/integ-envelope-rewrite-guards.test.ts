@@ -354,3 +354,35 @@ describe("the rewrite opens and swaps only what the one verified read returned (
 		await expect(attempt).rejects.toMatchObject({ code: "envelope_unbound" });
 	});
 });
+
+describe("the caller must hand the rewrite its one verified read unchanged (E-3229)", () => {
+	it("opens and re-encrypts a planted old-form secret when the read it is given hides the seal row", async () => {
+		const userId = await sealedAccount();
+		const planted = await encryptWithPurposeKey(
+			beforeRotation,
+			"totp-enc",
+			new TextEncoder().encode("a secret the writer knows"),
+		);
+		await connection.query(
+			`INSERT INTO ${schema}.totp_credential (user_id, secret_enc, key_version, confirmed_at)
+			 VALUES ($1, $2, $3, now())`,
+			[userId, planted.ciphertext, planted.keyVersion],
+		);
+
+		const outcome = await inOneTransaction(connection, async (driver) => {
+			await lockAccountRow(driver, schema, userId);
+			const read = await verifiedEnvelopeReadOf(driver, schema, userId);
+			expect(read.sealRow).toBe("present");
+			return rebindEnvelopesOfAccount({
+				driver,
+				schema,
+				keys: beforeRotation,
+				actor: actorOfTestUser(userId),
+				sealing: "migrating",
+				read: { ...read, sealRow: "absent" },
+			});
+		});
+
+		expect(outcome.totpRewritten).toBe(true);
+	});
+});

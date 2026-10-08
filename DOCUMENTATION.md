@@ -9103,10 +9103,13 @@ rewrite works from it alone (E-3224):
 
 1. It locks the account row through `src/core/db/lock.ts`, which is harmless
    where the caller already holds the lock, as it must before its read.
-2. It decides the old form from `sealing` and the `sealRow` of the read. A
-   caller cannot have it read the old form of an account whose read showed a
-   seal row: such an envelope throws, and nothing is laundered (E-3121). A seal
-   row deleted after the read changes nothing.
+2. It decides the old form from `sealing` and the `sealRow` of the read, and
+   from nothing else. Where the read showed a seal row, an old-form envelope
+   throws and nothing is laundered (E-3121), and a seal row deleted after the
+   read changes nothing. It cannot tell a verified read from a value built by
+   hand: a caller that passes `sealRow: "absent"` for an account whose read
+   showed one has the old form opened and re-encrypted. Passing the one
+   verified read unchanged is the caller's obligation (E-3229).
 3. It opens each envelope of the read with `rebindEnvelope` and, where it is not
    already bound under the current key, writes the new value with a
    compare-and-swap on exactly the ciphertext and key version of the read. A

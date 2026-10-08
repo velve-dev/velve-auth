@@ -133,7 +133,7 @@ export async function rebindEnvelopesOfAccount(
 ): Promise<AccountEnvelopeRewrite> {
 	await lockAccountRow(input.driver, input.schema, input.actor);
 	const { read } = input;
-	//the old form of a sealed account is never opened, whatever the caller asks (E-3121)
+	//the caller's one verified read alone decides whether the old form opens (E-3229)
 	const unbound = unboundReadingOf(input.sealing, read.sealRow);
 	const password =
 		read.password === null

@@ -15989,6 +15989,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A binding that covers a value only up to a rounding covers a different value from the one stored.
 **Price.** The deadline travels through the code as a decimal string rather than a `Date`, and `deadlineOf` refuses anything else.
 
+<a id="e-3229"></a>
+
+### The rewrite trusts the read it is given, and passing the one verified read unchanged is the caller's obligation
+`E-3229` · security-state-envelopes · interface, S-INTEG-1, open until the seal branch merges
+
+**Context.** E-3224 made `rebindEnvelopesOfAccount` decide the old form from the `sealRow` of the read its caller passes, and the comment above that line still said, from E-3121, that the old form of a sealed account is never opened whatever the caller asks. A review of this branch showed that this overstates the guard: `VerifiedEnvelopeRead` is a plain structural type, so a caller that passes `{ ...read, sealRow: "absent" }` for an account whose read showed a seal row has a planted old-form TOTP secret opened and re-encrypted in the bound form. The rewrite cannot tell a verified read from a value built by hand, and with no read of its own it has nothing to compare against. The comment now says that the caller's one verified read alone decides, and *Security state: bound envelopes* states the obligation. `test/integ-envelope-rewrite-guards.test.ts` keeps the review's case as a characterization of it: given a read that hides the seal row, the rewrite opens and rewrites the planted secret. Making the type constructible only from the seal branch's verified read is that branch's, which reads the seal row and the components in its one statement; this entry stays open until it merges.
+**Rejected.** (a) Reading the seal row again inside the rewrite, which is the second read E-3224 removed. (b) A brand on `VerifiedEnvelopeRead` minted here, which would need the one statement that reads it to live on this branch, and that statement is the seal branch's.
+**Reason.** A guard that depends on its input is only as strong as the caller's duty to pass that input untouched, and the duty has to be written down where the caller looks.
+**Price.** Until the seal branch makes the read constructible only from its statement, a caller in `src/` that edits the read before passing it launders an old-form envelope; the case in the test stops compiling the day the type no longer allows it, and is then rewritten as a refusal.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model
