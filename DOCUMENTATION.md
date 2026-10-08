@@ -8998,6 +8998,25 @@ since no other transaction can hold the new row.
 A session epoch drawn uniformly from 1 to 9007199254740991 through the library's
 one source of randomness, never equal to `current`.
 
+### The limits
+
+`src/core/security-state/limits.ts`. Every check reads and encodes every passkey
+and identity of an account, so an account holds at most a configured number of
+each (S-INTEG-10).
+
+| Field of `LimitsConfig` | Default | Meaning |
+|---|---|---|
+| `passkeysPerAccount` | `20` | the most passkeys one account may hold |
+| `identitiesPerAccount` | `10` | the most identities one account may hold |
+
+`resolveLimits(configured)` fills in the defaults and returns `null` when a
+limit is not an integer of at least 1. `assertBelowCredentialLimit(read,
+credential, limits)` throws `CredentialLimitReachedError` with the code
+`passkey_limit_reached` or `identity_limit_reached` when the verified read already
+holds as many as the limit; a registration or a link calls it first in its
+sealing change's `write`, so the count is the one the account lock protects and
+the error rolls the change back (E-3158).
+
 ### The alarm
 
 `src/core/security-state/alarm.ts`. `createSecurityStateAlarms({ callback, log, clock })`
