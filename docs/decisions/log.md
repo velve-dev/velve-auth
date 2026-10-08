@@ -16858,3 +16858,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Writing the sealing transaction as two functions that share one lock site, which keeps the count at eight by moving where the statement is written rather than how many transactions take the lock.
 **Reason.** A count that guards against drift has to move with a deliberate change, and the change has to be placed where the count's comment says.
 **Price.** The merge of this branch with the token branch has to set the lock count to ten by hand. History is not rewritten, so the commits named above stay red on those cases.
+
+<a id="e-3161"></a>
+
+### The one read returns each identity's stored provider tokens for the envelope rewrite
+`E-3161` · security-state-seal · storage read, settled
+
+**Context.** The bound-envelope branch's `rebindEnvelopesOfAccount` takes a `VerifiedEnvelopeRead` — the password's `phc` and key version, the TOTP secret and its key version, and the three token columns with `token_key_version` of every identity, together with whether a seal row exists — and asks that it be filled from the seal check's one statement and be complete, since a partial read can leave an envelope unconverted. The read of E-3153 returned the first two and the presence of the seal row, and of each identity only its id, provider and subject, which is what the seal covers. Each identity in the read now also carries `accessTokenEnc`, `refreshTokenEnc` and `idTokenEnc` as bytes or `null` and `tokenKeyVersion` as an integer or `null`, read by the same statement, with the field names the bound-envelope branch's `StoredProviderTokens` uses.
+**Rejected.** Reading the provider tokens in a statement of the rewrite's own, which would be a second read in the sealing transaction and could hand the rewrite a ciphertext a writer put in after the check.
+**Reason.** Whatever the rewrite opens has to be what the verified read returned, as E-3300 requires of every re-encryption.
+**Price.** The read grows by up to three ciphertexts per identity, at most ten identities an account, which E-3153's measurement did not include.

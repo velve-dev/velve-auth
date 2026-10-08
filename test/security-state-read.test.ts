@@ -102,7 +102,27 @@ WHERE user_id = $1`,
 		expect(read?.passkeys[0]?.publicKey).toHaveLength(77);
 		expect(read?.passkeys[0]?.signCount).toBe(0);
 		expect(read?.identities).toHaveLength(2);
+		expect(read?.identities[0]?.accessTokenEnc).toBeNull();
+		expect(read?.identities[0]?.tokenKeyVersion).toBeNull();
 		expect(read?.recoveryCodes).toHaveLength(3);
+	});
+
+	it("returns an identity's stored provider tokens and their key version for the envelope rewrite", async () => {
+		const userId = await seedAccount(connection, schema, { identities: 1 });
+		const access = randomBytes(40);
+		const identifying = randomBytes(60);
+		await connection.query(
+			`UPDATE ${schema}.identity SET access_token_enc = $2, id_token_enc = $3, token_key_version = 2 WHERE user_id = $1`,
+			[userId, access, identifying],
+		);
+
+		const read = await readSecurityState(connection, schema, userId);
+
+		const [identity] = read?.identities ?? [];
+		expect(Buffer.from(identity?.accessTokenEnc ?? []).equals(access)).toBe(true);
+		expect(identity?.refreshTokenEnc).toBeNull();
+		expect(Buffer.from(identity?.idTokenEnc ?? []).equals(identifying)).toBe(true);
+		expect(identity?.tokenKeyVersion).toBe(2);
 	});
 
 	it("answers null for an account that does not exist and for an id that is no uuid", async () => {

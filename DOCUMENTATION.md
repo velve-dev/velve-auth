@@ -8907,7 +8907,7 @@ state, which several statements would not; the statement takes no lock.
 | `password` | `{ phc, keyVersion, scheme, setBySessionId }` with the full ciphertext, or `null` |
 | `totp` | `{ secretEnc, keyVersion, confirmed }` with the full ciphertext, or `null` |
 | `passkeys` | `{ id, credentialId, publicKey, signCount }` per row |
-| `identities` | `{ id, provider, subject }` per row |
+| `identities` | `{ id, provider, subject, accessTokenEnc, refreshTokenEnc, idTokenEnc, tokenKeyVersion }` per row, the stored provider tokens for the envelope rewrite (E-3161) |
 | `recoveryCodes` | `{ keyVersion, codeHmac }` per row |
 
 What a sign-in, a factor check or a change evaluates — the passkey and its

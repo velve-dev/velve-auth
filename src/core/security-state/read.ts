@@ -25,11 +25,15 @@ interface ReadPasskey {
 	readonly signCount: number;
 }
 
-/** an identity as the one read returned it */
+/** an identity as the one read returned it, its stored provider tokens included for the envelope rewrite */
 interface ReadIdentity {
 	readonly id: string;
 	readonly provider: string;
 	readonly subject: string;
+	readonly accessTokenEnc: Uint8Array<ArrayBuffer> | null;
+	readonly refreshTokenEnc: Uint8Array<ArrayBuffer> | null;
+	readonly idTokenEnc: Uint8Array<ArrayBuffer> | null;
+	readonly tokenKeyVersion: number | null;
 }
 
 /** a recovery code as the one read returned it */
@@ -110,7 +114,11 @@ export function securityStateReadStatement(schema: string): string {
   'identities', (SELECT coalesce(jsonb_agg(jsonb_build_object(
       'id', linked.id::text,
       'provider', linked.provider,
-      'subject', linked.subject)), '[]'::jsonb)
+      'subject', linked.subject,
+      'access_token_enc', encode(linked.access_token_enc, 'hex'),
+      'refresh_token_enc', encode(linked.refresh_token_enc, 'hex'),
+      'id_token_enc', encode(linked.id_token_enc, 'hex'),
+      'token_key_version', linked.token_key_version::text)), '[]'::jsonb)
     FROM ${table("identity")} linked WHERE linked.user_id = account.id),
   'recovery_codes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
       'key_version', code.key_version::text,
@@ -169,6 +177,10 @@ function bytes(value: unknown, field: string): Uint8Array<ArrayBuffer> {
 		decoded[index] = Number.parseInt(spelled.slice(index * 2, index * 2 + 2), 16);
 	}
 	return decoded;
+}
+
+function bytesOrNull(value: unknown, field: string): Uint8Array<ArrayBuffer> | null {
+	return value === null ? null : bytes(value, field);
 }
 
 //a stored integer beyond the exact javascript integers would be read as a number nobody stored
@@ -261,6 +273,13 @@ function stateOf(spelled: string): SecurityStateRead {
 				id: text(identity.id, "identity id"),
 				provider: text(identity.provider, "provider"),
 				subject: text(identity.subject, "subject"),
+				accessTokenEnc: bytesOrNull(identity.access_token_enc, "access token"),
+				refreshTokenEnc: bytesOrNull(identity.refresh_token_enc, "refresh token"),
+				idTokenEnc: bytesOrNull(identity.id_token_enc, "id token"),
+				tokenKeyVersion:
+					identity.token_key_version === null
+						? null
+						: exactInteger(identity.token_key_version, "token key version"),
 			};
 		}),
 		recoveryCodes: list(state.recovery_codes, "recovery codes").map((value) => {
