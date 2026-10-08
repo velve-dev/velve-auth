@@ -24,16 +24,17 @@ afterAll(async () => {
 
 function missingTheFirstBooking(inner: Driver): Driver {
 	let missed = false;
-	return {
+	const over = (connection: Driver): Driver => ({
 		query: async <T>(sql: string, params: unknown[]) => {
 			if (!missed && /UPDATE .*pending_authentication/s.test(sql) && /SET attempts/.test(sql)) {
 				missed = true;
 				return [] as T[];
 			}
-			return inner.query<T>(sql, params);
+			return connection.query<T>(sql, params);
 		},
-		transaction: (work) => inner.transaction(work),
-	};
+		transaction: (work) => connection.transaction((tx) => work(over(tx))),
+	});
+	return over(inner);
 }
 
 describe("a missed booking over a row that reads back unchanged", () => {

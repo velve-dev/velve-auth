@@ -229,15 +229,18 @@ async function rebindRow(
 		return "refused";
 	}
 	const next = await bindToken(input.keys, binding);
-	const written = await input.driver.query(pass.updateSql, [
-		row.token_hash,
-		row.user_id,
-		row.token_mac,
-		next.tokenMac,
-		next.tokenMacKeyVersion,
-		row.token_mac_key_version,
-		...(shape.guardsAttempts ? [row.attempts] : []),
-	]);
+	//a compare-and-set whose miss leaves the row must run at read committed whatever the default (E-3481)
+	const written = await input.driver.transaction((tx) =>
+		tx.query(pass.updateSql, [
+			row.token_hash,
+			row.user_id,
+			row.token_mac,
+			next.tokenMac,
+			next.tokenMacKeyVersion,
+			row.token_mac_key_version,
+			...(shape.guardsAttempts ? [row.attempts] : []),
+		]),
+	);
 	return written.length === 1 ? "rebound" : "left";
 }
 

@@ -17258,3 +17258,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Running the token part after the migrations, which brings back the refusal after a write that E-3374 removed.
 **Reason.** A probe has to read only what the schema it finds can hold.
 **Price.** One catalogue statement per start.
+
+<a id="e-3481"></a>
+
+### The booking, its re-read and every rebinding compare-and-set run in a library transaction
+`E-3481` · security-state-tokens · S-INTEG-3, S-INTEG-9, settled
+
+**Context.** E-3379 requires every statement whose miss the library interprets to run in a library transaction, even as its only statement, because a statement run through `query` outside one runs at the database's default isolation. This branch ran the booking of an attempt, its re-read, the rebinding of a session at resolution and the maintenance pass's compare-and-sets as standalone statements. On a connection whose default is `repeatable read`, a booking that lost to a concurrent write failed with `40001` and never reached the re-read. Each of those statements now runs in `driver.transaction`, which the instance's driver opens with the isolation statement first. `test/security-state-booking-repeatable-read.test.ts` holds a pending row's lock on one connection and books on a second whose default is `repeatable read`: the booking books once the lock is released, and fails with `40001` when the booking is a standalone statement. Five test drivers that interposed on `query` alone, and so no longer saw the statements now inside a transaction, hand their own interposition to `transaction` as well.
+**Rejected.** Opening one transaction around the whole retry loop of the booking, which would hold the read snapshot across retries only at `repeatable read` and gains nothing at `READ COMMITTED`.
+**Reason.** The case table of a miss is only reached if the statement can miss, as E-3379 said.
+**Price.** Each such statement costs a `BEGIN`, the isolation statement and a `COMMIT`.

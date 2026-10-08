@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
 import { createSessionService } from "../src/core/session/service.js";
 import { rebindTokenRowsUnderCurrentKey } from "../src/core/token/rebind.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -146,7 +147,9 @@ describe("the maintenance rebinding against a mass revocation (section 3.18 poin
 		const reads: string[] = [];
 		let revoked = false;
 		const revokingAfterTheRead = {
-			...migrated.connection,
+			transaction<T>(work: (tx: Driver) => Promise<T>): Promise<T> {
+				return work(this);
+			},
 			query: async <T>(sql: string, params: unknown[]): Promise<T[]> => {
 				const rows = await migrated.connection.query<T>(sql, params);
 				if (!revoked && /token_mac_key_version <> \$1/.test(sql)) {

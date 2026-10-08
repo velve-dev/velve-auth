@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
 import { createOneTimeTokenRepository } from "../src/core/db/repositories/token.js";
 import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import { createPendingAuthenticationService } from "../src/core/factor/pending/index.js";
@@ -219,7 +220,9 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 				}
 				return migrated.connection.query<T>(sql, params);
 			},
-			transaction: migrated.connection.transaction.bind(migrated.connection),
+			transaction<T>(work: (tx: Driver) => Promise<T>): Promise<T> {
+				return work(this);
+			},
 		};
 		refusals = [];
 
@@ -264,7 +267,9 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 				}
 				return migrated.connection.query<T>(sql, params);
 			},
-			transaction: migrated.connection.transaction.bind(migrated.connection),
+			transaction<T>(work: (tx: Driver) => Promise<T>): Promise<T> {
+				return work(this);
+			},
 		};
 		const booking = createPendingAuthenticationService({
 			driver: rebindingBeforeTheBooking,
@@ -309,7 +314,9 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 				}
 				return migrated.connection.query<T>(sql, params);
 			},
-			transaction: migrated.connection.transaction.bind(migrated.connection),
+			transaction<T>(work: (tx: Driver) => Promise<T>): Promise<T> {
+				return work(this);
+			},
 		};
 
 		const pass = await rebindTokenRowsUnderCurrentKey({
@@ -378,7 +385,9 @@ describe("the rows a pass reports under each key version (S-KEY-5, E-3277)", () 
 			[userId, sha256Of(forged), randomBytes(32)],
 		);
 		const rewriting = {
-			...migrated.connection,
+			transaction<T>(work: (tx: Driver) => Promise<T>): Promise<T> {
+				return work(this);
+			},
 			query: async <T>(sql: string, params: unknown[]): Promise<T[]> => {
 				if (sql.includes("WITH trace AS")) {
 					await migrated.connection.query(

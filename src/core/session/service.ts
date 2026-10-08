@@ -254,13 +254,17 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			throw new VelveError("account_disabled");
 		}
 		const resolved = resolutionOf(found.userId, found.session, found.observedAt);
-		if (verified.rebound !== null) {
-			await sessions.rebindSessionTokenMac({
-				actor: actorOfResolvedSession(resolved),
-				sessionId: found.session.id,
-				previous: verified.stored,
-				next: verified.rebound,
-			});
+		const { rebound } = verified;
+		if (rebound !== null) {
+			//a rebinding whose miss is let stand must run at read committed whatever the default (E-3481)
+			await options.driver.transaction((tx) =>
+				repositoryOn(tx).rebindSessionTokenMac({
+					actor: actorOfResolvedSession(resolved),
+					sessionId: found.session.id,
+					previous: verified.stored,
+					next: rebound,
+				}),
+			);
 		}
 		const sinceLastWrite = found.observedAt.getTime() - found.session.lastUsedAt.getTime();
 		if (sinceLastWrite < writtenNoSoonerThanMs) {

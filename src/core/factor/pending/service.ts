@@ -96,10 +96,18 @@ function budgetIsSpentBy(attempts: number): boolean {
 export function createPendingAuthenticationService(
 	options: PendingAuthenticationServiceOptions,
 ): PendingAuthenticationService {
-	const repository: PendingAuthenticationRepository = createPendingAuthenticationRepository({
-		driver: options.driver,
-		schema: options.schema ?? "velve",
-	});
+	const repository: PendingAuthenticationRepository = repositoryOn(options.driver);
+
+	function repositoryOn(driver: Driver): PendingAuthenticationRepository {
+		return createPendingAuthenticationRepository({ driver, schema: options.schema ?? "velve" });
+	}
+
+	//a statement whose miss is read as a race must run at read committed whatever the database default (E-3481)
+	function inTransaction<T>(
+		work: (store: PendingAuthenticationRepository) => Promise<T>,
+	): Promise<T> {
+		return options.driver.transaction((tx) => work(repositoryOn(tx)));
+	}
 
 	function bindingOf(tokenHash: Uint8Array, candidate: PendingCandidate<unknown>): TokenBinding {
 		return pendingBinding(
@@ -172,7 +180,9 @@ export function createPendingAuthenticationService(
 		tokenHash: Uint8Array,
 		pinned: CheckedPendingRow,
 	): Promise<CheckedPendingRow | "missing"> {
-		const reread = await repository.findPendingAuthenticationByTokenHash(tokenHash);
+		const reread = await inTransaction((store) =>
+			store.findPendingAuthenticationByTokenHash(tokenHash),
+		);
 		if (reread === null) {
 			return "missing";
 		}
@@ -198,7 +208,7 @@ export function createPendingAuthenticationService(
 			options.keys,
 			pendingBinding(row.userId, tokenHash, row.factorNames, row.attempts + 1),
 		);
-		return repository.bookAttempt({ tokenHash, checked: row, next });
+		return inTransaction((store) => store.bookAttempt({ tokenHash, checked: row, next }));
 	}
 
 	function bookingOf(

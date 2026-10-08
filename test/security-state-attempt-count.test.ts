@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Driver } from "../src/core/db/driver.js";
 import { pendingBinding } from "../src/core/factor/pending/binding.js";
 import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
@@ -237,8 +238,10 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 			schema,
 		}).begin({ userId, factorsCompleted: ["password"] });
 		let interposed = 0;
-		const rebindingBeforeEveryBooking: typeof owner = {
-			...owner,
+		const rebindingBeforeEveryBooking: Driver = {
+			transaction<T>(work: (tx: Driver) => Promise<T>): Promise<T> {
+				return work(this);
+			},
 			query: async (sql, params) => {
 				if (sql.includes("SET attempts =") && interposed + 1 < newest) {
 					interposed += 1;
