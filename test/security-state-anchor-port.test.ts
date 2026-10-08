@@ -27,7 +27,7 @@ function floor(version: number, digest: Uint8Array = DIGEST): SecurityStateFloor
 	return { version, digest: encodeBase64Url(digest) };
 }
 
-describe("an anchor's answer is a floor, null, or a broken state", () => {
+describe("an anchor's answer is a floor, null, or a broken state (S-INTEG-6)", () => {
 	const malformed: ReadonlyArray<readonly [string, unknown]> = [
 		["undefined", undefined],
 		["a version NaN", { version: Number.NaN, digest: encodeBase64Url(DIGEST) }],

@@ -1,14 +1,19 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
+import { toWebHandler } from "../src/core/http/web-handler.js";
 import { rootKeyProvider } from "../src/core/keys/index.js";
+import type { SecurityStateAlarm } from "../src/core/security-state/alarm.js";
 import {
 	checkSecurityState,
 	readSecurityState,
 	type SecurityStateVerdict,
 } from "../src/core/security-state/read.js";
+import { createVelveAuth } from "../src/index.js";
+import { configFor } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { postTo } from "./flows-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import {
 	EVERY_COMPONENT,
@@ -33,6 +38,20 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("seal_read");
 	connection = migrated.connection;
 	schema = migrated.schema;
+	signIn = toWebHandler(
+		createVelveAuth(
+			configFor({
+				database: connection,
+				schema,
+				keys,
+				securityState: { sealing: "required", alarm: (alarm) => alarms.push(alarm) },
+				rateLimit: {
+					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+					perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
+				},
+			}),
+		),
+	);
 });
 
 afterAll(async () => {
@@ -46,6 +65,25 @@ async function verdictOf(userId: string): Promise<SecurityStateVerdict> {
 		throw new Error("the account vanished");
 	}
 	return (await checkSecurityState(keys, read, "required")).verdict;
+}
+
+const alarms: SecurityStateAlarm[] = [];
+let signIn: (request: Request) => Promise<Response>;
+
+//the sign-in T-INTEG-2 attempts runs over the account's current address and is told apart by its alarm
+async function alarmsOfASignInAs(userId: string): Promise<readonly string[]> {
+	const [row] = await connection.query<{ email: string }>(
+		`SELECT email FROM ${schema}.user WHERE id = $1`,
+		[userId],
+	);
+	const answer = await signIn(
+		postTo("/sign-in/password", { email: row?.email ?? "", password: "any password at all 9f2b" }),
+	);
+	expect(answer.status).toBe(401);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	return alarms
+		.filter((alarm) => alarm.userId === userId)
+		.map((alarm) => `${alarm.occasion} ${alarm.reason}`);
 }
 
 function countingStatements(driver: Driver): { driver: Driver; statements: string[] } {
@@ -162,7 +200,7 @@ interface Change {
 
 const WITHOUT_RESET_ROW: SeededComponents = { ...EVERY_COMPONENT, resetRequired: false };
 
-describe("every change T-INTEG-2 lists makes the check refuse the account", () => {
+describe("every change T-INTEG-2 lists makes the check refuse the account (S-INTEG-2)", () => {
 	const sql = (statement: string) => async (userId: string) => {
 		await connection.query(statement.replaceAll("velve.", `${schema}.`), [userId]);
 	};
@@ -397,7 +435,7 @@ describe("every change T-INTEG-2 lists makes the check refuse the account", () =
 	});
 
 	for (const change of changes) {
-		it(`refuses ${change.name}`, async () => {
+		it(`refuses ${change.name}, and the sign-in raises its alarm`, async () => {
 			const userId = await seedAccount(connection, schema, change.base);
 			await sealDirectly(connection, schema, keys, userId);
 			expect(await verdictOf(userId)).toBe("valid");
@@ -405,6 +443,9 @@ describe("every change T-INTEG-2 lists makes the check refuse the account", () =
 			await change.apply(userId);
 
 			expect(await verdictOf(userId)).toBe(change.expected ?? "seal_mismatch");
+			expect(await alarmsOfASignInAs(userId)).toStrictEqual([
+				`sign_in ${change.expected ?? "seal_mismatch"}`,
+			]);
 		});
 	}
 });
