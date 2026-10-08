@@ -16,7 +16,7 @@ import {
 } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 
-//a session issue that writes no row answers as the ordinary failure of the path it completes (S-INTEG-5)
+//a session issue that writes no row answers as the ordinary failure of the path it completes (E-3275)
 
 const PASSWORD = "correct-horse-battery-staple";
 let migrated: MigratedSchema;
@@ -53,7 +53,7 @@ afterAll(async () => {
 	await migrated.connection.close();
 });
 
-describe("a password sign-in whose session issue writes nothing (S-INTEG-5)", () => {
+describe("a password sign-in whose session issue writes nothing (S-INTEG-9, E-3275)", () => {
 	it("answers exactly as a wrong password does", async () => {
 		const auth = createVelveAuth(
 			configFor({
@@ -101,7 +101,7 @@ async function failureOf(work: () => Promise<unknown>): Promise<unknown> {
 	);
 }
 
-describe("every path a session issue completes (S-INTEG-5)", () => {
+describe("every path a session issue completes (S-INTEG-9, E-3275)", () => {
 	it.each(ORDINARY_FAILURE)(
 		"answers a missed issue completing %s with occasion %s as %s",
 		async (completes, occasion, visible) => {

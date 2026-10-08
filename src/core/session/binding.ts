@@ -10,6 +10,7 @@ import {
 
 /** a session row as stored, with the account's current epoch beside it */
 interface StoredSessionRow extends StoredTokenMac {
+	readonly sessionId: string;
 	readonly userId: string;
 	readonly tokenHash: Uint8Array;
 	/** the factor names exactly as stored, or null where the column holds something that is no name */
@@ -22,12 +23,14 @@ interface StoredSessionRow extends StoredTokenMac {
 
 /** what a session's MAC binds beside its owner, token and factors */
 export interface SessionIssue {
+	/** the row's `id`, drawn before the insert so the MAC can bind it */
+	readonly sessionId: string;
 	readonly sessionEpoch: number;
 	/** `created_at` in whole microseconds since the Unix epoch */
 	readonly createdAtMicros: number;
 }
 
-//a row written back after a mass revocation must stay refused (S-INTEG-9)
+//a row written back after a mass revocation or renamed to another id must stay refused (S-INTEG-9)
 export function sessionBinding(
 	userId: string,
 	tokenHash: Uint8Array,
@@ -38,7 +41,12 @@ export function sessionBinding(
 		purpose: "session",
 		ownerId: userId,
 		tokenSha256: tokenHash,
-		content: { factors, sessionEpoch: issue.sessionEpoch, createdAtMicros: issue.createdAtMicros },
+		content: {
+			sessionId: issue.sessionId,
+			factors,
+			sessionEpoch: issue.sessionEpoch,
+			createdAtMicros: issue.createdAtMicros,
+		},
 	};
 }
 
@@ -58,6 +66,7 @@ export async function librarySessionBinding(
 		row.storedFactorNames === null || row.createdAtMicros === null
 			? null
 			: sessionBinding(row.userId, row.tokenHash, row.storedFactorNames, {
+					sessionId: row.sessionId,
 					sessionEpoch: row.sessionEpoch,
 					createdAtMicros: row.createdAtMicros,
 				});

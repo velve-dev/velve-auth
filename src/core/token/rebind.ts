@@ -32,6 +32,7 @@ interface TokenRebinding {
 interface StoredTokenRow {
 	readonly token_hash: Uint8Array;
 	readonly user_id: string | null;
+	readonly session_id?: string;
 	readonly token_mac: Uint8Array;
 	readonly token_mac_key_version: number;
 	readonly factor_names?: string;
@@ -68,10 +69,20 @@ function sessionBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBind
 	const names = namesOf(row.factor_names);
 	const sessionEpoch = exactIntegerOf(row.session_epoch);
 	const createdAtMicros = exactIntegerOf(row.created_at_us);
-	if (row.user_id === null || names === null || sessionEpoch === null || createdAtMicros === null) {
+	if (
+		row.user_id === null ||
+		row.session_id === undefined ||
+		names === null ||
+		sessionEpoch === null ||
+		createdAtMicros === null
+	) {
 		return null;
 	}
-	return sessionBinding(row.user_id, tokenHash, names, { sessionEpoch, createdAtMicros });
+	return sessionBinding(row.user_id, tokenHash, names, {
+		sessionId: row.session_id,
+		sessionEpoch,
+		createdAtMicros,
+	});
 }
 
 function pendingBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
@@ -110,7 +121,10 @@ function challengeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBi
 const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 	session: {
 		hashColumn: "token_sha256",
-		contentColumns: (states, sealing) => `array_to_json(t.factors)::text AS factor_names,
+		contentColumns: (
+			states,
+			sealing,
+		) => `t.id::text AS session_id, array_to_json(t.factors)::text AS factor_names,
 		${microsOf("t.created_at")} AS created_at_us,
 		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`,
 		guardsAttempts: false,

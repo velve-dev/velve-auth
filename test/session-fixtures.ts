@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
 import type { SessionInsert } from "../src/core/db/repositories/session.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
@@ -109,10 +109,10 @@ export async function withProcessClockShiftedBy<T>(
 }
 
 /**
- * The three columns a session row written by hand needs to resolve, taken the way the session
- * service takes them (S-INTEG-9): pass them as the last three parameters of the insert, for
- * `token_mac`, `token_mac_key_version` and `created_at`, the last cast to `timestamptz`. An account
- * without a seal row is at epoch 1.
+ * The four columns a session row written by hand needs to resolve, taken the way the session
+ * service takes them (S-INTEG-9): pass them as the last four parameters of the insert, for
+ * `token_mac`, `token_mac_key_version`, `created_at` cast to `timestamptz` and `id` cast to `uuid`,
+ * since the MAC binds the id. An account without a seal row is at epoch 1.
  */
 export async function sessionMacParameters(
 	keys: KeyProvider,
@@ -122,19 +122,21 @@ export async function sessionMacParameters(
 		readonly factors: readonly string[];
 		readonly sessionEpoch?: number;
 	},
-): Promise<[Uint8Array, number, string]> {
+): Promise<[Uint8Array, number, string, string]> {
 	const createdAt = new Date();
+	const sessionId = randomUUID();
 	const { tokenMac, tokenMacKeyVersion } = await bindToken(keys, {
 		purpose: "session",
 		ownerId: row.userId,
 		tokenSha256: row.tokenHash,
 		content: {
+			sessionId,
 			factors: row.factors,
 			sessionEpoch: row.sessionEpoch ?? 1,
 			createdAtMicros: createdAt.getTime() * 1000,
 		},
 	});
-	return [tokenMac, tokenMacKeyVersion, createdAt.toISOString()];
+	return [tokenMac, tokenMacKeyVersion, createdAt.toISOString(), sessionId];
 }
 
 /**
@@ -158,7 +160,7 @@ export async function rebindSessionsOf(
 	}>(
 		`SELECT s.id, s.user_id, s.token_sha256, array_to_json(s.factors)::text AS factor_names,
 			COALESCE((SELECT session_epoch FROM ${schema}.security_state st WHERE st.user_id = s.user_id), 1)::text AS session_epoch,
-			(extract(epoch FROM s.created_at) * 1000000)::bigint::text AS created_at_us
+			trunc(extract(epoch FROM s.created_at) * 1000000)::text AS created_at_us
 		 FROM ${schema}.session s WHERE s.user_id = $1 OR s.id = $2`,
 		[where.userId ?? null, where.sessionId ?? null],
 	);
@@ -166,6 +168,7 @@ export async function rebindSessionsOf(
 		const { tokenMac, tokenMacKeyVersion } = await bindToken(
 			keys,
 			sessionBinding(row.user_id, new Uint8Array(row.token_sha256), JSON.parse(row.factor_names), {
+				sessionId: row.id,
 				sessionEpoch: Number(row.session_epoch),
 				createdAtMicros: Number(row.created_at_us),
 			}),

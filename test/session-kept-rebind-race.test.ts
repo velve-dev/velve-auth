@@ -6,7 +6,7 @@ import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from 
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
-//a resolution that rebinds the kept session under a newer key while revokeEveryOther holds the lock signs nobody out (E-3362)
+//a resolution that rebinds the kept session under a newer key while revokeEveryOther holds the lock signs nobody out (E-3276)
 
 const NO_REQUEST = { ipAddress: null, userAgent: null };
 let migrated: MigratedSchema;

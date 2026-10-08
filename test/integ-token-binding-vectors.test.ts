@@ -40,6 +40,7 @@ function referenceEncoding(binding: TokenBinding): Buffer {
 				? text(content.ceremony)
 				: "sessionEpoch" in content
 					? Buffer.concat([
+							text(content.sessionId),
 							list(content.factors),
 							integer(content.sessionEpoch),
 							integer(content.createdAtMicros),
@@ -76,6 +77,7 @@ const BINDINGS: readonly [string, TokenBinding][] = [
 			ownerId: "0f0e0d0c-0b0a-4908-8706-050403020100",
 			tokenSha256: hash,
 			content: {
+				sessionId: "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d",
 				factors: ["password", "totp"],
 				sessionEpoch: 3,
 				createdAtMicros: 1_767_225_600_123_456,

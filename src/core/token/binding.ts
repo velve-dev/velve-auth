@@ -12,6 +12,7 @@ export type TokenBindingPurpose =
 /** the security-relevant content of a token row, in the form it is stored in */
 export type TokenRowContent =
 	| {
+			readonly sessionId: string;
 			readonly factors: readonly string[];
 			readonly sessionEpoch: number;
 			/** `created_at` in whole microseconds since the Unix epoch */
@@ -160,29 +161,11 @@ export function canonicalPayloadOf(payload: OneTimeTokenPayload | null): string 
 	return payload === null ? null : canonicalJsonOf(JSON.parse(JSON.stringify(payload)));
 }
 
-//the purpose field must tell a session epoch from an attempt count (S-INTEG-9)
-function contentField(content: TokenRowContent): Uint8Array {
-	if ("ceremony" in content) {
-		return textField(content.ceremony);
-	}
-	if (!("factors" in content)) {
-		return optionalTextField(canonicalPayloadOf(content.payload));
-	}
-	if ("sessionEpoch" in content) {
-		return concatenated([
-			listField(content.factors),
-			integerField(content.sessionEpoch),
-			integerField(content.createdAtMicros),
-		]);
-	}
-	return concatenated([listField(content.factors), integerField(content.attempts)]);
-}
-
 const UUID_DIGITS = /^[0-9a-f]{32}$/;
 
 //every spelling postgresql reads as one uuid must bind as the one it hands back
-function canonicalOwnerIdOf(ownerId: string): string {
-	const lower = ownerId.toLowerCase();
+function canonicalUuidOf(uuid: string): string {
+	const lower = uuid.toLowerCase();
 	const digits = lower.replace(/^\{(.*)\}$/, "$1").replaceAll("-", "");
 	if (!UUID_DIGITS.test(digits)) {
 		return lower;
@@ -196,12 +179,31 @@ function canonicalOwnerIdOf(ownerId: string): string {
 	].join("-");
 }
 
+//the purpose field must tell a session epoch from an attempt count (S-INTEG-9)
+function contentField(content: TokenRowContent): Uint8Array {
+	if ("ceremony" in content) {
+		return textField(content.ceremony);
+	}
+	if (!("factors" in content)) {
+		return optionalTextField(canonicalPayloadOf(content.payload));
+	}
+	if ("sessionEpoch" in content) {
+		return concatenated([
+			textField(canonicalUuidOf(content.sessionId)),
+			listField(content.factors),
+			integerField(content.sessionEpoch),
+			integerField(content.createdAtMicros),
+		]);
+	}
+	return concatenated([listField(content.factors), integerField(content.attempts)]);
+}
+
 //two different rows must never encode alike (S-INTEG-9)
 export function encodeTokenBinding(binding: TokenBinding): Uint8Array<ArrayBuffer> {
 	return concatenated([
 		textField(BINDING_CONTEXT),
 		textField(binding.purpose),
-		optionalTextField(binding.ownerId === null ? null : canonicalOwnerIdOf(binding.ownerId)),
+		optionalTextField(binding.ownerId === null ? null : canonicalUuidOf(binding.ownerId)),
 		bytesField(binding.tokenSha256),
 		contentField(binding.content),
 	]);

@@ -247,6 +247,25 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 		expectOneRefusal("session_resolve", owner);
 	});
 
+	it("refuses a session renamed to the id another row of the account carried (E-3277)", async () => {
+		const owner = await createUser(migrated.connection, schema);
+		const token = await issuedSession(owner);
+		const [named] = await migrated.connection.query<{ id: string }>(
+			`SELECT id FROM ${schema}.session WHERE token_sha256 = $1`,
+			[sha256Of(token)],
+		);
+		await sql(`DELETE FROM ${schema}.session WHERE token_sha256 = $1`, [sha256Of(token)]);
+		const renamed = await issuedSession(owner);
+		await sql(`UPDATE ${schema}.session SET id = $2 WHERE token_sha256 = $1`, [
+			sha256Of(renamed),
+			named?.id,
+		]);
+		refusals = [];
+
+		expect(await sessions.resolve(renamed)).toBeNull();
+		expectOneRefusal("session_resolve", owner);
+	});
+
 	it("refuses a pending authentication moved to another account", async () => {
 		const owner = await createUser(migrated.connection, schema);
 		const victim = await createUser(migrated.connection, schema);
@@ -850,7 +869,12 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 					? { payload: pick([null, {}, { a: "" }, { a: ",", b: [1, "x"] }, { "": null }]) }
 					: purpose === "pending_authentication"
 						? { factors, attempts: byte() % 3 }
-						: { factors, sessionEpoch: byte() % 3, createdAtMicros: byte() % 3 },
+						: {
+								sessionId: pick(["", "a", "ab", ",", "a,b"]),
+								factors,
+								sessionEpoch: byte() % 3,
+								createdAtMicros: byte() % 3,
+							},
 		};
 	}
 
@@ -893,13 +917,23 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 			Buffer.from(
 				encodeTokenBinding({
 					...base,
-					content: { factors: ["password,totp"], sessionEpoch: 1, createdAtMicros: 0 },
+					content: {
+						sessionId: "s",
+						factors: ["password,totp"],
+						sessionEpoch: 1,
+						createdAtMicros: 0,
+					},
 				}),
 			).equals(
 				Buffer.from(
 					encodeTokenBinding({
 						...base,
-						content: { factors: ["password", "totp"], sessionEpoch: 1, createdAtMicros: 0 },
+						content: {
+							sessionId: "s",
+							factors: ["password", "totp"],
+							sessionEpoch: 1,
+							createdAtMicros: 0,
+						},
 					}),
 				),
 			),
@@ -1101,7 +1135,7 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 					purpose: "session",
 					ownerId,
 					tokenSha256: new Uint8Array(32),
-					content: { factors: [], sessionEpoch: 1, createdAtMicros: 0 },
+					content: { sessionId: "s", factors: [], sessionEpoch: 1, createdAtMicros: 0 },
 				}),
 			).toString("hex");
 

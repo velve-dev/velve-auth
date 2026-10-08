@@ -23,8 +23,8 @@ beforeAll(async () => {
 	const [row] = await mounted.connection.query<{ id: string }>(
 		`INSERT INTO ${mounted.schema}.session
 		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
-			    token_mac, token_mac_key_version, created_at)
-		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz)
+			    token_mac, token_mac_key_version, created_at, id)
+		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)
 		 RETURNING id`,
 		[
 			userId,

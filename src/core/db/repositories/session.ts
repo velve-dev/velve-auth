@@ -12,6 +12,7 @@ import {
 	type TokenBindingOccasion,
 	type TokenBindingRefusalReport,
 } from "../../token/binding.js";
+import { randomUuid } from "../../token/random.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
@@ -291,10 +292,12 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 
 //the creation time is the transaction's own so it equals the one the mac was taken over (S-INTEG-9)
 const INSERTED_VALUES = `$1, $2, now() + make_interval(secs => $3::double precision),
-		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9, now()`;
+		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9, now(),
+		$10::uuid`;
 
+//the id is drawn before the insert as the mac binds it (S-INTEG-9)
 const INSERTED_COLUMNS = `(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip,
-		user_agent, token_mac, token_mac_key_version, created_at)`;
+		user_agent, token_mac, token_mac_key_version, created_at, id)`;
 
 //a creation time no bigint holds must read as none and not fail the statement (S-INTEG-9)
 export function microsOf(timestamp: string): string {
@@ -305,7 +308,7 @@ export function microsOf(timestamp: string): string {
 function sealedInsertStatement(table: string, states: string): string {
 	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
 	SELECT ${INSERTED_VALUES}
-	FROM ${states} WHERE user_id = $1 AND session_epoch = $10::bigint
+	FROM ${states} WHERE user_id = $1 AND session_epoch = $11::bigint
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
@@ -534,6 +537,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return librarySessionBinding(
 			options.keys,
 			{
+				sessionId: row.id,
 				userId: row.user_id,
 				tokenHash: row.token_sha256,
 				storedFactorNames: storedNamesOf(row.factor_names),
@@ -601,10 +605,20 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			throw new TypeError("the database clock lies outside what this library binds");
 		}
 		if (row.session_epoch !== null) {
-			return { sessionEpoch: epochFrom(row.session_epoch), createdAtMicros, sealed: true };
+			return {
+				sessionId: randomUuid(),
+				sessionEpoch: epochFrom(row.session_epoch),
+				createdAtMicros,
+				sealed: true,
+			};
 		}
 		return sealing === "migrating"
-			? { sessionEpoch: FIRST_SESSION_EPOCH, createdAtMicros, sealed: false }
+			? {
+					sessionId: randomUuid(),
+					sessionEpoch: FIRST_SESSION_EPOCH,
+					createdAtMicros,
+					sealed: false,
+				}
 			: null;
 	}
 
@@ -617,7 +631,12 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			throw new ConcealedError(insert.missed.reason);
 		}
 		const mac = await insert.bindUnder(issuing);
-		const parameters = [...insertParameters(insert), mac.tokenMac, mac.tokenMacKeyVersion];
+		const parameters = [
+			...insertParameters(insert),
+			mac.tokenMac,
+			mac.tokenMacKeyVersion,
+			issuing.sessionId,
+		];
 		const [row] = issuing.sealed
 			? await driver.query<SessionRowShape>(sealedInsertSql, [...parameters, issuing.sessionEpoch])
 			: await driver.query<SessionRowShape>(unsealedInsertSql, parameters);
@@ -660,7 +679,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
-	//a kept row a resolution rebound under a newer version since the read is swapped again without an alarm (E-3362)
+	//a kept row a resolution rebound under a newer version since the read is swapped again without an alarm (E-3276)
 	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
 		let row = kept;
 		for (;;) {
