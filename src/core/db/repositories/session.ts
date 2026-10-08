@@ -393,6 +393,17 @@ function epochFrom(value: string): number {
 	return epoch;
 }
 
+//only a newer key version over the same token can be a rebinding and the loop ends at the newest in the ring
+function isRebindingOf(read: VerifiedRowShape, reread: VerifiedRowShape): boolean {
+	const before = new Uint8Array(read.token_sha256);
+	const after = new Uint8Array(reread.token_sha256);
+	return (
+		reread.token_mac_key_version > read.token_mac_key_version &&
+		before.length === after.length &&
+		before.every((byte, index) => byte === after[index])
+	);
+}
+
 function toEpoch(value: string | null): number | null {
 	return value === null ? null : epochFrom(value);
 }
@@ -649,27 +660,39 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
+	//a kept row a resolution rebound under a newer version since the read is swapped again without an alarm (E-3362)
 	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
-		const binding = await libraryBindingOf(kept, "change");
-		if (binding === null) {
-			return false;
+		let row = kept;
+		for (;;) {
+			const binding = await libraryBindingOf(row, "change");
+			if (binding === null) {
+				return false;
+			}
+			const next = await bindToken(options.keys, binding);
+			const rebound = await tx.query(keptRebindSql, [
+				row.id,
+				row.user_id,
+				row.token_mac,
+				next.tokenMac,
+				next.tokenMacKeyVersion,
+			]);
+			if (rebound.length === 1) {
+				return true;
+			}
+			const [reread] = await tx.query<VerifiedRowShape>(keptRowSql, [row.id, row.user_id]);
+			if (reread === undefined) {
+				return false;
+			}
+			if (!isRebindingOf(row, reread)) {
+				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+					userId: row.user_id,
+					occasion: "change",
+					verdict: "mismatch",
+				});
+				return false;
+			}
+			row = reread;
 		}
-		const next = await bindToken(options.keys, binding);
-		const rebound = await tx.query(keptRebindSql, [
-			kept.id,
-			kept.user_id,
-			kept.token_mac,
-			next.tokenMac,
-			next.tokenMacKeyVersion,
-		]);
-		if (rebound.length === 0) {
-			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
-				userId: kept.user_id,
-				occasion: "change",
-				verdict: "mismatch",
-			});
-		}
-		return rebound.length === 1;
 	}
 
 	//a forged row goes with the others and is neither counted nor returned (S-INTEG-9)
