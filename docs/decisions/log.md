@@ -16898,3 +16898,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Freezing the event once where the seal module builds it, which is in `src/core/security-state/`, outside this branch's files, and which still hands every anchor the same object.
 **Reason.** One plugin's anchor must not be able to decide what another plugin's anchor learns.
 **Price.** Two small objects per anchor call.
+
+<a id="e-3173"></a>
+
+### The Plugins chapter gains the anchor's row and its count of declared fields
+`E-3173` · security-state-administration · documentation, settled
+
+**Context.** CLAUDE.md §5 gives this branch the chapter "Security state: administration and migration" of `DOCUMENTATION.md` and no other. The anchor is a member of `VelvePlugin`, and the Plugins chapter holds the table of `VelvePlugin`'s fields, which a reader looking up the plugin type reads first; without a row there the member is documented only in a chapter that reader has no reason to open. The same chapter says a `middleware` array is refused beside "the seven declared fields", which the member makes eight. Both lines were changed in the Plugins chapter: one row added to the `VelvePlugin` table, pointing at this branch's chapter, and "seven" made "eight". Everything else about the anchor is in this branch's own chapter. The start-error table of the Plugins chapter is untouched, because E-3171 adds no start error.
+**Rejected.** Leaving the field table without the member and the count at seven, which leaves the reference wrong about the type it documents.
+**Reason.** A field table that omits a field is wrong, and a count that is one short is wrong, so each is fixed where it stands.
+**Price.** This branch writes two lines outside its partition, in a chapter the integration branch may also change.

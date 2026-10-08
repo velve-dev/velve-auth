@@ -6617,6 +6617,7 @@ migration, and removing a plugin leaves its tables where they are.
 | `hooks` | `PluginHooks?` | Any of the seven points below. |
 | `errorCodes` | `readonly \`${Id}.${string}\`[]?` | The codes this plugin's routes may answer with. Each answers `400` with the library's own message; see below. |
 | `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | A rule per route name, which **replaces** the `rateLimit` that route declares. The key must name a route this plugin contributes. |
+| `securityStateAnchor` | `SecurityStateAnchor?` | An anchor for the security state, which learns every new seal and sets a floor under its version (3.18). Not a hook point; see [`securityStateAnchor`](#securitystateanchor). |
 
 ### Start errors
 
@@ -6682,7 +6683,7 @@ mounts without plugins.
 
 `plugin_field_unknown` is the other half of that, and it is what answers
 `S-CSRF-6`. A plugin written in JavaScript can carry any field it likes, so a
-`middleware` array or an `assertOriginAllowed` beside the seven declared fields
+`middleware` array or an `assertOriginAllowed` beside the eight declared fields
 would otherwise be dropped without a word and its author left believing it runs.
 3.11 says the extension points are **enumerated**; a field outside the
 enumeration is refused rather than ignored.
@@ -9104,7 +9105,117 @@ rejects, and a failure never undoes the committed change.
 
 ## Security state: administration and migration
 
-> Reserved for `security-state-administration`: the maintenance step and the administrator reseal (S-INTEG-7, S-INTEG-8). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Architecture section 3.18, *Anchor* and point 5, and section 3.15 G. This
+chapter documents what an application contributes and runs to administer the
+seal: the anchor a plugin contributes (S-INTEG-6), and the two maintenance calls
+an operator runs, `maintenance.sealSecurityState()` (S-INTEG-8) and
+`maintenance.resealSecurityState({ userId, reason })` (S-INTEG-7). The anchor is
+built as far as the registry: it reads the member and builds the ports the
+request path takes, and the checks and changes in the tables below call them
+once the seal is wired into that path. The two maintenance calls are not built
+yet, and nothing below describes them.
+
+### `securityStateAnchor`
+
+A member of [`VelvePlugin`](#velveplugin), and not an eighth hook point: it
+observes after a seal is committed and refuses through the floor it answers,
+never by throwing to veto (3.11, E-3084).
+
+```ts
+interface SecurityStateAnchor {
+  recordSeal(event: SecurityStateSealedEvent, context: FrozenContext): Promise<void>
+  minimumVersion(input: { readonly userId: string },
+                 context: FrozenContext): Promise<SecurityStateFloor | null>
+}
+interface SecurityStateSealedEvent {
+  readonly userId: string; readonly version: number
+  readonly digest: string                  // base64url, the seal's HMAC under state-mac
+}
+interface SecurityStateFloor {
+  readonly version: number; readonly digest: string   // the highest version recorded and its digest
+}
+```
+
+All three types are exported with the plugin types.
+
+| Member | Called | Answers |
+|---|---|---|
+| `recordSeal(event, context)` | after the transaction that wrote a new seal has committed, and again off the response path when a check finds a verified seal above the anchor's floor | nothing; a throw or a rejection is logged and raises the alarm `anchor_unavailable`, and never undoes the committed change |
+| `minimumVersion({ userId }, context)` | before the account lock on every check and every change, after the one statement on a session resolution, and inside the transaction after the consumption on a path that learns its account by consuming a row | `null` for no floor, or `{ version, digest }`: the highest version the anchor has recorded for the account and that version's digest |
+
+What `minimumVersion` answers decides the check:
+
+| The stored seal | Outcome |
+|---|---|
+| below the floor's `version`, or no seal row while there is a floor | broken, alarm `version_below_anchor` |
+| at the floor's `version` with another `digest` | broken, alarm `anchor_mismatch` |
+| above the floor's `version`, or at it with the same `digest`, or with no floor | passes |
+| any, when `minimumVersion` throws, rejects, or answers anything but `null` or a floor | broken, alarm `anchor_unavailable` |
+
+A floor is valid only with a `version` for which `Number.isSafeInteger` holds and
+that is at least 1, and a `digest` that is base64url of exactly 32 bytes.
+`undefined`, `NaN`, a fraction, `0`, a negative number, a number above
+`Number.MAX_SAFE_INTEGER`, or a missing or wrongly sized `digest` is never read as
+"no floor". With several plugins contributing an anchor, every one is asked and
+every floor holds.
+
+**What the anchor's store has to be.** The application keeps it, append-only,
+somewhere no role that can write the schema `velve` can write — a plugin's own
+tables in `velve` do not qualify, because the writer the anchor exists to catch
+resets the seal row and the anchor's record together. Per account it keeps the
+digest of the highest version it recorded, and when `recordSeal` reports a
+version it already holds with a different digest, the anchor raises its own
+alarm: that is a played-back state being resealed.
+
+**What it does not cover.** Without an anchor, a writer can reset an account to
+an old, internally consistent state — old factor rows together with their old
+seal row — and no check notices. With one, a window stays: after `recordSeal`
+fails, or the process ends between the commit and the call, the anchor does not
+know the latest seal, and until the alarm is handled or a check records the seal
+again, the account can be reset to the version the anchor last knows.
+
+**How the start reads it.** The registry reads `recordSeal` and `minimumVersion`
+once, when `createVelveAuth` runs; replacing either afterwards changes nothing.
+Each is called with the anchor object as `this`, so an anchor written as a class
+that keeps a client of its own store in a field works as written, and no other
+name of the anchor is checked against the interface. A member that is missing or
+is no function — and an anchor that is `null` or not an object — does **not**
+refuse the start: every call through that member fails, which is answered like an
+anchor that throws, so every sign-in, change and session resolution is refused
+with the alarm `anchor_unavailable` until the configuration is fixed (E-3171).
+
+Each call hands the anchor a frozen copy — `{ userId }`, or `{ userId, version,
+digest }` — so one plugin's anchor cannot change what another's is told
+(E-3172). The `context` is the same frozen context the plugin's hooks are given.
+
+```ts
+class AppendOnlyAnchor implements SecurityStateAnchor {
+  constructor(private readonly store: AnchorStore) {}   // outside the velve schema's reach
+
+  async recordSeal(event: SecurityStateSealedEvent): Promise<void> {
+    const held = await this.store.digestAt(event.userId, event.version)
+    if (held !== null && held !== event.digest) raiseOwnAlarm(event)
+    await this.store.append(event)
+  }
+
+  minimumVersion({ userId }: { readonly userId: string }): Promise<SecurityStateFloor | null> {
+    return this.store.highest(userId)                  // { version, digest } or null
+  }
+}
+
+createVelveAuth({ …, plugins: [{ id: "anchor", securityStateAnchor: new AppendOnlyAnchor(store) }] })
+```
+
+### `securityStateAnchors`
+
+Internal. A field of the plugin runtime `createPluginRuntime` returns: one
+`SecurityStateAnchorPort` ([The anchor port](#the-anchor-port)) per plugin that
+contributes an anchor, in the dependency order every hook point runs in, each
+with that plugin's context bound. A plugin without an anchor contributes no port,
+and an instance without one has an empty list. It is built by
+`securityStateAnchorPortsOf(registered)` in `src/core/plugin/anchor-ports.ts` from
+the plugins as the start read them, `asOneReadingOfTheAnchor(anchor)` being that
+reading. Each port turns a synchronous throw of its member into a rejection.
 
 ## Using it with an AI coding agent
 
