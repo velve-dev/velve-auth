@@ -1707,15 +1707,15 @@ code itself.
 
 | Visible code | Internal reasons |
 |---|---|
-| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled_on_sign_in` |
+| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled_on_sign_in`, `session_issue_missed_on_password_sign_in` |
 | `session_required` | `cookie_absent`, `session_not_found`, `session_idle_expired`, `session_absolute_expired` |
-| `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled_on_token_redemption` |
+| `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled_on_token_redemption`, `session_issue_missed_on_token_redemption` |
 | `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed` |
 | `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated` |
-| `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent` |
-| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow` |
+| `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent`, `session_issue_missed_on_second_factor` |
+| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow`, `session_issue_missed_on_oauth_flow` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
-| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion` |
+| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion`, `session_issue_missed_on_passkey_sign_in` |
 
 An exception that is neither a `VelveError` nor a `ConcealedError` becomes
 `internal_error` with no detail in the body. The log line for it carries
@@ -3507,7 +3507,8 @@ library that do.
 | Method | Does |
 |---|---|
 | `replaceOneTimeToken({ tokenSha256, purpose, userId, payload, tokenMac, tokenMacKeyVersion })` | locks the owner's row, then deletes the user's earlier tokens of that purpose and inserts the new row with its token MAC in one statement, returning `{ expiresAt }` |
-| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload, token_mac, token_mac_key_version`; a `OneTimeTokenCandidate` whose MAC the caller checks before using it, or `null` |
+| `consumeOneTimeToken({ tokenSha256, purpose })` | `DELETE … WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now() RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version`; a `OneTimeTokenCandidate` whose MAC the caller checks before using it, or `null`. The payload is read as the text of its `jsonb` and parsed once, so every driver hands it back alike |
+| `withdrawTokensOf({ actor, purpose })` | `DELETE … WHERE user_id = $1 AND purpose = $2`; the confirmation of an address change calls it once per purpose, before the account lock, to withdraw every link still mailed to the old address |
 
 `replaceOneTimeToken` runs in a transaction and serialises the requests about one
 subject with `pg_advisory_xact_lock` before it writes, **not** with a row lock: the
@@ -3992,9 +3993,17 @@ read.
 | Method | What it does |
 |---|---|
 | `issue({ userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
-| `issueReplacingPresented({ presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
+| `issueReplacingPresented({ completes, presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
 | `reissue({ previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
 | `reissueAfterCredentialChange({ resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+
+`completes`, which `issueReplacingPresented` and `reissueSessionOfUser` take, names
+what the issue completes — `password_sign_in`, `passkey_sign_in`,
+`second_factor`, `magic_link`, `oauth_sign_in`, `password_reset` or
+`oauth_link` (`SessionIssuePath`) — and decides how an issue that writes no row
+is answered ([The session epoch](#the-session-epoch)). `issue`, `reissue` and
+`reissueAfterCredentialChange` complete a change behind a resolved session, or a
+sign-up, and answer such an issue as no session.
 
 `sessionRowsOn(service, driver)`, internal in `src/core/session/rows.ts` and not
 part of the shipped `SessionService`, returns the session rows a flow announces or
@@ -5703,7 +5712,8 @@ device that started a link cancels the link**, rather than the callback quietly
 signing that device back in.
 
 The session service call behind this is
-`reissueSessionOfUser({ actor, previousSessionId, factors, observed })`. It is
+`reissueSessionOfUser({ completes, actor, previousSessionId, factors, observed })`,
+with `completes: "oauth_link"`. It is
 the third re-issue shape beside `reissue`, which finds the previous row by its
 token, and `reissueAfterCredentialChange`, which replaces every row the account
 has; this one names the row by id, touches no other, and refuses when the named
@@ -8884,22 +8894,35 @@ presented token. The MAC is taken over a length-prefixed encoding of:
 | purpose | `session` | `pending_authentication` | the row's `purpose` |
 | owner | `user_id` | `user_id` | `user_id`, or absent |
 | token | `token_sha256` | `token_sha256` | `token_sha256` |
-| content | `factors`, in stored order, the account's `session_epoch` at issue, and `created_at` in whole microseconds since the Unix epoch | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
+| content | the row's `id`, `factors` in stored order, the account's `session_epoch` at issue, and `created_at` in whole microseconds since the Unix epoch | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
 
 Each field is a type byte, a four-byte length in network order and its bytes,
 and an absent value has its own type byte, so two different rows never encode
 alike. The owner is encoded in the lower-case, hyphenated spelling PostgreSQL
 hands a `uuid` back in, whatever spelling the caller passed. The canonical JSON of a payload sorts every object's keys and is taken
 after a JSON round trip, which is the form `jsonb` hands back. A payload is read
-the same whether the driver hands `jsonb` back decoded or as text; a stored
-payload that is not an object, an array or SQL `NULL` — a `jsonb` string, number
-or boolean, which no issue writes — has no binding, and its row is refused and
-reported like any row whose MAC does not match.
+as `payload::text`, which every driver hands back as text, and parsed exactly
+once, so one stored row gets one verdict whatever the driver does with `jsonb`; a
+stored payload that is not an object, an array or SQL `NULL` — a `jsonb` string,
+number or boolean, which no issue writes, a string holding JSON text among them —
+has no binding, and its row is refused and reported like any row whose MAC does
+not match. A session's id is drawn before the insert, so the MAC can bind it: a
+writer who renames a session row to the id `set_by_session_id` or
+`link_from_session_id` names leaves a row that is refused. The factor lists are
+bound in the order the row stores them, not sorted as the seal sorts its lists.
+
+A column the MAC does not bind can still hold a value the library never writes —
+a deadline or `last_used_at` moved to `infinity`. A row whose `created_at` is no
+exact count of microseconds, or whose unbound columns no date of the runtime can
+carry, is refused and reported like a row whose MAC does not match; no reader
+throws on it. The owner's list, every revocation, a password change and the
+maintenance pass go on over the genuine rows and still delete such a row where
+they delete.
 
 A writer who inserts a row for a token of their own, moves a real row to another
 account, into another table or to another purpose, raises its factors, rewrites
-a payload or resets a pending attempt counter leaves a row whose MAC does not
-match.
+a payload, renames a session or resets a pending attempt counter leaves a row
+whose MAC does not match.
 
 A WebAuthn challenge is bound the same way, with `challenge_sha256` in the token
 field: purpose `webauthn_challenge`, the owner or the absent field for a
@@ -8918,7 +8941,12 @@ that address. The redemption reads the account and compares: if `user.email` is
 no longer the bound address, the state is broken — a writer set the address to
 their own only for the request and restored it — and the redemption is answered
 as a missing token (`invalid_token`) and reported with `reason: "seal_mismatch"`
-and the occasion `token_redemption`. Until the seal branch reads the sealed
+and the occasion `token_redemption`. A legitimate change of address does not
+leave the older links to raise it: the confirmation of the change consumes its
+own token first and then, in the same transaction and still before the account
+lock, withdraws every other one-time token of the account, so `velve.one_time_token`
+stays ahead of `velve.user`. A mismatch at redemption can then only come from a
+write outside the library. Until the seal branch reads the sealed
 address in the statement that reads the seal, the comparison is against the
 stored `user.email` (`refuseUnlessTheAddressIsStillTheAccounts` in
 `src/core/flows/artefact.ts`, called by every redemption through
@@ -8955,9 +8983,24 @@ while the account is still at the epoch. For an account with a seal row the inse
 for one read without a seal row, only in `"migrating"` and only at epoch 1, it is
 `… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. The lock
 does not hold off a writer who changes `velve.security_state` directly, so an
-insert that writes nothing is a broken state: the issue is answered as no session
-(`session_required`), the refusal report receives `reason: "seal_mismatch"` with
-the occasion `sign_in`, and nothing is retried.
+insert that writes nothing is a broken state: the refusal report receives
+`reason: "seal_mismatch"`, and nothing is retried. The answer is the ordinary
+failure of the path the issue completes, decided in `src/core/http/error-map.ts`
+by a concealed reason of its own:
+
+| `completes` | Occasion | Answered as |
+|---|---|---|
+| `password_sign_in` | `sign_in` | `invalid_credentials` |
+| `passkey_sign_in` | `sign_in` | `webauthn_credential_rejected` |
+| `second_factor` | `sign_in` | `invalid_pending_authentication` |
+| `magic_link` | `sign_in` | `invalid_token` |
+| `oauth_sign_in` | `sign_in` | `oauth_flow_invalid` |
+| `password_reset` | `change` | `invalid_token` |
+| `oauth_link` | `change` | `oauth_flow_invalid` |
+| none: `issue`, `reissue`, `reissueAfterCredentialChange` | `change` | `session_required` |
+
+An issue for an account that has no epoch is answered the same way, without a
+report.
 Because the issue now takes the account row, a flow that mints a one-time token
 and issues a session in one transaction mints first: sign-up writes its
 verification token before it issues the session, so `velve.one_time_token` still
@@ -8968,7 +9011,7 @@ Whether an account without a seal row has an epoch is the sealing mode's to say:
 the session service takes `sealing`, `"required"` or `"migrating"`. In
 `"migrating"` such an account is at epoch 1. In `"required"`, and in a session
 repository built without a mode, it has none: issuing a session for it answers as
-no session (`session_required`), and its existing sessions resolve to nothing. The
+the table above says, and its existing sessions resolve to nothing. The
 instance passes `"migrating"` until the `securityState.sealing` configuration
 exists, because nothing writes a seal row before the seal branch does. A
 resolve checks the MAC over the account's current epoch, so a session issued under
@@ -9002,7 +9045,12 @@ keeps and the account's epoch under it, checks that row and rebinds it under the
 current key by a compare-and-set on the MAC it read, before the others go. A kept
 row that fails its check, or that a writer changed between the read and the
 rebinding, goes with the others: the caller is signed out too, and the refusal
-report receives `occasion: "change"` for the missed rebinding. The seal branch
+report receives `occasion: "change"`. A compare-and-set that misses reads the row
+once more: the same session over the same token hash under a newer key version,
+whose MAC verifies, was rebound by a resolution in the meantime, which takes no
+account lock, and the swap is repeated against its MAC without a report; a row
+that is gone means no session is kept, without a report; any other row is treated
+as a MAC that does not match. The seal branch
 draws the new epoch in the same transaction, and the rebinding is where the kept
 session moves to the epoch the revocation leaves.
 
@@ -9021,7 +9069,8 @@ returns and announces only the rows that do: `revokedOtherSessionsCount` of a
 password change or reset, `revokedCount` of `session.revokeAll`, the count of a
 first address confirmation, the ids told to `beforeSessionRevoke`, and the
 plugin context's `revokeSession`, which removes a forged row without announcing
-it. Each refused row is reported with the occasion `session_resolve`.
+it. Each refused row is reported with the occasion `change`, and a row the owner's
+list leaves out with `session_list`.
 
 A one-time token row that names no account — the cover artefact an unknown
 address is answered with — is checked as well, with the owner field absent, and is
@@ -9049,7 +9098,7 @@ the rollback of the transaction that would have issued the session.
 | Field | Value |
 |---|---|
 | `userId` | the account the refused row names, or `null` for a row that names none, such as a forged cover artefact of an unknown address |
-| `occasion` | `sign_in` for a session insert that wrote nothing, `session_resolve`, `factor_check`, `token_redemption`, `change` for a kept session whose rebinding missed, or `maintenance` for the rebinding pass |
+| `occasion` | `sign_in` or `change` for a session insert that wrote nothing, after what it completes; `session_resolve` for a resolution; `session_list` for the owner's list and a plugin's `listSessionsOfUser`; `factor_check`; `token_redemption`; `change` for every check made for a revocation — the kept session, the rows a mass revocation removes and announces, a plugin's `revokeSession`; or `maintenance` for the rebinding pass |
 | `reason` | `token_binding_mismatch` for a row whose MAC does not match, or `seal_mismatch` for a state around a genuine row that is not what the library left |
 | `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |
 
@@ -9062,13 +9111,14 @@ the security-state alarm of section 3.18 is what it is there for.
 | Type | Shape | Where it appears |
 |---|---|---|
 | `TokenBindingRefusal` | `{ userId: string \| null; occasion; reason: "token_binding_mismatch" \| "seal_mismatch"; verdict: "mismatch" \| "key_version_unknown" \| "key_unusable" }` | what `reportTokenBindingRefusal` receives |
-| `TokenBindingOccasion` | `"sign_in" \| "session_resolve" \| "factor_check" \| "token_redemption" \| "change" \| "maintenance"` | the `occasion` of a refusal |
+| `TokenBindingOccasion` | `"sign_in" \| "session_resolve" \| "session_list" \| "factor_check" \| "token_redemption" \| "change" \| "maintenance"` | the `occasion` of a refusal |
+| `SessionIssuePath` | `"password_sign_in" \| "passkey_sign_in" \| "second_factor" \| "magic_link" \| "oauth_sign_in" \| "password_reset" \| "oauth_link"` | the `completes` of `issueReplacingPresented` and `reissueSessionOfUser` |
 | `TokenBindingRefusalReport` | `(refusal: TokenBindingRefusal) => void` | the option every factory above takes |
 | `SecurityStateSealing` | `"required" \| "migrating"` | the `sealing` of the session service, the session repository, the second-factor completion and the maintenance pass |
 
 Internal, in `src/core/token/binding.ts` and not in the shipped declarations:
 `TokenBinding` (`{ purpose, ownerId, tokenSha256, content }`), `TokenRowContent`
-(a session's factors, epoch and `createdAtMicros`, a pending row's factors and
+(a session's `sessionId`, factors, epoch and `createdAtMicros`, a pending row's factors and
 `attempts`, a one-time token's `payload`, or a challenge's `ceremony`),
 `StoredTokenMac` (`{ tokenMac, tokenMacKeyVersion }`), `StoredPayload` and
 `TokenBindingVerdict`. `SessionRows` lives in `src/core/session/rows.ts` and
@@ -9095,7 +9145,11 @@ out. The step it calls is internal:
 
 ```ts
 rebindTokenRowsUnderCurrentKey({ driver, schema, keys, sealing, table, batchSize, reportTokenBindingRefusal? })
-  : Promise<{ rebound: number; refused: number; rowsByKeyVersion: Record<number, number> }>
+  : Promise<{
+      rebound: number;
+      refused: number;
+      rowsByKeyVersion: Record<number, { tokens: number; traces: number }>;
+    }>
 ```
 
 in `src/core/token/rebind.ts`, for `table` one of `session`, `one_time_token`,
@@ -9110,9 +9164,16 @@ the MAC and key version it read, and a pending row also on the `attempts` it rea
 changed in between is left for the next pass. A row that fails is not rebound and
 not deleted: it keeps its version, stays unusable, is counted as `refused` and is
 reported with the occasion `maintenance`. It takes no account lock: each row is its
-own compare-and-set. `rowsByKeyVersion` counts the rows each version still holds
-in the table after the pass; remove a version from the ring only after a final
-pass over all four tables reports no row under it, refused rows included.
+own compare-and-set. A session and the account's epoch it is checked against are
+read in the one statement that selects the batch, so a mass revocation between
+the read and the rebinding leaves the row to its missed compare-and-set and raises
+nothing. `rowsByKeyVersion` gives, for each version, the rows the table still
+holds under it after the pass: `traces` are the rows this pass refused, matched by
+token hash and the MAC it refused, and `tokens` all the others, a refused row a
+writer rewrote since among them. Remove a version from the ring only after a
+final pass over all four tables reports no `tokens` under it. Traces do not hold
+it there: once the version is gone they are refused as `key_version_unknown`, and
+the administrator deletes them by SQL after handling their alarm.
 
 ### The attempt budget
 
@@ -9126,10 +9187,14 @@ once more:
 | The row read again | Answer | Report |
 |---|---|---|
 | gone, consumed or expired | no pending authentication (`invalid_pending_authentication`) | none |
-| verifies, with more attempts than the booking saw, or the same count rebound under a newer key version | a concurrent attempt: the booking retries over it | none |
+| verifies, with more attempts than the booking saw, or the same count rebound under a newer key version | a concurrent attempt or a rebinding: the booking retries over it, and checks the budget again on the row it retries over | none |
 | verifies, with `attempts` at the budget | `too_many_factor_attempts` | none |
 | fails its MAC, or verifies with fewer attempts or the same count under no newer version | no pending authentication | `token_binding_mismatch` |
-| still verifies as progress after six tries, one more than the budget allows bookings | no pending authentication | `token_binding_mismatch` |
+
+The booking keeps no retry count of its own: it retries only over a row that
+verifies and advanced, in attempts, which cannot pass the budget, or at the same
+count under a newer key version, which cannot pass the newest in the ring, so it
+ends.
 
 A correct factor is evaluated after its booking, and the sign-in it completes
 removes the row; a wrong one has already been counted, and the attempt that
