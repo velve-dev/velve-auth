@@ -9012,18 +9012,29 @@ hold here as stated:
 
 A session's MAC also binds the account's `session_epoch` from `velve.security_state`.
 Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
-waits for a mass revocation that holds the account and then reads the epoch that
-revocation leaves, together with the transaction's `now()`; it takes the MAC over
-that epoch and that time, writes the time as `created_at`, and inserts the row only
-while the account is still at the epoch. For an account with a seal row the insert is
-`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $10`;
-for one read without a seal row, only in `"migrating"` and only at epoch 1, it is
-`… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. The lock
-does not hold off a writer who changes `velve.security_state` directly, so an
-insert that writes nothing is a broken state: the refusal report receives
-`reason: "seal_mismatch"`, and nothing is retried. The answer is the ordinary
-failure of the path the issue completes, decided in `src/core/http/error-map.ts`
-by a concealed reason of its own:
+waits for a mass revocation that holds the account. It inserts only while the seal
+row still holds the `version` and `session_epoch` the check that authorised the
+session read: the caller names them in `authorisedBy` (`IssueAuthorisation`,
+`{ version?, sessionEpoch? }` or `"unsealed"` where the check read no seal row),
+and a member it leaves out is read under the lock, together with the
+transaction's `now()`. A second-factor completion names the epoch the consumed
+pending row stores. The MAC is taken over that epoch and that time, the time is
+written as `created_at`, and for an account with a seal row the insert is
+`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $11 AND version = $12`;
+for one without a seal row, only in `"migrating"`, only at epoch 1 and only where
+the check read none either, it is
+`… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. A sign-in
+whose check came before a password change or any other reseal, with the KDF
+running in between outside any transaction, therefore inserts nothing. An insert
+that writes nothing is told apart under the lock by `sealVerifiesAfterMissedIssue`,
+an optional member of the session service's options and of
+`createSecondFactorCompletion`'s, which the seal branch supplies: a seal that
+verifies there was a legitimate change that won the race, and nothing is
+reported; otherwise the state is broken and the refusal report receives
+`reason: "seal_mismatch"`. Nothing is retried either way, and without the member
+every miss is reported. The answer is the ordinary failure of the path the issue
+completes, decided in `src/core/http/error-map.ts` by a concealed reason of its
+own:
 
 | `completes` | Occasion | Answered as |
 |---|---|---|

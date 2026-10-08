@@ -17298,3 +17298,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Binding the epoch into the MAC without storing it, which E-3377 rejected because a stale row would then be indistinguishable from a forged one.
 **Reason.** A mass revocation ends what the state it replaced authorised, and a pending row was authorised by that state.
 **Price.** One more column, one more read at `begin` where the caller names no epoch, and a pending row created just before a revocation has to be begun again.
+
+<a id="e-3485"></a>
+
+### A session issue is bound to the version and epoch its authorising check read, with a seam for the seal's verdict on a miss
+`E-3485` · security-state-tokens · S-INTEG-9, S-FIX-6, settled
+
+**Context.** E-3377 has every session issue insert only while the seal row's `version` and `session_epoch` are those the authorising check read. This branch's issue read the epoch under the lock and conditioned on it alone, so a sign-in checked before a password change inserted under the new epoch. Every issuing method now takes an optional `authorisedBy`. It holds the version and epoch the check read, or `"unsealed"` where the check read no seal row. A member left out is read under the account lock, and the insert's condition is `… AND session_epoch = $11 AND version = $12`. For an unsealed account it inserts only in `"migrating"`, only at epoch 1 and only where the check also read none. The second-factor completion passes the epoch the consumed pending row stores (E-3484). The checks that read the seal and its version are the seal branch's, so until it passes `authorisedBy` the version and epoch read under the lock stand in, which is the old behaviour with the version added. The verdict on a miss is the seal branch's too. The session service and the completion take an optional `sealVerifiesAfterMissedIssue(tx, userId)`: true answers the path's ordinary failure without an alarm, as a legitimate change that won the race, and without it every miss raises `seal_mismatch`, as before. `test/integ-session-issue-authorisation.test.ts` holds six cases, and dropping the version predicate fails two of them. A key-ring test that wrote a pending row by hand was given the new column here. The pending-epoch commit should have done that and broke it.
+**Rejected.** Reading the seal and verifying it on a miss in this branch, which would duplicate the seal branch's canonical read without its components.
+**Reason.** The token branch owns the conditional insert, and the seal branch owns what a seal verifies to.
+**Price.** `authorisedBy` on five shipped methods and a new option on two factories. Until the seal branch wires both, a sign-in that loses to a legitimate reseal raises a false `seal_mismatch`.

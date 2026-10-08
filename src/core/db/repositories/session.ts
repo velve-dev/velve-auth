@@ -60,9 +60,21 @@ export interface MissedIssue {
 	readonly reason: ConcealedReason;
 }
 
+/**
+ * the seal row the check that authorised an issue read, or `"unsealed"` where it read none;
+ * a member left out is read under the account lock instead
+ */
+export type IssueAuthorisation =
+	| { readonly version?: number; readonly sessionEpoch?: number }
+	| "unsealed";
+
+/** tells whether the seal verifies under the account lock after an issue wrote no row */
+export type SealVerification = (tx: Driver, userId: string) => Promise<boolean>;
+
 export interface SessionInsert {
 	readonly userId: string;
 	readonly missed: MissedIssue;
+	readonly authorisedBy?: IssueAuthorisation;
 	readonly tokenHash: Uint8Array;
 	readonly factors: readonly AuthenticationFactor[];
 	readonly ipAddress: string | null;
@@ -101,9 +113,17 @@ export interface SessionOwner {
 	readonly libraryRow: boolean;
 }
 
-interface IssuingState extends SessionIssue {
-	readonly sealed: boolean;
+interface LockedState {
+	readonly version: number | null;
+	readonly sessionEpoch: number | null;
+	readonly createdAtMicros: number;
 }
+
+//an issue inserts while the seal row still holds what its check read, or while there is none (E-3485)
+type IssueCondition =
+	| { readonly sealed: true; readonly version: number; readonly sessionEpoch: number }
+	| { readonly sealed: false }
+	| { readonly unwritable: true };
 
 export interface RemovedSession {
 	readonly id: string;
@@ -118,6 +138,8 @@ interface SessionRepositoryOptions {
 	//a caller that names no mode gets the one that refuses an account without a seal row (S-INTEG-4)
 	readonly sealing?: SecurityStateSealing;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
+	//a missed issue under a seal that verifies was a legitimate change and raises no alarm (E-3485)
+	readonly sealVerifiesAfterMissedIssue?: SealVerification;
 }
 
 export interface SessionRepository {
@@ -308,7 +330,7 @@ export function microsOf(timestamp: string): string {
 function sealedInsertStatement(table: string, states: string): string {
 	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
 	SELECT ${INSERTED_VALUES}
-	FROM ${states} WHERE user_id = $1 AND session_epoch = $11::bigint
+	FROM ${states} WHERE user_id = $1 AND session_epoch = $11::bigint AND version = $12::bigint
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
@@ -378,6 +400,7 @@ function deleteLiveOwnedStatement(table: string, users: string): string {
 
 function issuingStateStatement(states: string): string {
 	return `SELECT (SELECT session_epoch::text FROM ${states} WHERE user_id = $1) AS session_epoch,
+		(SELECT version::text FROM ${states} WHERE user_id = $1) AS version,
 		${microsOf("now()")} AS created_at_us`;
 }
 
@@ -389,11 +412,26 @@ function microsFrom(value: string | null): number | null {
 
 //an epoch must be an exact integer before a mac binds it (S-INTEG-9)
 function epochFrom(value: string): number {
-	const epoch = Number(value);
-	if (!Number.isSafeInteger(epoch) || epoch < FIRST_SESSION_EPOCH) {
-		throw new TypeError("velve.security_state.session_epoch holds no epoch this library writes");
+	return storedCountFrom(
+		value,
+		"velve.security_state.session_epoch holds no epoch this library writes",
+	);
+}
+
+//a version is compared as the exact integer the seal row stores (E-3485)
+function versionFrom(value: string): number {
+	return storedCountFrom(
+		value,
+		"velve.security_state.version holds no version this library writes",
+	);
+}
+
+function storedCountFrom(value: string, refusal: string): number {
+	const count = Number(value);
+	if (!Number.isSafeInteger(count) || count < 1) {
+		throw new TypeError(refusal);
 	}
-	return epoch;
+	return count;
 }
 
 //only a newer key version over the same token can be a rebinding and the loop ends at the newest in the ring
@@ -592,9 +630,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return sessions;
 	}
 
-	async function issuingStateOf(driver: Driver, userId: string): Promise<IssuingState | null> {
+	async function lockedStateOf(driver: Driver, userId: string): Promise<LockedState> {
 		const [row] = await driver.query<{
 			session_epoch: string | null;
+			version: string | null;
 			created_at_us: string | null;
 		}>(issuingStateSql, [userId]);
 		if (row === undefined) {
@@ -604,41 +643,62 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		if (createdAtMicros === null) {
 			throw new TypeError("the database clock lies outside what this library binds");
 		}
-		if (row.session_epoch !== null) {
-			return {
-				sessionId: randomUuid(),
-				sessionEpoch: epochFrom(row.session_epoch),
-				createdAtMicros,
-				sealed: true,
-			};
+		return {
+			version: row.version === null ? null : versionFrom(row.version),
+			sessionEpoch: row.session_epoch === null ? null : epochFrom(row.session_epoch),
+			createdAtMicros,
+		};
+	}
+
+	function conditionOf(
+		locked: LockedState,
+		authorisedBy: IssueAuthorisation | undefined,
+	): IssueCondition {
+		const unsealed =
+			authorisedBy === "unsealed" || (authorisedBy === undefined && locked.version === null);
+		if (unsealed) {
+			return sealing === "migrating" ? { sealed: false } : { unwritable: true };
 		}
-		return sealing === "migrating"
-			? {
-					sessionId: randomUuid(),
-					sessionEpoch: FIRST_SESSION_EPOCH,
-					createdAtMicros,
-					sealed: false,
-				}
-			: null;
+		const version = authorisedBy?.version ?? locked.version;
+		const sessionEpoch = authorisedBy?.sessionEpoch ?? locked.sessionEpoch;
+		if (version !== null && sessionEpoch !== null) {
+			return { sealed: true, version, sessionEpoch };
+		}
+		//a check of an unsealed account in migrating names only epoch 1 and still finds no seal row
+		return sealing === "migrating" &&
+			sessionEpoch === FIRST_SESSION_EPOCH &&
+			locked.version === null
+			? { sealed: false }
+			: { unwritable: true };
 	}
 
 	async function insertUnderCurrentEpoch(
 		driver: Driver,
 		insert: SessionInsert,
 	): Promise<SessionRowShape | undefined> {
-		const issuing = await issuingStateOf(driver, insert.userId);
-		if (issuing === null) {
+		const locked = await lockedStateOf(driver, insert.userId);
+		const condition = conditionOf(locked, insert.authorisedBy);
+		if ("unwritable" in condition) {
 			throw new ConcealedError(insert.missed.reason);
 		}
-		const mac = await insert.bindUnder(issuing);
+		const issue = {
+			sessionId: randomUuid(),
+			sessionEpoch: condition.sealed ? condition.sessionEpoch : FIRST_SESSION_EPOCH,
+			createdAtMicros: locked.createdAtMicros,
+		};
+		const mac = await insert.bindUnder(issue);
 		const parameters = [
 			...insertParameters(insert),
 			mac.tokenMac,
 			mac.tokenMacKeyVersion,
-			issuing.sessionId,
+			issue.sessionId,
 		];
-		const [row] = issuing.sealed
-			? await driver.query<SessionRowShape>(sealedInsertSql, [...parameters, issuing.sessionEpoch])
+		const [row] = condition.sealed
+			? await driver.query<SessionRowShape>(sealedInsertSql, [
+					...parameters,
+					condition.sessionEpoch,
+					condition.version,
+				])
 			: await driver.query<SessionRowShape>(unsealedInsertSql, parameters);
 		return row;
 	}
@@ -659,6 +719,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	async function insertUnderAccountLock(tx: Driver, insert: SessionInsert): Promise<Session> {
 		const row = await insertUnderCurrentEpoch(tx, insert);
 		if (row === undefined) {
+			//the seal branch tells a legitimate change that won the race from a writer (E-3485)
+			if (await options.sealVerifiesAfterMissedIssue?.(tx, insert.userId)) {
+				throw new ConcealedError(insert.missed.reason);
+			}
 			reportBrokenState(options.reportTokenBindingRefusal, {
 				userId: insert.userId,
 				occasion: insert.missed.occasion,

@@ -2,8 +2,10 @@ import { type Actor, actorOfResolvedSession, type ResolvedSession } from "../db/
 import type { Driver } from "../db/driver.js";
 import {
 	createSessionRepository,
+	type IssueAuthorisation,
 	type MissedIssue,
 	PreviousSessionMissingError,
+	type SealVerification,
 	type SecurityStateSealing,
 	type SessionInsert,
 	type SessionRepository,
@@ -95,6 +97,8 @@ export interface SessionServiceOptions {
 	readonly sealing: SecurityStateSealing;
 	readonly schema?: string;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
+	/** verifies the seal under the account lock after an issue wrote no row, so a legitimate change that won the race raises no alarm */
+	readonly sealVerifiesAfterMissedIssue?: SealVerification;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
 }
@@ -106,6 +110,8 @@ export interface SessionService {
 	/** a sign-up unless `completes` names the change it completes */
 	issue(input: {
 		readonly completes?: SessionIssuePath;
+		/** what the check that authorised the issue read of the seal row */
+		readonly authorisedBy?: IssueAuthorisation;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
@@ -113,6 +119,8 @@ export interface SessionService {
 	/** issues a session and removes the one the browser presented, whoever owns it, in one transaction */
 	issueReplacingPresented(input: {
 		readonly completes: SessionIssuePath;
+		/** what the check that authorised the issue read of the seal row */
+		readonly authorisedBy?: IssueAuthorisation;
 		readonly presentedToken: string | null;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -120,6 +128,8 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	reissue(input: {
 		readonly completes: SessionIssuePath;
+		/** what the check that authorised the issue read of the seal row */
+		readonly authorisedBy?: IssueAuthorisation;
 		readonly previousToken: string;
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -127,6 +137,8 @@ export interface SessionService {
 	}): Promise<IssuedSession>;
 	reissueAfterCredentialChange(input: {
 		readonly completes: SessionIssuePath;
+		/** what the check that authorised the issue read of the seal row */
+		readonly authorisedBy?: IssueAuthorisation;
 		readonly resolved: SessionResolution;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
@@ -134,6 +146,8 @@ export interface SessionService {
 	/** replaces the one named session and leaves every other session of the account alone */
 	reissueSessionOfUser(input: {
 		readonly completes: SessionIssuePath;
+		/** what the check that authorised the issue read of the seal row */
+		readonly authorisedBy?: IssueAuthorisation;
 		readonly actor: Actor;
 		readonly previousSessionId: string;
 		readonly factors: readonly AuthenticationFactor[];
@@ -191,6 +205,9 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			...(options.reportTokenBindingRefusal === undefined
 				? {}
 				: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
+			...(options.sealVerifiesAfterMissedIssue === undefined
+				? {}
+				: { sealVerifiesAfterMissedIssue: options.sealVerifiesAfterMissedIssue }),
 		});
 	}
 
@@ -205,11 +222,13 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		observed: ObservedRequest,
 		tokenHash: Uint8Array,
 		missed: MissedIssue,
+		authorisedBy: IssueAuthorisation | undefined,
 	): SessionInsert {
 		const storedFactors = factors.filter((factor, index) => factors.indexOf(factor) === index);
 		return {
 			userId,
 			missed,
+			...(authorisedBy === undefined ? {} : { authorisedBy }),
 			tokenHash,
 			factors: storedFactors,
 			...metadataOf(observed),
@@ -306,16 +325,30 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 		boundTo: (driver) => createSessionService({ ...options, driver }),
 
-		async issue({ completes = "sign_up", userId, factors, observed }) {
+		async issue({ completes = "sign_up", authorisedBy, userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.insertSession(
-				insertFor(userId, factors, observed, issued.tokenHash, MISSED_ISSUE_BY_PATH[completes]),
+				insertFor(
+					userId,
+					factors,
+					observed,
+					issued.tokenHash,
+					MISSED_ISSUE_BY_PATH[completes],
+					authorisedBy,
+				),
 			);
 			return { token: issued.token, session };
 		},
 
 		//a sign-in must leave no row for the token the browser presented (S-FIX-3)
-		async issueReplacingPresented({ completes, presentedToken, userId, factors, observed }) {
+		async issueReplacingPresented({
+			completes,
+			authorisedBy,
+			presentedToken,
+			userId,
+			factors,
+			observed,
+		}) {
 			const issued = createSessionToken();
 			const session = await sessions.replacePresentedSession({
 				presentedTokenHash: presentedToken === null ? null : sessionTokenHash(presentedToken),
@@ -325,13 +358,14 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 					observed,
 					issued.tokenHash,
 					MISSED_ISSUE_BY_PATH[completes],
+					authorisedBy,
 				),
 			});
 			return { token: issued.token, session };
 		},
 
 		//every change of the trust level must end the old session and begin a new one (S-FIX-1)
-		async reissue({ completes, previousToken, userId, factors, observed }) {
+		async reissue({ completes, authorisedBy, previousToken, userId, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions
 				.replaceSession({
@@ -342,6 +376,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 						observed,
 						issued.tokenHash,
 						MISSED_ISSUE_BY_PATH[completes],
+						authorisedBy,
 					),
 				})
 				.catch(replacedSessionFailure);
@@ -349,7 +384,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		},
 
 		//a credential change must end every other session and nothing turns that off (S-FIX-6)
-		async reissueAfterCredentialChange({ completes, resolved, factors, observed }) {
+		async reissueAfterCredentialChange({ completes, authorisedBy, resolved, factors, observed }) {
 			const issued = createSessionToken();
 			const session = await sessions.replaceEverySessionOfUser({
 				actor: actorOfResolvedSession(resolved),
@@ -359,12 +394,20 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 					observed,
 					issued.tokenHash,
 					MISSED_ISSUE_BY_PATH[completes],
+					authorisedBy,
 				),
 			});
 			return { token: issued.token, session };
 		},
 
-		async reissueSessionOfUser({ completes, actor, previousSessionId, factors, observed }) {
+		async reissueSessionOfUser({
+			completes,
+			authorisedBy,
+			actor,
+			previousSessionId,
+			factors,
+			observed,
+		}) {
 			const issued = createSessionToken();
 			const session = await sessions.replaceSessionOwnedBy({
 				actor,
@@ -375,6 +418,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 					observed,
 					issued.tokenHash,
 					MISSED_ISSUE_BY_PATH[completes],
+					authorisedBy,
 				),
 			});
 			return { token: issued.token, session };

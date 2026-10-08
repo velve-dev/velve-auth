@@ -1,5 +1,5 @@
 import type { Driver } from "../../db/driver.js";
-import type { SecurityStateSealing } from "../../db/repositories/session.js";
+import type { SealVerification, SecurityStateSealing } from "../../db/repositories/session.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import type { SessionConfig } from "../../session/config.js";
 import type { SessionMetadataMode } from "../../session/metadata.js";
@@ -20,6 +20,7 @@ export interface SecondFactorCompletionOptions {
 	readonly sealing: SecurityStateSealing;
 	readonly schema?: string;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
+	readonly sealVerifiesAfterMissedIssue?: SealVerification;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
 	/** told the owner of the consumed pending row before the account lock is taken, and may refuse by throwing */
@@ -67,6 +68,9 @@ export function createSecondFactorCompletion(
 					sealing: options.sealing,
 					schema,
 					...report,
+					...(options.sealVerifiesAfterMissedIssue === undefined
+						? {}
+						: { sealVerifiesAfterMissedIssue: options.sealVerifiesAfterMissedIssue }),
 					...(options.session === undefined ? {} : { session: options.session }),
 					...(options.sessionMetadata === undefined
 						? {}
@@ -78,6 +82,8 @@ export function createSecondFactorCompletion(
 				await options.beforeLockingTheOwnerOf?.(consumed.userId);
 				return sessions.issueReplacingPresented({
 					completes: SECOND_FACTOR_PATH[factor],
+					//the factor check that authorises the session read the epoch the pending row stores (E-3485)
+					authorisedBy: { sessionEpoch: consumed.sessionEpoch },
 					presentedToken: presentedSessionToken,
 					userId: consumed.userId,
 					factors: [...consumed.factorsCompleted, factor],
