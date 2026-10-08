@@ -16738,3 +16738,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Amending the messages and editing the entries, which CLAUDE.md §4 and §6 forbid.
 **Reason.** A rule that history cannot be made to meet is met by saying where history breaks it.
 **Price.** A reader of `git log` meets the withdrawn wording before this entry, and has to know to look here.
+
+<a id="e-3387"></a>
+
+### Commits a7a78de and ff08a71 fail the test step on their own
+`E-3387` · security-state · history, tests, settled
+
+**Context.** Commit `a7a78de` added `schemaHoldsTheSealTable`, a start-up function that names `security_state`, without listing it among the start-up exceptions of `test/owner-actor-census.test.ts`, so the census reports it as a method that reaches an owned table without a proof. Commit `ff08a71` kept two spec guards whose regular expressions hold backticks, which the template-literal walker of `test/sql-collapse.test.ts` reads as opening a literal, so that test reports both files as unread. Neither was run against the whole suite before it was pushed; the full gate found both. The next commit lists the function as "maintenance or start-up", like the stored-version probe beside it, and writes the backticks in those regular expressions as `\x60`, which matches the same characters. History is not rewritten, so this entry names the commits, as E-3372 does for an earlier one.
+**Rejected.** Amending the commits, which CLAUDE.md §4 forbids.
+**Reason.** A bisect that lands on these commits should find the reason here.
+**Price.** The commits from `a7a78de` to the fix fail `pnpm test` at the owner census, and those from `ff08a71` at the literal walker as well.

@@ -20,7 +20,7 @@ function region(lines: string[], from: string, until: string): string[] {
 function numbersOutsideCode(line: string): string[] {
 	return (
 		line
-			.replace(/`[^`]*`/g, " ")
+			.replace(/\x60[^\x60]*\x60/g, " ")
 			.replace(/(\d)[ \u202f\u00a0](\d{3})(?!\d)/g, "$1$2")
 			.match(/\d[\d.,]*\d|\d/g) ?? []
 	)
@@ -29,8 +29,8 @@ function numbersOutsideCode(line: string): string[] {
 }
 
 function asciiCodeSpans(line: string): string[] {
-	return (line.match(/`[^`\n]+`/g) ?? [])
-		.filter((span) => /^`[\x20-\x7e]+`$/.test(span) && !/[<>]/.test(span))
+	return (line.match(/\x60[^\x60\n]+\x60/g) ?? [])
+		.filter((span) => /^\x60[\x20-\x7e]+\x60$/.test(span) && !/[<>]/.test(span))
 		.sort();
 }
 
