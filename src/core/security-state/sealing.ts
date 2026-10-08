@@ -194,6 +194,26 @@ RETURNING 1 AS updated`,
 	}
 }
 
+async function refuseABrokenRead(
+	read: SecurityStateRead,
+	context: SealingContext,
+	anchorReading: AnchorReading,
+): Promise<void> {
+	const { verdict } = await checkSecurityState(context.keys, read, context.sealing);
+	const broken = brokenVerdictOf(verdict);
+	if (broken !== null) {
+		throw new SealingRefusedError(broken);
+	}
+	const anchorVerdict = compareWithAnchors(read.seal, anchorReading);
+	if (
+		anchorVerdict === "version_below_anchor" ||
+		anchorVerdict === "anchor_mismatch" ||
+		anchorVerdict === "anchor_unavailable"
+	) {
+		throw new SealingRefusedError(anchorVerdict);
+	}
+}
+
 //a change must verify the state it read under the lock before it writes or seals (S-INTEG-3)
 export async function sealUnderAccountLock<T>(
 	tx: Driver,
@@ -208,19 +228,7 @@ export async function sealUnderAccountLock<T>(
 	if (verifiedRead === null) {
 		throw new SealingRefusedError("account_missing");
 	}
-	const { verdict } = await checkSecurityState(context.keys, verifiedRead, context.sealing);
-	const broken = brokenVerdictOf(verdict);
-	if (broken !== null) {
-		throw new SealingRefusedError(broken);
-	}
-	const anchorVerdict = compareWithAnchors(verifiedRead.seal, anchorReading);
-	if (
-		anchorVerdict === "version_below_anchor" ||
-		anchorVerdict === "anchor_mismatch" ||
-		anchorVerdict === "anchor_unavailable"
-	) {
-		throw new SealingRefusedError(anchorVerdict);
-	}
+	await refuseABrokenRead(verifiedRead, context, anchorReading);
 	const guarded = refusingSecondRead(tx, statement);
 	//a path without a proof of ownership changes an unsealed account and leaves its sealing to maintenance (E-3162)
 	if (verifiedRead.seal === null && context.leaveUnsealed === true) {
