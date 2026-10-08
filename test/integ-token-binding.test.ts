@@ -753,9 +753,9 @@ describe("the session lists of an account (S-INTEG-9)", () => {
 			own.session.id,
 		]);
 		expect(refusals.map((refusal) => refusal.occasion)).toStrictEqual([
-			"session_resolve",
-			"session_resolve",
-			"session_resolve",
+			"session_list",
+			"session_list",
+			"change",
 		]);
 	});
 });
@@ -1145,7 +1145,7 @@ describe("a forged session row and the revocations that remove it (S-INTEG-9)", 
 
 		expect(revoked).toBe(1);
 		expect(left?.n).toBe(0);
-		expectOneRefusal("session_resolve", userId);
+		expectOneRefusal("change", userId);
 	});
 
 	it("is not counted among the sessions a password change revoked", async () => {

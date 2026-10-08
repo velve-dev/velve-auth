@@ -9,6 +9,7 @@ import {
 	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBinding,
+	type TokenBindingOccasion,
 	type TokenBindingRefusalReport,
 } from "../../token/binding.js";
 import type { Actor } from "../actor.js";
@@ -515,7 +516,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const listOwnedSql = listOwnedStatement(table, states, sealing);
 	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
 
-	function libraryBindingOf(row: VerifiedRowShape): Promise<TokenBinding | null> {
+	function libraryBindingOf(
+		row: VerifiedRowShape,
+		occasion: TokenBindingOccasion,
+	): Promise<TokenBinding | null> {
 		return librarySessionBinding(
 			options.keys,
 			{
@@ -527,18 +531,28 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				tokenMac: row.token_mac,
 				tokenMacKeyVersion: row.token_mac_key_version,
 			},
-			options.reportTokenBindingRefusal,
+			{ report: options.reportTokenBindingRefusal, occasion },
 		);
 	}
 
-	async function libraryRowsAmong<T extends VerifiedRowShape>(rows: readonly T[]): Promise<T[]> {
-		const bindings = await Promise.all(rows.map(libraryBindingOf));
+	async function libraryRowsAmong<T extends VerifiedRowShape>(
+		rows: readonly T[],
+		occasion: TokenBindingOccasion,
+	): Promise<T[]> {
+		const bindings = await Promise.all(rows.map((row) => libraryBindingOf(row, occasion)));
 		return rows.filter((_, index) => bindings[index] !== null);
 	}
 
 	//a row the library did not write is not listed, announced or shown to a plugin (S-INTEG-9)
-	async function libraryRowsOf(userId: string, statement: string): Promise<SessionRowShape[]> {
-		return libraryRowsAmong(await options.driver.query<ListedRowShape>(statement, [userId]));
+	async function libraryRowsOf(
+		userId: string,
+		statement: string,
+		occasion: TokenBindingOccasion,
+	): Promise<SessionRowShape[]> {
+		return libraryRowsAmong(
+			await options.driver.query<ListedRowShape>(statement, [userId]),
+			occasion,
+		);
 	}
 
 	//a library row whose unbound columns no longer decode is reported and left out (S-INTEG-9)
@@ -548,12 +562,12 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		currentSessionId: string | null,
 	): Promise<Session[]> {
 		const sessions: Session[] = [];
-		for (const row of await libraryRowsOf(userId, statement)) {
+		for (const row of await libraryRowsOf(userId, statement, "session_list")) {
 			const session = decodedOrNull(() => toSession(row, row.id === currentSessionId));
 			if (session === null) {
 				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
 					userId: row.user_id,
-					occasion: "session_resolve",
+					occasion: "session_list",
 					verdict: "mismatch",
 				});
 			} else {
@@ -636,7 +650,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	}
 
 	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
-		const binding = await libraryBindingOf(kept);
+		const binding = await libraryBindingOf(kept, "change");
 		if (binding === null) {
 			return false;
 		}
@@ -661,7 +675,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	//a forged row goes with the others and is neither counted nor returned (S-INTEG-9)
 	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
 		const rows = await options.driver.query<VerifiedRowShape>(deleteEveryOwnedSql, [actor]);
-		return (await libraryRowsAmong(rows)).map((row) => row.id);
+		return (await libraryRowsAmong(rows, "change")).map((row) => row.id);
 	}
 
 	return {
@@ -687,7 +701,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		},
 
 		async listEverySessionIdOwnedBy({ actor }) {
-			return (await libraryRowsOf(actor, listEveryIdOwnedSql)).map((row) => row.id);
+			return (await libraryRowsOf(actor, listEveryIdOwnedSql, "change")).map((row) => row.id);
 		},
 
 		listSessionsOfUser: ({ userId }) => librarySessionsOf(userId, listOwnedSql, null),
@@ -701,7 +715,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			const [row] = await options.driver.query<VerifiedRowShape>(findOwnerSql, [sessionId]);
 			return row === undefined
 				? null
-				: { userId: row.user_id, libraryRow: (await libraryBindingOf(row)) !== null };
+				: { userId: row.user_id, libraryRow: (await libraryBindingOf(row, "change")) !== null };
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {
@@ -742,7 +756,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				if (kept !== undefined && !(await keptAfterRebinding(tx, kept))) {
 					await tx.query(deleteOwnedSql, [keptSessionId, actor]);
 				}
-				return (await libraryRowsAmong(removed)).length;
+				return (await libraryRowsAmong(removed, "change")).length;
 			});
 		},
 

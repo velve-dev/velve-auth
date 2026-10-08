@@ -210,7 +210,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 		const binding = await librarySessionBinding(
 			options.keys,
 			{ ...candidate, tokenHash },
-			options.reportTokenBindingRefusal,
+			{ report: options.reportTokenBindingRefusal, occasion: "session_resolve" },
 		);
 		if (binding === null) {
 			return null;

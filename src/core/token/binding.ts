@@ -39,6 +39,7 @@ export interface StoredTokenMac {
 export type TokenBindingOccasion =
 	| "sign_in"
 	| "session_resolve"
+	| "session_list"
 	| "factor_check"
 	| "token_redemption"
 	| "change"

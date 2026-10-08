@@ -4,6 +4,7 @@ import {
 	reportRefusedTokenRow,
 	type StoredTokenMac,
 	type TokenBinding,
+	type TokenBindingOccasion,
 	type TokenBindingRefusalReport,
 } from "../token/binding.js";
 
@@ -45,7 +46,10 @@ export function sessionBinding(
 export async function librarySessionBinding(
 	keys: KeyProvider,
 	row: StoredSessionRow,
-	report: TokenBindingRefusalReport | undefined,
+	refused: {
+		readonly report: TokenBindingRefusalReport | undefined;
+		readonly occasion: TokenBindingOccasion;
+	},
 ): Promise<TokenBinding | null> {
 	if (row.sessionEpoch === null) {
 		return null;
@@ -59,7 +63,11 @@ export async function librarySessionBinding(
 				});
 	const verdict = binding === null ? "mismatch" : await checkTokenBinding(keys, binding, row);
 	if (verdict !== "valid") {
-		reportRefusedTokenRow(report, { userId: row.userId, occasion: "session_resolve", verdict });
+		reportRefusedTokenRow(refused.report, {
+			userId: row.userId,
+			occasion: refused.occasion,
+			verdict,
+		});
 		return null;
 	}
 	return binding;
