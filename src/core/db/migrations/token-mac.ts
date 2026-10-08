@@ -10,8 +10,10 @@ export const tokenMacSchema: Migration = {
    The tables are locked first, as a 1.x instance still running would otherwise insert between
    the deletes and the NOT NULL columns; stop every 1.x instance before migrating. They are
    locked one statement each in the order a sign-in reaches them, the pending authentication
-   and the one-time token before the session, so a completion in flight is waited for and
-   never deadlocks with the migration. */
+   and the one-time token before the session, so a second-factor completion or a reset in flight
+   is waited for. A 1.x sign-up reaches the session before the one-time token, so one still in
+   flight can deadlock with the migration, and PostgreSQL then aborts one of the two; the
+   migration is one transaction, an abort leaves nothing behind, and it is simply run again. */
 LOCK TABLE velve.pending_authentication IN ACCESS EXCLUSIVE MODE;
 LOCK TABLE velve.one_time_token IN ACCESS EXCLUSIVE MODE;
 LOCK TABLE velve.webauthn_challenge IN ACCESS EXCLUSIVE MODE;

@@ -412,7 +412,7 @@ the two byte for byte.
 | `0002_identity_username.sql` | 2 | `CHECK (username IS NOT NULL)` |
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
-| `0004_token_mac.sql` | 4 | deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables |
+| `0004_token_mac.sql` | 4 | locks the four token tables, deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables; stop every 1.x instance first, and rerun it if PostgreSQL aborted it with a deadlock against a 1.x request still in flight |
 
 Exactly one of the three version-2 files is applied — the one matching the
 configured identity mode. Migrations 3 and 4 are the same in every mode; migration 4
@@ -9155,16 +9155,20 @@ derives it from the root key with no configuration.
 
 ### Upgrading
 
-Migration 4 locks the three tables, deletes every row of them and then adds the
-`NOT NULL` columns: every session ends, and every open link and pending sign-in
-expires. **Stop every 1.x instance before you migrate.** The lock keeps a 1.x
-instance that still runs from inserting a row between the deletes and the new
-columns, which would make the migration fail and roll back. It takes the tables
-one at a time in the order a sign-in reaches them — `pending_authentication`,
-then `one_time_token`, then `webauthn_challenge`, then `session` — so a 1.x second-factor completion or
-password reset in flight finishes first and the migration waits for it, rather
-than the two deadlocking and PostgreSQL aborting the migration. A 1.x insert that
-arrives after the lock waits, and fails once the columns exist.
+Migration 4 locks the four token tables, deletes every row of them and then adds
+the `NOT NULL` columns: every session ends, and every open link, pending sign-in
+and WebAuthn challenge expires. **Stop every 1.x instance before you migrate.**
+The lock keeps a 1.x instance that still runs from inserting a row between the
+deletes and the new columns, which would make the migration fail and roll back.
+It takes the tables one at a time — `pending_authentication`, then
+`one_time_token`, then `webauthn_challenge`, then `session` — the order a 1.x
+second-factor completion or password reset reaches them, so one of those in
+flight finishes first and the migration waits for it. A 1.x sign-up reaches
+`session` before `one_time_token`, the other way round, so a sign-up still in
+flight can deadlock with the migration, and PostgreSQL then aborts one of the
+two. The migration is one transaction: an abort leaves nothing behind, and you
+run it again. A 1.x insert that arrives after the lock waits, and fails once
+the columns exist.
 
 ## Security state: the seal
 
