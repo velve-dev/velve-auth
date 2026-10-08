@@ -16129,6 +16129,76 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A compare-and-set has to hold everything the check that preceded it relied on.
 **Price.** None beyond one more predicate.
 
+<a id="e-3273"></a>
+
+### A token row whose unbound columns hold a value the library never writes is refused, not thrown on
+`E-3273` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** A writer who moved a session's `created_at` past what an exact count of microseconds holds, to 9999-12-31 or to `infinity`, made resolve, the owner's list, a mass revocation and a password change throw, and the maintenance pass stopped at the row. The SQL cast `(extract(epoch FROM created_at) * 1000000)::bigint` failed on infinity, and the decoder threw on a count past `Number.MAX_SAFE_INTEGER`. A deadline or `last_used_at` moved to `infinity` on a row whose MAC still held made the decode throw the same way, for a session and for a pending authentication. So one written row could block the owner's own remediation, a password change answering 500, and stop the pass that every old key version waits for. The creation time is now read as `trunc(extract(epoch FROM created_at) * 1000000)::text` only where `isfinite(created_at)`. A value no exact integer holds reads as none, and the row has no binding. A row whose MAC holds but whose unbound columns no date of the runtime can carry is refused as well. Both are reported like a row whose MAC does not match, never thrown on. Listing, revoking, a password change and the maintenance pass go on over the genuine rows. `test/integ-token-tampered-columns.test.ts` covers seven moved columns across resolve, list and revocation, a pending row and the password change. `test/integ-token-rebind-tampered-row.test.ts` covers the pass. 25 of their 29 cases failed on the code before.
+**Rejected.** Encoding the creation time as an arbitrary-precision integer so that 9999 still binds, which leaves `infinity` and the deadlines throwing and gains nothing, since the library never writes such a time.
+**Reason.** A reader of rows a writer can reach must not have an answer other than refusing the row.
+**Price.** The resolution statement departs from the byte-for-byte fixture of T-CACHE-2 by the new expression, and the fixture in `test/session-review-resolution.test.ts` was changed with it.
+
+<a id="e-3274"></a>
+
+### A one-time token's payload is read as its jsonb text and parsed once
+`E-3274` · security-state-tokens · S-INTEG-9, S-REPLAY-2, settled, specification to follow
+
+**Context.** E-3252 refuses a stored payload no issue writes. A writer who replaced an object payload by a `jsonb` string holding the same JSON text got two verdicts for one row. A driver that hands `jsonb` back as text, like the test connection, parsed it once to a string and the row was refused. A driver that decodes `jsonb`, like node-postgres, decoded it to the string, and `storedPayloadOf` parsed that string a second time and accepted it. The consuming statement and the maintenance pass now return `payload::text AS payload_text`, which every driver hands back as text, and the library parses it exactly once. The alias keeps the column name apart from `payload`, which a decoding driver would otherwise treat by name in the test wrapper. `test/integ-token-payload-text.test.ts` runs the row through both drivers and expects a refusal from each.
+**Rejected.** Deciding by the JavaScript type the driver handed back, which is the rule that gave two verdicts.
+**Reason.** One stored row has to get one verdict, and the only form every driver hands back alike is text.
+**Price.** The consuming statement is no longer the one 3.7 and S-REPLAY-2 print verbatim. `test/token-static-scan.test.ts` pins the new text, and the specification's statement has to follow.
+
+<a id="e-3275"></a>
+
+### A missed session issue answers as the path it completes, and every session check names its own occasion
+`E-3275` · security-state-tokens · S-INTEG-5, S-INTEG-9, settled, specification to follow
+
+**Context.** E-3256 answered a session issue whose conditional insert wrote nothing as no session, `session_required`, with the occasion `sign_in`. An issue for an account without an epoch in `"required"` answered the same. On the password sign-in and every other sign-in or completion route that is a code the route's ordinary failure never gives. The outside could tell the broken state apart, which S-INTEG-5 forbids. A reissue after a credential change reported `sign_in` although it completes a change. The caller now names what the issue completes. `issueReplacingPresented` and `reissueSessionOfUser` take `completes`: `password_sign_in`, `passkey_sign_in`, `second_factor`, `magic_link`, `oauth_sign_in`, `password_reset` or `oauth_link`. Each maps to a concealed reason that `src/core/http/error-map.ts` turns into `invalid_credentials`, `webauthn_credential_rejected`, `invalid_pending_authentication`, `invalid_token` or `oauth_flow_invalid`, with the occasion `sign_in` for a sign-in and `change` for a reset or a link. `issue`, `reissue` and `reissueAfterCredentialChange` complete a sign-up or a change behind a resolved session and keep `session_required` with `change`. Separately, every failed check of a session row reported `session_resolve`, from a list, the kept row and a mass revocation too. The alarm deduplicates by account, occasion and reason, so a forged row met in a list held back a resolution's alarm for its window. A resolution now reports `session_resolve`, every check made for a revocation `change`, and the owner's list and a plugin's `listSessionsOfUser` report `session_list`. Section 3.18 names no listing occasion, so `session_list` is new to the refusal report's occasions, and the alarm's enumeration has to gain it. `test/integ-session-issue-miss-answer.test.ts` holds the password route against a wrong password and every path's answer and occasion, and `test/integ-session-issue-occasion.test.ts` the reissue's occasion. All 16 of their cases failed on the code before.
+**Rejected.** (a) Answering every missed issue as `session_required` and accepting the difference on sign-in routes, which S-INTEG-5 does not allow. (b) Reporting a list under `session_resolve` and leaving the deduplication to hide one behind the other.
+**Reason.** What a route answers is decided per path in the one file that decides it, and an alarm's occasion is where the row was met.
+**Price.** `completes` is a new required parameter of two methods of the shipped `SessionService`, and `SessionIssuePath` a new type in the declarations. Five concealed reasons are new.
+
+<a id="e-3276"></a>
+
+### A retry follows only a row that advanced, at the booking and at the kept session
+`E-3276` · security-state-tokens · S-INTEG-9, S-KEY-5, settled
+
+**Context.** The booking of E-3140 retried at most six times, one more than the budget, and E-3257 raised `token_binding_mismatch` when the row kept moving past every retry. Five concurrent bookings and one maintenance rebinding at the same count are six legitimate advances. A booking that lost to all of them answered missing with an alarm, where the row stood at the budget and the answer is `too_many_factor_attempts` without one. The loop now keeps no count. It retries only over a row that verifies and advanced, in attempts or at the same count under a newer key version, and checks the budget on every row it reads, the last one included. Attempts cannot pass the budget and a version cannot pass the newest in the ring, so it ends, and E-3257's bound is gone with its alarm. The case that pinned the bound now pins that a row rebound under each of seven newer versions is followed without an alarm. Separately, the kept session of `revokeEveryOther` (E-3260) is rebound by a compare-and-set on the MAC read under the account lock. A resolution rebinds under a newer version without taking that lock, so during a rotation it could land between the read and the swap. The swap missed, the caller was signed out and the alarm was raised for nobody's write. A swap that misses now reads the row again. The same session over the same token hash under a newer key version, with a verifying MAC, is swapped again without an alarm. A row that is gone keeps no session, also without an alarm, as for the booking. Any other row counts as a MAC that does not match. The foundation's newest text asks for the alarm on any other answer, which taken literally includes the vanished row, and this follows the booking there instead. `test/session-kept-rebind-race.test.ts` and `test/security-state-booking-advances.test.ts` failed on the code before.
+**Rejected.** Raising the booking's bound, which only moves the number of legitimate advances that trips it.
+**Reason.** A bound is only needed where nothing else ends the loop, and here the budget and the ring do.
+**Price.** A booking that loses to many rebindings reads the row once per rebinding. The vanished kept row raises no alarm, which the specification has to say if it is to stay.
+
+<a id="e-3277"></a>
+
+### The session MAC binds the session's id, and a pass reports its traces apart
+`E-3277` · security-state-tokens · S-INTEG-9, S-LINK-4, S-KEY-5, settled
+
+**Context.** Section 3.18 point 3 of the foundation's newer text binds `session.id` into the session MAC, because L-12 compares `set_by_session_id` with the confirming session's id and a writer could rename a row to that id. The id is now drawn before the insert from `src/core/token/random.ts`, inserted explicitly and bound as the first content field, ahead of the factors, the epoch and the creation time. Every reader checks it over the stored id. The confirmation flow also compares the confirming session's account with the confirmed one, and a session of another account counts as one the password was not set in, which S-LINK-4 now asks. Point 5 has the maintenance read a session and the account's epoch in one statement. The pass already did so by a subselect, and a case now holds it there against a revocation run right after the read. Point 5 also counts traces apart in `rowsByKeyVersion`. The pass now gives `{ tokens, traces }` per version: traces are the rows this pass refused, matched by token hash and the refused MAC, and a row a writer rewrote since counts as a token again. The seal rows beside them are the administration branch's to report. A trace under a version that has left the ring is refused as `key_version_unknown`. Tests on hand-written session rows now pass the id as a fourth parameter of `sessionMacParameters`.
+**Rejected.** Binding the id into the seal only, which leaves the session side of the comparison renameable.
+**Reason.** A comparison of two ids proves nothing while one side can be rewritten, and a rule that keeps evidence and a rule that needs zero rows have to count different rows.
+**Price.** One more field in the session MAC, one more parameter on the insert, and a second statement at the end of each pass that matches the traces by a JSON list of hex pairs.
+
+<a id="e-3278"></a>
+
+### A confirmed address change withdraws the account's other mailed links before the account lock
+`E-3278` · security-state-tokens · S-INTEG-9, settled, specification to follow
+
+**Context.** E-3264 binds every mailed link to the address it went to and raises `seal_mismatch` when the account's address is another at redemption. A legitimate change of address left the older links standing. A user who requested a reset, changed the address and then clicked the reset link raised the tamper alarm although nobody had written the database. The foundation names that alarm a possible false one among its limits. It is now removed instead. The confirmation of an address change consumes its `email_change` token first, as §7 orders. In the same transaction and still before the account lock it deletes every other one-time token of the account, one statement per purpose so that each names its purpose (S-TOKEN-1). Only then does it lock the account and move the address. `velve.one_time_token` therefore still comes before `velve.user`, and `pnpm check:token-after-lock` and the order trace stay green. A confirmation that rolls back, for a taken address, restores the links. Verification and its resend change no address and withdraw nothing.
+**Rejected.** Keeping the false alarm as a named limit, which makes every such alarm one an administrator has to dismiss by hand.
+**Reason.** After the withdrawal the only way for a link's bound address to differ from the account's is a write outside the library, and that is what the alarm is for.
+**Price.** A user who changed their address loses an outstanding reset or magic link and requests a new one. One statement per purpose, four, runs in every confirmed change.
+
+<a id="e-3279"></a>
+
+### Migration 4 can deadlock with a 1.x sign-up, the factor order is the stored one, and five plant killers stay
+`E-3279` · security-state-tokens · S-INTEG-9, settled, specification to follow
+
+**Context.** Migration 4's comment said its table locks, taken in the order a sign-in reaches the tables, meant a completion in flight was waited for and never deadlocked. A 1.x sign-up issues its session and then mints its verification token, the other way round. One still in flight deadlocks with the migration, and PostgreSQL aborts one of the two. The order stays, since it does protect a second-factor completion and a reset. The comment, the migration row and the upgrade text now say to stop every 1.x instance first and to run the migration again if it was aborted, as one transaction leaves nothing behind. `test/migration-token-mac-signup.test.ts` expects one side aborted with 40P01 and a rerun to apply version 4 on all four tables. Separately, the token MAC binds a session's and a pending row's factors in the order the row stores them, as E-3131 (a) froze. Point 4 sorts the seal's lists, and its rule reads as if it governed every encoding of the section, so the specification has to state the token MAC's exception. Five green cases written against this branch were kept because no committed case pinned their guard. A sixth was dropped as covered by E-3273's cases. One plant was run here: a resolve-time compare-and-set without its version and owner predicates fails two kept cases. The other cases' plants were not recorded, and they were kept on reading alone.
+**Rejected.** Reordering the locks around a sign-up, which would deadlock with the completion and the reset instead.
+**Reason.** No order of four locks fits two 1.x paths that take two of them in opposite orders, so the upgrade has to say what happens and what to do.
+**Price.** An operator who does not stop 1.x first may have to run the migration twice.
+
 <a id="e-3280"></a>
 
 ### The REPEATABLE READ sealing snapshot is abandoned for one READ COMMITTED model
