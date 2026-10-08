@@ -151,7 +151,10 @@ describe("a booked attempt and a legitimate rebinding during the booking (E-3149
 		const { token } = await older.begin({ userId, factorsCompleted: ["password"] });
 		const rebound = await bindToken(
 			ring.providerAt(2, [1, 2]),
-			pendingBinding(userId, hashPendingToken(token), ["password"], 0),
+			pendingBinding(userId, hashPendingToken(token), ["password"], {
+				attempts: 0,
+				sessionEpoch: 1,
+			}),
 		);
 		refusals = [];
 
@@ -175,7 +178,10 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 		const token = await pendingAfterFailedAttempts(userId, 1);
 		const older = await bindToken(
 			ring.providerAt(1, [1]),
-			pendingBinding(userId, hashPendingToken(token), ["password"], 1),
+			pendingBinding(userId, hashPendingToken(token), ["password"], {
+				attempts: 1,
+				sessionEpoch: 1,
+			}),
 		);
 		refusals = [];
 
@@ -247,7 +253,10 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 					interposed += 1;
 					const next = await bindToken(
 						many.providerAt(interposed + 1),
-						pendingBinding(userId, hashPendingToken(token), ["password"], 0),
+						pendingBinding(userId, hashPendingToken(token), ["password"], {
+							attempts: 0,
+							sessionEpoch: 1,
+						}),
 					);
 					await owner.query(
 						`UPDATE ${schema}.pending_authentication

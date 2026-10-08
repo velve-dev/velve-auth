@@ -28,7 +28,8 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	import_mapping: "no repository: no module of the library reads or writes it",
 	password_reset_required: "no repository: no module of the library reads or writes it",
 	//the session repository reads the session epoch, the start probes key versions (E-3138, E-3191)
-	security_state: "src/core/db/repositories/session.ts, src/core/auth/integrity-key-ring.ts",
+	security_state:
+		"src/core/db/repositories/session.ts, src/core/auth/integrity-key-ring.ts, src/core/factor/pending/repository.ts",
 };
 
 const NO_REPOSITORY = "no repository:";
@@ -120,6 +121,9 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.recordAssertion":
 		"credential under verification",
 
+	//the epoch a new pending row binds is read for the account whose row the insert writes (E-3484)
+	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.sessionEpochOf":
+		"row that carries the proof",
 	"src/core/factor/totp/repository.ts#createTotpRepository.findCredentialOf": "pending resolution",
 	"src/core/factor/totp/repository.ts#createTotpRepository.claimTimeStepOfPending":
 		"pending resolution",

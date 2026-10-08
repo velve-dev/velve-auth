@@ -54,6 +54,8 @@ export type PendingResolution = ResolvedPendingAuthentication;
 export interface ConsumedPendingAuthentication {
 	readonly userId: string;
 	readonly factorsCompleted: readonly AuthenticationFactor[];
+	/** the epoch the row was created under, which the session the completion issues must still find */
+	readonly sessionEpoch: number;
 }
 
 export type FailedAttempt =
@@ -71,6 +73,8 @@ export interface PendingAuthenticationService {
 	begin(input: {
 		readonly userId: string;
 		readonly factorsCompleted: readonly AuthenticationFactor[];
+		/** the epoch the first factor's check read; the account's current one where not given */
+		readonly sessionEpoch?: number;
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
@@ -81,6 +85,7 @@ interface CheckedPendingRow extends StoredTokenMac {
 	readonly userId: string;
 	readonly factorNames: readonly string[];
 	readonly attempts: number;
+	readonly sessionEpoch: number;
 }
 
 function attemptsRemainingAfter(attempts: number): number {
@@ -110,12 +115,15 @@ export function createPendingAuthenticationService(
 	}
 
 	function bindingOf(tokenHash: Uint8Array, candidate: PendingCandidate<unknown>): TokenBinding {
-		return pendingBinding(
-			candidate.userId,
-			tokenHash,
-			candidate.storedFactorNames ?? [],
-			candidate.attempts,
-		);
+		return pendingBinding(candidate.userId, tokenHash, candidate.storedFactorNames ?? [], {
+			attempts: candidate.attempts,
+			sessionEpoch: candidate.sessionEpoch,
+		});
+	}
+
+	//a pending row a mass revocation has overtaken is no row, and no writer's doing (E-3484)
+	function isOvertaken(candidate: PendingCandidate<unknown>): boolean {
+		return candidate.sessionEpoch !== candidate.currentEpoch;
 	}
 
 	async function verdictOf(
@@ -144,6 +152,9 @@ export function createPendingAuthenticationService(
 			return null;
 		}
 		const verdict = await verdictOf(tokenHash, candidate);
+		if (verdict === "valid" && isOvertaken(candidate)) {
+			return null;
+		}
 		const decoded = verdict === "valid" ? decodedOrNull(() => candidate.decode()) : null;
 		if (decoded === null) {
 			reportRefusal(candidate.userId, verdict === "valid" ? "mismatch" : verdict);
@@ -157,6 +168,7 @@ export function createPendingAuthenticationService(
 			userId: candidate.userId,
 			factorNames: candidate.storedFactorNames ?? [],
 			attempts: candidate.attempts,
+			sessionEpoch: candidate.sessionEpoch,
 			tokenMac: candidate.tokenMac,
 			tokenMacKeyVersion: candidate.tokenMacKeyVersion,
 		};
@@ -191,6 +203,9 @@ export function createPendingAuthenticationService(
 			reread.attempts > pinned.attempts ||
 			(reread.attempts === pinned.attempts &&
 				reread.tokenMacKeyVersion > pinned.tokenMacKeyVersion);
+		if (verdict === "valid" && isOvertaken(reread)) {
+			return "missing";
+		}
 		if (verdict !== "valid" || !advanced) {
 			reportRefusal(reread.userId, verdict === "valid" ? "mismatch" : verdict);
 			return "missing";
@@ -206,7 +221,10 @@ export function createPendingAuthenticationService(
 	async function bookedOver(tokenHash: Uint8Array, row: CheckedPendingRow): Promise<boolean> {
 		const next = await bindToken(
 			options.keys,
-			pendingBinding(row.userId, tokenHash, row.factorNames, row.attempts + 1),
+			pendingBinding(row.userId, tokenHash, row.factorNames, {
+				attempts: row.attempts + 1,
+				sessionEpoch: row.sessionEpoch,
+			}),
 		);
 		return inTransaction((store) => store.bookAttempt({ tokenHash, checked: row, next }));
 	}
@@ -275,20 +293,25 @@ export function createPendingAuthenticationService(
 
 	const service: PendingAuthenticationService = {
 		//the factors on offer are the account's state so the write reads them itself (E-735)
-		async begin({ userId, factorsCompleted }) {
+		async begin({ userId, factorsCompleted, sessionEpoch }) {
 			const token = createPendingToken();
 			const tokenHash = hashPendingToken(token);
 			const storedFactors = factorsCompleted.filter(
 				(factor, index) => factorsCompleted.indexOf(factor) === index,
 			);
+			const boundEpoch = sessionEpoch ?? (await repository.sessionEpochOf({ userId }));
 			const stored = await repository.insertPendingAuthentication({
 				userId,
 				tokenHash,
 				factorsCompleted: storedFactors,
 				lifetimeInSeconds: PENDING_LIFETIME_IN_SECONDS,
+				sessionEpoch: boundEpoch,
 				...(await bindToken(
 					options.keys,
-					pendingBinding(userId, tokenHash, storedFactors, FIRST_ATTEMPT_COUNT),
+					pendingBinding(userId, tokenHash, storedFactors, {
+						attempts: FIRST_ATTEMPT_COUNT,
+						sessionEpoch: boundEpoch,
+					}),
 				)),
 			});
 			return {
@@ -310,14 +333,12 @@ export function createPendingAuthenticationService(
 		//the removal is the check so two requests with one token cannot both pass
 		async consume(token) {
 			const tokenHash = hashPendingToken(token);
-			const removed = await verified(
-				tokenHash,
-				await repository.deletePendingAuthenticationByTokenHash(tokenHash),
-			);
-			if (removed === null) {
+			const candidate = await repository.deletePendingAuthenticationByTokenHash(tokenHash);
+			const removed = await verified(tokenHash, candidate);
+			if (removed === null || candidate === null) {
 				throw new ConcealedError("pending_consumed");
 			}
-			return removed.decoded;
+			return { ...removed.decoded, sessionEpoch: candidate.sessionEpoch };
 		},
 
 		async cancel({ token }) {

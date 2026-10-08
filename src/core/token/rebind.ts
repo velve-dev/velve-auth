@@ -94,10 +94,16 @@ function sessionBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBind
 
 function pendingBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
 	const names = namesOf(row.factor_names);
-	if (row.user_id === null || names === null || row.attempts === undefined) {
+	const sessionEpoch = exactIntegerOf(row.session_epoch);
+	if (
+		row.user_id === null ||
+		names === null ||
+		row.attempts === undefined ||
+		sessionEpoch === null
+	) {
 		return null;
 	}
-	return pendingBinding(row.user_id, tokenHash, names, row.attempts);
+	return pendingBinding(row.user_id, tokenHash, names, { attempts: row.attempts, sessionEpoch });
 }
 
 function oneTimeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
@@ -145,7 +151,8 @@ const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 	},
 	pending_authentication: {
 		hashColumn: "token_sha256",
-		contentColumns: () => "array_to_json(t.factors_completed)::text AS factor_names, t.attempts",
+		contentColumns: () =>
+			"array_to_json(t.factors_completed)::text AS factor_names, t.attempts, t.session_epoch::text AS session_epoch",
 		guardsAttempts: true,
 		bindingOf: pendingBindingOf,
 	},

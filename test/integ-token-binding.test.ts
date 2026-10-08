@@ -168,8 +168,9 @@ describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/
 		const token = chosenToken();
 		await sql(
 			`INSERT INTO ${schema}.pending_authentication
-			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version)
-			 VALUES ($1, $2, '{password}', now() + interval '5 minutes', $3, 1)`,
+			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
+			    session_epoch)
+			 VALUES ($1, $2, '{password}', now() + interval '5 minutes', $3, 1, 1)`,
 			[sha256Of(token), victim, randomBytes(32)],
 		);
 
@@ -224,9 +225,10 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 		await sql(
 			`WITH moved AS (DELETE FROM ${schema}.session WHERE token_sha256 = $1 RETURNING *)
 			 INSERT INTO ${schema}.pending_authentication
-			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version)
+			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
+			    session_epoch)
 			 SELECT token_sha256, user_id, factors, now() + interval '5 minutes',
-			    token_mac, token_mac_key_version FROM moved`,
+			    token_mac, token_mac_key_version, 1 FROM moved`,
 			[sha256Of(token)],
 		);
 		refusals = [];
@@ -336,9 +338,10 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 		await sql(
 			`WITH moved AS (DELETE FROM ${schema}.one_time_token WHERE token_sha256 = $1 RETURNING *)
 			 INSERT INTO ${schema}.pending_authentication
-			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version)
+			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
+			    session_epoch)
 			 SELECT token_sha256, user_id, '{password}', now() + interval '5 minutes',
-			    token_mac, token_mac_key_version FROM moved`,
+			    token_mac, token_mac_key_version, 1 FROM moved`,
 			[sha256Of(token)],
 		);
 		refusals = [];
@@ -868,7 +871,7 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 				purpose === "email_verify" || purpose === "magic_link"
 					? { payload: pick([null, {}, { a: "" }, { a: ",", b: [1, "x"] }, { "": null }]) }
 					: purpose === "pending_authentication"
-						? { factors, attempts: byte() % 3 }
+						? { factors, attempts: byte() % 3, sessionEpoch: byte() % 3 }
 						: {
 								sessionId: pick(["", "a", "ab", ",", "a,b"]),
 								factors,

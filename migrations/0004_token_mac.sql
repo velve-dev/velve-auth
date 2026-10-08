@@ -25,7 +25,9 @@ ALTER TABLE velve.one_time_token
   ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);
 ALTER TABLE velve.pending_authentication
   ADD COLUMN token_mac bytea NOT NULL CHECK (octet_length(token_mac) = 32),
-  ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);
+  ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1),
+  ADD COLUMN session_epoch bigint NOT NULL
+    CHECK (session_epoch BETWEEN 1 AND 9007199254740991);
 ALTER TABLE velve.webauthn_challenge
   ADD COLUMN token_mac bytea NOT NULL CHECK (octet_length(token_mac) = 32),
   ADD COLUMN token_mac_key_version integer NOT NULL CHECK (token_mac_key_version >= 1);

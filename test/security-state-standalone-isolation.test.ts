@@ -33,8 +33,9 @@ async function pendingRow(): Promise<Uint8Array> {
 	const token = crypto.getRandomValues(new Uint8Array(32));
 	await first.query(
 		`INSERT INTO ${schema}.pending_authentication
-		   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version)
-		 VALUES ($1, $2, ARRAY['password'], now() + interval '5 minutes', $3, 1)`,
+		   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
+		    session_epoch)
+		 VALUES ($1, $2, ARRAY['password'], now() + interval '5 minutes', $3, 1, 1)`,
 		[token, userId, crypto.getRandomValues(new Uint8Array(32))],
 	);
 	return token;

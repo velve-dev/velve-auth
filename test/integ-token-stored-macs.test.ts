@@ -122,7 +122,7 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 				"pending_authentication",
 				userId,
 				Buffer.from(row?.token_sha256 ?? []),
-				Buffer.concat([list(["password"]), integer(0)]),
+				Buffer.concat([list(["password"]), integer(0), integer(1)]),
 			),
 		);
 	});

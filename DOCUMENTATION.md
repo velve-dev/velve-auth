@@ -266,6 +266,7 @@ The state between the first factor and the second.
 | `expires_at` | `timestamptz` | indexed for the sweep |
 | `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
 | `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
+| `session_epoch` | `bigint` | 1 to 2^53 − 1; the account's `session_epoch` when the row was created, 1 for an account without a seal row; bound into `token_mac` (migration 4) |
 
 ### `velve.totp_credential`
 
@@ -8928,7 +8929,7 @@ presented token. The MAC is taken over a length-prefixed encoding of:
 | purpose | `session` | `pending_authentication` | the row's `purpose` |
 | owner | `user_id` | `user_id` | `user_id`, or absent |
 | token | `token_sha256` | `token_sha256` | `token_sha256` |
-| content | the row's `id`, `factors` in stored order, the account's `session_epoch` at issue, and `created_at` in whole microseconds since the Unix epoch | `factors_completed`, in stored order, and `attempts` | `payload` as canonical JSON, or absent |
+| content | the row's `id`, `factors` in stored order, the account's `session_epoch` at issue, and `created_at` in whole microseconds since the Unix epoch | `factors_completed`, in stored order, `attempts`, and the `session_epoch` it was created under | `payload` as canonical JSON, or absent |
 
 Each field is a type byte, a four-byte length in network order and its bytes,
 and an absent value has its own type byte, so two different rows never encode
@@ -9069,6 +9070,20 @@ one statement per issued session: measured at 0.73 to 0.78 ms on a local Postgre
 
 Raising the epoch at every mass revocation is part of resealing the account and is
 described with the seal.
+
+### The epoch of a pending authentication
+
+A pending authentication stores in `session_epoch` the epoch of the check that
+created it: the epoch the first factor's check read where the caller names it to
+`begin({ userId, factorsCompleted, sessionEpoch })`, and otherwise the account's
+current one, read just before the insert; an account without a seal row is at
+epoch 1. Resolving, booking and consuming the row read the account's current
+epoch in the statement that reads the row. A row whose MAC holds but whose stored
+epoch is not the current one was overtaken by a mass revocation, which cannot
+delete it because §7 puts `pending_authentication` before `velve.user`: it is
+answered as missing, without a report, before its booking and before the
+submitted factor is evaluated. `consume` hands the stored epoch on as
+`sessionEpoch`, for the session the completion issues.
 
 ### When it is checked
 

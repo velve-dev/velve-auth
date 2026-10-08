@@ -18,7 +18,12 @@ export type TokenRowContent =
 			/** `created_at` in whole microseconds since the Unix epoch */
 			readonly createdAtMicros: number;
 	  }
-	| { readonly factors: readonly string[]; readonly attempts: number }
+	| {
+			readonly factors: readonly string[];
+			readonly attempts: number;
+			/** the account's session epoch the check that created the row read */
+			readonly sessionEpoch: number;
+	  }
 	| { readonly ceremony: string }
 	| { readonly payload: OneTimeTokenPayload | null };
 
@@ -187,7 +192,7 @@ function contentField(content: TokenRowContent): Uint8Array {
 	if (!("factors" in content)) {
 		return optionalTextField(canonicalPayloadOf(content.payload));
 	}
-	if ("sessionEpoch" in content) {
+	if ("sessionId" in content) {
 		return concatenated([
 			textField(canonicalUuidOf(content.sessionId)),
 			listField(content.factors),
@@ -195,7 +200,11 @@ function contentField(content: TokenRowContent): Uint8Array {
 			integerField(content.createdAtMicros),
 		]);
 	}
-	return concatenated([listField(content.factors), integerField(content.attempts)]);
+	return concatenated([
+		listField(content.factors),
+		integerField(content.attempts),
+		integerField(content.sessionEpoch),
+	]);
 }
 
 //two different rows must never encode alike (S-INTEG-9)

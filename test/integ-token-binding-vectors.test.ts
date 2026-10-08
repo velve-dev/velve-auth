@@ -38,14 +38,18 @@ function referenceEncoding(binding: TokenBinding): Buffer {
 			? optionalText(content.payload === null ? null : JSON.stringify(content.payload))
 			: "ceremony" in content
 				? text(content.ceremony)
-				: "sessionEpoch" in content
+				: "sessionId" in content
 					? Buffer.concat([
 							text(content.sessionId),
 							list(content.factors),
 							integer(content.sessionEpoch),
 							integer(content.createdAtMicros),
 						])
-					: Buffer.concat([list(content.factors), integer(content.attempts)]);
+					: Buffer.concat([
+							list(content.factors),
+							integer(content.attempts),
+							integer(content.sessionEpoch),
+						]);
 	return Buffer.concat([
 		text("velve-auth/token-binding/v1"),
 		text(binding.purpose),
@@ -90,7 +94,7 @@ const BINDINGS: readonly [string, TokenBinding][] = [
 			purpose: "pending_authentication",
 			ownerId: "0f0e0d0c-0b0a-4908-8706-050403020100",
 			tokenSha256: hash,
-			content: { factors: ["password"], attempts: 2 },
+			content: { factors: ["password"], attempts: 2, sessionEpoch: 5 },
 		},
 	],
 	[

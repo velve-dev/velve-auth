@@ -5,12 +5,16 @@ export function pendingBinding(
 	userId: string,
 	tokenHash: Uint8Array,
 	factorsCompleted: readonly string[],
-	attempts: number,
+	counted: { readonly attempts: number; readonly sessionEpoch: number },
 ): TokenBinding {
 	return {
 		purpose: "pending_authentication",
 		ownerId: userId,
 		tokenSha256: tokenHash,
-		content: { factors: factorsCompleted, attempts },
+		content: {
+			factors: factorsCompleted,
+			attempts: counted.attempts,
+			sessionEpoch: counted.sessionEpoch,
+		},
 	};
 }

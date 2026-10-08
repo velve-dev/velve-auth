@@ -238,7 +238,7 @@ describe("consumption", () => {
 
 		const consumed = await pending.consume(token);
 
-		expect(consumed).toStrictEqual({ userId, factorsCompleted: ["password"] });
+		expect(consumed).toStrictEqual({ userId, factorsCompleted: ["password"], sessionEpoch: 1 });
 		expect(await countRows()).toBe(0);
 	});
 
