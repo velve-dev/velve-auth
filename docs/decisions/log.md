@@ -16668,3 +16668,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Setting the session's isolation with `SET SESSION CHARACTERISTICS` on the connection, which a pooled driver hands to the next caller and which the library cannot assume it owns.
 **Reason.** The interpretation of a miss is only reached if the statement can miss, and at `repeatable read` it cannot.
 **Price.** Each of these statements costs a `BEGIN`, the isolation statement and a `COMMIT` beside it.
+
+<a id="e-3380"></a>
+
+### Only a seal the check verified is re-recorded with the anchor
+`E-3380` · security-state · specification, S-INTEG-6, test plan, settled
+
+**Context.** E-3351 has a check that finds a stored version above the anchor's re-record the seal at the anchor, so an anchor that missed a `recordSeal` catches up. The tenth review pointed out that the sentence did not require the seal to have passed the check. A writer who set a seal row's `version` far above the anchor's, with any digest, would have the library hand that version and digest to `recordSeal`. From then on the anchor's floor lies above any version the library can write, which locks the account out until an administrator repairs the anchor's own store, and every later check meets a false `anchor_mismatch`. As decided, *Anchor* now says, in both languages, that only a seal whose digest the same check verified under a usable key is re-recorded, and that a seal that failed the check is never reported to the anchor. T-INTEG-6 gains the case: a seal row raised above the anchor with a changed digest reaches `recordSeal` in 0/1 cases, and the sign-in is refused with one alarm `seal_mismatch`. `test/security-state-spec-anchor-rerecord.test.ts` holds the case that both languages state the restriction.
+**Rejected.** Never re-recording from a check and leaving the catch-up to the next change, which keeps the window E-3351 closes open until the account changes.
+**Reason.** The anchor exists to hold what the writer cannot reach, and a value the library has not verified is the writer's.
+**Price.** None at run time; the check already holds its verdict when it decides to re-record.
