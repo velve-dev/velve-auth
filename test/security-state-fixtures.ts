@@ -109,7 +109,7 @@ VALUES ($1, $2, 1, CASE WHEN $3 THEN now() END)`,
 	return userId;
 }
 
-//the test seals an account directly from one read, which is what the library's first seal does
+//a directly sealed account must hold the seal the library's first seal would write
 export async function sealDirectly(
 	driver: Driver,
 	schema: string,

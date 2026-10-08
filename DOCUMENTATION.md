@@ -8931,6 +8931,73 @@ and `"seal_missing"` when it is `"required"`. Every verdict but `"valid"` and
 `"unsealed"` is a broken state. The read handed back is the only one the path
 may evaluate.
 
+### Sealing a change
+
+`src/core/security-state/sealing.ts`. A legitimate change of an account's
+sign-in methods is a `SealingChange<T>`:
+
+| Member | Type | Meaning |
+|---|---|---|
+| `epoch` | `"keep" \| "raise"` | `"raise"` for a mass revocation, which draws a new session epoch |
+| `write(tx, read)` | `Promise<T>` | writes the change over the locked transaction; that transaction refuses a second read of the state |
+| `after(read, written)` | `SealedComponents` | the components after the change, from the verified read and what `write` returned |
+
+#### `sealAccount(services, userId, change)`
+
+Asks the anchors about the account, opens a transaction through
+`runSealingTransaction` and runs `sealUnderAccountLock` in it, then hands the new
+seal to the anchors after commit without awaiting them. Resolves
+`{ kind: "sealed", sealed }` or `{ kind: "refused", reason }`; every refusal that
+is a broken state raises the alarm with the occasion `change`, and a failing
+`recordSeal` raises `anchor_unavailable`. `services` holds `driver`, `schema`,
+`keys`, `sealing`, `anchors`, `alarms` and, for mode `"migrating"`,
+`convertUnsealed`.
+
+#### `sealUnderAccountLock(tx, userId, context, anchorReading, change)`
+
+The order of section 3.18 *Sealing* on an open transaction: `lockAccountRow`, one
+`readSecurityState`, `checkSecurityState`, the comparison with the anchors,
+`context.convertUnsealed` for an account without a seal row, `change.write`,
+`change.after`, `computeSeal`, and the seal row written. A path that learns its
+account by consuming a row calls it itself after the consumption and after
+`consultAnchors`, inside `runSealingTransaction`. It resolves `SealWritten`:
+`userId`, `version`, `sessionEpoch`, `keyVersion`, `digest`, `firstSeal`, the
+`read` the seal was computed from, and what `write` returned. It throws
+`SealingRefusedError` with a `reason`:
+
+| Reason | When |
+|---|---|
+| `"seal_missing"`, `"seal_mismatch"`, `"key_version_unknown"`, `"key_unusable"` | the check found a broken state |
+| `"version_below_anchor"`, `"anchor_mismatch"`, `"anchor_unavailable"` | the anchors' floor refuses the read |
+| `"seal_mismatch"` | also: the seal row was rewritten after the read, so the compare-and-set missed |
+| `"version_exhausted"` | the stored version is `Number.MAX_SAFE_INTEGER` |
+| `"account_missing"` | the account does not exist |
+
+The new version is the read's plus one, or 1 for a first seal; the epoch is the
+read's, 1 for a first seal, unless the change raises it. A change that reads the
+state again through the transaction it was handed fails with
+`SecondStateReadError`, and `test/security-state-one-read-guard.test.ts` scans the
+tree for a second read under the lock (E-3157).
+
+#### `runSealingTransaction(driver, work)`
+
+Runs `work` in a READ COMMITTED transaction of the library. A first seal whose
+insert meets a unique violation — a seal row inserted past the library — runs
+the whole transaction again, consumption included; after the third attempt it
+throws `SealingRefusedError` with `"seal_mismatch"`. Every other failure passes
+through unchanged.
+
+#### `sealCreatedAccount(tx, userId, { schema, keys })`
+
+The first seal of an account the same transaction created, at sign-up or
+import: one read and the insert of version 1 at epoch 1, without the lock,
+since no other transaction can hold the new row.
+
+#### `drawSessionEpochOtherThan(current)`
+
+A session epoch drawn uniformly from 1 to 9007199254740991 through the library's
+one source of randomness, never equal to `current`.
+
 ### The alarm
 
 `src/core/security-state/alarm.ts`. `createSecurityStateAlarms({ callback, log, clock })`

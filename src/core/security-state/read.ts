@@ -7,7 +7,7 @@ import type { SealedComponents, SecurityState } from "./encoding.js";
 import { type SealVerdict, verifySeal } from "./seal.js";
 
 /** whether every account must have a seal or the estate is still being sealed */
-type SealingMode = "required" | "migrating";
+export type SealingMode = "required" | "migrating";
 
 /** the seal row as it was read */
 interface StoredSeal {
@@ -54,7 +54,7 @@ interface ReadTotp {
 }
 
 /** the seal row and every component of one account, all from a single statement */
-interface SecurityStateRead {
+export interface SecurityStateRead {
 	readonly userId: string;
 	readonly seal: StoredSeal | null;
 	readonly email: string | null;
@@ -78,7 +78,7 @@ interface SecurityStateCheck {
 }
 
 //one statement sees one consistent state under read committed, several could see a reseal between them (E-3280)
-function securityStateReadStatement(schema: string): string {
+export function securityStateReadStatement(schema: string): string {
 	const table = (name: string) => qualifiedTableName(schema, name);
 	return `SELECT jsonb_build_object(
   'user_id', account.id::text,
@@ -286,7 +286,7 @@ export async function readSecurityState(
 }
 
 /** the components a read holds, with each ciphertext replaced by its SHA-256 value */
-function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
+export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 	return {
 		email: read.email,
 		emailVerified: read.emailVerified,

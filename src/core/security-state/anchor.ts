@@ -27,7 +27,7 @@ interface DecodedFloor {
 }
 
 /** what asking every anchor about one account found, one floor or null per anchor */
-type AnchorReading =
+export type AnchorReading =
 	| { readonly kind: "answered"; readonly floors: readonly (DecodedFloor | null)[] }
 	| { readonly kind: "unavailable" };
 

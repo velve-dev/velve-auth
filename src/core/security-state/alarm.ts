@@ -40,7 +40,7 @@ export interface SecurityStateAlarmRaised {
 }
 
 /** where every path reports a broken state, and which decides on its own what is delivered */
-interface SecurityStateAlarms {
+export interface SecurityStateAlarms {
 	raise(alarm: SecurityStateAlarmRaised): void;
 }
 
