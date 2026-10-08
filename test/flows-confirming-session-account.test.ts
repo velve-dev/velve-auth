@@ -11,6 +11,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 
 //a confirming session keeps a password only on the account it belongs to (S-LINK-4)
 
@@ -31,6 +32,7 @@ async function firstConfirmationDeletesThePassword(
 	confirmedBySessionOf: "the account" | "another",
 ) {
 	const { connection, schema } = migrated;
+	const keys = testKeyProvider();
 	const sessions = createSessionService({
 		sealing: "migrating",
 		driver: connection,
@@ -49,6 +51,7 @@ async function firstConfirmationDeletesThePassword(
 		 VALUES ($1, $2, 1, 'argon2id', $3)`,
 		[userId, randomBytes(48), issued.session.id],
 	);
+	await resealDirectly(connection, schema, keys, userId);
 	const other = await createUser(connection, schema);
 
 	const outcome = await connection.transaction((transaction) =>
@@ -58,6 +61,7 @@ async function firstConfirmationDeletesThePassword(
 			pluginRuntime: NO_PLUGINS,
 			sessions,
 			actor: actorOfTestUser(userId),
+			securityState: testSecurityState(connection, schema, keys),
 			confirmingSession: {
 				sessionId: issued.session.id,
 				userId: confirmedBySessionOf === "the account" ? userId : other,

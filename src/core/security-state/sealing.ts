@@ -1,7 +1,7 @@
+import { inOneTransaction } from "../auth/account-envelopes.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
-import { withReadCommittedTransactions } from "../db/read-committed.js";
 import { encodeBase64Url } from "../keys/base64url.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { randomBytes } from "../token/random.js";
@@ -26,12 +26,20 @@ import { computeSeal } from "./seal.js";
 
 /** one legitimate change of an account's sign-in methods, written and sealed under the account lock */
 export interface SealingChange<T> {
-	/** whether the change draws a new session epoch, which every mass revocation does */
-	readonly epoch: "keep" | "raise";
+	/** whether the change draws a new session epoch, which every mass revocation does, decided on the verified read where it depends on it */
+	readonly epoch: "keep" | "raise" | ((read: SecurityStateRead) => "keep" | "raise");
 	/** writes the change over the locked transaction, which refuses a second read of the state */
-	write(tx: Driver, read: SecurityStateRead): Promise<T>;
+	write(tx: Driver, read: SecurityStateRead, next: SealTarget): Promise<T>;
 	/** the components after the change, computed from the verified read and what the write returned */
 	after(read: SecurityStateRead, written: T): SealedComponents;
+	/** runs in the same transaction once the new seal row is written, where a session is issued under it */
+	afterSeal?(tx: Driver, sealed: SealTarget, written: T): Promise<void>;
+}
+
+/** the version and session epoch a change's new seal carries */
+export interface SealTarget {
+	readonly version: number;
+	readonly sessionEpoch: number;
 }
 
 /** what a sealing transaction needs besides its change */
@@ -41,16 +49,20 @@ interface SealingContext {
 	readonly sealing: SealingMode;
 	/** rewrites an unsealed account's old-form envelopes and returns the read with their new ciphertexts */
 	readonly convertUnsealed?: (tx: Driver, read: SecurityStateRead) => Promise<SecurityStateRead>;
+	/** whether an unsealed account is changed and left unsealed, for a path that holds no proof of ownership to convert it under */
+	readonly leaveUnsealed?: boolean;
 }
 
 /** the seal a change wrote, with the verified read it was computed from */
-interface SealWritten<T> {
+export interface SealWritten<T> {
 	readonly userId: string;
 	readonly version: number;
 	readonly sessionEpoch: number;
 	readonly keyVersion: number;
 	readonly digest: Uint8Array<ArrayBuffer>;
 	readonly firstSeal: boolean;
+	/** whether the change was written to an unsealed account and no seal row was written */
+	readonly leftUnsealed: boolean;
 	readonly read: SecurityStateRead;
 	readonly written: T;
 }
@@ -209,6 +221,10 @@ export async function sealUnderAccountLock<T>(
 		throw new SealingRefusedError(anchorVerdict);
 	}
 	const guarded = refusingSecondRead(tx, statement);
+	//a path without a proof of ownership changes an unsealed account and leaves its sealing to maintenance (E-3162)
+	if (verifiedRead.seal === null && context.leaveUnsealed === true) {
+		return leftUnsealed(verifiedRead, await change.write(guarded, verifiedRead, UNSEALED_TARGET));
+	}
 	const read =
 		verifiedRead.seal === null && context.convertUnsealed !== undefined
 			? await context.convertUnsealed(guarded, verifiedRead)
@@ -217,11 +233,11 @@ export async function sealUnderAccountLock<T>(
 	if (current !== null && current.version >= MAXIMUM_SEAL_NUMBER) {
 		throw new SealingRefusedError("version_exhausted");
 	}
-	const written = await change.write(guarded, read);
 	const version = current === null ? 1 : current.version + 1;
 	const currentEpoch = current === null ? 1 : current.sessionEpoch;
-	const sessionEpoch =
-		change.epoch === "raise" ? drawSessionEpochOtherThan(currentEpoch) : currentEpoch;
+	const epoch = typeof change.epoch === "function" ? change.epoch(read) : change.epoch;
+	const sessionEpoch = epoch === "raise" ? drawSessionEpochOtherThan(currentEpoch) : currentEpoch;
+	const written = await change.write(guarded, read, { version, sessionEpoch });
 	const { keyVersion, digest } = await computeSeal(context.keys, {
 		userId: read.userId,
 		version,
@@ -229,6 +245,7 @@ export async function sealUnderAccountLock<T>(
 		...change.after(read, written),
 	});
 	await writeSealRow(tx, context.schema, read, { version, sessionEpoch, keyVersion, digest });
+	await change.afterSeal?.(guarded, { version, sessionEpoch }, written);
 	return {
 		userId: read.userId,
 		version,
@@ -236,10 +253,38 @@ export async function sealUnderAccountLock<T>(
 		keyVersion,
 		digest,
 		firstSeal: current === null,
+		leftUnsealed: false,
 		read,
 		written,
 	};
 }
+
+const UNSEALED_TARGET: SealTarget = { version: 0, sessionEpoch: 1 };
+
+function leftUnsealed<T>(read: SecurityStateRead, written: T): SealWritten<T> {
+	return {
+		userId: read.userId,
+		version: UNSEALED_TARGET.version,
+		sessionEpoch: UNSEALED_TARGET.sessionEpoch,
+		keyVersion: 0,
+		digest: new Uint8Array(0),
+		firstSeal: false,
+		leftUnsealed: true,
+		read,
+		written,
+	};
+}
+
+/** the components a change leaves, given the read with the rows the change replaces put in place */
+export function componentsAfter(
+	read: SecurityStateRead,
+	replaced: Partial<SecurityStateRead>,
+): SealedComponents {
+	return sealedComponentsOf({ ...read, ...replaced });
+}
+
+/** a reading of no anchor, for an account no anchor can know yet */
+export const NO_ANCHOR_FLOOR: AnchorReading = { kind: "answered", floors: [] };
 
 //sign-up creates the account row instead of locking it and no other transaction can hold it yet (E-3364)
 export async function sealCreatedAccount(
@@ -268,6 +313,7 @@ export async function sealCreatedAccount(
 		keyVersion,
 		digest,
 		firstSeal: true,
+		leftUnsealed: false,
 		read,
 		written: null,
 	};
@@ -278,10 +324,9 @@ export async function runSealingTransaction<T>(
 	driver: Driver,
 	work: (tx: Driver) => Promise<T>,
 ): Promise<T> {
-	const readCommitted = withReadCommittedTransactions(driver);
 	for (let attempt = 1; ; attempt += 1) {
 		try {
-			return await readCommitted.transaction(work);
+			return await inOneTransaction(driver, work);
 		} catch (error) {
 			if (!(error instanceof FirstSealConflict)) {
 				throw error;

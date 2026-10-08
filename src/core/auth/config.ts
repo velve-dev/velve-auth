@@ -7,6 +7,8 @@ import type { KeyProvider } from "../keys/provider.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { PasswordConfig } from "../password/config.js";
 import type { VelvePlugin } from "../plugin/config.js";
+import type { SecurityStateAlarm } from "../security-state/alarm.js";
+import type { LimitsConfig } from "../security-state/limits.js";
 import type { SessionConfig } from "../session/config.js";
 import type { SessionMetadataMode } from "../session/metadata.js";
 
@@ -92,9 +94,10 @@ export interface RateLimitConfig {
 	};
 }
 
-/** whether every account must carry a seal, or the estate is still being sealed */
+/** whether every account must carry a seal, or the estate is still being sealed, and who hears of a broken one */
 export interface SecurityStateConfig {
 	readonly sealing: "required" | "migrating";
+	readonly alarm?: (event: SecurityStateAlarm) => void;
 }
 
 /** the identity options for mode `M`, where only a username mode carries the username rules */
@@ -131,6 +134,8 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly schema?: string;
 	readonly clock?: Clock;
 	readonly securityState?: SecurityStateConfig;
+	/** how many passkeys and identities one account may hold */
+	readonly limits?: Partial<LimitsConfig>;
 	readonly log?: (
 		level: "info" | "warn" | "error",
 		message: string,

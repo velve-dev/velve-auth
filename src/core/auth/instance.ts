@@ -4,7 +4,7 @@ import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
 import { withReadCommittedTransactions } from "../db/read-committed.js";
-import { createSessionRepository, type SecurityStateSealing } from "../db/repositories/session.js";
+import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
 	createPendingAuthenticationService,
@@ -51,6 +51,15 @@ import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
+import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
+import {
+	createSecurityStateRuntime,
+	type SecurityStateRuntime,
+	sealChange,
+	sealVerifiesUnderLock,
+	sessionStateCheckOf,
+} from "../security-state/runtime.js";
+import { componentsAfter } from "../security-state/sealing.js";
 import { type SessionSettings, sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
@@ -271,9 +280,6 @@ function optionalConfigurationOf<M extends IdentityMode>(config: VelveAuthConfig
 	};
 }
 
-//every account is served unsealed until securityState.sealing exists to say otherwise (E-3142)
-const SEALING_UNTIL_IT_IS_CONFIGURED: SecurityStateSealing = "migrating";
-
 //session options nobody configured must also reach the completion as absent keys (E-1258)
 function sessionOptionsOf<M extends IdentityMode>(config: VelveAuthConfig<M>) {
 	return {
@@ -312,6 +318,50 @@ async function failuresMappedAs<Output>(
 	}
 }
 
+//disabling and enabling an account changes a sealed component and reseals (E-3315)
+async function setDisabledUnderTheSeal(
+	securityState: SecurityStateRuntime,
+	userId: string,
+	disabled: boolean,
+): Promise<void> {
+	//an operator names the account by its id and holds no proof a conversion could run under (E-3162)
+	await sealChange(
+		securityState,
+		{ unproven: userId },
+		{
+			epoch: "keep",
+			write: (tx) =>
+				createUserRepository({ driver: tx, schema: securityState.schema }).setDisabledAt({
+					userId,
+					disabled,
+				}),
+			after: (read) => componentsAfter(read, { disabled }),
+		},
+	);
+}
+
+function securityStateOf<M extends IdentityMode>(
+	config: VelveAuthConfig<M>,
+	resolved: {
+		readonly driver: Driver;
+		readonly schema: string;
+		readonly clock: Clock;
+		readonly log: HttpEnvironment["log"];
+	},
+): SecurityStateRuntime {
+	return createSecurityStateRuntime({
+		driver: resolved.driver,
+		schema: resolved.schema,
+		keys: config.keys,
+		sealing: sealingOf(config.securityState),
+		limits: resolveLimits(config.limits) ?? DEFAULT_LIMITS,
+		anchors: [],
+		alarm: config.securityState?.alarm,
+		log: (level, message, fields) => resolved.log(level, message, fields),
+		clock: resolved.clock,
+	});
+}
+
 //the core reads no clock of its own, so the caller brings the fallback one (E-231)
 export function assembleVelveAuth<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
@@ -332,19 +382,33 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
+	const securityState = securityStateOf(config, { driver, schema, clock, log });
+	const { sealing } = securityState;
+	const sealSeams = {
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+		sealVerifiesAfterMissedIssue: sealVerifiesUnderLock(securityState),
+		checkSessionState: sessionStateCheckOf(securityState),
+	};
 	const sessions = createSessionService({
 		driver,
 		keys: config.keys,
-		sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
+		sealing,
 		schema,
+		...sealSeams,
 		...sessionOptionsOf(config),
 	});
-	const pending = createPendingAuthenticationService({ driver, keys: config.keys, schema });
+	const pending = createPendingAuthenticationService({
+		driver,
+		keys: config.keys,
+		schema,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+	});
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
 	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }), {
 		keys: config.keys,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
 	});
 
 	const pluginDatabaseRole =
@@ -364,7 +428,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			driver,
 			schema,
 			keys: config.keys,
-			sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
+			sealing,
+			reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
 		}),
 		driver,
 		log,
@@ -388,7 +453,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		driver,
 		schema,
 		keys: config.keys,
-		securityState: { sealing: sealingOf(config.securityState) },
+		securityState,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
 		clock,
 		oneTimeTokens,
 		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
@@ -396,8 +462,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		completeSecondFactor: createSecondFactorCompletion({
 			driver,
 			keys: config.keys,
-			sealing: SEALING_UNTIL_IT_IS_CONFIGURED,
+			sealing,
 			schema,
+			...sealSeams,
 			...sessionOptionsOf(config),
 		}),
 		...optionalConfigurationOf(config),
@@ -543,9 +610,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			//the reason is logged and never stored, as the library keeps no audit log (E-37)
 			disable: async ({ userId, reason }) => {
 				log("warn", "account disabled", { userId, reason });
-				await users.setDisabledAt({ userId, disabled: true });
+				await setDisabledUnderTheSeal(securityState, userId, true);
 			},
-			enable: ({ userId }) => users.setDisabledAt({ userId, disabled: false }),
+			enable: ({ userId }) => setDisabledUnderTheSeal(securityState, userId, false),
 			delete: ({ userId }) => users.deleteUser(userId),
 			...(identity.mode === "username"
 				? {}

@@ -1,6 +1,7 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
 import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
+import { securityStateDocumentOf } from "../../security-state/read.js";
 import { librarySessionBinding, type SessionIssue } from "../../session/binding.js";
 import {
 	bindToken,
@@ -82,6 +83,8 @@ export interface SessionInsert {
 	readonly userAgent: string | null;
 	readonly idleTimeoutMs: number;
 	readonly absoluteTimeoutMs: number;
+	/** the row id drawn before the issue, where a credential sealed in the same change names it */
+	readonly sessionId?: string;
 	/** takes the token MAC over the session epoch and creation time the inserting transaction reads */
 	bindUnder(issue: SessionIssue): Promise<StoredTokenMac>;
 }
@@ -106,6 +109,8 @@ export interface SessionCandidate extends StoredTokenMac {
 	readonly createdAtMicros: number | null;
 	/** null where a column the MAC does not bind holds a value no date of this runtime can carry */
 	decode(): SessionWithOwner | null;
+	/** the account's security-state document the same statement read */
+	readonly securityState: string | null;
 }
 
 /** the account a session row names, and whether the row passed the MAC check */
@@ -186,6 +191,8 @@ export interface SessionRepository {
 	deleteEveryOtherSessionOwnedBy(input: {
 		readonly actor: Actor;
 		readonly keptSessionId: string;
+		/** the epoch the mass revocation draws, which the kept row is bound under */
+		readonly keptUnderEpoch?: number;
 	}): Promise<number>;
 	replaceSession(input: {
 		readonly previousTokenHash: Uint8Array;
@@ -241,6 +248,7 @@ interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
 	readonly token_mac_key_version: number;
 	readonly disabled_at: unknown;
 	readonly observed_at: unknown;
+	readonly security_state?: string | null;
 }
 
 const SELECTED_COLUMNS = `id, user_id, created_at, last_used_at, idle_expires_at,
@@ -344,7 +352,9 @@ function unsealedInsertStatement(table: string, states: string): string {
 }
 
 //one joined query reads disabled at so a disabled account cannot pass as signed in (S-CACHE-2)
+//the session row, the epoch, the seal and every component come from one statement (E-3299)
 function resolveStatement(
+	schema: string,
 	table: string,
 	users: string,
 	states: string,
@@ -354,7 +364,8 @@ function resolveStatement(
 		s.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 		s.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
 		${microsOf("s.created_at")} AS created_at_us,
-		${epochOf("st.session_epoch", sealing)}::text AS session_epoch
+		${epochOf("st.session_epoch", sealing)}::text AS session_epoch,
+		${securityStateDocumentOf(schema, "s.user_id")} AS security_state
 	FROM ${table} s
 	JOIN ${users} u ON u.id = s.user_id
 	LEFT JOIN ${states} st ON st.user_id = s.user_id
@@ -537,6 +548,7 @@ function candidateOf(row: OwnedRowShape): SessionCandidate {
 		createdAtMicros: microsFrom(row.created_at_us),
 		tokenMac: row.token_mac,
 		tokenMacKeyVersion: row.token_mac_key_version,
+		securityState: row.security_state ?? null,
 		decode: () =>
 			decodedOrNull(() => ({
 				session: toSession({ ...row, factors: (storedFactorNames ?? []).join(",") }, NOT_LISTED),
@@ -554,7 +566,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const sealing = options.sealing ?? "required";
 	const sealedInsertSql = sealedInsertStatement(table, states);
 	const unsealedInsertSql = unsealedInsertStatement(table, states);
-	const resolveSql = resolveStatement(table, users, states, sealing);
+	const resolveSql = resolveStatement(options.schema, table, users, states, sealing);
 	const issuingStateSql = issuingStateStatement(states);
 	const extendSql = extendIdleDeadlineStatement(table);
 	const rebindSql = rebindStatement(table);
@@ -678,7 +690,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			throw new ConcealedError(insert.missed.reason);
 		}
 		const issue = {
-			sessionId: randomUuid(),
+			sessionId: insert.sessionId ?? randomUuid(),
 			sessionEpoch: condition.sealed ? condition.sessionEpoch : FIRST_SESSION_EPOCH,
 			createdAtMicros: locked.createdAtMicros,
 		};
@@ -739,15 +751,29 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
+	//the one session a mass revocation keeps is bound under the epoch it draws (S-INTEG-9)
+	function boundUnderEpoch(
+		binding: TokenBinding,
+		keptUnderEpoch: number | undefined,
+	): TokenBinding {
+		return keptUnderEpoch === undefined || !("sessionEpoch" in binding.content)
+			? binding
+			: { ...binding, content: { ...binding.content, sessionEpoch: keptUnderEpoch } };
+	}
+
 	//a kept row a resolution rebound under a newer version since the read is swapped again without an alarm (E-3276)
-	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
+	async function keptAfterRebinding(
+		tx: Driver,
+		kept: VerifiedRowShape,
+		keptUnderEpoch: number | undefined,
+	): Promise<boolean> {
 		let row = kept;
 		for (;;) {
 			const binding = await libraryBindingOf(row, "change");
 			if (binding === null) {
 				return false;
 			}
-			const next = await bindToken(options.keys, binding);
+			const next = await bindToken(options.keys, boundUnderEpoch(binding, keptUnderEpoch));
 			const rebound = await tx.query(keptRebindSql, [
 				row.id,
 				row.user_id,
@@ -848,14 +874,14 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			deleteEverySessionOwnedByReturningIds(actor),
 
 		//the kept row is checked and rebound under the lock or it goes with the others (E-3260)
-		deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
+		deleteEveryOtherSessionOwnedBy({ actor, keptSessionId, keptUnderEpoch }) {
 			return issuing(options.driver, actor, async (tx) => {
 				const [kept] = await tx.query<VerifiedRowShape>(keptRowSql, [keptSessionId, actor]);
 				const removed = await tx.query<VerifiedRowShape>(deleteEveryOtherOwnedSql, [
 					actor,
 					keptSessionId,
 				]);
-				if (kept !== undefined && !(await keptAfterRebinding(tx, kept))) {
+				if (kept !== undefined && !(await keptAfterRebinding(tx, kept, keptUnderEpoch))) {
 					await tx.query(deleteOwnedSql, [keptSessionId, actor]);
 				}
 				return (await libraryRowsAmong(removed, "change")).length;

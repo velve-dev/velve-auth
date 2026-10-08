@@ -105,6 +105,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 
 	"src/core/security-state/read.ts#securityStateReadStatement": "account the path already named",
 	"src/core/security-state/read.ts#readSecurityState": "account the path already named",
+	"src/core/security-state/read.ts#securityStateDocumentOf": "account the path already named",
 	"src/core/security-state/sealing.ts#sealUnderAccountLock": "account the path already named",
 	"src/core/security-state/sealing.ts#sealCreatedAccount": "account the path already named",
 	"src/core/security-state/sealing.ts#sealAccount": "account the path already named",

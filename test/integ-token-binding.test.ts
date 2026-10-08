@@ -1550,6 +1550,7 @@ describe("the anchor's place on a consuming path: after the consumption, before 
 		});
 
 		await completion.complete({
+			authorisedBy: "unsealed",
 			pendingToken: token,
 			factor: "totp",
 			presentedSessionToken: null,

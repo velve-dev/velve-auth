@@ -77,6 +77,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		const token = await beginPending();
 
 		const issued = await completion.complete({
+			authorisedBy: "unsealed",
 			pendingToken: token,
 			factor: "totp",
 			presentedSessionToken: null,
@@ -112,6 +113,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 				driver: refusing,
 				schema,
 			}).complete({
+				authorisedBy: "unsealed",
 				pendingToken: token,
 				factor: "totp",
 				presentedSessionToken: null,
@@ -142,6 +144,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 						driver: racer,
 						schema,
 					}).complete({
+						authorisedBy: "unsealed",
 						pendingToken: token,
 						factor: "totp",
 						presentedSessionToken: null,

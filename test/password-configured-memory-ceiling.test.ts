@@ -19,6 +19,7 @@ import { configFor, testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { postTo } from "./flows-fixtures.js";
 import { drawTestPassword } from "./password-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 
 /**
  * A configured Argon2id memory above the import ceiling raises the ceiling verification applies,
@@ -87,6 +88,7 @@ describe.each([ABOVE_THE_IMPORT_CEILING, TWICE_THE_IMPORT_CEILING])(
 			 VALUES ($1, $2, $3, 'argon2id')`,
 				[userId, sealed.ciphertext, sealed.keyVersion],
 			);
+			await resealDirectly(migrated.connection, migrated.schema, keys, userId);
 		}
 
 		it("verifies a password the library set at the configured memory", async () => {

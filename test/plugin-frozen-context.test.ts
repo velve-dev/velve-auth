@@ -19,6 +19,7 @@ beforeAll(async () => {
 	probe = createContextProbe();
 	mounted = await mountAuth("frozenctx", { keys: TOKEN_KEYS, plugins: [probe.plugin] });
 	userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 	const issued = createSessionToken();
 	const [row] = await mounted.connection.query<{ id: string }>(
 		`INSERT INTO ${mounted.schema}.session

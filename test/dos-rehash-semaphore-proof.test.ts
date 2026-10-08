@@ -67,6 +67,7 @@ const { postTo } = await import("./flows-fixtures.js");
 const { kdfAccounting } = await import("./kdf-accounting-fixtures.js");
 const { generateRootKey } = await import("./keys-fixtures.js");
 const { drawTestPassword } = await import("./password-fixtures.js");
+const { resealDirectly } = await import("./security-state-fixtures.js");
 const { hash: bcryptHash } = await import("bcryptjs");
 
 type Migrated = Awaited<ReturnType<typeof openMigratedSchema>>;
@@ -127,6 +128,7 @@ beforeAll(async () => {
 			scheme: "bcrypt",
 			setBySessionId: null,
 		});
+		await resealDirectly(migrated.connection, migrated.schema, keys, userId);
 		accounts.push({ email, userId });
 	}
 }, 120_000);

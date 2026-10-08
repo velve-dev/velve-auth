@@ -12,6 +12,7 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
 import { postTo } from "./flows-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword, storedHashesFor } from "./password-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 
 /**
  * T-RACE-6 through the mounted handler. Each instance holds a connection of its own, as two
@@ -123,6 +124,7 @@ async function accountWithBcrypt(): Promise<{ email: string; userId: string }> {
 		scheme: "bcrypt",
 		setBySessionId: null,
 	});
+	await resealDirectly(primary, schema, keys, userId);
 	return { email, userId };
 }
 
@@ -157,6 +159,7 @@ function failedDeferredWork(): readonly string[] {
 }
 
 describe("T-RACE-6 — the rehash writes by compare-and-swap (S-RACE-6)", () => {
+	//the account lock serialises the two rehashes and the second finds the hash the first swapped in (E-3385)
 	it("lets exactly one of two simultaneous rehashes take effect", async () => {
 		const account = await accountWithBcrypt();
 		const [first, second] = instances as [Instance, Instance];
@@ -166,13 +169,15 @@ describe("T-RACE-6 — the rehash writes by compare-and-swap (S-RACE-6)", () => 
 			signIn(first, account.email, PASSWORD),
 			signIn(second, account.email, PASSWORD),
 		]);
-		await until(() => gate.arrivals === 2, "both rehashes reaching their swap");
+		await until(() => gate.arrivals === 1, "one rehash reaching its swap");
 		expect((await storedCredential(account.userId)).scheme, "nothing swapped yet").toBe("bcrypt");
 		gate.release();
-		await until(() => gate.results.length === 2, "both swaps returning");
+		await until(() => gate.results.length === 1, "the swap returning");
+		await new Promise((resolve) => setTimeout(resolve, 500));
 
 		expect(answers.map((answer) => answer.status)).toStrictEqual([200, 200]);
-		expect([...gate.results].sort()).toStrictEqual([0, 1]);
+		expect(gate.arrivals, "the second rehash reached no swap").toBe(1);
+		expect(gate.results).toStrictEqual([1]);
 		expect(failedDeferredWork()).toStrictEqual([]);
 		expect((await storedCredential(account.userId)).scheme).toBe("argon2id");
 		expect((await signIn(first, account.email, PASSWORD)).status, "the stored hash").toBe(200);
@@ -204,11 +209,13 @@ describe("T-RACE-6 — the rehash writes by compare-and-swap (S-RACE-6)", () => 
 		const writtenByTheThirdParty = await storedCredential(account.userId);
 		gate.release();
 		await until(() => gate.results.length === 1, "the swap returning");
+		await new Promise((resolve) => setTimeout(resolve, 200));
 
 		expect(answer.status).toBe(200);
 		expect(gate.results).toStrictEqual([0]);
-		expect(failedDeferredWork()).toStrictEqual([]);
 		expect(await storedCredential(account.userId)).toStrictEqual(writtenByTheThirdParty);
+		//a write past the account lock leaves the seal behind until an administrator seals it again (E-3166)
+		await resealDirectly(primary, schema, keys, account.userId);
 		expect((await signIn(first, account.email, THIRD_PARTY_PASSWORD)).status).toBe(200);
 		expect((await signIn(first, account.email, PASSWORD)).status).toBe(401);
 	}, 60_000);

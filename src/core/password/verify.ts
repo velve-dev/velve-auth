@@ -41,7 +41,7 @@ export type PasswordCheck =
 			readonly outcome: "verified";
 			readonly userId: string;
 			//the caller runs the rehash after answering so it never lengthens the sign-in (S-TIM-5)
-			readonly rehash?: () => Promise<boolean>;
+			readonly rehash?: () => Promise<SealedRehash | null>;
 	  }
 	| { readonly outcome: "refused"; readonly reason: ConcealedReason }
 	//a length refusal depends on the input alone and on nothing else (S-DOS-2)
@@ -69,7 +69,11 @@ export async function createDummyCredential(
 
 //after the length check nothing returns early before the outcome is decided (S-TIM-1)
 export async function checkPassword(
-	input: { readonly userId: string | null; readonly plaintext: string },
+	input: {
+		readonly userId: string | null;
+		readonly plaintext: string;
+		readonly checked?: PasswordCredentialRow | null;
+	},
 	environment: PasswordEnvironment,
 ): Promise<PasswordCheck> {
 	const accepted = acceptSubmittedPassword(input.plaintext, environment.config);
@@ -77,7 +81,11 @@ export async function checkPassword(
 		return { outcome: "unacceptable" };
 	}
 
-	const row = await environment.credentials.findByUserId(input.userId ?? ABSENT_USER_ID);
+	//what the sign-in evaluates must come from the read the seal check verified (S-INTEG-4)
+	const row =
+		input.checked === undefined
+			? await environment.credentials.findByUserId(input.userId ?? ABSENT_USER_ID)
+			: input.checked;
 	const usable = row !== null && isAcceptedScheme(row.scheme, environment.config) ? row : null;
 	const source = usable ?? environment.dummy;
 
@@ -136,23 +144,23 @@ export async function setPassword(
 	});
 }
 
+//a rehash hands its hash to the caller who writes it under the account lock (E-3385)
+export interface SealedRehash {
+	readonly previous: Uint8Array<ArrayBuffer>;
+	readonly phc: string;
+}
+
 //a rehash that loses the race is harmless as the next sign-in tries again (E-11)
 async function rewriteCredential(
 	password: Uint8Array<ArrayBuffer>,
 	row: PasswordCredentialRow,
 	environment: PasswordEnvironment,
-): Promise<boolean> {
+): Promise<SealedRehash | null> {
 	//the rehash shares the semaphore so a rehash wave cannot displace sign-ins (S-DOS-6)
 	const phc = await environment.semaphore.run(() =>
 		createArgon2idHash(password, environment.config.argon2id),
 	);
-
-	return environment.credentials.replaceIfUnchanged({
-		userId: row.userId,
-		previous: row.phc,
-		phc,
-		scheme: CREATED_SCHEME,
-	});
+	return { previous: row.phc, phc };
 }
 
 interface OpenedCredential {

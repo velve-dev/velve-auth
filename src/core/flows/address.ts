@@ -86,6 +86,7 @@ export async function redeemVerification(
 			actor: account.actor,
 			confirmingSession,
 			newEmail: null,
+			securityState: environment.services.securityState,
 		});
 		return account.user.id;
 	});
@@ -164,6 +165,7 @@ export async function redeemChange(
 			actor: account.actor,
 			confirmingSession,
 			newEmail: addressIn(redeemed.payload),
+			securityState: environment.services.securityState,
 		});
 		return account.user.id;
 	});

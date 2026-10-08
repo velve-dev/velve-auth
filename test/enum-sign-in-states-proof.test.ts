@@ -33,6 +33,7 @@ beforeAll(async () => {
 		`UPDATE ${mounted.schema}.user SET email_verified_at = now() WHERE id = $1`,
 		[confirmed],
 	);
+	await mounted.reseal(confirmed);
 	const disabled = await accountWith("disabled@example.com", PASSWORD);
 	await mounted.auth.user.disable({ userId: disabled, reason: "T-ENUM-2" });
 	await accountWith("credentialless@example.com", null);

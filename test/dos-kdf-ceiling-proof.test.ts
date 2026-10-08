@@ -75,6 +75,7 @@ const { postTo } = await import("./flows-fixtures.js");
 const { kdfAccounting } = await import("./kdf-accounting-fixtures.js");
 const { generateRootKey } = await import("./keys-fixtures.js");
 const { drawTestPassword } = await import("./password-fixtures.js");
+const { resealDirectly } = await import("./security-state-fixtures.js");
 
 type Migrated = Awaited<ReturnType<typeof openMigratedSchema>>;
 type Pool = Awaited<ReturnType<typeof openConnectionPool>>;
@@ -121,6 +122,7 @@ async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
 			 VALUES ($1, $2, $3, 'argon2id')`,
 			[userId, sealed.ciphertext, sealed.keyVersion],
 		);
+		await resealDirectly(migrated.connection, migrated.schema, keys, userId);
 		emails.push(email);
 	}
 	return emails;
@@ -299,7 +301,10 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 	it("keeps an imported derivation within the import ceiling and the wave within min(4, cpus) times max(m, 64 MiB)", async () => {
 		const statuses = await signInWave(importedAtTheCap, SIMULTANEOUS_SIGN_INS);
 
-		expect(statuses.filter((status) => status !== 200 && status !== 429)).toStrictEqual([]);
+		//a sign-in that loses the race against its account's first rehash ends without a session (E-3377)
+		expect(
+			statuses.filter((status) => status !== 200 && status !== 429 && status !== 401),
+		).toStrictEqual([]);
 		expect(statuses.filter((status) => status === 200).length).toBeGreaterThan(ceiling);
 		expect(
 			Math.max(...kdfAccounting.memoryRequestsKiB),

@@ -17,6 +17,7 @@ import { toVisibleFailure } from "../src/core/http/error-map.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 import {
 	beginPendingState,
 	pendingAuthenticationsOn,
@@ -48,7 +49,13 @@ beforeAll(async () => {
 	schema = migrated.schema;
 	keys = testKeyProvider();
 	pending = pendingAuthenticationsOn(connection, schema);
-	recovery = createRecoveryCodeService({ driver: connection, schema, keys, pending });
+	recovery = createRecoveryCodeService({
+		securityState: testSecurityState(connection, schema, keys),
+		driver: connection,
+		schema,
+		keys,
+		pending,
+	});
 });
 
 afterAll(async () => {
@@ -345,6 +352,7 @@ describe("L-3: the pepper version travels with the code", () => {
 		const actor = actorOfTestUser(userId);
 
 		const beforeRotation = createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			pending,
@@ -356,6 +364,7 @@ describe("L-3: the pepper version travels with the code", () => {
 		);
 
 		const afterRotation = createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(2)),
 			driver: connection,
 			schema,
 			pending,
@@ -375,12 +384,14 @@ describe("L-3: the pepper version travels with the code", () => {
 		const actor = actorOfTestUser(userId);
 
 		await createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			pending,
 			keys: ring.providerAt(1, [1]),
 		}).generate({ actor });
 		await createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(2)),
 			driver: connection,
 			schema,
 			pending,
@@ -398,13 +409,17 @@ describe("L-3: the pepper version travels with the code", () => {
 		const actor = actorOfTestUser(userId);
 
 		const { codes } = await createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			pending,
 			keys: ring.providerAt(1, [1]),
 		}).generate({ actor });
+		//the seal follows the ring and only the codes stay under the dropped version (E-3165)
+		await resealDirectly(connection, schema, ring.providerAt(2, [2]), userId);
 
 		const withoutTheOldVersion = createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(2, [2])),
 			driver: connection,
 			schema,
 			pending,

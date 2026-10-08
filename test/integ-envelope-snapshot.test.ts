@@ -6,6 +6,7 @@ import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
 //a reader decides whether the old form opens from the snapshot it read the secret in (E-3121)
@@ -26,13 +27,12 @@ afterAll(async () => {
 	await connection.close();
 });
 
-//every statement passes through, and the first read of the secret is followed by the conversion and a seal
-function sealingRightAfterTheRead(userId: string, readsSeen: { count: number }): Driver {
-	const reading = /FROM \S+\.totp_credential credential/;
-	return {
+//every statement passes through, and the account lock is preceded once by the conversion and a seal
+function sealingRightBeforeTheLock(userId: string, readsSeen: { count: number }): Driver {
+	const locking = /FOR NO KEY UPDATE/;
+	const intercepting = (inner: Driver): Driver => ({
 		async query<T>(sql: string, parameters: unknown[]): Promise<T[]> {
-			const rows = await connection.query<T>(sql, parameters);
-			if (reading.test(sql) && readsSeen.count === 0) {
+			if (locking.test(sql) && readsSeen.count === 0) {
 				readsSeen.count += 1;
 				await inOneTransaction(connection, (transaction) =>
 					rebindAfterOneRead({
@@ -43,23 +43,22 @@ function sealingRightAfterTheRead(userId: string, readsSeen: { count: number }):
 						sealing: "migrating",
 					}),
 				);
-				await connection.query(
-					`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
-					 VALUES ($1, 1, $2, 1)`,
-					[userId, new Uint8Array(32)],
-				);
+				await resealDirectly(connection, schema, keys, userId);
 			}
-			return rows;
+			return inner.query<T>(sql, parameters);
 		},
-		transaction: (work) => connection.transaction(work),
-	};
+		transaction: (work) => inner.transaction((tx) => work(intercepting(tx))),
+	});
+	return intercepting(connection);
 }
 
+//the sealing transaction reads seal row and secret under the lock in one statement (E-3165)
 describe("the seal row is read in the statement that reads the envelope (S-INTEG-1)", () => {
-	it("accepts the right code when the account is converted and sealed between read and use", async () => {
+	it("accepts the right code when the account is converted and sealed before the read under the lock", async () => {
 		const userId = await createUser(connection, schema);
 		const actor = actorOfTestUser(userId);
 		const enrolling = createTotpService({
+			securityState: testSecurityState(connection, schema, keys),
 			driver: connection,
 			schema,
 			keys,
@@ -78,15 +77,16 @@ describe("the seal row is read in the statement that reads the envelope (S-INTEG
 			`UPDATE ${schema}.totp_credential SET secret_enc = $2, key_version = $3 WHERE user_id = $1`,
 			[userId, unbound.ciphertext, unbound.keyVersion],
 		);
+		await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [userId]);
 		const readsSeen = { count: 0 };
 		const migrating = createTotpService({
-			driver: sealingRightAfterTheRead(userId, readsSeen),
+			securityState: testSecurityState(sealingRightBeforeTheLock(userId, readsSeen), schema, keys),
+			driver: sealingRightBeforeTheLock(userId, readsSeen),
 			schema,
 			keys,
 			pending: pendingAuthenticationsOn(connection, schema),
 			issuer: "Velve",
 			clock: { now: () => new Date() },
-			sealing: "migrating",
 		});
 
 		await expect(

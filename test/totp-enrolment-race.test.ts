@@ -6,6 +6,7 @@ import { createTestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { HeldDriver } from "./lock-order-fixtures.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyProvider } from "./totp-fixtures.js";
 
 const FIXED_INSTANT = new Date("2026-10-04T09:15:00.000Z");
@@ -31,6 +32,7 @@ afterAll(async () => {
 
 function totpOn(driver: HeldDriver | TestConnection) {
 	return createTotpService({
+		securityState: testSecurityState(driver, schema, keys),
 		driver,
 		schema,
 		keys,

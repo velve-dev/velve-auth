@@ -1,5 +1,9 @@
 import type { Driver } from "../../db/driver.js";
-import type { SealVerification, SecurityStateSealing } from "../../db/repositories/session.js";
+import type {
+	IssueAuthorisation,
+	SealVerification,
+	SecurityStateSealing,
+} from "../../db/repositories/session.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import type { SessionConfig } from "../../session/config.js";
 import type { SessionMetadataMode } from "../../session/metadata.js";
@@ -31,6 +35,8 @@ export interface SecondFactorCompletion {
 	complete(input: {
 		readonly pendingToken: PendingToken;
 		readonly factor: SecondFactor;
+		/** the seal the factor check read, whose epoch is the one the pending row stores */
+		readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
 		readonly presentedSessionToken: string | null;
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
@@ -50,7 +56,7 @@ export function createSecondFactorCompletion(
 	const schema = options.schema ?? "velve";
 
 	return {
-		complete({ pendingToken, factor, presentedSessionToken, observed }) {
+		complete({ pendingToken, factor, authorisedBy, presentedSessionToken, observed }) {
 			return options.driver.transaction(async (tx) => {
 				const report =
 					options.reportTokenBindingRefusal === undefined
@@ -82,7 +88,7 @@ export function createSecondFactorCompletion(
 				await options.beforeLockingTheOwnerOf?.(consumed.userId);
 				return sessions.issueReplacingPresented({
 					completes: SECOND_FACTOR_PATH[factor],
-					authorisedBy: "read_under_lock",
+					authorisedBy,
 					presentedToken: presentedSessionToken,
 					userId: consumed.userId,
 					factors: [...consumed.factorsCompleted, factor],

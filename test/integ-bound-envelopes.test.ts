@@ -27,6 +27,7 @@ import {
 	oauthConfigFor,
 	type StubProvider,
 } from "./oauth-provider.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
 //every path that decrypts opens only the envelope bound to its own row (T-INTEG-1)
@@ -113,6 +114,7 @@ async function signUp(): Promise<Account> {
 
 async function enrolTotp(account: Account, keys: KeyProvider = beforeRotation): Promise<void> {
 	const totp = createTotpService({
+		securityState: testSecurityState(connection, schema, keys),
 		driver: connection,
 		schema,
 		keys,
@@ -264,6 +266,8 @@ async function writePhc(userId: string, stored: StoredCiphertext): Promise<void>
 		`UPDATE ${schema}.password_credential SET phc = $2, key_version = $3 WHERE user_id = $1`,
 		[userId, stored.ciphertext, stored.keyVersion],
 	);
+	//after a copy the seal is renewed and only the envelope's own binding is left to refuse it (E-3165)
+	await resealDirectly(connection, schema, beforeRotation, userId);
 }
 
 async function readTotpSecret(userId: string): Promise<StoredCiphertext> {
@@ -282,6 +286,8 @@ async function writeTotpSecret(userId: string, stored: StoredCiphertext): Promis
 		`UPDATE ${schema}.totp_credential SET secret_enc = $2, key_version = $3 WHERE user_id = $1`,
 		[userId, stored.ciphertext, stored.keyVersion],
 	);
+	//after a copy the seal is renewed and only the envelope's own binding is left to refuse it (E-3165)
+	await resealDirectly(connection, schema, beforeRotation, userId);
 }
 
 const TOKEN_COLUMN_NAMES = {
@@ -641,6 +647,11 @@ async function unboundStartingWithTheMarker(
 	throw new Error("no nonce began with the marker in ten thousand draws");
 }
 
+//an account from before the seal has no seal row, which is the only account the unbound form opens for (S-INTEG-1)
+async function asAnAccountFromBeforeTheSeal(userId: string): Promise<void> {
+	await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [userId]);
+}
+
 async function unboundPhcOf(userId: string): Promise<StoredCiphertext> {
 	const bound = await readPhc(userId);
 	const phc = await decryptBound(beforeRotation, phcBindingOf(userId), bound, "refused");
@@ -670,6 +681,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 	it("reads an unbound password ciphertext under sealing migrating", async () => {
 		const account = await signUp();
 		await writePhc(account.userId, await unboundPhcOf(account.userId));
+		await asAnAccountFromBeforeTheSeal(account.userId);
 		const migrating = instanceUnder(beforeRotation, { securityState: { sealing: "migrating" } });
 
 		expect((await signInWithPassword(migrating, account.email, PASSWORD)).status).toBe(200);
@@ -685,6 +697,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 		const migrating = instanceUnder(beforeRotation, { securityState: { sealing: "migrating" } });
 
 		expect(await checkTotp(handler, account, currentCodeOf(secret))).toStrictEqual(ordinaryFailure);
+		await asAnAccountFromBeforeTheSeal(account.userId);
 		expect((await checkTotp(migrating, account, currentCodeOf(secret, 1))).status).toBe(200);
 	});
 
@@ -699,6 +712,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 		);
 		const unbound = await unboundStartingWithTheMarker(phc);
 		await writePhc(account.userId, unbound);
+		await asAnAccountFromBeforeTheSeal(account.userId);
 		const migrating = instanceUnder(beforeRotation, { securityState: { sealing: "migrating" } });
 
 		expect((await signInWithPassword(migrating, account.email, PASSWORD)).status).toBe(200);
@@ -724,6 +738,7 @@ describe("T-INTEG-1: the unbound form of 1.x is read only while migrating (S-INT
 				"refused",
 			),
 		).toStrictEqual(phc);
+		await resealDirectly(connection, schema, beforeRotation, account.userId);
 		expect((await signInWithPassword(handler, account.email, PASSWORD)).status).toBe(200);
 	});
 
@@ -827,6 +842,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 			 VALUES ($1, $2, $3, 'argon2id')`,
 			[identity.userId, unboundPhc.ciphertext, unboundPhc.keyVersion],
 		);
+		await resealDirectly(connection, schema, beforeRotation, identity.userId);
 		await enrolTotp(account);
 		const secret = account.totpSecret as Uint8Array<ArrayBuffer>;
 		await writeTotpSecret(
@@ -834,6 +850,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 			await encryptWithPurposeKey(beforeRotation, "totp-enc", secret),
 		);
 		await unboundTokensOf(identity);
+		await asAnAccountFromBeforeTheSeal(identity.userId);
 
 		await expect(rebind(identity.userId, beforeRotation, "required")).rejects.toMatchObject({
 			name: "KeyError",
@@ -962,6 +979,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 			byVersion: (purpose, version) => afterRotation.byVersion(purpose, version),
 		};
 		await unboundTokensOf(identity);
+		await asAnAccountFromBeforeTheSeal(identity.userId);
 
 		await expect(rebind(identity.userId, alternating, "migrating")).rejects.toMatchObject({
 			code: "internal_error",
@@ -973,6 +991,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 		const other = await signUp();
 		const unbound = await unboundPhcOf(account.userId);
 		await writePhc(account.userId, unbound);
+		await asAnAccountFromBeforeTheSeal(account.userId);
 		const replacement = await readPhc(other.userId);
 
 		const pool = writingBefore(/^UPDATE \S+\.password_credential SET phc = \$2/, (transaction) =>
@@ -1011,6 +1030,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 			account.totpSecret as Uint8Array<ArrayBuffer>,
 		);
 		await writeTotpSecret(account.userId, unbound);
+		await asAnAccountFromBeforeTheSeal(account.userId);
 		const foreign = await readTotpSecret(other.userId);
 		const pool = writingBefore(/^UPDATE \S+\.totp_credential SET secret_enc = \$3/, (transaction) =>
 			transaction.query(`UPDATE ${schema}.totp_credential SET secret_enc = $2 WHERE user_id = $1`, [
@@ -1040,6 +1060,7 @@ describe("rebindEnvelopesOfAccount, the rewrite a change on an unsealed account 
 	it("fails rather than reporting success when an identity's tokens changed under the rewrite", async () => {
 		const identity = await signInThroughOAuth(`swap-${accountNumber}`);
 		await unboundTokensOf(identity);
+		await asAnAccountFromBeforeTheSeal(identity.userId);
 		const before = await readToken(identity.identityId, "identity.access_token_enc");
 		const replacement = await encryptBound(
 			beforeRotation,

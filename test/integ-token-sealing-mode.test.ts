@@ -62,6 +62,7 @@ describe('completing a second factor under "required"', () => {
 
 		await expect(
 			completion.complete({
+				authorisedBy: "unsealed",
 				pendingToken: token,
 				factor: "totp",
 				presentedSessionToken: null,

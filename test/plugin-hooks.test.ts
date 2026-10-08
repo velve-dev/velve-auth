@@ -14,7 +14,11 @@ import { createPluginRuntime } from "../src/core/plugin/registry.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
-import { SESSION_FIXTURE_KEYS, sessionMacParameters } from "./session-fixtures.js";
+import {
+	rebindSessionsOf,
+	SESSION_FIXTURE_KEYS,
+	sessionMacParameters,
+} from "./session-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
 
@@ -233,6 +237,10 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 				})),
 			],
 		);
+		//a revocation earlier in the file moved the account to a new epoch
+		await rebindSessionsOf(mounted.connection, mounted.schema, TOKEN_KEYS, {
+			sessionId: row?.id ?? "",
+		});
 		return { token: issued.token, id: row?.id ?? "" };
 	}
 
@@ -292,6 +300,7 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 	beforeAll(async () => {
 		mounted = await mountAuth("pluginhooks", { keys: TOKEN_KEYS, plugins: [watcher] });
 		userId = await createUser(mounted.connection, mounted.schema);
+		await mounted.reseal(userId);
 	});
 
 	afterAll(async () => {

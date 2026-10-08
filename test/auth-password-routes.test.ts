@@ -18,6 +18,7 @@ import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.j
 import type { TestConnection } from "./db-postgres-connection.js";
 import { difference, normalisedAnswer, postTo } from "./flows-fixtures.js";
 import { storedHashesFor } from "./password-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 import { rebindSessionsOf } from "./session-fixtures.js";
 
 type Handler = (request: Request) => Promise<Response>;
@@ -134,6 +135,7 @@ async function enrolATotpFactor(userId: string): Promise<void> {
 		 VALUES ($1, $2, 1, now())`,
 		[userId, Buffer.from("a stand-in for an encrypted secret")],
 	);
+	await mounted.reseal(userId);
 }
 
 /**
@@ -667,6 +669,7 @@ describe("every refusal of the real sign-in answers alike (S-ENUM-1)", () => {
 			scheme: "bcrypt",
 			setBySessionId: null,
 		});
+		await resealDirectly(connection, schema, keys, legacy);
 	});
 
 	afterAll(async () => {

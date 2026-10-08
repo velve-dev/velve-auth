@@ -15,6 +15,7 @@ import { toVisibleFailure } from "../src/core/http/error-map.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import {
 	attemptsRecorded,
 	beginPendingState,
@@ -48,6 +49,7 @@ beforeAll(async () => {
 	clock = createTestClock(FIXED_INSTANT);
 	pending = pendingAuthenticationsOn(connection, schema);
 	totp = createTotpService({
+		securityState: testSecurityState(connection, schema, testKeyProvider()),
 		driver: connection,
 		schema,
 		keys: testKeyProvider(),

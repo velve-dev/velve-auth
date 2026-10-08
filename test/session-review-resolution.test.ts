@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
+import { securityStateDocumentOf } from "../src/core/security-state/read.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { testKeyProvider } from "./auth-fixtures.js";
@@ -172,7 +173,9 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 	 * the one authorisation query is a decision somebody made on purpose. This is that fixture.
 	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232); the factors are
 	 * read as JSON, and the two MAC columns and the account's session epoch are read beside them,
-	 * because S-INTEG-9 checks the row before use.
+	 * because S-INTEG-9 checks the row before use. The account's whole security state is read by the
+	 * same statement, as the document `securityStateDocumentOf` builds for the one read, so the seal is
+	 * checked against what this one statement saw (E-3164).
 	 */
 	it("runs the statement this fixture pins, byte for byte", async () => {
 		const issued = await service.issue({
@@ -190,7 +193,8 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 \t\ts.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 \t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
 \t\tCASE WHEN isfinite(s.created_at) THEN trunc(extract(epoch FROM s.created_at) * 1000000)::text END AS created_at_us,
-\t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch
+\t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch,
+\t\t${securityStateDocumentOf(migrated.schema, "s.user_id")} AS security_state
 \tFROM ${migrated.schema}.session s
 \tJOIN ${migrated.schema}.user u ON u.id = s.user_id
 \tLEFT JOIN ${migrated.schema}.security_state st ON st.user_id = s.user_id

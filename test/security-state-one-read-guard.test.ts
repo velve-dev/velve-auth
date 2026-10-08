@@ -65,7 +65,9 @@ function findingsInFunction(path: string, facts: FunctionFacts): string[] {
 	}
 	for (const call of facts.calls) {
 		const handsOverTheChange =
-			call.callee === "change.write" || call.callee === "context.convertUnsealed";
+			call.callee === "change.write" ||
+			call.callee === "change.afterSeal" ||
+			call.callee === "context.convertUnsealed";
 		if (handsOverTheChange && call.firstArgument !== "guarded") {
 			findings.push(`${path}#${facts.name} hands ${call.callee} the unguarded transaction`);
 		}
@@ -76,7 +78,7 @@ function findingsInFunction(path: string, facts: FunctionFacts): string[] {
 function scan(sources: ReadonlyMap<string, string>): string[] {
 	const findings: string[] = [];
 	for (const [path, text] of sources) {
-		if (path !== READ_MODULE && text.includes("jsonb_build_object(\n  'user_id'")) {
+		if (path !== READ_MODULE && text.includes("(SELECT jsonb_build_object(\n  'user_id'")) {
 			findings.push(`${path} spells the state read outside ${READ_MODULE}`);
 		}
 		for (const facts of functionsOf(path, text)) {
@@ -113,8 +115,8 @@ describe("a sealing transaction reads the state once", () => {
 		const sources = shippedSources();
 		const sealing = sources.get(SEALING_MODULE) ?? "";
 		const planted = sealing.replace(
-			"const written = await change.write(guarded, read);",
-			"const written = await change.write(guarded, read);\n\tawait readSecurityState(tx, context.schema, userId);",
+			"const written = await change.write(guarded, read, { version, sessionEpoch });",
+			"const written = await change.write(guarded, read, { version, sessionEpoch });\n\tawait readSecurityState(tx, context.schema, userId);",
 		);
 		expect(planted).not.toBe(sealing);
 
@@ -127,8 +129,8 @@ describe("a sealing transaction reads the state once", () => {
 		const sources = shippedSources();
 		const sealing = sources.get(SEALING_MODULE) ?? "";
 		const planted = sealing.replace(
-			"await change.write(guarded, read)",
-			"await change.write(tx, read)",
+			"await change.write(guarded, read, {",
+			"await change.write(tx, read, {",
 		);
 		expect(planted).not.toBe(sealing);
 
@@ -140,8 +142,9 @@ describe("a sealing transaction reads the state once", () => {
 	it("reports the state read spelled in another module", () => {
 		const sources = shippedSources();
 		const statement =
-			(sources.get(READ_MODULE) ?? "").match(/\x60SELECT jsonb_build_object\([^\x60]*\x60/)?.[0] ??
-			"";
+			(sources.get(READ_MODULE) ?? "").match(
+				/\x60\(SELECT jsonb_build_object\([^\x60]*\x60/,
+			)?.[0] ?? "";
 		expect(statement).not.toBe("");
 
 		expect(

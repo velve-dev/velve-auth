@@ -81,10 +81,10 @@ interface SecurityStateCheck {
 	readonly read: SecurityStateRead;
 }
 
-//one statement sees one consistent state under read committed, several could see a reseal between them (E-3280)
-export function securityStateReadStatement(schema: string): string {
+//a statement that names an account reads its whole state in the same snapshot as everything else (E-3299)
+export function securityStateDocumentOf(schema: string, accountIdSql: string): string {
 	const table = (name: string) => qualifiedTableName(schema, name);
-	return `SELECT jsonb_build_object(
+	return `(SELECT jsonb_build_object(
   'user_id', account.id::text,
   'email', account.email,
   'email_verified', account.email_verified_at IS NOT NULL,
@@ -124,12 +124,17 @@ export function securityStateReadStatement(schema: string): string {
       'key_version', code.key_version::text,
       'code_hmac', encode(code.code_hmac, 'hex'))), '[]'::jsonb)
     FROM ${table("recovery_code")} code WHERE code.user_id = account.id)
-)::text AS state
+)::text
 FROM ${table("user")} account
 LEFT JOIN ${table("security_state")} seal ON seal.user_id = account.id
 LEFT JOIN ${table("password_credential")} credential ON credential.user_id = account.id
 LEFT JOIN ${table("totp_credential")} secret ON secret.user_id = account.id
-WHERE account.id = $1::uuid`;
+WHERE account.id = ${accountIdSql})`;
+}
+
+//one statement sees one consistent state under read committed, several could see a reseal between them (E-3280)
+export function securityStateReadStatement(schema: string): string {
+	return `SELECT ${securityStateDocumentOf(schema, "$1::uuid")} AS state`;
 }
 
 const HEX = /^(?:[0-9a-f]{2})*$/;
@@ -300,8 +305,15 @@ export async function readSecurityState(
 	if (!isRowIdentifier(userId)) {
 		return null;
 	}
-	const [row] = await driver.query<{ state: string }>(securityStateReadStatement(schema), [userId]);
-	return row === undefined ? null : stateOf(row.state);
+	const [row] = await driver.query<{ state: string | null }>(securityStateReadStatement(schema), [
+		userId,
+	]);
+	return securityStateOfDocument(row?.state ?? null);
+}
+
+/** the read a statement's security-state document holds, or null for an account that does not exist */
+export function securityStateOfDocument(document: string | null): SecurityStateRead | null {
+	return document === null ? null : stateOf(document);
 }
 
 /** the components a read holds, with each ciphertext replaced by its SHA-256 value */

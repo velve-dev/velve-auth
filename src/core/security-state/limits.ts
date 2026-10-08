@@ -20,7 +20,7 @@ export class CredentialLimitReachedError extends Error {
 	}
 }
 
-const DEFAULT_LIMITS: LimitsConfig = { passkeysPerAccount: 20, identitiesPerAccount: 10 };
+export const DEFAULT_LIMITS: LimitsConfig = { passkeysPerAccount: 20, identitiesPerAccount: 10 };
 
 function isCount(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;

@@ -72,6 +72,8 @@ describe("an old-form password copied across accounts (S-INTEG-1, E-3122)", () =
 			`UPDATE ${schema}.password_credential SET phc = $2, key_version = $3 WHERE user_id = $1`,
 			[ids.victim, kept.ciphertext, kept.keyVersion],
 		);
+		//an account from before the seal has no seal row, as a sign-up now writes one (E-3165)
+		await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [ids.victim]);
 		const asTheVictimWithTheWritersPassword = async (handler: typeof migrating) =>
 			(
 				await handler(

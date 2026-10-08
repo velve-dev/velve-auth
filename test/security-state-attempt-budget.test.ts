@@ -12,6 +12,7 @@ import {
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import {
 	beginPendingState,
 	pendingAuthenticationsOn,
@@ -34,6 +35,7 @@ beforeAll(async () => {
 	clock = createTestClock(new Date("2026-07-01T12:00:00.000Z"));
 	pending = pendingAuthenticationsOn(connection, schema);
 	totp = createTotpService({
+		securityState: testSecurityState(connection, schema, testKeyProvider()),
 		driver: connection,
 		schema,
 		keys: testKeyProvider(),

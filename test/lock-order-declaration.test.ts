@@ -253,7 +253,10 @@ describe("every account lock outside the interleavings is declared before the ta
 	 * drives four of them, `test/lock-order-race.test.ts` drives two, and the remaining five write
 	 * fewer than two of the account's own tables, so the audit skips them by construction (E-1617);
 	 * the OAuth refresh of E-3222 is the fourth and the automatic link of E-3225 the fifth. A twelfth
-	 * site added anywhere reddens this and has to be placed in that account.
+	 * site added anywhere reddens this and has to be placed in that account. The seal's wiring moved
+	 * five of them, the address confirmation, the token and recovery-code resets, the identity link and the
+	 * password change, into `sealUnderAccountLock`, which takes the lock for every sealing change, so the
+	 * count fell from thirteen to nine (E-3163).
 	 */
 	it("counts the statements that take the account lock, so the reach cannot drift unnoticed", () => {
 		const CALL = /\blockAccountRow(?:Statement)?\s*\(/g;
@@ -281,7 +284,7 @@ describe("every account lock outside the interleavings is declared before the ta
 		const listing = sites.map((source) => `${source.path}: ${source.count}`).join("\n");
 
 		expect(sites.length, listing).toBeGreaterThan(5);
-		//one of them issues a session and one seals a change under the account lock (E-3160)
-		expect(total, listing).toBe(13);
+		//one of them issues a session and one seals every change under the account lock (E-3163)
+		expect(total, listing).toBe(9);
 	});
 });

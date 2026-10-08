@@ -253,6 +253,7 @@ describe("a signed-in revoke with the target in two sources changes nothing (S-O
 
 	beforeAll(async () => {
 		userId = await createUser(mounted.connection, mounted.schema);
+		await mounted.reseal(userId);
 	});
 
 	it("answers 400 and removes neither the query's session nor the body's", async () => {
