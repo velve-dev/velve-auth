@@ -678,9 +678,9 @@ pnpm check:token-after-lock
                  velve.one_time_token is ordered before velve.user, so no
                  transaction takes the account row and then reaches that table —
                  raw SQL, either repository method or the flows' mintArtefact,
-                 comments and imports
-                 stripped first so prose about the rule and a named import are
-                 not read as reaching for it.
+                 also under a name an import gives it or the lock, comments and
+                 imports stripped first so prose about the rule and a named
+                 import are not read as reaching for it.
 pnpm check:egress
                  only src/core/oauth/outbound.ts calls out, through the fetch
                  config.fetch injects, and only src/core/oauth/providers.ts

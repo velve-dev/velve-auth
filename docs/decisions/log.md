@@ -16598,3 +16598,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Amending the commit, which CLAUDE.md §4 forbids.
 **Reason.** A bisect that lands on these commits should find the reason here.
 **Price.** The commits from `08486c5` to the fix fail `pnpm gate` at the lint step.
+
+<a id="e-3373"></a>
+
+### The ordering check follows a helper or a lock an import renames
+`E-3373` · security-state · gate, CLAUDE.md §7, settled
+
+**Context.** E-3364 taught `pnpm check:token-after-lock` to see the flows' `mintArtefact` beside the two repository methods. The tenth review showed the pattern matched the exported names only: `import { mintArtefact as mint }` followed by `mint(` after the account lock passed the check, and so would a renamed `lockAccountRow`. `tools/token-after-lock.mjs` now reads the file's import statements before stripping them, takes every `as` rename of one of the two lock functions or the three token helpers, and searches for calls under the local names as well. A reach found under a local name is reported under the exported one. `test/token-after-lock.test.ts` reports a renamed mint helper after the lock, reads a renamed lock as taking the account row, and does not read a renamed import of anything else as a reach; the first two fail on the previous pattern. The shipped tree still passes. CLAUDE.md §9 says so.
+**Rejected.** Resolving imports across files, which a pattern scan cannot do and which a re-export would still defeat.
+**Reason.** A rule that a rename defeats is a rule about spelling, not about order.
+**Price.** A re-export under another name, or a helper passed around as a value, is still not followed. The check stays a scan within one file, as E-1616 said it was.
