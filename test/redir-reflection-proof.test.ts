@@ -3,13 +3,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPendingAuthenticationService } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import type { AnyRoute } from "../src/core/http/route.js";
-import { TEST_ORIGIN } from "./auth-fixtures.js";
+import { TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { jsonPost, mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let mount: WidestMount;
 
 beforeAll(async () => {
-	mount = await mountWidest("redirseven");
+	mount = await mountWidest("redirseven", { keys: TOKEN_KEYS });
 });
 
 afterAll(async () => {
@@ -41,6 +43,7 @@ async function cookieFor(route: AnyRoute): Promise<string | undefined> {
 	if (route.caller === "pending") {
 		const account = await signUpOn(mount);
 		const pending = createPendingAuthenticationService({
+			keys: TOKEN_KEYS,
 			driver: mount.connection,
 			schema: mount.schema,
 		});

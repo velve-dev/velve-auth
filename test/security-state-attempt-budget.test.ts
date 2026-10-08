@@ -19,7 +19,7 @@ import {
 	testKeyProvider,
 } from "./totp-fixtures.js";
 
-//a writer who resets attempts must get no more guesses than the budget once the token branch binds the counter (E-3091)
+//a writer who resets attempts gets no more guesses than the budget allows (E-3091)
 
 let connection: TestConnection;
 let schema: string;
@@ -76,14 +76,8 @@ async function guessesAnsweredWhileAWriterResetsAttempts(): Promise<number> {
 }
 
 describe("a database writer and the pending attempt budget (section 3.18, L-8)", () => {
-	it.fails("does not give a writer who resets attempts more guesses than the budget", async () => {
+	it("does not give a writer who resets attempts more guesses than the budget", async () => {
 		expect(await guessesAnsweredWhileAWriterResetsAttempts()).toBeLessThanOrEqual(
-			MAXIMUM_PENDING_ATTEMPTS,
-		);
-	});
-
-	it("control: today the writer gets more answered guesses than the budget, so the placeholder fails for that reason", async () => {
-		expect(await guessesAnsweredWhileAWriterResetsAttempts()).toBeGreaterThan(
 			MAXIMUM_PENDING_ATTEMPTS,
 		);
 	});

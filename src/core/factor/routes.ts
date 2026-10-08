@@ -574,6 +574,8 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 				{ userId: assertion.userId, factors: ["webauthn"] },
 				() =>
 					services.sessions.issueReplacingPresented({
+						completes: "passkey_sign_in",
+						authorisedBy: "read_under_lock",
 						presentedToken: context.sessionToken,
 						userId: assertion.userId,
 						factors: ["webauthn"],
@@ -634,6 +636,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 	const webauthn: WebAuthnService = createWebAuthnService({
 		driver: services.driver,
 		schema: services.schema,
+		keys: services.keys,
 		webauthn: services.webauthn,
 	});
 	return [

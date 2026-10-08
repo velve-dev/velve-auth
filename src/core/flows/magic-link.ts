@@ -13,7 +13,7 @@ import {
 	observedIn,
 	readUserOrRefuse,
 	refuseADisabledAccount,
-	sessionIdOfCaller,
+	sessionOfCaller,
 } from "./environment.js";
 
 //both branches must run the same statements and call send exactly once (S-TIM-6)
@@ -29,11 +29,12 @@ export async function requestMagicLink(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "magic_link",
 			subject: subjectOfAddress(owner, address),
+			accountEmail: owner?.email ?? address,
 		}),
 	);
 	await sendOrUndo(
@@ -62,10 +63,10 @@ export async function redeemMagicLink(
 	const observed = observedIn(context);
 	//a veto must come before the token is spent so the link can still be used
 	await askBeforeSignIn(hooks, "magic_link", observed);
-	const confirmingSessionId = await sessionIdOfCaller(environment, context);
+	const confirmingSession = await sessionOfCaller(environment, context);
 
 	const account = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "magic_link",
 		});
@@ -78,8 +79,9 @@ export async function redeemMagicLink(
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
+			sessions: environment.services.sessions,
 			actor: resolved.actor,
-			confirmingSessionId,
+			confirmingSession,
 			newEmail: null,
 		});
 		return resolved;
@@ -101,6 +103,8 @@ export async function redeemMagicLink(
 		{ userId: account.user.id, factors: [] },
 		() =>
 			sessions.issueReplacingPresented({
+				completes: "magic_link",
+				authorisedBy: "read_under_lock",
 				presentedToken: context.sessionToken,
 				userId: account.user.id,
 				factors: [],

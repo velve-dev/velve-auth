@@ -55,8 +55,9 @@ async function redemptionAgainstARebind(rebindUnderTheAccountLock: boolean): Pro
 	const userId = await createUser(redeemer, schema);
 	const tokenHash = new Uint8Array(32).fill(rebindUnderTheAccountLock ? 7 : 8);
 	await redeemer.query(
-		`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
-		 VALUES ($1, 'password_reset', $2, now() + interval '1 hour')`,
+		`INSERT INTO ${schema}.one_time_token
+		   (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, 'password_reset', $2, now() + interval '1 hour', decode(repeat('00', 32), 'hex'), 1)`,
 		[tokenHash, userId],
 	);
 	const redeemerBackend = await backendOf(redeemer);

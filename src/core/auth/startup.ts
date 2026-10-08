@@ -3,7 +3,7 @@ import { isUsableBucketRule } from "../http/rate-limit.js";
 import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
 import { isStorableKeyVersion } from "../keys/key-version.js";
 import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
-import { isIntegrityPurpose } from "../keys/purpose.js";
+import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
 import type { BaseConfig } from "./config.js";
 import { isStartableSecurityState } from "./security-state.js";
@@ -249,18 +249,28 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 }
 
 //an operator must learn which stored version made the start refuse (E-3289)
-export function storedIntegrityKeyUnusable(keyVersion: number): VelveStartupError {
+const WHAT_STORES_A_VERSION: Readonly<Record<IntegrityKeyPurpose, readonly [string, string]>> = {
+	"state-mac": ["a stored seal names", "no seal"],
+	"token-mac": ["a stored token row names", "no token row"],
+};
+
+export function storedIntegrityKeyUnusable(
+	stored: IntegrityKeyPurpose,
+	keyVersion: number,
+): VelveStartupError {
+	const [naming, nothing] = WHAT_STORES_A_VERSION[stored];
 	const refusal = new VelveStartupError("keys_unusable");
-	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with a key that cannot take HMAC-SHA256, so no seal under that version could be checked`;
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${naming}, with a key that cannot take HMAC-SHA256, so ${nothing} under that version could be checked`;
 	return refusal;
 }
 
-export function storedStateMacKeySharedWith(
+export function storedIntegrityKeySharedWith(
+	stored: IntegrityKeyPurpose,
 	keyVersion: number,
 	otherKey: string,
 ): VelveStartupError {
 	const refusal = new VelveStartupError("keys_unusable");
-	refusal.message = `keys answered state-mac version ${keyVersion}, which a stored seal names, with ${otherKey}`;
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${WHAT_STORES_A_VERSION[stored][0]}, with ${otherKey}`;
 	return refusal;
 }
 

@@ -1,7 +1,32 @@
 import type { AuthenticationFactor, Session } from "../../http/caller.js";
+import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
+import type { KeyProvider } from "../../keys/provider.js";
+import { librarySessionBinding, type SessionIssue } from "../../session/binding.js";
+import {
+	bindToken,
+	decodedOrNull,
+	reportBrokenState,
+	reportRefusedTokenRow,
+	type StoredTokenMac,
+	type TokenBinding,
+	type TokenBindingOccasion,
+	type TokenBindingRefusalReport,
+} from "../../token/binding.js";
+import { randomUuid } from "../../token/random.js";
 import type { Actor } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { qualifiedTableName } from "../identifier.js";
+import { lockAccountRow } from "../lock.js";
+
+/** whether every account must have a seal row, or one without is still served while it is sealed */
+export type SecurityStateSealing = "required" | "migrating";
+
+//an unsealed account is at the first epoch in "migrating" and at none in "required" (E-3142)
+const FIRST_SESSION_EPOCH = 1;
+
+export function epochOf(storedEpoch: string, sealing: SecurityStateSealing): string {
+	return sealing === "migrating" ? `COALESCE(${storedEpoch}, ${FIRST_SESSION_EPOCH})` : storedEpoch;
+}
 
 const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 	"password",
@@ -29,14 +54,36 @@ export class SessionOwnerMismatchError extends Error {
 	}
 }
 
+/** how an issue that writes no row is reported and answered, which the path it completes decides */
+export interface MissedIssue {
+	readonly occasion: "sign_in" | "change";
+	readonly reason: ConcealedReason;
+}
+
+/**
+ * the seal row the check that authorised an issue read, `"unsealed"` where it read none, or
+ * `"read_under_lock"` where no check of the seal authorises the issue yet
+ */
+export type IssueAuthorisation =
+	| { readonly version: number; readonly sessionEpoch: number }
+	| "unsealed"
+	| "read_under_lock";
+
+/** tells whether the seal verifies under the account lock after an issue wrote no row */
+export type SealVerification = (tx: Driver, userId: string) => Promise<boolean>;
+
 export interface SessionInsert {
 	readonly userId: string;
+	readonly missed: MissedIssue;
+	readonly authorisedBy: IssueAuthorisation;
 	readonly tokenHash: Uint8Array;
 	readonly factors: readonly AuthenticationFactor[];
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
 	readonly idleTimeoutMs: number;
 	readonly absoluteTimeoutMs: number;
+	/** takes the token MAC over the session epoch and creation time the inserting transaction reads */
+	bindUnder(issue: SessionIssue): Promise<StoredTokenMac>;
 }
 
 export interface SessionWithOwner {
@@ -47,6 +94,38 @@ export interface SessionWithOwner {
 	readonly observedAt: Date;
 }
 
+/** a row found by its token hash whose MAC is still to be checked before anything in it is used */
+export interface SessionCandidate extends StoredTokenMac {
+	readonly sessionId: string;
+	readonly userId: string;
+	/** the factor names exactly as stored, or null where the column holds something that is no name */
+	readonly storedFactorNames: readonly string[] | null;
+	/** the account's current session epoch, or null for an account that has none to be checked against */
+	readonly sessionEpoch: number | null;
+	/** null where the stored creation time is no exact count of microseconds the library could have bound */
+	readonly createdAtMicros: number | null;
+	/** null where a column the MAC does not bind holds a value no date of this runtime can carry */
+	decode(): SessionWithOwner | null;
+}
+
+/** the account a session row names, and whether the row passed the MAC check */
+export interface SessionOwner {
+	readonly userId: string;
+	readonly libraryRow: boolean;
+}
+
+interface LockedState {
+	readonly version: number | null;
+	readonly sessionEpoch: number | null;
+	readonly createdAtMicros: number;
+}
+
+//an issue inserts while the seal row still holds what its check read, or while there is none (E-3485)
+type IssueCondition =
+	| { readonly sealed: true; readonly version: number; readonly sessionEpoch: number }
+	| { readonly sealed: false }
+	| { readonly unwritable: true };
+
 export interface RemovedSession {
 	readonly id: string;
 	readonly userId: string;
@@ -55,11 +134,27 @@ export interface RemovedSession {
 interface SessionRepositoryOptions {
 	readonly driver: Driver;
 	readonly schema: string;
+	//a repository that lists rows must hold the key that checks them (S-INTEG-9)
+	readonly keys: KeyProvider;
+	//a caller that names no mode gets the one that refuses an account without a seal row (S-INTEG-4)
+	readonly sealing?: SecurityStateSealing;
+	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
+	//a missed issue under a seal that verifies was a legitimate change and raises no alarm (E-3485)
+	readonly sealVerifiesAfterMissedIssue?: SealVerification;
 }
 
 export interface SessionRepository {
+	/** the same repository, keys and mode over another driver */
+	boundTo(driver: Driver): SessionRepository;
 	insertSession(input: SessionInsert): Promise<Session>;
-	findSessionByTokenHash(tokenHash: Uint8Array): Promise<SessionWithOwner | null>;
+	findSessionByTokenHash(tokenHash: Uint8Array): Promise<SessionCandidate | null>;
+	//a concurrent rebinding must not be overwritten (S-KEY-5)
+	rebindSessionTokenMac(input: {
+		readonly actor: Actor;
+		readonly sessionId: string;
+		readonly previous: StoredTokenMac;
+		readonly next: StoredTokenMac;
+	}): Promise<void>;
 	extendIdleDeadline(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -81,7 +176,7 @@ export interface SessionRepository {
 		readonly ownerReadBefore: string;
 	}): Promise<number>;
 	//the owner is read before the row goes so the revoke hook can still refuse (E-640)
-	findUserIdOfSession(input: { readonly sessionId: string }): Promise<string | null>;
+	findOwnerOfSession(input: { readonly sessionId: string }): Promise<SessionOwner | null>;
 	deleteSessionOwnedBy(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -125,7 +220,25 @@ interface SessionRowShape {
 	readonly user_agent: string | null;
 }
 
-interface OwnedRowShape extends SessionRowShape {
+interface VerifiedRowShape {
+	readonly id: string;
+	readonly user_id: string;
+	readonly created_at_us: string | null;
+	readonly token_sha256: Uint8Array;
+	readonly factor_names: string;
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
+	readonly session_epoch: string | null;
+}
+
+interface ListedRowShape extends SessionRowShape, VerifiedRowShape {}
+
+interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
+	readonly created_at_us: string | null;
+	readonly factor_names: string;
+	readonly session_epoch: string | null;
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
 	readonly disabled_at: unknown;
 	readonly observed_at: unknown;
 }
@@ -162,6 +275,12 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 	return names.filter(isAuthenticationFactor);
 }
 
+//a comma inside a factor name must not split it in two (S-INTEG-9)
+function storedNamesOf(json: string): readonly string[] | null {
+	const names: unknown = JSON.parse(json);
+	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;
+}
+
 //the array literal is built from a closed set so no request value can reach it
 function toFactorArray(factors: readonly AuthenticationFactor[]): string {
 	for (const factor of factors) {
@@ -194,21 +313,51 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 	};
 }
 
-function insertStatement(table: string): string {
-	return `INSERT INTO ${table}
-		(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip, user_agent)
-	VALUES ($1, $2, now() + make_interval(secs => $3::double precision),
-		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7)
+//the creation time is the transaction's own so it equals the one the mac was taken over (S-INTEG-9)
+const INSERTED_VALUES = `$1, $2, now() + make_interval(secs => $3::double precision),
+		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9, now(),
+		$10::uuid`;
+
+//the id is drawn before the insert as the mac binds it (S-INTEG-9)
+const INSERTED_COLUMNS = `(user_id, token_sha256, idle_expires_at, absolute_expires_at, factors, ip,
+		user_agent, token_mac, token_mac_key_version, created_at, id)`;
+
+//a creation time no bigint holds must read as none and not fail the statement (S-INTEG-9)
+export function microsOf(timestamp: string): string {
+	return `CASE WHEN isfinite(${timestamp}) THEN trunc(extract(epoch FROM ${timestamp}) * 1000000)::text END`;
+}
+
+//a session must be written only while the account is at the epoch its mac binds (S-INTEG-9)
+function sealedInsertStatement(table: string, states: string): string {
+	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
+	SELECT ${INSERTED_VALUES}
+	FROM ${states} WHERE user_id = $1 AND session_epoch = $11::bigint AND version = $12::bigint
+	RETURNING ${SELECTED_COLUMNS}`;
+}
+
+//an account read without a seal row is issued at the first epoch only while it still has none (E-3142)
+function unsealedInsertStatement(table: string, states: string): string {
+	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
+	SELECT ${INSERTED_VALUES}
+	WHERE NOT EXISTS (SELECT 1 FROM ${states} WHERE user_id = $1)
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
 //one joined query reads disabled at so a disabled account cannot pass as signed in (S-CACHE-2)
-function resolveStatement(table: string, users: string): string {
+function resolveStatement(
+	table: string,
+	users: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
 	return `SELECT s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
-		s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
-		u.disabled_at, now() AS observed_at
+		s.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
+		s.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
+		${microsOf("s.created_at")} AS created_at_us,
+		${epochOf("st.session_epoch", sealing)}::text AS session_epoch
 	FROM ${table} s
 	JOIN ${users} u ON u.id = s.user_id
+	LEFT JOIN ${states} st ON st.user_id = s.user_id
 	WHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`;
 }
 
@@ -222,13 +371,18 @@ function extendIdleDeadlineStatement(table: string): string {
 	RETURNING idle_expires_at`;
 }
 
+function rebindStatement(table: string): string {
+	return `UPDATE ${table} SET token_mac = $3, token_mac_key_version = $4
+	WHERE id = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5`;
+}
+
 function deleteByTokenHashStatement(table: string): string {
 	return `DELETE FROM ${table} /* no owner predicate: S-OWNER-2, the predicate is the secret itself */
 	WHERE token_sha256 = $1 RETURNING id, user_id`;
 }
 
-function findUserIdStatement(table: string): string {
-	return `SELECT user_id FROM ${table} WHERE id = $1`;
+function findOwnerStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${verifiedColumns(states, sealing)} FROM ${table} s WHERE s.id = $1`;
 }
 
 function deleteOwnedStatement(table: string): string {
@@ -245,23 +399,120 @@ function deleteLiveOwnedStatement(table: string, users: string): string {
 	RETURNING s.id`;
 }
 
-function deleteEveryOwnedStatement(table: string): string {
-	return `DELETE FROM ${table} WHERE user_id = $1 RETURNING id`;
+function issuingStateStatement(states: string): string {
+	return `SELECT (SELECT session_epoch::text FROM ${states} WHERE user_id = $1) AS session_epoch,
+		(SELECT version::text FROM ${states} WHERE user_id = $1) AS version,
+		${microsOf("now()")} AS created_at_us`;
 }
 
-function deleteEveryOtherOwnedStatement(table: string): string {
-	return `DELETE FROM ${table} WHERE user_id = $1 AND id <> $2 RETURNING id`;
+//a count of microseconds must be exact before a mac binds it (S-INTEG-9)
+function microsFrom(value: string | null): number | null {
+	const micros = value === null ? Number.NaN : Number(value);
+	return Number.isSafeInteger(micros) ? micros : null;
 }
 
-function listEveryIdOwnedStatement(table: string): string {
-	return `SELECT id FROM ${table} WHERE user_id = $1 ORDER BY created_at DESC, id`;
+//an epoch must be an exact integer before a mac binds it (S-INTEG-9)
+function epochFrom(value: string): number {
+	return storedCountFrom(
+		value,
+		"velve.security_state.session_epoch holds no epoch this library writes",
+	);
 }
 
-function listOwnedStatement(table: string): string {
-	return `SELECT ${SELECTED_COLUMNS}
-	FROM ${table}
-	WHERE user_id = $1 AND idle_expires_at > now() AND absolute_expires_at > now()
-	ORDER BY created_at DESC, id`;
+//a version is compared as the exact integer the seal row stores (E-3485)
+function versionFrom(value: string): number {
+	return storedCountFrom(
+		value,
+		"velve.security_state.version holds no version this library writes",
+	);
+}
+
+function storedCountFrom(value: string, refusal: string): number {
+	const count = Number(value);
+	if (!Number.isSafeInteger(count) || count < 1) {
+		throw new TypeError(refusal);
+	}
+	return count;
+}
+
+//only a newer key version over the same token can be a rebinding and the loop ends at the newest in the ring
+function isRebindingOf(read: VerifiedRowShape, reread: VerifiedRowShape): boolean {
+	const before = new Uint8Array(read.token_sha256);
+	const after = new Uint8Array(reread.token_sha256);
+	return (
+		reread.token_mac_key_version > read.token_mac_key_version &&
+		before.length === after.length &&
+		before.every((byte, index) => byte === after[index])
+	);
+}
+
+function toEpoch(value: string | null): number | null {
+	return value === null ? null : epochFrom(value);
+}
+
+function deleteEveryOwnedStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `DELETE FROM ${table} s WHERE s.user_id = $1 RETURNING ${verifiedColumns(states, sealing)}`;
+}
+
+function deleteEveryOtherOwnedStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `DELETE FROM ${table} s WHERE s.user_id = $1 AND s.id <> $2
+	RETURNING ${verifiedColumns(states, sealing)}`;
+}
+
+function keptRowStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${verifiedColumns(states, sealing)} FROM ${table} s WHERE s.id = $1 AND s.user_id = $2`;
+}
+
+//a kept session is rebound only where it still holds the mac read under the lock (S-INTEG-9)
+function keptRebindStatement(table: string): string {
+	return `UPDATE ${table} SET token_mac = $4, token_mac_key_version = $5
+	WHERE id = $1 AND user_id = $2 AND token_mac = $3
+	RETURNING id`;
+}
+
+//a row that is counted or announced must be checkable first (S-INTEG-9)
+function verifiedColumns(states: string, sealing: SecurityStateSealing): string {
+	return `s.id, s.user_id, ${microsOf("s.created_at")} AS created_at_us, s.token_sha256,
+	array_to_json(s.factors)::text AS factor_names,
+	s.token_mac, s.token_mac_key_version,
+	${epochOf(`(SELECT session_epoch FROM ${states} WHERE user_id = s.user_id)`, sealing)}::text AS session_epoch`;
+}
+
+//a listed row must be checkable before it is shown (S-INTEG-9)
+function listedColumns(sealing: SecurityStateSealing): string {
+	return `s.id, s.user_id, s.created_at, s.last_used_at, s.idle_expires_at,
+	s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
+	s.token_sha256, array_to_json(s.factors)::text AS factor_names, s.token_mac,
+	s.token_mac_key_version, ${epochOf("st.session_epoch", sealing)}::text AS session_epoch,
+	${microsOf("s.created_at")} AS created_at_us`;
+}
+
+function listEveryIdOwnedStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `SELECT ${listedColumns(sealing)}
+	FROM ${table} s
+	LEFT JOIN ${states} st ON st.user_id = s.user_id
+	WHERE s.user_id = $1
+	ORDER BY s.created_at DESC, s.id`;
+}
+
+function listOwnedStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${listedColumns(sealing)}
+	FROM ${table} s
+	LEFT JOIN ${states} st ON st.user_id = s.user_id
+	WHERE s.user_id = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()
+	ORDER BY s.created_at DESC, s.id`;
 }
 
 function insertParameters(insert: SessionInsert): unknown[] {
@@ -276,25 +527,204 @@ function insertParameters(insert: SessionInsert): unknown[] {
 	];
 }
 
+function candidateOf(row: OwnedRowShape): SessionCandidate {
+	const storedFactorNames = storedNamesOf(row.factor_names);
+	return {
+		sessionId: row.id,
+		userId: row.user_id,
+		storedFactorNames,
+		sessionEpoch: toEpoch(row.session_epoch),
+		createdAtMicros: microsFrom(row.created_at_us),
+		tokenMac: row.token_mac,
+		tokenMacKeyVersion: row.token_mac_key_version,
+		decode: () =>
+			decodedOrNull(() => ({
+				session: toSession({ ...row, factors: (storedFactorNames ?? []).join(",") }, NOT_LISTED),
+				userId: row.user_id,
+				userDisabledAt: toOptionalDate(row.disabled_at),
+				observedAt: toDate(row.observed_at),
+			})),
+	};
+}
+
 export function createSessionRepository(options: SessionRepositoryOptions): SessionRepository {
 	const table = qualifiedTableName(options.schema, "session");
 	const users = qualifiedTableName(options.schema, "user");
-	const insertSql = insertStatement(table);
-	const resolveSql = resolveStatement(table, users);
+	const states = qualifiedTableName(options.schema, "security_state");
+	const sealing = options.sealing ?? "required";
+	const sealedInsertSql = sealedInsertStatement(table, states);
+	const unsealedInsertSql = unsealedInsertStatement(table, states);
+	const resolveSql = resolveStatement(table, users, states, sealing);
+	const issuingStateSql = issuingStateStatement(states);
 	const extendSql = extendIdleDeadlineStatement(table);
+	const rebindSql = rebindStatement(table);
 	const deleteByTokenHashSql = deleteByTokenHashStatement(table);
-	const findUserIdSql = findUserIdStatement(table);
+	const findOwnerSql = findOwnerStatement(table, states, sealing);
 	const deleteOwnedSql = deleteOwnedStatement(table);
 	const deleteLiveOwnedSql = deleteLiveOwnedStatement(table, users);
-	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table);
-	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table);
-	const listOwnedSql = listOwnedStatement(table);
-	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table);
+	const deleteEveryOwnedSql = deleteEveryOwnedStatement(table, states, sealing);
+	const deleteEveryOtherOwnedSql = deleteEveryOtherOwnedStatement(table, states, sealing);
+	const keptRowSql = keptRowStatement(table, states, sealing);
+	const keptRebindSql = keptRebindStatement(table);
+	const listOwnedSql = listOwnedStatement(table, states, sealing);
+	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
 
-	async function insertSession(driver: Driver, insert: SessionInsert): Promise<Session> {
-		const [row] = await driver.query<SessionRowShape>(insertSql, insertParameters(insert));
+	function libraryBindingOf(
+		row: VerifiedRowShape,
+		occasion: TokenBindingOccasion,
+	): Promise<TokenBinding | null> {
+		return librarySessionBinding(
+			options.keys,
+			{
+				sessionId: row.id,
+				userId: row.user_id,
+				tokenHash: row.token_sha256,
+				storedFactorNames: storedNamesOf(row.factor_names),
+				sessionEpoch: toEpoch(row.session_epoch),
+				createdAtMicros: microsFrom(row.created_at_us),
+				tokenMac: row.token_mac,
+				tokenMacKeyVersion: row.token_mac_key_version,
+			},
+			{ report: options.reportTokenBindingRefusal, occasion },
+		);
+	}
+
+	async function libraryRowsAmong<T extends VerifiedRowShape>(
+		rows: readonly T[],
+		occasion: TokenBindingOccasion,
+	): Promise<T[]> {
+		const bindings = await Promise.all(rows.map((row) => libraryBindingOf(row, occasion)));
+		return rows.filter((_, index) => bindings[index] !== null);
+	}
+
+	//a row the library did not write is not listed, announced or shown to a plugin (S-INTEG-9)
+	async function libraryRowsOf(
+		userId: string,
+		statement: string,
+		occasion: TokenBindingOccasion,
+	): Promise<SessionRowShape[]> {
+		return libraryRowsAmong(
+			await options.driver.query<ListedRowShape>(statement, [userId]),
+			occasion,
+		);
+	}
+
+	//a library row whose unbound columns no longer decode is reported and left out (S-INTEG-9)
+	async function librarySessionsOf(
+		userId: string,
+		statement: string,
+		currentSessionId: string | null,
+	): Promise<Session[]> {
+		const sessions: Session[] = [];
+		for (const row of await libraryRowsOf(userId, statement, "session_list")) {
+			const session = decodedOrNull(() => toSession(row, row.id === currentSessionId));
+			if (session === null) {
+				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+					userId: row.user_id,
+					occasion: "session_list",
+					verdict: "mismatch",
+				});
+			} else {
+				sessions.push(session);
+			}
+		}
+		return sessions;
+	}
+
+	async function lockedStateOf(driver: Driver, userId: string): Promise<LockedState> {
+		const [row] = await driver.query<{
+			session_epoch: string | null;
+			version: string | null;
+			created_at_us: string | null;
+		}>(issuingStateSql, [userId]);
 		if (row === undefined) {
-			throw new TypeError("the insert of a session returned no row");
+			throw new TypeError("the read of the issuing state returned no row");
+		}
+		const createdAtMicros = microsFrom(row.created_at_us);
+		if (createdAtMicros === null) {
+			throw new TypeError("the database clock lies outside what this library binds");
+		}
+		return {
+			version: row.version === null ? null : versionFrom(row.version),
+			sessionEpoch: row.session_epoch === null ? null : epochFrom(row.session_epoch),
+			createdAtMicros,
+		};
+	}
+
+	function conditionWithoutASeal(): IssueCondition {
+		return sealing === "migrating" ? { sealed: false } : { unwritable: true };
+	}
+
+	//an issue no check of the seal names yet stands on the row the lock reads until the seal branch names it (E-3487)
+	function conditionOf(locked: LockedState, authorisedBy: IssueAuthorisation): IssueCondition {
+		if (authorisedBy === "unsealed") {
+			return conditionWithoutASeal();
+		}
+		if (authorisedBy !== "read_under_lock") {
+			return { sealed: true, ...authorisedBy };
+		}
+		return locked.version === null || locked.sessionEpoch === null
+			? conditionWithoutASeal()
+			: { sealed: true, version: locked.version, sessionEpoch: locked.sessionEpoch };
+	}
+
+	async function insertUnderCurrentEpoch(
+		driver: Driver,
+		insert: SessionInsert,
+	): Promise<SessionRowShape | undefined> {
+		const locked = await lockedStateOf(driver, insert.userId);
+		const condition = conditionOf(locked, insert.authorisedBy);
+		if ("unwritable" in condition) {
+			throw new ConcealedError(insert.missed.reason);
+		}
+		const issue = {
+			sessionId: randomUuid(),
+			sessionEpoch: condition.sealed ? condition.sessionEpoch : FIRST_SESSION_EPOCH,
+			createdAtMicros: locked.createdAtMicros,
+		};
+		const mac = await insert.bindUnder(issue);
+		const parameters = [
+			...insertParameters(insert),
+			mac.tokenMac,
+			mac.tokenMacKeyVersion,
+			issue.sessionId,
+		];
+		const [row] = condition.sealed
+			? await driver.query<SessionRowShape>(sealedInsertSql, [
+					...parameters,
+					condition.sessionEpoch,
+					condition.version,
+				])
+			: await driver.query<SessionRowShape>(unsealedInsertSql, parameters);
+		return row;
+	}
+
+	//an issue waits on the lock a mass revocation holds and reads the epoch it leaves (E-3141)
+	function issuing<T>(
+		driver: Driver,
+		userId: string,
+		work: (tx: Driver) => Promise<T>,
+	): Promise<T> {
+		return driver.transaction(async (tx) => {
+			await lockAccountRow(tx, options.schema, userId);
+			return work(tx);
+		});
+	}
+
+	//a writer who moved the epoch past the lock leaves a broken state that is not retried (E-3256)
+	async function insertUnderAccountLock(tx: Driver, insert: SessionInsert): Promise<Session> {
+		const row = await insertUnderCurrentEpoch(tx, insert);
+		if (row === undefined) {
+			//a miss under a seal that verifies was a legitimate change and raises no alarm (E-3485)
+			if (await options.sealVerifiesAfterMissedIssue?.(tx, insert.userId)) {
+				throw new ConcealedError(insert.missed.reason);
+			}
+			reportBrokenState(options.reportTokenBindingRefusal, {
+				userId: insert.userId,
+				occasion: insert.missed.occasion,
+				reason: "seal_mismatch",
+			});
+			throw new ConcealedError(insert.missed.reason);
 		}
 		return toSession(row, NOT_LISTED);
 	}
@@ -309,45 +739,85 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return row === undefined ? null : { id: row.id, userId: row.user_id };
 	}
 
+	//a kept row a resolution rebound under a newer version since the read is swapped again without an alarm (E-3276)
+	async function keptAfterRebinding(tx: Driver, kept: VerifiedRowShape): Promise<boolean> {
+		let row = kept;
+		for (;;) {
+			const binding = await libraryBindingOf(row, "change");
+			if (binding === null) {
+				return false;
+			}
+			const next = await bindToken(options.keys, binding);
+			const rebound = await tx.query(keptRebindSql, [
+				row.id,
+				row.user_id,
+				row.token_mac,
+				next.tokenMac,
+				next.tokenMacKeyVersion,
+			]);
+			if (rebound.length === 1) {
+				return true;
+			}
+			const [reread] = await tx.query<VerifiedRowShape>(keptRowSql, [row.id, row.user_id]);
+			if (reread === undefined) {
+				return false;
+			}
+			if (!isRebindingOf(row, reread)) {
+				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+					userId: row.user_id,
+					occasion: "change",
+					verdict: "mismatch",
+				});
+				return false;
+			}
+			row = reread;
+		}
+	}
+
+	//a forged row goes with the others and is neither counted nor returned (S-INTEG-9)
 	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
-		const rows = await options.driver.query<{ id: string }>(deleteEveryOwnedSql, [actor]);
-		return rows.map((row) => row.id);
+		const rows = await options.driver.query<VerifiedRowShape>(deleteEveryOwnedSql, [actor]);
+		return (await libraryRowsAmong(rows, "change")).map((row) => row.id);
 	}
 
 	return {
-		insertSession: (insert) => insertSession(options.driver, insert),
+		boundTo: (driver) => createSessionRepository({ ...options, driver }),
+
+		insertSession: (insert) =>
+			issuing(options.driver, insert.userId, (tx) => insertUnderAccountLock(tx, insert)),
 
 		async findSessionByTokenHash(tokenHash) {
 			const [row] = await options.driver.query<OwnedRowShape>(resolveSql, [tokenHash]);
-			if (row === undefined) {
-				return null;
-			}
-			return {
-				session: toSession(row, NOT_LISTED),
-				userId: row.user_id,
-				userDisabledAt: toOptionalDate(row.disabled_at),
-				observedAt: toDate(row.observed_at),
-			};
+			return row === undefined ? null : candidateOf(row);
+		},
+
+		async rebindSessionTokenMac({ actor, sessionId, previous, next }) {
+			await options.driver.query(rebindSql, [
+				sessionId,
+				previous.tokenMac,
+				next.tokenMac,
+				next.tokenMacKeyVersion,
+				previous.tokenMacKeyVersion,
+				actor,
+			]);
 		},
 
 		async listEverySessionIdOwnedBy({ actor }) {
-			const rows = await options.driver.query<{ id: string }>(listEveryIdOwnedSql, [actor]);
-			return rows.map((row) => row.id);
+			return (await libraryRowsOf(actor, listEveryIdOwnedSql, "change")).map((row) => row.id);
 		},
 
-		async listSessionsOfUser({ userId }) {
-			const rows = await options.driver.query<SessionRowShape>(listOwnedSql, [userId]);
-			return rows.map((row) => toSession(row, NOT_LISTED));
-		},
+		listSessionsOfUser: ({ userId }) => librarySessionsOf(userId, listOwnedSql, null),
 
 		async deleteSessionById({ sessionId, ownerReadBefore }) {
 			const rows = await options.driver.query(deleteOwnedSql, [sessionId, ownerReadBefore]);
 			return rows.length;
 		},
 
-		async findUserIdOfSession({ sessionId }) {
-			const [row] = await options.driver.query<{ user_id: string }>(findUserIdSql, [sessionId]);
-			return row === undefined ? null : row.user_id;
+		async findOwnerOfSession({ sessionId }) {
+			const [row] = await options.driver.query<VerifiedRowShape>(findOwnerSql, [sessionId]);
+			return row === undefined
+				? null
+				: { userId: row.user_id, libraryRow: (await libraryBindingOf(row, "change")) !== null };
 		},
 
 		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {
@@ -362,10 +832,8 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 
 		deleteSessionByTokenHash: (tokenHash) => deleteSessionByTokenHash(options.driver, tokenHash),
 
-		async listSessionsOwnedBy({ actor, currentSessionId }) {
-			const rows = await options.driver.query<SessionRowShape>(listOwnedSql, [actor]);
-			return rows.map((row) => toSession(row, row.id === currentSessionId));
-		},
+		listSessionsOwnedBy: ({ actor, currentSessionId }) =>
+			librarySessionsOf(actor, listOwnedSql, currentSessionId),
 
 		async deleteSessionOwnedBy({ sessionId, actor }) {
 			const rows = await options.driver.query(deleteOwnedSql, [sessionId, actor]);
@@ -379,14 +847,24 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		deleteEverySessionOwnedByReturningIds: ({ actor }) =>
 			deleteEverySessionOwnedByReturningIds(actor),
 
-		async deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
-			const rows = await options.driver.query(deleteEveryOtherOwnedSql, [actor, keptSessionId]);
-			return rows.length;
+		//the kept row is checked and rebound under the lock or it goes with the others (E-3260)
+		deleteEveryOtherSessionOwnedBy({ actor, keptSessionId }) {
+			return issuing(options.driver, actor, async (tx) => {
+				const [kept] = await tx.query<VerifiedRowShape>(keptRowSql, [keptSessionId, actor]);
+				const removed = await tx.query<VerifiedRowShape>(deleteEveryOtherOwnedSql, [
+					actor,
+					keptSessionId,
+				]);
+				if (kept !== undefined && !(await keptAfterRebinding(tx, kept))) {
+					await tx.query(deleteOwnedSql, [keptSessionId, actor]);
+				}
+				return (await libraryRowsAmong(removed, "change")).length;
+			});
 		},
 
 		//the new row and the removal of the old one are one transaction, never an update (S-FIX-1)
 		replaceSession({ previousTokenHash, insert }) {
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, insert.userId, async (tx) => {
 				const removed = await deleteSessionByTokenHash(tx, previousTokenHash);
 				//without the removal the caller would end up with two live sessions (E-239)
 				if (removed === null) {
@@ -395,17 +873,17 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				if (removed.userId !== insert.userId) {
 					throw new SessionOwnerMismatchError();
 				}
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 
 		//a sign-in removes the presented row in the transaction that inserts its successor (S-FIX-1)
 		replacePresentedSession({ presentedTokenHash, insert }) {
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, insert.userId, async (tx) => {
 				if (presentedTokenHash !== null) {
 					await deleteSessionByTokenHash(tx, presentedTokenHash);
 				}
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 
@@ -414,13 +892,13 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();
 			}
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, actor, async (tx) => {
 				const removed = await tx.query(deleteLiveOwnedSql, [previousSessionId, actor]);
 				//the count is checked here as only here can the insert still be undone (E-961)
 				if (removed.length === 0) {
 					throw new PreviousSessionMissingError();
 				}
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 
@@ -429,9 +907,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();
 			}
-			return options.driver.transaction(async (tx) => {
+			return issuing(options.driver, actor, async (tx) => {
 				await tx.query(deleteEveryOwnedSql, [actor]);
-				return insertSession(tx, insert);
+				return insertUnderAccountLock(tx, insert);
 			});
 		},
 	};

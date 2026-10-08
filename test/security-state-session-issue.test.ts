@@ -35,9 +35,10 @@ async function sealedAccount(): Promise<string> {
 function insertUnderEpoch(userId: string, epoch: number): Promise<number> {
 	return signer
 		.query(
-			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+			   token_mac, token_mac_key_version)
 			 SELECT s.user_id, decode(md5(random()::text) || md5(random()::text), 'hex'),
-				now() + interval '1 hour', now() + interval '1 day'
+				now() + interval '1 hour', now() + interval '1 day', decode(repeat('00', 32), 'hex'), 1
 			 FROM ${schema}.security_state s WHERE s.user_id = $1 AND s.session_epoch = $2
 			 RETURNING id`,
 			[userId, epoch],
@@ -107,9 +108,10 @@ describe("premise: a session of an account without a seal row (section 3.18 poin
 	function insertForUnsealed(userId: string): Promise<number> {
 		return signer
 			.query(
-				`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
+				`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at,
+			   token_mac, token_mac_key_version)
 				 SELECT $1, decode(md5(random()::text) || md5(random()::text), 'hex'),
-					now() + interval '1 hour', now() + interval '1 day'
+					now() + interval '1 hour', now() + interval '1 day', decode(repeat('00', 32), 'hex'), 1
 				 WHERE NOT EXISTS (SELECT 1 FROM ${schema}.security_state WHERE user_id = $1)
 				 RETURNING id`,
 				[userId],

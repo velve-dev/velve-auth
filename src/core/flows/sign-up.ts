@@ -111,8 +111,19 @@ async function register(
 			username: columns.username,
 			userId: created.id,
 		});
+		//the token must be minted before the session issue takes the account row (E-3254)
+		const artefact =
+			written.email === null
+				? null
+				: await mintArtefact(transaction, flow.environment.services, {
+						purpose: "email_verify",
+						subject: { userId: created.id },
+						accountEmail: created.email,
+					});
 		const issued = await createSessionUnderHooks(hooks, { userId: created.id, factors }, () =>
 			sessions.boundTo(transaction).issue({
+				completes: "sign_up",
+				authorisedBy: "read_under_lock",
 				userId: created.id,
 				factors,
 				observed: observedIn(context),
@@ -124,13 +135,6 @@ async function register(
 				{ userId: created.id, derived, setBySessionId: issued.session.id },
 			);
 		}
-		const artefact =
-			written.email === null
-				? null
-				: await mintArtefact(transaction, schema, {
-						purpose: "email_verify",
-						subject: { userId: created.id },
-					});
 		return {
 			//the answer must name the address the caller sent and never the cover (S-ENUM-3)
 			result: {
@@ -203,8 +207,8 @@ async function announce(
 	if (flow.email === undefined || address === null || minted === null) {
 		return;
 	}
-	const { driver, schema } = flow.environment.services;
-	const mailer = { driver, schema, email: flow.email };
+	const { driver, schema, keys } = flow.environment.services;
+	const mailer = { driver, schema, keys, email: flow.email };
 	if (occupancy.kind === "taken") {
 		if (occupancy.owner !== null) {
 			await sendOrUndo(mailer, null, noticeOf(occupancy.owner, address));

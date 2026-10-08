@@ -281,6 +281,7 @@ describe("every account lock outside the interleavings is declared before the ta
 		const listing = sites.map((source) => `${source.path}: ${source.count}`).join("\n");
 
 		expect(sites.length, listing).toBeGreaterThan(5);
-		expect(total, listing).toBe(11);
+		//one of them issues a session under the account lock (E-3141)
+		expect(total, listing).toBe(12);
 	});
 });

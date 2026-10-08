@@ -188,8 +188,9 @@ describe("core code a migration removes rather than leaves behind (S-FIX-2)", ()
 		const owner = await createUser(driver, schema);
 		const victim = await createUser(driver, schema);
 		await driver.query(
-			`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-			 VALUES ($1, decode('aa', 'hex'), now() + interval '1 day', now() + interval '7 days')`,
+			`INSERT INTO ${schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, decode('aa', 'hex'), now() + interval '1 day', now() + interval '7 days', decode(repeat('ab', 32), 'hex'), 1)`,
 			[owner],
 		);
 

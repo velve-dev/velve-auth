@@ -12,7 +12,7 @@ const genuine = rootKeyProvider({
 	keysByVersion: { 1: generateRootKey(), 2: generateRootKey() },
 });
 const storedVersionOne: Driver = {
-	query: async <T>() => [{ key_version: 1 }] as T[],
+	query: async <T>() => [{ purpose: "state-mac", key_version: 1 }] as T[],
 	transaction: () => Promise.reject(new Error("not used")),
 };
 

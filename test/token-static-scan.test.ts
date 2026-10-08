@@ -101,14 +101,19 @@ describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 
 describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 	it("names the table in the schema that creates it and in the repository, nowhere else", () => {
-		// L-11 adds a third: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
+		// Migration 4 names it to add the MAC columns of S-INTEG-9. L-11 adds another: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
 		// and naming them is what it does. What it is allowed to do there is pinned below, because
 		// admitting a file to this list without that would move the sweep out of every scan in this
 		// file — each of the others reads the repository source alone (E-353).
 		expect(pathsMatching(/one_time_token/)).toStrictEqual([
+			//the start reads which token-mac versions the rows name and nothing else (E-3148)
+			`${coreDirectory}/auth/integrity-key-ring.ts`,
 			`${coreDirectory}/auth/maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
+			`${coreDirectory}/db/migrations/token-mac.ts`,
 			repositoryPath,
+			//the maintenance seam rebinds the token MACs of the three tables it names (E-3148)
+			`${coreDirectory}/token/rebind.ts`,
 		]);
 	});
 
@@ -139,15 +144,15 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
-	it("writes three statements, two of them against the table", () => {
-		expect(statements, listing(statements)).toHaveLength(3);
-		expect(tokenStatements, listing(tokenStatements)).toHaveLength(2);
+	it("writes four statements, three of them against the table", () => {
+		expect(statements, listing(statements)).toHaveLength(4);
+		expect(tokenStatements, listing(tokenStatements)).toHaveLength(3);
 		expect(ownerStatements, listing(ownerStatements)).toHaveLength(1);
 	});
 
 	it("filters on the purpose in every predicate it writes against the table", () => {
 		const predicates = tokenStatements.flatMap(predicatesIn);
-		expect(predicates).toHaveLength(2);
+		expect(predicates).toHaveLength(3);
 		expect(predicates.filter((predicate) => !predicate.includes("purpose = $2"))).toStrictEqual([]);
 	});
 
@@ -162,7 +167,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(asWritten(consume)).toBe(
 			"DELETE FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = $2 " +
-				"AND expires_at > now() RETURNING user_id, payload",
+				"AND expires_at > now() RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version",
 		);
 	});
 

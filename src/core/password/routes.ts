@@ -119,6 +119,8 @@ async function signedIn(
 	const hooks = services.pluginRuntime.hooks;
 	const issued = await createSessionUnderHooks(hooks, { userId, factors: ["password"] }, () =>
 		services.sessions.issueReplacingPresented({
+			completes: "password_sign_in",
+			authorisedBy: "read_under_lock",
 			presentedToken: context.sessionToken,
 			userId,
 			factors: ["password"],
@@ -203,6 +205,7 @@ export function passwordRoutes(services: RouteServices) {
 			const environment = await readEnvironment();
 			await refuseIfCredentialExists(environment, actorOfResolvedSession(resolved));
 			return replacePasswordOfSession(services, environment, context, {
+				completes: "password_set",
 				resolved,
 				newPassword: input.newPassword,
 			});
@@ -237,6 +240,7 @@ export function passwordRoutes(services: RouteServices) {
 				plaintext: input.currentPassword,
 			});
 			return replacePasswordOfSession(services, environment, context, {
+				completes: "password_change",
 				resolved,
 				newPassword: input.newPassword,
 			});

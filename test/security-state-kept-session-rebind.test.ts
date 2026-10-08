@@ -16,7 +16,6 @@ beforeAll(async () => {
 	keeping = migrated.connection;
 	schema = migrated.schema;
 	resolving = await openTestConnection();
-	await keeping.query(`ALTER TABLE ${schema}.session ADD COLUMN token_mac bytea`, []);
 	await resolving.query("SET lock_timeout = '2s'", []);
 });
 
@@ -30,8 +29,9 @@ async function keptSwapAgainstAConcurrentResolutionRebind() {
 	const userId = await createUser(keeping, schema);
 	const oldMac = randomBytes(32);
 	const [row] = await keeping.query<{ id: string }>(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac)
-		 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day', $3) RETURNING id`,
+		`INSERT INTO ${schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '1 hour', now() + interval '1 day', $3, 1) RETURNING id`,
 		[userId, randomBytes(32), oldMac],
 	);
 	await keeping.query("BEGIN ISOLATION LEVEL READ COMMITTED", []);

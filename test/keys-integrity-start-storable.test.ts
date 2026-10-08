@@ -40,7 +40,7 @@ describe("what the start accepts for the integrity purposes", () => {
 					: genuine.byVersion(purpose, version),
 		};
 		const driver: Driver = {
-			query: async <T>() => [{ key_version: 1 }] as T[],
+			query: async <T>() => [{ purpose: "state-mac", key_version: 1 }] as T[],
 			transaction: () => Promise.reject(new Error("not used")),
 		};
 		await expect(assertKeysAnswerForEveryPurpose(provider)).resolves.toBeUndefined();

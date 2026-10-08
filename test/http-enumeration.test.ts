@@ -18,6 +18,8 @@ const SIGN_IN_REASONS: readonly ConcealedReason[] = [
 	"no_password_credential",
 	"legacy_scheme_rejected",
 	"user_disabled_on_sign_in",
+	"session_issue_missed_on_password_sign_in",
+	"session_issue_missed_on_password_change",
 ];
 
 const MERGED_GROUPS: Readonly<Record<string, readonly ConcealedReason[]>> = {
@@ -35,12 +37,19 @@ const MERGED_GROUPS: Readonly<Record<string, readonly ConcealedReason[]>> = {
 		"token_purpose_mismatch",
 		"email_taken_on_change",
 		"user_disabled_on_token_redemption",
+		"session_issue_missed_on_token_redemption",
 	],
-	invalid_factor_code: ["totp_code_wrong", "totp_step_replayed", "totp_not_confirmed"],
+	invalid_factor_code: [
+		"totp_code_wrong",
+		"totp_step_replayed",
+		"totp_not_confirmed",
+		"session_issue_missed_on_totp_second_factor",
+	],
 	invalid_recovery_code: [
 		"recovery_code_not_found",
 		"recovery_codes_exhausted",
 		"recovery_codes_never_generated",
+		"session_issue_missed_on_recovery_second_factor",
 	],
 	invalid_pending_authentication: [
 		"pending_not_found",
@@ -56,6 +65,7 @@ const MERGED_GROUPS: Readonly<Record<string, readonly ConcealedReason[]>> = {
 		"issuer_mismatch",
 		"id_token_signature_invalid",
 		"user_disabled_on_oauth_flow",
+		"session_issue_missed_on_oauth_flow",
 	],
 	webauthn_challenge_invalid: [
 		"challenge_not_found",
@@ -69,6 +79,8 @@ const MERGED_GROUPS: Readonly<Record<string, readonly ConcealedReason[]>> = {
 		"origin_mismatch",
 		"user_not_verified",
 		"user_disabled_on_webauthn_assertion",
+		"session_issue_missed_on_passkey_sign_in",
+		"session_issue_missed_on_passkey_second_factor",
 	],
 };
 

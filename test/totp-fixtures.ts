@@ -1,9 +1,12 @@
 import { randomBytes as nodeRandomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
+import { bookAttemptOn } from "../src/core/factor/pending/booking.js";
 import {
 	createPendingAuthenticationService,
+	type FailedAttempt,
 	type IssuedPendingAuthentication,
 	type PendingAuthenticationService,
+	type PendingToken,
 } from "../src/core/factor/pending/index.js";
 import { createTotpSecret } from "../src/core/factor/totp/index.js";
 import { encryptBound } from "../src/core/keys/envelope-binding.js";
@@ -37,11 +40,23 @@ export function testKeyProvider(currentVersion = 1): KeyProvider {
 	return testKeyRing(currentVersion).providerAt(currentVersion);
 }
 
+//every pending service of one test file takes its token MACs under one provider (S-INTEG-9)
+const PENDING_TOKEN_KEYS = testKeyProvider();
+
 export function pendingAuthenticationsOn(
 	driver: Driver,
 	schema: string,
 ): PendingAuthenticationService {
-	return createPendingAuthenticationService({ driver, schema });
+	return createPendingAuthenticationService({ driver, keys: PENDING_TOKEN_KEYS, schema });
+}
+
+/** One wrong factor, booked and then failed the way verifyUnderPendingAttemptLimit does it. */
+export async function failOneAttempt(
+	pending: PendingAuthenticationService,
+	token: PendingToken,
+): Promise<FailedAttempt | { readonly outcome: "missing" }> {
+	const booked = await bookAttemptOn(pending, token);
+	return booked.outcome === "booked" ? booked.failed() : booked;
 }
 
 /** The state a second factor is spent on, begun the way the sign-in path begins it. */

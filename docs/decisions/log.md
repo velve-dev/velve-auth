@@ -15599,6 +15599,106 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A rule that a planted module passes is not checked, and a lock the type lets a caller lose is not held.
 **Price.** Those chapters belong to no current feature and their edits are reviewed by nobody who owns them. `inOneTransaction` is one more function the two other branches must use rather than `driver.transaction`.
 
+<a id="e-3130"></a>
+
+### The token MAC is checked in the services and the repositories stay keyless
+`E-3130` · security-state-tokens · keys, storage format, settled
+
+**Context.** S-INTEG-9 and section 3.18 ask that every session, one-time token and pending authentication row carry `token_mac` and `token_mac_key_version` and be checked before use. Taking the MAC needs the `KeyProvider`. `createSessionRepository` alone is built in seven places, six of them outside the session feature (`src/core/auth/instance.ts`, `src/core/oauth/service.ts`, `src/core/flows/confirmation.ts`, `src/core/flows/reset.ts`, `src/core/password/set-credential.ts`, `src/core/plugin/registry.ts`), and none of the six writes or resolves a token row. The repositories now write and return the two columns and nothing more: a resolve or a consume returns a candidate with the stored factor names, the attempt counter, the payload and the MAC, and a `decode()` or `accept()` that builds the session, the pending state or the redemption only once the caller has checked it. `createSessionService`, `createPendingAuthenticationService`, `createSecondFactorCompletion` and `createOneTimeTokens` take `keys` and do the check in `src/core/token/binding.ts`, which takes the MAC through `src/core/keys/mac.ts` (E-3088).
+**Rejected.** (a) `keys` on every repository, which changes all seven construction sites for six that never write a token row. (b) Checking inside the SQL, which cannot hold the key.
+**Reason.** The check belongs where the row becomes a session or an owner, and that is the service; a repository that cannot build its answer before the check cannot be used without it.
+**Price.** A new caller of a repository could still use a candidate's `userId` before the check; nothing but review stops that. The session factors are now read as `array_to_json(...)::text` instead of `array_to_string`, because a comma inside a stored name made two names out of one and the MAC over the split names would have verified.
+
+<a id="e-3131"></a>
+
+### The token binding is its own length-prefixed encoding, and the payload is canonical JSON
+`E-3131` · security-state-tokens · storage format, frozen
+
+**Context.** Section 3.18 asks for a length-prefixed encoding of purpose, owner, `token_sha256` and the row's content. `encodeTokenBinding` writes the context `velve-auth/token-binding/v1`, then each field as a type byte, a four-byte big-endian length and its bytes, with an absent owner or payload as its own type byte. The factors are a list of their count followed by each name, in the order the row stores them, so a reordered or repeated factor fails. The payload is taken through `JSON.parse(JSON.stringify(...))`, which is what the repository stores, and then written with every object's keys sorted, because `jsonb` hands keys back in its own order. The seal branch will need a canonical encoding as well and does not exist yet.
+**Rejected.** (a) Sorting the factors into a set, which lets a writer reorder them unnoticed; harmless today, but the stored order is what the library wrote. (b) Sharing one encoder with the seal, which would mean writing the seal's encoder on this branch.
+**Reason.** An encoding two branches would have to agree on before either exists is a collision waiting; this one is private to `binding.ts` and versioned by its context string.
+**Price.** There may be two canonical encoders in `src/` once the seal lands. A payload number that does not survive a JSON round trip unchanged would fail its own check, which no payload the library writes contains.
+
+<a id="e-3132"></a>
+
+### A refused token row is reported through an optional callback the seal branch wires
+`E-3132` · security-state-tokens · alarm seam, open until the seal branch merges
+
+**Context.** Section 3.18 says a token row whose MAC fails is answered as no row and raises the alarm with the reason `token_binding_mismatch`. The alarm, its rate limit and its log line belong to the seal branch. The three services and the `ArtefactStore` of `src/core/flows/artefact.ts` take an optional `reportTokenBindingRefusal`, which receives `{ userId, occasion, reason: "token_binding_mismatch", verdict }` with `verdict` either `mismatch` or `key_version_unknown`. *Note added before merge: since the merge of the foundation at 288b138 the MAC module also answers `key_unusable`, and the report carries it as a third `verdict`.* Whatever it throws is swallowed. `src/core/auth/instance.ts` passes none, so on this branch a refusal is silent. `ArtefactStore` is satisfied by `RouteServices`, so a `reportTokenBindingRefusal` member added there reaches every redemption without touching the flows again.
+**Rejected.** (a) Building the alarm here, which is the seal branch's file set. (b) A distinct error the caller maps, which would make the refusal a second answer beside the missing row until `error-map.ts` knew it.
+**Reason.** The refusal path must exist and be testable now; the alarm can only be connected to it by the branch that owns the alarm.
+**Price.** Until the seal branch merges, T-INTEG-9's "with alarm" is met only as far as the report: the tests assert the report, not an alarm. An unknown key version reports the same reason as a mismatch and differs only in `verdict`.
+
+<a id="e-3133"></a>
+
+### A resolved session or pending row is rebound by compare-and-set, and a one-time token is not
+`E-3133` · security-state-tokens · key rotation, settled
+
+**Context.** Section 3.18 rebinds a successfully resolved row whose `token_mac_key_version` is not the current one. The session rebind is an `UPDATE` of the two columns with `id`, the resolved actor's `user_id`, the stored MAC and the stored version in its predicate; the pending rebind uses the token hash, the row's owner, the stored MAC and version. A rebind that finds the row changed does nothing. A one-time token is deleted by the redemption that reads it, so there is nothing to rebind. `test/key-rotation-restart-proof.test.ts` now asserts that the session the rotation resolves carries version 2 afterwards; it passes because that session is resolved while both versions are in the ring.
+**Rejected.** (a) Rebinding by token hash alone, which would let two concurrent resolves race to write and a writer's change in between be overwritten with a fresh MAC. (b) A start-up refusal, like the password ring check of E-1697, for a ring missing a stored `token_mac_key_version`: it needs a new code in the instance's start and is not in this branch's file set.
+**Reason.** The rebinding should never write a MAC over a row other than the one that was checked.
+**Price.** A row not resolved while two versions are in the ring stays under the old version until `maintenance.sealSecurityState()` rebinds it, and that step belongs to the administration branch. Removing the old version before it has run signs those users out silently, and nothing at start says so. The brief named `test/key-rotation-restart-proof.release.test.ts`; the file in the tree is `test/key-rotation-restart-proof.test.ts` in the unit project.
+
+<a id="e-3134"></a>
+
+### The pending attempt counter is bound into the MAC and counted by compare-and-set
+`E-3134` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** A foundation review found that a writer who resets `pending_authentication.attempts` gets five more guesses at a second factor, and the specification is being amended to bind it. The pending MAC now covers `attempts` after the factors. A failed attempt used to be `UPDATE ... SET attempts = attempts + 1` and, at the limit, a delete, in one transaction. It is now: read the row, check its MAC, take a MAC over the raised counter, and write counter and MAC with the old MAC and the old counter in the predicate; when another attempt changed the row first, the write finds nothing and the loop reads again. The attempt that reaches the limit deletes the row by its token hash without the compare, since deleting is the answer either way. A row that fails its check answers `exhausted`, which is what a missing row answered before.
+**Rejected.** (a) A row lock to serialise the attempts, which `check:lock-order` forbids outside `src/core/db/lock.ts` and on any table but `velve.user`. (b) Leaving `attempts` out of the MAC, which is the finding.
+**Reason.** The counter has to be written together with a MAC over its new value, and the key is not in the database, so the increment cannot stay one statement.
+**Price.** Every failed attempt costs a resolve query, two HMACs and an update instead of one update, more under contention, and the loop has no bound of its own: it ends because each retry follows another attempt's success and the fifth deletes the row. The count and the delete are no longer one transaction.
+
+<a id="e-3135"></a>
+
+### The keys reach the token services through seven files outside this branch's set
+`E-3135` · security-state-tokens · file ownership, reported
+
+**Context.** The brief gave this branch `src/core/session/`, `src/core/token/`, `src/core/factor/pending/`, the session and token repositories and migration 4, and asked that every place that mints a token row take the MAC. The instance builds the session service, the pending service, the second-factor completion and the instance's one-time tokens in `src/core/auth/instance.ts`, and every email flow mints and redeems through `src/core/flows/artefact.ts`, which took a schema and no keys. `instance.ts` now passes `config.keys` four times. `artefact.ts` takes an `ArtefactStore` (`schema`, `keys`) where it took `schema`; its callers in `address.ts`, `magic-link.ts`, `reset.ts` and `sign-up.ts` pass `environment.services`, and `mailerOf` in `environment.ts` and the mailer in `sign-up.ts` carry `keys`. None of the seven changes more than how the keys arrive.
+**Rejected.** Stopping before the wiring and reporting it, which leaves every insert failing on migration 4's `NOT NULL` columns and the gate red on this branch.
+**Reason.** Migration 4 and the code that writes the columns cannot merge apart (E-3086), and neither can the code that writes them and the wiring that gives it the key.
+**Price.** CLAUDE.md §5 says a feature that needs a file outside its set stops and reports; this branch edited them and reports afterwards. A parallel branch that edits the same lines of `instance.ts` or the flows will conflict.
+
+<a id="e-3136"></a>
+
+### Tests that wrote token rows by hand or pinned the old statements now state the MAC
+`E-3136` · security-state-tokens · test, settled
+
+**Context.** Fifty-eight test files changed. Most build a service, which now needs `keys`, or insert a session, one-time token or pending row by hand, which migration 4 refuses without the two columns. A hand-written row that a test later resolves through a mounted instance now takes its MAC through `sessionMacParameters` in `test/session-fixtures.ts`, with the instance mounted under the same key provider; one that is never resolved carries 32 fixed bytes. `test/flows-review-redemption-race.test.ts` built four instances over one database each with its own random ring, so a token minted by one was refused by another, and they now share one ring. Five cases changed meaning: `test/token-review-purpose-and-ownership.test.ts` asserted that a row written around the library yields its owner, and now asserts it is refused; `test/token-static-scan.test.ts` pins the consume statement of section 3.7, which now also returns `token_mac` and `token_mac_key_version`, and admits `src/core/db/migrations/token-mac.ts` among the files naming `one_time_token`; `test/session-review-resolution.test.ts` pins the resolve statement, which now reads the factors as JSON and the two MAC columns; `test/owner-actor-census.test.ts` names `rebindPendingTokenMac` a secret address; `test/factor-pending-surface.test.ts` states the pending service's four option names.
+**Rejected.** Giving the tests a keyless path through the services, which would be a way around the check in the shipped code.
+**Reason.** A test that writes a token row past the library is exactly the writer section 3.18 now refuses.
+**Price.** Section 3.7 of the specification still prescribes the consume statement with `RETURNING user_id, payload`; the code and its pinning test now differ from that text, and the specification is not this branch's to change. The S-INTEG-9 line of `NAMED_BY_NO_TEST` in `test/requirement-coverage.test.ts` is removed, as E-3087 asks.
+
+<a id="e-3137"></a>
+
+### Migration 4 carries the two CHECK constraints the specification is gaining
+`E-3137` · security-state-tokens · schema, settled
+
+**Context.** Migration 4 is the SQL of section 3.18 as reserved by E-3086, plus `CHECK (octet_length(token_mac) = 32)` and `CHECK (token_mac_key_version >= 1)` on each of the three tables, which the orchestrator reported the specification is gaining. It ships as `migrations/0004_token_mac.sql` and is embedded byte for byte in `src/core/db/migrations/token-mac.ts`. The Schema chapter of DOCUMENTATION.md gains the two columns in each of the three tables and the Migrations chapter the file's row and a sentence in place of the one reserving migration 4.
+**Rejected.** The section's SQL without the constraints, which the amended text would contradict.
+**Reason.** A migration's checksum is recorded in every database that ran it, so its SQL should match the amended specification before it ships, not after.
+**Price.** On this branch the constraints are ahead of the German text it reads. The *Security state* chapter, which the foundation owns, still says migration 4 is reserved and that nothing writes the token columns; that sentence is the foundation's to change and is reported, not edited.
+
+<a id="e-3138"></a>
+
+### A session MAC binds the account's session epoch, and a session is inserted only under the epoch it bound
+`E-3138` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** The foundation's second review (E-3107 and after) adds `session_epoch` to `velve.security_state` and has a session's MAC bind the account's epoch at issue, so a session row written back after a mass revocation stays refused. Raising the epoch is a reseal and belongs to the seal branch; this branch binds and checks it. The session row stores no epoch: the MAC is taken over the epoch read in the inserting transaction, and a resolve checks it over the account's current epoch, read by a `LEFT JOIN` in the resolving statement. An account without a seal row, which only `"migrating"` serves, is at epoch 1 on both sides. `SessionInsert` carries `bindUnderEpoch(epoch)` instead of a finished MAC, and the repository's `insertSession` reads the epoch, takes the MAC and inserts with `INSERT … SELECT … WHERE` the account's epoch still equals the bound one, so a raise between the read and the insert writes no row; it then reads the epoch once more and tries again, and a second miss throws `SessionEpochMovedError` without a report. A refused session under an older epoch reports `mismatch`, since the check cannot tell an old epoch from a forged row. Before the review this branch also raised the epoch itself in the repository's four mass-revocation methods under the account lock and rebound the session `revokeAllOther` keeps; that was never committed and is dropped, because the seal branch now owns the raise.
+**Rejected.** (a) An epoch column on `velve.session`, which a writer can set to the current epoch on a written-back row. (b) An unconditional insert after reading the epoch, which can write a row under an epoch a concurrent revocation has already left, refused only at first use. (c) Raising an alarm on the miss, which a legitimate revocation racing a sign-in causes.
+**Reason.** A valid MAC over the current epoch already says the session was issued under it, and the conditional insert keeps a sign-in from writing a session a concurrent revocation would not have covered.
+**Price.** Every session insert costs one more statement, two on a miss. Until the seal branch raises the epoch at every mass revocation, nothing on this branch raises it, and the tests raise it by SQL; `test/security-state-session-epoch.test.ts` stays an expected failure and moves to the seal branch. A session of an unsealed account in `"migrating"` is at epoch 1 and stays valid when its first seal is written at epoch 1. The resolving statement pinned by `test/session-review-resolution.test.ts` reads the epoch, the owner census names the session repository as a reader of `velve.security_state`, and two traced transactions in `test/session-review-reissue-race.test.ts` show the epoch read before the insert.
+
+<a id="e-3139"></a>
+
+### A failed attempt is counted only against the row the resolve checked
+`E-3139` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** E-3134 counted a failed second-factor attempt by reading the row again, checking it and writing the raised counter by compare-and-set, retrying when another attempt had changed the row. The foundation's second review found that a writer who restores an older version of the row with its old MAC between the resolve and the count gets the budget back, because the re-read verifies. The count is now pinned to the values the resolve checked: `PendingAuthenticationService.resolveForAttempt(token)` returns the resolution and a `registerFailedAttempt()` bound to that row's `attempts` and MAC, and `verifyUnderPendingAttemptLimit` uses it. The `UPDATE` keeps `token_mac = $checked AND attempts = $checked` in its predicate, and a miss is no longer retried: it answers as a missing row, `exhausted`, and goes to the refusal report. A rebinding at resolve, when it lands, moves the pinned MAC to the rebound one. `registerFailedAttempt(token)` remains for a caller without a resolution and pins to its own read. The attempt that reaches the limit still deletes the row by its token hash without the pin.
+**Rejected.** (a) The retry of E-3134, for the replay above. (b) Pinning the exhausting delete as well, which would leave a row standing that a writer just reset.
+**Reason.** What was checked is what may be counted; anything written since is a writer's or a concurrent attempt's, and neither may move the budget.
+**Price.** Two legitimate attempts on one pending state at the same time now cost the slower one its attempt: it answers `too_many_factor_attempts` and reports a refusal, though the row stays and the next attempt counts normally. The case of E-3134 that counted concurrent attempts once each is replaced by one that shows the slower count refused. E-3134's description of the retry is superseded by this entry.
+
 <a id="e-3190"></a>
 
 ### The integrity probe requires HMAC with SHA-256 and a 32-byte MAC
@@ -15768,6 +15868,106 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Refusing old-form envelopes in `"migrating"` for accounts that already have a session, which a writer controls as well.
 **Reason.** The upgrade window is the weakest the design has, and an operator who does not know that keeps it open longer than needed.
 **Price.** None beyond the sentence; the exposure itself is E-3083's.
+
+<a id="e-3140"></a>
+
+### An attempt is booked before the factor is evaluated, and a missed booking reads the row once more
+`E-3140` · security-state-tokens · S-INTEG-9, L-8, settled
+
+**Context.** E-3139 counted a failed attempt after the factor had been evaluated, by a compare-and-set pinned to the row the resolve checked, and turned every miss into `exhausted` with a report. A review showed that this let concurrent wrong guesses on one pending state all be evaluated while only one was counted: forty simultaneous wrong TOTP codes left `attempts = 1` and the row alive, so anyone who knows the password could guess the second factor without bound, with no database access at all. Before this branch the single `attempts = attempts + 1` had exhausted the row after five. The same miss also raised `token_binding_mismatch` and answered `too_many_factor_attempts` for a double submit, a row consumed by the faster half, and a row that expired in between. The orchestrator decided the rule this entry carries out. `PendingAuthenticationService.bookAttempt(token)` resolves and checks the row and writes `attempts + 1` with a MAC over it where `attempts` and `token_mac` still hold the values it verified; only then does `verifyUnderPendingAttemptLimit` run the factor. A correct factor is completed and the row consumed as before; a wrong one reports through `failed()`, which removes the row when the booked attempt was the last. A booking that misses reads the row once more: gone answers as a missing row with no report; a row that verifies with more attempts, or with the same count rebound under a newer key version, is a concurrent attempt and is booked over; a verified count at the budget answers `too_many_factor_attempts` and leaves the row to the attempt that spent it; a row that fails its MAC, or verifies with fewer attempts or the same count under no newer version, is refused as missing and reported. The loop is bounded by the budget, because every retry follows a booking that raised the counter. The repository's `countFailedAttempt` becomes `bookAttempt`, which answers whether it wrote. `test/totp-pending-attempts.test.ts` asserted that a correct code spends no attempt; it now asserts the one booked attempt, which the completed sign-in removes with the row. The TOTP chapter's account of the five attempts, the pending service's table in *The instance*, and the reference entries of `createOneTimeTokens` and `createSessionService`, which still showed the options before `keys`, are brought into step in place, chapters this branch does not own, for the reason E-3089 gives.
+**Rejected.** (a) Counting after the evaluation with any retry, which always lets the guesses already in flight be evaluated first. (b) An atomic `attempts = attempts + 1` without the MAC pin, which a writer's reset during the update would ratify (E-3139). (c) Treating every miss as a manipulation, the design of E-3139, which alarmed on ordinary concurrency. (d) Giving the booked attempt back after a correct factor, which would reopen a window for the guesses racing it.
+**Reason.** An attempt that is evaluated before it is counted is not limited by the count; booking first makes the budget the bound on evaluations, and reading the row again tells a concurrent attempt from a writer without guessing.
+**Price.** Every factor check costs a booking write before the evaluation, also for a correct code. A correct code that loses the race to the budget's last booking is refused with `too_many_factor_attempts` although it was right. A writer who restores an older consistent row before the resolve is not seen at all; that limit is E-3143's. The answer of an attempt whose booking was refused changes from `too_many_factor_attempts` to `invalid_pending_authentication`, the missing-row answer section 3.18 *Outwards* gives the factor check. E-3139's design is superseded; its entry stands as written.
+
+<a id="e-3141"></a>
+
+### Issuing a session takes the account lock before it reads the epoch
+`E-3141` · security-state-tokens · S-INTEG-9, lock order, settled
+
+**Context.** E-3138 says that the conditional insert "keeps a sign-in from writing a session a concurrent revocation would not have covered". That is false as written. A review showed that the insert reads `velve.security_state` under a plain snapshot and the issuing transaction took no account lock, and the foreign key's `FOR KEY SHARE` on `velve.user` does not conflict with the revocation's `FOR NO KEY UPDATE`. A sign-in between a revocation's `DELETE` and its commit therefore inserted under the old epoch, after the delete and before the raise was visible, and the row then failed its first use with `token_binding_mismatch`, an alarm for an ordering. Every issuing transaction in the session repository now takes `lockAccountRow` first, through one helper, `issuing`: a plain insert, the re-issue of one session, the replacement of the presented one, the replacement of a named one and the replacement of every one. It waits for a revocation that holds the account and then reads the epoch the revocation leaves. The conditional insert stays as a second guard; under the lock it cannot miss, so the single retry and `SessionEpochMovedError` (A-L1, a 500 nobody mapped) are removed, and a miss, which only a writer can cause, throws the repository's existing "returned no row" error. The lock order stays legal: a transaction that consumes a pending authentication, an OAuth flow or a one-time token does so before it issues the session. Sign-up issues the session of the account it created in the same transaction and mints a one-time token afterwards. Its account row is its own uncommitted insert, which no other transaction can wait on. `test/lock-order-declaration.test.ts` counts nine lock sites. Two traced re-issues in `test/session-review-reissue-race.test.ts` and the statement census of `test/session-owner-sql.test.ts` now see the lock. `test/integ-session-epoch-race.test.ts` shows an issue waiting for a revocation's commit, and fifty sign-ins racing a revocation leaving every surviving session resolvable with no alarm; with the lock removed both cases fail.
+**Rejected.** (a) Reading the epoch with `FOR SHARE`, which `check:lock-order` refuses. (b) Keeping the retry without the lock, which E-3138 chose and which the review's race defeats. (c) Mapping `SessionEpochMovedError` in `error-map.ts`, which would give a legitimate race a visible error.
+**Reason.** Only the account lock orders a sign-in against a mass revocation, and the specification already makes every mass revocation take it.
+**Price.** Every issued session costs one more statement and waits for any transaction holding the account; measured at 0.73 to 0.78 ms per issue on a local PostgreSQL 16, against 2.8 to 3.3 ms for the whole issue. Sign-up now takes the lock on its own new account row before it mints a one-time token, which is the order CLAUDE.md §7 describes as never taken; the case is harmless only because the row is the transaction's own uncommitted insert, and `check:token-after-lock`, which reads one file at a time, does not see it.
+
+<a id="e-3142"></a>
+
+### The session repository takes the sealing mode, and only "migrating" gives an unsealed account epoch 1
+`E-3142` · security-state-tokens · S-INTEG-4, S-INTEG-9, open until the seal branch configures the mode
+
+**Context.** E-3138 took a missing seal row as epoch 1 in every mode, through `COALESCE(…, 1)`. A review pointed out that section 3.18 gives epoch 1 to an account without a seal row only in `"migrating"`; in `"required"` such an account is broken. The orchestrator decided that the repository receives the mode. `SecurityStateSealing` (`"required"` or `"migrating"`) is an option of `createSessionRepository`, defaulting to `"required"`, and a required option of `createSessionService` and `createSecondFactorCompletion`. Under `"required"` the resolving statement and the issuing read take the epoch without a fallback: a session of an account without a seal row resolves to nothing without a report, since the seal check owns that refusal, and issuing one throws `ConcealedError("session_not_found")` before any MAC is taken. The configuration `securityState.sealing` belongs to the seal branch and does not exist here. The instance therefore passes the named constant `SEALING_UNTIL_IT_IS_CONFIGURED`, set to `"migrating"`, because nothing on this branch writes a seal row and `"required"` would refuse every account. Tests that build a service or a repository which issues sessions for unsealed accounts name `"migrating"`, and one case shows `"required"` refusing an unsealed account and serving a sealed one.
+**Rejected.** (a) Defaulting the service's option, which would let a caller forget the decision. (b) Passing `"required"` from the instance now, which signs nobody in until the seal branch seals at sign-up. (c) Answering an unsealed account's issue with a distinct error, which would be a new outward answer outside `error-map.ts`.
+**Reason.** Whether a missing seal row is an old account or an attack can only be said outside the database (E-3083), and the mode is that statement; the repository is where the fallback is written, so the mode has to reach it.
+**Price.** Until the seal branch replaces the constant with `securityState.sealing`, every instance on this branch runs as if in `"migrating"`, which is a weakening the start does not report. Issuing for an unsealed account in `"required"` answers `session_required`, which a sign-in route would not otherwise answer, but the seal branch's check refuses that account before any session is issued.
+
+<a id="e-3143"></a>
+
+### An older consistent pending row written back gives its budget back, and that is pinned as a limit
+`E-3143` · security-state-tokens · S-INTEG-9, L-8, limit
+
+**Context.** A review showed that a writer who saved a pending row after its first failed attempt and wrote it back after four more got the whole budget back, because the saved row carries the MAC the library took over its own `attempts`. E-3139 said the pinned count gave "no budget back to a writer who restores an older row between resolve and count", and E-3140 says a restore during a booking is refused. Both are true only for a restore that lands between a booking's read and its write. A restore before the read is invisible. Section 3.18 names this replay among its limits. Nothing in this branch's chapter said what it means for the attempt budget, and E-3139's sentence read wider than it is. The chapter now says it plainly: against a database writer the budget is five per write-back. `test/integ-token-binding.test.ts` pins the limit as stated, with a written-back row resolving with its full budget and no report, so a later change that closes it fails that case and has to say so.
+**Rejected.** (a) Binding the row's creation time or a counter outside the row, which a writer restores along with the row. (b) Leaving the limit to the specification's sentence alone, which a reader of the attempt budget does not find.
+**Reason.** A limit nobody can see from the place they read about the guarantee is a guarantee overstated.
+**Price.** The budget against a writer is unbounded within the pending row's five minutes. The review's case asserted the opposite and is kept with its expectation turned to what the code does, which is a test that passes on the gap.
+
+<a id="e-3144"></a>
+
+### Every listed session row passes the MAC check, and the repository now holds the key
+`E-3144` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** A review found that `session.list`, the plugin context's `listSessionsForUser` and the ids announced to `beforeSessionRevoke` came from statements that never checked a row's MAC, so a session a writer inserted, with factors of their choosing, or one written back after a mass revocation, was shown to the user and to plugins as a live session. The three listing statements now return each row's token hash, stored factors, MAC, key version and the account's epoch, and the repository checks every row before it lists or announces it, leaving out and reporting one the library did not write. The check lives in `src/core/session/binding.ts`, which the session service's resolve uses as well. This reverses part of E-3130: the session repository now takes `keys`, and its `sealing` and refusal report, because it is the only thing the plugin context holds. So that no flow constructs a repository without them, `SessionService.repositoryOn(driver)` returns one with the service's options. The flows that revoke every session (`src/core/flows/confirmation.ts`, `reset.ts`), the OAuth link announcement (`src/core/oauth/service.ts`), the password change (`src/core/password/set-credential.ts`) and the instance's frozen plugin services (`src/core/auth/instance.ts`) use it. `src/core/plugin/registry.ts` rebinds the frozen repository to a lent connection through the repository's new `boundTo`. The address confirmation takes the session service in its input, which `address.ts` and `magic-link.ts` pass. These are files outside this branch's set, edited only in how they obtain a repository. The owner census names `boundTo` under a class of its own. The test of the session module's files counts nine, `binding.ts` being the ninth. `sessionInsertFor` now takes its MAC under a fixture key the test repositories share.
+**Rejected.** (a) Checking only in the service's `list`, which leaves the plugin path and the revocation announcements. (b) A keyless repository returning candidates the caller must check, which every caller can forget. (c) A `keys` field in the plugin context's services, which adds a secret-holding member to a type plugins' code is built around.
+**Reason.** A listed session is a statement that the session exists, and S-INTEG-9 answers a row that fails its MAC like a missing one wherever it is read.
+**Price.** Listing costs one HMAC per row of the account, and the announcement before a mass revocation one per row as well, deadlines included. A forged row is still deleted by a mass revocation without its id being announced to the hook. Seven files outside the set changed again.
+
+<a id="e-3145"></a>
+
+### The specification now prescribes the consume statement this branch runs
+`E-3145` · security-state-tokens · specification, test, settled
+
+**Context.** E-3136's price said that section 3.7 and S-REPLAY-2 still prescribed the one-time token's consume statement as `RETURNING user_id, payload`, while this branch also returns `token_mac` and `token_mac_key_version` and pins that in `test/token-static-scan.test.ts`. The foundation amended both in 2377691 (E-3205): the statement returns the two MAC columns, and a returned row whose MAC does not match is answered like an empty result. The code and the specification agree again, and E-3136's price is settled by that amendment, not by an edit to E-3136. The foundation's two placeholders for this branch are plain cases. `test/security-state-attempt-budget.test.ts` was flipped at the merge 288b138. `test/security-state-attempt-count.test.ts` was adapted at the merge 4699e8b to the count then in place. With 145ed4b it waits on the booking's statement and refuses both a reset counter and a restored older row during a booking, with the alarm.
+**Rejected.** Editing E-3136's price, which existed when this branch was last reviewed and states what was true then.
+**Reason.** New information about an old entry goes into a new entry that cites it (CLAUDE.md §6).
+**Price.** None beyond a reader following E-3136 to this entry.
+
+<a id="e-3146"></a>
+
+### Migration 4 locks the three token tables before it deletes their rows
+`E-3146` · security-state-tokens · schema, migration 4, settled
+
+**Context.** A review noted that migration 4 ran `DELETE` and then `ALTER TABLE … ADD COLUMN … NOT NULL`, and that a 1.x instance still serving during the upgrade could insert a row in between. The `ADD COLUMN` would then fail, and the migration would roll back cleanly but leave the operator with an error that names neither cause. Migration 4 now begins with `LOCK TABLE velve.session, velve.one_time_token, velve.pending_authentication IN ACCESS EXCLUSIVE MODE`. It is changed in place, as E-3108 changed migration 3, because it has never been released. The upgrade text in the chapter says to stop every 1.x instance first. `test/db-token-mac-migration.test.ts` holds the order of the first two statements and shows the migration emptying the three tables of a database at version 3 and adding the six columns.
+**Rejected.** (a) Only the upgrade text, which leaves the failure for an operator who does not read it. (b) A separate migration 5 for the lock, which cannot run before the statements it is meant to precede.
+**Reason.** An unreleased migration is a draft, and the lock is what makes its delete and its new columns one step for every other session on the database.
+**Price.** While migration 4 runs, every statement of a running instance on the three tables waits; a 1.x instance left running fails every insert afterwards. A database built from an earlier draft of migration 4 on a parallel branch refuses to start with a changed checksum, as E-3108 describes for migration 3.
+
+<a id="e-3147"></a>
+
+### The chapter corrects what a refused one-time row leaves, and states the writer's limits in full
+`E-3147` · security-state-tokens · documentation, settled
+
+**Context.** A review found that the chapter said a refused one-time row "is deleted with the redemption that found it". In every email flow the redemption runs inside the flow's transaction and the refusal throws `invalid_token`, which rolls the transaction back and restores the row. Only the redemption that spends a token whose mail failed runs outside a transaction and deletes it. The sentence was written from the consume statement alone and never checked against the flows. The chapter now says what happens. The same review asked that the chapter state the limits the foundation is making explicit in section 3.18. These are the unbound deadlines and timestamps, and the replay of an earlier version of a row with its MAC of that time. That covers a session revoked on its own, a consumed one-time token and a pending row's budget, where a mass revocation's epoch stops the session case. The chapter lists them in its own words.
+**Rejected.** Changing the flows so that a refused one-time row is deleted, which would make a refusal write and differ from an unknown token in what it leaves behind.
+**Reason.** A documented behaviour nobody checked is a defect of its own, whichever way the code goes.
+**Price.** A forged one-time row stays in the table until its deadline or a sweep, and every redemption of it is refused again with a report.
+
+<a id="e-3148"></a>
+
+### The rebinding of unresolved token rows is a seam for the maintenance step, and the start probes their key versions
+`E-3148` · security-state-tokens · S-KEY-5, settled
+
+**Context.** S-KEY-5 holds only if the maintenance step rebinds every token row under an old `token-mac` version before that version leaves the ring (E-3133). *Note added before merge: the seam no longer visits `pending_authentication`, and where this entry says "one of the three tables" it now takes `session` or `one_time_token`; E-3149 gives the reason.* A review asked this branch for the seam the administration branch calls. `rebindTokenRowsUnderCurrentKey` in `src/core/token/rebind.ts` takes one of the three tables and visits, in batches and in token-hash order, every row not under the current version. It checks each under its own version, with the session epoch read under the sealing mode, and rebinds it by a compare-and-set on the stored MAC with the owner in the predicate. A row that fails is left at its version, counted and reported with the new occasion `maintenance`, which section 3.18's alarm already lists. A one-time token without an owner is the cover artefact nothing redeems, and it is not visited. Separately, the foundation's start probe `assertStoredIntegrityKeysTakeMac` (E-3191) read only `velve.security_state`; since migration 4 stores `token-mac` versions in three more tables, it now reads those as well, as the merge instructions asked. Both reach token tables outside the repositories: the owner census lists the seam among the maintenance and start-up functions, the owner-predicate scan lists it among the files whose table is chosen at run time, and the scan of files naming `one_time_token` admits it.
+**Rejected.** (a) Leaving the rebinding to the administration branch entirely, which would make that branch write the binding of three tables it does not own. (b) Rebinding a row that fails its check, which would ratify a forged row under the current version.
+**Reason.** The rows' binding is this branch's, and the seam keeps it in one place.
+**Price.** The pass reads each stale row and takes two HMACs and one update per row it rebinds. A session under an older epoch fails its check and is counted as refused with a report, although it is only stale.
+
+<a id="e-3149"></a>
+
+### A pending row is rebound only by its booking, and nothing on this branch leaves READ COMMITTED
+`E-3149` · security-state-tokens · S-INTEG-9, S-KEY-5, settled
+
+**Context.** The orchestrator decided, while the specification was being amended, that the seal's `REPEATABLE READ` snapshot is dropped and every statement runs at `READ COMMITTED`. This branch opens no `REPEATABLE READ` transaction: issuing a session is the account lock, the epoch read and the conditional insert (E-3141), and the booking and its re-read are statements of their own (E-3140). The same decision has a pending row rebound under a new key version only through the booking's own compare-and-set. A booking already writes its MAC under the current version, so the separate rebinding at resolve, `rebindPendingTokenMac`, is removed. A booking that re-reads a row which verifies at an equal count under a newer version treats it as a legitimate rebinding, re-pins and retries without a report; `test/security-state-attempt-count.test.ts` shows that case during a lock wait. The rebinding seam of E-3148 no longer visits `pending_authentication`, because a row that lives five minutes and is rebound by every booking needs no maintenance pass. The maintenance rebinding the administration branch will run is row-by-row compare-and-set outside the account lock, which is what the seam does.
+**Rejected.** (a) Keeping the resolve-time rebinding of pending rows, which writes a MAC a booking in flight then misses, outside the one write the decision allows. (b) Visiting pending rows in the seam anyway, which the decision rules out.
+**Reason.** One writer of a pending row's MAC — the booking — is one place where a concurrent attempt and a rebinding can meet, and the re-read already tells them apart.
+**Price.** A pending row under an old version that is never booked keeps its version until it expires; removing that version from the ring within five minutes of a sign-in that has not yet reached its second factor refuses that sign-in, as a missing pending state.
 
 <a id="e-3207"></a>
 
@@ -16008,6 +16208,306 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the fixture untested because it is test code, which would let every rewrite test pass over a read that is not the one the specification describes.
 **Reason.** A guard that can be removed with the suite green is not known to work, and a fixture other tests trust is a guard of theirs.
 **Price.** Six more database cases and one more lock wait per run.
+
+<a id="e-3250"></a>
+
+### Migration 4 locks the token tables one at a time, in the order a sign-in reaches them
+`E-3250` · security-state-tokens · schema, migration 4, settled
+
+**Context.** E-3146 added `LOCK TABLE velve.session, velve.one_time_token, velve.pending_authentication IN ACCESS EXCLUSIVE MODE` so that a 1.x instance still serving would wait for migration 4 rather than break it. PostgreSQL takes the locks of one `LOCK TABLE` in the order it lists them, so the migration held `session` first. A 1.x second-factor completion deletes its pending row and then inserts the session; a 1.x reset consumes its one-time token and then touches the sessions. A completion in flight when the migration started therefore held `pending_authentication` and waited on `session`, while the migration held `session` and waited on `pending_authentication`. PostgreSQL detected the deadlock and aborted the migration, which had waited longer. E-3146 and the chapter said the 1.x instance "waits instead", which nobody had tried. Migration 4 now takes `pending_authentication`, `one_time_token` and `session` in three statements, in that order, and is changed in place because it is unreleased. `test/db-token-mac-migration.test.ts` holds the three statements in that order, and runs the migration against a completion and a reset each holding its first table: both finish and the migration applies, where the single statement was aborted with `deadlock detected` in both cases.
+**Rejected.** (a) One `LOCK TABLE` listing the tables in the new order, which is correct too but leaves the order to a property of the statement a reader has to know. (b) A `lock_timeout` with a retry, which turns a deadlock into a migration that may never get through under load.
+**Reason.** A lock that is taken against the order every flow takes the same tables is a deadlock waiting for the first upgrade under traffic.
+**Price.** A migration that waits behind a long 1.x transaction on `pending_authentication` holds nothing else meanwhile, so 1.x sessions go on being issued until it gets through, and are deleted by it.
+
+<a id="e-3251"></a>
+
+### The start reads the stored token-mac versions down an index, one version at a time
+`E-3251` · security-state-tokens · schema, migration 4, start, settled
+
+**Context.** E-3148 extended the start probe `assertStoredIntegrityKeysTakeMac` to the token tables by a `UNION` of one `SELECT` per table. A `UNION` removes duplicates over everything its branches return, so every start read every session, one-time token and pending authentication. Nothing indexed `token_mac_key_version`, and nothing had measured the read. Migration 4, still unreleased, now creates an index on `token_mac_key_version` in each of the three tables. The probe reads each table by a recursive query that takes the lowest stored version from the index and then the next one above it, until there is none. The seal table is read with `SELECT DISTINCT`, as before. Measured on PostgreSQL 16 against one table of 300,000 rows under two versions, the stepwise read took 0.4 to 0.9 ms and a `SELECT DISTINCT` over the same index 26 to 35 ms.
+**Rejected.** (a) `SELECT DISTINCT` per table, which an index makes an index-only scan but still reads every entry, since PostgreSQL 14 to 16 has no skip scan. (b) Probing every version the ring holds instead of the stored ones, which E-3191 rejected because a ring may hold a version no row names.
+**Reason.** A start that reads every token row grows with the number of signed-in users, and the question it asks has as many answers as there are key versions.
+**Price.** Three indexes that every token insert maintains. The seal table is still read in full, because its key version is the foundation's and has no index.
+
+<a id="e-3252"></a>
+
+### A stored payload no issue writes is refused, never thrown on
+`E-3252` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** The redemption and the maintenance pass each read `one_time_token.payload` by calling `JSON.parse` on any string and taking anything else as it came. The test connection hands `jsonb` back as text, so every test parsed a JSON document and passed. node-postgres, postgres.js and the neon driver hand `jsonb` back decoded. A writer who inserted a row with the `jsonb` string `"not json"` therefore made the redemption throw a `SyntaxError`, which reached the outside as an unmapped failure and raised no alarm. The same row stopped the maintenance pass at its first batch, so the old key version could never be shown to be unused. One function in `src/core/token/binding.ts`, `storedPayloadOf`, now reads a payload for both. It takes SQL `NULL`, an object or an array as it came, parses a string and keeps the result only if it is one of those, and answers anything else as no payload a library wrote. A row without a readable payload has no binding, and is refused and reported with the verdict `mismatch` like a row whose MAC does not match. The binding tests now redeem through a wrapper that decodes `jsonb` the way those drivers do. They show a `jsonb` string, number or boolean refused with one alarm through it and through the text-returning connection, and the maintenance pass counting such a row as refused and going on to rebind the genuine row after it.
+**Rejected.** (a) Selecting `payload::text` so every driver returns text, which changes the consume statement section 3.7 prescribes (E-142). (b) Catching the `SyntaxError` at the redemption only, which leaves the maintenance pass and the next caller to find the same value.
+**Reason.** A value a writer chose is input, and a refusal of input is the answer S-INTEG-9 gives, not an exception.
+**Price.** A `jsonb` string whose text happens to be a JSON object is read as that object. That is harmless, because the row's MAC still has to match, and no issue writes a string.
+
+<a id="e-3253"></a>
+
+### The owner is bound in the spelling PostgreSQL hands back
+`E-3253` · security-state-tokens · S-INTEG-9, storage format, settled
+
+**Context.** The token MAC encoded the owner id exactly as the caller passed it. PostgreSQL reads `0F0E…`, `{0f0e…}` and `0f0e…` without hyphens as the same `uuid` and hands every one of them back lower-case and hyphenated. A session, one-time token or pending authentication issued with another spelling was therefore written with a MAC over a text the resolve never presents, and was refused as forged when its own owner used it. `encodeTokenBinding` now passes the owner through one function that lower-cases it and, when what remains without braces and hyphens is 32 hexadecimal digits, writes it in the 8-4-4-4-12 form. Because the encoding is the one place both minting and checking go through, the two cannot disagree. `test/integ-token-binding.test.ts` issues all three kinds of row in upper case, in braces and without hyphens, and resolves each. It also shows two different owners still encoding apart.
+**Rejected.** (a) Refusing a non-canonical spelling at issue, which turns a spelling PostgreSQL accepts into an error of this library's own. (b) Canonicalising at each caller, which is five places to forget one.
+**Reason.** What the MAC binds has to be what the row reads back as, or a genuine row fails its own check.
+**Price.** The encoding's owner field is no longer the caller's text byte for byte. For the spelling every stored row already has, the change is nothing.
+
+<a id="e-3254"></a>
+
+### Sign-up mints its verification token before it issues its session
+`E-3254` · security-state-tokens · CLAUDE.md §7, lock order, settled
+
+**Context.** E-3141 made every session issue take the account lock, and its price recorded that sign-up then took the lock on its new account row before minting the `email_verify` token, "the order CLAUDE.md §7 describes as never taken". It called that harmless because the row is the transaction's own uncommitted insert. That reason was wrong when it was written. CLAUDE.md §7 states the ordering for every transaction, `check:token-after-lock` is built on it holding everywhere, and an exception that holds only by reasoning about who can see a row is the kind E-1616 found held "by a reading and by nothing else". A traced sign-up showed the account lock followed by the insert into `velve.one_time_token` in one transaction. Sign-up now mints the token after creating the account and before issuing the session, in the same transaction, for the registration and its cover alike. `test/integ-token-order-trace.test.ts` wraps the instance's driver, records the statements of every transaction, and refuses one that reaches `.one_time_token` after a `FOR NO KEY UPDATE`. It runs the sign-up, the verification, the magic link, the address change and the reset. On the old order it fails on the sign-up alone.
+**Rejected.** (a) Teaching `check:token-after-lock` to follow calls across files, which needs a call graph the check does not have and would still miss a lock taken behind a service. (b) Leaving the exception standing with its reason, which is the reasoning E-1616 asks to replace with a check.
+**Reason.** An ordering that is promised everywhere is checked by what the transactions do, and the trace sees the lock wherever it is written.
+**Price.** The test covers the flows it runs and no others. A flow added later that mints and issues in one transaction is caught only once a case runs it. The sign-up's statement order changed, which S-TIM-6's cover follows because both run the same function.
+
+<a id="e-3255"></a>
+
+### A revocation counts and announces only session rows that pass their check
+`E-3255` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** E-3144 kept a forged session row out of every listing and out of the ids announced before a mass revocation, and its price said the row "is still deleted by a mass revocation without its id being announced". The counts were left out of that. The password change answered `revokedOtherSessionsCount` from the number of rows its `DELETE` returned, so a row a writer inserted was reported to the caller as one of their own sessions, revoked. The reset, the first address confirmation and `session.revokeAll` counted the same way. The plugin context's `revokeSession` read the owner of any row by its id and announced it to `beforeSessionRevoke`, forged or not. The mass deletion now returns, for every row it removes, what the check needs. It returns and counts only the rows that pass, and reports each one that does not. The owner lookup behind `revokeSession` is renamed `findOwnerOfSession`; it checks the row as well and says whether it is the library's. A forged row is then removed without the hook being told. `test/integ-token-binding.test.ts` shows the mass deletion removing a forged row without counting it, with one report, and the password change over HTTP answering a count of 0 beside one. `test/plugin-revocation-announcement.test.ts` shows a forged row revoked through the plugin context, removed and not announced.
+**Rejected.** (a) Leaving forged rows standing, which keeps a writer's row alive past the revocation that was meant to end everything. (b) Counting in the flows by comparing with an earlier listing, which is a second read the deletion makes unnecessary.
+**Reason.** A count of revoked sessions is a statement that those sessions existed, and S-INTEG-9 answers a row that fails its MAC like a missing one wherever it is read.
+**Price.** Every mass revocation takes one HMAC per removed row, and one statement now returns six columns per row where it returned one. The check uses the epoch the account has when the rows are deleted, so a revocation that raises the epoch must delete before it raises, or every row it removes fails the check and none is counted.
+
+<a id="e-3256"></a>
+
+### A session insert that writes nothing is a broken state, answered as no session and raised
+`E-3256` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** E-3141 called the conditional insert "a second guard that under the lock never misses", and threw a `TypeError` if it did. The account lock holds off a mass revocation, not a writer who updates `velve.security_state` directly between the epoch read and the insert. Such a writer turned the issue into an unmapped error. Section 3.18 point 3 now states the case: the issue is answered like a missing row, raises the alarm with the reason `seal_mismatch`, and is not retried. It also states the two conditions. For an account with a seal row the condition is `… FROM security_state WHERE user_id = $1 AND session_epoch = $2`. For one without a seal row it applies only in `"migrating"`, only against epoch 1, and only `WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. The insert used `COALESCE(epoch, 1) = $10`, which also accepted a seal row a writer created at epoch 1 after the read. The issue now reads the seal row's epoch itself and inserts with the condition of the case it read. On a miss it reports `{ occasion: "sign_in", reason: "seal_mismatch", verdict: "mismatch" }` and throws `ConcealedError("session_not_found")`. The refusal type gains the reason `seal_mismatch` and the occasion `sign_in` from the alarm of section 3.18. `test/integ-session-epoch-race.test.ts` has a writer raise the epoch, and in a second case create a seal row, right after the issue's read. Both cases end with no session and one `seal_mismatch`. On the old code the first threw the `TypeError` and the second issued a session.
+**Rejected.** (a) Retrying the issue, which section 3.18 rules out because the state is broken, not contended. (b) Keeping one `COALESCE` condition, which lets a seal row appear under a session bound to an account that had none.
+**Reason.** The specification states the case and its answer, and an unmapped error is an answer nobody chose.
+**Price.** A second insert statement. The alarm's occasion `sign_in` is used for every issue, including those a password change or a reset makes, because the refusal report is the session repository's and does not know which flow called it.
+
+<a id="e-3257"></a>
+
+### A booking that runs out of retries answers missing and raises the alarm
+`E-3257` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** The booking of E-3140 retries over a row that verifies as a concurrent attempt's progress, at most six times, one more than the budget. Each legitimate retry follows a booking that raised `attempts`, so the budget is spent before the retries are. When the loop ended with a row still in hand it answered `exhausted`, which is `too_many_factor_attempts`. A row under the budget that keeps verifying as progress past six retries has been written by more than the bookings, for instance rebound at the same count under one newer version after another. Section 3.18 point 3 has no answer for it, and `exhausted` was a guess that reads as a legitimate outcome. The decision taken was to answer `missing` and raise the alarm, since only interleaved writes reach the case. `test/security-state-attempt-count.test.ts` rebinds the row under a newer version before each of the booking's writes. It shows six writes interposed and the booking answered `missing` with one `token_binding_mismatch`. On the old code the answer was `exhausted`.
+**Rejected.** (a) Retrying without a bound, which a writer can keep busy indefinitely. (b) Answering `exhausted` without the alarm, which hides a write that is not the library's.
+**Reason.** A row the loop cannot account for is not a state the library left, and S-INTEG-9 answers that as missing.
+**Price.** The alarm carries the verdict `mismatch` although the last re-read verified, because no single row failed; the operator learns that something wrote the row, not what.
+
+<a id="e-3258"></a>
+
+### A session's MAC binds its creation time, which the issue reads from the database
+`E-3258` · security-state-tokens · S-INTEG-9, storage format, settled
+
+**Context.** E-3131 left `created_at` unbound for every token row, and the chapter listed it among what a writer may change. Freshness is measured from a session's `created_at` (E-233), so a writer could make a stale session fresh again and pass every route that asks for a fresh session. Section 3.18 point 3 now names `session.created_at` in the content a session MAC covers. The session content of the encoding is now `factors`, the epoch, and `created_at` as an integer field of whole microseconds since the Unix epoch. The issue reads `now()` in the statement that reads the epoch, takes the MAC over both, and inserts `created_at = now()` in the same transaction, so the stored value is the one bound. Every read that checks a session row — the resolve, the listings, the revocations and the maintenance pass — reads `created_at` as microseconds in SQL, so the check never passes through a JavaScript `Date`, which holds milliseconds. Tests that age a session by moving its `created_at` now rebind it through a fixture, `rebindSessionsOf`, as the library would have bound it. The hand-written rows of eight test files insert the `created_at` their MAC was taken over. The foundation's placeholder for a replayed session saved the row through the driver, which cut its microseconds and made it fail for that reason. It now copies the row inside the database. `test/integ-token-binding.test.ts` refuses a stale session whose `created_at` a writer moved forward, and a session whose `created_at` moved by one microsecond, each with one report. This commit also brings that file's case for an epoch moved under the insert into step with E-3256, which it still expected to throw a `TypeError`.
+**Rejected.** (a) Binding milliseconds, which leaves a writer a thousand values per millisecond and makes the check depend on how a driver rounds. (b) Taking the time in JavaScript and inserting it, which puts the process clock where E-238 requires the database's.
+**Reason.** A value the library decides from is a value the MAC has to cover, and freshness decides from `created_at`.
+**Price.** One more integer in every session MAC. Every statement that reads a session for a check computes `extract(epoch …)`. A session row written by hand, in a test or a migration, has to carry the `created_at` its MAC was taken over.
+
+<a id="e-3259"></a>
+
+### The session rows and the booking are lent by their services, off the shipped declarations
+`E-3259` · security-state-tokens · API surface, settled
+
+**Context.** E-3144 added `SessionService.repositoryOn(driver)` so that flows obtain checked session rows. E-3140 put `bookAttempt` and its `BookedAttempt` on `PendingAuthenticationService`. Both services are types the shipped declarations carry through `RouteServices`. The api-surface comparison therefore showed `SessionRows`, `repositoryOn`, `bookAttempt` and `BookedAttempt` as new public surface, which no caller outside the library needs. Each now lives in a module of its own that no public type refers to, so no declaration file is emitted for it: `src/core/session/rows.ts` and `src/core/factor/pending/booking.ts`. The service lends its function to that module when it is built, in a `WeakMap` keyed by the service object. `sessionRowsOn(service, driver)` and `bookAttemptOn(service, token)` look it up and throw a `TypeError` for a service no factory built. The flows, the password change, the OAuth link and `verifyUnderPendingAttemptLimit` call those. After `pnpm build` no file under `dist` declares any of the six names. `test/factor-pending-surface.test.ts` holds that the shipped service has no `bookAttempt`. `registerFailedAttempt`, which the base shipped, stays removed (E-3140), and with it the declaration of `FailedAttempt`, which nothing shipped refers to any longer.
+**Rejected.** (a) `@internal` with `stripInternal`, which needs a build option this branch does not own and hides members of a type the code still sees, so a caller can use one that the declarations deny. (b) A second interface the factory returns beside the public one, whose return type the factory's own declaration would ship. (c) Leaving them on the surface, which makes them a contract for the next major version.
+**Reason.** What flows need from a service is not what an integrator calls, and the shipped declarations are the contract.
+**Price.** Two lookups through a `WeakMap`, and a service object that is copied or wrapped loses what it lends: a caller that spreads a service into a new object gets the `TypeError`. The api-surface diff still shows `registerFailedAttempt` and `FailedAttempt` removed.
+
+<a id="e-3260"></a>
+
+### The service carries what it lends, and no module keeps a map of services
+`E-3260` · security-state-tokens · S-CACHE-1, settled
+
+**Context.** E-3259 lent the session rows and the booking through a `WeakMap` keyed by the service object. The session module's own scans refuse a `WeakMap` anywhere in `src/core/session/` and count its files (S-CACHE-1), and the full suite failed on both, which E-3259's commit had not run. A map of services is not a cache of session state, but it is module-level state the scans exist to keep out, and moving it to another directory to pass them would be passing the scan rather than meeting it. Each service now carries its function under a module-private `Symbol`, defined non-enumerable on the service object when the factory builds it. `sessionRowsOn` and `bookAttemptOn` read it from the service they are given. Neither module holds anything between calls. The file count of the session module's scan is now ten, `rows.ts` being the tenth.
+**Rejected.** (a) Moving the `WeakMap` outside `src/core/session/`, for the reason above. (b) Widening the scan to admit a `WeakMap` of functions, which is a scan this branch does not own, loosened for its own convenience.
+**Reason.** What a service lends is a property of that service, and a property needs no registry.
+**Price.** The property is reachable by `Reflect.get` with the symbol, which only the two modules hold; a service copied by spreading still loses it, since the property is not enumerable, and the copy answers with the `TypeError` E-3259 describes.
+
+<a id="e-3261"></a>
+
+### Signing out every other session checks and rebinds the kept one under the account lock
+`E-3261` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** `session.revokeEveryOther` deleted every other row of the account in one statement, without the account lock and without looking at the kept row again. Section 3.18 point 3 has the seal branch raise the epoch at every mass revocation. Under the lock and before that raise, the kept row's MAC is checked against the epoch read under the lock and rebound by a compare-and-set on that MAC. On a miss there is no kept session and the alarm is raised. The repository's `deleteEveryOtherSessionOwnedBy` now takes the account lock and reads the kept row with the account's epoch. It deletes the others, checks the kept row and rebinds it under the current key by a compare-and-set on the MAC it read. It deletes the kept row as well when the check or the compare-and-set fails. A missed compare-and-set is reported with the occasion `change` from the alarm of section 3.18, which the refusal type now carries. A failed check is reported as every failed check is. Until the seal branch raises the epoch, the rebinding binds the epoch it read, so it changes the MAC only under a new key. It is the place where that branch binds the raised epoch. `test/integ-session-epoch-race.test.ts` shows the call waiting for a holder of the account lock, keeping the caller's session and counting the other. It shows the caller signed out with one `change` alarm when a writer replaces the kept row's MAC between the read and the rebinding, and signed out when the kept row fails its check. All three failed on the old code.
+**Rejected.** (a) Trusting the resolution that authorised the call, which happened before the lock and proves nothing about the row under it. (b) Keeping the caller's row when its rebinding misses, which keeps a row nobody can vouch for after an operation meant to leave exactly one.
+**Reason.** The one session a mass revocation leaves is the one a writer would most like to choose, so it is checked where the revocation holds the account.
+**Price.** One more statement, one HMAC and one update per call, and the call now waits for any transaction holding the account. A writer who changes the kept row signs the caller out, which is the outcome for a broken state.
+
+<a id="e-3262"></a>
+
+### A row that names no account is checked too, and its report carries no owner
+`E-3262` · security-state-tokens · S-INTEG-9, S-TOKEN-4, settled
+
+**Context.** The one-time token repository answered a consumed row whose `user_id` is null as no row before anything checked it. That row is the cover artefact an unknown address is answered with (S-TIM-6). A writer could insert one, and nothing raised an alarm, because the refusal type required an owner. Section 3.18 now says that a report about a row without an owner carries `userId: null`. The refusal type's `userId` is now `string | null`. The consume returns such a row as a candidate without `accept`, so it cannot be turned into an actor, and the redemption checks its MAC with the owner field absent. It then answers no row whether the check passes or not, and reports only a failing one, with `userId: null`. `test/integ-token-binding.test.ts` redeems a genuine cover artefact without a report and a forged ownerless row with one. `test/db-entity-id.test.ts` now holds that an ownerless candidate offers no `accept`, where it held that the repository answered it as `null`.
+**Rejected.** (a) Leaving ownerless rows unchecked, which leaves the one table writable without an alarm for rows nothing redeems. (b) Answering a genuine ownerless row with anything but no row, which S-TOKEN-4 rules out.
+**Reason.** The alarm is about writes to token tables, and a write of an ownerless row is one.
+**Price.** Redeeming a cover artefact now costs an HMAC, as redeeming any other row does. An operator's alarm handler has to accept a null `userId`.
+
+<a id="e-3263"></a>
+
+### A WebAuthn challenge carries a token MAC over its ceremony and owner
+`E-3263` · security-state-tokens · S-INTEG-9, schema, migration 4, settled
+
+**Context.** Section 3.18 point 3 now gives `velve.webauthn_challenge` a `token_mac` and `token_mac_key_version`. They are an HMAC under `token-mac` over the purpose `webauthn_challenge` with the challenge's own `purpose`, over the owner or explicitly none, and over `challenge_sha256`, checked at consumption like the other token rows. Without them a writer could insert a challenge row for a challenge they chose, or re-insert one already spent, and pass the replay check of S-REPLAY-5 with an assertion signed over it. Migration 4, unreleased, now locks `webauthn_challenge` between `one_time_token` and `session`, deletes its rows, adds the two columns with the constraints of the other tables, and indexes the version. The encoding gains a content variant, the ceremony as one text field. The challenge store takes `keys` and the optional refusal report, binds at issue, and checks the row its consuming `DELETE` returns. A failed check answers as no challenge and is reported with the occasion `factor_check`, with `userId: null` for a discoverable challenge (E-3262). The WebAuthn service takes `keys`, which the factor routes pass from the route services. The start probe reads the fourth table. `test/integ-token-binding.test.ts` refuses a consumed challenge inserted again, one moved to the other ceremony and one inserted for a challenge of the writer's choosing, each with one report. The three fail on a store that does not check, and the second on an encoding that leaves the ceremony out.
+**Rejected.** (a) Binding the ceremony into the purpose text, as `webauthn_challenge/register`, which section 3.18 lists as two things and which would make the purpose field carry a value the other tables do not. (b) Leaving the challenge out of the maintenance seam, which the section names.
+**Reason.** A challenge is a token row like the others: a hash anyone can compute, standing in for something the library issued.
+**Price.** Every challenge costs an HMAC at issue and at consumption. Every open ceremony ends at the upgrade. `WebAuthnServiceOptions` and the challenge store's options gain a required `keys`; neither is in the shipped declarations.
+
+<a id="e-3264"></a>
+
+### A mailed link binds the account's address, and its redemption compares it
+`E-3264` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** Section 3.18 point 3 now has every one-time token mailed to an address — reset, magic link, address verification and its resend — carry that address in `one_time_token.payload`, under its MAC. The confirmation of an address change carries the old and the new address. At redemption the bound address, for a change the old one, must equal the sealed `user.email`. A mismatch is answered like a missing token and raises the alarm with `seal_mismatch`. Without the binding a writer sets `user.email` to their own address only for the request, has the link mailed to themselves, restores the address and redeems the link against a valid seal. `mintArtefact` now requires the account's address and writes it to the payload as `accountEmail`, beside whatever else the payload holds. Every mint passes it: the reset and the magic link pass the found account's address, or for a cover the requested one; the verification and its resend pass the account's address; the change passes the account's old address. `refuseUnlessTheAddressIsStillTheAccounts`, called by `accountOrDisabledOfRedemption` for every redemption, compares the bound address with the `user.email` it read and, on a mismatch or a missing binding, reports `seal_mismatch` and throws as for an unknown token. The seal branch replaces the stored address with the sealed one, read with the seal. `test/integ-token-address-binding.test.ts` moves the address for the request only, restores it and presents the link, for the reset, the magic link, the resent verification and the change, and each answers `invalid_token`. A reset where nothing moved still redeems. All four fail with the comparison removed.
+**Rejected.** (a) Binding the address only in the mailed message, which a writer never sees through. (b) Comparing against the address the request was made with, which for a session-bound resend is the account's own and catches nothing.
+**Reason.** The link is proof of control of an address, and it proves the account only while the account still has that address.
+**Price.** Every one-time token's payload grows by one address, and its MAC with it. A legitimate change of address between request and redemption, by the user on another device, now refuses the older link too.
+
+<a id="e-3265"></a>
+
+### A consuming path consumes first and asks about the consumed row's owner before the account lock
+`E-3265` · security-state-tokens · S-INTEG-6, S-RACE-2, settled
+
+**Context.** For a path that learns its account by consuming a row, the specification asked the anchor about the owner before the consumption. That required reading the row first, which S-RACE-2 forbids and `test/token-static-scan.test.ts` refuses. This branch built that read-first step during its second review and held it back as a patch when the conflict showed. The merged specification drops the read. Such a path consumes the row first, as §7 orders. In the same transaction and before the account lock, it asks the anchor about the owner of the row it consumed, then takes the lock and reads the seal. The only lock held across the call into the application is the consumed row's own. The patch was discarded and nothing of it is on this branch. The anchor itself belongs to the seal and administration branches. This branch leaves the place it is called: an optional `beforeLockingTheOwnerOf(ownerId)` on the store `redeemOrRefuse` takes, called after a successful redemption, and on the options of `createSecondFactorCompletion`, called after the pending row is consumed and before the session is issued. Throwing refuses, and the transaction's rollback restores the row. `test/integ-token-binding.test.ts` shows each hook told the owner while another connection can still take the account lock, and a refusing hook leaving the row redeemable. The WebAuthn challenge gets no hook, because its consuming statement already names the owner the ceremony expects.
+**Rejected.** (a) The read-first step, which the merged specification drops for S-RACE-2. (b) Asking after the account lock, which keeps the account locked across a call into the application.
+**Reason.** Consuming first keeps the one atomic removal S-RACE-2 relies on, and asking before the lock keeps the call into the application from holding anything but the token it spent.
+**Price.** A refusal by the anchor costs a consumed and restored row. Until the integration passes a hook, nothing is asked.
+
+<a id="e-3266"></a>
+
+### The maintenance pass covers all four token tables, checks every row first, and counts what each version still holds
+`E-3266` · security-state-tokens · S-KEY-5, S-INTEG-9, settled
+
+**Context.** E-3149 removed `pending_authentication` from the rebinding seam of E-3148, reasoning that a row rebound by every booking needs no maintenance pass. That left an open sign-in under a version the operator then retired: a pending row never booked kept the old version and was refused, with an alarm, although nothing but the operator's own rotation had happened. Section 3.18 point 3 now has the maintenance rebind a pending row by a compare-and-set on its old `token_mac` and its `attempts`, with the new MAC over the checked count. Outside maintenance a pending row is still rebound only by its own booking. The same point adds `webauthn_challenge` to the rows the maintenance rebinds. The foundation's review asked the seam to check every row under its stored version before rebinding it, against everything the MAC binds. A row that fails is not rebound and not deleted, and is reported with the occasion `maintenance`. It also asked the seam to return counts per key version, so the operator removes a version only when a final run reports zero rows under it. `rebindTokenRowsUnderCurrentKey` now takes all four tables through one description per table. The description names the hash column, the content columns, how the binding is rebuilt, and whether the compare-and-set also holds the counter. It visits ownerless rows as well, which E-3148 skipped. It returns `rowsByKeyVersion` beside `rebound` and `refused`. With the pass rebinding pending rows, the booking's re-read case of an equal count under a newer version, which E-3149 called the legitimate rebinding, is now reached by something the library does. `test/integ-token-rebind.test.ts` shows a booking that meets a row the pass just rebound going on without an alarm. It shows the pass rebinding all four tables so every row works once the old version has left. It shows forged session and one-time rows under the old version surviving the pass unusable, with one report each and their version counted, and a pending rebinding left alone when a booking moved the counter first. All four failed on the old seam.
+**Rejected.** (a) Leaving pending rows to their bookings, which E-3149 chose for a reason that does not survive an operator retiring a version. (b) Deleting refused rows, which would make the maintenance pass a writer that removes evidence.
+**Reason.** A key version can only leave the ring once nothing under it is still in use, and only a count over every table says so.
+**Price.** A pass reads and checks every stale row of four tables, and ends with one grouped count per table. A pending row whose counter moves during the pass is left under the old version for the next run.
+
+<a id="e-3267"></a>
+
+### The repository reference of two other chapters is brought into step with the token MAC
+`E-3267` · security-state-tokens · documentation, settled
+
+**Context.** The reference chapters for one-time tokens and sessions still described the repositories as they were before this branch. `createSessionRepository` was shown taking only a driver and a schema, and `findSessionByTokenHash` returning a decoded session. The method table lacked `rebindSessionTokenMac`, `listSessionsOfUser`, `listEverySessionIdOwnedBy`, `boundTo`, `findOwnerOfSession`, `deleteSessionById` and `deleteEverySessionOwnedByReturningIds`. `SessionInsert` was shown without its binding function. The consume statement was quoted without its MAC columns. `StoredOneTimeToken` and `OneTimeTokenReplacement` were described in shapes the code no longer has. The census table of the owner rules named `findUserIdOfSession`, which E-3255 renamed. Each passage now states what the code does: the repository options, the conditional insert, the candidates checked before use, the revocations counting only rows that pass, and `OneTimeTokenCandidate` in place of `StoredOneTimeToken`. They link to this branch's chapter for the reasons. That chapter gains a table of the refusal types and a list of the internal ones, and the measured cost of a check moves from the end of "Upgrading", where it did not belong, to "When it is checked". These are edits in chapters this branch does not own, made because the code they describe changed here and a reference that contradicts its code is a defect of the change.
+**Rejected.** Reporting the stale passages for their owners to fix, which leaves the reference wrong in the release that changes the code.
+**Reason.** CLAUDE.md §5 counts the documentation of every changed function as part of being done.
+**Price.** Six passages outside the chapter this branch owns, which a reviewer of those chapters has to read again.
+
+<a id="e-3268"></a>
+
+### Five entries and eleven commit messages of this branch name a part played in the review, and that wording is withdrawn
+`E-3268` · security-state-tokens · documentation, settled
+
+**Context.** E-3137, E-3140, E-3142 and E-3149 attribute a decision or a report to a participant of this branch's review by the part they played in it. E-3141 cites a review finding by its identifier, which no document defines. E-3267's price speaks of a reader of the other chapters by the same kind of name. Fourteen commit messages from `9a3f1b8` onward open with "Review finding" and an identifier, and one with the same attribution as E-3149. *Note added before merge: the count was written as eleven and the commit as `9a3f1b8`, neither of them counted; listing the branch's own commit messages gives fourteen that name a part or cite an identifier, `145ed4b` through `032f7c5`, and no commit `9a3f1b8` exists.* Nothing in the repository may name such a part or such an identifier. The decisions those entries record are this branch's, taken while it was reviewed, and their reasons stand as written. Where E-3137 says the specification's constraints were reported by a participant, read that the specification was being amended to carry them. Where E-3140, E-3142 and E-3149 say a participant decided, read that the decision was taken during the review of this branch. Where E-3141 cites the finding, read E-3141 itself. Where E-3267 names a reader by role, read anyone who reads those chapters. The entries are not edited, because they existed before this correction (CLAUDE.md §6), and the commit messages stay, because history is not rewritten. From here on, no entry, comment or message of this branch names such a part or cites such an identifier; each names the decision and cites `E-`, `S-` and `T-` identifiers only.
+**Rejected.** Editing the five entries, which the rules forbid for entries that are standing, and which for E-3267 would rewrite text inside a standing sentence.
+**Reason.** A log is read by people who were not in the review, and a reference to a part in it or to one of its identifiers points at something they cannot see.
+**Price.** A reader of E-3137, E-3140, E-3141, E-3142, E-3149 or E-3267 has to come here to read them as intended, and `git log` still carries the identifiers.
+
+<a id="e-3269"></a>
+
+### The fixed sealing mode and the unwired refusal report block the integration
+`E-3269` · security-state-tokens · S-INTEG-4, S-INTEG-9, blocking, open until the seal branch merges
+
+**Context.** E-3132 records that the instance passes no `reportTokenBindingRefusal`, so a refusal on this branch is silent. E-3142 records that the instance passes the constant `SEALING_UNTIL_IT_IS_CONFIGURED`, set to `"migrating"`, until `securityState.sealing` exists. Both entries describe these as the state until the seal branch merges. Neither says that the integration cannot ship in that state. It cannot. With the constant, an operator who configures `"required"` gets `"migrating"`, which serves every account without a seal row and is a weakening the start does not report. Without the wiring, every `token_binding_mismatch` and `seal_mismatch` that section 3.18 raises as an alarm is reported to nobody. Since E-3256, E-3262 and E-3264 the same report also carries the session insert that wrote nothing, the forged ownerless row and the moved address. The integration of the seal branch with this one must replace the constant with the configured mode in all three places of `src/core/auth/instance.ts` and pass the alarm's report to the session service, the session repository, the second-factor completion, the pending service, the one-time tokens, the WebAuthn challenge store and the maintenance pass. The read-first step of section 3.18 has no hook in the instance either, and is a third item for the same integration.
+**Rejected.** Wiring a provisional log line here, which would be a second alarm path beside the seal branch's.
+**Reason.** A guarantee that depends on a later branch is a dependency, and a dependency nobody writes down as blocking ships without it.
+**Price.** Until the integration lands, a release cut from this branch alone would carry both gaps; this entry is the record that it must not be cut.
+
+<a id="e-3270"></a>
+
+### This branch's tests raise an epoch to a fresh random value and compare epochs for equality only
+`E-3270` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** The merged specification has every mass revocation, and every reseal, draw a new `session_epoch` from a CSPRNG over 1 … 2^53 − 1, different from the current one, and compares epochs for equality only. It had been an increment of one and, after a reseal, the new version. This branch's code never raised an epoch and checked only that a stored epoch is an exact integer of at least 1, so it needed no change. Its tests standing in for a mass revocation did assume the old rule. They set `session_epoch = session_epoch + 1`, or fixed epochs at 2 and 3 beside a version of the same number. They now draw the new epoch through `aFreshEpochOtherThan` and `raiseEpochOf` in `test/session-fixtures.ts`, uniformly from the same range and different from the current one. The chapter now says equality is the only comparison and that a rebinding keeps a session's epoch rather than moving it.
+**Rejected.** Leaving the increments in the tests, which would let a check that orders epochs pass by accident.
+**Reason.** A test that stands in for the seal branch's raise has to raise the way that branch will.
+**Price.** The epochs in these tests differ on every run.
+
+<a id="e-3271"></a>
+
+### Every transaction this branch opens is the instance's, and its trace shows READ COMMITTED first
+`E-3271` · security-state-tokens · S-INTEG-3, settled
+
+**Context.** The merged foundation wraps the instance's driver in `withReadCommittedTransactions` (E-3310). Every transaction it opens therefore begins with `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`, whatever `default_transaction_isolation` says. This branch opens transactions in four places: the session repository's issue under the account lock, its revocation of every other session, the second-factor completion and the one-time token's replacement. All four run on the driver the instance hands to its services. None of the factories is exported from a package entry point, so no caller can hand them an unwrapped driver from outside the library. A factory that wrapped its own driver would break the flows that pass an open transaction in. A nested `transaction` there is a savepoint, and `SET TRANSACTION` after the outer transaction's first statement is refused, so the factories do not wrap. `test/integ-token-order-trace.test.ts` now also requires the first statement of every transaction that sign-up and the email flows open to be the isolation statement. All five cases fail when the instance passes its driver unwrapped.
+**Rejected.** Wrapping inside each factory, for the reason above.
+**Reason.** One wrapper at the one place the configured driver enters keeps the isolation statement first, and a nested call inside it stays a savepoint.
+**Price.** A test or a future caller that builds these factories over a raw driver gets the database's default isolation, as the tests here do on purpose.
+
+<a id="e-3272"></a>
+
+### The maintenance compare-and-set also holds the key version it read
+`E-3272` · security-state-tokens · S-KEY-5, settled
+
+**Context.** Checking the branch against the merged section 3.18 point 5 found one difference. The point has the maintenance rebind each session and one-time token by a compare-and-set on its old MAC and that MAC's key version. The seam's statement held the MAC, the owner and, for a pending row, the counter, but not the version. A writer who changed only `token_mac_key_version` between the pass's read and its update therefore had the row rebound over a version the pass never checked. The seam's update now also requires `token_mac_key_version` to be the one it read. `test/integ-token-rebind.test.ts` moves the version during a pass and finds the row left under the writer's version. The same check found the rest of points 3 and 5 as built: the four version indexes, `created_at` in whole microseconds, the ceremony as a text field, `accountEmail`, the occasions `sign_in`, `change` and `maintenance`, and counts per key version. The migration SQL that point 4 prints has no `LOCK TABLE` statements, while migration 4 here begins with three and a fourth for the challenges (E-3250). That difference is the specification's to resolve, and it is reported rather than changed here.
+**Rejected.** Leaving the version out because the MAC already differs under another key, which is not true for a writer who changes the version alone.
+**Reason.** A compare-and-set has to hold everything the check that preceded it relied on.
+**Price.** None beyond one more predicate.
+
+<a id="e-3273"></a>
+
+### A token row whose unbound columns hold a value the library never writes is refused, not thrown on
+`E-3273` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** A writer who moved a session's `created_at` past what an exact count of microseconds holds, to 9999-12-31 or to `infinity`, made resolve, the owner's list, a mass revocation and a password change throw, and the maintenance pass stopped at the row. The SQL cast `(extract(epoch FROM created_at) * 1000000)::bigint` failed on infinity, and the decoder threw on a count past `Number.MAX_SAFE_INTEGER`. A deadline or `last_used_at` moved to `infinity` on a row whose MAC still held made the decode throw the same way, for a session and for a pending authentication. So one written row could block the owner's own remediation, a password change answering 500, and stop the pass that every old key version waits for. The creation time is now read as `trunc(extract(epoch FROM created_at) * 1000000)::text` only where `isfinite(created_at)`. A value no exact integer holds reads as none, and the row has no binding. A row whose MAC holds but whose unbound columns no date of the runtime can carry is refused as well. Both are reported like a row whose MAC does not match, never thrown on. Listing, revoking, a password change and the maintenance pass go on over the genuine rows. `test/integ-token-tampered-columns.test.ts` covers seven moved columns across resolve, list and revocation, a pending row and the password change. `test/integ-token-rebind-tampered-row.test.ts` covers the pass. 25 of their 29 cases failed on the code before.
+**Rejected.** Encoding the creation time as an arbitrary-precision integer so that 9999 still binds, which leaves `infinity` and the deadlines throwing and gains nothing, since the library never writes such a time.
+**Reason.** A reader of rows a writer can reach must not have an answer other than refusing the row.
+**Price.** The resolution statement departs from the byte-for-byte fixture of T-CACHE-2 by the new expression, and the fixture in `test/session-review-resolution.test.ts` was changed with it.
+
+<a id="e-3274"></a>
+
+### A one-time token's payload is read as its jsonb text and parsed once
+`E-3274` · security-state-tokens · S-INTEG-9, S-REPLAY-2, settled, specification to follow
+
+**Context.** E-3252 refuses a stored payload no issue writes. A writer who replaced an object payload by a `jsonb` string holding the same JSON text got two verdicts for one row. A driver that hands `jsonb` back as text, like the test connection, parsed it once to a string and the row was refused. A driver that decodes `jsonb`, like node-postgres, decoded it to the string, and `storedPayloadOf` parsed that string a second time and accepted it. The consuming statement and the maintenance pass now return `payload::text AS payload_text`, which every driver hands back as text, and the library parses it exactly once. The alias keeps the column name apart from `payload`, which a decoding driver would otherwise treat by name in the test wrapper. `test/integ-token-payload-text.test.ts` runs the row through both drivers and expects a refusal from each.
+**Rejected.** Deciding by the JavaScript type the driver handed back, which is the rule that gave two verdicts.
+**Reason.** One stored row has to get one verdict, and the only form every driver hands back alike is text.
+**Price.** The consuming statement is no longer the one 3.7 and S-REPLAY-2 print verbatim. `test/token-static-scan.test.ts` pins the new text, and the specification's statement has to follow.
+
+<a id="e-3275"></a>
+
+### A missed session issue answers as the path it completes, and every session check names its own occasion
+`E-3275` · security-state-tokens · S-INTEG-5, S-INTEG-9, settled, specification to follow
+
+**Context.** E-3256 answered a session issue whose conditional insert wrote nothing as no session, `session_required`, with the occasion `sign_in`. An issue for an account without an epoch in `"required"` answered the same. On the password sign-in and every other sign-in or completion route that is a code the route's ordinary failure never gives. The outside could tell the broken state apart, which S-INTEG-5 forbids. A reissue after a credential change reported `sign_in` although it completes a change. The caller now names what the issue completes. `issueReplacingPresented` and `reissueSessionOfUser` take `completes`: `password_sign_in`, `passkey_sign_in`, `second_factor`, `magic_link`, `oauth_sign_in`, `password_reset` or `oauth_link`. Each maps to a concealed reason that `src/core/http/error-map.ts` turns into `invalid_credentials`, `webauthn_credential_rejected`, `invalid_pending_authentication`, `invalid_token` or `oauth_flow_invalid`, with the occasion `sign_in` for a sign-in and `change` for a reset or a link. `issue`, `reissue` and `reissueAfterCredentialChange` complete a sign-up or a change behind a resolved session and keep `session_required` with `change`. Separately, every failed check of a session row reported `session_resolve`, from a list, the kept row and a mass revocation too. The alarm deduplicates by account, occasion and reason, so a forged row met in a list held back a resolution's alarm for its window. A resolution now reports `session_resolve`, every check made for a revocation `change`, and the owner's list and a plugin's `listSessionsOfUser` report `session_list`. Section 3.18 names no listing occasion, so `session_list` is new to the refusal report's occasions, and the alarm's enumeration has to gain it. `test/integ-session-issue-miss-answer.test.ts` holds the password route against a wrong password and every path's answer and occasion, and `test/integ-session-issue-occasion.test.ts` the reissue's occasion. All 16 of their cases failed on the code before.
+**Rejected.** (a) Answering every missed issue as `session_required` and accepting the difference on sign-in routes, which S-INTEG-5 does not allow. (b) Reporting a list under `session_resolve` and leaving the deduplication to hide one behind the other.
+**Reason.** What a route answers is decided per path in the one file that decides it, and an alarm's occasion is where the row was met.
+**Price.** `completes` is a new required parameter of two methods of the shipped `SessionService`, and `SessionIssuePath` a new type in the declarations. Five concealed reasons are new.
+
+<a id="e-3276"></a>
+
+### A retry follows only a row that advanced, at the booking and at the kept session
+`E-3276` · security-state-tokens · S-INTEG-9, S-KEY-5, settled
+
+**Context.** The booking of E-3140 retried at most six times, one more than the budget, and E-3257 raised `token_binding_mismatch` when the row kept moving past every retry. Five concurrent bookings and one maintenance rebinding at the same count are six legitimate advances. A booking that lost to all of them answered missing with an alarm, where the row stood at the budget and the answer is `too_many_factor_attempts` without one. The loop now keeps no count. It retries only over a row that verifies and advanced, in attempts or at the same count under a newer key version, and checks the budget on every row it reads, the last one included. Attempts cannot pass the budget and a version cannot pass the newest in the ring, so it ends, and E-3257's bound is gone with its alarm. The case that pinned the bound now pins that a row rebound under each of seven newer versions is followed without an alarm. Separately, the kept session of `revokeEveryOther` (E-3260) is rebound by a compare-and-set on the MAC read under the account lock. A resolution rebinds under a newer version without taking that lock, so during a rotation it could land between the read and the swap. The swap missed, the caller was signed out and the alarm was raised for nobody's write. A swap that misses now reads the row again. The same session over the same token hash under a newer key version, with a verifying MAC, is swapped again without an alarm. A row that is gone keeps no session, also without an alarm, as for the booking. Any other row counts as a MAC that does not match. The foundation's newest text asks for the alarm on any other answer, which taken literally includes the vanished row, and this follows the booking there instead. `test/session-kept-rebind-race.test.ts` and `test/security-state-booking-advances.test.ts` failed on the code before.
+**Rejected.** Raising the booking's bound, which only moves the number of legitimate advances that trips it.
+**Reason.** A bound is only needed where nothing else ends the loop, and here the budget and the ring do.
+**Price.** A booking that loses to many rebindings reads the row once per rebinding. The vanished kept row raises no alarm, which the specification has to say if it is to stay.
+
+<a id="e-3277"></a>
+
+### The session MAC binds the session's id, and a pass reports its traces apart
+`E-3277` · security-state-tokens · S-INTEG-9, S-LINK-4, S-KEY-5, settled
+
+**Context.** Section 3.18 point 3 of the foundation's newer text binds `session.id` into the session MAC, because L-12 compares `set_by_session_id` with the confirming session's id and a writer could rename a row to that id. The id is now drawn before the insert from `src/core/token/random.ts`, inserted explicitly and bound as the first content field, ahead of the factors, the epoch and the creation time. Every reader checks it over the stored id. The confirmation flow also compares the confirming session's account with the confirmed one, and a session of another account counts as one the password was not set in, which S-LINK-4 now asks. Point 5 has the maintenance read a session and the account's epoch in one statement. The pass already did so by a subselect, and a case now holds it there against a revocation run right after the read. Point 5 also counts traces apart in `rowsByKeyVersion`. The pass now gives `{ tokens, traces }` per version: traces are the rows this pass refused, matched by token hash and the refused MAC, and a row a writer rewrote since counts as a token again. The seal rows beside them are the administration branch's to report. A trace under a version that has left the ring is refused as `key_version_unknown`. Tests on hand-written session rows now pass the id as a fourth parameter of `sessionMacParameters`.
+**Rejected.** Binding the id into the seal only, which leaves the session side of the comparison renameable.
+**Reason.** A comparison of two ids proves nothing while one side can be rewritten, and a rule that keeps evidence and a rule that needs zero rows have to count different rows.
+**Price.** One more field in the session MAC, one more parameter on the insert, and a second statement at the end of each pass that matches the traces by a JSON list of hex pairs.
+
+<a id="e-3278"></a>
+
+### A confirmed address change withdraws the account's other mailed links before the account lock
+`E-3278` · security-state-tokens · S-INTEG-9, settled, specification to follow
+
+**Context.** E-3264 binds every mailed link to the address it went to and raises `seal_mismatch` when the account's address is another at redemption. A legitimate change of address left the older links standing. A user who requested a reset, changed the address and then clicked the reset link raised the tamper alarm although nobody had written the database. The foundation names that alarm a possible false one among its limits. It is now removed instead. The confirmation of an address change consumes its `email_change` token first, as §7 orders. In the same transaction and still before the account lock it deletes every other one-time token of the account, one statement per purpose so that each names its purpose (S-TOKEN-1). Only then does it lock the account and move the address. `velve.one_time_token` therefore still comes before `velve.user`, and `pnpm check:token-after-lock` and the order trace stay green. A confirmation that rolls back, for a taken address, restores the links. Verification and its resend change no address and withdraw nothing.
+**Rejected.** Keeping the false alarm as a named limit, which makes every such alarm one an administrator has to dismiss by hand.
+**Reason.** After the withdrawal the only way for a link's bound address to differ from the account's is a write outside the library, and that is what the alarm is for.
+**Price.** A user who changed their address loses an outstanding reset or magic link and requests a new one. One statement per purpose, four, runs in every confirmed change.
+
+<a id="e-3279"></a>
+
+### Migration 4 can deadlock with a 1.x sign-up, the factor order is the stored one, and five plant killers stay
+`E-3279` · security-state-tokens · S-INTEG-9, settled, specification to follow
+
+**Context.** Migration 4's comment said its table locks, taken in the order a sign-in reaches the tables, meant a completion in flight was waited for and never deadlocked. A 1.x sign-up issues its session and then mints its verification token, the other way round. One still in flight deadlocks with the migration, and PostgreSQL aborts one of the two. The order stays, since it does protect a second-factor completion and a reset. The comment, the migration row and the upgrade text now say to stop every 1.x instance first and to run the migration again if it was aborted, as one transaction leaves nothing behind. `test/migration-token-mac-signup.test.ts` expects one side aborted with 40P01 and a rerun to apply version 4 on all four tables. Separately, the token MAC binds a session's and a pending row's factors in the order the row stores them, as E-3131 (a) froze. Point 4 sorts the seal's lists, and its rule reads as if it governed every encoding of the section, so the specification has to state the token MAC's exception. Five green cases written against this branch were kept because no committed case pinned their guard. A sixth was dropped as covered by E-3273's cases. One plant was run here: a resolve-time compare-and-set without its version and owner predicates fails two kept cases. The other cases' plants were not recorded, and they were kept on reading alone.
+**Rejected.** Reordering the locks around a sign-up, which would deadlock with the completion and the reset instead.
+**Reason.** No order of four locks fits two 1.x paths that take two of them in opposite orders, so the upgrade has to say what happens and what to do.
+**Price.** An operator who does not stop 1.x first may have to run the migration twice.
 
 <a id="e-3280"></a>
 
@@ -17058,3 +17558,93 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Amending the commits, which CLAUDE.md §4 forbids.
 **Reason.** A bisect that lands on these commits should find the reason here.
 **Price.** The commits from `a7a78de` to the fix fail `pnpm test` at the owner census, and those from `ff08a71` at the literal walker as well.
+
+<a id="e-3480"></a>
+
+### The start probe reads token-mac versions only from the token tables migration 4 has reached
+`E-3480` · security-state-tokens · keys, start, settled
+
+**Context.** E-3374 runs the stored-version probe before `migrate()` applies a migration, wherever `schemaHoldsTheSealTable` finds `velve.security_state`. This branch's probe also reads every stored `token_mac_key_version` of the four token tables. A schema at migration 3 that already holds a seal has the seal table but not those columns, so the probe failed with `column "token_mac_key_version" does not exist`, and the upgrade from such a schema could not start. E-3374 named the guard as the token branch's to add. The probe now asks `pg_attribute` which of the four tables have the column and reads only those. After migration 4 the tables are empty, as it deletes every row, so nothing a later start would see is skipped. `test/keys-integrity-start-token-columns.test.ts` takes a schema at migration 3 with a seal row through `migrate()` and expects migration 4 applied; it fails without the guard.
+**Rejected.** Running the token part after the migrations, which brings back the refusal after a write that E-3374 removed.
+**Reason.** A probe has to read only what the schema it finds can hold.
+**Price.** One catalogue statement per start.
+
+<a id="e-3481"></a>
+
+### The booking, its re-read and every rebinding compare-and-set run in a library transaction
+`E-3481` · security-state-tokens · S-INTEG-3, S-INTEG-9, settled
+
+**Context.** E-3379 requires every statement whose miss the library interprets to run in a library transaction, even as its only statement, because a statement run through `query` outside one runs at the database's default isolation. This branch ran the booking of an attempt, its re-read, the rebinding of a session at resolution and the maintenance pass's compare-and-sets as standalone statements. On a connection whose default is `repeatable read`, a booking that lost to a concurrent write failed with `40001` and never reached the re-read. Each of those statements now runs in `driver.transaction`, which the instance's driver opens with the isolation statement first. `test/security-state-booking-repeatable-read.test.ts` holds a pending row's lock on one connection and books on a second whose default is `repeatable read`: the booking books once the lock is released, and fails with `40001` when the booking is a standalone statement. Seven test drivers that interposed on `query` alone, and so no longer saw the statements now inside a transaction, hand their own interposition to `transaction` as well.
+**Rejected.** Opening one transaction around the whole retry loop of the booking, which would hold the read snapshot across retries only at `repeatable read` and gains nothing at `READ COMMITTED`.
+**Reason.** The case table of a miss is only reached if the statement can miss, as E-3379 said.
+**Price.** Each such statement costs a `BEGIN`, the isolation statement and a `COMMIT`.
+
+<a id="e-3482"></a>
+
+### A refused WebAuthn challenge is reported under its ceremony, and listing keeps session_list
+`E-3482` · security-state-tokens · S-INTEG-5, S-INTEG-9, settled, specification to follow
+
+**Context.** E-3381 names the path behind every alarm occasion and has a WebAuthn challenge carry the occasion of its ceremony. This branch reported every refused challenge as `factor_check`. A refused challenge is now reported as `change` for a registration, `sign_in` for the challenge of a discoverable sign-in, which names no account, and `factor_check` for a passkey as the second factor. Two cases of `test/integ-token-binding.test.ts` expect those occasions. E-3381 also files the listing of an account's sessions and the counting of the rows a revocation removes under `session_resolve`, and adds no occasion for them. E-3275 had already given the listing `session_list` and every check made for a revocation `change`, and that stays as decided for this branch. The specification's occasion list and the sentence of *The alarm* that files listing and counting under `session_resolve` have to follow it.
+**Rejected.** Folding the listing back into `session_resolve`, which lets a forged row met in a list hold back a resolution's alarm for its window of deduplication.
+**Reason.** An occasion says where a row was met, and a list is not a resolution.
+**Price.** One occasion more than *The alarm* lists, until the specification says it.
+
+<a id="e-3483"></a>
+
+### No missed session issue answers session_required, and a second factor answers with its own code
+`E-3483` · security-state-tokens · S-INTEG-5, settled, specification to follow
+
+**Context.** E-3275 mapped a missed issue per sign-in path but kept `session_required` for the issues a change makes: sign-up, `password.set` and `password.change`, and the two reissues no route calls. It also answered every second-factor completion with `invalid_pending_authentication`. E-3384 says a missed issue never answers `session_required`, which belongs to session resolution alone, and that the completion of a pending authentication answers with the factor path's code. Every issuing method now names what it completes. `issue` takes an optional `completes` that defaults to a sign-up, and `reissue` and `reissueAfterCredentialChange` take it as a required parameter. The completion of a second factor names `totp_second_factor`, `passkey_second_factor` or `recovery_second_factor` by the factor it completed, answered as `invalid_factor_code`, `webauthn_credential_rejected` and `invalid_recovery_code`. A sign-up answers `invalid_input` and `password.change` answers `invalid_credentials`, each a code its route declares and gives for its ordinary failure. `password.set` answers `factor_already_enrolled`, the code it gives when the account already has a password, which is what a concurrent change that wins the race leaves. The specification names no code for these three changes. E-3384 says only that such a change is refused like any other broken state, so the three choices are this branch's and are for the specification to state or replace. `test/integ-session-issue-miss-answer.test.ts` holds all twelve paths.
+**Rejected.** `session_required` for a change behind a resolved session, which its route also gives when a concurrent change revoked the caller and would be the most natural code, but which E-3384 forbids.
+**Reason.** S-INTEG-5 asks for the ordinary failure of the same path, and the specification reserves `session_required` for resolution.
+**Price.** `completes` is required on two more methods of the shipped `SessionService`, optional on a third, and six concealed reasons are new.
+
+<a id="e-3484"></a>
+
+### A pending authentication stores and binds the epoch it was created under
+`E-3484` · security-state-tokens · S-INTEG-9, S-FIX-6, storage format, settled
+
+**Context.** E-3377 adds `pending_authentication.session_epoch` to migration 4 and the pending MAC. A pending row created before a mass revocation would otherwise complete afterwards into a session, because a revocation cannot delete it: §7 orders `pending_authentication` before `velve.user`. The column is now in migration 4 with the bounds the specification prints, and the pending MAC binds it as a third content field after the factors and the attempt count. The session MAC's content is now told apart from the pending one by its `sessionId`, since both carry an epoch. `begin` binds the epoch the first factor's check read when the caller names it, and the account's current one otherwise, read by `sessionEpochOf` just before the insert. That reader is listed in the owner census as a row that carries its proof, since the insert it serves writes the row whose token later proves the owner. An account without a seal row is at epoch 1 in either mode, because the pending service has no sealing mode and the seal check refuses such an account in `"required"` anyway. Resolution, the booking's re-read and consumption read the current epoch in the statement that reads the row. A row whose MAC holds and whose stored epoch is not the current one is answered as missing, without an alarm, before the booking, and `consume` hands the stored epoch on for the issue. `test/integ-pending-epoch.test.ts` holds the stored epoch, the overtaken row on all three paths with no report, a row whose stored epoch a writer moved, refused with one report, and an epoch the caller names. The two placeholder cases of `test/security-state-issue-after-revocation.test.ts` still fail as expected. The token side is done, but this branch's password change and `session.revokeAll` draw no new epoch yet, which is the seal branch's work.
+**Rejected.** Binding the epoch into the MAC without storing it, which E-3377 rejected because a stale row would then be indistinguishable from a forged one.
+**Reason.** A mass revocation ends what the state it replaced authorised, and a pending row was authorised by that state.
+**Price.** One more column, one more read at `begin` where the caller names no epoch, and a pending row created just before a revocation has to be begun again.
+
+<a id="e-3485"></a>
+
+### A session issue is bound to the version and epoch its authorising check read, with a seam for the seal's verdict on a miss
+`E-3485` · security-state-tokens · S-INTEG-9, S-FIX-6, settled
+
+**Context.** E-3377 has every session issue insert only while the seal row's `version` and `session_epoch` are those the authorising check read. This branch's issue read the epoch under the lock and conditioned on it alone, so a sign-in checked before a password change inserted under the new epoch. Every issuing method now takes an optional `authorisedBy`. It holds the version and epoch the check read, or `"unsealed"` where the check read no seal row. A member left out is read under the account lock, and the insert's condition is `… AND session_epoch = $11 AND version = $12`. For an unsealed account it inserts only in `"migrating"`, only at epoch 1 and only where the check also read none. The second-factor completion passes the epoch the consumed pending row stores (E-3484). The checks that read the seal and its version are the seal branch's, so until it passes `authorisedBy` the version and epoch read under the lock stand in, which is the old behaviour with the version added. The verdict on a miss is the seal branch's too. The session service and the completion take an optional `sealVerifiesAfterMissedIssue(tx, userId)`: true answers the path's ordinary failure without an alarm, as a legitimate change that won the race, and without it every miss raises `seal_mismatch`, as before. `test/integ-session-issue-authorisation.test.ts` holds six cases, and dropping the version predicate fails two of them. A key-ring test that wrote a pending row by hand was given the new column here. The pending-epoch commit should have done that and broke it.
+**Rejected.** Reading the seal and verifying it on a miss in this branch, which would duplicate the seal branch's canonical read without its components.
+**Reason.** The token branch owns the conditional insert, and the seal branch owns what a seal verifies to.
+**Price.** `authorisedBy` on five shipped methods and a new option on two factories. Until the seal branch wires both, a sign-in that loses to a legitimate reseal raises a false `seal_mismatch`.
+
+<a id="e-3486"></a>
+
+### A WebAuthn challenge is consumed in a library transaction
+`E-3486` · security-state-tokens · S-INTEG-3, S-INTEG-9, settled
+
+**Context.** E-3481 moved the statements whose miss the library interprets into a library transaction, and missed the consumption of a WebAuthn challenge, whose miss is answered as `challenge_not_found`. On a connection whose default is `repeatable read`, a consumption that waited on a row a concurrent transaction had written failed with `40001` instead of consuming. The consuming `DELETE` now runs in `driver.transaction`, which the instance's driver opens with the isolation statement first. No finish path of this branch opens a registering or issuing transaction around the consumption: the registration's insert and the assertion's verification run as statements of their own. When the seal branch opens one, it builds the challenge store over that transaction and consumes first and locks afterwards, as §7 orders, and the nested call is then a savepoint of it. `test/webauthn-challenge-repeatable-read.test.ts` consumes a registration challenge on a second connection whose default is `repeatable read` while the first holds the row. It consumes once the lock is released, and fails with `40001` when the consumption is a standalone statement. While merging the bound envelopes, commit a686f06 gave the account-lock count of `test/lock-order-declaration.test.ts` as this branch's one new lock and the envelope branch's two over a base of nine. The counts at that merge were eight at the base, one new here and three new there, which make the twelve the test holds.
+**Rejected.** Opening the registering transaction here to consume inside it, which would move the seal branch's transaction into this branch.
+**Reason.** The case table of a miss is only reached if the statement can miss, as E-3379 said.
+**Price.** A `BEGIN`, the isolation statement and a `COMMIT` per consumption.
+
+<a id="e-3487"></a>
+
+### A session issue names its authorisation, and reading the seal row under the lock is a named interim
+`E-3487` · security-state-tokens · S-INTEG-9, settled
+
+**Context.** E-3485 made `authorisedBy` optional, with both of its members optional, and filled what the caller left out from the seal row read under the account lock. A caller that forgot it therefore got the read under the lock silently, which is the behaviour E-3377 means to end. `IssueAuthorisation` is now `{ version, sessionEpoch }` with both members required, `"unsealed"`, or `"read_under_lock"`, and `authorisedBy` is required on every issuing method. `"read_under_lock"` is the interim for callers whose check of the seal the seal branch has not yet wired: every route, flow and the second-factor completion pass it by name, so `grep read_under_lock` lists what remains. The second-factor completion passes it too. E-3485 had it pass the epoch alone, and the pending row stores an epoch but no version, so it cannot carry both. Consumption already answers a pending row under another epoch as missing in the statement that consumes it (E-3484). The window left is between that statement and the account lock, until the factor check passes the version and epoch it verified. The tests pass `"read_under_lock"` to every session they issue as a fixture.
+**Rejected.** Keeping an epoch-only variant for the completion, which brings back an authorisation with a member missing.
+**Reason.** An authorisation a caller can leave out is one the next caller will.
+**Price.** One more argument at every issue. The window between a pending row's consumption and the account lock stays open until the seal branch passes the checked version.
+
+<a id="e-3488"></a>
+
+### The client's route table is written out, so the issuing plumbing stays off the declarations
+`E-3488` · security-state-tokens · public interface, settled
+
+**Context.** `VelveRouteTable` was `ReturnType<typeof sessionRoutes>` and its siblings, and `OAuthSurface` read `ReturnType<typeof oauthRoutes>`. A declaration of `typeof` a factory carries the factory's parameter, `RouteServices`, and with it the session and pending services in full. So `IssueAuthorisation`, `SessionIssuePath`, `completes`, `authorisedBy` and the pending row's `sessionEpoch` shipped in `dist/`, where no user calls them. Stripping them with `stripInternal` would hide them by annotation and is not needed. `VelveRouteTable` is now written out route for route, from the expanded tuples the build had already printed for those factories. The provider routes are `OAuthRouteTable` in `src/core/oauth/routes.ts`, which `OAuthSurface` reads as well. `test/client-route-table.test.ts` holds the written table against the factories' types, each assignable to the other. Note added in the commit after the one that wrote this entry: that commit wrote the type test over the existing `test/client-route-table.test.ts`, whose run-time cases it dropped; the run-time file is restored and the type test is `test/client-route-table-type.test.ts`. A route output changed in the written table fails the type check there. After the build, `RouteServices`, the two session types and the three members no longer appear in any `.d.mts`, and `test/api-internal-issue-parameters.test.ts` reads the declarations for them. Its review form failed on the build before this change.
+**Rejected.** (a) `stripInternal` with `@internal` on each member. (b) Moving the issuing methods off `SessionService` behind lent functions, which changes every caller for a declaration concern.
+**Reason.** A public type should name what a user reads, and the client reads routes, not the services behind them.
+**Price.** The table is a second spelling of the routes, roughly 600 lines, and a route change means editing it beside the factory, which the type test enforces. Mutual assignability is weaker than identity: two spellings that accept the same values pass.

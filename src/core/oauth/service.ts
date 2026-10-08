@@ -9,10 +9,7 @@ import { createUserRepository, type User, type UserRepository } from "../auth/us
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import {
-	createSessionRepository,
-	PreviousSessionMissingError,
-} from "../db/repositories/session.js";
+import { PreviousSessionMissingError } from "../db/repositories/session.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
@@ -28,6 +25,7 @@ import { KeyError } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
+import { sessionRowsOn } from "../session/rows.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
 import { type ProviderAccount, providerAccountOf } from "./claims.js";
@@ -442,6 +440,8 @@ export function createOAuthService(input: {
 
 		const { issued, user } = await issueSessionAround(userId, () =>
 			services.sessions.issueReplacingPresented({
+				completes: "oauth_sign_in",
+				authorisedBy: "read_under_lock",
 				presentedToken: arrival.presentedSessionToken,
 				userId,
 				factors: OAUTH_FACTORS,
@@ -456,7 +456,7 @@ export function createOAuthService(input: {
 		if (!services.pluginRuntime.listensTo("beforeSessionRevoke")) {
 			return;
 		}
-		const owned = await createSessionRepository({ driver, schema }).listEverySessionIdOwnedBy({
+		const owned = await sessionRowsOn(services.sessions, driver).listEverySessionIdOwnedBy({
 			actor: actorOfConsumedOAuthFlow(linked.account),
 		});
 		await announceEachRevocation(services.pluginRuntime, {
@@ -503,6 +503,8 @@ export function createOAuthService(input: {
 			const issued = await services.sessions
 				.boundTo(transaction)
 				.reissueSessionOfUser({
+					completes: "oauth_link",
+					authorisedBy: "read_under_lock",
 					actor,
 					previousSessionId: input.linked.previousSessionId,
 					factors: OAUTH_FACTORS,

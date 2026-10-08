@@ -8,7 +8,7 @@ import type { RequestContext } from "../http/route.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
 import type { ObservedRequest } from "../session/service.js";
 import type { OneTimeTokenRedemption } from "../token/one-time-token.js";
-import type { ArtefactMailer } from "./artefact.js";
+import { type ArtefactMailer, refuseUnlessTheAddressIsStillTheAccounts } from "./artefact.js";
 
 export interface FlowEnvironment {
 	readonly services: RouteServices;
@@ -21,7 +21,8 @@ export function observedIn(context: RequestContext): ObservedRequest {
 }
 
 export function mailerOf(environment: FlowEnvironment, email: EmailConfig): ArtefactMailer {
-	return { driver: environment.services.driver, schema: environment.services.schema, email };
+	const { driver, schema, keys } = environment.services;
+	return { driver, schema, keys, email };
 }
 
 //an account that vanished after a redemption must answer as the token does
@@ -55,6 +56,7 @@ export async function accountOrDisabledOfRedemption(
 	redemption: OneTimeTokenRedemption,
 ): Promise<RedeemedAccount | typeof A_DISABLED_ACCOUNT> {
 	const user = await readUserOrRefuse(environment, driver, redemption.userId);
+	refuseUnlessTheAddressIsStillTheAccounts(environment.services, redemption, user.email);
 	if (user.disabledAt !== null) {
 		return A_DISABLED_ACCOUNT;
 	}
@@ -78,16 +80,22 @@ export async function readAccountOfSession(
 	return user;
 }
 
+/** the session a confirmation was presented with, which counts only for the account it belongs to */
+export interface ConfirmingSession {
+	readonly sessionId: string;
+	readonly userId: string;
+}
+
 //an unresolvable session must count as a different session and fail closed (S-LINK-4)
-export async function sessionIdOfCaller(
+export async function sessionOfCaller(
 	environment: FlowEnvironment,
 	context: RequestContext,
-): Promise<string | null> {
+): Promise<ConfirmingSession | null> {
 	if (context.sessionToken === null) {
 		return null;
 	}
 	const resolved = await environment.services.sessions
 		.resolve(context.sessionToken)
 		.catch(() => null);
-	return resolved === null ? null : resolved.session.id;
+	return resolved === null ? null : { sessionId: resolved.session.id, userId: resolved.userId };
 }

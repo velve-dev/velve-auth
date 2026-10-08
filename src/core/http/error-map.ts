@@ -234,7 +234,17 @@ export type ConcealedReason =
 	| "rp_id_mismatch"
 	| "origin_mismatch"
 	| "user_not_verified"
-	| "user_disabled_on_webauthn_assertion";
+	| "user_disabled_on_webauthn_assertion"
+	| "session_issue_missed_on_password_sign_in"
+	| "session_issue_missed_on_passkey_sign_in"
+	| "session_issue_missed_on_totp_second_factor"
+	| "session_issue_missed_on_passkey_second_factor"
+	| "session_issue_missed_on_recovery_second_factor"
+	| "session_issue_missed_on_sign_up"
+	| "session_issue_missed_on_password_set"
+	| "session_issue_missed_on_password_change"
+	| "session_issue_missed_on_token_redemption"
+	| "session_issue_missed_on_oauth_flow";
 
 const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveErrorCode>> = {
 	user_not_found: "invalid_credentials",
@@ -279,6 +289,17 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	origin_mismatch: "webauthn_credential_rejected",
 	user_not_verified: "webauthn_credential_rejected",
 	user_disabled_on_webauthn_assertion: "webauthn_credential_rejected",
+	//a session issue that wrote no row answers as the ordinary failure of the path it completes (S-INTEG-5)
+	session_issue_missed_on_password_sign_in: "invalid_credentials",
+	session_issue_missed_on_passkey_sign_in: "webauthn_credential_rejected",
+	session_issue_missed_on_totp_second_factor: "invalid_factor_code",
+	session_issue_missed_on_passkey_second_factor: "webauthn_credential_rejected",
+	session_issue_missed_on_recovery_second_factor: "invalid_recovery_code",
+	session_issue_missed_on_sign_up: "invalid_input",
+	session_issue_missed_on_password_set: "factor_already_enrolled",
+	session_issue_missed_on_password_change: "invalid_credentials",
+	session_issue_missed_on_token_redemption: "invalid_token",
+	session_issue_missed_on_oauth_flow: "oauth_flow_invalid",
 };
 
 export class ConcealedError extends Error {
