@@ -8830,7 +8830,63 @@ in [Security state: keyed token hashes](#security-state-keyed-token-hashes).
 
 ## Security state: the seal
 
-> Reserved for `security-state-seal`: the seal, its reseal on every change, its verification, the alarm and the anchor (S-INTEG-2 to S-INTEG-6). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Every account has one row in `velve.security_state`: a version, a session epoch
+and a digest, the HMAC-SHA256 under `state-mac` over a canonical encoding of
+every way into the account (architecture section 3.18, point 4). This chapter
+documents the modules in `src/core/security-state/` that compute, check and
+write that row, the alarm a broken state raises, and the anchor an application
+can contribute. All of them are internal; none is exported from the package.
+
+### The anchor port
+
+`src/core/security-state/anchor.ts`. The request path calls an anchor through
+`SecurityStateAnchorPort`, a plugin's `securityStateAnchor` member
+([Plugins](#plugins)) with its frozen context already bound. It takes one port
+per plugin that contributes an anchor.
+
+| Member | Type | Meaning |
+|---|---|---|
+| `minimumVersion({ userId })` | `Promise<SecurityStateFloor \| null>` | the highest version the anchor recorded for the account with that version's digest in base64url, or `null` for no floor |
+| `recordSeal(event)` | `Promise<void>` | learns `{ userId, version, digest }` after a new seal has been committed |
+
+#### `decodeAnchorFloor(answer)`
+
+Reads one answer of `minimumVersion`. Returns `null` for `null`, the floor with
+its digest decoded for an object whose `version` is a safe integer from 1 and
+whose `digest` is base64url of 32 bytes, and `"malformed"` for anything else —
+`undefined`, `NaN`, `1.5`, `0`, `-1`, `2 ** 53`, a digest of another length. A
+malformed answer is never read as no floor.
+
+#### `consultAnchors(anchors, userId)`
+
+Asks every port about one account and resolves `{ kind: "answered", floors }`,
+one floor or `null` per port, or `{ kind: "unavailable" }` as soon as one port
+throws, rejects or answers something `decodeAnchorFloor` calls malformed. It
+never rejects. The request path calls it before the account lock and outside
+any transaction, except on a path that learns its account by consuming a row,
+which calls it after the consumption and before the lock.
+
+#### `compareWithAnchors(stored, reading)`
+
+Holds the stored version and digest of a seal, or `null` for an account
+without a seal row, against a reading:
+
+| Verdict | When |
+|---|---|
+| `"anchor_unavailable"` | the reading is unavailable |
+| `"version_below_anchor"` | the stored version lies below a floor, or there is no seal row and a port has a floor |
+| `"anchor_mismatch"` | the stored version equals a floor and the digests differ, compared in constant time |
+| `"ahead_of_anchor"` | the stored version lies above a floor, or a port answered `null` for a sealed account |
+| `"within_floor"` | none of these, also when no anchor is configured |
+
+`"ahead_of_anchor"` is not a broken state: a check whose seal verified records
+it again with the anchors, off the response path.
+
+#### `recordSealWithAnchors(anchors, event, reportFailure)`
+
+Hands every port the event after commit. If any port throws or rejects it calls
+`reportFailure` once, which raises the alarm `anchor_unavailable`; it never
+rejects, and a failure never undoes the committed change.
 
 ## Security state: administration and migration
 
