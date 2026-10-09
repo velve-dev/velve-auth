@@ -45,3 +45,8 @@ export type ConsumedRecoveryCode = { readonly userId: UserId } & {
 export function actorOfConsumedRecoveryCode(consumed: ConsumedRecoveryCode): Actor {
 	return consumed.userId as string as Actor;
 }
+
+//a maintenance call has no route and runs on the application's own authorisation decision (E-3176)
+export function actorOfMaintenance(userId: string): Actor {
+	return userId as Actor;
+}

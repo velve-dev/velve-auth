@@ -25,7 +25,7 @@ const repositoryPath = `${coreDirectory}/db/repositories/token.ts`;
 /** Every scan in this file reads statements, markers and raised errors. A comment carries none of
  * those, and reading whole file text let one comment stand in for the consume statement and redden
  * three cases about S-REPLAY-2, S-TOKEN-4 and S-RACE-2 at once (E-1653). Markers survive: the
- * sixteen of them live inside statements, which this keeps verbatim. */
+ * eighteen of them live inside statements, which this keeps verbatim. */
 function sourceTextOf(path: string): string {
 	return withoutComments(readFileSync(path, "utf8"));
 }
@@ -109,6 +109,8 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 			//the start reads which token-mac versions the rows name and nothing else (E-3148)
 			`${coreDirectory}/auth/integrity-key-ring.ts`,
 			`${coreDirectory}/auth/maintenance.ts`,
+			//the maintenance step names the table only to hand it to the rebinding pass (E-3177)
+			`${coreDirectory}/auth/security-state-maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
 			`${coreDirectory}/db/migrations/token-mac.ts`,
 			repositoryPath,
@@ -181,7 +183,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of sixteen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of eighteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
@@ -202,11 +204,12 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 			.join("\n");
 		const declaring = statements.filter((statement) => /no owner predicate/.test(statement));
 
-		expect(markers, perFile).toHaveLength(16);
+		//the maintenance step lists every account and counts every seal row by key version (E-3177)
+		expect(markers, perFile).toHaveLength(18);
 		expect(
 			carrying.map((source) => source.path),
 			perFile,
-		).toHaveLength(9);
+		).toHaveLength(10);
 		expect(declaring, listing(declaring)).toHaveLength(1);
 	});
 });

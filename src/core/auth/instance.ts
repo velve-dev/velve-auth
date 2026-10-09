@@ -80,6 +80,10 @@ import {
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
 import { sealingOf } from "./security-state.js";
 import {
+	createSecurityStateMaintenance,
+	type SecurityStateMaintenance,
+} from "./security-state-maintenance.js";
+import {
 	assertConfigurationIsStartable,
 	assertKeysAnswerForEveryPurpose,
 	type RouteConflict,
@@ -151,7 +155,7 @@ export interface AuthInternals {
 	readonly routes: readonly AnyRoute[];
 	readonly identityMode: IdentityMode;
 	readonly errorCodes: readonly VelveErrorCode[];
-	readonly maintenance: { sweep(): Promise<SweepReport> };
+	readonly maintenance: { sweep(): Promise<SweepReport> } & SecurityStateMaintenance;
 	/** the one asynchronous start step, and where the key ring report runs */
 	migrate(): Promise<MigrationReport>;
 	close(): Promise<void>;
@@ -544,7 +548,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		http: environment,
 		weakenings,
 
-		maintenance: { sweep: () => sweepExpiredRows({ driver, schema }) },
+		maintenance: {
+			sweep: () => sweepExpiredRows({ driver, schema }),
+			//a reseal must reach the operator even without a configured sink (S-INTEG-7)
+			...createSecurityStateMaintenance({ runtime: securityState, log: operatorWarnings }),
+		},
 
 		async migrate(): Promise<MigrationReport> {
 			//a start the keys refuse must have written nothing to the schema (E-3374)
