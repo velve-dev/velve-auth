@@ -17908,3 +17908,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Answering with `second_factor_required` and the factors of the read, which would hand out a pending row naming a factor the account no longer has.
 **Reason.** A factor that disappears between two reads of one sign-in was removed past the seal.
 **Price.** A factor added in that window is not offered by that sign-in; the next one offers it.
+
+<a id="e-3407"></a>
+
+### A bound envelope that fails to open raises envelope_binding_mismatch with its path's occasion
+`E-3407` · security-state-seal · alarm, settled
+
+**Context.** S-INTEG-1 and T-INTEG-1 expect one alarm `envelope_binding_mismatch` for every copied ciphertext, and the alarm module named the reason, but no path raised it: the password check fell back to the dummy credential, the TOTP check answered a factor nobody holds, the callback answered an unknown state, and the rewrite of an unsealed account's envelopes failed with whatever the key module threw. `reportEnvelopeRefusal` in `src/core/security-state/runtime.ts` raises the alarm for a `KeyError` that says the envelope does not belong where it was found — `authentication_failed`, `envelope_unbound`, `envelope_malformed` or `ciphertext_malformed` — and not for a key version the ring lacks, which E-428 answers on its own. The password check calls it with `sign_in` or `change`, the TOTP check with `factor_check`, its enrolment and removal with `change`, the PKCE verifier with `sign_in` or, for a link, `change`, and `sealChange` for every rewrite it runs, where the identity tokens are opened. `test/security-state-envelope-alarm.test.ts` copies one account's TOTP ciphertext onto another without a seal row and holds the one alarm.
+**Rejected.** Raising it inside the key module, which knows neither the account nor the path.
+**Reason.** A refusal the operator never hears of protects the account and leaves the writer free to try again elsewhere.
+**Price.** The answer each path gives is unchanged; only the alarm is new.

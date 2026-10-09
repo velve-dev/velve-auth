@@ -73,6 +73,7 @@ export async function checkPassword(
 		readonly userId: string | null;
 		readonly plaintext: string;
 		readonly checked?: PasswordCredentialRow | null;
+		readonly onEnvelopeRefused?: (failure: unknown) => void;
 	},
 	environment: PasswordEnvironment,
 ): Promise<PasswordCheck> {
@@ -89,7 +90,11 @@ export async function checkPassword(
 	const usable = row !== null && isAcceptedScheme(row.scheme, environment.config) ? row : null;
 	const source = usable ?? environment.dummy;
 
-	const opened = await openCredential(environment, source);
+	const opened = await openCredential(
+		environment,
+		source,
+		usable === null ? undefined : input.onEnvelopeRefused,
+	);
 	//a hash written under an earlier higher configuration still verifies and is rehashed down (E-2621)
 	const memoryCeilingKiB = MAXIMUM_CONFIGURABLE_MEMORY_KIB;
 	//a credential refused before deriving is checked as the dummy so its refusal costs the same (S-TIM-2)
@@ -176,10 +181,14 @@ function openedDummy(environment: PasswordEnvironment): OpenedCredential {
 async function openCredential(
 	environment: PasswordEnvironment,
 	row: PasswordCredentialRow,
+	onRefused: ((failure: unknown) => void) | undefined,
 ): Promise<OpenedCredential> {
 	return openPhc(environment.keys, row).then(
 		(phc) => ({ phc, scheme: row.scheme }),
-		() => openedDummy(environment),
+		(failure: unknown) => {
+			onRefused?.(failure);
+			return openedDummy(environment);
+		},
 	);
 }
 

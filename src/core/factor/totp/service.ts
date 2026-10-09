@@ -10,6 +10,7 @@ import type { KeyProvider } from "../../keys/provider.js";
 import type { SecurityStateRead } from "../../security-state/read.js";
 import {
 	checkAccount,
+	reportEnvelopeRefusal,
 	type SecurityStateRuntime,
 	sealChange,
 } from "../../security-state/runtime.js";
@@ -96,6 +97,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 	async function decryptSecret(
 		owner: string,
 		credential: HeldSecret,
+		occasion: "factor_check" | "change",
 	): Promise<Uint8Array<ArrayBuffer>> {
 		try {
 			return await decryptBound(
@@ -105,6 +107,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 				unboundReadingOf(sealing, credential.sealRow),
 			);
 		} catch (failure) {
+			reportEnvelopeRefusal(securityState, owner, occasion, failure);
 			throw failure instanceof KeyError ? new ConcealedError("totp_not_confirmed") : failure;
 		}
 	}
@@ -114,12 +117,13 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 		readonly owner: string;
 		readonly credential: HeldSecret | null;
 		readonly code: string;
+		readonly occasion: "factor_check" | "change";
 	}): Promise<number> {
 		if (input.credential === null || !input.credential.confirmed) {
 			throw new ConcealedError("totp_not_confirmed");
 		}
 		const step = matchingTimeStep({
-			secretBytes: await decryptSecret(input.owner, input.credential),
+			secretBytes: await decryptSecret(input.owner, input.credential, input.occasion),
 			submittedCode: input.code,
 			at: options.clock.now(),
 			toleranceInSteps,
@@ -189,7 +193,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 							throw new VelveError("factor_already_enrolled");
 						}
 						const step = matchingTimeStep({
-							secretBytes: await decryptSecret(actor, credential),
+							secretBytes: await decryptSecret(actor, credential, "change"),
 							submittedCode: code,
 							at: options.clock.now(),
 							toleranceInSteps,
@@ -230,6 +234,7 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					owner: resolution.userId,
 					credential: heldSecretOf(check.read),
 					code,
+					occasion: "factor_check",
 				});
 				rejectAReplayedStep(
 					await credentials.claimTimeStepOfPending({
@@ -251,7 +256,12 @@ export function createTotpService(options: TotpServiceOptions): TotpService {
 					if (credential === null || !credential.confirmed) {
 						throw new VelveError("factor_not_enrolled");
 					}
-					const step = await matchConfirmedCode({ owner: actor, credential, code });
+					const step = await matchConfirmedCode({
+						owner: actor,
+						credential,
+						code,
+						occasion: "change",
+					});
 					const repository = createTotpRepository({
 						driver: tx,
 						schema: options.schema ?? "velve",

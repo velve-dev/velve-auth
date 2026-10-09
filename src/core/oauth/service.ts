@@ -33,6 +33,7 @@ import { type SecurityStateRead, sealedComponentsOf } from "../security-state/re
 import {
 	checkAccount,
 	issueAuthorisationOf,
+	reportEnvelopeRefusal,
 	sealChange,
 	secondFactorsOf,
 } from "../security-state/runtime.js";
@@ -658,6 +659,12 @@ export function createOAuthService(input: {
 			);
 			return new TextDecoder().decode(verifier);
 		} catch (failure) {
+			reportEnvelopeRefusal(
+				services.securityState,
+				flow.linkTo?.userId ?? null,
+				flow.linkTo === null ? "sign_in" : "change",
+				failure,
+			);
 			throw failure instanceof KeyError ? new ConcealedError("state_not_found") : failure;
 		}
 	}

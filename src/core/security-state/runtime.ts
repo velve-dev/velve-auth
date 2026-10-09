@@ -12,6 +12,7 @@ import type { SecondFactor } from "../factor/pending/repository.js";
 import type { Clock } from "../http/environment.js";
 import { ConcealedError, type ConcealedReason } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
+import { KeyError, type KeyErrorCode } from "../keys/errors.js";
 import type { KeyProvider } from "../keys/provider.js";
 import type { PasswordCredentialRow } from "../password/credential.js";
 import type { PasswordScheme } from "../password/scheme.js";
@@ -174,6 +175,25 @@ export function recordSealLater(
 	);
 }
 
+const BINDING_FAILURES: ReadonlySet<KeyErrorCode> = new Set([
+	"authentication_failed",
+	"envelope_unbound",
+	"envelope_malformed",
+	"ciphertext_malformed",
+]);
+
+//an envelope that fails under its own binding was copied, moved or replaced past the seal (S-INTEG-1)
+export function reportEnvelopeRefusal(
+	runtime: SecurityStateRuntime,
+	userId: string | null,
+	occasion: SecurityStateAlarmOccasion,
+	failure: unknown,
+): void {
+	if (failure instanceof KeyError && BINDING_FAILURES.has(failure.code)) {
+		runtime.alarms.raise({ userId, occasion, reason: "envelope_binding_mismatch" });
+	}
+}
+
 function refusedAndReported(
 	runtime: SecurityStateRuntime,
 	userId: string,
@@ -193,6 +213,10 @@ function refusedAndReported(
 		if (error.reason !== "account_missing" && error.reason !== "version_exhausted") {
 			runtime.alarms.raise({ userId, occasion, reason: error.reason });
 		}
+		throw new ConcealedError(refusal);
+	}
+	if (error instanceof KeyError && BINDING_FAILURES.has(error.code)) {
+		reportEnvelopeRefusal(runtime, userId, occasion, error);
 		throw new ConcealedError(refusal);
 	}
 	//a ciphertext swapped between the verified read and its rewrite is a broken state (E-3300)

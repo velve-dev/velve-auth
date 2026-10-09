@@ -22,6 +22,7 @@ import {
 	checkAccount,
 	checkAccountOrStandIn,
 	passwordCredentialOf,
+	reportEnvelopeRefusal,
 	sealChange,
 	secondFactorsOf,
 	sessionEpochOf,
@@ -166,9 +167,17 @@ async function verifiedAccount(
 		readonly userId: string | null;
 		readonly plaintext: string;
 		readonly checked: PasswordCredentialRow | null;
+		readonly occasion: "sign_in" | "change";
 	},
 ): Promise<string> {
-	const check = await checkPassword(input, environment);
+	const check = await checkPassword(
+		{
+			...input,
+			onEnvelopeRefused: (failure) =>
+				reportEnvelopeRefusal(services.securityState, input.userId, input.occasion, failure),
+		},
+		environment,
+	);
 	//the true reason is raised and only error-map decides what the caller learns (S-ENUM-6)
 	if (check.outcome === "refused") {
 		throw new ConcealedError(check.reason);
@@ -283,6 +292,7 @@ export function passwordRoutes(services: RouteServices) {
 				userId: found === null ? null : found.id,
 				plaintext: input.password,
 				checked,
+				occasion: "sign_in",
 			});
 			//a broken state is told only by the alarm and answers like a wrong password (S-INTEG-5)
 			if (check.kind !== "usable") {
@@ -359,6 +369,7 @@ export function passwordRoutes(services: RouteServices) {
 				userId: resolved.userId,
 				plaintext: input.currentPassword,
 				checked,
+				occasion: "change",
 			});
 			if (checked === null) {
 				throw new ConcealedError("password_mismatch");
