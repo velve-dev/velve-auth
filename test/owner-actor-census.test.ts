@@ -84,7 +84,6 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"secret address",
 	"src/core/db/repositories/session.ts#createSessionRepository.deleteSessionByTokenHash":
 		"secret address",
-	"src/core/db/repositories/session.ts#createSessionRepository.replaceSession": "secret address",
 	"src/core/db/repositories/session.ts#createSessionRepository.replacePresentedSession":
 		"secret address",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.findPendingAuthenticationByTokenHash":
