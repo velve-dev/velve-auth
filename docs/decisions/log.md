@@ -17948,3 +17948,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Mapping `pending_consumed` to the path's failure where the sign-in consumes, which would keep a consumption that decides nothing the issue does not decide already.
 **Reason.** A race the specification lets end without a session must end with the path's ordinary failure, and the race tests are where that is seen.
 **Price.** The withdrawn row is no longer verified on its way out; it named no factor and its token never left the server.
+
+<a id="e-3410"></a>
+
+### T-KEY-5 waits for its sign-in's rehash before the factor check, because its one test connection interleaves them
+`E-3410` · security-state-seal · tests, settled
+
+**Context.** `test/key-rotation-restart-proof.test.ts` failed on CI at the TOTP check after a password sign-in under the rotated ring, answering `invalid_factor_code`. Run eight times at once on the development machine, one run failed the same way, logging the reason `broken_state_on_totp_second_factor` with the alarm `seal_mismatch` at `factor_check`. The sign-in's background rehash rewrites the password and reseals in one transaction, and the test hands every instance one `TestConnection`, which opens a transaction with `BEGIN` on its single socket and lets any other caller's statement run in between. The factor check's one statement therefore ran inside the open rehash, after its password write and before its seal write, and read a state that never committed. With a pool, as a real driver has, the check runs on another connection and reads either side of the commit. The test now waits for the rehash to land, as it already did further down, before it checks the factor.
+**Rejected.** Retrying the case, and handing this test a pool, which would change what the restart case measures for a race it does not test.
+**Reason.** The failure is the harness's, and the library's one-statement read is right on a connection of its own.
+**Price.** None; the case asserted the same rewrite a few lines later.
