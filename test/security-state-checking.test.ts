@@ -76,6 +76,7 @@ function withPending(token: string): Record<string, string> {
 }
 
 let accounts = 0;
+const presentedSecrets: string[] = [PASSWORD];
 
 interface Account {
 	readonly email: string;
@@ -89,7 +90,9 @@ async function signUp(): Promise<Account> {
 	const answer = await mounted.handler(postTo("/sign-up", { email, password: PASSWORD }));
 	expect(answer.status).toBe(200);
 	const userId = ((await answer.json()) as { user: { id: string } }).user.id;
-	return { email, userId, session: cookieIn(answer, DEFAULT_COOKIE_NAMES.session) ?? "" };
+	const session = cookieIn(answer, DEFAULT_COOKIE_NAMES.session) ?? "";
+	presentedSecrets.push(session);
+	return { email, userId, session };
 }
 
 //a writer who cannot compute the seal leaves a digest that matches no state
@@ -537,5 +540,38 @@ describe("T-INTEG-4: a missing seal row (S-INTEG-4)", () => {
 			await dropSchema(migrating.connection, migrating.schema);
 			await migrating.connection.close();
 		}
+	});
+});
+
+//alarm and log carry the reason and never a secret (S-INTEG-5)
+describe("T-INTEG-5: what the alarms and the log of every refusal above carry", () => {
+	async function storedValues(sql: string): Promise<string[]> {
+		const rows = await mounted.connection.query<{ value: Uint8Array }>(sql, []);
+		return rows.flatMap((row) => {
+			const bytes = Buffer.from(row.value);
+			return [bytes.toString("hex"), bytes.toString("base64"), bytes.toString("base64url")];
+		});
+	}
+
+	it("holds no token, hash, ciphertext or password", async () => {
+		const schema = mounted.schema;
+		const mailed = mounted.email.messages.flatMap((message) =>
+			"token" in message ? [message.token] : [],
+		);
+		const secrets = [
+			...presentedSecrets,
+			...mailed,
+			...(await storedValues(`SELECT token_sha256 AS value FROM ${schema}.session`)),
+			...(await storedValues(`SELECT token_sha256 AS value FROM ${schema}.one_time_token`)),
+			...(await storedValues(`SELECT phc AS value FROM ${schema}.password_credential`)),
+			...(await storedValues(`SELECT secret_enc AS value FROM ${schema}.totp_credential`)),
+			...(await storedValues(`SELECT code_hmac AS value FROM ${schema}.recovery_code`)),
+			...(await storedValues(`SELECT digest AS value FROM ${schema}.security_state`)),
+		].filter((secret) => secret.length >= 16);
+		const carried = JSON.stringify({ alarms, log: mounted.log.lines });
+
+		expect(alarms.length).toBeGreaterThanOrEqual(11);
+		expect(secrets.length).toBeGreaterThan(50);
+		expect(secrets.filter((secret) => carried.includes(secret))).toStrictEqual([]);
 	});
 });

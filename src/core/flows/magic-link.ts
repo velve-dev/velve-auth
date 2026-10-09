@@ -104,7 +104,8 @@ export async function redeemMagicLink(
 		return { status: "second_factor_required", pendingToken: begun.token, pending: begun.pending };
 	}
 
-	await pending.consume(begun.token);
+	//a pending row that names no factor is withdrawn and the issue alone answers a race (E-3404)
+	await pending.cancel({ token: begun.token });
 	const issued = await createSessionUnderHooks(
 		hooks,
 		{ userId: account.user.id, factors: [] },

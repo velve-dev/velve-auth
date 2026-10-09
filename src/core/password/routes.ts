@@ -229,7 +229,8 @@ async function signedIn(
 		return { status: "second_factor_required", pendingToken: begun.token, pending: begun.pending };
 	}
 
-	await services.pending.consume(begun.token);
+	//a pending row that names no factor is withdrawn and the issue alone answers a race (E-3404)
+	await services.pending.cancel({ token: begun.token });
 	const observed = observedIn(context);
 	const hooks = services.pluginRuntime.hooks;
 	const issued = await createSessionUnderHooks(hooks, { userId, factors: ["password"] }, () =>

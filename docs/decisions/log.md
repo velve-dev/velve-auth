@@ -17938,3 +17938,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the duplicates, which would let the two copies of one conversion drift.
 **Reason.** One conversion between the read and the rewrite is one place to keep right.
 **Price.** None.
+
+<a id="e-3404"></a>
+
+### The library's sign-in and resolution race session.revokeAll, alarms and logs are searched for secrets, and the broken-state timing runs nightly
+`E-3404` · security-state-seal · tests, settled
+
+**Context.** E-3400 left three parts of the test plan unbuilt. `test/security-state-revocation-race.test.ts` now runs T-INTEG-3's two library races over the mounted handler on a pool whose connections default to `repeatable read`: 50 password sign-ins each started together with `session.revokeAll` of the same account, and 50 session resolutions each started together with a `session.revokeAll` from another session of the account. The first run found 12 of 50 sign-ins answered `invalid_pending_authentication`, a code no password sign-in otherwise gives: the pending row a sign-in writes and withdraws when it names no factor binds the check's epoch, and its consumption refused the row once the revocation had raised the epoch. The password and magic-link sign-ins now withdraw that row with `cancel`, as the OAuth sign-in already did by E-563, and the session issue bound to the check alone decides the race. Every sign-in now ends with a session that resolves or with `invalid_credentials`, every resolution with the session or as a missing one, the presented session never survives, and neither race raises an alarm. `openConnectionPool` gains a `defaultIsolation` option for it. `test/security-state-checking.test.ts` searches the alarms and the log lines of its eleven refusals for every presented and mailed token, the password, and the stored token hashes, ciphertexts, recovery-code HMACs and digests in hex and base64, and finds none. `test/security-state-broken-timing.test.ts` is T-INTEG-5's timing part on the nightly tier: a broken account's correct password against an intact account's wrong one, through the handler, sampled and decided as T-TIM-1 is. The 40 wrong codes and the old-key rebind of T-INTEG-3 on repeatable-read connections stay with the token branch's tests of them.
+**Rejected.** Mapping `pending_consumed` to the path's failure where the sign-in consumes, which would keep a consumption that decides nothing the issue does not decide already.
+**Reason.** A race the specification lets end without a session must end with the path's ordinary failure, and the race tests are where that is seen.
+**Price.** The withdrawn row is no longer verified on its way out; it named no factor and its token never left the server.
