@@ -85,7 +85,7 @@ export async function redeemMagicLink(
 			newEmail: null,
 			securityState: environment.services.securityState,
 		});
-		return { ...resolved, sealed: confirmed.sealed };
+		return { ...resolved, sealed: confirmed.sealed, secondFactors: confirmed.secondFactors };
 	});
 	if (account === A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
@@ -97,6 +97,7 @@ export async function redeemMagicLink(
 		userId: account.user.id,
 		factorsCompleted: [],
 		sessionEpoch: account.sealed.sessionEpoch,
+		offered: { factors: account.secondFactors, refusal: "broken_state_on_token_redemption" },
 	});
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);

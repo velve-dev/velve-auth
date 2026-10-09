@@ -8,6 +8,7 @@ import { unboundReadingOf } from "../auth/security-state.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import type { IssueAuthorisation } from "../db/repositories/session.js";
+import type { SecondFactor } from "../factor/pending/repository.js";
 import type { Clock } from "../http/environment.js";
 import { ConcealedError, type ConcealedReason } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
@@ -431,6 +432,15 @@ export function passwordCredentialOf(
 				scheme: read.password.scheme as PasswordScheme,
 				unbound: unboundReadingOf(runtime.sealing, read.seal === null ? "absent" : "present"),
 			};
+}
+
+/** the second factors a verified read holds, which a sign-in offers and its pending row must still find */
+export function secondFactorsOf(read: SecurityStateRead): readonly SecondFactor[] {
+	return [
+		...(read.totp?.confirmed === true ? (["totp"] as const) : []),
+		...(read.passkeys.length > 0 ? (["webauthn"] as const) : []),
+		...(read.recoveryCodes.length > 0 ? (["recovery"] as const) : []),
+	];
 }
 
 /** the session epoch a pending authentication created after this check binds */

@@ -11,6 +11,7 @@ import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
 import type { IssueAuthorisation } from "../db/repositories/session.js";
 import { PreviousSessionMissingError } from "../db/repositories/session.js";
+import type { SecondFactor } from "../factor/pending/repository.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
@@ -29,7 +30,12 @@ import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../pl
 import { type AnchorReading, consultAnchors } from "../security-state/anchor.js";
 import { assertBelowCredentialLimit } from "../security-state/limits.js";
 import { type SecurityStateRead, sealedComponentsOf } from "../security-state/read.js";
-import { checkAccount, issueAuthorisationOf, sealChange } from "../security-state/runtime.js";
+import {
+	checkAccount,
+	issueAuthorisationOf,
+	sealChange,
+	secondFactorsOf,
+} from "../security-state/runtime.js";
 import { componentsAfter, sealCreatedAccount } from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
@@ -103,6 +109,8 @@ interface ResolvedAccount {
 	readonly identity: Identity;
 	/** the seal the sign-in checked or wrote, which the session it leads to is bound to */
 	readonly authorisedBy: IssueAuthorisation;
+	/** the second factors the sign-in's verified read held */
+	readonly secondFactors: readonly SecondFactor[];
 }
 
 function sealedIdentityAfter(read: SecurityStateRead, provider: string, subject: string) {
@@ -388,7 +396,7 @@ export function createOAuthService(input: {
 		transaction: Driver,
 		locked: OwnedIdentity,
 		anchorReading: AnchorReading,
-	): Promise<IssueAuthorisation> {
+	): Promise<Pick<ResolvedAccount, "authorisedBy" | "secondFactors">> {
 		const check = await checkAccount(services.securityState, locked.userId, "sign_in", {
 			driver: transaction,
 			anchorReading,
@@ -413,7 +421,7 @@ export function createOAuthService(input: {
 		assertTheAccountIsEnabled(
 			await createUserRepository({ driver: transaction, schema }).findUserById(locked.userId),
 		);
-		return check.authorisedBy;
+		return { authorisedBy: check.authorisedBy, secondFactors: secondFactorsOf(check.read) };
 	}
 
 	async function accountForSignIn(
@@ -433,11 +441,11 @@ export function createOAuthService(input: {
 				//the anchor is asked before the lock so no connection holds it while the application answers (S-INTEG-6)
 				const anchored = await consultAnchors(services.securityState.anchors, existing.userId);
 				const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
-				const authorisedBy = await checkedIdentityOf(transaction, locked, anchored);
+				const checked = await checkedIdentityOf(transaction, locked, anchored);
 				return {
 					userId: locked.userId,
 					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
-					authorisedBy,
+					...checked,
 				};
 			}
 
@@ -453,6 +461,7 @@ export function createOAuthService(input: {
 					userId: owner.id,
 					identity,
 					authorisedBy: issueAuthorisationOf(sealed),
+					secondFactors: secondFactorsOf(sealed.read),
 				};
 			}
 			const anchored = await consultAnchors(services.securityState.anchors, joinable.id);
@@ -494,6 +503,7 @@ export function createOAuthService(input: {
 				userId: joined.id,
 				identity: sealed.written,
 				authorisedBy: issueAuthorisationOf(sealed),
+				secondFactors: secondFactorsOf(sealed.read),
 			};
 		});
 	}
@@ -525,6 +535,7 @@ export function createOAuthService(input: {
 			userId,
 			factorsCompleted: OAUTH_FACTORS,
 			sessionEpoch: authorisedBy === "unsealed" ? 1 : authorisedBy.sessionEpoch,
+			offered: { factors: resolved.secondFactors, refusal: "broken_state_on_oauth_sign_in" },
 		});
 		if (pending.pending.availableFactors.length > 0) {
 			return {

@@ -17898,3 +17898,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the lock into the check and the change, which would put the subject lookup the lock protects after the check.
 **Reason.** A lock held while the application answers stalls every other change of the account for as long as the application takes.
 **Price.** A floor read before the lock can be older than the state the lock then reads, which the anchor comparison already allows for: a seal ahead of the floor is recorded again.
+
+<a id="e-3406"></a>
+
+### The second factors a sign-in offers come from its verified read
+`E-3406` · security-state-seal · second factor, settled
+
+**Context.** S-INTEG-4 has what a path evaluates come from its one verified read. After the password, magic-link and OAuth sign-ins checked the seal, the pending row's insert read the confirmed TOTP secret, the passkeys and the recovery codes a second time and offered what that read found, so a writer who deleted the TOTP row between the check and the insert turned a sign-in that needed a second factor into a session on the first. `secondFactorsOf(read)` in `src/core/security-state/runtime.ts` takes the factors from the verified read, and `pending.begin` takes them as `offered` with the path's ordinary failure. The insert still reads the enrolments in its statement; a factor the check read and the insert no longer finds deletes the new pending row, reports `seal_mismatch` with the occasion `sign_in`, and refuses the sign-in with that failure. `test/security-state-offered-factors.test.ts` deletes the confirmed TOTP row just before the pending insert and holds the answer to a wrong password's, with no session and no pending cookie.
+**Rejected.** Answering with `second_factor_required` and the factors of the read, which would hand out a pending row naming a factor the account no longer has.
+**Reason.** A factor that disappears between two reads of one sign-in was removed past the seal.
+**Price.** A factor added in that window is not offered by that sign-in; the next one offers it.

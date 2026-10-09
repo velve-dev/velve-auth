@@ -1,11 +1,16 @@
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
+import type { SecondFactor } from "../factor/pending/repository.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import type { SecurityStateRead } from "../security-state/read.js";
-import { type SecurityStateRuntime, sealChange } from "../security-state/runtime.js";
+import {
+	type SecurityStateRuntime,
+	sealChange,
+	secondFactorsOf,
+} from "../security-state/runtime.js";
 import { componentsAfter, type SealTarget } from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { SessionService } from "../session/service.js";
@@ -21,6 +26,8 @@ interface ConfirmationWrite {
 interface ConfirmationOutcome extends ConfirmationWrite {
 	/** the version and epoch the confirmation sealed, which a session it leads to is bound to */
 	readonly sealed: SealTarget;
+	/** the second factors the confirmation's verified read held */
+	readonly secondFactors: readonly SecondFactor[];
 }
 
 interface AddressConfirmation {
@@ -109,6 +116,7 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 	return {
 		...sealed.written,
 		sealed: { version: sealed.version, sessionEpoch: sealed.sessionEpoch },
+		secondFactors: secondFactorsOf(sealed.read),
 	};
 }
 

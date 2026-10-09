@@ -82,7 +82,7 @@ function withSession(token: string): Record<string, string> {
 }
 
 describe("the second factors a sign-in offers come from its verified read (S-INTEG-4)", () => {
-	it("does not issue a password-only session when the totp row vanishes after the check", async () => {
+	it("refuses the sign-in like a wrong password when the TOTP row vanishes after the check", async () => {
 		const email = "downgrade@example.com";
 		const signedUp = await handler(postTo("/sign-up", { email, password: PASSWORD }));
 		expect(signedUp.status).toBe(200);
@@ -104,7 +104,7 @@ describe("the second factors a sign-in offers come from its verified read (S-INT
 			await connection.query(`DELETE FROM ${schema}.totp_credential WHERE user_id = $1`, [userId]);
 		};
 		const answer = await handler(postTo("/sign-in/password", { email, password: PASSWORD }));
-		const body = (await answer.json()) as { status?: string };
+		const body = (await answer.json()) as { error?: { code?: string } };
 		await connection.query(
 			`INSERT INTO ${schema}.totp_credential (user_id, secret_enc, key_version, confirmed_at, created_at)
 VALUES ($1, $2, $3, $4, $5)`,
@@ -124,9 +124,18 @@ VALUES ($1, $2, $3, $4, $5)`,
 						}),
 					);
 
-		expect({ status: body.status, sessionResolves: resolved?.status === 200 }).toStrictEqual({
-			status: "second_factor_required",
-			sessionResolves: false,
+		expect({
+			status: answer.status,
+			code: body.error?.code,
+			session: stolen,
+			pending: cookieIn(answer, DEFAULT_COOKIE_NAMES.pending),
+			resolved,
+		}).toStrictEqual({
+			status: 401,
+			code: "invalid_credentials",
+			session: null,
+			pending: null,
+			resolved: null,
 		});
 	});
 });

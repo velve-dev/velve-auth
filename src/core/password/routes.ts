@@ -23,6 +23,7 @@ import {
 	checkAccountOrStandIn,
 	passwordCredentialOf,
 	sealChange,
+	secondFactorsOf,
 	sessionEpochOf,
 } from "../security-state/runtime.js";
 import { componentsAfter, SealingRefusedError } from "../security-state/sealing.js";
@@ -209,6 +210,10 @@ async function signedIn(
 		userId,
 		factorsCompleted: ["password"],
 		sessionEpoch: sessionEpochOf(check),
+		offered: {
+			factors: secondFactorsOf(check.read),
+			refusal: "broken_state_on_password_sign_in",
+		},
 	});
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);
