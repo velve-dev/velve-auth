@@ -17918,3 +17918,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Raising it inside the key module, which knows neither the account nor the path.
 **Reason.** A refusal the operator never hears of protects the account and leaves the writer free to try again elsewhere.
 **Price.** The answer each path gives is unchanged; only the alarm is new.
+
+<a id="e-3408"></a>
+
+### A change that changes nothing still renews a seal taken under an older state-mac key
+`E-3408` · security-state-seal · sealing transaction, settled
+
+**Context.** E-3402 keeps the verified seal for a change that leaves every component and the epoch as they were. A seal stays verifiable under the key version it names, so after a rotation of `state-mac` such a change left the seal under the old key, and the administration branch's rekey, which reseals every account through this sealing path, could never retire the old key from the ring. `sealUnderAccountLock` now keeps the verified seal only when its `key_version` is also the ring's current `state-mac` version, and otherwise writes a new seal under the current key with the version raised. `test/security-state-sealing.test.ts` seals an account under version 1, runs a change that changes nothing under a ring at version 2, and holds the new seal at key version 2 with the version raised by one.
+**Rejected.** A separate rekey path beside the sealing change, which would be a second writer of the seal row with its own order.
+**Reason.** A key can leave the ring only once nothing is sealed under it.
+**Price.** The first change of each account after a rotation writes a seal even when it changes nothing.
