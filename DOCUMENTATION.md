@@ -9829,7 +9829,8 @@ The order of section 3.18 *Sealing* on an open transaction: `lockAccountRow`, on
 `change.after`, `computeSeal`, the seal row written and `change.afterSeal`. A
 change that keeps the epoch and leaves every component as the read held it writes
 no seal row and hands `change.afterSeal` the version and epoch it verified
-(E-3402). With `context.leaveUnsealed` an account without a seal row gets
+(E-3402), unless the seal names an older `state-mac` key version than the ring's
+current one, which it renews (E-3408). With `context.leaveUnsealed` an account without a seal row gets
 `change.write` and no seal row. A path that learns its account by consuming a row calls it itself after
 the consumption and after `consultAnchors`, inside `runSealingTransaction`. It
 resolves `SealWritten`: `userId`, `version`, `sessionEpoch`, `keyVersion`,
@@ -9883,6 +9884,9 @@ refused row; a refusal while listing sessions is raised with the occasion
 |---|---|
 | `sealChange(runtime, account, change, { driver?, occasion?, refusal?, accountMissing? })` | asks the anchors, runs `sealUnderAccountLock` in a new sealing transaction or on `driver` when a path has already consumed its row there, hands an unsealed account in mode `"migrating"` to the bound-envelope rewrite, and after commit records the seal with the anchors. A broken state raises the alarm with `occasion` (`"change"` by default) and throws a `ConcealedError` with `refusal`, the ordinary failure of the path that changes; an account that does not exist throws what `accountMissing` returns, where the path gives one |
 | `issueAuthorisationOf(sealed)` | the `{ version, sessionEpoch }` a session issued after a change is bound to, or `"unsealed"` when the change left the account unsealed |
+| `secondFactorsOf(read)` | the second factors a verified read holds — a confirmed TOTP secret, any passkey, any recovery code — which a sign-in offers; `pending.begin` takes them as `offered` and refuses the sign-in with the path's ordinary failure when its insert no longer finds one (E-3406) |
+| `reportEnvelopeRefusal(runtime, userId, occasion, failure)` | raises `envelope_binding_mismatch` for a `KeyError` that says an envelope does not belong where it was found; the password check, the TOTP check and enrolment, the PKCE verifier and every envelope rewrite call it (E-3407) |
+| `envelopesOf(read)`, `readWithEnvelopes(read, envelopes)` | the read's stored envelopes in the shape the envelope rewrite takes, and the read with the rewrite's ciphertexts put back (E-3409) |
 | `checkAccount(runtime, userId, occasion, { driver? })` | asks the anchors, reads once and checks; resolves `{ kind: "usable", read, authorisedBy }`, `{ kind: "broken" }` after raising the alarm, or `{ kind: "missing" }`. A verified seal ahead of an anchor is recorded again, off the response path |
 | `checkAccountOrStandIn(runtime, userId, identifier)` | the password sign-in's check; for an unknown account it asks the anchors about a stand-in id derived from the identifier under `token-pepper`, runs the read and verifies a stand-in state, and answers `missing` |
 | `sessionStateCheckOf(runtime)` | the check a session resolution runs over the state document its one statement returned: `"usable"`, `"broken"`, or `"read_again"` once when the read lies below an anchor |
@@ -9898,8 +9902,11 @@ change without one writes to an account without a seal row and leaves it
 unsealed, and `SealWritten.leftUnsealed` is `true`; in mode `"required"` such an
 account is a broken state anyway (E-3162).
 
+`checkAccount` and `sealChange` take an `anchorReading` a path asked for before it
+took the account lock itself, as the OAuth sign-in does (E-3405).
+
 `authorisedBy` is the `{ version, sessionEpoch }` the check read, or
-`"unsealed"`. Every session a sign-in, a factor check, a redemption or a link
+`"unsealed"`; no issue stands on a read its own lock takes (E-3403). Every session a sign-in, a factor check, a redemption or a link
 issues is inserted only while the seal row still holds that version and epoch;
 a miss is verified under the account lock and answered as the path's ordinary
 failure (E-3377). A pending authentication carries the epoch its first factor's
