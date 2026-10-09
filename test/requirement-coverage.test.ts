@@ -64,14 +64,6 @@ const NAMED_BY_NO_TEST: ReadonlyMap<string, string> = new Map([
 		"S-REDIR-1",
 		"T-REDIR-1 counts redirect-carrying fields of the route declarations that are typed `string` and requires zero. The requirement itself is met: `acceptedRedirectPath` refuses a URL at run time and `test/oauth-redirect-corpus.test.ts` drives a corpus at it. A typing that satisfies the census and 3.15 B.1 at once exists and was built: unbranding `RedirectPath` inside `ServerMethodOf` and `ClientMethodOf`, after which the declaration resolves to `Validator<RedirectPath | undefined>` and the method parameter resolves to `string`. What excludes it is 3.15 D.2, which allows exactly one difference between a route declaration and its signatures and gives `caller` as the one that makes it; the unbranding introduces a second, across the whole surface. That reading of D.2 is a ruling on German prose and not an `S-` requirement, and if it is wrong the case can be met by that shape; settling it belongs to a `specfix` pass and not to this list. Reported rather than built (E-1335, E-1337, E-1343).",
 	],
-	[
-		"S-INTEG-7",
-		"Stated by section 5.21 ahead of the code that meets it. The specification, the state-mac and token-mac purposes and the velve.security_state table are the foundation the requirement is built on; the requirement itself belongs to the `security-state-administration` range of the decision log and is unbuilt until that branch merges, which removes this line by citing it (E-3087).",
-	],
-	[
-		"S-INTEG-8",
-		"Stated by section 5.21 ahead of the code that meets it. The specification, the state-mac and token-mac purposes and the velve.security_state table are the foundation the requirement is built on; the requirement itself belongs to the `security-state-administration` range of the decision log and is unbuilt until that branch merges, which removes this line by citing it (E-3087).",
-	],
 ]);
 
 describe("every requirement of section 5 has a test case in section 6", () => {
