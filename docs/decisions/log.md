@@ -17968,3 +17968,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Raising the epoch to force the write, which signs every user of such an account out on every rotation.
 **Reason.** The report stays truthful about what is left under the old version, so the operator is not told a version can leave the ring when it cannot.
 **Price.** Until the sealing module changes, an operator rotating the root key cannot remove the old version while any account without an envelope exists.
+
+<a id="e-3179"></a>
+
+### The instance and Plugins chapters gain the start error and the two maintenance members
+`E-3179` · security-state-administration · documentation, settled
+
+**Context.** E-3173 recorded two lines this branch wrote into the Plugins chapter. The start error of E-3174 is listed in two tables outside this branch's chapter, the instance chapter's *What refuses to start* and the Plugins chapter's *Start errors*, whose count goes from eighteen to nineteen, and the instance chapter prints `AuthInternals` with `maintenance` holding `sweep` alone. Each table gains the row, the count is raised, the printed interface gains `sealSecurityState` and `resealSecurityState`, and one sentence after the paragraph on `sweep` points to this branch's chapter, which holds the whole reference of both calls.
+**Rejected.** Leaving the tables and the printed interface as they were, which would make them wrong about the code they document.
+**Reason.** A table of start errors that omits one, and an interface printed without two of its members, are wrong where they stand.
+**Price.** Five more lines outside this branch's partition, in chapters the integration branch may also change.
