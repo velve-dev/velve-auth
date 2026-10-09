@@ -17928,3 +17928,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A separate rekey path beside the sealing change, which would be a second writer of the seal row with its own order.
 **Reason.** A key can leave the ring only once nothing is sealed under it.
 **Price.** The first change of each account after a rotation writes a seal even when it changes nothing.
+
+<a id="e-3409"></a>
+
+### The envelope helpers of the runtime are exported, and a rewritten identity no longer carries the rewrite's row key
+`E-3409` · security-state-seal · runtime, settled
+
+**Context.** The administration branch rewrites envelopes through the same read the seal verifies and had copied `envelopesOf` and `readWithEnvelopes` from `src/core/security-state/runtime.ts`. Both are now exported with a doc comment, and `test/security-state-read.test.ts` uses them. The test found that `readWithEnvelopes` spread the rewrite's `identityId` into each rewritten identity of the read, a field the read does not have; it now takes only the token columns and their key version.
+**Rejected.** Leaving the duplicates, which would let the two copies of one conversion drift.
+**Reason.** One conversion between the read and the rewrite is one place to keep right.
+**Price.** None.

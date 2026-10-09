@@ -95,7 +95,8 @@ export function createSecurityStateRuntime(input: {
 	};
 }
 
-function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
+/** the stored envelopes of a verified read, in the shape the envelope rewrite takes */
+export function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
 	return {
 		password:
 			read.password === null
@@ -115,7 +116,8 @@ function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
 	};
 }
 
-function readWithEnvelopes(
+/** the verified read with the ciphertexts an envelope rewrite stored put in place of the old ones */
+export function readWithEnvelopes(
 	read: SecurityStateRead,
 	envelopes: AccountEnvelopes,
 ): SecurityStateRead {
@@ -139,7 +141,11 @@ function readWithEnvelopes(
 					},
 		identities: read.identities.map((identity) => {
 			const rewritten = envelopes.identities.find((stored) => stored.identityId === identity.id);
-			return rewritten === undefined ? identity : { ...identity, ...rewritten, id: identity.id };
+			if (rewritten === undefined) {
+				return identity;
+			}
+			const { identityId: _rewrittenRow, ...tokens } = rewritten;
+			return { ...identity, ...tokens };
 		}),
 	};
 }
