@@ -26,6 +26,7 @@ import { KeyError } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
+import { type AnchorReading, consultAnchors } from "../security-state/anchor.js";
 import { assertBelowCredentialLimit } from "../security-state/limits.js";
 import { type SecurityStateRead, sealedComponentsOf } from "../security-state/read.js";
 import { checkAccount, issueAuthorisationOf, sealChange } from "../security-state/runtime.js";
@@ -386,9 +387,11 @@ export function createOAuthService(input: {
 	async function checkedIdentityOf(
 		transaction: Driver,
 		locked: OwnedIdentity,
+		anchorReading: AnchorReading,
 	): Promise<IssueAuthorisation> {
 		const check = await checkAccount(services.securityState, locked.userId, "sign_in", {
 			driver: transaction,
+			anchorReading,
 		});
 		if (check.kind !== "usable") {
 			throw new ConcealedError("broken_state_on_oauth_sign_in");
@@ -427,8 +430,10 @@ export function createOAuthService(input: {
 			});
 
 			if (existing !== null) {
+				//the anchor is asked before the lock so no connection holds it while the application answers (S-INTEG-6)
+				const anchored = await consultAnchors(services.securityState.anchors, existing.userId);
 				const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
-				const authorisedBy = await checkedIdentityOf(transaction, locked);
+				const authorisedBy = await checkedIdentityOf(transaction, locked, anchored);
 				return {
 					userId: locked.userId,
 					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
@@ -450,6 +455,7 @@ export function createOAuthService(input: {
 					authorisedBy: issueAuthorisationOf(sealed),
 				};
 			}
+			const anchored = await consultAnchors(services.securityState.anchors, joinable.id);
 			const joined = await theJoinableAccountUnderItsLock(
 				transaction,
 				users,
@@ -477,7 +483,12 @@ export function createOAuthService(input: {
 					},
 					after: (read) => sealedIdentityAfter(read, provider.id, account.subject),
 				},
-				{ driver: transaction, occasion: "sign_in", refusal: "broken_state_on_oauth_sign_in" },
+				{
+					driver: transaction,
+					occasion: "sign_in",
+					refusal: "broken_state_on_oauth_sign_in",
+					anchorReading: anchored,
+				},
 			);
 			return {
 				userId: joined.id,

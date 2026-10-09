@@ -17888,3 +17888,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping `"read_under_lock"` for tests, which would leave a production type member whose only callers are tests and whose meaning the specification no longer has.
 **Reason.** A member that authorises an issue without a check is the gap S-INTEG-9 closes, and a gap kept for convenience is still a gap.
 **Price.** About thirty test files change how they issue a session directly.
+
+<a id="e-3405"></a>
+
+### The OAuth sign-in asks the anchor before it locks the account
+`E-3405` · security-state-seal · anchor, settled
+
+**Context.** S-INTEG-6 and E-3304 have the anchor asked before the account lock, since `minimumVersion` is the application's own code and may wait on a network. The OAuth sign-in through a linked identity and the automatic link take the account lock themselves before the check and the sealing change, and both asked the anchor inside, under the lock. `accountForSignIn` now calls `consultAnchors` before `theIdentityUnderItsAccountLock` and before `theJoinableAccountUnderItsLock`, and hands the reading to `checkAccount` and `sealChange` through a new `anchorReading` option. `test/oauth-anchor-before-lock.test.ts` holds the order in the source and that neither lock function asks an anchor.
+**Rejected.** Moving the lock into the check and the change, which would put the subject lookup the lock protects after the check.
+**Reason.** A lock held while the application answers stalls every other change of the account for as long as the application takes.
+**Price.** A floor read before the lock can be older than the state the lock then reads, which the anchor comparison already allows for: a seal ahead of the floor is recorded again.

@@ -12,24 +12,31 @@ function bodyOf(name: string): string {
 	return source.slice(start, next === -1 ? undefined : next);
 }
 
+function anchorAskedBefore(lockCall: string, branch: (body: string) => string): boolean {
+	const body = branch(bodyOf("accountForSignIn"));
+	const asked = body.indexOf("consultAnchors(");
+	const lock = body.indexOf(lockCall);
+	return asked !== -1 && lock !== -1 && asked < lock;
+}
+
 describe("the OAuth sign-in asks the anchor before it takes the account lock (S-INTEG-6)", () => {
 	it("checks a linked identity's account with the anchor asked before theIdentityUnderItsAccountLock", () => {
-		const body = bodyOf("accountForSignIn");
-		const lock = body.indexOf("theIdentityUnderItsAccountLock(");
-		const anchorAsked = body.indexOf("checkedIdentityOf(");
-		expect({ lock, anchorAsked }).toSatisfy(
-			({ lock, anchorAsked }: { lock: number; anchorAsked: number }) =>
-				lock === -1 || anchorAsked === -1 || anchorAsked < lock,
-		);
+		const linked = (body: string) => body.slice(0, body.indexOf("accountAnAutomaticLinkMayJoin("));
+
+		expect(anchorAskedBefore("theIdentityUnderItsAccountLock(", linked)).toBe(true);
+		expect(bodyOf("checkedIdentityOf")).toContain("anchorReading");
 	});
 
 	it("seals the automatic link with the anchor asked before theJoinableAccountUnderItsLock", () => {
-		const body = bodyOf("accountForSignIn");
-		const lock = body.indexOf("theJoinableAccountUnderItsLock(");
-		const anchorAsked = body.indexOf("sealChange(");
-		expect({ lock, anchorAsked }).toSatisfy(
-			({ lock, anchorAsked }: { lock: number; anchorAsked: number }) =>
-				lock === -1 || anchorAsked === -1 || anchorAsked < lock,
-		);
+		const joining = (body: string) => body.slice(body.indexOf("accountAnAutomaticLinkMayJoin("));
+
+		expect(anchorAskedBefore("theJoinableAccountUnderItsLock(", joining)).toBe(true);
+		expect(joining(bodyOf("accountForSignIn"))).toContain("anchorReading: anchored");
+	});
+
+	it("asks no anchor inside a function that holds the lock", () => {
+		for (const name of ["theIdentityUnderItsAccountLock", "theJoinableAccountUnderItsLock"]) {
+			expect(bodyOf(name)).not.toContain("consultAnchors(");
+		}
 	});
 });

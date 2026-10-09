@@ -206,9 +206,7 @@ function refusedAndReported(
 export type ChangedAccount = Actor | { readonly unproven: string };
 
 /** the version and epoch a session issued under a change's new seal is bound to */
-export function issueAuthorisationOf(
-	sealed: SealWritten<unknown>,
-): IssueAuthorisation {
+export function issueAuthorisationOf(sealed: SealWritten<unknown>): IssueAuthorisation {
 	return sealed.leftUnsealed
 		? "unsealed"
 		: { version: sealed.version, sessionEpoch: sealed.sessionEpoch };
@@ -226,12 +224,14 @@ export async function sealChange<T>(
 		readonly refusal?: ConcealedReason;
 		/** the failure a path answers an account that does not exist with, where it has its own */
 		readonly accountMissing?: () => Error;
+		/** what the anchors answered, asked by a path that takes the account lock before the change does */
+		readonly anchorReading?: AnchorReading;
 	} = {},
 ): Promise<SealWritten<T>> {
 	const occasion = options.occasion ?? "change";
 	const refusal = options.refusal ?? "broken_state_on_change";
 	const userId = typeof account === "string" ? account : account.unproven;
-	const anchorReading = await consultAnchors(runtime.anchors, userId);
+	const anchorReading = options.anchorReading ?? (await consultAnchors(runtime.anchors, userId));
 	const context =
 		typeof account === "string"
 			? {
@@ -328,9 +328,13 @@ export async function checkAccount(
 	runtime: SecurityStateRuntime,
 	userId: string,
 	occasion: SecurityStateAlarmOccasion,
-	options: { readonly driver?: Driver } = {},
+	options: {
+		readonly driver?: Driver;
+		/** what the anchors answered, asked by a path before it took the account lock */
+		readonly anchorReading?: AnchorReading;
+	} = {},
 ): Promise<AccountCheck> {
-	const anchorReading = await consultAnchors(runtime.anchors, userId);
+	const anchorReading = options.anchorReading ?? (await consultAnchors(runtime.anchors, userId));
 	const read = await readSecurityState(options.driver ?? runtime.driver, runtime.schema, userId);
 	if (read === null) {
 		return { kind: "missing" };
