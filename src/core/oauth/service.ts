@@ -101,7 +101,7 @@ interface ResolvedAccount {
 	readonly userId: string;
 	readonly identity: Identity;
 	/** the seal the sign-in checked or wrote, which the session it leads to is bound to */
-	readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
+	readonly authorisedBy: IssueAuthorisation;
 }
 
 function sealedIdentityAfter(read: SecurityStateRead, provider: string, subject: string) {
@@ -386,7 +386,7 @@ export function createOAuthService(input: {
 	async function checkedIdentityOf(
 		transaction: Driver,
 		locked: OwnedIdentity,
-	): Promise<Exclude<IssueAuthorisation, "read_under_lock">> {
+	): Promise<IssueAuthorisation> {
 		const check = await checkAccount(services.securityState, locked.userId, "sign_in", {
 			driver: transaction,
 		});

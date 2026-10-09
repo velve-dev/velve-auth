@@ -61,14 +61,10 @@ export interface MissedIssue {
 	readonly reason: ConcealedReason;
 }
 
-/**
- * the seal row the check that authorised an issue read, `"unsealed"` where it read none, or
- * `"read_under_lock"` where no check of the seal authorises the issue yet
- */
+/** the seal row the check that authorised an issue read, or `"unsealed"` where it read none */
 export type IssueAuthorisation =
 	| { readonly version: number; readonly sessionEpoch: number }
-	| "unsealed"
-	| "read_under_lock";
+	| "unsealed";
 
 /** tells whether the seal verifies under the account lock after an issue wrote no row */
 export type SealVerification = (tx: Driver, userId: string) => Promise<boolean>;
@@ -194,17 +190,9 @@ export interface SessionRepository {
 		/** the epoch the mass revocation draws, which the kept row is bound under */
 		readonly keptUnderEpoch?: number;
 	}): Promise<number>;
-	replaceSession(input: {
-		readonly previousTokenHash: Uint8Array;
-		readonly insert: SessionInsert;
-	}): Promise<Session>;
 	//the predicate is the presented secret so its row goes whoever owns it (E-2120)
 	replacePresentedSession(input: {
 		readonly presentedTokenHash: Uint8Array | null;
-		readonly insert: SessionInsert;
-	}): Promise<Session>;
-	replaceEverySessionOfUser(input: {
-		readonly actor: Actor;
 		readonly insert: SessionInsert;
 	}): Promise<Session>;
 	//only a live row of an enabled account can authorise its own replacement (E-971)
@@ -667,17 +655,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return sealing === "migrating" ? { sealed: false } : { unwritable: true };
 	}
 
-	//an issue no check of the seal names yet stands on the row the lock reads until the seal branch names it (E-3487)
-	function conditionOf(locked: LockedState, authorisedBy: IssueAuthorisation): IssueCondition {
-		if (authorisedBy === "unsealed") {
-			return conditionWithoutASeal();
-		}
-		if (authorisedBy !== "read_under_lock") {
-			return { sealed: true, ...authorisedBy };
-		}
-		return locked.version === null || locked.sessionEpoch === null
+	//an issue stands on the version and epoch its authorising check read and never on the lock's own read (E-3403)
+	function conditionOf(authorisedBy: IssueAuthorisation): IssueCondition {
+		return authorisedBy === "unsealed"
 			? conditionWithoutASeal()
-			: { sealed: true, version: locked.version, sessionEpoch: locked.sessionEpoch };
+			: { sealed: true, ...authorisedBy };
 	}
 
 	async function insertUnderCurrentEpoch(
@@ -685,7 +667,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		insert: SessionInsert,
 	): Promise<SessionRowShape | undefined> {
 		const locked = await lockedStateOf(driver, insert.userId);
-		const condition = conditionOf(locked, insert.authorisedBy);
+		const condition = conditionOf(insert.authorisedBy);
 		if ("unwritable" in condition) {
 			throw new ConcealedError(insert.missed.reason);
 		}
@@ -888,21 +870,6 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			});
 		},
 
-		//the new row and the removal of the old one are one transaction, never an update (S-FIX-1)
-		replaceSession({ previousTokenHash, insert }) {
-			return issuing(options.driver, insert.userId, async (tx) => {
-				const removed = await deleteSessionByTokenHash(tx, previousTokenHash);
-				//without the removal the caller would end up with two live sessions (E-239)
-				if (removed === null) {
-					throw new PreviousSessionMissingError();
-				}
-				if (removed.userId !== insert.userId) {
-					throw new SessionOwnerMismatchError();
-				}
-				return insertUnderAccountLock(tx, insert);
-			});
-		},
-
 		//a sign-in removes the presented row in the transaction that inserts its successor (S-FIX-1)
 		replacePresentedSession({ presentedTokenHash, insert }) {
 			return issuing(options.driver, insert.userId, async (tx) => {
@@ -924,17 +891,6 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				if (removed.length === 0) {
 					throw new PreviousSessionMissingError();
 				}
-				return insertUnderAccountLock(tx, insert);
-			});
-		},
-
-		//every other session of the user goes and no parameter keeps one (S-FIX-6)
-		async replaceEverySessionOfUser({ actor, insert }) {
-			if (insert.userId !== actor) {
-				throw new SessionOwnerMismatchError();
-			}
-			return issuing(options.driver, actor, async (tx) => {
-				await tx.query(deleteEveryOwnedSql, [actor]);
 				return insertUnderAccountLock(tx, insert);
 			});
 		},

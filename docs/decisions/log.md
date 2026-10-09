@@ -17878,3 +17878,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Moving the magic link's session issue into its sealing transaction, which would remove this race but not the one against any other change that commits between the transaction and the issue, which E-3377 accepts.
 **Reason.** A seal records a state, and a change that leaves the state as it was has nothing new to record.
 **Price.** One encoding of the account's components more per change; the anchor is told the same seal again after such a change.
+
+<a id="e-3403"></a>
+
+### No session issue stands on the read its own lock takes
+`E-3403` · security-state-seal · session issue, settled
+
+**Context.** E-3487 let an issue that no seal check named yet insert under the version and epoch it read itself under the account lock, as `"read_under_lock"`, until the seal branch named every issue. E-3163 named them all, and nothing in `src/` passed the value any more, yet the repository still took it. `IssueAuthorisation` is now the checked `{ version, sessionEpoch }` or `"unsealed"`, and `conditionOf` takes nothing else. `reissue` and `reissueAfterCredentialChange` of the session service, which no path called since the password change and the second factors issue through `issueReplacingPresented` and the sealing change, are removed with the repository's `replaceSession` and `replaceEverySessionOfUser` that only they used. Tests that issued directly with `"read_under_lock"` now take what a check of the account would read, through `authorisationOf` in `test/session-fixtures.ts`. `test/session-issue-paths-lock.test.ts` held each issuing path to binding the epoch a concurrent revocation leaves, which was E-3141's design; each path now waits for the lock and inserts nothing, as E-3377 decided. The sign-in races of `test/integ-session-epoch-race.test.ts` stood in for the library's revocation and move to the library-level races of E-3404.
+**Rejected.** Keeping `"read_under_lock"` for tests, which would leave a production type member whose only callers are tests and whose meaning the specification no longer has.
+**Reason.** A member that authorises an issue without a check is the gap S-INTEG-9 closes, and a gap kept for convenience is still a gap.
+**Price.** About thirty test files change how they issue a session directly.

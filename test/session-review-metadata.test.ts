@@ -84,7 +84,7 @@ afterAll(async () => {
 describe("L-10: truncated is the default, and it is what the column holds", () => {
 	it("stores an IPv4 address as its /24 network and the user agent as two families", async () => {
 		const issued = await truncating.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
@@ -98,7 +98,7 @@ describe("L-10: truncated is the default, and it is what the column holds", () =
 
 	it("stores an IPv6 address as its /64 network", async () => {
 		const issued = await truncating.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "2001:db8:1:2:dead:beef:1234:5678", userAgent: SAFARI_ON_IOS },
@@ -116,7 +116,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		sent.reset();
 
 		await truncating.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
@@ -134,7 +134,7 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		sent.reset();
 
 		await truncating.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "198.51.100.200", userAgent: SAFARI_ON_IOS },
@@ -149,17 +149,17 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 
 	it("truncates on a re-issue and on a credential change as well, not only on the first insert", async () => {
 		const first = await truncating.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "192.0.2.77", userAgent: CHROME_ON_MACOS },
 		});
 		sent.reset();
 
-		const next = await truncating.reissue({
-			authorisedBy: "read_under_lock",
+		const next = await truncating.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: first.token,
+			presentedToken: first.token,
 			userId,
 			factors: ["password", "totp"],
 			observed: { ipAddress: "192.0.2.77", userAgent: CHROME_ON_MACOS },
@@ -168,10 +168,11 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		if (resolved === null) {
 			throw new Error("the re-issued session did not resolve");
 		}
-		const after = await truncating.reissueAfterCredentialChange({
-			authorisedBy: "read_under_lock",
+		await truncating.revokeEvery({ resolved });
+		const after = await truncating.issue({
+			authorisedBy: "unsealed",
 			completes: "password_change",
-			resolved,
+			userId,
 			factors: ["password"],
 			observed: { ipAddress: "192.0.2.77", userAgent: CHROME_ON_MACOS },
 		});
@@ -198,13 +199,13 @@ describe("L-10, E-222: the untruncated value never reaches the database", () => 
 		});
 
 		const blank = await nothing.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
 		});
 		const complete = await everything.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },
@@ -228,7 +229,7 @@ describe("what truncation refuses to pass through", () => {
 			"'; DROP TABLE velve.session; --",
 		]) {
 			const issued = await truncating.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId,
 				factors: ["password"],
 				observed: { ipAddress: hostile, userAgent: null },
@@ -275,7 +276,7 @@ describe("what truncation refuses to pass through", () => {
 		});
 
 		const issued = await unconfigured.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: { ipAddress: "203.0.113.42", userAgent: CHROME_ON_MACOS },

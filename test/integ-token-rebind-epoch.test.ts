@@ -4,7 +4,7 @@ import type { Driver } from "../src/core/db/driver.js";
 import { createSessionService } from "../src/core/session/service.js";
 import { rebindTokenRowsUnderCurrentKey } from "../src/core/token/rebind.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { aFreshEpochOtherThan } from "./session-fixtures.js";
+import { aFreshEpochOtherThan, authorisationOf } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 // S-KEY-5 with S-INTEG-9: a session of an account above epoch 1 that resolves under a newer key
@@ -45,7 +45,7 @@ describe("a rebound session keeps the epoch it was issued under", () => {
 			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
 		);
 		const issued = await before.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -75,7 +75,7 @@ describe("a session issued with a factor named twice", () => {
 		const userId = await createUser(migrated.connection, schema);
 
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password", "password"],
 			observed: NO_REQUEST,
@@ -97,7 +97,7 @@ describe('the maintenance rebinding of a session of an account without a seal ro
 		});
 		const userId = await createUser(migrated.connection, schema);
 		await before.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -155,7 +155,7 @@ describe("the maintenance rebinding against a mass revocation (section 3.18 poin
 			[userId, randomBytes(32), aFreshEpochOtherThan(1)],
 		);
 		await before.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,

@@ -36,7 +36,7 @@ export interface SecondFactorCompletion {
 		readonly pendingToken: PendingToken;
 		readonly factor: SecondFactor;
 		/** the seal the factor check read, whose epoch is the one the pending row stores */
-		readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
+		readonly authorisedBy: IssueAuthorisation;
 		readonly presentedSessionToken: string | null;
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;

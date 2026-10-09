@@ -7,15 +7,13 @@ import type { TokenBindingRefusal } from "../src/core/token/binding.js";
 import { openConnectionPool } from "./connection-pool-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
-import { aFreshEpochOtherThan } from "./session-fixtures.js";
+import { aFreshEpochOtherThan, authorisationOf } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 /**
- * Section 3.18 point 3 and T-INTEG-3: a sign-in racing a mass revocation raises no alarm, and every
- * session whose row exists after the revocation resolves. Raising the epoch is the seal branch's,
- * so a transaction of this test stands in for the revocation: account lock, delete every session,
- * raise the epoch, commit. Issuing takes the account lock first (E-3141), so it waits for the
- * revocation and binds the epoch the revocation leaves.
+ * Section 3.18 point 3: the session repository's own share of a mass revocation, with a
+ * transaction of this test standing in for the revocation. The library's sign-in and resolution
+ * racing `session.revokeAll` are in `test/security-state-revocation-race.test.ts` (E-3404).
  */
 
 const NO_REQUEST = { ipAddress: null, userAgent: null };
@@ -71,76 +69,6 @@ async function revokeEverySession(driver: Driver, userId: string): Promise<void>
 	});
 }
 
-async function tokensThatSurvived(userId: string, tokens: readonly string[]): Promise<string[]> {
-	const surviving: string[] = [];
-	for (const token of tokens) {
-		const [row] = await migrated.connection.query<{ present: number }>(
-			`SELECT count(*)::int AS present FROM ${schema}.session
-			 WHERE user_id = $1 AND token_sha256 = sha256(convert_to($2, 'UTF8'))`,
-			[userId, token],
-		);
-		if (row?.present === 1) {
-			surviving.push(token);
-		}
-	}
-	return surviving;
-}
-
-describe("a sign-in racing a mass revocation (section 3.18 point 3, T-INTEG-3)", () => {
-	it("waits for the revocation's commit and binds the epoch it leaves", async () => {
-		const userId = await sealedAccount();
-		refusals = [];
-
-		await revoker.query("BEGIN", []);
-		await revoker.query(lockAccountRowStatement(schema), [userId]);
-		await revoker.query(`DELETE FROM ${schema}.session WHERE user_id = $1`, [userId]);
-		await revoker.query(
-			`UPDATE ${schema}.security_state SET session_epoch = $2 WHERE user_id = $1`,
-			[userId, aFreshEpochOtherThan(1)],
-		);
-		const issuing = sessions.issue({
-			authorisedBy: "read_under_lock",
-			userId,
-			factors: ["password"],
-			observed: NO_REQUEST,
-		});
-		const finishedBeforeCommit = await Promise.race([
-			issuing.then(() => true),
-			new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
-		]);
-		await revoker.query("COMMIT", []);
-		const issued = await issuing;
-
-		expect(finishedBeforeCommit).toBe(false);
-		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
-		expect(refusals).toStrictEqual([]);
-	});
-
-	it(`leaves every surviving session resolvable and raises no alarm in ${PAIRS} races`, async () => {
-		refusals = [];
-		let surviving = 0;
-		for (let pair = 0; pair < PAIRS; pair += 1) {
-			const userId = await sealedAccount();
-			const [issued] = await Promise.all([
-				sessions.issue({
-					authorisedBy: "read_under_lock",
-					userId,
-					factors: ["password"],
-					observed: NO_REQUEST,
-				}),
-				revokeEverySession(pool, userId),
-			]);
-			for (const token of await tokensThatSurvived(userId, [issued.token])) {
-				surviving += 1;
-				expect((await sessions.resolve(token))?.userId).toBe(userId);
-			}
-		}
-
-		expect(surviving).toBeGreaterThan(0);
-		expect(refusals).toStrictEqual([]);
-	});
-});
-
 //the writer acts on its own connection right after the issue has read the epoch it will bind
 function writingAfterTheEpochRead(inner: Driver, write: () => Promise<unknown>): Driver {
 	return {
@@ -170,7 +98,7 @@ describe("a writer who changes the account's state between the epoch read and th
 		});
 		return racing
 			.issueReplacingPresented({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				completes: "password_sign_in",
 				presentedToken: null,
 				userId,
@@ -238,13 +166,13 @@ describe("signing out every other session (section 3.18 point 3)", () => {
 
 	async function signedInTwice(service: SessionService, userId: string) {
 		const kept = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
 		});
 		const other = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -345,7 +273,7 @@ describe("a resolve racing a mass revocation (section 3.18 point 3, S-CACHE-2)",
 		for (let pair = 0; pair < PAIRS; pair += 1) {
 			const userId = await sealedAccount();
 			const issued = await sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 				userId,
 				factors: ["password"],
 				observed: NO_REQUEST,

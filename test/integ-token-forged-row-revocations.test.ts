@@ -39,13 +39,13 @@ describe("a planted session row", () => {
 		});
 		const userId = await createUser(migrated.connection, schema);
 		const kept = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: OBSERVED,
 		});
 		await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: OBSERVED,
@@ -68,7 +68,7 @@ describe("a planted session row", () => {
 		});
 		const userId = await createUser(migrated.connection, schema);
 		const kept = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: OBSERVED,

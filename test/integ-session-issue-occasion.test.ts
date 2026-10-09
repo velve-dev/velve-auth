@@ -59,7 +59,7 @@ describe("a missed session issue that completes a change", () => {
 			schema,
 		});
 		const issued = await plain.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: { version: 1, sessionEpoch: 1 },
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -86,10 +86,10 @@ describe("a missed session issue that completes a change", () => {
 		});
 
 		await racing
-			.reissueAfterCredentialChange({
-				authorisedBy: "read_under_lock",
+			.issue({
+				authorisedBy: { version: 1, sessionEpoch: 1 },
 				completes: "password_change",
-				resolved,
+				userId: resolved.userId,
 				factors: ["password"],
 				observed: NO_REQUEST,
 			})

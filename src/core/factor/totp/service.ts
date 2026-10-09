@@ -60,7 +60,7 @@ function heldSecretOf(read: SecurityStateRead): HeldSecret | null {
 /** a second factor the check verified, with the seal it read for the session it completes */
 export interface CheckedSecondFactor {
 	readonly resolution: PendingResolution;
-	readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
+	readonly authorisedBy: IssueAuthorisation;
 }
 
 //the owner names the row as the table holds one row per account and no id of its own (S-INTEG-1)

@@ -67,7 +67,7 @@ afterAll(async () => {
 describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 	it("answers with the session and the user it belongs to", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -86,7 +86,7 @@ describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 
 	it("answers null once the idle deadline has passed", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -98,7 +98,7 @@ describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 
 	it("answers null once the absolute deadline has passed", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -110,7 +110,7 @@ describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 
 	it("asks the database every single time (ratio 1.0)", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -129,7 +129,7 @@ describe("resolving a session (S-CACHE-1, S-CACHE-2)", () => {
 describe("a disabled account (L-4, S-CACHE-3)", () => {
 	it("stops the next request of an existing session with account_disabled", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -148,7 +148,7 @@ describe("a disabled account (L-4, S-CACHE-3)", () => {
 
 	it("acts on the first following request, with no lifetime to wait out", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -182,7 +182,7 @@ describe("a disabled account (L-4, S-CACHE-3)", () => {
 describe("the idle deadline (architecture 3.5)", () => {
 	it("is not written again inside the write interval", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -197,7 +197,7 @@ describe("the idle deadline (architecture 3.5)", () => {
 
 	it("is written once the interval has passed, and moves forward", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -215,7 +215,7 @@ describe("the idle deadline (architecture 3.5)", () => {
 
 	it("never moves the absolute deadline, however often the session is used", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -239,7 +239,7 @@ describe("the idle deadline (architecture 3.5)", () => {
 describe("refresh (3.15 B.2)", () => {
 	it("forces the idle write the interval would otherwise hold back", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -254,7 +254,7 @@ describe("refresh (3.15 B.2)", () => {
 
 	it("leaves the token as it was — a refresh is not a re-issue", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,

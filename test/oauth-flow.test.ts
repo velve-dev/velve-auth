@@ -7,7 +7,6 @@ import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
 import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import type { SessionConfig } from "../src/core/session/config.js";
-import { createSessionService } from "../src/core/session/service.js";
 import { createVelveAuth, registerPluginErrorCodes, VelveError } from "../src/index.js";
 import {
 	configFor,
@@ -795,34 +794,23 @@ describe("linking inside a session (3.15 B.7, S-LINK-7)", () => {
 	});
 
 	/**
-	 * The transfer to S-FIX-6: `replaceEverySessionOfUser` runs the same delete, so a password change
-	 * or reset with a flow in flight would leave the flow redeemable. Driven through the session
-	 * service rather than a route because this build mounts no password routes (E-961).
+	 * The transfer to S-FIX-6: a credential change deletes every session of the account, so a
+	 * password set with a flow in flight must leave the flow unredeemable (E-961).
 	 */
 	it("refuses a link flow whose session a credential change replaced", async () => {
 		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
 		const signedIn = await mounted.auth.handler(callbackRequest(await start(mounted)));
 		const session = sessionCookieOf(signedIn) ?? "";
-		const sessions = createSessionService({
-			sealing: "migrating",
-			keys: TOKEN_KEYS,
-			driver: mounted.auth.connection,
-			schema: mounted.auth.schema,
-		});
 
 		mounted.provider.reportClaims({ sub: "credential-changed", email: "second@example.com" });
 		const linkFlow = await startLink(mounted, session);
-		const resolved = await sessions.resolve(session.split("=")[1] ?? "");
-		if (resolved === null) {
-			throw new Error("the session the credential change replaces must resolve");
-		}
-		await sessions.reissueAfterCredentialChange({
-			authorisedBy: "read_under_lock",
-			completes: "password_change",
-			resolved,
-			factors: ["oauth"],
-			observed: { ipAddress: null, userAgent: null },
-		});
+		const changed = await mounted.auth.handler(
+			requestTo("/password/set", {
+				body: { newPassword: "a password set while a link flow was open 4c2a" },
+				cookie: session,
+			}),
+		);
+		expect(changed.status).toBe(200);
 		const refused = await mounted.auth.handler(callbackRequest(linkFlow));
 
 		expect(refused.status).toBe(400);

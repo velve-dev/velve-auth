@@ -208,7 +208,7 @@ export type ChangedAccount = Actor | { readonly unproven: string };
 /** the version and epoch a session issued under a change's new seal is bound to */
 export function issueAuthorisationOf(
 	sealed: SealWritten<unknown>,
-): Exclude<IssueAuthorisation, "read_under_lock"> {
+): IssueAuthorisation {
 	return sealed.leftUnsealed
 		? "unsealed"
 		: { version: sealed.version, sessionEpoch: sealed.sessionEpoch };
@@ -266,7 +266,7 @@ export type AccountCheck =
 	| {
 			readonly kind: "usable";
 			readonly read: SecurityStateRead;
-			readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
+			readonly authorisedBy: IssueAuthorisation;
 	  }
 	| { readonly kind: "broken" }
 	| { readonly kind: "missing" };

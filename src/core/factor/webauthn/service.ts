@@ -70,7 +70,7 @@ export interface VerifiedWebAuthnAssertion {
 	/** reported and never a rejection, as a synchronised passkey does not keep the counter */
 	readonly signCountRegressed: boolean;
 	/** the seal the check before the assertion read, which the session it leads to is bound to */
-	readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
+	readonly authorisedBy: IssueAuthorisation;
 }
 
 export interface WebAuthnService {

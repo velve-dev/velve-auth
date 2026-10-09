@@ -80,7 +80,7 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 			schema,
 		});
 		await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password", "totp"],
 			observed: OBSERVED,

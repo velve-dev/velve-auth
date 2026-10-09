@@ -46,13 +46,13 @@ async function twoSessionsWithOneMoved(column: string, moved: string): Promise<s
 	const userId = await createUser(migrated.connection, schema);
 	const sessions = createSessionService(reporting());
 	await sessions.issue({
-		authorisedBy: "read_under_lock",
+		authorisedBy: "unsealed",
 		userId,
 		factors: ["password"],
 		observed: OBSERVED,
 	});
 	await sessions.issue({
-		authorisedBy: "read_under_lock",
+		authorisedBy: "unsealed",
 		userId,
 		factors: ["password"],
 		observed: OBSERVED,
@@ -78,7 +78,7 @@ describe.each([
 		const userId = await createUser(migrated.connection, schema);
 		const sessions = createSessionService(reporting());
 		const { token } = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: OBSERVED,

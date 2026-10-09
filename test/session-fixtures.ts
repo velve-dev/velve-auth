@@ -23,7 +23,7 @@ export function sessionInsertFor(
 	const insert = {
 		userId,
 		missed: { occasion: "sign_in", reason: "session_not_found" } as const,
-		authorisedBy: "read_under_lock" as const,
+		authorisedBy: "unsealed" as const,
 		tokenHash: createSessionToken().tokenHash,
 		factors: ["password"] as const,
 		ipAddress: null,
@@ -213,4 +213,22 @@ export async function raiseEpochOf(
 		fresh,
 	]);
 	return fresh;
+}
+
+/**
+ * The authorisation a seal check of the account would hand an issue now: the seal row's version
+ * and epoch, or "unsealed" without one. A test that issues directly stands for that check (E-3403).
+ */
+export async function authorisationOf(
+	driver: Driver,
+	schema: string,
+	userId: string,
+): Promise<{ readonly version: number; readonly sessionEpoch: number } | "unsealed"> {
+	const [row] = await driver.query<{ version: string; epoch: string }>(
+		`SELECT version::text AS version, session_epoch::text AS epoch FROM ${schema}.security_state WHERE user_id = $1`,
+		[userId],
+	);
+	return row === undefined
+		? "unsealed"
+		: { version: Number(row.version), sessionEpoch: Number(row.epoch) };
 }
