@@ -51,6 +51,7 @@ import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
+import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
 import {
 	createSecurityStateRuntime,
@@ -78,6 +79,10 @@ import {
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
 import { sealingOf } from "./security-state.js";
+import {
+	createSecurityStateMaintenance,
+	type SecurityStateMaintenance,
+} from "./security-state-maintenance.js";
 import {
 	assertConfigurationIsStartable,
 	assertKeysAnswerForEveryPurpose,
@@ -150,7 +155,7 @@ export interface AuthInternals {
 	readonly routes: readonly AnyRoute[];
 	readonly identityMode: IdentityMode;
 	readonly errorCodes: readonly VelveErrorCode[];
-	readonly maintenance: { sweep(): Promise<SweepReport> };
+	readonly maintenance: { sweep(): Promise<SweepReport> } & SecurityStateMaintenance;
 	/** the one asynchronous start step, and where the key ring report runs */
 	migrate(): Promise<MigrationReport>;
 	close(): Promise<void>;
@@ -347,6 +352,7 @@ function securityStateOf<M extends IdentityMode>(
 		readonly schema: string;
 		readonly clock: Clock;
 		readonly log: HttpEnvironment["log"];
+		readonly anchors: readonly SecurityStateAnchorPort[];
 	},
 ): SecurityStateRuntime {
 	return createSecurityStateRuntime({
@@ -355,7 +361,7 @@ function securityStateOf<M extends IdentityMode>(
 		keys: config.keys,
 		sealing: sealingOf(config.securityState),
 		limits: resolveLimits(config.limits) ?? DEFAULT_LIMITS,
-		anchors: [],
+		anchors: resolved.anchors,
 		alarm: config.securityState?.alarm,
 		log: (level, message, fields) => resolved.log(level, message, fields),
 		clock: resolved.clock,
@@ -382,7 +388,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
-	const securityState = securityStateOf(config, { driver, schema, clock, log });
+	//the plugins that contribute an anchor are registered after the services that consult it (E-3175)
+	const anchors: SecurityStateAnchorPort[] = [];
+	const securityState = securityStateOf(config, { driver, schema, clock, log, anchors });
 	const { sealing } = securityState;
 	const sealSeams = {
 		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
@@ -441,6 +449,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		plugins: config.plugins ?? [],
 		services: frozenContextServices,
 	});
+	anchors.push(...pluginRuntime.securityStateAnchors);
 
 	const services: RouteServices = {
 		sessions,
@@ -539,7 +548,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		http: environment,
 		weakenings,
 
-		maintenance: { sweep: () => sweepExpiredRows({ driver, schema }) },
+		maintenance: {
+			sweep: () => sweepExpiredRows({ driver, schema }),
+			//a reseal must reach the operator even without a configured sink (S-INTEG-7)
+			...createSecurityStateMaintenance({ runtime: securityState, log: operatorWarnings }),
+		},
 
 		async migrate(): Promise<MigrationReport> {
 			//a start the keys refuse must have written nothing to the schema (E-3374)

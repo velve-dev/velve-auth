@@ -44,6 +44,12 @@ export {
 	SECURITY_OPTIONS,
 	type SecurityOption,
 } from "./core/auth/security-options.js";
+export type {
+	RowsUnderSecurityStateKeyVersion,
+	SealedSecurityState,
+	SecurityStateMaintenanceError,
+	SecurityStateReport,
+} from "./core/auth/security-state-maintenance.js";
 export { type RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.js";
 export {
 	TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS,

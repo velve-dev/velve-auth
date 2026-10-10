@@ -6086,6 +6086,7 @@ nothing else would tell you.
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
 | `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the nineteen namespaces 3.15 B gives the instance |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
+| `plugin_anchor_incomplete` | a plugin's `securityStateAnchor` is not an object carrying the functions `recordSeal` and `minimumVersion` (E-3174) |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 | `security_state_sealing_unknown` | `securityState` is given and its `sealing` is neither `"required"` nor `"migrating"` (S-INTEG-1, E-3112) |
@@ -6232,7 +6233,11 @@ interface AuthInternals {
   readonly routes: readonly AnyRoute[];
   readonly identityMode: IdentityMode;
   readonly errorCodes: readonly VelveErrorCode[];
-  readonly maintenance: { sweep(): Promise<SweepReport> };
+  readonly maintenance: {
+    sweep(): Promise<SweepReport>;
+    sealSecurityState(): Promise<SecurityStateReport>;
+    resealSecurityState(input: { userId: string; reason: string }): Promise<SealedSecurityState>;
+  };
   migrate(): Promise<MigrationReport>;
   close(): Promise<void>;
   readonly http: HttpEnvironment;
@@ -6260,6 +6265,9 @@ application and goes back to it; the library never opened one.
 `*_sweep_idx` — `session`, `one_time_token`, `pending_authentication`,
 `totp_used_step`, `webauthn_challenge`, `oauth_flow` and `rate_bucket` — and
 reports how many rows went from each (L-11). It has no HTTP route, on purpose.
+`maintenance.sealSecurityState()` and `maintenance.resealSecurityState()` have
+none either; see
+[Security state: administration and migration](#security-state-administration-and-migration).
 
 ### The namespaces
 
@@ -6732,10 +6740,11 @@ migration, and removing a plugin leaves its tables where they are.
 | `hooks` | `PluginHooks?` | Any of the seven points below. |
 | `errorCodes` | `readonly \`${Id}.${string}\`[]?` | The codes this plugin's routes may answer with. Each answers `400` with the library's own message; see below. |
 | `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | A rule per route name, which **replaces** the `rateLimit` that route declares. The key must name a route this plugin contributes. |
+| `securityStateAnchor` | `SecurityStateAnchor?` | An anchor for the security state, which learns every new seal and sets a floor under its version (3.18). Not a hook point; see [`securityStateAnchor`](#securitystateanchor). |
 
 ### Start errors
 
-Eighteen configurations refuse the start with a `VelveStartupError` — sixteen
+Nineteen configurations refuse the start with a `VelveStartupError` — seventeen
 codes only a plugin can trip, and two more a plugin can trip and so can a core
 route. All but one are decided when `createVelveAuth` runs;
 `plugin_database_reaches_the_core` needs the database and is decided by
@@ -6749,6 +6758,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
 | `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the nineteen namespaces 3.15 B gives the instance. Those nineteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
+| `plugin_anchor_incomplete` | `securityStateAnchor` is `null`, not an object, or lacks a function `recordSeal` or `minimumVersion`. An anchor that cannot be asked would refuse every check, so it refuses the start instead (E-3174). |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
 | `plugin_route_exempts_the_origin_check` | A plugin route declares an `originCheck` that is not `"checked"`, `undefined` included (S-CSRF-6). |
 | `plugin_route_without_address_rate_limit` | A plugin route's rule — after `rateLimitRules` has replaced it — has no usable `perIpAddress` bucket: `"none"`, no rule at all, or a `capacity` or `refillPerSecond` that is not a finite number of at least zero (S-DEFAULT-3). `perAccount: "none"` is allowed. |
@@ -6797,7 +6807,7 @@ mounts without plugins.
 
 `plugin_field_unknown` is the other half of that, and it is what answers
 `S-CSRF-6`. A plugin written in JavaScript can carry any field it likes, so a
-`middleware` array or an `assertOriginAllowed` beside the seven declared fields
+`middleware` array or an `assertOriginAllowed` beside the eight declared fields
 would otherwise be dropped without a word and its author left believing it runs.
 3.11 says the extension points are **enumerated**; a field outside the
 enumeration is refused rather than ignored.
@@ -10060,7 +10070,219 @@ rejects, and a failure never undoes the committed change.
 
 ## Security state: administration and migration
 
-> Reserved for `security-state-administration`: the maintenance step and the administrator reseal (S-INTEG-7, S-INTEG-8). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Architecture section 3.18, *Anchor* and point 5, and section 3.15 G. This
+chapter documents what an application contributes and runs to administer the
+seal: the anchor a plugin contributes (S-INTEG-6), and the two maintenance calls
+an operator runs, `maintenance.sealSecurityState()` (S-INTEG-8) and
+`maintenance.resealSecurityState({ userId, reason })` (S-INTEG-7). The instance
+hands every check and change the ports of the configured anchors (E-3175).
+
+### `securityStateAnchor`
+
+A member of [`VelvePlugin`](#velveplugin), and not an eighth hook point: it
+observes after a seal is committed and refuses through the floor it answers,
+never by throwing to veto (3.11, E-3084).
+
+```ts
+interface SecurityStateAnchor {
+  recordSeal(event: SecurityStateSealedEvent, context: FrozenContext): Promise<void>
+  minimumVersion(input: { readonly userId: string },
+                 context: FrozenContext): Promise<SecurityStateFloor | null>
+}
+interface SecurityStateSealedEvent {
+  readonly userId: string; readonly version: number
+  readonly digest: string                  // base64url, the seal's HMAC under state-mac
+}
+interface SecurityStateFloor {
+  readonly version: number; readonly digest: string   // the highest version recorded and its digest
+}
+```
+
+All three types are exported with the plugin types.
+
+| Member | Called | Answers |
+|---|---|---|
+| `recordSeal(event, context)` | after the transaction that wrote a new seal has committed, and again off the response path when a check finds a verified seal above the anchor's floor | nothing; a throw or a rejection is logged and raises the alarm `anchor_unavailable`, and never undoes the committed change |
+| `minimumVersion({ userId }, context)` | before the account lock on every check and every change, after the one statement on a session resolution, and inside the transaction after the consumption on a path that learns its account by consuming a row | `null` for no floor, or `{ version, digest }`: the highest version the anchor has recorded for the account and that version's digest |
+
+What `minimumVersion` answers decides the check:
+
+| The stored seal | Outcome |
+|---|---|
+| below the floor's `version`, or no seal row while there is a floor | broken, alarm `version_below_anchor` |
+| at the floor's `version` with another `digest` | broken, alarm `anchor_mismatch` |
+| above the floor's `version`, or at it with the same `digest`, or with no floor | passes |
+| any, when `minimumVersion` throws, rejects, or answers anything but `null` or a floor | broken, alarm `anchor_unavailable` |
+
+A floor is valid only with a `version` for which `Number.isSafeInteger` holds and
+that is at least 1, and a `digest` that is base64url of exactly 32 bytes.
+`undefined`, `NaN`, a fraction, `0`, a negative number, a number above
+`Number.MAX_SAFE_INTEGER`, or a missing or wrongly sized `digest` is never read as
+"no floor". With several plugins contributing an anchor, every one is asked and
+every floor holds.
+
+**What the anchor's store has to be.** The application keeps it, append-only,
+somewhere no role that can write the schema `velve` can write — a plugin's own
+tables in `velve` do not qualify, because the writer the anchor exists to catch
+resets the seal row and the anchor's record together. Per account it keeps the
+digest of the highest version it recorded, and when `recordSeal` reports a
+version it already holds with a different digest, the anchor raises its own
+alarm: that is a played-back state being resealed.
+
+**What it does not cover.** Without an anchor, a writer can reset an account to
+an old, internally consistent state — old factor rows together with their old
+seal row — and no check notices. With one, a window stays: after `recordSeal`
+fails, or the process ends between the commit and the call, the anchor does not
+know the latest seal, and until the alarm is handled or a check records the seal
+again, the account can be reset to the version the anchor last knows.
+
+**How the start reads it.** The registry reads `recordSeal` and `minimumVersion`
+once, when `createVelveAuth` runs; replacing either afterwards changes nothing.
+Each is called with the anchor object as `this`, so an anchor written as a class
+that keeps a client of its own store in a field works as written, and no other
+name of the anchor is checked against the interface. A member that is missing or
+is no function, and an anchor that is `null` or not an object, refuses the start
+with `plugin_anchor_incomplete` (E-3174).
+
+Each call hands the anchor a frozen copy — `{ userId }`, or `{ userId, version,
+digest }` — so one plugin's anchor cannot change what another's is told
+(E-3172). The `context` is the same frozen context the plugin's hooks are given.
+
+```ts
+class AppendOnlyAnchor implements SecurityStateAnchor {
+  constructor(private readonly store: AnchorStore) {}   // outside the velve schema's reach
+
+  async recordSeal(event: SecurityStateSealedEvent): Promise<void> {
+    const held = await this.store.digestAt(event.userId, event.version)
+    if (held !== null && held !== event.digest) raiseOwnAlarm(event)
+    await this.store.append(event)
+  }
+
+  minimumVersion({ userId }: { readonly userId: string }): Promise<SecurityStateFloor | null> {
+    return this.store.highest(userId)                  // { version, digest } or null
+  }
+}
+
+createVelveAuth({ …, plugins: [{ id: "anchor", securityStateAnchor: new AppendOnlyAnchor(store) }] })
+```
+
+### `securityStateAnchors`
+
+Internal. A field of the plugin runtime `createPluginRuntime` returns: one
+`SecurityStateAnchorPort` ([The anchor port](#the-anchor-port)) per plugin that
+contributes an anchor, in the dependency order every hook point runs in, each
+with that plugin's context bound. A plugin without an anchor contributes no port,
+and an instance without one has an empty list. It is built by
+`securityStateAnchorPortsOf(registered)` in `src/core/plugin/anchor-ports.ts` from
+the plugins as the start read them, `asOneReadingOfTheAnchor(anchor)` being that
+reading. Each port turns a synchronous throw of its member into a rejection.
+
+### `maintenance.sealSecurityState()`
+
+```ts
+sealSecurityState(): Promise<SecurityStateReport>
+interface SecurityStateReport {
+  readonly sealed: number; readonly rekeyed: number
+  readonly refused: number; readonly unchanged: number
+  readonly refusedUserIds: readonly string[]
+  readonly rowsByKeyVersion: Readonly<Record<number, RowsUnderSecurityStateKeyVersion>>
+}
+interface RowsUnderSecurityStateKeyVersion {
+  readonly seals: number; readonly tokens: number; readonly traces: number
+}
+```
+
+Brings an estate into the form of section 3.18 (S-INTEG-8). It needs the root key,
+so it is not plain SQL. Run it right after the upgrade to 2.0.0 in mode
+`"migrating"`, until it reports nothing refused, then switch to `"required"`;
+run it again after every key rotation, before the old version leaves the ring.
+
+It works account by account, in id order, each in a transaction of its own under
+the account lock, through the same sealing change every legitimate change takes:
+
+| The account | What happens | Counted as |
+|---|---|---|
+| no seal row | its envelopes are re-encrypted in bound form by compare-and-set on the verified read, and it gets its first seal at version 1, epoch 1 | `sealed` |
+| a valid seal with an envelope under an old key version | the envelopes are re-encrypted under the current version and the seal is rewritten one version higher, the epoch kept, and the anchors learn it | `rekeyed` |
+| a valid seal, nothing to rewrite | nothing is written; the anchors are told the seal again | `unchanged` |
+| a broken state | nothing is written, and the alarm is raised with the occasion `maintenance` | `refused` |
+| an envelope that cannot be opened — its key version gone from the ring, or its ciphertext spoiled | nothing is written, and the alarm `envelope_binding_mismatch` is raised with the occasion `maintenance` | `refused` |
+| deleted since it was listed | skipped | — |
+
+`refusedUserIds` names every refused account, so the operator can handle its
+alarm; an account with an unreadable envelope is repaired by SQL — delete the
+row, let the user set the factor up again — and the next run converts it. Any
+other failure, such as a lost connection, stops the run with a
+`SecurityStateMaintenanceError` whose `code` is `security_state_account_failed`
+and whose `userId` names the account. Every account before it is converted
+entirely and the one it stopped at not at all, so the run is repeated. A second
+run over a converted estate writes no row.
+
+After the accounts it rebinds the token MACs of `session`, `one_time_token`,
+`pending_authentication` and `webauthn_challenge` that are not under the current
+`token-mac` version, row by row, outside every account lock, each in a
+transaction of the library's by compare-and-set on the MAC it verified first. A
+row whose MAC does not verify under its own version is left standing and unusable
+as a trace, and the alarm `token_binding_mismatch` is raised with the occasion
+`maintenance`.
+
+`rowsByKeyVersion` is what each key version holds after the run: `seals` counts
+seal rows, `tokens` usable token rows, `traces` the rows this run refused. A key
+version may leave the ring once a run reports **0** seals and **0** tokens for it;
+traces do not hold it there, and after it has left they answer
+`key_version_unknown` until the administrator deletes them.
+
+**One known gap (E-3178).** An account without any envelope — no password, no
+TOTP secret, no stored provider token — keeps its seal under the old key version,
+because the sealing change leaves a seal over unchanged components as it is. The
+report shows it under the old version, which therefore cannot leave the ring
+while such an account exists.
+
+### `maintenance.resealSecurityState({ userId, reason })`
+
+```ts
+resealSecurityState(input: { userId: string; reason: string }): Promise<SealedSecurityState>
+interface SealedSecurityState {
+  readonly version: number; readonly sessionEpoch: number
+  readonly email: string | null; readonly emailVerified: boolean; readonly disabled: boolean
+  readonly password: boolean; readonly passwordSetBySession: string | null
+  readonly passwordResetRequired: boolean
+  readonly totp: "none" | "unconfirmed" | "confirmed"
+  readonly passkeyCredentialIds: readonly string[]          // base64url
+  readonly identities: readonly { readonly provider: string; readonly subject: string }[]
+  readonly recoveryCodeCount: number
+}
+```
+
+The only way a broken state is sealed again (S-INTEG-7). Call it from your own
+process after your own decision; it has no route. It seals what the rows hold and
+checks none of them, so read what it returns: that is what you just ratified,
+a passkey or identity a writer inserted included.
+
+| Parameter | Meaning |
+|---|---|
+| `userId` | the account |
+| `reason` | why, non-empty; it is logged at `warn` with the account and the new version, to the configured `log` or, without one, to the console, and it is not stored |
+
+The new version lies above the stored one and above every anchor's floor, and the
+anchors learn it. The session epoch is drawn afresh and differs from the current
+one, so every session of the account is signed out, a session row a writer saved
+and put back included. An account without a seal row has its envelopes converted
+first, as a first seal does.
+
+It refuses with a `SecurityStateMaintenanceError` and changes nothing:
+
+| `code` | When |
+|---|---|
+| `security_state_reason_missing` | `reason` is missing, not a string, or blank |
+| `security_state_account_missing` | `userId` is not an id or names no account |
+| `security_state_anchor_unavailable` | an anchor throws or answers something that is not a floor; the alarm `anchor_unavailable` is raised |
+| `security_state_version_exhausted` | the stored version or an anchor's floor is already `Number.MAX_SAFE_INTEGER` |
+| `security_state_envelope_unreadable` | the account has no seal row and an envelope its conversion cannot open; the alarm `envelope_binding_mismatch` is raised, and the reseal repairs no envelope |
+| `security_state_changed_during_reseal` | the seal row changed under the account lock, which only a writer outside the library can do |
+
+An account at the largest version is recovered by hand: delete its sessions and
+its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
 
 ## Using it with an AI coding agent
 

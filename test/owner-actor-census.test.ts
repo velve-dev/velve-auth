@@ -108,6 +108,10 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/security-state/sealing.ts#sealUnderAccountLock": "account the path already named",
 	"src/core/security-state/sealing.ts#sealCreatedAccount": "account the path already named",
 	"src/core/security-state/sealing.ts#sealAccount": "account the path already named",
+	"src/core/auth/security-state-maintenance.ts#createSecurityStateMaintenance.sealSecurityState":
+		"maintenance or start-up",
+	"src/core/auth/security-state-maintenance.ts#createSecurityStateMaintenance.resealSecurityState":
+		"shipped surface",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.boundTo":
 		"the repository on another driver",

@@ -256,7 +256,8 @@ describe("every account lock outside the interleavings is declared before the ta
 	 * site added anywhere reddens this and has to be placed in that account. The seal's wiring moved
 	 * five of them, the address confirmation, the token and recovery-code resets, the identity link and the
 	 * password change, into `sealUnderAccountLock`, which takes the lock for every sealing change, so the
-	 * count fell from thirteen to nine (E-3163).
+	 * count fell from thirteen to nine (E-3163). The administrator reseal takes it once more, outside
+	 * the sealing path, because it seals a state that path refuses, which makes ten (E-3177).
 	 */
 	it("counts the statements that take the account lock, so the reach cannot drift unnoticed", () => {
 		const CALL = /\blockAccountRow(?:Statement)?\s*\(/g;
@@ -285,6 +286,6 @@ describe("every account lock outside the interleavings is declared before the ta
 
 		expect(sites.length, listing).toBeGreaterThan(5);
 		//one of them issues a session and one seals every change under the account lock (E-3163)
-		expect(total, listing).toBe(9);
+		expect(total, listing).toBe(10);
 	});
 });

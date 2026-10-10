@@ -595,6 +595,7 @@ import { PasswordSurface } from "../password/routes.mjs";
 import { PluginSurface } from "../plugin/routes.mjs";
 import { SweepReport } from "./maintenance.mjs";
 import { ChosenWeakening } from "./security-options.mjs";
+import { SecurityStateMaintenance } from "./security-state-maintenance.mjs";
 
 //#region src/core/auth/instance.d.ts
 interface SessionNamespace {
@@ -673,7 +674,7 @@ interface AuthInternals {
   readonly routes: readonly AnyRoute[];
   readonly maintenance: {
     sweep(): Promise<SweepReport>;
-  };
+  } & SecurityStateMaintenance;
   /** the one asynchronous start step, and where the key ring report runs */
   migrate(): Promise<MigrationReport>;
   close(): Promise<void>;
@@ -824,11 +825,77 @@ export {
 	SecurityOption,
 };
 
+## core/auth/security-state-maintenance.d.mts
+
+//#region src/core/auth/security-state-maintenance.d.ts
+
+/** what one key version still holds after a maintenance run */
+interface RowsUnderSecurityStateKeyVersion {
+  readonly seals: number;
+  readonly tokens: number;
+  /** token rows the run refused and left standing, which do not keep the version in the ring */
+  readonly traces: number;
+}
+/** what a maintenance run did to the accounts, and what every key version holds after it */
+interface SecurityStateReport {
+  readonly refused: number;
+  /** every account the run refused and left as it was, whether broken or with an envelope it could not open */
+  readonly refusedUserIds: readonly string[];
+  readonly rekeyed: number;
+  readonly rowsByKeyVersion: Readonly<Record<number, RowsUnderSecurityStateKeyVersion>>;
+  readonly sealed: number;
+  readonly unchanged: number;
+}
+/** what an administrator reseal ratified, which the application reads to see what it confirmed */
+interface SealedSecurityState {
+  readonly disabled: boolean;
+  readonly email: string | null;
+  readonly emailVerified: boolean;
+  /** the credential id of every passkey, in base64url */
+  readonly passkeyCredentialIds: readonly string[];
+  readonly password: boolean;
+  readonly passwordResetRequired: boolean;
+  readonly passwordSetBySession: string | null;
+  readonly sessionEpoch: number;
+  readonly totp: "confirmed" | "none" | "unconfirmed";
+  readonly version: number;
+  readonly identities: readonly {
+    readonly provider: string;
+    readonly subject: string;
+  }[];
+  readonly recoveryCodeCount: number;
+}
+type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_version_exhausted";
+/** a maintenance call refused, with a stable code and the account it was about where there is one */
+declare class SecurityStateMaintenanceError extends Error {
+  readonly code: SecurityStateMaintenanceErrorCode;
+  readonly userId: string | null;
+  constructor(code: SecurityStateMaintenanceErrorCode, userId: string | null, options?: {
+    readonly cause?: unknown;
+  });
+}
+/** the two operator calls of the security state, which no route reaches */
+interface SecurityStateMaintenance {
+  sealSecurityState(): Promise<SecurityStateReport>;
+  resealSecurityState(input: {
+    reason: string;
+    userId: string;
+  }): Promise<SealedSecurityState>;
+}
+//#endregion
+export {
+	RowsUnderSecurityStateKeyVersion,
+	SealedSecurityState,
+	SecurityStateMaintenance,
+	SecurityStateMaintenanceError,
+	SecurityStateReport,
+};
+
 ## core/auth/startup.d.mts
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
@@ -2046,6 +2113,7 @@ import { AuthenticationFactor, Session } from "../http/caller.mjs";
 import { RateLimitRule } from "../http/rate-limit.mjs";
 import { Clock } from "../http/environment.mjs";
 import { VelveErrorCode } from "../http/error-map.mjs";
+import { SecurityStateFloor, SecurityStateSealedEvent } from "../security-state/anchor.mjs";
 import { RouteDeclaration } from "../http/route.mjs";
 
 //#region src/core/plugin/config.d.ts
@@ -2134,6 +2202,13 @@ type PluginRoute<Id extends string> = Omit<RouteDeclaration<`${Id}.${string}`, `
   readonly caller: PluginCallerRequirement;
   readonly originCheck: "checked";
 };
+/** an anchor kept outside the reach of whoever can write the velve schema, which learns every new seal and sets a floor under its version */
+interface SecurityStateAnchor {
+  recordSeal(event: SecurityStateSealedEvent, context: FrozenContext): Promise<void>;
+  minimumVersion(input: {
+    readonly userId: string;
+  }, context: FrozenContext): Promise<SecurityStateFloor | null>;
+}
 /** a plugin, whose declaration type cannot overwrite a core route */
 interface VelvePlugin<Id extends string = string> {
   readonly dependsOn?: readonly string[];
@@ -2143,6 +2218,7 @@ interface VelvePlugin<Id extends string = string> {
   readonly migrations?: readonly PluginMigration<Id>[];
   readonly rateLimitRules?: Readonly<Record<`${Id}.${string}`, RateLimitRule>>;
   readonly routes?: readonly PluginRoute<Id>[];
+  readonly securityStateAnchor?: SecurityStateAnchor;
 }
 //#endregion
 export {
@@ -2153,6 +2229,7 @@ export {
 	PluginMigration,
 	PluginRoute,
 	RevokeReason,
+	SecurityStateAnchor,
 	SessionCreateEvent,
 	SessionCreatedEvent,
 	SessionRevokeEvent,
@@ -2193,6 +2270,26 @@ interface SecurityStateAlarm {
 //#endregion
 export {
 	SecurityStateAlarm,
+};
+
+## core/security-state/anchor.d.mts
+
+//#region src/core/security-state/anchor.d.ts
+/** a new seal as the anchor learns it after commit, with the digest in base64url */
+interface SecurityStateSealedEvent {
+  readonly digest: string;
+  readonly userId: string;
+  readonly version: number;
+}
+/** the highest version an anchor recorded for an account, with that version's digest in base64url */
+interface SecurityStateFloor {
+  readonly digest: string;
+  readonly version: number;
+}
+//#endregion
+export {
+	SecurityStateFloor,
+	SecurityStateSealedEvent,
 };
 
 ## core/security-state/limits.d.mts
@@ -2276,7 +2373,8 @@ import { AuthenticationFactor, PendingAuthentication, Session } from "./core/htt
 import { CookieAttributes, CookieInstruction } from "./core/http/cookies.mjs";
 import { Clock } from "./core/http/environment.mjs";
 import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
-import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
+import { SecurityStateFloor, SecurityStateSealedEvent } from "./core/security-state/anchor.mjs";
+import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
 import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SessionToken } from "./core/session/token.mjs";
@@ -2298,6 +2396,7 @@ import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpN
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
 import { ChosenWeakening, SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
+import { RowsUnderSecurityStateKeyVersion, SealedSecurityState, SecurityStateMaintenanceError, SecurityStateReport } from "./core/auth/security-state-maintenance.mjs";
 import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
 import { RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
@@ -2375,10 +2474,17 @@ export {
 	type ResolvedSessionView,
 	RevokeReason,
 	type RouteConflict,
+	type RowsUnderSecurityStateKeyVersion,
 	SECURITY_OPTIONS,
+	type SealedSecurityState,
 	type SecurityOption,
 	type SecurityStateAlarm,
+	SecurityStateAnchor,
 	type SecurityStateConfig,
+	SecurityStateFloor,
+	type SecurityStateMaintenanceError,
+	type SecurityStateReport,
+	SecurityStateSealedEvent,
 	type Session,
 	SessionCreateEvent,
 	SessionCreatedEvent,

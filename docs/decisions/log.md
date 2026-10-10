@@ -17959,6 +17959,136 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The failure is the harness's, and the library's one-statement read is right on a connection of its own.
 **Price.** None; the case asserted the same rewrite a few lines later.
 
+<a id="e-3170"></a>
+
+### The anchor member joins the plugin type, and the registry turns it into one port per plugin
+`E-3170` · security-state-administration · plugin interface, settled
+
+**Context.** Section 3.15 G gives `VelvePlugin` the member `securityStateAnchor` with `recordSeal(event, context)` and `minimumVersion({ userId }, context)`, 3.11 lists it among what a plugin may contribute, and E-3150 fixed the interface the request path calls: a list of `SecurityStateAnchorPort`, one per plugin that contributes an anchor, each with the plugin's frozen context already bound, and left to this branch how the registry builds that list. `SecurityStateAnchor` is now declared in `src/core/plugin/config.ts` and exported with the plugin types; `SecurityStateFloor` and `SecurityStateSealedEvent` are not declared a second time but exported from `src/core/security-state/anchor.ts`, where the port declares them. `securityStateAnchor` joins the enumerated plugin fields, so it is no longer refused with `plugin_field_unknown`. `src/core/plugin/anchor-ports.ts` builds the ports, and `createPluginRuntime` exposes them as `securityStateAnchors`, in the dependency order every hook point runs in, each bound to the same frozen context the plugin's hooks are given. A plugin that registers twice cannot occur, since a duplicated id is a start error already, so a plugin has at most one port. Nothing reads `securityStateAnchors` yet: the instance hands it to the sealing services and the checks when the request path is wired.
+**Rejected.** (a) Declaring the floor and the event again in the plugin module, which gives the member and the port two types that agree only until one of them changes. (b) A function the instance calls with the configured plugins, which would need the contexts the registry keeps to itself, or build second ones that are not the contexts the plugin's hooks see. (c) One combined port taking the highest floor, which E-3150 already rejected for dropping every other anchor's digest.
+**Reason.** The registry is the one place that holds each plugin read once together with its context, so it is where a port can be bound to both.
+**Price.** The public plugin types now come partly from a module that is otherwise internal, and the shipped declarations change by three types and a member. The port is bound to the context a hook gets on the pool, but 3.18 *Anchor* has a consuming path ask the anchor inside its transaction; an anchor that reaches its own tables through `context.ownTables` there takes a second connection from the pool while the transaction holds one, where a hook inside a transaction is lent the transaction's connection (E-2584). 3.18 says an anchor stored in the `velve` schema protects nothing in any case, and whether the consuming paths need a lent context is left to the wiring.
+
+<a id="e-3171"></a>
+
+### The anchor is read once, called on itself, and a missing member fails every call closed instead of the start
+`E-3171` · security-state-administration · plugin registration, revisit when a start error code can be added
+
+**Context.** E-900 has the registry read every plugin field once at start and work from that reading, and E-901 reads a plugin written as a class through its prototype. The hooks are copied out as bare functions and called without `this`. An anchor is different in kind: E-3334 requires its store to be out of reach of whoever can write the `velve` schema, so an anchor normally holds a client of a store of its own, and the ordinary way to write that is a class instance with the client in a field and the two members on its prototype. `asOneReadingOfTheAnchor` therefore reads `recordSeal` and `minimumVersion` once and calls each with the anchor object as `this`; replacing a member afterwards, or a getter answering differently on a second read, changes nothing. No other name of the anchor is held against the interface, so its own fields are allowed. A member that is missing or is no function, and an anchor that is `null` or not an object, is not refused at start: the port rejects every call through that member with an internal `plugin_anchor_member_missing` error, which `consultAnchors` reads as unavailable and `recordSealWithAnchors` reports as a failure, so each is answered with the alarm `anchor_unavailable` as 3.18 *Anchor* asks for an anchor that throws.
+**Rejected.** (a) A start error for an incomplete anchor, which is the better answer and which this branch could not give: a new code needs `StartupErrorCode` and its message in `src/core/auth/startup.ts` and a row in the start-error table of the Plugins chapter, and neither is among this branch's files; it is reported rather than added. (b) Refusing every name beside the two members with `plugin_field_unknown`, as the hooks object is held to its seven points, which refuses the class anchor with its own client and gains nothing a missing member does not already catch. (c) Calling the members without `this`, as the hooks are called, which makes that class anchor throw on every call.
+**Reason.** An anchor that cannot be asked must never be read as an anchor without a floor, and the one refusal available to this branch that is not silent is the one 3.18 already gives a throwing anchor.
+**Price.** A misconfigured anchor starts, and every sign-in, change and session resolution is then refused with the alarm `anchor_unavailable` until it is fixed: closed, but discovered at run time rather than at start. A misspelled member name beside a correct one is not reported at all.
+
+<a id="e-3172"></a>
+
+### Every port hands its anchor a frozen copy of what it is told
+`E-3172` · security-state-administration · plugin interface, settled
+
+**Context.** `recordSealWithAnchors` hands the same event object to every port, and the ports start one after another before any of them settles. An anchor that changed the event's `version` or `digest` before returning would change what every later anchor records, and so lower or move the floor another plugin keeps. Each port therefore passes its anchor a fresh frozen `{ userId, version, digest }`, and `minimumVersion` a fresh frozen `{ userId }`; an anchor that tries to write to either throws, which is a failure of that anchor alone. Each port also runs its member inside `Promise.resolve().then`, so a member that throws synchronously rejects the port's promise rather than throwing out of it.
+**Rejected.** Freezing the event once where the seal module builds it, which is in `src/core/security-state/`, outside this branch's files, and which still hands every anchor the same object.
+**Reason.** One plugin's anchor must not be able to decide what another plugin's anchor learns.
+**Price.** Two small objects per anchor call.
+
+<a id="e-3173"></a>
+
+### The Plugins chapter gains the anchor's row and its count of declared fields
+`E-3173` · security-state-administration · documentation, settled
+
+**Context.** CLAUDE.md §5 gives this branch the chapter "Security state: administration and migration" of `DOCUMENTATION.md` and no other. The anchor is a member of `VelvePlugin`, and the Plugins chapter holds the table of `VelvePlugin`'s fields, which a reader looking up the plugin type reads first; without a row there the member is documented only in a chapter that reader has no reason to open. The same chapter says a `middleware` array is refused beside "the seven declared fields", which the member makes eight. Both lines were changed in the Plugins chapter: one row added to the `VelvePlugin` table, pointing at this branch's chapter, and "seven" made "eight". Everything else about the anchor is in this branch's own chapter. The start-error table of the Plugins chapter is untouched, because E-3171 adds no start error.
+**Rejected.** Leaving the field table without the member and the count at seven, which leaves the reference wrong about the type it documents.
+**Reason.** A field table that omits a field is wrong, and a count that is one short is wrong, so each is fixed where it stands.
+**Price.** This branch writes two lines outside its partition, in a chapter the integration branch may also change.
+
+<a id="e-3174"></a>
+
+### An incomplete anchor refuses the start, and E-3171's run-time refusal is withdrawn
+`E-3174` · security-state-administration · plugin registration, settled
+
+**Context.** E-3171 let a plugin start whose `securityStateAnchor` was `null`, not an object, or lacked a function `recordSeal` or `minimumVersion`, and failed every call through the missing member closed at run time, because a start error needed `src/core/auth/startup.ts`, which was outside that change's files. Its own Rejected named the start error as the better answer. The orchestrator decided for it once the file could be changed. `StartupErrorCode` gains `plugin_anchor_incomplete` with its message, and `asOneReadingOfTheAnchor` raises it while it reads the two members once at start, so the check and the reading are the same reading (E-900). E-3171's statement that a misconfigured anchor starts and refuses every request with `anchor_unavailable` no longer holds; its reading of the members once, and the call with the anchor as `this`, still do. E-3171 is not edited.
+**Rejected.** Keeping the run-time refusal beside the start error, which would leave a path no configuration can reach.
+**Reason.** A configuration that cannot work is answered when `createVelveAuth` runs, as every other plugin misconfiguration is (3.11).
+**Price.** One more start error code, and the Plugins chapter's count of start errors goes from eighteen to nineteen.
+
+<a id="e-3175"></a>
+
+### The instance hands the security-state runtime the plugins' anchor ports
+`E-3175` · security-state-administration · instance wiring, settled
+
+**Context.** E-3401 left the instance building the security-state runtime with no anchor ports until this branch registered them. The runtime is built before the plugin runtime, because the session service and the frozen context the plugins are given take the runtime's seams, while the ports need the plugins registered. `assembleVelveAuth` therefore hands the runtime an array it fills with `pluginRuntime.securityStateAnchors` once the plugins are registered, before anything can call it; the runtime keeps the array, not a copy.
+**Rejected.** Building the plugin runtime first, which needs the session repository and so the runtime's seams. Passing a getter, which changes `SecurityStateRuntime`'s type, a module of the seal branch.
+**Reason.** The one ordering problem is solved where it arises, in the instance, without changing the seal branch's interface.
+**Price.** The array is mutable for the length of `assembleVelveAuth`; nothing reads it before the push.
+
+<a id="e-3176"></a>
+
+### The maintenance step names its accounts through an actor of its own
+`E-3176` · security-state-administration · ownership, settled
+
+**Context.** S-OWNER-7 lets an `Actor` come only from a proof of ownership, and `test/owner-proof-brand-proof.test.ts` lets `src/core/db/actor.ts` alone mint one. The first seal of an unsealed account runs the bound-envelope rewrite, which takes an `Actor`, and `sealChange` converts an unsealed account only for an `Actor`; for `{ unproven }` it leaves the account unsealed (E-3162). The maintenance step and the administrator reseal hold no session or token: section 3.15 B has the application call them in its own process after its own authorisation decision, without a route, and the step finds its accounts by reading the account table itself. `actor.ts` gains `actorOfMaintenance(userId)`, called only from `src/core/auth/security-state-maintenance.ts`.
+**Rejected.** Casting in the maintenance module, which the brand census refuses. A brand of its own for a listed account, which adds a marker to two census tests for a value only one module produces.
+**Reason.** No request can reach either call, so the id it names was chosen by the operator or read from the table, never sent by a caller.
+**Price.** `actor.ts` now holds one producer that takes a plain string; its safety rests on its single caller, which no test enforces.
+
+<a id="e-3177"></a>
+
+### The maintenance step reseals through the seal branch's change, and the reseal writes its own row
+`E-3177` · security-state-administration · maintenance, settled
+
+**Context.** Section 3.18 point 5 and S-INTEG-8 have `maintenance.sealSecurityState()` take each account in a transaction of its own under the account lock. It does so through `sealChange` of `src/core/security-state/runtime.ts` with the occasion `maintenance` and a change that keeps the epoch: the seal branch converts an unsealed account first, and the change's write runs the bound-envelope rewrite with the seal row present, so a sealed account's envelopes under an old key are re-encrypted by compare-and-set on the verified read and the new seal is computed from what that rewrite returned. A first seal counts as `sealed`; a seal whose version rose counts as `rekeyed`; one the change left as it was counts as `unchanged`; a broken state is answered by the seal branch's alarm and counted as `refused`. An account deleted between the listing and its transaction is skipped. Any other failure stops the run with `security_state_account_failed` naming the account, which section 3.18 describes for an envelope that cannot be opened and which leaves nothing half converted. After the accounts, the token MACs of the four token tables are rebound outside every account lock through the token branch's `rebindTokenRowsUnderCurrentKey`, over the instance's driver, so every compare-and-set runs in a library transaction at `READ COMMITTED` (E-3379), and a refused row is reported with the occasion `maintenance`. The report counts seal rows per key version after the run and adds the tokens and traces the pass found. `resealSecurityState` cannot use the seal branch's path, because that path refuses a broken read and S-INTEG-7 exists to seal one: it locks the account, reads it in the one statement, converts an account without a seal row like a first seal, draws a fresh epoch, places the version above the stored one and above every anchor's floor, writes the seal row by compare-and-set on the read or by insert, logs the reason at `warn` to the operator's sink, records the seal with the anchors and returns what it ratified. It refuses with `security_state_reason_missing`, `security_state_account_missing`, `security_state_anchor_unavailable`, `security_state_version_exhausted` or `security_state_changed_during_reseal`, each as `SecurityStateMaintenanceError.code`; neither call has a route, so none of these reaches `error-map.ts`.
+**Rejected.** (a) Counting any failure as refused and going on, which would turn a lost database connection into a report of refusals. (b) Deleting the account's sessions in the reseal, which section 3.18 does not ask for and which `beforeSessionRevoke` has no reason for; the fresh epoch already makes every session unusable. (c) A reseal under the seal branch's change with the broken-state check turned off, which needs a change to that module.
+**Reason.** The first seal and the rekey are legitimate changes and take the one path every change takes; the reseal is the one write that must not check, and it is kept apart and small.
+**Price.** The account pass repeats two small mappings between the read and the envelopes that `runtime.ts` keeps private, and the reseal writes `velve.security_state` outside the sealing module. A run that stops at an unconvertible account converts nothing after it until the account is repaired by SQL. The unchanged count includes the accounts an earlier run already converted, and every account is recorded with the anchors again on every run.
+
+<a id="e-3178"></a>
+
+### A seal over no envelope is not rewritten under a new key
+`E-3178` · security-state-administration · maintenance, open until the sealing path rewrites unchanged components under a new key
+
+**Context.** S-KEY-5 and point 5 ask the maintenance step to rewrite every seal under the current `state-mac` version. `sealUnderAccountLock` keeps the verified seal as it is when a change leaves the components and the epoch unchanged (E-3402). An account whose envelopes are rewritten under the new key changes its components, so its seal is rewritten; an account without any envelope — no password, no TOTP secret, no identity tokens — does not, and its seal stays under the old version, which the report then shows in `rowsByKeyVersion` and which keeps that version in the ring. `test/security-state-key-rotation.test.ts` holds the case as an expected failure. Closing it needs the sealing module to write a new seal when the stored one is under an old key version, which is the seal branch's file; it is reported, not changed here.
+**Rejected.** Raising the epoch to force the write, which signs every user of such an account out on every rotation.
+**Reason.** The report stays truthful about what is left under the old version, so the operator is not told a version can leave the ring when it cannot.
+**Price.** Until the sealing module changes, an operator rotating the root key cannot remove the old version while any account without an envelope exists.
+
+<a id="e-3179"></a>
+
+### The instance and Plugins chapters gain the start error and the two maintenance members
+`E-3179` · security-state-administration · documentation, settled
+
+**Context.** E-3173 recorded two lines this branch wrote into the Plugins chapter. The start error of E-3174 is listed in two tables outside this branch's chapter, the instance chapter's *What refuses to start* and the Plugins chapter's *Start errors*, whose count goes from eighteen to nineteen, and the instance chapter prints `AuthInternals` with `maintenance` holding `sweep` alone. Each table gains the row, the count is raised, the printed interface gains `sealSecurityState` and `resealSecurityState`, and one sentence after the paragraph on `sweep` points to this branch's chapter, which holds the whole reference of both calls.
+**Rejected.** Leaving the tables and the printed interface as they were, which would make them wrong about the code they document.
+**Reason.** A table of start errors that omits one, and an interface printed without two of its members, are wrong where they stand.
+**Price.** Five more lines outside this branch's partition, in chapters the integration branch may also change.
+
+<a id="e-3180"></a>
+
+### The seal over no envelope is rewritten under a new key, and the two mappings are imported
+`E-3180` · security-state-administration · maintenance, settled
+
+**Context.** E-3178 left an account without any envelope with its seal under the old key version after the maintenance step, because the sealing path kept an unchanged seal, and held the case as an expected failure. The seal branch now reseals a verified seal under an old `state-mac` version as a change (E-3408), so the case in `test/security-state-key-rotation.test.ts` is a plain one and passes. E-3177's Price named two mappings between the read and the envelopes that the maintenance module repeated because `runtime.ts` kept them private; that module now exports `envelopesOf` and `readWithEnvelopes`, and the copies are removed. E-3178 and E-3177 are not edited.
+**Rejected.** Keeping the copies, which would let the two mappings drift apart.
+**Reason.** One mapping in one place, and a test that states the requirement rather than its gap.
+**Price.** None.
+
+<a id="e-3181"></a>
+
+### An envelope the maintenance step cannot open fails its account, not the run
+`E-3181` · security-state-administration · maintenance, settled
+
+**Context.** E-3177 had any failure other than a broken state stop the whole run with `security_state_account_failed`, and its Price said a run stopping at an unconvertible account converts nothing after it until the account is repaired by SQL. The review of this branch showed that this reads section 3.18 wrongly: point 5 has the maintenance step fail *at that account*, and one account a writer spoiled, or one whose key version left the ring, then held back the first seal of every account after it in id order and the whole token pass. E-3177's Price was wrong when written; E-3177 is not edited. A `KeyError` from the conversion or the rekey — an envelope that cannot be opened — now counts its account as refused, raises the alarm `envelope_binding_mismatch` with the occasion `maintenance`, and the run goes on with the next account and the token pass. The report gains `refusedUserIds`, every account the run refused, broken or unreadable, so the operator knows which alarms to handle. Any other failure still stops the run. The administrator reseal threw the raw `KeyError` for the same case; it now raises the same alarm and refuses with `SecurityStateMaintenanceError` and the code `security_state_envelope_unreadable`, repairing no envelope (E-3219).
+**Rejected.** (a) Counting every failure as refused, which E-3177 already rejected for turning a lost connection into refusals. (b) Leaving the account ids out of the report, which leaves the operator with a count and an alarm stream to match by hand.
+**Reason.** The step must not let one account a writer can spoil hold back the sealing of every other.
+**Price.** `SecurityStateReport` carries a field section 3.15 B does not list yet, which the specification sync has to add; a run over many unreadable accounts reports each one, and the alarm's global bound holds back the alarms beyond it.
+
+<a id="e-3182"></a>
+
+### Three scans of the tree learn of the maintenance module
+`E-3182` · security-state-administration · tests, settled
+
+**Context.** The full gate on this branch failed three scans that read the tree or the shipped declarations. `test/api-internal-issue-parameters.test.ts` refuses the text `readonly sessionEpoch` in any declaration, to keep the session issue's internal parameters off the surface (E-3488); `SealedSecurityState` carries `sessionEpoch` because section 3.15 B and S-INTEG-7 have the reseal name the new epoch. `test/http-enumeration.test.ts` reports any file but `error-map.ts` that tests `instanceof ConcealedError`; the maintenance step does, to count an account the sealing path refused as `refused`, and it has no route, so nothing it reads reaches a caller's answer. `test/owner-predicate-proof.test.ts` lists the files whose row-changing statements name their table through a variable; the reseal's write of the seal row is one, and it carries `user_id = $1`. Each test now admits the maintenance module for exactly that one thing, with a comment naming this entry.
+**Rejected.** Renaming the field, which would contradict 3.15 B. Catching the refusal by its name instead of its class, which would pass the scan by hiding from it.
+**Reason.** Each scan guards a rule the maintenance module keeps, and each exception is the one fact that makes it keep it.
+**Price.** Three test files carry an exception for one module each, and a later misuse inside that module of the same pattern would pass the scan.
+
 <a id="e-3411"></a>
 
 ### The single test connection holds other callers back while a transaction is open, and E-3410's wait goes again
