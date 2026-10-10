@@ -817,7 +817,7 @@ method that reaches them some other way says which way, by name.**
 
 | Class | Why no proof is passed | Methods |
 |---|---|---|
-| secret address | the row is addressed by the hash of a secret the caller presents (E-242, E-2421) | `findSessionByTokenHash`, `deleteSessionByTokenHash`, `replaceSession`, `replacePresentedSession`; the three pending-authentication methods addressed by token hash |
+| secret address | the row is addressed by the hash of a secret the caller presents (E-242, E-2421) | `findSessionByTokenHash`, `deleteSessionByTokenHash`, `replacePresentedSession`; the three pending-authentication methods addressed by token hash |
 | consumed single-use row | the statement that removes the row is the proof (E-234, E-2421) | `consumeOneTimeToken`, `consumeFlow`, the WebAuthn challenge `consume`, `consumeCode` |
 | row that carries the proof | the insert writes the row whose secret later proves the owner (E-242, E-2422) | `insertSession`, `insertPendingAuthentication`, `replaceOneTimeToken`, the WebAuthn challenge `issue` |
 | credential under verification | the row read or written back is the credential a sign-in is verifying (E-2423) | password `findByUserId` and `replaceIfUnchanged`, recovery `pepperVersionsOf`, WebAuthn `findCredentialByCredentialId` and `recordAssertion` |
@@ -3892,9 +3892,8 @@ from a caller.
 | `deleteEverySessionOwnedByReturningIds({ actor })` | the same statement | the ids of the removed rows that passed |
 | `deleteEveryOtherSessionOwnedBy({ actor, keptSessionId })` | the account lock, the kept row read, `DELETE … WHERE user_id = $1 AND id <> $2`, then the kept row checked and rebound by compare-and-set, or deleted, one transaction | how many of the other rows passed their check |
 | `listSessionsOwnedBy({ actor, currentSessionId })` | `SELECT … WHERE user_id = $1` and both deadlines in the future | the live sessions, newest first |
-| `replaceSession({ previousTokenHash, insert })` | `DELETE` plus `INSERT`, one transaction | the new `Session` |
+| `replaceSessionOwnedBy({ actor, previousSessionId, insert })` | `DELETE … WHERE id = $1 AND user_id = $2` plus `INSERT`, one transaction | the new `Session` |
 | `replacePresentedSession({ presentedTokenHash, insert })` | `DELETE … WHERE token_sha256 = $1` when a token was presented, plus `INSERT`, one transaction | the new `Session` |
-| `replaceEverySessionOfUser({ actor, insert })` | `DELETE` of every row of the user plus `INSERT`, one transaction | the new `Session` |
 
 `observedAt` is the database's `now()`, read in the same statement as the row.
 Everything decided after the fact — whether the idle write is due, whether the
@@ -3912,23 +3911,24 @@ Every method that reaches rows by owner takes an `actor` and puts it in the
 `WHERE` clause (S-OWNER-1, S-OWNER-2). A row of another user and a row that
 never existed produce the same answer (S-OWNER-8).
 
-There is no method that updates `user_id`. `replaceSession` removes the previous
-row and inserts a new one in one transaction (S-FIX-1, E-23), and it refuses
-with `SessionOwnerMismatchError` if the row it removed belonged to a different
-user than the row it is about to write — a re-issue cannot move a session
-between accounts even by mistake.
+There is no method that updates `user_id`. `replaceSessionOwnedBy` removes the
+named row and inserts a new one in one transaction (S-FIX-1, E-23), and it refuses
+with `SessionOwnerMismatchError` if the new row would belong to a different user
+than the actor — a re-issue cannot move a session between accounts even by
+mistake.
 
-`replaceSession` also refuses, with `PreviousSessionMissingError`, when the
+`replaceSessionOwnedBy` also refuses, with `PreviousSessionMissingError`, when the
 `DELETE` matched no row: a replacement that replaces nothing is an issue, and
 issuing is what `insertSession` is for. Two requests re-issuing the same session
 at the same moment therefore leave one live session rather than two — the loser's
 `DELETE` matches nothing once the winner has committed, and its transaction rolls
-back. `SessionService.reissue` turns that refusal into `session_required`,
-because a session that vanished mid-flight is a session the caller no longer has.
+back. `SessionService.reissueSessionOfUser` passes that refusal on, and the OAuth
+link turns it into `link_session_gone`, because a session that vanished mid-flight
+is a session the caller no longer has.
 
 `replacePresentedSession` is what every sign-in uses. It removes the row the
 browser presented, if there is one, and inserts the new row in the same
-transaction. Unlike `replaceSession` it neither requires the presented row to
+transaction. Unlike `replaceSessionOwnedBy` it neither requires the presented row to
 exist nor to belong to the user signing in: a stale cookie, an expired row and a
 cookie of another account are all removed or found absent, and the sign-in
 proceeds. The answer overwrites that cookie in this browser, so a row left
@@ -3936,9 +3936,9 @@ standing would be a live session nobody holds any more (E-2120). It reaches the
 row through the same owner-free `DELETE` as signing out, for the same reason —
 the predicate is the secret itself.
 
-`replaceEverySessionOfUser` is what a password change uses: it removes **every**
-session of the user and issues one new one, in one transaction. There is no
-parameter that keeps the others (S-FIX-6).
+A password change removes every session of the user with
+`deleteEverySessionOwnedByReturningIds` and issues one new one with `issue`, in one
+transaction. There is no parameter that keeps the others (S-FIX-6).
 
 `deleteSessionByTokenHash` is the one statement here without an owner predicate,
 and it says so in its own text: `/* no owner predicate: S-OWNER-2, the predicate
@@ -4024,8 +4024,7 @@ read.
 |---|---|
 | `issue({ completes?, authorisedBy, userId, factors, observed })` | a new session and nothing removed — a sign-up writes this, as its first row cannot replace anything |
 | `issueReplacingPresented({ completes, authorisedBy, presentedToken, userId, factors, observed })` | a new session, and the row of the token the browser presented goes, whoever owns it, in one transaction — this is a sign-in |
-| `reissue({ completes, authorisedBy, previousToken, userId, factors, observed })` | a new session, and the previous row goes, in one transaction |
-| `reissueAfterCredentialChange({ completes, authorisedBy, resolved, factors, observed })` | a new session, and **every** other session of the user goes, in one transaction |
+| `reissueSessionOfUser({ completes, authorisedBy, actor, previousSessionId, factors, observed })` | a new session, and the named previous row goes, in one transaction; no other session of the user is touched |
 
 `completes`, which every issuing method takes, names what the issue completes
 (`SessionIssuePath`) and decides how an issue that writes no row is answered
@@ -4061,8 +4060,8 @@ completion passes the same token through
 `SecondFactorCompletion.complete({ presentedSessionToken })`, and the provider
 callback through `OAuthCallbackArrival.presentedSessionToken`. A new identity
 linked calls `reissueSessionOfUser`, which replaces the session the link began in.
-A password change calls `reissueAfterCredentialChange`, which has no parameter
-that could keep the other sessions (S-FIX-6). A password reset revokes every
+A password change deletes every session of the account and then calls `issue`
+inside the same transaction, so nothing keeps the other sessions (S-FIX-6). A password reset revokes every
 session of the account and then calls `issueReplacingPresented`, so a presented
 cookie of another account goes too. In every case the token the caller held
 before the change is gone from the table, and a request carrying it is answered
@@ -4149,11 +4148,11 @@ without the check. Three other places obtain an actor without it, each for a
 stated reason: `resolve` itself, which needs one to write the idle deadline of
 the session it has just resolved; `revokeEverySessionOfUser`, which is handed an
 actor rather than minting one, because the password reset has no session to
-resolve; and `reissueAfterCredentialChange`, deliberately.
+resolve; and the issue a password change makes, deliberately.
 
-`reissueAfterCredentialChange` is that third case. B.9 puts the
+That issue is the third case. B.9 puts the
 freshness requirement on `password.set` and `password.change`, which is *before*
-the password is hashed and written; a check inside the re-issue would run after
+the password is hashed and written; a check inside the issue would run after
 it, and failing there would leave the new password in place, the other sessions
 alive and the caller without a session — the half state S-FIX-6 exists to
 prevent.
@@ -5751,10 +5750,8 @@ signing that device back in.
 
 The session service call behind this is
 `reissueSessionOfUser({ completes, authorisedBy, actor, previousSessionId, factors, observed })`,
-with `completes: "oauth_link"`. It is
-the third re-issue shape beside `reissue`, which finds the previous row by its
-token, and `reissueAfterCredentialChange`, which replaces every row the account
-has; this one names the row by id, touches no other, and refuses when the named
+with `completes: "oauth_link"`. It
+names the row by id, touches no other, and refuses when the named
 row is not there. It is reached through `boundTo(driver)`, which returns the same
 session service over another driver so that the session write joins the
 transaction the identity write is already in — carrying the configured deadlines
@@ -6187,6 +6184,7 @@ What counts as weaker, option by option:
 | `recoveryCodes` | `count` below ten |
 | `clock` | any clock the caller supplies |
 | `securityState` | `sealing: "migrating"`; the line says that unsealed accounts are open to old envelopes copied from another account |
+| `limits` | `passkeysPerAccount` or `identitiesPerAccount` above its default of 20 and 10; the line gives both values chosen, since every check of an account reads and seals every passkey and identity |
 
 The other rows say nothing weakens them: `password` and a username mode without
 recovery codes are refused instead, and a TOTP tolerance above one step is not
