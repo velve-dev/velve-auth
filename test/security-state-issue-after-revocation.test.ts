@@ -254,9 +254,9 @@ describe("premise: the issue point 3 prescribed until now, after a check that pr
 describe("section 3.18 point 3 in the binding German specification", () => {
 	const german = readFileSync(new URL("../VELVE-AUTH-ARCHITEKTUR.md", import.meta.url), "utf8");
 
-	it("inserts a session only under the version and the epoch the authorising check read", () => {
+	it("inserts a session only under the components version and the epoch the authorising check read", () => {
 		expect(german).toContain(
-			"`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $2 AND version = $3`, mit Epoche und Version der erlaubenden Prüfung",
+			"`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $2 AND components_version = $3`, mit Epoche und `components_version` der erlaubenden Prüfung",
 		);
 	});
 

@@ -28,6 +28,7 @@ import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import { type AnchorReading, consultAnchors } from "../security-state/anchor.js";
+import { FIRST_GENERATIONS } from "../security-state/encoding.js";
 import { assertBelowCredentialLimit } from "../security-state/limits.js";
 import { type SecurityStateRead, sealedComponentsOf } from "../security-state/read.js";
 import {
@@ -609,15 +610,17 @@ export function createOAuthService(input: {
 		const actor = actorOfConsumedOAuthFlow(input.linked.account);
 		const outcome: { issued?: IssuedSession } = {};
 		//a link inserts the identity under the lock and reseals before the session is issued under it (S-INTEG-3)
+		//the session the link replaces is revoked on its own and moves the generation the others follow (E-3521)
 		const sealed = await sealChange(services.securityState, actor, {
 			epoch: "keep",
-			write: async (transaction, read) => {
+			moves: () => ({ session: true }),
+			write: async (transaction, read, target) => {
 				if (read.disabled) {
 					throw new ConcealedError("user_disabled_on_oauth_flow");
 				}
 				assertBelowCredentialLimit(read, "identity", services.securityState.limits);
 				//a link only ever inserts and the unique pair refuses every existing identity (E-979)
-				return refuseIfAlreadyLinked(
+				const identity = refuseIfAlreadyLinked(
 					await createOAuthIdentityRepository({ driver: transaction, schema, keys }).insertIdentity(
 						{
 							actor,
@@ -625,6 +628,15 @@ export function createOAuthService(input: {
 						},
 					),
 				);
+				await sessionRowsOn(services.sessions, transaction).rebindToGeneration({
+					actor,
+					step: {
+						from: read.seal?.sessionGeneration ?? FIRST_GENERATIONS.sessionGeneration,
+						to: target.sessionGeneration,
+					},
+					excluding: [input.linked.previousSessionId],
+				});
+				return identity;
 			},
 			after: (read) => sealedIdentityAfter(read, input.facts.provider, input.facts.subject),
 			afterSeal: async (transaction, next) => {

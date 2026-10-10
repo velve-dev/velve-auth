@@ -1,6 +1,11 @@
 import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
-import { epochOf, microsOf, type SecurityStateSealing } from "../db/repositories/session.js";
+import {
+	epochOf,
+	generationOf,
+	microsOf,
+	type SecurityStateSealing,
+} from "../db/repositories/session.js";
 import { pendingBinding } from "../factor/pending/binding.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { sessionBinding } from "../session/binding.js";
@@ -45,6 +50,10 @@ interface StoredTokenRow {
 	readonly factor_names?: string;
 	readonly session_epoch?: string | null;
 	readonly created_at_us?: string;
+	readonly idle_expires_at_us?: string | null;
+	readonly absolute_expires_at_us?: string | null;
+	readonly session_generation?: string | null;
+	readonly attempt_generation?: string | null;
 	readonly attempts?: number;
 	readonly purpose?: string;
 	readonly payload_text?: string | null;
@@ -76,12 +85,18 @@ function sessionBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBind
 	const names = namesOf(row.factor_names);
 	const sessionEpoch = exactIntegerOf(row.session_epoch);
 	const createdAtMicros = exactIntegerOf(row.created_at_us);
+	const sessionGeneration = exactIntegerOf(row.session_generation);
+	const idleExpiresAtMicros = row.idle_expires_at_us ?? null;
+	const absoluteExpiresAtMicros = row.absolute_expires_at_us ?? null;
 	if (
 		row.user_id === null ||
 		row.session_id === undefined ||
 		names === null ||
 		sessionEpoch === null ||
-		createdAtMicros === null
+		createdAtMicros === null ||
+		sessionGeneration === null ||
+		idleExpiresAtMicros === null ||
+		absoluteExpiresAtMicros === null
 	) {
 		return null;
 	}
@@ -89,21 +104,30 @@ function sessionBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBind
 		sessionId: row.session_id,
 		sessionEpoch,
 		createdAtMicros,
+		sessionGeneration,
+		idleExpiresAtMicros,
+		absoluteExpiresAtMicros,
 	});
 }
 
 function pendingBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
 	const names = namesOf(row.factor_names);
 	const sessionEpoch = exactIntegerOf(row.session_epoch);
+	const attemptGeneration = exactIntegerOf(row.attempt_generation);
 	if (
 		row.user_id === null ||
 		names === null ||
 		row.attempts === undefined ||
-		sessionEpoch === null
+		sessionEpoch === null ||
+		attemptGeneration === null
 	) {
 		return null;
 	}
-	return pendingBinding(row.user_id, tokenHash, names, { attempts: row.attempts, sessionEpoch });
+	return pendingBinding(row.user_id, tokenHash, names, {
+		attempts: row.attempts,
+		sessionEpoch,
+		attemptGeneration,
+	});
 }
 
 function oneTimeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
@@ -139,6 +163,9 @@ const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 			sealing,
 		) => `t.id::text AS session_id, array_to_json(t.factors)::text AS factor_names,
 		${microsOf("t.created_at")} AS created_at_us,
+		${microsOf("t.idle_expires_at")} AS idle_expires_at_us,
+		${microsOf("t.absolute_expires_at")} AS absolute_expires_at_us,
+		${generationOf(`(SELECT session_generation FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_generation,
 		${epochOf(`(SELECT session_epoch FROM ${states} st WHERE st.user_id = t.user_id)`, sealing)}::text AS session_epoch`,
 		guardsAttempts: false,
 		bindingOf: sessionBindingOf,
@@ -152,7 +179,7 @@ const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 	pending_authentication: {
 		hashColumn: "token_sha256",
 		contentColumns: () =>
-			"array_to_json(t.factors_completed)::text AS factor_names, t.attempts, t.session_epoch::text AS session_epoch",
+			"array_to_json(t.factors_completed)::text AS factor_names, t.attempts, t.session_epoch::text AS session_epoch, t.attempt_generation::text AS attempt_generation",
 		guardsAttempts: true,
 		bindingOf: pendingBindingOf,
 	},

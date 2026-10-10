@@ -269,7 +269,7 @@ describe("the token and the repository underneath the service", () => {
 		const booked = await repository.bookAttempt({
 			tokenHash: hashPendingToken(toPendingToken("x".repeat(43))),
 			checked: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1, attempts: 0 },
-			next: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1 },
+			next: { tokenMac: new Uint8Array(32), tokenMacKeyVersion: 1, attemptGeneration: 1 },
 		});
 
 		expect(booked).toBe(false);

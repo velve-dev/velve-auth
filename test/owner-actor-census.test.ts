@@ -137,8 +137,8 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.recordAssertion":
 		"credential under verification",
 
-	//the epoch a new pending row binds is read for the account whose row the insert writes (E-3484)
-	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.sessionEpochOf":
+	//the epoch and generation a new pending row binds are read for the account whose row the insert writes (E-3484)
+	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.accountStateOf":
 		"row that carries the proof",
 	"src/core/factor/totp/repository.ts#createTotpRepository.findCredentialOf": "pending resolution",
 	"src/core/factor/totp/repository.ts#createTotpRepository.claimTimeStepOfPending":

@@ -19,6 +19,7 @@ export interface PendingAuthenticationInsert extends StoredTokenMac {
 	readonly factorsCompleted: readonly AuthenticationFactor[];
 	readonly lifetimeInSeconds: number;
 	readonly sessionEpoch: number;
+	readonly attemptGeneration: number;
 }
 
 export interface StoredPendingAuthentication {
@@ -52,7 +53,20 @@ export interface PendingCandidate<Decoded> extends StoredTokenMac {
 	readonly sessionEpoch: number;
 	/** the account's epoch now, read in the statement that read the row; 1 for an account without a seal row */
 	readonly currentEpoch: number;
+	/** the attempt generation stored with the row, which its MAC binds */
+	readonly attemptGeneration: number;
+	/** the account's attempt generation now, or null for an account without a seal row */
+	readonly currentAttemptGeneration: number | null;
+	/** the token hash of the pending row whose booking moved the account's attempt generation last */
+	readonly attemptLast: Uint8Array | null;
 	decode(): Decoded;
+}
+
+/** what a new pending row binds of its account's state */
+export interface PendingAccountState {
+	readonly sessionEpoch: number;
+	/** null for an account without a seal row, whose rows bind the first generation */
+	readonly attemptGeneration: number | null;
 }
 
 export interface PendingAuthenticationRepositoryOptions {
@@ -65,8 +79,8 @@ export interface PendingAuthenticationRepository {
 	insertPendingAuthentication(
 		input: PendingAuthenticationInsert,
 	): Promise<StoredPendingAuthentication>;
-	//the epoch a new row binds is the account's own, which its token is about to prove (E-3484)
-	sessionEpochOf(input: { readonly userId: string }): Promise<number>;
+	//the epoch and generation a new row binds are the account's own, which its token is about to prove (E-3484)
+	accountStateOf(input: { readonly userId: string }): Promise<PendingAccountState>;
 	findPendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
 	): Promise<PendingCandidate<PendingAuthenticationWithOwner> | null>;
@@ -74,7 +88,7 @@ export interface PendingAuthenticationRepository {
 	bookAttempt(input: {
 		readonly tokenHash: Uint8Array;
 		readonly checked: StoredTokenMac & { readonly attempts: number };
-		readonly next: StoredTokenMac;
+		readonly next: StoredTokenMac & { readonly attemptGeneration: number };
 	}): Promise<boolean>;
 	deletePendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
@@ -102,6 +116,9 @@ interface MacColumns {
 	readonly token_mac_key_version: number;
 	readonly session_epoch: string;
 	readonly current_epoch: string;
+	readonly attempt_generation: string;
+	readonly current_attempt_generation: string | null;
+	readonly attempt_last: Uint8Array | null;
 }
 
 interface OwnedPendingRowShape
@@ -164,6 +181,10 @@ function candidateOf<Decoded>(
 		storedFactorNames,
 		sessionEpoch: Number(row.session_epoch),
 		currentEpoch: Number(row.current_epoch),
+		attemptGeneration: Number(row.attempt_generation),
+		currentAttemptGeneration:
+			row.current_attempt_generation === null ? null : Number(row.current_attempt_generation),
+		attemptLast: row.attempt_last,
 		tokenMac: row.token_mac,
 		tokenMacKeyVersion: row.token_mac_key_version,
 		decode: () => decode((storedFactorNames ?? []).join(",")),
@@ -210,9 +231,9 @@ function insertStatement(table: string, totp: string, webauthn: string, recovery
 	return `WITH inserted AS (
 		INSERT INTO ${table}
 			(token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
-			session_epoch)
+			session_epoch, attempt_generation)
 		VALUES ($1, $2, $3::text[], now() + make_interval(secs => $4::double precision), $5, $6,
-			$7::bigint)
+			$7::bigint, $8::bigint)
 		RETURNING user_id, factors_completed, attempts, created_at, expires_at
 	)
 	SELECT i.user_id, array_to_string(i.factors_completed, ',') AS factors_completed,
@@ -226,6 +247,14 @@ function epochColumns(stored: string, states: string, owner: string): string {
 	return `${stored}::text AS session_epoch,
 		COALESCE((SELECT st.session_epoch FROM ${states} st WHERE st.user_id = ${owner}), 1)::text
 			AS current_epoch`;
+}
+
+//the generation a booking moves is read with the row to tell a row written back from a live one (E-3519)
+function generationColumns(row: string, states: string): string {
+	return `${row}.attempt_generation::text AS attempt_generation,
+		(SELECT st.attempt_generation::text FROM ${states} st WHERE st.user_id = ${row}.user_id)
+			AS current_attempt_generation,
+		(SELECT st.attempt_last FROM ${states} st WHERE st.user_id = ${row}.user_id) AS attempt_last`;
 }
 
 function enrolmentColumns(totp: string, webauthn: string, recovery: string, owner: string): string {
@@ -246,6 +275,7 @@ function resolveStatement(
 	return `SELECT p.user_id, array_to_json(p.factors_completed)::text AS factor_names,
 		p.attempts, p.created_at, p.expires_at, p.token_mac, p.token_mac_key_version,
 		${epochColumns("p.session_epoch", states, "p.user_id")},
+		${generationColumns("p", states)},
 		u.disabled_at, now() AS observed_at,
 		${enrolmentColumns(totp, webauthn, recovery, "p.user_id")}
 	FROM ${table} p
@@ -255,7 +285,7 @@ function resolveStatement(
 
 function countAttemptStatement(table: string): string {
 	return `UPDATE ${table} /* no owner predicate: S-OWNER-2, E-242, the predicate is the secret itself */
-	SET attempts = $3, token_mac = $4, token_mac_key_version = $5
+	SET attempts = $3, token_mac = $4, token_mac_key_version = $5, attempt_generation = $6
 	WHERE token_sha256 = $1 AND token_mac = $2 AND attempts = $3 - 1 AND expires_at > now()
 	RETURNING attempts`;
 }
@@ -265,12 +295,14 @@ function deleteStatement(table: string, states: string): string {
 	WHERE token_sha256 = $1 AND expires_at > now()
 	RETURNING user_id, array_to_json(factors_completed)::text AS factor_names, attempts,
 		token_mac, token_mac_key_version,
-		${epochColumns(`${table}.session_epoch`, states, `${table}.user_id`)}`;
+		${epochColumns(`${table}.session_epoch`, states, `${table}.user_id`)},
+		${generationColumns(table, states)}`;
 }
 
-function sessionEpochStatement(states: string): string {
+function accountStateStatement(states: string): string {
 	return `SELECT COALESCE((SELECT session_epoch FROM ${states} WHERE user_id = $1), 1)::text
-		AS session_epoch`;
+		AS session_epoch,
+		(SELECT attempt_generation FROM ${states} WHERE user_id = $1)::text AS attempt_generation`;
 }
 
 export function createPendingAuthenticationRepository(
@@ -292,7 +324,7 @@ export function createPendingAuthenticationRepository(
 	);
 	const countAttemptSql = countAttemptStatement(table);
 	const deleteSql = deleteStatement(table, states);
-	const sessionEpochSql = sessionEpochStatement(states);
+	const accountStateSql = accountStateStatement(states);
 
 	async function removeByTokenHash(
 		driver: Driver,
@@ -317,6 +349,7 @@ export function createPendingAuthenticationRepository(
 				insert.tokenMac,
 				insert.tokenMacKeyVersion,
 				insert.sessionEpoch,
+				insert.attemptGeneration,
 			]);
 			if (row === undefined) {
 				throw new TypeError("the insert of a pending authentication returned no row");
@@ -324,11 +357,18 @@ export function createPendingAuthenticationRepository(
 			return toStored(row);
 		},
 
-		async sessionEpochOf({ userId }) {
-			const [row] = await options.driver.query<{ session_epoch: string }>(sessionEpochSql, [
-				userId,
-			]);
-			return Number(row?.session_epoch);
+		async accountStateOf({ userId }) {
+			const [row] = await options.driver.query<{
+				session_epoch: string;
+				attempt_generation: string | null;
+			}>(accountStateSql, [userId]);
+			return {
+				sessionEpoch: Number(row?.session_epoch),
+				attemptGeneration:
+					row?.attempt_generation === null || row?.attempt_generation === undefined
+						? null
+						: Number(row.attempt_generation),
+			};
 		},
 
 		async findPendingAuthenticationByTokenHash(tokenHash) {
@@ -349,6 +389,7 @@ export function createPendingAuthenticationRepository(
 				checked.attempts + 1,
 				next.tokenMac,
 				next.tokenMacKeyVersion,
+				next.attemptGeneration,
 			]);
 			return rows.length === 1;
 		},

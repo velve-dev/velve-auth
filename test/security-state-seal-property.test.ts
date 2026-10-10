@@ -45,6 +45,17 @@ function randomState(random: Random): SecurityState {
 		userId: uuid(random),
 		version: 1 + integerBelow(random, 1000),
 		sessionEpoch: 1 + integerBelow(random, 1000),
+		componentsVersion: 1 + integerBelow(random, 1000),
+		sessionGeneration: 1 + integerBelow(random, 1000),
+		attemptGeneration: 1 + integerBelow(random, 1000),
+		attemptLast: random() < 0.5 ? null : digestBytes(random),
+		tokenGenerations: {
+			email_verify: 1 + integerBelow(random, 1000),
+			password_reset: 1 + integerBelow(random, 1000),
+			email_change: 1 + integerBelow(random, 1000),
+			magic_link: 1 + integerBelow(random, 1000),
+		},
+		tokenLast: random() < 0.5 ? null : digestBytes(random),
 		email: random() < 0.2 ? null : `${asciiText(random, 1, 6)}@example`,
 		emailVerified: random() < 0.5,
 		disabled: random() < 0.5,
@@ -168,9 +179,37 @@ function boundaryShifted(base: SecurityState, random: Random): SecurityState {
 	}
 }
 
+//the generations a booking, a revocation and a redemption move are fields like any other (E-3519)
+function generationMutated(base: SecurityState, random: Random, field: number): SecurityState {
+	switch (field) {
+		case 14:
+			return { ...base, sessionGeneration: base.sessionGeneration + 1 };
+		case 15:
+			return { ...base, attemptGeneration: base.attemptGeneration + 1 };
+		case 16:
+			return { ...base, attemptLast: base.attemptLast === null ? digestBytes(random) : null };
+		case 17:
+			return {
+				...base,
+				tokenGenerations: {
+					...base.tokenGenerations,
+					email_change: base.tokenGenerations.email_change + 1,
+				},
+			};
+		case 18:
+			return { ...base, tokenLast: base.tokenLast === null ? digestBytes(random) : null };
+		default:
+			return { ...base, componentsVersion: base.componentsVersion + 1 };
+	}
+}
+
 //a mutated state must differ from its base in exactly one field
 function singleFieldMutated(base: SecurityState, random: Random): SecurityState {
-	switch (integerBelow(random, 14)) {
+	const field = integerBelow(random, 20);
+	if (field >= 14) {
+		return generationMutated(base, random, field);
+	}
+	switch (field) {
 		case 0:
 			return { ...base, userId: uuid(random) };
 		case 1:

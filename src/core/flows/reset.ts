@@ -22,6 +22,7 @@ import type { SecurityStateRead } from "../security-state/read.js";
 import { type ChangedAccount, recordSealLater, sealChange } from "../security-state/runtime.js";
 import {
 	componentsAfter,
+	type GenerationMoves,
 	SealingRefusedError,
 	type SealWritten,
 } from "../security-state/sealing.js";
@@ -29,7 +30,9 @@ import { sessionRowsOn } from "../session/rows.js";
 import { randomUuid } from "../token/random.js";
 import {
 	mintArtefact,
+	movesOfSpentToken,
 	redeemOrRefuse,
+	refuseATokenWrittenBack,
 	refuseUnlessTheAddressIsStillTheAccounts,
 	sendOrUndo,
 	subjectOfAddress,
@@ -124,6 +127,8 @@ async function replacePassword(
 		readonly refusal: ConcealedReason;
 		readonly occasion: "token_redemption" | "change";
 		readonly claim: (tx: Driver, read: SecurityStateRead) => Promise<ClaimedUnderLock>;
+		/** the generation the spent artefact moves, where the replacement redeems a link */
+		readonly moves?: GenerationMoves;
 	},
 ): Promise<ReplacedPassword> {
 	const { schema, keys, sessions, pluginRuntime, securityState } = environment.services;
@@ -134,6 +139,7 @@ async function replacePassword(
 		input.account,
 		{
 			epoch: "raise",
+			moves: () => input.moves ?? {},
 			write: async (tx, read) => {
 				const claimed = await input.claim(tx, read);
 				if (claimed.disabled) {
@@ -245,8 +251,10 @@ export async function redeemReset(
 			derived,
 			refusal: "broken_state_on_token_redemption",
 			occasion: "token_redemption",
+			moves: movesOfSpentToken(redeemed.spent),
 			claim: async (_tx, read) => {
 				refuseUnlessTheAddressIsStillTheAccounts(environment.services, redeemed, read.email);
+				refuseATokenWrittenBack(environment.services, redeemed.userId, redeemed.spent, read);
 				//a token presented for a disabled account stays spent once it is enabled again (E-2879)
 				return {
 					actor: actorOfRedeemedOneTimeToken(redeemed),

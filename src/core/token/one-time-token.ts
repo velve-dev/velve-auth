@@ -26,7 +26,16 @@ export interface IssuedOneTimeToken {
 export type OneTimeTokenRedemption = RedeemedOneTimeToken & {
 	readonly purpose: OneTimeTokenPurpose;
 	readonly payload: OneTimeTokenPayload | null;
+	/** what the account's token generation must still be at, and what moves it */
+	readonly spent: SpentToken;
 };
+
+/** the token a redemption spent, which the account's token generation must still be at when it takes effect */
+export interface SpentToken {
+	readonly purpose: OneTimeTokenPurpose;
+	readonly tokenSha256: Uint8Array;
+	readonly tokenGeneration: number | null;
+}
 
 export interface OneTimeTokens {
 	issue(request: OneTimeTokenRequest): Promise<IssuedOneTimeToken>;
@@ -41,6 +50,30 @@ interface OneTimeTokenBindingOptions {
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 }
 
+const TOKEN_GENERATION = "tokenGeneration";
+
+//the generation a link binds travels in its payload under the mac like the address it was mailed to (E-3522)
+function payloadUnder(
+	payload: OneTimeTokenPayload | null,
+	tokenGeneration: number | null,
+): OneTimeTokenPayload | null {
+	return tokenGeneration === null ? payload : { ...payload, [TOKEN_GENERATION]: tokenGeneration };
+}
+
+function tokenGenerationIn(payload: OneTimeTokenPayload | null): number | null {
+	const generation = payload?.[TOKEN_GENERATION];
+	return typeof generation === "number" && Number.isSafeInteger(generation) ? generation : null;
+}
+
+//the generation is the library's own and the caller gets back the payload it issued
+function payloadAsIssued(payload: OneTimeTokenPayload | null): OneTimeTokenPayload | null {
+	if (payload === null || !(TOKEN_GENERATION in payload)) {
+		return payload;
+	}
+	const { [TOKEN_GENERATION]: _bound, ...issued } = payload;
+	return Object.keys(issued).length === 0 ? null : issued;
+}
+
 export function createOneTimeTokens(
 	repository: OneTimeTokenRepository,
 	options: OneTimeTokenBindingOptions,
@@ -49,18 +82,19 @@ export function createOneTimeTokens(
 		async issue(request) {
 			const token = createSecretToken();
 			const tokenSha256 = hashSecretToken(token);
-			const payload = request.payload ?? null;
-			const binding: TokenBinding = {
-				purpose: request.purpose,
-				ownerId: request.userId,
-				tokenSha256,
-				content: { payload },
-			};
 			const { expiresAt } = await repository.replaceOneTimeToken({
 				...request,
 				tokenSha256,
-				payload,
-				...(await bindToken(options.keys, binding)),
+				bindUnder: async (tokenGeneration) => {
+					const payload = payloadUnder(request.payload ?? null, tokenGeneration);
+					const binding: TokenBinding = {
+						purpose: request.purpose,
+						ownerId: request.userId,
+						tokenSha256,
+						content: { payload },
+					};
+					return { payload, ...(await bindToken(options.keys, binding)) };
+				},
 			});
 			return { token, expiresAt };
 		},
@@ -94,7 +128,16 @@ export function createOneTimeTokens(
 				});
 				return null;
 			}
-			return candidate.userId === null ? null : { ...candidate.accept(), purpose };
+			if (candidate.userId === null) {
+				return null;
+			}
+			const accepted = candidate.accept();
+			return {
+				...accepted,
+				payload: payloadAsIssued(accepted.payload),
+				purpose,
+				spent: { purpose, tokenSha256, tokenGeneration: tokenGenerationIn(accepted.payload) },
+			};
 		},
 	};
 }

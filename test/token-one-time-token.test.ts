@@ -14,6 +14,7 @@ import {
 	type OneTimeTokens,
 	toSecretToken,
 } from "../src/core/token/index.js";
+import type { OneTimeTokenRedemption } from "../src/core/token/one-time-token.js";
 import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
@@ -68,6 +69,15 @@ async function expire(userId: string): Promise<void> {
 	);
 }
 
+//what a redemption spent is held to the account's token generation and is not what this file tests
+function withoutSpent(redeemed: OneTimeTokenRedemption | null) {
+	if (redeemed === null) {
+		return null;
+	}
+	const { spent: _spent, ...rest } = redeemed;
+	return rest;
+}
+
 async function clear(): Promise<void> {
 	await connection.query(`DELETE FROM ${schema}.one_time_token`, []);
 }
@@ -79,7 +89,7 @@ describe("a one-time token is valid exactly once (S-REPLAY-1, S-REPLAY-2)", () =
 		const issued = await tokens.issue({ purpose, userId: user });
 
 		expect(await storedRows(user, purpose)).toBe(1);
-		expect(await tokens.redeem({ token: issued.token, purpose })).toStrictEqual({
+		expect(withoutSpent(await tokens.redeem({ token: issued.token, purpose }))).toStrictEqual({
 			purpose,
 			userId: user,
 			payload: null,
@@ -239,7 +249,9 @@ describe("the payload travels with the token", () => {
 			payload: { newEmail: "next@example.com" },
 		});
 
-		expect(await tokens.redeem({ token: issued.token, purpose: "email_change" })).toStrictEqual({
+		expect(
+			withoutSpent(await tokens.redeem({ token: issued.token, purpose: "email_change" })),
+		).toStrictEqual({
 			purpose: "email_change",
 			userId: user,
 			payload: { newEmail: "next@example.com" },

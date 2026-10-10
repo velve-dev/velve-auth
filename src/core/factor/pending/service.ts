@@ -5,6 +5,7 @@ import type {
 	ResolvedPendingAuthentication,
 } from "../../http/caller.js";
 import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
+import { equalsInConstantTime } from "../../keys/constant-time.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import {
 	bindToken,
@@ -63,11 +64,26 @@ export type FailedAttempt =
 	| { readonly outcome: "attempts_remain"; readonly attemptsRemaining: number }
 	| { readonly outcome: "exhausted" };
 
+/** what sealing a booked attempt found, a refusal being a broken state the factor check answers */
+export type SealedAttempt = "booked" | "missed" | "written_back" | "overtaken" | "refused";
+
+/** books an attempt over the pending row and then moves the account's attempt generation under its lock */
+export type AttemptSeal = (input: {
+	readonly userId: string;
+	readonly tokenHash: Uint8Array;
+	/** the generation the booked row binds before the booking */
+	readonly from: number;
+	/** the compare-and-set on the pending row, taken before the account lock, binding the generation the account moves to */
+	readonly book: (tx: Driver, to: number) => Promise<boolean>;
+}) => Promise<SealedAttempt>;
+
 export interface PendingAuthenticationServiceOptions {
 	readonly driver: Driver;
 	readonly keys: KeyProvider;
 	readonly schema?: string;
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
+	//a booking moves a generation under the seal and a row written back binds one the account has left (E-3519)
+	readonly attemptSeal?: AttemptSeal;
 }
 
 /** the second factors a verified read holds, which the pending row must still find when it is written */
@@ -95,7 +111,12 @@ interface CheckedPendingRow extends StoredTokenMac {
 	readonly factorNames: readonly string[];
 	readonly attempts: number;
 	readonly sessionEpoch: number;
+	readonly attemptGeneration: number;
+	/** whether the account had a seal row when the row was read, which only then moves a generation */
+	readonly accountSealed: boolean;
 }
+
+const FIRST_ATTEMPT_GENERATION = 1;
 
 function attemptsRemainingAfter(attempts: number): number {
 	return Math.max(MAXIMUM_PENDING_ATTEMPTS - attempts, 0);
@@ -127,12 +148,46 @@ export function createPendingAuthenticationService(
 		return pendingBinding(candidate.userId, tokenHash, candidate.storedFactorNames ?? [], {
 			attempts: candidate.attempts,
 			sessionEpoch: candidate.sessionEpoch,
+			attemptGeneration: candidate.attemptGeneration,
 		});
 	}
 
 	//a pending row a mass revocation has overtaken is no row, and no writer's doing (E-3484)
 	function isOvertaken(candidate: PendingCandidate<unknown>): boolean {
 		return candidate.sessionEpoch !== candidate.currentEpoch;
+	}
+
+	function generationLeftBehind(candidate: PendingCandidate<unknown>): boolean {
+		return (
+			candidate.attemptGeneration !==
+			(candidate.currentAttemptGeneration ?? FIRST_ATTEMPT_GENERATION)
+		);
+	}
+
+	//a row whose own booking moved the generation past it was written back, a sibling's booking only overtook it (E-3519)
+	function wasWrittenBack(tokenHash: Uint8Array, candidate: PendingCandidate<unknown>): boolean {
+		return (
+			candidate.attemptLast !== null &&
+			equalsInConstantTime(new Uint8Array(candidate.attemptLast), new Uint8Array(tokenHash))
+		);
+	}
+
+	//a library row overtaken by a revocation or by the account's generation is answered as missing (E-3519)
+	function supersededLibraryRow(
+		tokenHash: Uint8Array,
+		candidate: PendingCandidate<unknown>,
+		verdict: TokenBindingVerdict,
+	): boolean {
+		if (verdict !== "valid") {
+			return false;
+		}
+		if (!isOvertaken(candidate) && generationLeftBehind(candidate)) {
+			if (wasWrittenBack(tokenHash, candidate)) {
+				reportRefusal(candidate.userId, "mismatch");
+			}
+			return true;
+		}
+		return isOvertaken(candidate);
 	}
 
 	async function verdictOf(
@@ -161,7 +216,7 @@ export function createPendingAuthenticationService(
 			return null;
 		}
 		const verdict = await verdictOf(tokenHash, candidate);
-		if (verdict === "valid" && isOvertaken(candidate)) {
+		if (supersededLibraryRow(tokenHash, candidate, verdict)) {
 			return null;
 		}
 		const decoded = verdict === "valid" ? decodedOrNull(() => candidate.decode()) : null;
@@ -178,6 +233,8 @@ export function createPendingAuthenticationService(
 			factorNames: candidate.storedFactorNames ?? [],
 			attempts: candidate.attempts,
 			sessionEpoch: candidate.sessionEpoch,
+			attemptGeneration: candidate.attemptGeneration,
+			accountSealed: candidate.currentAttemptGeneration !== null,
 			tokenMac: candidate.tokenMac,
 			tokenMacKeyVersion: candidate.tokenMacKeyVersion,
 		};
@@ -212,7 +269,7 @@ export function createPendingAuthenticationService(
 			reread.attempts > pinned.attempts ||
 			(reread.attempts === pinned.attempts &&
 				reread.tokenMacKeyVersion > pinned.tokenMacKeyVersion);
-		if (verdict === "valid" && isOvertaken(reread)) {
+		if (supersededLibraryRow(tokenHash, reread, verdict)) {
 			return "missing";
 		}
 		if (verdict !== "valid" || !advanced) {
@@ -227,15 +284,65 @@ export function createPendingAuthenticationService(
 		return { outcome: "exhausted" };
 	}
 
-	async function bookedOver(tokenHash: Uint8Array, row: CheckedPendingRow): Promise<boolean> {
-		const next = await bindToken(
+	async function bookedUnder(
+		tokenHash: Uint8Array,
+		row: CheckedPendingRow,
+		attemptGeneration: number,
+	): Promise<StoredTokenMac & { readonly attemptGeneration: number }> {
+		const mac = await bindToken(
 			options.keys,
 			pendingBinding(row.userId, tokenHash, row.factorNames, {
 				attempts: row.attempts + 1,
 				sessionEpoch: row.sessionEpoch,
+				attemptGeneration,
 			}),
 		);
-		return inTransaction((store) => store.bookAttempt({ tokenHash, checked: row, next }));
+		return { ...mac, attemptGeneration };
+	}
+
+	function bookedWithoutASeal(tokenHash: Uint8Array, row: CheckedPendingRow): Promise<boolean> {
+		return inTransaction(async (store) =>
+			store.bookAttempt({
+				tokenHash,
+				checked: row,
+				next: await bookedUnder(tokenHash, row, row.attemptGeneration),
+			}),
+		);
+	}
+
+	async function bookedWithoutASealOutcome(
+		tokenHash: Uint8Array,
+		row: CheckedPendingRow,
+	): Promise<"booked" | "missed"> {
+		return (await bookedWithoutASeal(tokenHash, row)) ? "booked" : "missed";
+	}
+
+	//a booking under a broken seal is still counted and the factor check answers the broken state (S-INTEG-5)
+	async function bookedOver(
+		tokenHash: Uint8Array,
+		row: CheckedPendingRow,
+	): Promise<"booked" | "missed" | "missing"> {
+		if (options.attemptSeal === undefined || !row.accountSealed) {
+			return bookedWithoutASealOutcome(tokenHash, row);
+		}
+		const sealed = await options.attemptSeal({
+			userId: row.userId,
+			tokenHash,
+			from: row.attemptGeneration,
+			book: async (tx, to) =>
+				repositoryOn(tx).bookAttempt({
+					tokenHash,
+					checked: row,
+					next: await bookedUnder(tokenHash, row, to),
+				}),
+		});
+		if (sealed === "written_back") {
+			reportRefusal(row.userId, "mismatch");
+		}
+		if (sealed === "refused") {
+			return bookedWithoutASealOutcome(tokenHash, row);
+		}
+		return sealed === "booked" || sealed === "missed" ? sealed : "missing";
 	}
 
 	function bookingOf(
@@ -264,10 +371,11 @@ export function createPendingAuthenticationService(
 			if (budgetIsSpentBy(row.attempts)) {
 				return { outcome: "exhausted" };
 			}
-			if (await bookedOver(tokenHash, row)) {
+			const booked = await bookedOver(tokenHash, row);
+			if (booked === "booked") {
 				return bookingOf(tokenHash, resolution, row.attempts + 1);
 			}
-			row = await afterMissedBooking(tokenHash, row);
+			row = booked === "missing" ? "missing" : await afterMissedBooking(tokenHash, row);
 		}
 		return { outcome: "missing" };
 	}
@@ -328,18 +436,22 @@ export function createPendingAuthenticationService(
 			const storedFactors = factorsCompleted.filter(
 				(factor, index) => factorsCompleted.indexOf(factor) === index,
 			);
-			const boundEpoch = sessionEpoch ?? (await repository.sessionEpochOf({ userId }));
+			const account = await repository.accountStateOf({ userId });
+			const boundEpoch = sessionEpoch ?? account.sessionEpoch;
+			const attemptGeneration = account.attemptGeneration ?? FIRST_ATTEMPT_GENERATION;
 			const stored = await repository.insertPendingAuthentication({
 				userId,
 				tokenHash,
 				factorsCompleted: storedFactors,
 				lifetimeInSeconds: PENDING_LIFETIME_IN_SECONDS,
 				sessionEpoch: boundEpoch,
+				attemptGeneration,
 				...(await bindToken(
 					options.keys,
 					pendingBinding(userId, tokenHash, storedFactors, {
 						attempts: FIRST_ATTEMPT_COUNT,
 						sessionEpoch: boundEpoch,
+						attemptGeneration,
 					}),
 				)),
 			});

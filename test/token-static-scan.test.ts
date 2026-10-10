@@ -228,12 +228,19 @@ describe("nothing reads the row before removing it (S-RACE-2)", () => {
 		expect(tokenStatements.filter((statement) => /\bSELECT\b/i.test(statement))).toStrictEqual([]);
 	});
 
-	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259); it decides
-	// nothing about the row it precedes, which is what S-RACE-2 forbids.
-	it("reads only the owner row, and takes no row lock while doing it", () => {
+	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259) with the owner's
+	// token generation the new row binds (E-3522); it decides nothing about the row it precedes,
+	// which is what S-RACE-2 forbids.
+	it("reads only the owner row and its seal row, and takes no row lock while doing it", () => {
 		expect(ownerStatements.map(asWritten)).toStrictEqual([
 			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
-				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists, " +
+				"(SELECT COALESCE( (SELECT CASE $3::text WHEN 'email_verify' THEN st.email_verify_generation " +
+				"WHEN 'password_reset' THEN st.password_reset_generation " +
+				"WHEN 'email_change' THEN st.email_change_generation " +
+				"WHEN 'magic_link' THEN st.magic_link_generation END " +
+				"FROM velve.security_state st WHERE st.user_id = owner.id), 1) " +
+				"FROM velve.user owner WHERE owner.id = $1)::text AS token_generation",
 		]);
 		expect(repositorySource).not.toMatch(/\bFOR (NO KEY )?UPDATE\b/);
 	});

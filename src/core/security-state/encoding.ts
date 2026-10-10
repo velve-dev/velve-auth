@@ -1,3 +1,5 @@
+import { ONE_TIME_TOKEN_PURPOSES, type OneTimeTokenPurpose } from "../token/purpose.js";
+
 /** the password credential as the seal covers it */
 interface SealedPassword {
 	readonly phcSha256: Uint8Array;
@@ -43,8 +45,37 @@ export interface SealedComponents {
 	readonly recoveryCodes: readonly SealedRecoveryCode[];
 }
 
+/** the token generation of each one-time token purpose, so a redemption leaves the links of the other purposes alone */
+export type TokenGenerations = Readonly<Record<OneTimeTokenPurpose, number>>;
+
+/** what a row written back with its old MAC is measured against, each moved by the use that spends such a row */
+export interface SealedGenerations {
+	/** the version of the last seal that changed a component or the epoch, which a session issue stands on */
+	readonly componentsVersion: number;
+	/** moved by every session revoked on its own */
+	readonly sessionGeneration: number;
+	/** moved by every booked second-factor attempt */
+	readonly attemptGeneration: number;
+	/** the token hash of the pending row whose booking moved it last */
+	readonly attemptLast: Uint8Array | null;
+	/** each moved by every redeemed one-time token of its purpose */
+	readonly tokenGenerations: TokenGenerations;
+	/** the token hash of the one-time token whose redemption moved it last */
+	readonly tokenLast: Uint8Array | null;
+}
+
+/** the generations of an account no row has moved yet */
+export const FIRST_GENERATIONS: SealedGenerations = {
+	componentsVersion: 1,
+	sessionGeneration: 1,
+	attemptGeneration: 1,
+	attemptLast: null,
+	tokenGenerations: { email_verify: 1, password_reset: 1, email_change: 1, magic_link: 1 },
+	tokenLast: null,
+};
+
 /** the whole state one seal digest is taken over */
-export interface SecurityState extends SealedComponents {
+export interface SecurityState extends SealedComponents, SealedGenerations {
 	readonly userId: string;
 	readonly version: number;
 	readonly sessionEpoch: number;
@@ -182,6 +213,12 @@ export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffe
 		uuidField(state.userId),
 		integerField(state.version),
 		integerField(state.sessionEpoch),
+		integerField(state.componentsVersion),
+		integerField(state.sessionGeneration),
+		integerField(state.attemptGeneration),
+		state.attemptLast === null ? ABSENT_FIELD : digestField(state.attemptLast),
+		...ONE_TIME_TOKEN_PURPOSES.map((purpose) => integerField(state.tokenGenerations[purpose])),
+		state.tokenLast === null ? ABSENT_FIELD : digestField(state.tokenLast),
 		state.email === null ? ABSENT_FIELD : textField(state.email),
 		booleanField(state.emailVerified),
 		booleanField(state.disabled),

@@ -23,7 +23,7 @@ import { testKeyRing } from "./totp-fixtures.js";
 // without a session (E-3141, E-3377, E-3403).
 
 const NO_REQUEST = { ipAddress: null, userAgent: null };
-const CHECKED = { version: 1, sessionEpoch: 1 } as const;
+const CHECKED = { componentsVersion: 1, sessionEpoch: 1 } as const;
 const HOLD_MS = 400;
 
 let migrated: MigratedSchema;

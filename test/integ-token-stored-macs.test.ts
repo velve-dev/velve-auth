@@ -90,8 +90,12 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 			token_sha256: Buffer;
 			token_mac: Buffer;
 			micros: string;
+			idle_micros: string;
+			absolute_micros: string;
 		}>(
-			`SELECT id, token_sha256, token_mac, (extract(epoch FROM created_at) * 1000000)::bigint::text AS micros
+			`SELECT id, token_sha256, token_mac, (extract(epoch FROM created_at) * 1000000)::bigint::text AS micros,
+			 (extract(epoch FROM idle_expires_at) * 1000000)::bigint::text AS idle_micros,
+			 (extract(epoch FROM absolute_expires_at) * 1000000)::bigint::text AS absolute_micros
 			 FROM ${schema}.session WHERE user_id = $1`,
 			[userId],
 		);
@@ -100,6 +104,9 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 			list(["password", "totp"]),
 			integer(1),
 			integer(BigInt(row?.micros ?? "0")),
+			integer(1),
+			text(row?.idle_micros ?? ""),
+			text(row?.absolute_micros ?? ""),
 		]);
 		expect(Buffer.from(row?.token_mac ?? []).toString("hex")).toBe(
 			mac("session", userId, Buffer.from(row?.token_sha256 ?? []), tail),
@@ -127,7 +134,7 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 				"pending_authentication",
 				userId,
 				Buffer.from(row?.token_sha256 ?? []),
-				Buffer.concat([list(["password"]), integer(0), integer(1)]),
+				Buffer.concat([list(["password"]), integer(0), integer(1), integer(1)]),
 			),
 		);
 	});
@@ -148,7 +155,7 @@ describe("the MAC stored beside a row the library writes is the frozen one", () 
 				"magic_link",
 				userId,
 				Buffer.from(row?.token_sha256 ?? []),
-				optionalText('{"a":"x","b":1}'),
+				optionalText('{"a":"x","b":1,"tokenGeneration":1}'),
 			),
 		);
 	});

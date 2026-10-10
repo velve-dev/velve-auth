@@ -198,8 +198,8 @@ describe("deleting a user (S-TOKEN-5)", () => {
 		await connection.query(
 			`INSERT INTO ${schema}.pending_authentication
 			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
-			    session_epoch)
-			 VALUES ($1, $2, '{password}', now() + interval '10 minutes', $3, 1, 1)`,
+			    session_epoch, attempt_generation)
+			 VALUES ($1, $2, '{password}', now() + interval '10 minutes', $3, 1, 1, 1)`,
 			[bytes(), userId, bytes()],
 		);
 		await connection.query(

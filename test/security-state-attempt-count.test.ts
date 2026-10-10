@@ -154,6 +154,7 @@ describe("a booked attempt and a legitimate rebinding during the booking (E-3149
 			pendingBinding(userId, hashPendingToken(token), ["password"], {
 				attempts: 0,
 				sessionEpoch: 1,
+				attemptGeneration: 1,
 			}),
 		);
 		refusals = [];
@@ -181,6 +182,7 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 			pendingBinding(userId, hashPendingToken(token), ["password"], {
 				attempts: 1,
 				sessionEpoch: 1,
+				attemptGeneration: 1,
 			}),
 		);
 		refusals = [];
@@ -256,6 +258,7 @@ describe("a booked attempt and a rewrite that only looks like progress (section 
 						pendingBinding(userId, hashPendingToken(token), ["password"], {
 							attempts: 0,
 							sessionEpoch: 1,
+							attemptGeneration: 1,
 						}),
 					);
 					await owner.query(

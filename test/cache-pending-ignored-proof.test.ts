@@ -294,6 +294,7 @@ async function compare(route: Route, pendingToken: string): Promise<Comparison> 
 describe("only the pending readers see the intermediate state (S-CACHE-4, T-CACHE-4)", () => {
 	let comparisons: readonly Comparison[] = [];
 	let sharedPendingToken = "";
+	let sharedStateAfterTheOthers: unknown = null;
 
 	beforeAll(async () => {
 		const routes = mounted.auth.routes as unknown as readonly Route[];
@@ -302,6 +303,15 @@ describe("only the pending readers see the intermediate state (S-CACHE-4, T-CACH
 		for (const route of routes.filter((candidate) => !PENDING_READERS.includes(candidate.name))) {
 			results.push(await compare(route, sharedPendingToken));
 		}
+		//a reader books an attempt on the same account, which overtakes every other pending state of it (E-3519)
+		sharedStateAfterTheOthers = await (
+			await mounted.handler(
+				new Request("https://api.example.com/pending", {
+					method: "GET",
+					headers: { Origin: TEST_ORIGIN, Cookie: pendingCookieHeader(sharedPendingToken) },
+				}),
+			)
+		).json();
 		for (const route of routes.filter((candidate) => PENDING_READERS.includes(candidate.name))) {
 			results.push(await compare(route, await freshPendingState()));
 		}
@@ -350,14 +360,7 @@ describe("only the pending readers see the intermediate state (S-CACHE-4, T-CACH
 		expect(echoing).toStrictEqual([]);
 	});
 
-	it("leaves the shared intermediate state standing through every other route", async () => {
-		const answer = await mounted.handler(
-			new Request("https://api.example.com/pending", {
-				method: "GET",
-				headers: { Origin: TEST_ORIGIN, Cookie: pendingCookieHeader(sharedPendingToken) },
-			}),
-		);
-
-		expect(await answer.json()).not.toBeNull();
+	it("leaves the shared intermediate state standing through every other route", () => {
+		expect(sharedStateAfterTheOthers).not.toBeNull();
 	});
 });

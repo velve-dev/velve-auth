@@ -180,8 +180,12 @@ describe("T-KEY-5 with the maintenance step (S-KEY-5)", () => {
 			id: string;
 			mac: Uint8Array;
 			created_us: string;
+			idle_us: string;
+			absolute_us: string;
 		}>(
-			`SELECT id, token_mac AS mac, trunc(extract(epoch FROM created_at) * 1000000)::text AS created_us
+			`SELECT id, token_mac AS mac, trunc(extract(epoch FROM created_at) * 1000000)::text AS created_us,
+			 trunc(extract(epoch FROM idle_expires_at) * 1000000)::text AS idle_us,
+			 trunc(extract(epoch FROM absolute_expires_at) * 1000000)::text AS absolute_us
 			 FROM ${schema}.session WHERE token_sha256 = $1`,
 			[forged.tokenHash],
 		);
@@ -191,6 +195,9 @@ describe("T-KEY-5 with the maintenance step (S-KEY-5)", () => {
 				sessionId: forgedRow?.id ?? "",
 				sessionEpoch: 1,
 				createdAtMicros: Number(forgedRow?.created_us),
+				sessionGeneration: 1,
+				idleExpiresAtMicros: forgedRow?.idle_us ?? "",
+				absoluteExpiresAtMicros: forgedRow?.absolute_us ?? "",
 			}),
 			{ tokenMac: new Uint8Array(forgedRow?.mac ?? []), tokenMacKeyVersion: 1 },
 		);

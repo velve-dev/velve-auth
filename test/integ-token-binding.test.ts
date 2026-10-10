@@ -173,8 +173,8 @@ describe("rows a writer inserts for a token of their own choosing (T-INTEG-9, 3/
 		await sql(
 			`INSERT INTO ${schema}.pending_authentication
 			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
-			    session_epoch)
-			 VALUES ($1, $2, '{password}', now() + interval '5 minutes', $3, 1, 1)`,
+			    session_epoch, attempt_generation)
+			 VALUES ($1, $2, '{password}', now() + interval '5 minutes', $3, 1, 1, 1)`,
 			[sha256Of(token), victim, randomBytes(32)],
 		);
 
@@ -230,9 +230,9 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 			`WITH moved AS (DELETE FROM ${schema}.session WHERE token_sha256 = $1 RETURNING *)
 			 INSERT INTO ${schema}.pending_authentication
 			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
-			    session_epoch)
+			    session_epoch, attempt_generation)
 			 SELECT token_sha256, user_id, factors, now() + interval '5 minutes',
-			    token_mac, token_mac_key_version, 1 FROM moved`,
+			    token_mac, token_mac_key_version, 1, 1 FROM moved`,
 			[sha256Of(token)],
 		);
 		refusals = [];
@@ -343,9 +343,9 @@ describe("real rows a writer rewrites (T-INTEG-9)", () => {
 			`WITH moved AS (DELETE FROM ${schema}.one_time_token WHERE token_sha256 = $1 RETURNING *)
 			 INSERT INTO ${schema}.pending_authentication
 			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
-			    session_epoch)
+			    session_epoch, attempt_generation)
 			 SELECT token_sha256, user_id, '{password}', now() + interval '5 minutes',
-			    token_mac, token_mac_key_version, 1 FROM moved`,
+			    token_mac, token_mac_key_version, 1, 1 FROM moved`,
 			[sha256Of(token)],
 		);
 		refusals = [];
@@ -918,12 +918,20 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 				purpose === "email_verify" || purpose === "magic_link"
 					? { payload: pick([null, {}, { a: "" }, { a: ",", b: [1, "x"] }, { "": null }]) }
 					: purpose === "pending_authentication"
-						? { factors, attempts: byte() % 3, sessionEpoch: byte() % 3 }
+						? {
+								factors,
+								attempts: byte() % 3,
+								sessionEpoch: byte() % 3,
+								attemptGeneration: byte() % 3,
+							}
 						: {
 								sessionId: pick(["", "a", "ab", ",", "a,b"]),
 								factors,
 								sessionEpoch: byte() % 3,
 								createdAtMicros: byte() % 3,
+								sessionGeneration: byte() % 3,
+								idleExpiresAtMicros: String(byte() % 3),
+								absoluteExpiresAtMicros: String(byte() % 3),
 							},
 		};
 	}
@@ -972,6 +980,9 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 						factors: ["password,totp"],
 						sessionEpoch: 1,
 						createdAtMicros: 0,
+						sessionGeneration: 1,
+						idleExpiresAtMicros: "0",
+						absoluteExpiresAtMicros: "0",
 					},
 				}),
 			).equals(
@@ -983,6 +994,9 @@ describe("the encoding the MAC is taken over (S-INTEG-9)", () => {
 							factors: ["password", "totp"],
 							sessionEpoch: 1,
 							createdAtMicros: 0,
+							sessionGeneration: 1,
+							idleExpiresAtMicros: "0",
+							absoluteExpiresAtMicros: "0",
 						},
 					}),
 				),
@@ -1186,7 +1200,15 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 					purpose: "session",
 					ownerId,
 					tokenSha256: new Uint8Array(32),
-					content: { sessionId: "s", factors: [], sessionEpoch: 1, createdAtMicros: 0 },
+					content: {
+						sessionId: "s",
+						factors: [],
+						sessionEpoch: 1,
+						createdAtMicros: 0,
+						sessionGeneration: 1,
+						idleExpiresAtMicros: "0",
+						absoluteExpiresAtMicros: "0",
+					},
 				}),
 			).toString("hex");
 

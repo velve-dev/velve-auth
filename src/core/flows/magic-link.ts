@@ -7,8 +7,8 @@ import { recordSealLater } from "../security-state/runtime.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
-	A_DISABLED_ACCOUNT,
 	accountOrDisabledOfRedemption,
+	DisabledRedemption,
 	type FlowEnvironment,
 	mailerOf,
 	observedIn,
@@ -73,7 +73,7 @@ export async function redeemMagicLink(
 		});
 		const resolved = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
 		//a link presented for a disabled account stays spent once it is enabled again (E-2880)
-		if (resolved === A_DISABLED_ACCOUNT) {
+		if (resolved instanceof DisabledRedemption) {
 			return resolved;
 		}
 		const confirmed = await confirmAddress({
@@ -85,6 +85,7 @@ export async function redeemMagicLink(
 			confirmingSession,
 			newEmail: null,
 			securityState: environment.services.securityState,
+			spent: redeemed.spent,
 		});
 		return {
 			...resolved,
@@ -93,7 +94,8 @@ export async function redeemMagicLink(
 			toRecord: confirmed.toRecord,
 		};
 	});
-	if (account === A_DISABLED_ACCOUNT) {
+	if (account instanceof DisabledRedemption) {
+		recordSealLater(environment.services.securityState, account.toRecord, "token_redemption");
 		refuseADisabledAccount();
 	}
 	recordSealLater(environment.services.securityState, account.toRecord, "token_redemption");

@@ -23,6 +23,12 @@ const EMPTY_STATE: SecurityState = {
 	userId: USER_ID,
 	version: 1,
 	sessionEpoch: 1,
+	componentsVersion: 1,
+	sessionGeneration: 1,
+	attemptGeneration: 1,
+	attemptLast: null,
+	tokenGenerations: { email_verify: 1, password_reset: 1, email_change: 1, magic_link: 1 },
+	tokenLast: null,
 	email: null,
 	emailVerified: false,
 	disabled: false,
@@ -38,6 +44,12 @@ const FULL_STATE: SecurityState = {
 	userId: USER_ID,
 	version: 7,
 	sessionEpoch: 4_503_599_627_370_497,
+	componentsVersion: 3,
+	sessionGeneration: 5,
+	attemptGeneration: 6,
+	attemptLast: filled(32, 0x33),
+	tokenGenerations: { email_verify: 8, password_reset: 9, email_change: 10, magic_link: 11 },
+	tokenLast: filled(32, 0x44),
 	email: "a@b.example",
 	emailVerified: true,
 	disabled: true,
@@ -77,6 +89,15 @@ describe("the canonical encoding of a security state, byte for byte", () => {
 			ACCOUNT +
 			integer(1n) +
 			integer(1n) +
+			integer(1n) +
+			integer(1n) +
+			integer(1n) +
+			ABSENT +
+			integer(1n) +
+			integer(1n) +
+			integer(1n) +
+			integer(1n) +
+			ABSENT +
 			ABSENT +
 			FALSE +
 			FALSE +
@@ -107,6 +128,15 @@ describe("the canonical encoding of a security state, byte for byte", () => {
 			ACCOUNT +
 			integer(7n) +
 			integer(4_503_599_627_370_497n) +
+			integer(3n) +
+			integer(5n) +
+			integer(6n) +
+			`0200000020${"33".repeat(32)}` +
+			integer(8n) +
+			integer(9n) +
+			integer(10n) +
+			integer(11n) +
+			`0200000020${"44".repeat(32)}` +
 			text("a@b.example") +
 			TRUE +
 			TRUE +

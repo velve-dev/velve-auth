@@ -3,14 +3,14 @@ import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import type { KeyProvider } from "../keys/provider.js";
-import type { SealedComponents, SecurityState } from "./encoding.js";
+import type { SealedComponents, SealedGenerations, SecurityState } from "./encoding.js";
 import { type SealVerdict, verifySeal } from "./seal.js";
 
 /** whether every account must have a seal or the estate is still being sealed */
 export type SealingMode = "required" | "migrating";
 
 /** the seal row as it was read */
-interface StoredSeal {
+interface StoredSeal extends SealedGenerations {
 	readonly version: number;
 	readonly digest: Uint8Array<ArrayBuffer>;
 	readonly keyVersion: number;
@@ -93,7 +93,16 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
     'version', seal.version::text,
     'digest', encode(seal.digest, 'hex'),
     'key_version', seal.key_version::text,
-    'session_epoch', seal.session_epoch::text) END,
+    'session_epoch', seal.session_epoch::text,
+    'components_version', seal.components_version::text,
+    'session_generation', seal.session_generation::text,
+    'attempt_generation', seal.attempt_generation::text,
+    'attempt_last', encode(seal.attempt_last, 'hex'),
+    'email_verify_generation', seal.email_verify_generation::text,
+    'password_reset_generation', seal.password_reset_generation::text,
+    'email_change_generation', seal.email_change_generation::text,
+    'magic_link_generation', seal.magic_link_generation::text,
+    'token_last', encode(seal.token_last, 'hex')) END,
   'password', CASE WHEN credential.user_id IS NULL THEN NULL ELSE jsonb_build_object(
     'phc', encode(credential.phc, 'hex'),
     'key_version', credential.key_version::text,
@@ -215,6 +224,17 @@ function sealOf(value: unknown): StoredSeal | null {
 		digest: bytes(seal.digest, "seal digest"),
 		keyVersion: exactInteger(seal.key_version, "seal key version"),
 		sessionEpoch: exactInteger(seal.session_epoch, "session epoch"),
+		componentsVersion: exactInteger(seal.components_version, "components version"),
+		sessionGeneration: exactInteger(seal.session_generation, "session generation"),
+		attemptGeneration: exactInteger(seal.attempt_generation, "attempt generation"),
+		attemptLast: bytesOrNull(seal.attempt_last, "attempt last"),
+		tokenGenerations: {
+			email_verify: exactInteger(seal.email_verify_generation, "token generation"),
+			password_reset: exactInteger(seal.password_reset_generation, "token generation"),
+			email_change: exactInteger(seal.email_change_generation, "token generation"),
+			magic_link: exactInteger(seal.magic_link_generation, "token generation"),
+		},
+		tokenLast: bytesOrNull(seal.token_last, "token last"),
 	};
 }
 
@@ -351,7 +371,20 @@ export function securityStateOf(read: SecurityStateRead, seal: StoredSeal): Secu
 		userId: read.userId,
 		version: seal.version,
 		sessionEpoch: seal.sessionEpoch,
+		...generationsOf(seal),
 		...sealedComponentsOf(read),
+	};
+}
+
+/** the generations a seal row holds */
+export function generationsOf(seal: SealedGenerations): SealedGenerations {
+	return {
+		componentsVersion: seal.componentsVersion,
+		sessionGeneration: seal.sessionGeneration,
+		attemptGeneration: seal.attemptGeneration,
+		attemptLast: seal.attemptLast,
+		tokenGenerations: seal.tokenGenerations,
+		tokenLast: seal.tokenLast,
 	};
 }
 

@@ -1,5 +1,6 @@
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
+import type { GenerationStep } from "../db/repositories/session.js";
 import type { SessionService } from "./service.js";
 
 /** the session rows a flow announces or revokes in its own transaction, each one checked first */
@@ -7,6 +8,11 @@ interface SessionRows {
 	listEverySessionIdOwnedBy(input: { readonly actor: Actor }): Promise<string[]>;
 	deleteEverySessionOwnedBy(input: { readonly actor: Actor }): Promise<number>;
 	deleteEverySessionOwnedByReturningIds(input: { readonly actor: Actor }): Promise<string[]>;
+	rebindToGeneration(input: {
+		readonly actor: Actor;
+		readonly step: GenerationStep;
+		readonly excluding: readonly string[];
+	}): Promise<void>;
 }
 
 const LENT_ROWS = Symbol("velve.sessionRows");

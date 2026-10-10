@@ -133,8 +133,10 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 			observed: NOWHERE,
 		});
 
+		//the owner of the presented row is read first, so a row of the same account is revoked under the seal (E-3521)
 		//the account lock comes first and the select before the insert reads the epoch (S-INTEG-9, E-3141)
 		expect(traced.log).toEqual([
+			"SELECT",
 			"BEGIN",
 			"tx SELECT",
 			"tx DELETE",

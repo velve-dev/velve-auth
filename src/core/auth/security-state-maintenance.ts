@@ -12,7 +12,11 @@ import {
 	consultAnchors,
 	recordSealWithAnchors,
 } from "../security-state/anchor.js";
-import type { SealedComponents } from "../security-state/encoding.js";
+import {
+	FIRST_GENERATIONS,
+	type SealedComponents,
+	type SealedGenerations,
+} from "../security-state/encoding.js";
 import { readSecurityState, type SecurityStateRead } from "../security-state/read.js";
 import {
 	envelopesOf,
@@ -23,6 +27,7 @@ import {
 import { computeSeal } from "../security-state/seal.js";
 import {
 	componentsAfter,
+	drawGenerationOtherThan,
 	drawSessionEpochOtherThan,
 	type SealingChange,
 } from "../security-state/sealing.js";
@@ -313,23 +318,64 @@ interface Resealed {
 	readonly digest: Uint8Array<ArrayBuffer>;
 }
 
+//a reseal confirms no generation a writer may have set and draws every one afresh (E-3523)
+function generationsAfterReseal(stored: SealedGenerations, version: number): SealedGenerations {
+	return {
+		componentsVersion: version,
+		sessionGeneration: drawGenerationOtherThan(stored.sessionGeneration),
+		attemptGeneration: drawGenerationOtherThan(stored.attemptGeneration),
+		attemptLast: null,
+		tokenGenerations: {
+			email_verify: drawGenerationOtherThan(stored.tokenGenerations.email_verify),
+			password_reset: drawGenerationOtherThan(stored.tokenGenerations.password_reset),
+			email_change: drawGenerationOtherThan(stored.tokenGenerations.email_change),
+			magic_link: drawGenerationOtherThan(stored.tokenGenerations.magic_link),
+		},
+		tokenLast: null,
+	};
+}
+
 async function writeResealedRow(
 	tx: Driver,
 	states: string,
 	read: SecurityStateRead,
-	seal: Omit<Resealed, "read"> & { readonly keyVersion: number },
+	seal: Omit<Resealed, "read"> & {
+		readonly keyVersion: number;
+		readonly generations: SealedGenerations;
+	},
 ): Promise<void> {
 	const stored = read.seal;
+	const generations = [
+		seal.generations.componentsVersion,
+		seal.generations.sessionGeneration,
+		seal.generations.attemptGeneration,
+		seal.generations.tokenGenerations.email_verify,
+		seal.generations.tokenGenerations.password_reset,
+		seal.generations.tokenGenerations.email_change,
+		seal.generations.tokenGenerations.magic_link,
+	];
 	const written =
 		stored === null
 			? await tx.query(
-					`INSERT INTO ${states} (user_id, version, digest, key_version, session_epoch)
-VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id) DO NOTHING RETURNING 1 AS written`,
-					[read.userId, seal.version, seal.digest, seal.keyVersion, seal.sessionEpoch],
+					`INSERT INTO ${states} (user_id, version, digest, key_version, session_epoch,
+  components_version, session_generation, attempt_generation, email_verify_generation,
+  password_reset_generation, email_change_generation, magic_link_generation)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (user_id) DO NOTHING RETURNING 1 AS written`,
+					[
+						read.userId,
+						seal.version,
+						seal.digest,
+						seal.keyVersion,
+						seal.sessionEpoch,
+						...generations,
+					],
 				)
 			: await tx.query(
 					`UPDATE ${states}
-SET version = $2, digest = $3, key_version = $4, session_epoch = $5, sealed_at = now()
+SET version = $2, digest = $3, key_version = $4, session_epoch = $5, sealed_at = now(),
+  components_version = $10, session_generation = $11, attempt_generation = $12,
+  attempt_last = NULL, email_verify_generation = $13, password_reset_generation = $14,
+  email_change_generation = $15, magic_link_generation = $16, token_last = NULL
 WHERE user_id = $1 AND version = $6 AND digest = $7 AND key_version = $8 AND session_epoch = $9
 RETURNING 1 AS written`,
 					[
@@ -342,6 +388,7 @@ RETURNING 1 AS written`,
 						stored.digest,
 						stored.keyVersion,
 						stored.sessionEpoch,
+						...generations,
 					],
 				);
 	if (written.length !== 1) {
@@ -372,15 +419,18 @@ async function resealUnderAccountLock(
 				: stored;
 		const version = base + 1;
 		const sessionEpoch = drawSessionEpochOtherThan(stored.seal?.sessionEpoch ?? 1);
+		const generations = generationsAfterReseal(stored.seal ?? FIRST_GENERATIONS, version);
 		const { keyVersion, digest } = await computeSeal(runtime.keys, {
 			userId,
 			version,
 			sessionEpoch,
+			...generations,
 			...componentsAfter(read, {}),
 		});
 		await writeResealedRow(tx, qualifiedTableName(schema, "security_state"), read, {
 			version,
 			sessionEpoch,
+			generations,
 			keyVersion,
 			digest,
 		});

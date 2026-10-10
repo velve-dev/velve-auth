@@ -44,11 +44,15 @@ function referenceEncoding(binding: TokenBinding): Buffer {
 							list(content.factors),
 							integer(content.sessionEpoch),
 							integer(content.createdAtMicros),
+							integer(content.sessionGeneration),
+							text(content.idleExpiresAtMicros),
+							text(content.absoluteExpiresAtMicros),
 						])
 					: Buffer.concat([
 							list(content.factors),
 							integer(content.attempts),
 							integer(content.sessionEpoch),
+							integer(content.attemptGeneration),
 						]);
 	return Buffer.concat([
 		text("velve-auth/token-binding/v1"),
@@ -85,6 +89,9 @@ const BINDINGS: readonly [string, TokenBinding][] = [
 				factors: ["password", "totp"],
 				sessionEpoch: 3,
 				createdAtMicros: 1_767_225_600_123_456,
+				sessionGeneration: 11,
+				idleExpiresAtMicros: "1767830400123456",
+				absoluteExpiresAtMicros: "9999999999999999999",
 			},
 		},
 	],
@@ -94,7 +101,7 @@ const BINDINGS: readonly [string, TokenBinding][] = [
 			purpose: "pending_authentication",
 			ownerId: "0f0e0d0c-0b0a-4908-8706-050403020100",
 			tokenSha256: hash,
-			content: { factors: ["password"], attempts: 2, sessionEpoch: 5 },
+			content: { factors: ["password"], attempts: 2, sessionEpoch: 5, attemptGeneration: 13 },
 		},
 	],
 	[

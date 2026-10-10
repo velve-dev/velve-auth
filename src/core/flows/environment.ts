@@ -6,10 +6,16 @@ import type { Driver } from "../db/driver.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
-import { type AccountCheck, checkAccount } from "../security-state/runtime.js";
+import { type AccountCheck, checkAccount, sealChange } from "../security-state/runtime.js";
+import { componentsAfter, type SealWritten } from "../security-state/sealing.js";
 import type { ObservedRequest } from "../session/service.js";
 import type { OneTimeTokenRedemption } from "../token/one-time-token.js";
-import { type ArtefactMailer, refuseUnlessTheAddressIsStillTheAccounts } from "./artefact.js";
+import {
+	type ArtefactMailer,
+	movesOfSpentToken,
+	refuseATokenWrittenBack,
+	refuseUnlessTheAddressIsStillTheAccounts,
+} from "./artefact.js";
 
 export interface FlowEnvironment {
 	readonly services: RouteServices;
@@ -50,7 +56,15 @@ interface RedeemedAccount {
 	readonly check: Extract<AccountCheck, { kind: "usable" }>;
 }
 
-export const A_DISABLED_ACCOUNT = Symbol("a redemption for a disabled account");
+/** a redemption for a disabled account, whose spent token still moved the account's token generation */
+export class DisabledRedemption {
+	/** the seal the move wrote, which the caller records once the redemption has committed */
+	readonly toRecord: SealWritten<unknown>;
+
+	constructor(toRecord: SealWritten<unknown>) {
+		this.toRecord = toRecord;
+	}
+}
 
 //every redemption commits the spent token before it refuses a disabled account (E-2880)
 //a redemption checks the seal before its token has any effect and compares the address it read with it (S-INTEG-4)
@@ -58,7 +72,7 @@ export async function accountOrDisabledOfRedemption(
 	environment: FlowEnvironment,
 	driver: Driver,
 	redemption: OneTimeTokenRedemption,
-): Promise<RedeemedAccount | typeof A_DISABLED_ACCOUNT> {
+): Promise<RedeemedAccount | DisabledRedemption> {
 	const check = await checkAccount(
 		environment.services.securityState,
 		redemption.userId,
@@ -72,11 +86,39 @@ export async function accountOrDisabledOfRedemption(
 		throw new ConcealedError("broken_state_on_token_redemption");
 	}
 	refuseUnlessTheAddressIsStillTheAccounts(environment.services, redemption, check.read.email);
+	refuseATokenWrittenBack(environment.services, redemption.userId, redemption.spent, check.read);
 	const user = await readUserOrRefuse(environment, driver, redemption.userId);
 	if (check.read.disabled) {
-		return A_DISABLED_ACCOUNT;
+		return new DisabledRedemption(await spentOnADisabledAccount(environment, driver, redemption));
 	}
 	return { actor: actorOfRedeemedOneTimeToken(redemption), user, check };
+}
+
+//a token spent on a disabled account moves the generation and stays spent once the account is enabled again (E-3522)
+function spentOnADisabledAccount(
+	environment: FlowEnvironment,
+	driver: Driver,
+	redemption: OneTimeTokenRedemption,
+): Promise<SealWritten<null>> {
+	return sealChange(
+		environment.services.securityState,
+		{ unproven: redemption.userId },
+		{
+			epoch: "keep",
+			moves: () => movesOfSpentToken(redemption.spent),
+			write: async (_tx, read) => {
+				refuseATokenWrittenBack(environment.services, redemption.userId, redemption.spent, read);
+				return null;
+			},
+			after: (read) => componentsAfter(read, {}),
+		},
+		{
+			driver,
+			refusal: "broken_state_on_token_redemption",
+			occasion: "token_redemption",
+			accountMissing: () => new ConcealedError("token_not_found"),
+		},
+	);
 }
 
 //a disabled account must answer a redemption as an invented token does

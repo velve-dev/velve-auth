@@ -54,8 +54,8 @@ const INSERTS: readonly (readonly [string, string])[] = [
 	[
 		"pending_authentication",
 		`INSERT INTO $S.pending_authentication (token_sha256, user_id, factors_completed, expires_at,
-		   token_mac, token_mac_key_version, session_epoch)
-		 VALUES ($2, $1, '{password}', now() + interval '5 minutes', $3, 1, 1)`,
+		   token_mac, token_mac_key_version, session_epoch, attempt_generation)
+		 VALUES ($2, $1, '{password}', now() + interval '5 minutes', $3, 1, 1, 1)`,
 	],
 	[
 		"webauthn_challenge",

@@ -1,17 +1,21 @@
 import {
 	type AccountEnvelopes,
 	EnvelopeChangedSinceReadError,
+	inOneTransaction,
 	type OpenTransaction,
 	rebindEnvelopesOfAccount,
 } from "../auth/account-envelopes.js";
 import { unboundReadingOf } from "../auth/security-state.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
-import type { IssueAuthorisation } from "../db/repositories/session.js";
+import { lockAccountRow } from "../db/lock.js";
+import type { IssueAuthorisation, RevocationSeal } from "../db/repositories/session.js";
 import type { SecondFactor } from "../factor/pending/repository.js";
+import type { AttemptSeal } from "../factor/pending/service.js";
 import type { Clock } from "../http/environment.js";
 import { ConcealedError, type ConcealedReason } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
+import { equalsInConstantTime } from "../keys/constant-time.js";
 import { KeyError, type KeyErrorCode } from "../keys/errors.js";
 import type { KeyProvider } from "../keys/provider.js";
 import type { PasswordCredentialRow } from "../password/credential.js";
@@ -31,6 +35,7 @@ import {
 	recordSealWithAnchors,
 	type SecurityStateAnchorPort,
 } from "./anchor.js";
+import { FIRST_GENERATIONS } from "./encoding.js";
 import type { LimitsConfig } from "./limits.js";
 import {
 	checkSecurityState,
@@ -41,6 +46,8 @@ import {
 } from "./read.js";
 import { verifySeal } from "./seal.js";
 import {
+	componentsAfter,
+	drawGenerationOtherThan,
 	runSealingTransaction,
 	type SealingChange,
 	SealingRefusedError,
@@ -240,7 +247,10 @@ export type ChangedAccount = Actor | { readonly unproven: string };
 export function issueAuthorisationOf(sealed: SealWritten<unknown>): IssueAuthorisation {
 	return sealed.leftUnsealed
 		? "unsealed"
-		: { version: sealed.version, sessionEpoch: sealed.sessionEpoch };
+		: {
+				componentsVersion: sealed.generations.componentsVersion,
+				sessionEpoch: sealed.sessionEpoch,
+			};
 }
 
 //a change checks the seal under the account lock, writes, reseals and only then tells the anchor (S-INTEG-3)
@@ -354,7 +364,10 @@ async function checkedRead(
 	return {
 		kind: "usable",
 		read,
-		authorisedBy: { version: read.seal.version, sessionEpoch: read.seal.sessionEpoch },
+		authorisedBy: {
+			componentsVersion: read.seal.componentsVersion,
+			sessionEpoch: read.seal.sessionEpoch,
+		},
 	};
 }
 
@@ -437,6 +450,7 @@ export async function checkAccountOrStandIn(
 			userId: standIn,
 			version: 1,
 			sessionEpoch: 1,
+			...FIRST_GENERATIONS,
 			email: identifier,
 			emailVerified: false,
 			disabled: false,
@@ -490,5 +504,117 @@ export function sealVerifiesUnderLock(runtime: SecurityStateRuntime) {
 			read !== null &&
 			(await checkSecurityState(runtime.keys, read, runtime.sealing)).verdict === "valid"
 		);
+	};
+}
+
+//a revocation moves the session generation only over a seal it verified and still removes its row over a broken one (E-3520)
+export function revocationSealOf(runtime: SecurityStateRuntime): RevocationSeal {
+	return async (userId, revoke) => {
+		const anchorReading = await consultAnchors(runtime.anchors, userId);
+		const context = {
+			schema: runtime.schema,
+			keys: runtime.keys,
+			sealing: runtime.sealing,
+			leaveUnsealed: true,
+		};
+		try {
+			const sealed = await runSealingTransaction(runtime.driver, (tx) =>
+				sealUnderAccountLock(tx, userId, context, anchorReading, {
+					epoch: "keep",
+					moves: () => ({ session: true }),
+					write: async (guarded, read, target) => ({
+						result: await revoke(
+							guarded,
+							read.seal === null
+								? null
+								: { from: read.seal.sessionGeneration, to: target.sessionGeneration },
+						),
+					}),
+					after: (read) => componentsAfter(read, {}),
+				}),
+			);
+			recordSealLater(runtime, sealed, "change");
+			return sealed.written.result;
+		} catch (error) {
+			if (!(error instanceof SealingRefusedError)) {
+				throw error;
+			}
+			if (error.reason !== "account_missing" && error.reason !== "version_exhausted") {
+				runtime.alarms.raise({ userId, occasion: "change", reason: error.reason });
+			}
+			return inOneTransaction(runtime.driver, async (tx) => {
+				await lockAccountRow(tx, runtime.schema, userId);
+				return revoke(tx, null);
+			});
+		}
+	};
+}
+
+class BookingMissed extends Error {
+	constructor() {
+		super("the booking found the pending row changed since its check");
+		this.name = "BookingMissed";
+	}
+}
+
+class AttemptGenerationLeft extends Error {
+	readonly writtenBack: boolean;
+
+	constructor(writtenBack: boolean) {
+		super("the pending row binds an attempt generation the account has left");
+		this.name = "AttemptGenerationLeft";
+		this.writtenBack = writtenBack;
+	}
+}
+
+function sameTokenHash(stored: Uint8Array | null, tokenHash: Uint8Array): boolean {
+	return stored !== null && equalsInConstantTime(new Uint8Array(stored), new Uint8Array(tokenHash));
+}
+
+//the pending row is booked before the account lock and the generation it binds is checked against the verified read under it (E-3519)
+export function attemptSealOf(runtime: SecurityStateRuntime): AttemptSeal {
+	return async ({ userId, tokenHash, from, book }) => {
+		const anchorReading = await consultAnchors(runtime.anchors, userId);
+		const to = drawGenerationOtherThan(from);
+		const context = {
+			schema: runtime.schema,
+			keys: runtime.keys,
+			sealing: runtime.sealing,
+			leaveUnsealed: true,
+		};
+		try {
+			const sealed = await runSealingTransaction(runtime.driver, async (tx) => {
+				if (!(await book(tx, to))) {
+					throw new BookingMissed();
+				}
+				return sealUnderAccountLock(tx, userId, context, anchorReading, {
+					epoch: "keep",
+					moves: () => ({ attempt: { last: tokenHash, to } }),
+					write: async (_guarded, read) => {
+						const current = read.seal?.attemptGeneration ?? FIRST_GENERATIONS.attemptGeneration;
+						if (current !== from) {
+							throw new AttemptGenerationLeft(
+								sameTokenHash(read.seal?.attemptLast ?? null, tokenHash),
+							);
+						}
+						return null;
+					},
+					after: (read) => componentsAfter(read, {}),
+				});
+			});
+			recordSealLater(runtime, sealed, "factor_check");
+			return "booked";
+		} catch (error) {
+			if (error instanceof BookingMissed) {
+				return "missed";
+			}
+			if (error instanceof AttemptGenerationLeft) {
+				return error.writtenBack ? "written_back" : "overtaken";
+			}
+			if (!(error instanceof SealingRefusedError)) {
+				throw error;
+			}
+			return "refused";
+		}
 	};
 }

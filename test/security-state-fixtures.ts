@@ -3,8 +3,10 @@ import type { Driver } from "../src/core/db/driver.js";
 import { encodeBase64Url } from "../src/core/keys/base64url.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import type { SecurityStateAlarm } from "../src/core/security-state/alarm.js";
+import { FIRST_GENERATIONS } from "../src/core/security-state/encoding.js";
 import { DEFAULT_LIMITS } from "../src/core/security-state/limits.js";
 import {
+	generationsOf,
 	readSecurityState,
 	sealedComponentsOf,
 	securityStateOf,
@@ -136,7 +138,12 @@ export async function sealDirectly(
 	}
 	const sealed = await computeSeal(
 		keys,
-		securityStateOf(read, { ...seal, digest: new Uint8Array(32), keyVersion: 1 }),
+		securityStateOf(read, {
+			...seal,
+			...FIRST_GENERATIONS,
+			digest: new Uint8Array(32),
+			keyVersion: 1,
+		}),
 	);
 	await driver.query(
 		`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
@@ -189,13 +196,17 @@ export async function resealDirectly(
 		userId,
 		version,
 		sessionEpoch,
+		...(read.seal === null ? FIRST_GENERATIONS : generationsOf(read.seal)),
+		componentsVersion: version,
 		...sealedComponentsOf(read),
 	});
 	await driver.query(
-		`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
-VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO ${schema}.security_state
+  (user_id, version, digest, key_version, session_epoch, components_version)
+VALUES ($1, $2, $3, $4, $5, $2)
 ON CONFLICT (user_id) DO UPDATE SET version = EXCLUDED.version, digest = EXCLUDED.digest,
-  key_version = EXCLUDED.key_version, session_epoch = EXCLUDED.session_epoch`,
+  key_version = EXCLUDED.key_version, session_epoch = EXCLUDED.session_epoch,
+  components_version = EXCLUDED.components_version`,
 		[userId, version, sealed.digest, sealed.keyVersion, sessionEpoch],
 	);
 }

@@ -5,6 +5,7 @@ import { lockAccountRow } from "../db/lock.js";
 import { encodeBase64Url } from "../keys/base64url.js";
 import { equalsInConstantTime } from "../keys/constant-time.js";
 import type { KeyProvider } from "../keys/provider.js";
+import type { OneTimeTokenPurpose } from "../token/purpose.js";
 import { randomBytes } from "../token/random.js";
 import type { SecurityStateAlarmReason, SecurityStateAlarms } from "./alarm.js";
 import {
@@ -14,9 +15,15 @@ import {
 	recordSealWithAnchors,
 	type SecurityStateAnchorPort,
 } from "./anchor.js";
-import { encodeSecurityState, type SealedComponents } from "./encoding.js";
+import {
+	encodeSecurityState,
+	FIRST_GENERATIONS,
+	type SealedComponents,
+	type SealedGenerations,
+} from "./encoding.js";
 import {
 	checkSecurityState,
+	generationsOf,
 	readSecurityState,
 	type SealingMode,
 	type SecurityStateRead,
@@ -35,10 +42,20 @@ export interface SealingChange<T> {
 	after(read: SecurityStateRead, written: T): SealedComponents;
 	/** runs in the same transaction once the new seal row is written, where a session is issued under it */
 	afterSeal?(tx: Driver, sealed: SealTarget, written: T): Promise<void>;
+	/** the generations the change moves, decided on the verified read */
+	moves?(read: SecurityStateRead): GenerationMoves;
 }
 
-/** the version and session epoch a change's new seal carries */
-export interface SealTarget {
+/** which generations a change moves, each with the token hash of the row that moved it where the seal names one */
+export interface GenerationMoves {
+	readonly session?: true;
+	/** a booking binds its row to the generation it moves to before the lock and so draws it itself */
+	readonly attempt?: { readonly last: Uint8Array; readonly to: number };
+	readonly token?: { readonly purpose: OneTimeTokenPurpose; readonly last: Uint8Array };
+}
+
+/** the version, session epoch and generations a change's new seal carries */
+export interface SealTarget extends SealedGenerations {
 	readonly version: number;
 	readonly sessionEpoch: number;
 }
@@ -59,6 +76,7 @@ export interface SealWritten<T> {
 	readonly userId: string;
 	readonly version: number;
 	readonly sessionEpoch: number;
+	readonly generations: SealedGenerations;
 	readonly keyVersion: number;
 	readonly digest: Uint8Array<ArrayBuffer>;
 	readonly firstSeal: boolean;
@@ -117,6 +135,11 @@ function isUniqueViolation(error: unknown): boolean {
 
 //an epoch is compared for equality only and is drawn rather than counted (E-3351)
 export function drawSessionEpochOtherThan(current: number): number {
+	return drawGenerationOtherThan(current);
+}
+
+//a generation is compared for equality only and is drawn like an epoch and never counted (E-3519)
+export function drawGenerationOtherThan(current: number): number {
 	for (;;) {
 		const drawn = randomBytes(8).reduce((value, byte) => (value << 8n) | BigInt(byte), 0n);
 		const epoch = Number(drawn & EPOCH_MASK);
@@ -141,6 +164,32 @@ function refusingSecondRead(tx: Driver, statement: string): Driver {
 	};
 }
 
+function movedGenerations(current: SealedGenerations, moves: GenerationMoves): SealedGenerations {
+	return {
+		componentsVersion: current.componentsVersion,
+		sessionGeneration:
+			moves.session === true
+				? drawGenerationOtherThan(current.sessionGeneration)
+				: current.sessionGeneration,
+		attemptGeneration: moves.attempt?.to ?? current.attemptGeneration,
+		attemptLast: moves.attempt?.last ?? current.attemptLast,
+		tokenGenerations:
+			moves.token === undefined
+				? current.tokenGenerations
+				: {
+						...current.tokenGenerations,
+						[moves.token.purpose]: drawGenerationOtherThan(
+							current.tokenGenerations[moves.token.purpose],
+						),
+					},
+		tokenLast: moves.token?.last ?? current.tokenLast,
+	};
+}
+
+function movesAnything(moves: GenerationMoves): boolean {
+	return moves.session === true || moves.attempt !== undefined || moves.token !== undefined;
+}
+
 function brokenVerdictOf(
 	verdict: Awaited<ReturnType<typeof checkSecurityState>>["verdict"],
 ): SealingRefusal | null {
@@ -151,20 +200,39 @@ async function writeSealRow(
 	tx: Driver,
 	schema: string,
 	read: SecurityStateRead,
-	seal: {
-		readonly version: number;
-		readonly sessionEpoch: number;
+	seal: SealTarget & {
 		readonly keyVersion: number;
 		readonly digest: Uint8Array<ArrayBuffer>;
 	},
 ): Promise<void> {
 	const table = qualifiedTableName(schema, "security_state");
+	const generations = [
+		seal.componentsVersion,
+		seal.sessionGeneration,
+		seal.attemptGeneration,
+		seal.attemptLast,
+		seal.tokenGenerations.email_verify,
+		seal.tokenGenerations.password_reset,
+		seal.tokenGenerations.email_change,
+		seal.tokenGenerations.magic_link,
+		seal.tokenLast,
+	];
 	if (read.seal === null) {
 		await tx
 			.query(
-				`INSERT INTO ${table} (user_id, version, digest, key_version, session_epoch)
-VALUES ($1, $2, $3, $4, $5)`,
-				[read.userId, seal.version, seal.digest, seal.keyVersion, seal.sessionEpoch],
+				`INSERT INTO ${table} (user_id, version, digest, key_version, session_epoch,
+  components_version, session_generation, attempt_generation, attempt_last,
+  email_verify_generation, password_reset_generation, email_change_generation,
+  magic_link_generation, token_last)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+				[
+					read.userId,
+					seal.version,
+					seal.digest,
+					seal.keyVersion,
+					seal.sessionEpoch,
+					...generations,
+				],
 			)
 			.catch((error: unknown) => {
 				throw isUniqueViolation(error) ? new FirstSealConflict(error) : error;
@@ -174,7 +242,10 @@ VALUES ($1, $2, $3, $4, $5)`,
 	//a seal row rewritten past the lock since the read is a broken state and is not overwritten (S-INTEG-3)
 	const updated = await tx.query<{ updated: number }>(
 		`UPDATE ${table}
-SET version = $2, digest = $3, key_version = $4, session_epoch = $5, sealed_at = now()
+SET version = $2, digest = $3, key_version = $4, session_epoch = $5, sealed_at = now(),
+  components_version = $10, session_generation = $11, attempt_generation = $12,
+  attempt_last = $13, email_verify_generation = $14, password_reset_generation = $15,
+  email_change_generation = $16, magic_link_generation = $17, token_last = $18
 WHERE user_id = $1 AND version = $6 AND digest = $7 AND key_version = $8 AND session_epoch = $9
 RETURNING 1 AS updated`,
 		[
@@ -187,6 +258,7 @@ RETURNING 1 AS updated`,
 			read.seal.digest,
 			read.seal.keyVersion,
 			read.seal.sessionEpoch,
+			...generations,
 		],
 	);
 	if (updated.length !== 1) {
@@ -246,29 +318,42 @@ export async function sealUnderAccountLock<T>(
 	const currentEpoch = current === null ? 1 : current.sessionEpoch;
 	const epoch = typeof change.epoch === "function" ? change.epoch(read) : change.epoch;
 	const sessionEpoch = epoch === "raise" ? drawSessionEpochOtherThan(currentEpoch) : currentEpoch;
-	const written = await change.write(guarded, read, { version, sessionEpoch });
+	const moves = change.moves?.(read) ?? {};
+	const generations = movedGenerations(
+		current === null ? FIRST_GENERATIONS : generationsOf(current),
+		moves,
+	);
+	const target: SealTarget = { version, sessionEpoch, ...generations };
+	const written = await change.write(guarded, read, target);
 	const after = change.after(read, written);
 	//a seal under an older state-mac key is renewed even by a change that changes nothing (E-3408)
 	if (
 		current !== null &&
 		epoch === "keep" &&
+		!movesAnything(moves) &&
 		sameComponents(read, after) &&
 		current.keyVersion === (await context.keys.current("state-mac")).version
 	) {
 		return unchanged(guarded, change, current, read, written);
 	}
+	const componentsVersion = componentsVersionAfter(read, after, {
+		version,
+		epoch,
+		previous: generations.componentsVersion,
+	});
+	const sealed: SealTarget = { ...target, componentsVersion };
 	const { keyVersion, digest } = await computeSeal(context.keys, {
 		userId: read.userId,
-		version,
-		sessionEpoch,
+		...sealed,
 		...after,
 	});
-	await writeSealRow(tx, context.schema, read, { version, sessionEpoch, keyVersion, digest });
-	await change.afterSeal?.(guarded, { version, sessionEpoch }, written);
+	await writeSealRow(tx, context.schema, read, { ...sealed, keyVersion, digest });
+	await change.afterSeal?.(guarded, sealed, written);
 	return {
 		userId: read.userId,
 		version,
 		sessionEpoch,
+		generations: { ...generations, componentsVersion },
 		keyVersion,
 		digest,
 		firstSeal: current === null,
@@ -278,8 +363,19 @@ export async function sealUnderAccountLock<T>(
 	};
 }
 
+//a seal that only moves a generation leaves standing what a check before it authorised (E-3527)
+function componentsVersionAfter(
+	read: SecurityStateRead,
+	after: SealedComponents,
+	seal: { readonly version: number; readonly epoch: "keep" | "raise"; readonly previous: number },
+): number {
+	return read.seal === null || seal.epoch === "raise" || !sameComponents(read, after)
+		? seal.version
+		: seal.previous;
+}
+
 function sameComponents(read: SecurityStateRead, after: SealedComponents): boolean {
-	const unchangedState = { userId: read.userId, version: 0, sessionEpoch: 0 };
+	const unchangedState = { userId: read.userId, version: 0, sessionEpoch: 0, ...FIRST_GENERATIONS };
 	return equalsInConstantTime(
 		encodeSecurityState({ ...unchangedState, ...sealedComponentsOf(read) }),
 		encodeSecurityState({ ...unchangedState, ...after }),
@@ -294,15 +390,17 @@ async function unchanged<T>(
 	read: SecurityStateRead,
 	written: T,
 ): Promise<SealWritten<T>> {
+	const generations = generationsOf(current);
 	await change.afterSeal?.(
 		guarded,
-		{ version: current.version, sessionEpoch: current.sessionEpoch },
+		{ version: current.version, sessionEpoch: current.sessionEpoch, ...generations },
 		written,
 	);
 	return {
 		userId: read.userId,
 		version: current.version,
 		sessionEpoch: current.sessionEpoch,
+		generations,
 		keyVersion: current.keyVersion,
 		digest: current.digest,
 		firstSeal: false,
@@ -312,13 +410,14 @@ async function unchanged<T>(
 	};
 }
 
-const UNSEALED_TARGET: SealTarget = { version: 0, sessionEpoch: 1 };
+const UNSEALED_TARGET: SealTarget = { version: 0, sessionEpoch: 1, ...FIRST_GENERATIONS };
 
 function leftUnsealed<T>(read: SecurityStateRead, written: T): SealWritten<T> {
 	return {
 		userId: read.userId,
 		version: UNSEALED_TARGET.version,
 		sessionEpoch: UNSEALED_TARGET.sessionEpoch,
+		generations: FIRST_GENERATIONS,
 		keyVersion: 0,
 		digest: new Uint8Array(0),
 		firstSeal: false,
@@ -356,13 +455,21 @@ export async function sealCreatedAccount(
 		userId: read.userId,
 		version: 1,
 		sessionEpoch: 1,
+		...FIRST_GENERATIONS,
 		...sealedComponentsOf(read),
 	});
-	await writeSealRow(tx, context.schema, read, { version: 1, sessionEpoch: 1, keyVersion, digest });
+	await writeSealRow(tx, context.schema, read, {
+		version: 1,
+		sessionEpoch: 1,
+		...FIRST_GENERATIONS,
+		keyVersion,
+		digest,
+	});
 	return {
 		userId: read.userId,
 		version: 1,
 		sessionEpoch: 1,
+		generations: FIRST_GENERATIONS,
 		keyVersion,
 		digest,
 		firstSeal: true,

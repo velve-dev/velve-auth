@@ -137,7 +137,10 @@ async function register(
 		const issued = await createSessionUnderHooks(hooks, { userId: created.id, factors }, () =>
 			sessions.boundTo(transaction).issue({
 				completes: "sign_up",
-				authorisedBy: { version: firstSeal.version, sessionEpoch: firstSeal.sessionEpoch },
+				authorisedBy: {
+					componentsVersion: firstSeal.generations.componentsVersion,
+					sessionEpoch: firstSeal.sessionEpoch,
+				},
 				userId: created.id,
 				factors,
 				observed: observedIn(context),

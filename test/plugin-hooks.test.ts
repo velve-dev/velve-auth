@@ -217,15 +217,16 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 		},
 	};
 
+	const HOUR_IN_MS = 60 * 60 * 1000;
+
 	/** An expired-but-unswept row is still a row `revokeAll` deletes, which is the case that was wrong (E-765). */
 	async function insertSession(expired = false): Promise<{ token: string; id: string }> {
 		const issued = createSessionToken();
-		const idleDeadline = expired ? "now() - interval '1 hour'" : "now() + interval '7 days'";
 		const [row] = await mounted.connection.query<{ id: string }>(
 			`INSERT INTO ${mounted.schema}.session
 			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
 			    token_mac, token_mac_key_version, created_at, id)
-			 VALUES ($1, $2, ${idleDeadline}, now() + interval '30 days', '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)
+			 VALUES ($1, $2, $7::timestamptz, $8::timestamptz, '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)
 			 RETURNING id`,
 			[
 				userId,
@@ -234,6 +235,7 @@ describe("the hook points fire from the operations they are named for (3.11)", (
 					userId,
 					tokenHash: issued.tokenHash,
 					factors: ["password"],
+					...(expired ? { idleInMs: -HOUR_IN_MS } : {}),
 				})),
 			],
 		);

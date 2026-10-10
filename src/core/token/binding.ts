@@ -17,12 +17,20 @@ export type TokenRowContent =
 			readonly sessionEpoch: number;
 			/** `created_at` in whole microseconds since the Unix epoch */
 			readonly createdAtMicros: number;
+			/** the account's session generation, which a session revoked on its own moves */
+			readonly sessionGeneration: number;
+			/** `idle_expires_at` in whole microseconds since the Unix epoch, as decimal digits */
+			readonly idleExpiresAtMicros: string;
+			/** `absolute_expires_at` in whole microseconds since the Unix epoch, as decimal digits */
+			readonly absoluteExpiresAtMicros: string;
 	  }
 	| {
 			readonly factors: readonly string[];
 			readonly attempts: number;
 			/** the account's session epoch the check that created the row read */
 			readonly sessionEpoch: number;
+			/** the account's attempt generation the row's last booking moved it to */
+			readonly attemptGeneration: number;
 	  }
 	| { readonly ceremony: string }
 	| { readonly payload: OneTimeTokenPayload | null };
@@ -198,12 +206,16 @@ function contentField(content: TokenRowContent): Uint8Array {
 			listField(content.factors),
 			integerField(content.sessionEpoch),
 			integerField(content.createdAtMicros),
+			integerField(content.sessionGeneration),
+			textField(content.idleExpiresAtMicros),
+			textField(content.absoluteExpiresAtMicros),
 		]);
 	}
 	return concatenated([
 		listField(content.factors),
 		integerField(content.attempts),
 		integerField(content.sessionEpoch),
+		integerField(content.attemptGeneration),
 	]);
 }
 

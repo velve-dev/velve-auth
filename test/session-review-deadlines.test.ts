@@ -18,14 +18,15 @@ interface Counter {
 
 function countingByVerb(inner: Driver): Counter {
 	const verbs: string[] = [];
-	const driver: Driver = {
+	//an extension writes inside a transaction since the deadline it writes is the one its mac binds
+	const counted = (over: Driver): Driver => ({
 		query(sql, params) {
 			verbs.push(sql.trimStart().split(/\s+/, 1)[0]?.toUpperCase() ?? "");
-			return inner.query(sql, params);
+			return over.query(sql, params);
 		},
-		transaction: (fn) => inner.transaction(fn),
-	};
-	return { driver, verbs, reset: () => verbs.splice(0, verbs.length) };
+		transaction: (fn) => over.transaction((tx) => fn(counted(tx))),
+	});
+	return { driver: counted(inner), verbs, reset: () => verbs.splice(0, verbs.length) };
 }
 
 let migrated: MigratedSchema;

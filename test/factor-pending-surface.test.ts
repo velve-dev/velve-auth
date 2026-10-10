@@ -59,7 +59,7 @@ describe("the surface the pending module publishes", () => {
 	it("carries the same option shape the session service takes, and no clock (E-247)", () => {
 		expectTypeOf<PendingAuthenticationServiceOptions>().toHaveProperty("driver");
 		expectTypeOf<keyof PendingAuthenticationServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "schema" | "reportTokenBindingRefusal"
+			"driver" | "keys" | "schema" | "reportTokenBindingRefusal" | "attemptSeal"
 		>();
 		expectTypeOf<keyof PendingAuthenticationRepositoryOptions>().toEqualTypeOf<
 			"driver" | "schema"

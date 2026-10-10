@@ -110,10 +110,12 @@ export async function withProcessClockShiftedBy<T>(
 }
 
 /**
- * The four columns a session row written by hand needs to resolve, taken the way the session
- * service takes them (S-INTEG-9): pass them as the last four parameters of the insert, for
- * `token_mac`, `token_mac_key_version`, `created_at` cast to `timestamptz` and `id` cast to `uuid`,
- * since the MAC binds the id. An account without a seal row is at epoch 1.
+ * The six columns a session row written by hand needs to resolve, taken the way the session
+ * service takes them (S-INTEG-9): pass them as the last six parameters of the insert, for
+ * `token_mac`, `token_mac_key_version`, `created_at` cast to `timestamptz`, `id` cast to `uuid`,
+ * since the MAC binds the id, and `idle_expires_at` and `absolute_expires_at` cast to
+ * `timestamptz`, since it binds both deadlines. An account without a seal row is at epoch 1 and
+ * at the first session generation.
  */
 export async function sessionMacParameters(
 	keys: KeyProvider,
@@ -122,10 +124,15 @@ export async function sessionMacParameters(
 		readonly tokenHash: Uint8Array;
 		readonly factors: readonly string[];
 		readonly sessionEpoch?: number;
+		readonly sessionGeneration?: number;
+		/** the idle deadline from the creation time, 7 days where not given */
+		readonly idleInMs?: number;
 	},
-): Promise<[Uint8Array, number, string, string]> {
+): Promise<[Uint8Array, number, string, string, string, string]> {
 	const createdAt = new Date();
 	const sessionId = randomUUID();
+	const idleExpiresAt = new Date(createdAt.getTime() + (row.idleInMs ?? 7 * DAY));
+	const absoluteExpiresAt = new Date(createdAt.getTime() + 30 * DAY);
 	const { tokenMac, tokenMacKeyVersion } = await bindToken(keys, {
 		purpose: "session",
 		ownerId: row.userId,
@@ -135,15 +142,25 @@ export async function sessionMacParameters(
 			factors: row.factors,
 			sessionEpoch: row.sessionEpoch ?? 1,
 			createdAtMicros: createdAt.getTime() * 1000,
+			sessionGeneration: row.sessionGeneration ?? 1,
+			idleExpiresAtMicros: String(idleExpiresAt.getTime() * 1000),
+			absoluteExpiresAtMicros: String(absoluteExpiresAt.getTime() * 1000),
 		},
 	});
-	return [tokenMac, tokenMacKeyVersion, createdAt.toISOString(), sessionId];
+	return [
+		tokenMac,
+		tokenMacKeyVersion,
+		createdAt.toISOString(),
+		sessionId,
+		idleExpiresAt.toISOString(),
+		absoluteExpiresAt.toISOString(),
+	];
 }
 
 /**
  * Takes the MAC of every session row of an account again, over what the row now stores, under
- * `keys` and the epoch the account is at; a test that ages a session by moving its `created_at`
- * calls this afterwards, since the MAC binds the creation time (S-INTEG-9).
+ * `keys` and the epoch and generation the account is at; a test that ages a session by moving its
+ * `created_at` or a deadline calls this afterwards, since the MAC binds both (S-INTEG-9).
  */
 export async function rebindSessionsOf(
 	driver: Driver,
@@ -157,11 +174,17 @@ export async function rebindSessionsOf(
 		token_sha256: Uint8Array;
 		factor_names: string;
 		session_epoch: string;
+		session_generation: string;
 		created_at_us: string;
+		idle_expires_at_us: string;
+		absolute_expires_at_us: string;
 	}>(
 		`SELECT s.id, s.user_id, s.token_sha256, array_to_json(s.factors)::text AS factor_names,
 			COALESCE((SELECT session_epoch FROM ${schema}.security_state st WHERE st.user_id = s.user_id), 1)::text AS session_epoch,
-			trunc(extract(epoch FROM s.created_at) * 1000000)::text AS created_at_us
+			COALESCE((SELECT session_generation FROM ${schema}.security_state st WHERE st.user_id = s.user_id), 1)::text AS session_generation,
+			trunc(extract(epoch FROM s.created_at) * 1000000)::text AS created_at_us,
+			trunc(extract(epoch FROM s.idle_expires_at) * 1000000)::text AS idle_expires_at_us,
+			trunc(extract(epoch FROM s.absolute_expires_at) * 1000000)::text AS absolute_expires_at_us
 		 FROM ${schema}.session s WHERE s.user_id = $1 OR s.id = $2`,
 		[where.userId ?? null, where.sessionId ?? null],
 	);
@@ -172,6 +195,9 @@ export async function rebindSessionsOf(
 				sessionId: row.id,
 				sessionEpoch: Number(row.session_epoch),
 				createdAtMicros: Number(row.created_at_us),
+				sessionGeneration: Number(row.session_generation),
+				idleExpiresAtMicros: row.idle_expires_at_us,
+				absoluteExpiresAtMicros: row.absolute_expires_at_us,
 			}),
 		);
 		await driver.query(
@@ -216,19 +242,19 @@ export async function raiseEpochOf(
 }
 
 /**
- * The authorisation a seal check of the account would hand an issue now: the seal row's version
- * and epoch, or "unsealed" without one. A test that issues directly stands for that check (E-3403).
+ * The authorisation a seal check of the account would hand an issue now: the seal row's components
+ * version and epoch, or "unsealed" without one. A test that issues directly stands for that check (E-3403).
  */
 export async function authorisationOf(
 	driver: Driver,
 	schema: string,
 	userId: string,
-): Promise<{ readonly version: number; readonly sessionEpoch: number } | "unsealed"> {
+): Promise<{ readonly componentsVersion: number; readonly sessionEpoch: number } | "unsealed"> {
 	const [row] = await driver.query<{ version: string; epoch: string }>(
-		`SELECT version::text AS version, session_epoch::text AS epoch FROM ${schema}.security_state WHERE user_id = $1`,
+		`SELECT components_version::text AS version, session_epoch::text AS epoch FROM ${schema}.security_state WHERE user_id = $1`,
 		[userId],
 	);
 	return row === undefined
 		? "unsealed"
-		: { version: Number(row.version), sessionEpoch: Number(row.epoch) };
+		: { componentsVersion: Number(row.version), sessionEpoch: Number(row.epoch) };
 }

@@ -29,6 +29,23 @@ export function epochOf(storedEpoch: string, sealing: SecurityStateSealing): str
 	return sealing === "migrating" ? `COALESCE(${storedEpoch}, ${FIRST_SESSION_EPOCH})` : storedEpoch;
 }
 
+//an unsealed account is at the first generation wherever it is at the first epoch (E-3520)
+export function generationOf(storedGeneration: string, sealing: SecurityStateSealing): string {
+	return epochOf(storedGeneration, sealing);
+}
+
+/** the session generation a single revocation moves the account from and to */
+export interface GenerationStep {
+	readonly from: number;
+	readonly to: number;
+}
+
+/** runs a single revocation under the account lock and moves the session generation where the seal verifies, or hands it null */
+export type RevocationSeal = <T>(
+	userId: string,
+	revoke: (tx: Driver, step: GenerationStep | null) => Promise<T>,
+) => Promise<T>;
+
 const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 	"password",
 	"totp",
@@ -55,15 +72,22 @@ export class SessionOwnerMismatchError extends Error {
 	}
 }
 
+class NothingRevoked extends Error {
+	constructor() {
+		super("the revocation found no row to remove");
+		this.name = "NothingRevoked";
+	}
+}
+
 /** how an issue that writes no row is reported and answered, which the path it completes decides */
 export interface MissedIssue {
 	readonly occasion: "sign_in" | "change";
 	readonly reason: ConcealedReason;
 }
 
-/** the seal row the check that authorised an issue read, or `"unsealed"` where it read none */
+/** the components version and epoch of the seal row the check that authorised an issue read, or `"unsealed"` where it read none */
 export type IssueAuthorisation =
-	| { readonly version: number; readonly sessionEpoch: number }
+	| { readonly componentsVersion: number; readonly sessionEpoch: number }
 	| "unsealed";
 
 /** tells whether the seal verifies under the account lock after an issue wrote no row */
@@ -103,6 +127,11 @@ export interface SessionCandidate extends StoredTokenMac {
 	readonly sessionEpoch: number | null;
 	/** null where the stored creation time is no exact count of microseconds the library could have bound */
 	readonly createdAtMicros: number | null;
+	/** the account's current session generation, or null for an account that has none */
+	readonly sessionGeneration: number | null;
+	/** null where a stored deadline is no finite count of microseconds the library could have bound */
+	readonly idleExpiresAtMicros: string | null;
+	readonly absoluteExpiresAtMicros: string | null;
 	/** null where a column the MAC does not bind holds a value no date of this runtime can carry */
 	decode(): SessionWithOwner | null;
 	/** the account's security-state document the same statement read */
@@ -118,12 +147,15 @@ export interface SessionOwner {
 interface LockedState {
 	readonly version: number | null;
 	readonly sessionEpoch: number | null;
+	readonly sessionGeneration: number | null;
 	readonly createdAtMicros: number;
+	readonly idleExpiresAtMicros: string;
+	readonly absoluteExpiresAtMicros: string;
 }
 
 //an issue inserts while the seal row still holds what its check read, or while there is none (E-3485)
 type IssueCondition =
-	| { readonly sealed: true; readonly version: number; readonly sessionEpoch: number }
+	| { readonly sealed: true; readonly componentsVersion: number; readonly sessionEpoch: number }
 	| { readonly sealed: false }
 	| { readonly unwritable: true };
 
@@ -142,6 +174,8 @@ interface SessionRepositoryOptions {
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	//a missed issue under a seal that verifies was a legitimate change and raises no alarm (E-3485)
 	readonly sealVerifiesAfterMissedIssue?: SealVerification;
+	//a session revoked on its own moves the generation every other session is rebound to (E-3520)
+	readonly revocationSeal?: RevocationSeal;
 }
 
 export interface SessionRepository {
@@ -155,7 +189,14 @@ export interface SessionRepository {
 		readonly sessionId: string;
 		readonly previous: StoredTokenMac;
 		readonly next: StoredTokenMac;
+	}): Promise<boolean>;
+	//every live session but the excluded ones follows the generation a change under the lock moves (E-3520)
+	rebindToGeneration(input: {
+		readonly actor: Actor;
+		readonly step: GenerationStep;
+		readonly excluding: readonly string[];
 	}): Promise<void>;
+	//a later idle deadline is written only with a MAC over it and over the row it checked first (E-3520)
 	extendIdleDeadline(input: {
 		readonly sessionId: string;
 		readonly actor: Actor;
@@ -215,7 +256,13 @@ interface SessionRowShape {
 	readonly user_agent: string | null;
 }
 
-interface VerifiedRowShape {
+interface DeadlineColumns {
+	readonly idle_expires_at_us: string | null;
+	readonly absolute_expires_at_us: string | null;
+	readonly session_generation: string | null;
+}
+
+interface VerifiedRowShape extends DeadlineColumns {
 	readonly id: string;
 	readonly user_id: string;
 	readonly created_at_us: string | null;
@@ -228,7 +275,7 @@ interface VerifiedRowShape {
 
 interface ListedRowShape extends SessionRowShape, VerifiedRowShape {}
 
-interface OwnedRowShape extends Omit<SessionRowShape, "factors"> {
+interface OwnedRowShape extends Omit<SessionRowShape, "factors">, DeadlineColumns {
 	readonly created_at_us: string | null;
 	readonly factor_names: string;
 	readonly session_epoch: string | null;
@@ -292,7 +339,13 @@ function secondsOf(milliseconds: number): number {
 	return Math.round(milliseconds) / 1000;
 }
 
+//a deadline is computed by the same expression in the statement the mac reads it from and the one that writes it (E-3520)
+const PLUS_SECONDS = (parameter: string) =>
+	`now() + make_interval(secs => ${parameter}::double precision)`;
+
 const NOT_LISTED = false;
+
+const GENERATION_REBIND_ATTEMPTS = 3;
 
 function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 	return {
@@ -310,8 +363,8 @@ function toSession(row: SessionRowShape, isCurrent: boolean): Session {
 }
 
 //the creation time is the transaction's own so it equals the one the mac was taken over (S-INTEG-9)
-const INSERTED_VALUES = `$1, $2, now() + make_interval(secs => $3::double precision),
-		now() + make_interval(secs => $4::double precision), $5::text[], $6::inet, $7, $8, $9, now(),
+const INSERTED_VALUES = `$1, $2, ${PLUS_SECONDS("$3")},
+		${PLUS_SECONDS("$4")}, $5::text[], $6::inet, $7, $8, $9, now(),
 		$10::uuid`;
 
 //the id is drawn before the insert as the mac binds it (S-INTEG-9)
@@ -327,7 +380,8 @@ export function microsOf(timestamp: string): string {
 function sealedInsertStatement(table: string, states: string): string {
 	return `INSERT INTO ${table} ${INSERTED_COLUMNS}
 	SELECT ${INSERTED_VALUES}
-	FROM ${states} WHERE user_id = $1 AND session_epoch = $11::bigint AND version = $12::bigint
+	FROM ${states} WHERE user_id = $1 AND session_epoch = $11::bigint
+		AND components_version = $12::bigint
 	RETURNING ${SELECTED_COLUMNS}`;
 }
 
@@ -352,6 +406,7 @@ function resolveStatement(
 		s.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 		s.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
 		${microsOf("s.created_at")} AS created_at_us,
+		${deadlineColumns(generationOf("st.session_generation", sealing))},
 		${epochOf("st.session_epoch", sealing)}::text AS session_epoch,
 		${securityStateDocumentOf(schema, "s.user_id")} AS security_state
 	FROM ${table} s
@@ -360,11 +415,19 @@ function resolveStatement(
 	WHERE s.token_sha256 = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`;
 }
 
+//the deadlines and the generation a mac binds are read beside the row (E-3520)
+function deadlineColumns(generation: string): string {
+	return `${microsOf("s.idle_expires_at")} AS idle_expires_at_us,
+		${microsOf("s.absolute_expires_at")} AS absolute_expires_at_us,
+		${generation}::text AS session_generation`;
+}
+
 //the write interval sits in the statement so two concurrent requests cannot both write
 function extendIdleDeadlineStatement(table: string): string {
 	return `UPDATE ${table}
-	SET last_used_at = now(), idle_expires_at = now() + make_interval(secs => $3::double precision)
-	WHERE id = $1 AND user_id = $2
+	SET last_used_at = now(), idle_expires_at = now() + make_interval(secs => $3::double precision),
+		token_mac = $6, token_mac_key_version = $7
+	WHERE id = $1 AND user_id = $2 AND token_mac = $5
 		AND last_used_at <= now() - make_interval(secs => $4::double precision)
 		AND idle_expires_at > now() AND absolute_expires_at > now()
 	RETURNING idle_expires_at`;
@@ -372,7 +435,32 @@ function extendIdleDeadlineStatement(table: string): string {
 
 function rebindStatement(table: string): string {
 	return `UPDATE ${table} SET token_mac = $3, token_mac_key_version = $4
-	WHERE id = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5`;
+	WHERE id = $1 AND user_id = $6 AND token_mac = $2 AND token_mac_key_version = $5
+	RETURNING id`;
+}
+
+function ownerByTokenHashStatement(table: string): string {
+	return `SELECT user_id FROM ${table} WHERE token_sha256 = $1`;
+}
+
+function deleteOwnedByTokenHashStatement(table: string): string {
+	return `DELETE FROM ${table} WHERE token_sha256 = $1 AND user_id = $2 RETURNING id, user_id`;
+}
+
+function liveOwnedStatement(table: string, states: string, sealing: SecurityStateSealing): string {
+	return `SELECT ${verifiedColumns(states, sealing)} FROM ${table} s
+	WHERE s.user_id = $1 AND s.idle_expires_at > now() AND s.absolute_expires_at > now()`;
+}
+
+//the row an extension rebinds and the now its deadline starts from come from one statement
+function extendedRowStatement(
+	table: string,
+	states: string,
+	sealing: SecurityStateSealing,
+): string {
+	return `SELECT ${verifiedColumns(states, sealing)},
+	${microsOf(PLUS_SECONDS("$3"))} AS extended_us
+	FROM ${table} s WHERE s.id = $1 AND s.user_id = $2`;
 }
 
 function deleteByTokenHashStatement(table: string): string {
@@ -401,7 +489,17 @@ function deleteLiveOwnedStatement(table: string, users: string): string {
 function issuingStateStatement(states: string): string {
 	return `SELECT (SELECT session_epoch::text FROM ${states} WHERE user_id = $1) AS session_epoch,
 		(SELECT version::text FROM ${states} WHERE user_id = $1) AS version,
+		(SELECT session_generation::text FROM ${states} WHERE user_id = $1) AS session_generation,
+		${microsOf(PLUS_SECONDS("$2"))} AS idle_expires_at_us,
+		${microsOf(PLUS_SECONDS("$3"))} AS absolute_expires_at_us,
 		${microsOf("now()")} AS created_at_us`;
+}
+
+const DECIMAL_DIGITS = /^-?(0|[1-9][0-9]*)$/;
+
+//a deadline past the year 2255 is no exact javascript number and is bound as its decimal digits (E-3520)
+function decimalMicrosFrom(value: string | null): string | null {
+	return value !== null && DECIMAL_DIGITS.test(value) ? value : null;
 }
 
 //a count of microseconds must be exact before a mac binds it (S-INTEG-9)
@@ -482,6 +580,7 @@ function verifiedColumns(states: string, sealing: SecurityStateSealing): string 
 	return `s.id, s.user_id, ${microsOf("s.created_at")} AS created_at_us, s.token_sha256,
 	array_to_json(s.factors)::text AS factor_names,
 	s.token_mac, s.token_mac_key_version,
+	${deadlineColumns(generationOf(`(SELECT session_generation FROM ${states} WHERE user_id = s.user_id)`, sealing))},
 	${epochOf(`(SELECT session_epoch FROM ${states} WHERE user_id = s.user_id)`, sealing)}::text AS session_epoch`;
 }
 
@@ -491,6 +590,7 @@ function listedColumns(sealing: SecurityStateSealing): string {
 	s.absolute_expires_at, array_to_string(s.factors, ',') AS factors, s.ip, s.user_agent,
 	s.token_sha256, array_to_json(s.factors)::text AS factor_names, s.token_mac,
 	s.token_mac_key_version, ${epochOf("st.session_epoch", sealing)}::text AS session_epoch,
+	${deadlineColumns(generationOf("st.session_generation", sealing))},
 	${microsOf("s.created_at")} AS created_at_us`;
 }
 
@@ -526,6 +626,18 @@ function insertParameters(insert: SessionInsert): unknown[] {
 	];
 }
 
+function deadlinesOf(row: DeadlineColumns): {
+	readonly sessionGeneration: number | null;
+	readonly idleExpiresAtMicros: string | null;
+	readonly absoluteExpiresAtMicros: string | null;
+} {
+	return {
+		sessionGeneration: toEpoch(row.session_generation),
+		idleExpiresAtMicros: decimalMicrosFrom(row.idle_expires_at_us),
+		absoluteExpiresAtMicros: decimalMicrosFrom(row.absolute_expires_at_us),
+	};
+}
+
 function candidateOf(row: OwnedRowShape): SessionCandidate {
 	const storedFactorNames = storedNamesOf(row.factor_names);
 	return {
@@ -534,6 +646,7 @@ function candidateOf(row: OwnedRowShape): SessionCandidate {
 		storedFactorNames,
 		sessionEpoch: toEpoch(row.session_epoch),
 		createdAtMicros: microsFrom(row.created_at_us),
+		...deadlinesOf(row),
 		tokenMac: row.token_mac,
 		tokenMacKeyVersion: row.token_mac_key_version,
 		securityState: row.security_state ?? null,
@@ -568,6 +681,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	const keptRebindSql = keptRebindStatement(table);
 	const listOwnedSql = listOwnedStatement(table, states, sealing);
 	const listEveryIdOwnedSql = listEveryIdOwnedStatement(table, states, sealing);
+	const ownerByTokenHashSql = ownerByTokenHashStatement(table);
+	const deleteOwnedByTokenHashSql = deleteOwnedByTokenHashStatement(table);
+	const liveOwnedSql = liveOwnedStatement(table, states, sealing);
+	const extendedRowSql = extendedRowStatement(table, states, sealing);
 
 	function libraryBindingOf(
 		row: VerifiedRowShape,
@@ -582,6 +699,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				storedFactorNames: storedNamesOf(row.factor_names),
 				sessionEpoch: toEpoch(row.session_epoch),
 				createdAtMicros: microsFrom(row.created_at_us),
+				...deadlinesOf(row),
 				tokenMac: row.token_mac,
 				tokenMacKeyVersion: row.token_mac_key_version,
 			},
@@ -631,23 +749,39 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		return sessions;
 	}
 
-	async function lockedStateOf(driver: Driver, userId: string): Promise<LockedState> {
+	async function lockedStateOf(driver: Driver, insert: SessionInsert): Promise<LockedState> {
 		const [row] = await driver.query<{
 			session_epoch: string | null;
 			version: string | null;
+			session_generation: string | null;
 			created_at_us: string | null;
-		}>(issuingStateSql, [userId]);
+			idle_expires_at_us: string | null;
+			absolute_expires_at_us: string | null;
+		}>(issuingStateSql, [
+			insert.userId,
+			secondsOf(insert.idleTimeoutMs),
+			secondsOf(insert.absoluteTimeoutMs),
+		]);
 		if (row === undefined) {
 			throw new TypeError("the read of the issuing state returned no row");
 		}
 		const createdAtMicros = microsFrom(row.created_at_us);
-		if (createdAtMicros === null) {
+		const idleExpiresAtMicros = decimalMicrosFrom(row.idle_expires_at_us);
+		const absoluteExpiresAtMicros = decimalMicrosFrom(row.absolute_expires_at_us);
+		if (
+			createdAtMicros === null ||
+			idleExpiresAtMicros === null ||
+			absoluteExpiresAtMicros === null
+		) {
 			throw new TypeError("the database clock lies outside what this library binds");
 		}
 		return {
 			version: row.version === null ? null : versionFrom(row.version),
 			sessionEpoch: row.session_epoch === null ? null : epochFrom(row.session_epoch),
+			sessionGeneration: row.session_generation === null ? null : epochFrom(row.session_generation),
 			createdAtMicros,
+			idleExpiresAtMicros,
+			absoluteExpiresAtMicros,
 		};
 	}
 
@@ -666,7 +800,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		driver: Driver,
 		insert: SessionInsert,
 	): Promise<SessionRowShape | undefined> {
-		const locked = await lockedStateOf(driver, insert.userId);
+		const locked = await lockedStateOf(driver, insert);
 		const condition = conditionOf(insert.authorisedBy);
 		if ("unwritable" in condition) {
 			throw new ConcealedError(insert.missed.reason);
@@ -675,6 +809,9 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			sessionId: insert.sessionId ?? randomUuid(),
 			sessionEpoch: condition.sealed ? condition.sessionEpoch : FIRST_SESSION_EPOCH,
 			createdAtMicros: locked.createdAtMicros,
+			sessionGeneration: locked.sessionGeneration ?? FIRST_SESSION_EPOCH,
+			idleExpiresAtMicros: locked.idleExpiresAtMicros,
+			absoluteExpiresAtMicros: locked.absoluteExpiresAtMicros,
 		};
 		const mac = await insert.bindUnder(issue);
 		const parameters = [
@@ -687,7 +824,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			? await driver.query<SessionRowShape>(sealedInsertSql, [
 					...parameters,
 					condition.sessionEpoch,
-					condition.version,
+					condition.componentsVersion,
 				])
 			: await driver.query<SessionRowShape>(unsealedInsertSql, parameters);
 		return row;
@@ -706,11 +843,18 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 	}
 
 	//a writer who moved the epoch past the lock leaves a broken state that is not retried (E-3256)
-	async function insertUnderAccountLock(tx: Driver, insert: SessionInsert): Promise<Session> {
+	async function insertUnderAccountLock(
+		tx: Driver,
+		insert: SessionInsert,
+		sealVerifiedUnderTheLock = false,
+	): Promise<Session> {
 		const row = await insertUnderCurrentEpoch(tx, insert);
 		if (row === undefined) {
 			//a miss under a seal that verifies was a legitimate change and raises no alarm (E-3485)
-			if (await options.sealVerifiesAfterMissedIssue?.(tx, insert.userId)) {
+			if (
+				sealVerifiedUnderTheLock ||
+				(await options.sealVerifiesAfterMissedIssue?.(tx, insert.userId))
+			) {
 				throw new ConcealedError(insert.missed.reason);
 			}
 			reportBrokenState(options.reportTokenBindingRefusal, {
@@ -782,6 +926,91 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		}
 	}
 
+	//a row a refresh or a resolution rewrote since the read is read again and followed while it still verifies (E-3520)
+	async function followedToGeneration(
+		tx: Driver,
+		first: VerifiedRowShape,
+		step: GenerationStep,
+	): Promise<void> {
+		let row: VerifiedRowShape | undefined = first;
+		for (let attempt = 0; row !== undefined && attempt < GENERATION_REBIND_ATTEMPTS; attempt += 1) {
+			const binding = await libraryBindingOf(
+				{ ...row, session_generation: String(step.from) },
+				"change",
+			);
+			if (binding === null || !("sessionGeneration" in binding.content)) {
+				return;
+			}
+			const next = await bindToken(options.keys, {
+				...binding,
+				content: { ...binding.content, sessionGeneration: step.to },
+			});
+			const rebound = await tx.query(keptRebindSql, [
+				row.id,
+				row.user_id,
+				row.token_mac,
+				next.tokenMac,
+				next.tokenMacKeyVersion,
+			]);
+			if (rebound.length === 1) {
+				return;
+			}
+			[row] = await tx.query<VerifiedRowShape>(keptRowSql, [row.id, row.user_id]);
+		}
+	}
+
+	async function rebindToGeneration(
+		tx: Driver,
+		userId: string,
+		step: GenerationStep,
+		excluding: readonly string[],
+	): Promise<void> {
+		for (const row of await tx.query<VerifiedRowShape>(liveOwnedSql, [userId])) {
+			if (!excluding.includes(row.id)) {
+				await followedToGeneration(tx, row, step);
+			}
+		}
+	}
+
+	//a revocation without a seal behind it still runs under the lock a mass revocation takes
+	const revocationSeal: RevocationSeal =
+		options.revocationSeal ??
+		((userId, revoke) => issuing(options.driver, userId, (tx) => revoke(tx, null)));
+
+	//a single revocation leaves every other session on a generation the revoked row does not bind (E-3520)
+	async function revokedUnderGeneration(
+		userId: string,
+		remove: (tx: Driver) => Promise<readonly string[]>,
+	): Promise<readonly string[]> {
+		try {
+			return await revocationSeal(userId, async (tx, step) => {
+				const removed = await remove(tx);
+				//a revocation that removed nothing rolls back and moves no generation
+				if (removed.length === 0) {
+					throw new NothingRevoked();
+				}
+				if (step !== null) {
+					await rebindToGeneration(tx, userId, step, removed);
+				}
+				return removed;
+			});
+		} catch (error) {
+			if (error instanceof NothingRevoked) {
+				return [];
+			}
+			throw error;
+		}
+	}
+
+	async function ownerOfTokenHash(tokenHash: Uint8Array): Promise<string | null> {
+		const [row] = await options.driver.query<{ user_id: string }>(ownerByTokenHashSql, [tokenHash]);
+		return row?.user_id ?? null;
+	}
+
+	async function deletedIds(tx: Driver, sql: string, parameters: unknown[]): Promise<string[]> {
+		return (await tx.query<{ id: string }>(sql, parameters)).map((row) => row.id);
+	}
+
 	//a forged row goes with the others and is neither counted nor returned (S-INTEG-9)
 	async function deleteEverySessionOwnedByReturningIds(actor: Actor): Promise<string[]> {
 		const rows = await options.driver.query<VerifiedRowShape>(deleteEveryOwnedSql, [actor]);
@@ -800,7 +1029,7 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		},
 
 		async rebindSessionTokenMac({ actor, sessionId, previous, next }) {
-			await options.driver.query(rebindSql, [
+			const rows = await options.driver.query(rebindSql, [
 				sessionId,
 				previous.tokenMac,
 				next.tokenMac,
@@ -808,7 +1037,11 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				previous.tokenMacKeyVersion,
 				actor,
 			]);
+			return rows.length === 1;
 		},
+
+		rebindToGeneration: ({ actor, step, excluding }) =>
+			rebindToGeneration(options.driver, actor, step, excluding),
 
 		async listEverySessionIdOwnedBy({ actor }) {
 			return (await libraryRowsOf(actor, listEveryIdOwnedSql, "change")).map((row) => row.id);
@@ -817,8 +1050,10 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		listSessionsOfUser: ({ userId }) => librarySessionsOf(userId, listOwnedSql, null),
 
 		async deleteSessionById({ sessionId, ownerReadBefore }) {
-			const rows = await options.driver.query(deleteOwnedSql, [sessionId, ownerReadBefore]);
-			return rows.length;
+			const removed = await revokedUnderGeneration(ownerReadBefore, (tx) =>
+				deletedIds(tx, deleteOwnedSql, [sessionId, ownerReadBefore]),
+			);
+			return removed.length;
 		},
 
 		async findOwnerOfSession({ sessionId }) {
@@ -828,24 +1063,63 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 				: { userId: row.user_id, libraryRow: (await libraryBindingOf(row, "change")) !== null };
 		},
 
-		async extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {
-			const [row] = await options.driver.query<{ idle_expires_at: unknown }>(extendSql, [
-				sessionId,
-				actor,
-				secondsOf(idleTimeoutMs),
-				secondsOf(writtenNoSoonerThanMs),
-			]);
-			return row === undefined ? null : toDate(row.idle_expires_at);
+		extendIdleDeadline({ sessionId, actor, idleTimeoutMs, writtenNoSoonerThanMs }) {
+			//the deadline written must be the one the mac binds
+			return options.driver.transaction(async (tx) => {
+				const [stored] = await tx.query<VerifiedRowShape & { extended_us: string | null }>(
+					extendedRowSql,
+					[sessionId, actor, secondsOf(idleTimeoutMs)],
+				);
+				const extendedMicros = decimalMicrosFrom(stored?.extended_us ?? null);
+				const checked =
+					stored === undefined ? null : await libraryBindingOf(stored, "session_resolve");
+				if (
+					extendedMicros === null ||
+					stored === undefined ||
+					checked === null ||
+					!("idleExpiresAtMicros" in checked.content)
+				) {
+					return null;
+				}
+				const next = await bindToken(options.keys, {
+					...checked,
+					content: {
+						...checked.content,
+						idleExpiresAtMicros: extendedMicros,
+					},
+				});
+				const [row] = await tx.query<{ idle_expires_at: unknown }>(extendSql, [
+					sessionId,
+					actor,
+					secondsOf(idleTimeoutMs),
+					secondsOf(writtenNoSoonerThanMs),
+					stored.token_mac,
+					next.tokenMac,
+					next.tokenMacKeyVersion,
+				]);
+				return row === undefined ? null : toDate(row.idle_expires_at);
+			});
 		},
 
-		deleteSessionByTokenHash: (tokenHash) => deleteSessionByTokenHash(options.driver, tokenHash),
+		async deleteSessionByTokenHash(tokenHash) {
+			const owner = await ownerOfTokenHash(tokenHash);
+			if (owner === null) {
+				return null;
+			}
+			const [removed] = await revokedUnderGeneration(owner, (tx) =>
+				deletedIds(tx, deleteOwnedByTokenHashSql, [tokenHash, owner]),
+			);
+			return removed === undefined ? null : { id: removed, userId: owner };
+		},
 
 		listSessionsOwnedBy: ({ actor, currentSessionId }) =>
 			librarySessionsOf(actor, listOwnedSql, currentSessionId),
 
 		async deleteSessionOwnedBy({ sessionId, actor }) {
-			const rows = await options.driver.query(deleteOwnedSql, [sessionId, actor]);
-			return rows.length;
+			const removed = await revokedUnderGeneration(actor, (tx) =>
+				deletedIds(tx, deleteOwnedSql, [sessionId, actor]),
+			);
+			return removed.length;
 		},
 
 		async deleteEverySessionOwnedBy({ actor }) {
@@ -871,7 +1145,22 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 		},
 
 		//a sign-in removes the presented row in the transaction that inserts its successor (S-FIX-1)
-		replacePresentedSession({ presentedTokenHash, insert }) {
+		async replacePresentedSession({ presentedTokenHash, insert }) {
+			const owner = presentedTokenHash === null ? null : await ownerOfTokenHash(presentedTokenHash);
+			//a presented row of the same account is revoked on its own and moves the generation (E-3521)
+			if (presentedTokenHash !== null && owner === insert.userId) {
+				return revocationSeal(insert.userId, async (tx, step) => {
+					const removed = await deletedIds(tx, deleteOwnedByTokenHashSql, [
+						presentedTokenHash,
+						insert.userId,
+					]);
+					const session = await insertUnderAccountLock(tx, insert, step !== null);
+					if (step !== null) {
+						await rebindToGeneration(tx, insert.userId, step, removed);
+					}
+					return session;
+				});
+			}
 			return issuing(options.driver, insert.userId, async (tx) => {
 				if (presentedTokenHash !== null) {
 					await deleteSessionByTokenHash(tx, presentedTokenHash);
@@ -885,13 +1174,17 @@ export function createSessionRepository(options: SessionRepositoryOptions): Sess
 			if (insert.userId !== actor) {
 				throw new SessionOwnerMismatchError();
 			}
-			return issuing(options.driver, actor, async (tx) => {
-				const removed = await tx.query(deleteLiveOwnedSql, [previousSessionId, actor]);
+			return revocationSeal(actor, async (tx, step) => {
+				const removed = await deletedIds(tx, deleteLiveOwnedSql, [previousSessionId, actor]);
 				//the count is checked here as only here can the insert still be undone (E-961)
 				if (removed.length === 0) {
 					throw new PreviousSessionMissingError();
 				}
-				return insertUnderAccountLock(tx, insert);
+				const session = await insertUnderAccountLock(tx, insert, step !== null);
+				if (step !== null) {
+					await rebindToGeneration(tx, actor, step, removed);
+				}
+				return session;
 			});
 		},
 	};

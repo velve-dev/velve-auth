@@ -16,7 +16,7 @@ interface Call {
 	readonly params: readonly unknown[];
 }
 
-const OWNER_FOUND = [{ owner_exists: 1 }];
+const OWNER_FOUND = [{ owner_exists: 1, token_generation: "1" }];
 
 function driverReturning(
 	rows: readonly unknown[],
@@ -59,8 +59,7 @@ describe("the parameters the repository sends", () => {
 			tokenSha256: HASH,
 			purpose: "password_reset",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
-			payload: { newEmail: "next@example.com" },
-			...MAC,
+			bindUnder: () => Promise.resolve({ payload: { newEmail: "next@example.com" }, ...MAC }),
 		});
 
 		expect(calls).toHaveLength(2);
@@ -68,6 +67,7 @@ describe("the parameters the repository sends", () => {
 		expect(calls[0]?.params).toStrictEqual([
 			"0d1b6c8e-0000-4000-8000-000000000001",
 			"0d1b6c8e-0000-4000-8000-000000000001",
+			"password_reset",
 		]);
 		expect(calls[1]?.params).toStrictEqual([
 			"0d1b6c8e-0000-4000-8000-000000000001",
@@ -89,8 +89,7 @@ describe("the parameters the repository sends", () => {
 			tokenSha256: HASH,
 			purpose: "magic_link",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
-			payload: null,
-			...MAC,
+			bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 		});
 
 		expect(calls[1]?.params[3]).toBeNull();
@@ -103,15 +102,20 @@ describe("the parameters the repository sends", () => {
 			tokenSha256: HASH,
 			purpose: "magic_link",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
-			payload: null,
-			...MAC,
+			bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 		});
 
 		const collapsed = calls.map((call) => call.sql.replace(/\s+/g, " ").trim());
 		expect(collapsed).toHaveLength(2);
 		expect(collapsed[0]).toBe(
 			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
-				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists, " +
+				"(SELECT COALESCE( (SELECT CASE $3::text WHEN 'email_verify' THEN st.email_verify_generation " +
+				"WHEN 'password_reset' THEN st.password_reset_generation " +
+				"WHEN 'email_change' THEN st.email_change_generation " +
+				"WHEN 'magic_link' THEN st.magic_link_generation END " +
+				"FROM velve.security_state st WHERE st.user_id = owner.id), 1) " +
+				"FROM velve.user owner WHERE owner.id = $1)::text AS token_generation",
 		);
 		expect(collapsed[1]).toMatch(/^WITH superseded AS \( DELETE FROM velve\.one_time_token/);
 	});
@@ -185,8 +189,7 @@ describe("what the repository refuses", () => {
 				tokenSha256: HASH,
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
-				payload: null,
-				...MAC,
+				bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 			}),
 		).rejects.toThrow(OneTimeTokenError);
 	});
@@ -203,8 +206,7 @@ describe("what the repository refuses", () => {
 					tokenSha256: HASH,
 					purpose,
 					userId: "0d1b6c8e-0000-4000-8000-000000000001",
-					payload: { secret: "must-not-appear" },
-					...MAC,
+					bindUnder: () => Promise.resolve({ payload: { secret: "must-not-appear" }, ...MAC }),
 				})
 				.catch((error: unknown) => error)) as OneTimeTokenError;
 		};
@@ -237,8 +239,7 @@ describe("what the repository refuses", () => {
 				tokenSha256: HASH,
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
-				payload: null,
-				...MAC,
+				bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 			})
 			.catch(() => undefined);
 
@@ -254,8 +255,7 @@ describe("what the repository refuses", () => {
 				tokenSha256: HASH,
 				purpose: "totp_step" as unknown as OneTimeTokenPurpose,
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
-				payload: null,
-				...MAC,
+				bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 			})
 			.catch(() => undefined);
 

@@ -164,7 +164,7 @@ describe("the plugin boundary against a real instance (S-CACHE-5, S-OWNER-10, S-
 			`INSERT INTO ${schema}.session
 			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
 			    token_mac, token_mac_key_version, created_at, id)
-			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[],
+			 VALUES ($1, $2, $7::timestamptz, $8::timestamptz, '{password}'::text[],
 			    $3, $4, $5::timestamptz, $6::uuid)`,
 			[
 				userId,

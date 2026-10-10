@@ -109,6 +109,7 @@ describe.each([
 		await expect(repository.listSessionsOfUser({ userId })).resolves.toHaveLength(1);
 	});
 
+	//both deadlines are bound so a moved one fails the mac like a moved creation time (E-3520)
 	it("goes with a revocation of every session, which counts the rows whose MAC holds", async () => {
 		const userId = await twoSessionsWithOneMoved(column, moved);
 		const repository = createSessionRepository(reporting());
@@ -119,7 +120,7 @@ describe.each([
 		);
 
 		expect({ counted, left: left?.n }).toStrictEqual({
-			counted: column === "created_at" ? 1 : 2,
+			counted: column === "last_used_at" ? 2 : 1,
 			left: 0,
 		});
 	});

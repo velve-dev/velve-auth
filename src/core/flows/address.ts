@@ -8,8 +8,8 @@ import { ONE_TIME_TOKEN_PURPOSES } from "../token/purpose.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
-	A_DISABLED_ACCOUNT,
 	accountOrDisabledOfRedemption,
+	DisabledRedemption,
 	type FlowEnvironment,
 	mailerOf,
 	readAccountOfSession,
@@ -75,7 +75,7 @@ export async function redeemVerification(
 		});
 		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
 		//a token presented for a disabled account stays spent once it is enabled again (E-2880)
-		if (account === A_DISABLED_ACCOUNT) {
+		if (account instanceof DisabledRedemption) {
 			return account;
 		}
 		//the confirmation link is one of the two ways an address is first confirmed (S-LINK-4)
@@ -88,10 +88,12 @@ export async function redeemVerification(
 			confirmingSession,
 			newEmail: null,
 			securityState: environment.services.securityState,
+			spent: redeemed.spent,
 		});
 		return { userId: account.user.id, toRecord: confirmed.toRecord };
 	});
-	if (redemption === A_DISABLED_ACCOUNT) {
+	if (redemption instanceof DisabledRedemption) {
+		recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
 		refuseADisabledAccount();
 	}
 	recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
@@ -151,7 +153,7 @@ export async function redeemChange(
 		});
 		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
 		//a token presented for a disabled account stays spent once it is enabled again (E-2880)
-		if (account === A_DISABLED_ACCOUNT) {
+		if (account instanceof DisabledRedemption) {
 			return account;
 		}
 		//the old address's links go before the account lock as one_time_token precedes velve.user (E-3278)
@@ -169,10 +171,12 @@ export async function redeemChange(
 			confirmingSession,
 			newEmail: addressIn(redeemed.payload),
 			securityState: environment.services.securityState,
+			spent: redeemed.spent,
 		});
 		return { userId: account.user.id, toRecord: confirmed.toRecord };
 	});
-	if (redemption === A_DISABLED_ACCOUNT) {
+	if (redemption instanceof DisabledRedemption) {
+		recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
 		refuseADisabledAccount();
 	}
 	recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");

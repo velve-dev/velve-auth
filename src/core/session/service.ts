@@ -4,6 +4,7 @@ import {
 	createSessionRepository,
 	type IssueAuthorisation,
 	type MissedIssue,
+	type RevocationSeal,
 	type SealVerification,
 	type SecurityStateSealing,
 	type SessionInsert,
@@ -98,6 +99,8 @@ export interface SessionServiceOptions {
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	/** verifies the seal under the account lock after an issue wrote no row, so a legitimate change that won the race raises no alarm */
 	readonly sealVerifiesAfterMissedIssue?: SealVerification;
+	/** runs a single revocation under the account lock and moves the session generation the other sessions are rebound to */
+	readonly revocationSeal?: RevocationSeal;
 	/** checks the seal a resolution's one statement read, before the session is used */
 	readonly checkSessionState?: (
 		userId: string,
@@ -194,6 +197,9 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			...(options.sealVerifiesAfterMissedIssue === undefined
 				? {}
 				: { sealVerifiesAfterMissedIssue: options.sealVerifiesAfterMissedIssue }),
+			...(options.revocationSeal === undefined || driver !== options.driver
+				? {}
+				: { revocationSeal: options.revocationSeal }),
 		});
 	}
 
@@ -323,7 +329,11 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	const service: SessionService = {
 		settings,
 
-		boundTo: (driver) => createSessionService({ ...options, driver }),
+		//a service bound to a caller's transaction moves no generation inside the caller's seal
+		boundTo: (driver) => {
+			const { revocationSeal: _sealedOnlyOnItsOwn, ...unsealed } = options;
+			return createSessionService({ ...unsealed, driver });
+		},
 
 		async issue({ completes = "sign_up", authorisedBy, userId, factors, observed, sessionId }) {
 			const issued = createSessionToken();

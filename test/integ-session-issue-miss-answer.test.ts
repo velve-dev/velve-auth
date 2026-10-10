@@ -23,13 +23,14 @@ let migrated: MigratedSchema;
 let writer: TestConnection;
 let armedFor: string | null = null;
 
-//the seal row moves past the check that authorised the issue, as a writer or a racing change would move it
+//the seal row moves past the check that authorised the issue, as a writer or a racing change of a component would move it
 async function movingTheSealOf(userId: string): Promise<void> {
 	armedFor = null;
 	await writer.query(
 		`INSERT INTO ${migrated.schema}.security_state (user_id, version, digest, key_version)
 		 VALUES ($1, 1, $2, 1)
-		 ON CONFLICT (user_id) DO UPDATE SET version = ${migrated.schema}.security_state.version + 1, digest = EXCLUDED.digest`,
+		 ON CONFLICT (user_id) DO UPDATE SET version = ${migrated.schema}.security_state.version + 1,
+		   components_version = ${migrated.schema}.security_state.version + 1, digest = EXCLUDED.digest`,
 		[userId, randomBytes(32)],
 	);
 }

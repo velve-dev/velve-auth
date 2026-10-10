@@ -14,6 +14,8 @@ import {
 import { componentsAfter, type SealTarget, type SealWritten } from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { SessionService } from "../session/service.js";
+import type { SpentToken } from "../token/one-time-token.js";
+import { movesOfSpentToken, refuseATokenWrittenBack } from "./artefact.js";
 import { createPasswordProvenance } from "./credential.js";
 import type { ConfirmingSession } from "./environment.js";
 
@@ -41,6 +43,8 @@ interface AddressConfirmation {
 	readonly confirmingSession: ConfirmingSession | null;
 	readonly newEmail: string | null;
 	readonly securityState: SecurityStateRuntime;
+	/** the token whose redemption confirms the address, which moves the account's token generation */
+	readonly spent: SpentToken;
 }
 
 function markFirstConfirmationStatement(schema: string): string {
@@ -101,7 +105,11 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 				!passwordSetInTheConfirmingSession(read, sessionId)
 					? "raise"
 					: "keep",
-			write: (tx) => confirmUnderTheLock({ ...input, transaction: tx }, sessionId),
+			moves: () => movesOfSpentToken(input.spent),
+			write: (tx, read) => {
+				refuseATokenWrittenBack(input.securityState, input.actor, input.spent, read);
+				return confirmUnderTheLock({ ...input, transaction: tx }, sessionId);
+			},
 			after: (read, outcome) =>
 				componentsAfter(read, {
 					email: input.newEmail ?? read.email,
@@ -117,7 +125,7 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 	);
 	return {
 		...sealed.written,
-		sealed: { version: sealed.version, sessionEpoch: sealed.sessionEpoch },
+		sealed: { version: sealed.version, sessionEpoch: sealed.sessionEpoch, ...sealed.generations },
 		secondFactors: secondFactorsOf(sealed.read),
 		toRecord: sealed,
 	};

@@ -59,7 +59,7 @@ describe("a missed session issue that completes a change", () => {
 			schema,
 		});
 		const issued = await plain.issue({
-			authorisedBy: { version: 1, sessionEpoch: 1 },
+			authorisedBy: { componentsVersion: 1, sessionEpoch: 1 },
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -87,7 +87,7 @@ describe("a missed session issue that completes a change", () => {
 
 		await racing
 			.issue({
-				authorisedBy: { version: 1, sessionEpoch: 1 },
+				authorisedBy: { componentsVersion: 1, sessionEpoch: 1 },
 				completes: "password_change",
 				userId: resolved.userId,
 				factors: ["password"],

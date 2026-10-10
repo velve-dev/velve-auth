@@ -67,6 +67,7 @@ async function firstConfirmationDeletesThePassword(
 				userId: confirmedBySessionOf === "the account" ? userId : other,
 			},
 			newEmail: null,
+			spent: { purpose: "email_verify", tokenSha256: new Uint8Array(32), tokenGeneration: 1 },
 		}),
 	);
 	return outcome.passwordCredentialDeleted;

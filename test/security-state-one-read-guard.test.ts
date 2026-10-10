@@ -115,8 +115,8 @@ describe("a sealing transaction reads the state once", () => {
 		const sources = shippedSources();
 		const sealing = sources.get(SEALING_MODULE) ?? "";
 		const planted = sealing.replace(
-			"const written = await change.write(guarded, read, { version, sessionEpoch });",
-			"const written = await change.write(guarded, read, { version, sessionEpoch });\n\tawait readSecurityState(tx, context.schema, userId);",
+			"const written = await change.write(guarded, read, target);",
+			"const written = await change.write(guarded, read, target);\n\tawait readSecurityState(tx, context.schema, userId);",
 		);
 		expect(planted).not.toBe(sealing);
 
@@ -129,8 +129,8 @@ describe("a sealing transaction reads the state once", () => {
 		const sources = shippedSources();
 		const sealing = sources.get(SEALING_MODULE) ?? "";
 		const planted = sealing.replace(
-			"await change.write(guarded, read, {",
-			"await change.write(tx, read, {",
+			"await change.write(guarded, read, target)",
+			"await change.write(tx, read, target)",
 		);
 		expect(planted).not.toBe(sealing);
 

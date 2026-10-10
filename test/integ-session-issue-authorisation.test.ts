@@ -28,8 +28,9 @@ async function sealedAt(version: number): Promise<{ userId: string; epoch: numbe
 	const userId = await createUser(migrated.connection, schema);
 	const epoch = aFreshEpochOtherThan(1);
 	await migrated.connection.query(
-		`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version, session_epoch)
-		 VALUES ($1, $2, $3, 1, $4)`,
+		`INSERT INTO ${schema}.security_state
+		   (user_id, version, digest, key_version, session_epoch, components_version)
+		 VALUES ($1, $2, $3, 1, $4, $2)`,
 		[userId, version, randomBytes(32), epoch],
 	);
 	return { userId, epoch };
@@ -72,7 +73,7 @@ describe("an issue authorised by a check of the seal row", () => {
 		const outcome = await outcomeOf(() =>
 			sessions.issueReplacingPresented({
 				completes: "password_sign_in",
-				authorisedBy: { version: 4, sessionEpoch: epoch },
+				authorisedBy: { componentsVersion: 4, sessionEpoch: epoch },
 				presentedToken: null,
 				userId,
 				factors: ["password"],
@@ -94,7 +95,7 @@ describe("an issue authorised by a check of the seal row", () => {
 		const outcome = await outcomeOf(() =>
 			sessions.issueReplacingPresented({
 				completes: "password_sign_in",
-				authorisedBy: { version: 4, sessionEpoch: epoch },
+				authorisedBy: { componentsVersion: 4, sessionEpoch: epoch },
 				presentedToken: null,
 				userId,
 				factors: ["password"],
@@ -116,7 +117,7 @@ describe("an issue authorised by a check of the seal row", () => {
 		const outcome = await outcomeOf(() =>
 			sessions.issueReplacingPresented({
 				completes: "password_sign_in",
-				authorisedBy: { version: 4, sessionEpoch: epoch },
+				authorisedBy: { componentsVersion: 4, sessionEpoch: epoch },
 				presentedToken: null,
 				userId,
 				factors: ["password"],
@@ -138,7 +139,7 @@ describe("an issue authorised by a check of the seal row", () => {
 		const outcome = await outcomeOf(() =>
 			sessions.issueReplacingPresented({
 				completes: "totp_second_factor",
-				authorisedBy: { version: 2, sessionEpoch: aFreshEpochOtherThan(epoch) },
+				authorisedBy: { componentsVersion: 2, sessionEpoch: aFreshEpochOtherThan(epoch) },
 				presentedToken: null,
 				userId,
 				factors: ["password", "totp"],

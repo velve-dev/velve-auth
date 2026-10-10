@@ -54,7 +54,9 @@ import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
 import {
+	attemptSealOf,
 	createSecurityStateRuntime,
+	revocationSealOf,
 	type SecurityStateRuntime,
 	sealChange,
 	sealVerifiesUnderLock,
@@ -396,6 +398,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
 		sealVerifiesAfterMissedIssue: sealVerifiesUnderLock(securityState),
 		checkSessionState: sessionStateCheckOf(securityState),
+		revocationSeal: revocationSealOf(securityState),
 	};
 	const sessions = createSessionService({
 		driver,
@@ -410,6 +413,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		keys: config.keys,
 		schema,
 		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+		attemptSeal: attemptSealOf(securityState),
 	});
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
@@ -438,6 +442,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			keys: config.keys,
 			sealing,
 			reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+			revocationSeal: sealSeams.revocationSeal,
 		}),
 		driver,
 		log,

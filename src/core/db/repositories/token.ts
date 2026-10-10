@@ -21,9 +21,14 @@ export interface OneTimeTokenRepositoryOptions {
 export type OneTimeTokenReplacement = {
 	readonly tokenSha256: Uint8Array;
 	readonly purpose: OneTimeTokenPurpose;
+	/** the payload and its MAC under the account's token generation the inserting transaction reads, null for no account */
+	bindUnder(tokenGeneration: number | null): Promise<BoundPayload>;
+} & OneTimeTokenSubject;
+
+/** a payload and the token MAC taken over it */
+interface BoundPayload extends StoredTokenMac {
 	readonly payload: OneTimeTokenPayload | null;
-} & OneTimeTokenSubject &
-	StoredTokenMac;
+}
 
 export interface OneTimeTokenLookup {
 	readonly tokenSha256: Uint8Array;
@@ -116,6 +121,12 @@ interface ConsumedRowShape {
 	readonly token_mac_key_version: number;
 }
 
+//a generation the column could hold beyond the exact integers is read as none and fails the mac
+function generationOfColumn(value: string | null | undefined): number | null {
+	const generation = value === null || value === undefined ? Number.NaN : Number(value);
+	return Number.isSafeInteger(generation) ? generation : null;
+}
+
 export function createOneTimeTokenRepository(
 	options: OneTimeTokenRepositoryOptions,
 ): OneTimeTokenRepository {
@@ -123,8 +134,17 @@ export function createOneTimeTokenRepository(
 	const table = qualifiedTableName(schema, "one_time_token");
 
 	//requests about one subject run in turn as the delete cannot see newer rows (S-TOKEN-3)
+	//the generation a link binds is read in the statement every request runs, account or none (S-TIM-6)
 	const serialiseAndReadOwnerStatement = `SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised,
-	(SELECT 1 FROM ${schema}.user owner WHERE owner.id = $1) AS owner_exists`;
+	(SELECT 1 FROM ${schema}.user owner WHERE owner.id = $1) AS owner_exists,
+	(SELECT COALESCE(
+		(SELECT CASE $3::text
+			WHEN 'email_verify' THEN st.email_verify_generation
+			WHEN 'password_reset' THEN st.password_reset_generation
+			WHEN 'email_change' THEN st.email_change_generation
+			WHEN 'magic_link' THEN st.magic_link_generation END
+		 FROM ${schema}.security_state st WHERE st.user_id = owner.id), 1)
+	 FROM ${schema}.user owner WHERE owner.id = $1)::text AS token_generation`;
 
 	const replaceStatement = `WITH superseded AS (
 	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
@@ -144,7 +164,7 @@ RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_versi
 
 	return {
 		async replaceOneTimeToken(replacement) {
-			const { tokenSha256, purpose, userId, payload } = replacement;
+			const { tokenSha256, purpose, userId } = replacement;
 			//an unknown purpose must not reach the constraint whose error names the table (E-263)
 			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
 				throw new OneTimeTokenError("one_time_token_purpose_unknown", null);
@@ -152,13 +172,15 @@ RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_versi
 			const lookupId = userId ?? anAccountThatCannotExist();
 			const subject = userId === null ? replacement.serialisedOn : userId;
 			return options.driver.transaction(async (tx) => {
-				const [read] = await tx.query<{ owner_exists: unknown }>(serialiseAndReadOwnerStatement, [
-					lookupId,
-					subject,
-				]);
+				const [read] = await tx.query<{ owner_exists: unknown; token_generation: string | null }>(
+					serialiseAndReadOwnerStatement,
+					[lookupId, subject, purpose],
+				);
 				if (userId !== null && (read?.owner_exists ?? null) === null) {
 					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}
+				const tokenGeneration = userId === null ? null : generationOfColumn(read?.token_generation);
+				const { payload, ...mac } = await replacement.bindUnder(tokenGeneration);
 				//an account deleted since the read must still fail with its own code (E-263)
 				const [row] = await tx
 					.query<{ expires_at: unknown }>(replaceStatement, [
@@ -168,8 +190,8 @@ RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_versi
 						payload === null ? null : JSON.stringify(payload),
 						ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
 						userId,
-						replacement.tokenMac,
-						replacement.tokenMacKeyVersion,
+						mac.tokenMac,
+						mac.tokenMacKeyVersion,
 					])
 					.catch((failure: unknown) => {
 						if (isForeignKeyViolation(failure)) {

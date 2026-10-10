@@ -2,12 +2,21 @@ import type { EmailConfig, EmailMessage } from "../auth/config.js";
 import type { Driver } from "../db/driver.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import { ConcealedError } from "../http/error-map.js";
+import { equalsInConstantTime } from "../keys/constant-time.js";
 import type { KeyProvider } from "../keys/provider.js";
-import { reportBrokenState, type TokenBindingRefusalReport } from "../token/binding.js";
+import { FIRST_GENERATIONS } from "../security-state/encoding.js";
+import type { SecurityStateRead } from "../security-state/read.js";
+import type { GenerationMoves } from "../security-state/sealing.js";
+import {
+	reportBrokenState,
+	reportRefusedTokenRow,
+	type TokenBindingRefusalReport,
+} from "../token/binding.js";
 import {
 	createOneTimeTokens,
 	type IssuedOneTimeToken,
 	type OneTimeTokenRedemption,
+	type SpentToken,
 } from "../token/one-time-token.js";
 import type {
 	OneTimeTokenPayload,
@@ -74,6 +83,37 @@ export function refuseUnlessTheAddressIsStillTheAccounts(
 		reason: "seal_mismatch",
 	});
 	throw new ConcealedError("token_not_found");
+}
+
+//a link written back after its redemption binds a token generation the account has left (E-3522)
+export function refuseATokenWrittenBack(
+	store: ArtefactStore,
+	userId: string,
+	spent: SpentToken,
+	read: SecurityStateRead,
+): void {
+	const current = (read.seal ?? FIRST_GENERATIONS).tokenGenerations[spent.purpose];
+	if (spent.tokenGeneration === current) {
+		return;
+	}
+	const last = read.seal?.tokenLast ?? null;
+	//a link a later redemption overtook is no writer's doing and raises no alarm
+	if (
+		last !== null &&
+		equalsInConstantTime(new Uint8Array(last), new Uint8Array(spent.tokenSha256))
+	) {
+		reportRefusedTokenRow(store.reportTokenBindingRefusal, {
+			userId,
+			occasion: "token_redemption",
+			verdict: "mismatch",
+		});
+	}
+	throw new ConcealedError("token_not_found");
+}
+
+/** the generation a redemption moves, so the row it spent cannot be spent again */
+export function movesOfSpentToken(spent: SpentToken): GenerationMoves {
+	return { token: { purpose: spent.purpose, last: spent.tokenSha256 } };
 }
 
 //a request for an unknown address must wait where a request for an account waits (E-931)
