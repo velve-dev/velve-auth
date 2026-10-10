@@ -18138,3 +18138,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Recording from `sealCreatedAccount`, which runs inside the transaction and knows no anchors.
 **Reason.** An account the anchor has never heard of is one whose first state it cannot defend.
 **Price.** None beyond the returned field.
+
+<a id="e-3514"></a>
+
+### A merge commit carries GitHub's merge identity, and the later role and finding names in commit messages are withdrawn
+`E-3514` · security-state-seal · history, documentation, settled
+
+**Context.** The rules this work runs under fix the author and committer of every commit as the repository's identity, and forbid naming a participant of a review by the part it played or citing a review finding by an identifier no document defines; E-3386 withdrew the wording of the commits that broke the second rule up to its own commit. Two things since then cannot be met in code. The merge commit `7439798`, which brought the bound envelopes into this branch, was made on GitHub and carries the author `Julius Grimm <me@juliusgrimm.dev>` and the committer `GitHub <noreply@github.com>`. And fifteen commit messages after E-3386's commit `cb9a545`, counted by listing every message from that commit to this entry's and matching the role names and the finding identifiers, cite such an identifier or name a role: `032f7c5`, `bc7bf6d`, `cae3f6e`, `50c1aad`, `26dc727`, `1ab8784`, `0cdf35b`, `bda181d`, `4d0640e`, `6a44764`, `a722bd3`, `0c14b41`, `9b223af`, `145ed4b` and `fa56bec`. No log entry after E-3386 does, by the same match. Their wording on those two points is withdrawn; the decisions they record stand as recorded, and each is to be read through the decision-log entries it cites.
+**Rejected.** Rewriting the merge and amending the messages, which CLAUDE.md §4 and §6 forbid.
+**Reason.** A rule that history cannot be made to meet is met by saying where history breaks it, as E-3386 did.
+**Price.** A reader of `git log` meets the withdrawn wording and the foreign identity before this entry, and has to know to look here.
