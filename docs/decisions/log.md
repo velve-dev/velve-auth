@@ -18058,3 +18058,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the tables and the printed interface as they were, which would make them wrong about the code they document.
 **Reason.** A table of start errors that omits one, and an interface printed without two of its members, are wrong where they stand.
 **Price.** Five more lines outside this branch's partition, in chapters the integration branch may also change.
+
+<a id="e-3180"></a>
+
+### The seal over no envelope is rewritten under a new key, and the two mappings are imported
+`E-3180` · security-state-administration · maintenance, settled
+
+**Context.** E-3178 left an account without any envelope with its seal under the old key version after the maintenance step, because the sealing path kept an unchanged seal, and held the case as an expected failure. The seal branch now reseals a verified seal under an old `state-mac` version as a change (E-3408), so the case in `test/security-state-key-rotation.test.ts` is a plain one and passes. E-3177's Price named two mappings between the read and the envelopes that the maintenance module repeated because `runtime.ts` kept them private; that module now exports `envelopesOf` and `readWithEnvelopes`, and the copies are removed. E-3178 and E-3177 are not edited.
+**Rejected.** Keeping the copies, which would let the two mappings drift apart.
+**Reason.** One mapping in one place, and a test that states the requirement rather than its gap.
+**Price.** None.

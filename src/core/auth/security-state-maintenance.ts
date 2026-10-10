@@ -13,7 +13,12 @@ import {
 } from "../security-state/anchor.js";
 import type { SealedComponents } from "../security-state/encoding.js";
 import { readSecurityState, type SecurityStateRead } from "../security-state/read.js";
-import { type SecurityStateRuntime, sealChange } from "../security-state/runtime.js";
+import {
+	envelopesOf,
+	readWithEnvelopes,
+	type SecurityStateRuntime,
+	sealChange,
+} from "../security-state/runtime.js";
 import { computeSeal } from "../security-state/seal.js";
 import {
 	componentsAfter,
@@ -22,7 +27,6 @@ import {
 } from "../security-state/sealing.js";
 import { rebindTokenRowsUnderCurrentKey, type TokenTable } from "../token/rebind.js";
 import {
-	type AccountEnvelopes,
 	inOneTransaction,
 	type OpenTransaction,
 	rebindEnvelopesOfAccount,
@@ -112,55 +116,6 @@ class AccountGoneError extends Error {
 		super("the account was deleted between the listing and its sealing transaction");
 		this.name = "AccountGoneError";
 	}
-}
-
-function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
-	return {
-		password:
-			read.password === null
-				? null
-				: { keyVersion: read.password.keyVersion, ciphertext: read.password.phc },
-		totpSecret:
-			read.totp === null
-				? null
-				: { keyVersion: read.totp.keyVersion, ciphertext: read.totp.secretEnc },
-		identities: read.identities.map((identity) => ({
-			identityId: identity.id,
-			accessTokenEnc: identity.accessTokenEnc,
-			refreshTokenEnc: identity.refreshTokenEnc,
-			idTokenEnc: identity.idTokenEnc,
-			tokenKeyVersion: identity.tokenKeyVersion,
-		})),
-	};
-}
-
-function readWithEnvelopes(
-	read: SecurityStateRead,
-	envelopes: AccountEnvelopes,
-): SecurityStateRead {
-	return {
-		...read,
-		password:
-			read.password === null || envelopes.password === null
-				? read.password
-				: {
-						...read.password,
-						phc: envelopes.password.ciphertext,
-						keyVersion: envelopes.password.keyVersion,
-					},
-		totp:
-			read.totp === null || envelopes.totpSecret === null
-				? read.totp
-				: {
-						...read.totp,
-						secretEnc: envelopes.totpSecret.ciphertext,
-						keyVersion: envelopes.totpSecret.keyVersion,
-					},
-		identities: read.identities.map((identity) => {
-			const rewritten = envelopes.identities.find((stored) => stored.identityId === identity.id);
-			return rewritten === undefined ? identity : { ...identity, ...rewritten, id: identity.id };
-		}),
-	};
 }
 
 async function rewriteEnvelopes(

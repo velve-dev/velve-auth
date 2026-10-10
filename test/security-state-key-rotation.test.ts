@@ -227,8 +227,8 @@ describe("T-KEY-5 with the maintenance step (S-KEY-5)", () => {
 		});
 	}, 120_000);
 
-	//a seal over no envelope keeps its old key until the sealing path rewrites unchanged components (E-3178)
-	it.fails("rewrites the seal of an account without any envelope under the new version", async () => {
+	//a seal over no envelope is rewritten under the new key like every other (E-3408)
+	it("rewrites the seal of an account without any envelope under the new version", async () => {
 		const userId = await createUser(connection, schema);
 		await sealDirectly(connection, schema, ringV1(), userId);
 		const during = await restartWith(ringV2V1());
