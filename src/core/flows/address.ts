@@ -3,6 +3,7 @@ import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
+import { recordSealLater } from "../security-state/runtime.js";
 import { ONE_TIME_TOKEN_PURPOSES } from "../token/purpose.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
@@ -67,7 +68,7 @@ export async function redeemVerification(
 	const { driver, schema } = environment.services;
 	const confirmingSession = await sessionOfCaller(environment, context);
 
-	const userId = await driver.transaction(async (transaction) => {
+	const redemption = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "email_verify",
@@ -78,7 +79,7 @@ export async function redeemVerification(
 			return account;
 		}
 		//the confirmation link is one of the two ways an address is first confirmed (S-LINK-4)
-		await confirmAddress({
+		const confirmed = await confirmAddress({
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
@@ -88,11 +89,13 @@ export async function redeemVerification(
 			newEmail: null,
 			securityState: environment.services.securityState,
 		});
-		return account.user.id;
+		return { userId: account.user.id, toRecord: confirmed.toRecord };
 	});
-	if (userId === A_DISABLED_ACCOUNT) {
+	if (redemption === A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
+	recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
+	const userId = redemption.userId;
 
 	return { user: await readUserOrRefuse(environment, driver, userId) };
 }
@@ -141,7 +144,7 @@ export async function redeemChange(
 	const { driver, schema } = environment.services;
 	const confirmingSession = await sessionOfCaller(environment, context);
 
-	const userId = await driver.transaction(async (transaction) => {
+	const redemption = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "email_change",
@@ -157,7 +160,7 @@ export async function redeemChange(
 			await tokens.withdrawTokensOf({ actor: account.actor, purpose });
 		}
 		//redeeming proves the new address and a collision must leave both changes undone
-		await confirmAddress({
+		const confirmed = await confirmAddress({
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
@@ -167,11 +170,13 @@ export async function redeemChange(
 			newEmail: addressIn(redeemed.payload),
 			securityState: environment.services.securityState,
 		});
-		return account.user.id;
+		return { userId: account.user.id, toRecord: confirmed.toRecord };
 	});
-	if (userId === A_DISABLED_ACCOUNT) {
+	if (redemption === A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
+	recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
+	const userId = redemption.userId;
 
 	return { user: await readUserOrRefuse(environment, driver, userId) };
 }

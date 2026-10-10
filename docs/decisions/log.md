@@ -18118,3 +18118,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Restating the three sentences already present in other words, which would give the German and the English two places to differ.
 **Reason.** Each sentence is added where the rule it belongs to stands, so that a reader of that rule finds it, and the two languages carry the same numbers and identifiers.
 **Price.** Section 3.18 grows by about a dozen sentences in a paragraph that is already long, and the maintenance and outward paragraphs now each carry two lists a reader has to hold apart.
+
+<a id="e-3512"></a>
+
+### A seal written in a caller's transaction reaches the anchor only after that transaction commits
+`E-3512` · security-state-seal · anchor, settled
+
+**Context.** Section 3.18 *Anchor* has `recordSeal` learn a new seal after it has committed. `sealChange` recorded every seal as soon as `sealUnderAccountLock` returned, which for a change run on its own transaction was after the commit, and for a change run on a caller's open transaction — the password reset and the reset with a recovery code, the address confirmation of a verification link, an address change and a magic link, and the automatic link of an OAuth sign-in — was before it. A delayed commit let the anchor learn a version the database did not yet hold, and a commit that failed left the anchor's floor above the stored seal, so the next sign-in of that account was refused as `version_below_anchor`. `sealChange` with a `driver` now records nothing and returns the seal; each of these callers hands it to `recordSealLater` once its own transaction has committed, as sign-up already did. `test/security-state-anchor-after-commit.test.ts` delays a reset's commit and holds the version the anchor learns to the committed one, and fails a reset's commit and holds that the old password still signs in without an alarm.
+**Rejected.** Recording inside `afterSeal`, which runs in the same transaction and has the same fault.
+**Reason.** An anchor that learns a state which never committed raises its floor over the truth, and locks the account it protects.
+**Price.** Every caller that hands `sealChange` its transaction has to record the seal itself.

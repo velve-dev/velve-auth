@@ -11,7 +11,7 @@ import {
 	sealChange,
 	secondFactorsOf,
 } from "../security-state/runtime.js";
-import { componentsAfter, type SealTarget } from "../security-state/sealing.js";
+import { componentsAfter, type SealTarget, type SealWritten } from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { SessionService } from "../session/service.js";
 import { createPasswordProvenance } from "./credential.js";
@@ -28,6 +28,8 @@ interface ConfirmationOutcome extends ConfirmationWrite {
 	readonly sealed: SealTarget;
 	/** the second factors the confirmation's verified read held */
 	readonly secondFactors: readonly SecondFactor[];
+	/** the seal written in the caller's transaction, which the caller records once that commits */
+	readonly toRecord: SealWritten<unknown>;
 }
 
 interface AddressConfirmation {
@@ -117,6 +119,7 @@ export async function confirmAddress(input: AddressConfirmation): Promise<Confir
 		...sealed.written,
 		sealed: { version: sealed.version, sessionEpoch: sealed.sessionEpoch },
 		secondFactors: secondFactorsOf(sealed.read),
+		toRecord: sealed,
 	};
 }
 

@@ -3,6 +3,7 @@ import type { SignInResult } from "../auth/results.js";
 import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
+import { recordSealLater } from "../security-state/runtime.js";
 import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
@@ -85,11 +86,17 @@ export async function redeemMagicLink(
 			newEmail: null,
 			securityState: environment.services.securityState,
 		});
-		return { ...resolved, sealed: confirmed.sealed, secondFactors: confirmed.secondFactors };
+		return {
+			...resolved,
+			sealed: confirmed.sealed,
+			secondFactors: confirmed.secondFactors,
+			toRecord: confirmed.toRecord,
+		};
 	});
 	if (account === A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
+	recordSealLater(environment.services.securityState, account.toRecord, "token_redemption");
 
 	//a link as the first factor must not skip the second factor (E-735)
 	//the session and the pending row are bound to the seal the redemption wrote (S-INTEG-9)

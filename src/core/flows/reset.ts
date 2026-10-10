@@ -19,8 +19,12 @@ import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { tellAfterSessionCreate } from "../plugin/sign-in.js";
 import type { SecurityStateRead } from "../security-state/read.js";
-import { type ChangedAccount, sealChange } from "../security-state/runtime.js";
-import { componentsAfter, SealingRefusedError } from "../security-state/sealing.js";
+import { type ChangedAccount, recordSealLater, sealChange } from "../security-state/runtime.js";
+import {
+	componentsAfter,
+	SealingRefusedError,
+	type SealWritten,
+} from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import { randomUuid } from "../token/random.js";
 import {
@@ -101,6 +105,12 @@ function withoutTheSpentCode(read: SecurityStateRead, spent: Uint8Array<ArrayBuf
 	});
 }
 
+/** what a password replacement left, and the seal its caller records once the transaction commits */
+interface ReplacedPassword {
+	readonly result: SetPasswordResult | typeof SPENT_ON_A_DISABLED_ACCOUNT;
+	readonly toRecord: SealWritten<unknown>;
+}
+
 //revocation, new session and credential are one sealing transaction and the revocation comes first (E-610)
 async function replacePassword(
 	environment: FlowEnvironment,
@@ -115,7 +125,7 @@ async function replacePassword(
 		readonly occasion: "token_redemption" | "change";
 		readonly claim: (tx: Driver, read: SecurityStateRead) => Promise<ClaimedUnderLock>;
 	},
-): Promise<SetPasswordResult | typeof SPENT_ON_A_DISABLED_ACCOUNT> {
+): Promise<ReplacedPassword> {
 	const { schema, keys, sessions, pluginRuntime, securityState } = environment.services;
 	const sessionId = randomUuid();
 	const outcome: { result?: SetPasswordResult } = {};
@@ -192,12 +202,22 @@ async function replacePassword(
 		{ driver: input.transaction, refusal: input.refusal, occasion: input.occasion },
 	);
 	if (sealed.written.claimed.disabled) {
-		return SPENT_ON_A_DISABLED_ACCOUNT;
+		return { result: SPENT_ON_A_DISABLED_ACCOUNT, toRecord: sealed };
 	}
 	if (outcome.result === undefined) {
 		throw new ConcealedError(input.refusal);
 	}
-	return outcome.result;
+	return { result: outcome.result, toRecord: sealed };
+}
+
+//a seal written in the redemption's transaction reaches the anchor only once that transaction committed (S-INTEG-6)
+function recordedAfterCommit(
+	environment: FlowEnvironment,
+	replaced: ReplacedPassword,
+	occasion: "token_redemption" | "change",
+): SetPasswordResult | typeof SPENT_ON_A_DISABLED_ACCOUNT {
+	recordSealLater(environment.services.securityState, replaced.toRecord, occasion);
+	return replaced.result;
 }
 
 export async function redeemReset(
@@ -213,7 +233,7 @@ export async function redeemReset(
 	);
 	const { driver } = environment.services;
 
-	const result = await driver.transaction(async (transaction) => {
+	const replaced = await driver.transaction(async (transaction) => {
 		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "password_reset",
@@ -236,6 +256,7 @@ export async function redeemReset(
 			},
 		});
 	});
+	const result = recordedAfterCommit(environment, replaced, "token_redemption");
 	if (result === SPENT_ON_A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
@@ -297,7 +318,7 @@ export async function redeemResetWithRecoveryCode(
 		});
 		throw new ConcealedError("recovery_code_not_found");
 	}
-	const result = await driver.transaction((transaction) =>
+	const replaced = await driver.transaction((transaction) =>
 		replacePassword(environment, context, {
 			transaction,
 			userId: found.id,
@@ -329,6 +350,7 @@ export async function redeemResetWithRecoveryCode(
 			},
 		}),
 	);
+	const result = recordedAfterCommit(environment, replaced, "change");
 	//a disabled account must answer as a wrong code does
 	if (result === SPENT_ON_A_DISABLED_ACCOUNT) {
 		throw new ConcealedError("recovery_code_not_found");

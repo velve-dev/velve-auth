@@ -249,6 +249,7 @@ export async function sealChange<T>(
 	account: ChangedAccount,
 	change: SealingChange<T>,
 	options: {
+		/** the caller's open transaction, after whose commit the caller hands the seal to recordSealLater */
 		readonly driver?: Driver;
 		readonly occasion?: SecurityStateAlarmOccasion;
 		/** what a broken state is answered as, the ordinary failure of the path that changes */
@@ -288,7 +289,10 @@ export async function sealChange<T>(
 	} catch (error) {
 		refusedAndReported(runtime, userId, occasion, refusal, error, options.accountMissing);
 	}
-	recordSealLater(runtime, sealed, occasion);
+	//a seal written in the caller's transaction is told to the anchor by the caller once that commits (S-INTEG-6)
+	if (options.driver === undefined) {
+		recordSealLater(runtime, sealed, occasion);
+	}
 	return sealed;
 }
 
