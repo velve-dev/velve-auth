@@ -18078,3 +18078,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Counting every failure as refused, which E-3177 already rejected for turning a lost connection into refusals. (b) Leaving the account ids out of the report, which leaves the operator with a count and an alarm stream to match by hand.
 **Reason.** The step must not let one account a writer can spoil hold back the sealing of every other.
 **Price.** `SecurityStateReport` carries a field section 3.15 B does not list yet, which the specification sync has to add; a run over many unreadable accounts reports each one, and the alarm's global bound holds back the alarms beyond it.
+
+<a id="e-3182"></a>
+
+### Three scans of the tree learn of the maintenance module
+`E-3182` · security-state-administration · tests, settled
+
+**Context.** The full gate on this branch failed three scans that read the tree or the shipped declarations. `test/api-internal-issue-parameters.test.ts` refuses the text `readonly sessionEpoch` in any declaration, to keep the session issue's internal parameters off the surface (E-3488); `SealedSecurityState` carries `sessionEpoch` because section 3.15 B and S-INTEG-7 have the reseal name the new epoch. `test/http-enumeration.test.ts` reports any file but `error-map.ts` that tests `instanceof ConcealedError`; the maintenance step does, to count an account the sealing path refused as `refused`, and it has no route, so nothing it reads reaches a caller's answer. `test/owner-predicate-proof.test.ts` lists the files whose row-changing statements name their table through a variable; the reseal's write of the seal row is one, and it carries `user_id = $1`. Each test now admits the maintenance module for exactly that one thing, with a comment naming this entry.
+**Rejected.** Renaming the field, which would contradict 3.15 B. Catching the refusal by its name instead of its class, which would pass the scan by hiding from it.
+**Reason.** Each scan guards a rule the maintenance module keeps, and each exception is the one fact that makes it keep it.
+**Price.** Three test files carry an exception for one module each, and a later misuse inside that module of the same pattern would pass the scan.

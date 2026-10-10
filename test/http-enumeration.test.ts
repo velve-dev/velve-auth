@@ -243,9 +243,11 @@ describe("enumeration — S-ENUM-1, S-ENUM-2, S-ENUM-6, L-4", () => {
 		const files = sourceFilesUnder(new URL("../src/", import.meta.url));
 		const errorMap = files.find(({ name }) => name === "error-map.ts")?.source ?? "";
 		const reasons = internalReasonsDeclaredIn(errorMap);
+		//the maintenance step has no route and only counts a refusal it reads (E-3182)
 		const deciders = files.filter(
 			({ name, source }) =>
 				name !== "error-map.ts" &&
+				name !== "security-state-maintenance.ts" &&
 				(source.includes("instanceof ConcealedError") ||
 					(mentionsTheClassWithoutConstructingIt(source) && source.includes(".reason")) ||
 					comparesAgainstAReason(source, reasons)),

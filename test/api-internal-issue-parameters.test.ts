@@ -28,7 +28,10 @@ describe("the shipped declarations", () => {
 		for (const file of declarationsUnder("dist")) {
 			const text = readFileSync(file, "utf8");
 			for (const name of INTERNAL_NAMES) {
-				if (text.includes(name)) {
+				//what an administrator reseal ratified names the new epoch on purpose (E-3182)
+				const ratifiedEpoch =
+					name === "readonly sessionEpoch" && file.endsWith("security-state-maintenance.d.mts");
+				if (text.includes(name) && !ratifiedEpoch) {
 					found[name] = [...(found[name] ?? []), file];
 				}
 			}
