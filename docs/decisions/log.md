@@ -18068,3 +18068,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping the copies, which would let the two mappings drift apart.
 **Reason.** One mapping in one place, and a test that states the requirement rather than its gap.
 **Price.** None.
+
+<a id="e-3181"></a>
+
+### An envelope the maintenance step cannot open fails its account, not the run
+`E-3181` · security-state-administration · maintenance, settled
+
+**Context.** E-3177 had any failure other than a broken state stop the whole run with `security_state_account_failed`, and its Price said a run stopping at an unconvertible account converts nothing after it until the account is repaired by SQL. The review of this branch showed that this reads section 3.18 wrongly: point 5 has the maintenance step fail *at that account*, and one account a writer spoiled, or one whose key version left the ring, then held back the first seal of every account after it in id order and the whole token pass. E-3177's Price was wrong when written; E-3177 is not edited. A `KeyError` from the conversion or the rekey — an envelope that cannot be opened — now counts its account as refused, raises the alarm `envelope_binding_mismatch` with the occasion `maintenance`, and the run goes on with the next account and the token pass. The report gains `refusedUserIds`, every account the run refused, broken or unreadable, so the operator knows which alarms to handle. Any other failure still stops the run. The administrator reseal threw the raw `KeyError` for the same case; it now raises the same alarm and refuses with `SecurityStateMaintenanceError` and the code `security_state_envelope_unreadable`, repairing no envelope (E-3219).
+**Rejected.** (a) Counting every failure as refused, which E-3177 already rejected for turning a lost connection into refusals. (b) Leaving the account ids out of the report, which leaves the operator with a count and an alarm stream to match by hand.
+**Reason.** The step must not let one account a writer can spoil hold back the sealing of every other.
+**Price.** `SecurityStateReport` carries a field section 3.15 B does not list yet, which the specification sync has to add; a run over many unreadable accounts reports each one, and the alarm's global bound holds back the alarms beyond it.

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { encryptWithPurposeKey } from "../src/core/keys/envelope.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import type { SecurityStateAlarm } from "../src/core/security-state/alarm.js";
 import { checkSecurityState, readSecurityState } from "../src/core/security-state/read.js";
@@ -8,7 +9,7 @@ import { configFor, createLogSink, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { drawTestPassword } from "./password-fixtures.js";
-import { memoryAnchor } from "./security-state-administration-fixtures.js";
+import { memoryAnchor, passwordPlaintextOf } from "./security-state-administration-fixtures.js";
 import { insertPasskey } from "./security-state-fixtures.js";
 import { testKeyProvider } from "./totp-fixtures.js";
 
@@ -241,6 +242,36 @@ describe("T-INTEG-7: the administrator reseal", () => {
 			auth.maintenance.resealSecurityState({ userId: account.userId, reason: "recover" }),
 		).rejects.toMatchObject({ code: "security_state_version_exhausted" });
 		expect(await snapshot()).toStrictEqual(before);
+	});
+
+	it("refuses an envelope it cannot open with a code of its own and the envelope alarm", async () => {
+		alarms = [];
+		const auth = mount();
+		const account = await signedUp(auth);
+		const plaintext = await passwordPlaintextOf(connection, schema, keys, account.userId);
+		const old = await encryptWithPurposeKey(keys, "password-enc", plaintext);
+		await connection.query(
+			`UPDATE ${schema}.password_credential SET phc = $2, key_version = $3 WHERE user_id = $1`,
+			[account.userId, old.ciphertext, old.keyVersion],
+		);
+		await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [
+			account.userId,
+		]);
+
+		await expect(
+			auth.maintenance.resealSecurityState({ userId: account.userId, reason: "incident 1" }),
+		).rejects.toMatchObject({
+			name: "SecurityStateMaintenanceError",
+			code: "security_state_envelope_unreadable",
+			userId: account.userId,
+		});
+		await delivered();
+		expect(await sealOf(account.userId)).toBeNull();
+		expect(
+			alarms
+				.filter((alarm) => alarm.userId === account.userId)
+				.map(({ occasion, reason }) => ({ occasion, reason })),
+		).toStrictEqual([{ occasion: "maintenance", reason: "envelope_binding_mismatch" }]);
 	});
 
 	for (const withAnchor of [false, true]) {

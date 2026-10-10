@@ -6,6 +6,7 @@ import { isRowIdentifier } from "../db/row-identifier.js";
 import type { LogLevel } from "../http/environment.js";
 import { ConcealedError } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
+import { KeyError } from "../keys/errors.js";
 import {
 	type AnchorReading,
 	consultAnchors,
@@ -47,6 +48,8 @@ export interface SecurityStateReport {
 	readonly rekeyed: number;
 	readonly refused: number;
 	readonly unchanged: number;
+	/** every account the run refused and left as it was, whether broken or with an envelope it could not open */
+	readonly refusedUserIds: readonly string[];
 	readonly rowsByKeyVersion: Readonly<Record<number, RowsUnderSecurityStateKeyVersion>>;
 }
 
@@ -73,6 +76,7 @@ type SecurityStateMaintenanceErrorCode =
 	| "security_state_anchor_unavailable"
 	| "security_state_version_exhausted"
 	| "security_state_changed_during_reseal"
+	| "security_state_envelope_unreadable"
 	| "security_state_account_failed";
 
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
@@ -183,6 +187,15 @@ async function sealOneAccount(
 		if (error instanceof ConcealedError) {
 			return "refused";
 		}
+		//an envelope that cannot be opened fails its account and not the run (E-3181)
+		if (error instanceof KeyError) {
+			runtime.alarms.raise({
+				userId,
+				occasion: "maintenance",
+				reason: "envelope_binding_mismatch",
+			});
+			return "refused";
+		}
 		throw new SecurityStateMaintenanceError("security_state_account_failed", userId, {
 			cause: error,
 		});
@@ -233,12 +246,16 @@ async function sealEveryAccount(runtime: SecurityStateRuntime): Promise<Security
 	const schema = assertSchemaName(runtime.schema);
 	const users = qualifiedTableName(schema, "user");
 	const counts = { sealed: 0, rekeyed: 0, refused: 0, unchanged: 0 };
+	const refusedUserIds: string[] = [];
 	for (let after = FIRST_ACCOUNT; ; ) {
 		const ids = await nextAccountIds(runtime.driver, users, after);
 		for (const userId of ids) {
 			const outcome = await sealOneAccount(runtime, userId);
 			if (outcome !== "gone") {
 				counts[outcome] += 1;
+			}
+			if (outcome === "refused") {
+				refusedUserIds.push(userId);
 			}
 		}
 		const last = ids.at(-1);
@@ -260,6 +277,7 @@ async function sealEveryAccount(runtime: SecurityStateRuntime): Promise<Security
 	}
 	return {
 		...counts,
+		refusedUserIds,
 		rowsByKeyVersion: Object.fromEntries([...rows].sort(([a], [b]) => a - b)),
 	};
 }
@@ -388,7 +406,20 @@ async function resealAccount(
 		runtime.alarms.raise({ userId, occasion: "maintenance", reason: "anchor_unavailable" });
 		throw new SecurityStateMaintenanceError("security_state_anchor_unavailable", userId);
 	}
-	const resealed = await resealUnderAccountLock(runtime, userId, highestFloorOf(reading));
+	const resealed = await resealUnderAccountLock(runtime, userId, highestFloorOf(reading)).catch(
+		(error: unknown) => {
+			if (!(error instanceof KeyError)) {
+				throw error;
+			}
+			//a reseal repairs no envelope and refuses one it cannot open (E-3219)
+			runtime.alarms.raise({
+				userId,
+				occasion: "maintenance",
+				reason: "envelope_binding_mismatch",
+			});
+			throw new SecurityStateMaintenanceError("security_state_envelope_unreadable", userId);
+		},
+	);
 	//a reseal is never silent and its reason is logged and not stored (S-INTEG-7)
 	log("warn", "an administrator resealed an account's security state", {
 		userId,

@@ -240,6 +240,38 @@ describe("T-INTEG-8: a tampered migration state", () => {
 		expect(alarms).toStrictEqual([]);
 	});
 
+	it("refuses an account whose envelope cannot be opened and goes on with every other account and the token pass", async () => {
+		await clearEstate();
+		const auth = mount(connection, before);
+		const ids: string[] = [];
+		for (let index = 0; index < 3; index += 1) {
+			const account = await signedUp(auth);
+			ids.push(account.userId);
+			await toPreUpgradeForm(connection, schema, before, account.userId);
+		}
+		ids.sort();
+		const [unreadable] = ids;
+		await connection.query(
+			`UPDATE ${schema}.password_credential SET key_version = 99 WHERE user_id = $1`,
+			[unreadable],
+		);
+
+		const report = await mount(connection, during).maintenance.sealSecurityState();
+		await deliveredAlarms();
+
+		const sealed = await connection.query<{ user_id: string }>(
+			`SELECT user_id::text AS user_id FROM ${schema}.security_state ORDER BY user_id`,
+			[],
+		);
+		expect(report).toMatchObject({ sealed: 2, refused: 1, refusedUserIds: [unreadable] });
+		expect(sealed.map((row) => row.user_id)).toStrictEqual(ids.slice(1));
+		expect(report.rowsByKeyVersion[1]?.tokens ?? 0, "no token row left under v1").toBe(0);
+		expect(report.rowsByKeyVersion[2]?.tokens, "the token pass ran").toBeGreaterThan(0);
+		expect(alarmsFor(unreadable ?? "")).toStrictEqual([
+			{ userId: unreadable, occasion: "maintenance", reason: "envelope_binding_mismatch" },
+		]);
+	});
+
 	it("leaves a session and a one-time token a writer inserted under the old version standing and unusable", async () => {
 		await clearEstate();
 		const auth = mount(connection, before);

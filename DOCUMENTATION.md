@@ -10184,6 +10184,7 @@ sealSecurityState(): Promise<SecurityStateReport>
 interface SecurityStateReport {
   readonly sealed: number; readonly rekeyed: number
   readonly refused: number; readonly unchanged: number
+  readonly refusedUserIds: readonly string[]
   readonly rowsByKeyVersion: Readonly<Record<number, RowsUnderSecurityStateKeyVersion>>
 }
 interface RowsUnderSecurityStateKeyVersion {
@@ -10205,14 +10206,17 @@ the account lock, through the same sealing change every legitimate change takes:
 | a valid seal with an envelope under an old key version | the envelopes are re-encrypted under the current version and the seal is rewritten one version higher, the epoch kept, and the anchors learn it | `rekeyed` |
 | a valid seal, nothing to rewrite | nothing is written; the anchors are told the seal again | `unchanged` |
 | a broken state | nothing is written, and the alarm is raised with the occasion `maintenance` | `refused` |
+| an envelope that cannot be opened — its key version gone from the ring, or its ciphertext spoiled | nothing is written, and the alarm `envelope_binding_mismatch` is raised with the occasion `maintenance` | `refused` |
 | deleted since it was listed | skipped | — |
 
-Any other failure stops the run with a `SecurityStateMaintenanceError` whose
-`code` is `security_state_account_failed` and whose `userId` names the account —
-an envelope that cannot be opened, or a lost connection. Every account before it
-is converted entirely and the one it stopped at not at all, so the run is
-repeated once the cause is repaired. A second run over a converted estate writes
-no row.
+`refusedUserIds` names every refused account, so the operator can handle its
+alarm; an account with an unreadable envelope is repaired by SQL — delete the
+row, let the user set the factor up again — and the next run converts it. Any
+other failure, such as a lost connection, stops the run with a
+`SecurityStateMaintenanceError` whose `code` is `security_state_account_failed`
+and whose `userId` names the account. Every account before it is converted
+entirely and the one it stopped at not at all, so the run is repeated. A second
+run over a converted estate writes no row.
 
 After the accounts it rebinds the token MACs of `session`, `one_time_token`,
 `pending_authentication` and `webauthn_challenge` that are not under the current
@@ -10274,6 +10278,7 @@ It refuses with a `SecurityStateMaintenanceError` and changes nothing:
 | `security_state_account_missing` | `userId` is not an id or names no account |
 | `security_state_anchor_unavailable` | an anchor throws or answers something that is not a floor; the alarm `anchor_unavailable` is raised |
 | `security_state_version_exhausted` | the stored version or an anchor's floor is already `Number.MAX_SAFE_INTEGER` |
+| `security_state_envelope_unreadable` | the account has no seal row and an envelope its conversion cannot open; the alarm `envelope_binding_mismatch` is raised, and the reseal repairs no envelope |
 | `security_state_changed_during_reseal` | the seal row changed under the account lock, which only a writer outside the library can do |
 
 An account at the largest version is recovered by hand: delete its sessions and
