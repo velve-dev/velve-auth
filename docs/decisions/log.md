@@ -18122,7 +18122,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3512"></a>
 
 ### A seal written in a caller's transaction reaches the anchor only after that transaction commits
-`E-3512` · security-state-seal · anchor, settled
+`E-3512` · security-state · anchor, settled
 
 **Context.** Section 3.18 *Anchor* has `recordSeal` learn a new seal after it has committed. `sealChange` recorded every seal as soon as `sealUnderAccountLock` returned, which for a change run on its own transaction was after the commit, and for a change run on a caller's open transaction — the password reset and the reset with a recovery code, the address confirmation of a verification link, an address change and a magic link, and the automatic link of an OAuth sign-in — was before it. A delayed commit let the anchor learn a version the database did not yet hold, and a commit that failed left the anchor's floor above the stored seal, so the next sign-in of that account was refused as `version_below_anchor`. `sealChange` with a `driver` now records nothing and returns the seal; each of these callers hands it to `recordSealLater` once its own transaction has committed, as sign-up already did. `test/security-state-anchor-after-commit.test.ts` delays a reset's commit and holds the version the anchor learns to the committed one, and fails a reset's commit and holds that the old password still signs in without an alarm.
 **Rejected.** Recording inside `afterSeal`, which runs in the same transaction and has the same fault.
@@ -18132,7 +18132,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3513"></a>
 
 ### An OAuth sign-up's first seal and an automatic link's seal reach the anchor after the sign-in's transaction
-`E-3513` · security-state-seal · anchor, settled
+`E-3513` · security-state · anchor, settled
 
 **Context.** Section 3.18 *Anchor* has every new seal reach `recordSeal`. The OAuth sign-in that creates an account sealed it with `sealCreatedAccount` inside `accountForSignIn`'s transaction and recorded nothing, so an anchor knew no floor for an account an OAuth sign-up made until its first later change. The automatic link, sealed in the same transaction, recorded before the commit, which E-3512 removes. `accountForSignIn` now returns the seal it wrote, or `null` for a sign-in through an existing identity, and the callback hands it to `recordSealLater` once the transaction has committed. `test/security-state-anchor-after-commit.test.ts` signs up through the stub provider with a memory anchor and holds that the anchor learned version 1 of the new account.
 **Rejected.** Recording from `sealCreatedAccount`, which runs inside the transaction and knows no anchors.
@@ -18142,7 +18142,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3514"></a>
 
 ### A merge commit carries GitHub's merge identity, and the later role and finding names in commit messages are withdrawn
-`E-3514` · security-state-seal · history, documentation, settled
+`E-3514` · security-state · history, documentation, settled
 
 **Context.** The rules this work runs under fix the author and committer of every commit as the repository's identity, and forbid naming a participant of a review by the part it played or citing a review finding by an identifier no document defines; E-3386 withdrew the wording of the commits that broke the second rule up to its own commit. Two things since then cannot be met in code. The merge commit `7439798`, which brought the bound envelopes into this branch, was made on GitHub and carries the author `Julius Grimm <me@juliusgrimm.dev>` and the committer `GitHub <noreply@github.com>`. And fifteen commit messages after E-3386's commit `cb9a545`, counted by listing every message from that commit to this entry's and matching the role names and the finding identifiers, cite such an identifier or name a role: `032f7c5`, `bc7bf6d`, `cae3f6e`, `50c1aad`, `26dc727`, `1ab8784`, `0cdf35b`, `bda181d`, `4d0640e`, `6a44764`, `a722bd3`, `0c14b41`, `9b223af`, `145ed4b` and `fa56bec`. No log entry after E-3386 does, by the same match. Their wording on those two points is withdrawn; the decisions they record stand as recorded, and each is to be read through the decision-log entries it cites.
 **Rejected.** Rewriting the merge and amending the messages, which CLAUDE.md §4 and §6 forbid.
@@ -18152,7 +18152,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3515"></a>
 
 ### The release notes count eight new start codes, and the readme names who refuses an unreadable envelope
-`E-3515` · security-state-seal · release notes, settled
+`E-3515` · security-state · release notes, settled
 
 **Context.** `docs/releases/2.0.0.md` said `StartupErrorCode` gained five members and listed five in its table, the count E-2960 took before the security state added `plugin_anchor_incomplete`, `security_state_sealing_unknown` and `limits_unusable`. The union in `src/core/auth/startup.ts` holds all eight. The notes now say eight in the summary, the heading, the table and the type-level list, with a row for each of the three, and the readme names `security_state_sealing_unknown` beside the other two. The readme also said the maintenance step can refuse with `security_state_envelope_unreadable`; only `maintenance.resealSecurityState` throws it, and `maintenance.sealSecurityState` lists an account it cannot read in `refusedUserIds` and goes on, as E-3181 decided. `test/security-state-release-documents.test.ts` holds both documents to the union and to that distinction.
 **Rejected.** Leaving the three security-state codes to the readme alone, which would keep the notes' own table short of what an exhaustive `switch` meets.
@@ -18162,7 +18162,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3516"></a>
 
 ### F.1 lists the nine broken-state causes the error map merges, in both languages
-`E-3516` · security-state-seal · specification, settled
+`E-3516` · security-state · specification, settled
 
 **Context.** Section 3.15 F.1 lists, for each visible code, every inner cause `src/core/http/error-map.ts` merges into it. The nine `broken_state_on_*` causes the seal added in E-3163 were mapped but missing from the table in both specifications. Each row now ends with them: `invalid_credentials` with the password sign-in, `webauthn_credential_rejected` with the passkey sign-in and the passkey as a second factor, `oauth_flow_invalid` with the OAuth sign-in, `invalid_token` with the token redemption, `invalid_factor_code` with the TOTP check, `invalid_recovery_code` with the recovery code, and `session_required` with the session resolution and a change. `test/security-state-release-documents.test.ts` holds both tables to the error map.
 **Rejected.** Listing the nine under one row of their own, which F.1 does not have; its rows are the visible codes.
@@ -18172,7 +18172,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3517"></a>
 
 ### SecurityStateMaintenanceError is exported as a value
-`E-3517` · security-state-seal · public interface, settled
+`E-3517` · security-state · public interface, settled
 
 **Context.** `maintenance.resealSecurityState` and `maintenance.sealSecurityState` refuse with `SecurityStateMaintenanceError`, and `src/index.ts` exported it as a type only, so an application could name it in a signature but not catch it with `instanceof`, as it can `VelveStartupError`. It is now exported as a value beside the three types of its module, and the shipped declarations are recorded again in their own commit. `test/security-state-release-documents.test.ts` holds that the package entry exports both classes as functions.
 **Rejected.** Telling the error apart by its `code` alone, which works but leaves the class the documentation names unreachable.
@@ -18182,7 +18182,7 @@ One consequence of restating in place that the rule does not mention, and that s
 <a id="e-3518"></a>
 
 ### The beforeLockingTheOwnerOf seam is removed, and the documentation says the instance passes the refusal report
-`E-3518` · security-state-seal · seams, documentation, settled
+`E-3518` · security-state · seams, documentation, settled
 
 **Context.** E-3265 gave `redeemOrRefuse` in `src/core/flows/artefact.ts` and the second-factor completion in `src/core/factor/pending/complete.ts` an optional `beforeLockingTheOwnerOf`, for the anchor to be asked about a consumed row's owner after the consumption and before the account lock, as section 3.18 orders for a path that learns its account by consuming a row. No production module ever passed it: the seal does that asking itself, `checkAccount` and `sealChange` consulting the anchors before the read and before the lock, in the transaction that consumed the row. The two options and their comments citing E-3265 are removed, with the three cases of `test/integ-token-binding.test.ts` that drove the seam directly. `test/security-state-anchor-after-commit.test.ts` now holds the order on the path itself: a reset redemption whose anchor, answering, finds the account row not locked. `test/security-state-seams.test.ts` refuses a seam of that name with no production caller. `DOCUMENTATION.md` said the instance passed no refusal report to the token store; it passes the one that raises the security-state alarm, and says so.
 **Rejected.** Wiring the seam to `consultAnchors`, which would ask the anchor twice on every redemption, once through the seam and once through the check.
