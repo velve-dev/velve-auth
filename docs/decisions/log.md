@@ -18148,3 +18148,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Rewriting the merge and amending the messages, which CLAUDE.md §4 and §6 forbid.
 **Reason.** A rule that history cannot be made to meet is met by saying where history breaks it, as E-3386 did.
 **Price.** A reader of `git log` meets the withdrawn wording and the foreign identity before this entry, and has to know to look here.
+
+<a id="e-3515"></a>
+
+### The release notes count eight new start codes, and the readme names who refuses an unreadable envelope
+`E-3515` · security-state-seal · release notes, settled
+
+**Context.** `docs/releases/2.0.0.md` said `StartupErrorCode` gained five members and listed five in its table, the count E-2960 took before the security state added `plugin_anchor_incomplete`, `security_state_sealing_unknown` and `limits_unusable`. The union in `src/core/auth/startup.ts` holds all eight. The notes now say eight in the summary, the heading, the table and the type-level list, with a row for each of the three, and the readme names `security_state_sealing_unknown` beside the other two. The readme also said the maintenance step can refuse with `security_state_envelope_unreadable`; only `maintenance.resealSecurityState` throws it, and `maintenance.sealSecurityState` lists an account it cannot read in `refusedUserIds` and goes on, as E-3181 decided. `test/security-state-release-documents.test.ts` holds both documents to the union and to that distinction.
+**Rejected.** Leaving the three security-state codes to the readme alone, which would keep the notes' own table short of what an exhaustive `switch` meets.
+**Reason.** An upgrade note that undercounts the members of a union is the note a type error proves wrong.
+**Price.** None.

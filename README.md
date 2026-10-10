@@ -168,9 +168,11 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 >   a weakening, so run the maintenance step and then switch to `"required"`.
 >   Sign-in and change paths can answer with `passkey_limit_reached` and
 >   `identity_limit_reached` (HTTP 409), because an account holds at most 20
->   passkeys and 10 identities (`limits`). The maintenance step can refuse with
->   `security_state_envelope_unreadable`, the start with `plugin_anchor_incomplete`
->   and `limits_unusable`, and its report lists `refusedUserIds`.
+>   passkeys and 10 identities (`limits`). The administrator reseal can refuse
+>   with `security_state_envelope_unreadable`; the maintenance step lists an
+>   account it cannot read in its report's `refusedUserIds` instead. The start
+>   can refuse with `plugin_anchor_incomplete`, `security_state_sealing_unknown`
+>   and `limits_unusable`.
 >
 > Every break and the upgrade steps are in
 > [`docs/releases/2.0.0.md`](./docs/releases/2.0.0.md). 1.x gets no further
