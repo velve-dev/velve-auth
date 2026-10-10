@@ -18188,3 +18188,93 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Wiring the seam to `consultAnchors`, which would ask the anchor twice on every redemption, once through the seam and once through the check.
 **Reason.** A seam nothing calls documents a guarantee nothing gives, and the seal gives this one already.
 **Price.** E-3265's seam, described there, no longer exists.
+
+<a id="e-3519"></a>
+
+### A pending row binds an attempt generation the seal holds and every booking draws anew
+`E-3519` · security-state · storage format, settled
+
+**Context.** Section 3.18 named the replay of a pending row with its old MAC as a limit: a writer who knows the password saves the row, sends four wrong codes, writes the row back and has the full budget again, as often as the five minutes allow (L-8). The MAC over `attempts` proved the row was the library's, not that it was the latest version. `velve.security_state` now carries `attempt_generation` and `attempt_last`, both under the seal, and `pending_authentication` carries the `attempt_generation` its MAC binds. A booking on a sealed account draws the next generation, writes the row with it by compare-and-swap before the account lock, as §7 orders `pending_authentication` before `velve.user`, then takes the lock, reads and checks the state in one statement, requires the account's generation to be the one the row bound before the booking, and reseals with the new generation and the row's `token_sha256` in `attempt_last`. A row whose generation is not the account's answers as a missing one; it raises the alarm only when `attempt_last` names the row itself, because then its own later booking moved the generation and the row was written back. `test/integ-row-replay.test.ts` saves the row, fails four codes, writes it back and sends the right code: refused as `invalid_pending_authentication`, one alarm `factor_check token_binding_mismatch`, no session. Before the change the same case signed in (`200`).
+**Rejected.** A budget per account counted under the seal, each row binding the count at its creation: a written-back row would keep the attempts its later bookings spent, but the fifth attempt the case sends is within that budget and would sign in, and the row itself would not be refused. A sealed list of every open pending row with its count, which refuses exactly the written-back row and leaves siblings alone, but grows with every sign-in and needs expiry inside the seal. Raising the alarm on every generation mismatch, which would alarm whenever two pending sign-ins of one account overlap and one of them books.
+**Reason.** The user-visible demand is that the written-back row is refused like a missing one, with the alarm; only state the writer cannot roll back without the seal can say a row is stale, and one generation with the hash of its last mover is the smallest such state that also tells a write-back from a sibling.
+**Price.** Every booking on a sealed account is a sealing transaction: account lock, the one state read, one seal check, one new seal, one `recordSeal`. A booking on another pending row of the same account overtakes this one, which then answers as missing without an alarm and the sign-in starts again from the password. A row created in its own transaction while a booking of the same account commits can bind the previous generation and is overtaken the same way. A booking over a broken seal is counted without a new generation, as before. A writer who books on a second pending row of the account before writing the first back makes the refusal silent.
+
+<a id="e-3520"></a>
+
+### A session binds the account's session generation and both deadlines, and a single revocation moves the generation
+`E-3520` · security-state · storage format, settled
+
+**Context.** A session revoked on its own (`session.revoke`, `signOut`) and written back unchanged was valid again, because only a mass revocation changed `session_epoch`; and `idle_expires_at` and `absolute_expires_at` were unbound, so a writer could extend any session. The session MAC now binds `session_generation` from the seal row, checked against the account's current one read in the resolving statement like the epoch, and both deadlines as their microseconds since the Unix epoch, written as decimal digits in a text field because a deadline past the year 2255 is no exact JavaScript number. Every single revocation runs as a sealing transaction: account lock, one state read and check, delete, a new `session_generation`, and every other live session of the account rebound under the lock by compare-and-swap on the MAC it carries under the previous generation. The ids the revocation deleted are excluded from the rebinding, so a row a writer inserts again with the same id meanwhile stays under the previous generation. A swap that misses reads the row again and follows it at most three times while it still verifies; a revocation that removes nothing rolls back. A broken seal or an unsealed account still loses the row under the lock, without a generation. The idle extension reads the row by id with the deadline it is about to write, computed by the same `now() + make_interval(…)` the update uses in the same transaction, verifies the row and writes deadline and MAC by compare-and-swap. `test/integ-row-replay.test.ts` writes back a session revoked by another session and one that signed out, and moves either deadline by a day: each is refused with one alarm `session_resolve token_binding_mismatch`, and a refresh by the library keeps the session.
+**Rejected.** Drawing a new `session_epoch` on a single revocation and rebinding the rest under it: the epoch also overtakes every pending authentication (E-3484), and section 3.18 says a rebinding never lifts a session into a newer epoch. A sealed list of revoked session ids, which grows with every sign-out. Binding the deadlines as whole microseconds in an integer field, which refuses every session configured to outlive the year 2255, a case `test/session-deadline-interval.test.ts` holds.
+**Reason.** A revocation must leave a trace the writer cannot remove without the seal, and moving one value and re-binding the survivors under the lock leaves exactly that, at a cost paid only when someone signs out.
+**Price.** A single revocation now costs a reseal plus one HMAC and one compare-and-swap per remaining live session. A session whose rebinding misses three times is signed out with the revoked one. A plugin's `revokeSession` and the user's own sign-out move the generation for their account like `session.revoke`. `test/lock-order-declaration.test.ts` counts eleven account-lock sites, the fallback under a refused seal being the new one.
+
+<a id="e-3521"></a>
+
+### A session replaced at a sign-in or a link is revoked under the generation, except one of another account
+`E-3521` · security-state · revocation, settled
+
+**Context.** Two more paths delete a single session: a sign-in deletes the session the browser presented (S-FIX-3), and `reissueSessionOfUser` replaces the session an OAuth link was started from. `replacePresentedSession` now reads the owner of the presented row first; when it is the signing-in account, the delete, the conditional insert and the rebinding of the other sessions run in one revocation seal, and the new session is rebound with them. The OAuth link replaces its session inside its own sealing change, which cannot nest a second one, so that change itself moves the generation and rebinds every other live session except the one it replaces, and the re-issue in `afterSeal` binds the generation the new seal row holds. A service bound to a caller's transaction never moves a generation, because it would seal inside the caller's seal.
+**Rejected.** Moving the other account's generation when the presented session belongs to someone else, which would take a second account lock in one transaction and open a lock-order cycle between two sign-ins that each present the other's session.
+**Reason.** The same-account cases are the ones a written-back row could revive for its holder; the foreign case revives a session the browser no longer carries.
+**Price.** A sign-in that presents a session of its own account reseals once more. A presented session of another account is deleted without its generation moving and can be written back with its MAC; section 3.18 names it. A password reset replaces its session inside its own seal without a generation of its own, which loses nothing, because its mass revocation has already ended every session.
+
+<a id="e-3522"></a>
+
+### A one-time token carries the generation of its purpose, and each redemption that takes effect moves it
+`E-3522` · security-state · storage format, settled
+
+**Context.** A consumed reset or confirmation token written back with its MAC was redeemable again within its deadline, a limit section 3.18 named. `velve.security_state` now holds a generation for each of the four purposes and `token_last`. The issue reads the purpose's generation in the statement that serialises it and writes it into `one_time_token.payload` under `tokenGeneration`, beside `accountEmail`, so the existing MAC over the payload binds it and the consume statement S-REPLAY-2 prescribes stays as it is. A redemption that takes effect — reset, confirmation, change, magic link, and one spent on a disabled account, which reseals for this alone — requires in its sealing transaction that the bound generation is the account's for that purpose, draws a new one and writes the token's hash into `token_last`; a mismatch answers as a missing token, with the alarm when `token_last` names the token. The returned payload has the key taken out again, so a caller of `createOneTimeTokens` gets back what it issued. `test/integ-row-replay.test.ts` writes back a redeemed reset and a redeemed confirmation token: both answer `400 invalid_token` with one alarm `token_redemption token_binding_mismatch`; before the change both redeemed a second time.
+**Rejected.** One generation for all four purposes, which made a confirmation link fail after a reset of the same account and turned the concurrent confirmation and magic link of `test/flows-review-redemption-race.test.ts` and `test/lock-order-race.test.ts` into a refused one. A new column on `one_time_token`, which changes the consume statement S-REPLAY-2 fixes word for word. Binding the seal's version, which every factor booking and every revocation now moves, so a link would die of an unrelated sign-out.
+**Reason.** S-TOKEN-3 keeps one open token per account and purpose, so a generation per purpose refuses the spent token without ever overtaking a live one.
+**Price.** Four more columns and four more integers under the seal. A token minted while a redemption of the same purpose commits can bind the previous generation and is answered as missing without an alarm. A token spent on a disabled account costs a reseal. The undo of a token whose mail failed (E-630) consumes it without moving the generation; nobody holds that token.
+
+<a id="e-3523"></a>
+
+### The administrator's reseal draws every generation anew
+`E-3523` · security-state · administration, settled
+
+**Context.** `maintenance.resealSecurityState` seals whatever it finds after a broken state. Carrying the stored generations forward would confirm values a writer may have set to match a row it wants back. The reseal now draws the session, attempt and four token generations afresh and clears both last-mover hashes, as it already draws a new epoch.
+**Rejected.** Keeping the stored generations, which costs nothing and confirms what the writer left.
+**Reason.** A reseal confirms rows it does not check; the generations are what keeps old rows out, so they are the one thing it must not take over.
+**Price.** After an administrator reseal every open link and every pending sign-in of the account is refused, besides every session, which the new epoch ends already.
+
+<a id="e-3524"></a>
+
+### The seal and token encodings and migrations 3 and 4 change in place before 2.0.0 ships
+`E-3524` · security-state · storage format, settled
+
+**Context.** Section 3.18 calls the seal encoding and the token MAC encoding frozen, and migrations 3 and 4 have checksums. 2.0.0 is not published, and E-3484 already added `pending_authentication.session_epoch` to migration 4 in place. The generations are written into migration 3, `attempt_generation` into migration 4, the two encodings gain their fields after the epoch, and the byte-for-byte vectors in `test/security-state-seal-encoding.test.ts` and `test/integ-token-binding-vectors.test.ts` are taken anew from the description, not from the code.
+**Rejected.** A migration 5 and a second context string, which a release nobody has installed does not need.
+**Reason.** Freezing protects stored rows, and no stored row of 2.0.0 exists outside a test database.
+**Price.** A database migrated from this branch before this change fails its checksum check and is migrated again from scratch.
+
+<a id="e-3525"></a>
+
+### Writing back one row now needs the seal row of its time, which only the anchor notices
+`E-3525` · security-state · limits, settled
+
+**Context.** After E-3519 to E-3522 a single row written back with its old MAC binds a generation the account has left. A writer who wants the row back must also write back the seal row from before the booking, revocation or redemption. That is a rollback of the whole account to an old, consistent state, which section 3.18 already names: the anchor of S-INTEG-6 sees the old version below its lower bound, and without an anchor nothing does, as long as the sealed components have not changed since. Section 3.18 *The limits*, section 5.21 and `DOCUMENTATION.md` now say exactly that, and that a session of another account replaced at a sign-in, and a consumed WebAuthn challenge, can still be written back alone.
+**Rejected.** Saying the replay is closed, which is true only with an anchor whose store the writer cannot reach.
+**Reason.** The change moves the attack from one row to the seal row, and the seal row's rollback has the defence it had before, no more.
+**Price.** None beyond what the three entries above state.
+
+<a id="e-3526"></a>
+
+### What a generation costs on the request path, measured
+`E-3526` · security-state · cost, measured
+
+**Context.** Measured on PostgreSQL 16 on the development container, median of 300 bookings on fresh sealed accounts with and without the attempt seal, and of 150 sign-outs with and without the revocation seal, each run twice in alternation: a booking took 2.9 ms without the seal and 5.7 and 7.0 ms with it; a sign-out took 1.8 ms without and 6.2 ms with one other live session, 13.0 ms with ten. A session resolution reads two deadlines and one generation more in its one statement and takes its MAC over three more fields; `test/security-state-limits-cap.test.ts`, which holds T-INTEG-10's bound of three times the cost at one passkey, passes unchanged. A redemption writes its generation in the sealing transaction it already ran, except on a disabled account.
+**Rejected.** Measuring through HTTP, where the KDF of the sign-in dominates and the difference disappears in the noise.
+**Reason.** The cost lands on failed codes and sign-outs, both rate-limited, and not on the resolution every request makes.
+**Price.** About 3 to 4 ms per second-factor attempt and about 0.7 ms per remaining session on a sign-out, on this machine.
+
+<a id="e-3527"></a>
+
+### A session issue stands on the components version, so a generation drawn meanwhile does not void it
+`E-3527` · security-state · issue condition, settled
+
+**Context.** A session issue inserted only while the seal row's `version` and `session_epoch` were still what the authorising check read. With E-3519 to E-3522 every booking, single revocation and redemption reseals, so `version` moves far more often than any sign-in method changes. `test/flows-review-redemption-race.test.ts` showed it: an address confirmation and a magic link of one account redeemed together answered `200,400` in one of five runs, the magic link's issue missing because the confirmation's redemption had moved its token generation in between. The seal row now carries `components_version`, sealed with the rest: the `version` of the last seal that changed a component or the epoch, a first seal included, and kept by a seal that only draws a generation or renews the key. `IssueAuthorisation` carries `componentsVersion`, and the conditional insert is `… AND session_epoch = $11 AND components_version = $12`.
+**Rejected.** Retrying a missed issue once under the version read under the lock, which section 3.18 forbids for a reason that still holds. Leaving the condition on `version` and accepting the miss, which a user meets whenever another tab of the same account signs out or fails a code during a sign-in.
+**Reason.** What a check authorises is the sign-in methods and the epoch it read; a generation is about other rows and changes nothing a session issued now would rest on.
+**Price.** One more sealed integer. A session issued after a generation-only reseal binds the generation the issue reads under the lock, which is the current one, so nothing it issues is stale.
